@@ -1,0 +1,112 @@
+## `atomic_define`
+
+### **Name**
+
+`atomic_define` - `[ATOMIC]` Atomically define the value of a variable
+
+### **Synopsis**
+
+```fortran
+    call atomic_define (atom, value [,stat] )
+```
+
+```fortran
+     subroutine atomic_define(atom, value, stat)
+
+      TYPE(kind=atomic_KIND_kind) :: atom[*]
+      TYPE(kind=KIND) :: value
+      integer,intent(out),optional :: stat
+```
+
+### **Characteristics**
+
+- `atom`
+  : Scalar coarray or coindexed variable of either integer type with
+  `atomic_int_kind` kind or logical type with `atomic_logical_kind`
+  kind.
+
+- `value`
+  : Scalar of the same type as `atom`. If the kind is different, the value
+  is converted to the kind of `atom`.
+
+- `stat`
+  : (optional) Scalar default-kind integer variable.
+
+### **Description**
+
+`atomic_define(atom, value, stat)` atomically sets the value of
+`atom` to `value`. This ensures thread-safe assignment in parallel
+environments.
+
+Use for simple atomic assignments, unlike `atomic_cas(3)` which
+involves comparison.
+
+Only one image should call `atomic_define(3)` to avoid undefined
+behavior in this context.
+
+### **Options**
+
+- `atom`
+  : Scalar coarray or coindexed variable to atomically assign the
+  value `value` to.
+  kind.
+
+- `value`
+  : value to assign to `atom`
+
+- `stat`
+  : When `stat` is present and the invocation was
+  successful, it is assigned the value `0`. If it is present and the
+  invocation has failed, it is assigned a positive value; in particular,
+  for a coindexed `atom`, if the remote image has stopped, it is assigned
+  the value of `iso_fortran_env`'s `stat_stopped_image` and if the remote
+  image has failed, the value `stat_failed_image`.
+
+### **Examples**
+
+Sample program:
+
+```fortran
+program demo_atomic_define
+  use iso_fortran_env
+  implicit none
+  integer(atomic_int_kind) :: counter[*]
+  integer :: stat, me
+
+  if (this_image() == 1) counter = 0
+  sync all
+
+  me = this_image()
+  if (me == 2) call atomic_define(counter[1], 42, stat)
+
+  if (stat /= 0) print *, "Image", me, ": Failed with STAT =", stat
+  sync all
+
+  if (this_image() == 1) print *, "Final counter:", counter
+end program demo_atomic_define
+```
+
+Expected Output (4 images)
+
+```text
+    > Final counter: 42
+```
+
+### **Standard**
+
+Fortran 2008; with `stat`, TS 18508
+
+### **See Also**
+
+`atomic_ref`(3),
+`atomic_cas`(3),
+`iso_fortran_env`(3),
+`atomic_add`(3),
+`atomic_and`(3),
+`atomic_or`(3),
+`atomic_xor`(3)
+
+See `iso_fortran_env` for constants like `atomic_int_kind`,
+`stat_stopped_image`, and `stat_failed_image`.
+
+ _Fortran intrinsic descriptions_

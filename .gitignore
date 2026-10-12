@@ -1,0 +1,20 @@
+# Zig
+.zig-cache/
+zig-out/
+*.o
+zig-pkg/
+.zigversion
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# generated documentation
+docs/build/
+site/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

@@ -1,0 +1,44 @@
+{
+  "version": "0.2",
+  "ignorePaths": [
+    ".cspell.json*",
+    ".cspell/**",
+    ".git/**",
+    "*.code-workspace",
+    ".gitignore",
+    ".local-gitignore",
+    "cache/**",
+    ".env",
+    "go.sum",
+    "pixi.lock",
+  ],
+  "dictionaryDefinitions": [
+    {
+      "name": "project-words",
+      "path": ".vscode/ltex.dictionary.en-US.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": [
+    "bash",
+    "win32",
+    "scientific-terms-us",
+    "zig",
+    "project-words"
+  ],
+  "allowCompoundWords": true,
+  "ignoreWords": [],
+  "ignoreRegExpList": [
+    "/-W.*/",
+    "/-D.*/",
+    "/-X.*/",
+    "/-i.*/",
+    "/-I.*/",
+    "/-f.*/",
+    // Doorstop base64url SHA256 fingerprints (`reviewed:` and link hashes in
+    // docs/{sys,srs,des,tst} item front matter): preceded by `: `, always end in one `=`.
+    "/(?<=: )[A-Za-z0-9_-]{25,}=+/",
+    // OOXML hex colors, e.g. rgb="FFEDEDED" (also as an escaped Zig string literal).
+    "/rgb=\\\\?\"[0-9A-Fa-f]{6,8}/",
+  ],
+}

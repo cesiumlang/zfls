@@ -1,0 +1,43 @@
+{"rule":"EN_A_VS_AN","sentence":"^\\QEvents: implement an \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q sink and connect it through \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q to Excel's application events (\\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q, \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q, and so on).\\E$"}
+{"rule":"SUBJECT_VERB_AGREEMENT","sentence":"^\\QAn input event queue written into wasm memory (pointer, wheel, keys, scroll position, resize).\\E$"}
+{"rule":"EN_A_VS_AN","sentence":"^\\QUse \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q or an \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q for memory reinterpretation.\\E$"}
+{"rule":"EN_A_VS_AN","sentence":"^\\QSeveral requests on which fortls raises an internal error (for example implementation requests on module names, or completion inside an \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q statement outside an interface) return \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q or an empty result.\\E$"}
+{"rule":"UNLIKELY_OPENING_PUNCTUATION","sentence":"^: "}
+{"rule":"EN_A_VS_AN","sentence":"store the result in an "}
+{"rule":"EN_A_VS_AN","sentence":"argument and shall be nonpolymorphic"}
+{"rule":"EN_A_VS_AN","sentence":"is treated as an integer"}
+{"rule":"IN_FACEBOOK","sentence":"Wikipedia"}
+{"rule":"A_BIT","sentence":"^Bit Inquiry$"}
+{"rule":"A_BIT","sentence":"Bit position increases"}
+{"rule":"A_BIT","sentence":"if bit position"}
+{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"dDIM-1, dDIM\\+1"}
+{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"result value of BESSEL_[JY]N"}
+{"rule":"PRP_VB","sentence":"As such it underflows"}
+{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"eXclusive OR"}
+{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"Bureau International des Poids et Mesures"}
+{"rule":"ENGLISH_WORD_REPEAT_RULE","sentence":"exclusive OR or"}
+{"rule":"ENGLISH_WORD_REPEAT_RULE","sentence":"of any kind"}
+{"rule":"KIND_OF_A","sentence":"dynamic type of"}
+{"rule":"KIND_OF_A","sentence":"Kind of an entity"}
+{"rule":"KIND_OF_A","sentence":"complex-part-designator"}
+{"rule":"ALL_OF_THE","sentence":"all of the"}
+{"rule":"WHETHER","sentence":"as to whether"}
+{"rule":"WHETHER","sentence":"whether or not"}
+{"rule":"THE_SUPERLATIVE","sentence":"most significant bit to least significant bit"}
+{"rule":"THE_SUPERLATIVE","sentence":"integer nearest whole number"}
+{"rule":"THE_SUPERLATIVE","sentence":"integer with largest magnitude"}
+{"rule":"IF_WOULD_HAVE_VBN","sentence":"If STAT would have been assigned"}
+{"rule":"AFTERWARDS_US","sentence":"Afterwards, remaining positions"}
+{"rule":"A_RB_NN","sentence":"in-place reinterpretation"}
+{"rule":"SQUARE_ROOT","sentence":"principal square root"}
+{"rule":"CD_NN","sentence":"[Bb]ase 10 (or common )?logarithm"}
+{"rule":"A_BUT","sentence":"but with the sign"}
+{"rule":"COMMA_COMPOUND_SENTENCE","sentence":"and it is expressed in"}
+{"rule":"COMMA_COMPOUND_SENTENCE","sentence":"attribute and it can be any type"}
+{"rule":"COMMA_COMPOUND_SENTENCE","sentence":"same type and they shall all"}
+{"rule":"COMMA_COMPOUND_SENTENCE","sentence":"still valid but it will start"}
+{"rule":"COMMA_COMPOUND_SENTENCE_2","sentence":"50 miles so the slope"}
+{"rule":"COMMA_COMPOUND_SENTENCE_2","sentence":"typically ignored and unquoted"}
+{"rule":"COMMA_COMPOUND_SENTENCE_2","sentence":"infinity so this may work"}
+{"rule":"COMMA_COMPOUND_SENTENCE_2","sentence":"but any trailing bits are filled"}
+{"rule":"MISSING_COMMA_AFTER_INTRODUCTORY_PHRASE","sentence":"In particular"}

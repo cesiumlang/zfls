@@ -1,0 +1,1688 @@
+//! Fortran source file handling and parsing (port of
+//! `fortls.parsers.internal.parser`)
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const str = @import("str.zig");
+const helpers = @import("helpers.zig");
+const patterns = @import("patterns.zig");
+const regex = @import("regex.zig");
+const C = @import("constants.zig");
+const objects = @import("objects.zig");
+const pp = @import("preprocessor.zig");
+const Obj = objects.Obj;
+const Ast = objects.Ast;
+const UseStmt = objects.UseStmt;
+const Range = helpers.Range;
+
+fn R() *const patterns.Patterns {
+    return patterns.get();
+}
+
+/// Receives parser/preprocessor trace lines (debug CLI only; not thread-safe)
+pub var debug_hook: ?*const fn ([]const u8) void = null;
+
+pub fn dbg(comptime fmt: []const u8, args: anytype) void {
+    const h = debug_hook orelse return;
+    var buf: [16384]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, fmt, args) catch buf[0..];
+    h(s);
+}
+
+// --------------------------------------------------------------------------
+// Line definition readers
+
+pub const ResultSig = struct {
+    name: ?[]const u8 = null,
+    type: ?[]const u8 = null,
+    kind: ?[]const u8 = null,
+    keywords: []const []const u8 = &.{},
+};
+
+pub const VarInfo = struct {
+    var_type: []const u8,
+    keywords: []const []const u8,
+    var_names: ?[]const []const u8,
+    var_kind: ?[]const u8 = null,
+};
+
+pub const SubInfo = struct {
+    name: []const u8,
+    args: []const u8,
+    keywords: []const []const u8 = &.{},
+    mod_flag: bool = false,
+};
+
+pub const FunSig = struct {
+    name: []const u8,
+    args: []const u8,
+    keywords: []const []const u8 = &.{},
+    mod_flag: bool = false,
+    result: ResultSig = .{},
+};
+
+pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8 };
+pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
+pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const []const u8, vis_flag: i8 };
+pub const SmodInfo = struct { name: []const u8, parent: []const u8 };
+pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
+pub const VisInfo = struct { type: i32, obj_names: []const []const u8 };
+pub const UseInfo = struct {
+    mod_name: []const u8,
+    only_list: []const []const u8,
+    renames: []const [2][]const u8,
+};
+pub const ImportInfo = struct {
+    import_type: objects.ImportType,
+    only_list: []const []const u8 = &.{},
+};
+
+pub const DefResult = union(enum) {
+    var_: VarInfo,
+    sub: SubInfo,
+    fun: FunSig,
+    block: ?[]const u8,
+    do_: []const u8,
+    where: bool,
+    if_,
+    assoc: []const []const u8,
+    select: SelectInfo,
+    typ: ClassInfo,
+    enum_,
+    use: UseInfo,
+    import: ImportInfo,
+    int: InterInfo,
+    gen: GenProcDefInfo,
+    int_pro: []const []const u8,
+    mod: []const u8,
+    prog: []const u8,
+    smod: SmodInfo,
+    inc: []const u8,
+    vis: VisInfo,
+};
+
+const E = Allocator.Error;
+
+fn lstripChars(s: []const u8, chars: []const u8) []const u8 {
+    return std.mem.trimStart(u8, s, chars);
+}
+
+/// Parse Fortran variable declaration keywords
+fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywords: []const []const u8, rest: []const u8 } {
+    var test_str = test_str_in;
+    var keywords: std.ArrayList([]const u8) = .empty;
+    var keyword_match = R().KEYWORD_LIST.match(test_str);
+    while (keyword_match) |m| {
+        var tmp_str: []const u8 = lstripChars(m.str(), ", ");
+        test_str = test_str[m.end(0)..];
+        if (str.startsWithIgnoreCase(tmp_str, "dimension")) {
+            const mc = helpers.findParenMatch(test_str);
+            if (mc < 0) break;
+            const mcu: usize = @intCast(mc);
+            tmp_str = try str.concat(a, &.{ tmp_str, test_str[0 .. mcu + 1] });
+            test_str = test_str[mcu + 1 ..];
+        }
+        tmp_str = lstripChars(tmp_str, ", ");
+        try keywords.append(a, try str.upper(a, str.strip(tmp_str)));
+        keyword_match = R().KEYWORD_LIST.match(test_str);
+    }
+    return .{ .keywords = keywords.items, .rest = test_str };
+}
+
+const KindResult = struct { kind: ?[]const u8, line: []const u8 };
+
+fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
+    const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
+    var kind_str: []const u8 = try str.replace(a, m.group(1).?, " ", "");
+    var rest = line[m.end(0)..];
+    if (std.mem.indexOfScalar(u8, kind_str, '(') != null) {
+        const mc = helpers.findParenMatch(rest);
+        if (mc < 0) return null; // Incomplete kind specification
+        const mcu: usize = @intCast(mc);
+        kind_str = try str.concat(a, &.{ kind_str, str.strip(rest[0 .. mcu + 1]) });
+        rest = rest[mcu + 1 ..];
+    }
+    return .{ .kind = kind_str, .line = rest };
+}
+
+/// Attempt to read variable definition line
+pub fn readVarDef(a: Allocator, line: []const u8, var_type_in: ?[]const u8, fun_only: bool) E!?DefResult {
+    var var_type: []const u8 = undefined;
+    var trailing: []const u8 = undefined;
+    if (var_type_in) |vt| {
+        var_type = vt;
+        trailing = str.from(line, vt.len);
+    } else {
+        const tm = R().VAR.match(line) orelse return null;
+        var_type = str.strip(tm.str());
+        trailing = line[tm.end(0)..];
+    }
+    var_type = try str.upper(a, var_type);
+    trailing = str.beforeFirst(trailing, "!");
+    if (trailing.len == 0) return null;
+
+    const kr = (try parseKind(a, trailing)) orelse return null;
+    const kind_str = kr.kind;
+    trailing = kr.line;
+    const has_kind = kind_str != null and kind_str.?.len > 0;
+    if (!has_kind and (str.eql(var_type, "TYPE") or str.eql(var_type, "CLASS"))) return null;
+    if (!has_kind) {
+        if (trailing.len == 0) return null;
+        const c0 = trailing[0];
+        if (!(c0 == ' ' or c0 == ',' or c0 == ':')) return null;
+    }
+
+    const kw = try parseVarKeywords(a, trailing);
+    trailing = kw.rest;
+    const fun_def = try readFunDef(a, trailing, .{ .type = var_type, .keywords = kw.keywords, .kind = kind_str }, false);
+    if (fun_def != null or fun_only) return fun_def;
+
+    var var_words: ?[]const []const u8 = null;
+    const line_split = try str.split(a, trailing, "::");
+    if (line_split.len == 1) {
+        if (kw.keywords.len > 0) {
+            var_words = null;
+        } else {
+            var_words = try helpers.separateDefList(a, str.strip(line_split[0]));
+        }
+    } else {
+        var_words = (try helpers.separateDefList(a, str.strip(line_split[1]))) orelse &.{};
+    }
+    return .{ .var_ = .{ .var_type = var_type, .keywords = kw.keywords, .var_names = var_words, .var_kind = kind_str } };
+}
+
+const ProcMods = struct { name: []const u8, args: []const u8, trailing: []const u8 };
+
+fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Regex) E!?ProcMods {
+    const m = re.match(line) orelse return null;
+    const name = m.group(1).?;
+    var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    var args: []const u8 = "";
+    if (R().SUB_PAREN.match(trailing)) |pm| {
+        const words = try R().WORD.findall(a, pm.str());
+        args = try str.join(a, ",", words);
+        trailing = trailing[pm.end(0)..];
+    }
+    return .{ .name = name, .args = args, .trailing = trailing };
+}
+
+/// Attempt to read FUNCTION definition line
+pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_flag: bool) E!?DefResult {
+    const keywords = try R().SUB_MOD.findall(a, line_in);
+    const line = try R().SUB_MOD.sub(a, "", line_in);
+    if (keywords.len > 0) {
+        if (try readVarDef(a, line, null, true)) |tmp_var| {
+            var tv = tmp_var;
+            switch (tv) {
+                .fun => |*f| f.keywords = keywords,
+                .var_ => |*v| v.keywords = keywords,
+                else => {},
+            }
+            return tv;
+        }
+    }
+    const pm = (try getProcedureModifiers(a, line, &R().FUN)) orelse return null;
+    const trailing = str.strip(pm.trailing);
+    var result = result_in orelse ResultSig{};
+    if (R().RESULT.match(trailing)) |rm| {
+        result.name = try str.lower(a, str.strip(rm.group(1).?));
+    }
+    if (result.name == null or result.name.?.len == 0) result.name = pm.name;
+    return .{ .fun = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag, .result = result } };
+}
+
+pub fn readSubDef(a: Allocator, line_in: []const u8, mod_flag: bool) E!?DefResult {
+    const keywords = try R().SUB_MOD.findall(a, line_in);
+    const line = try R().SUB_MOD.sub(a, "", line_in);
+    const pm = (try getProcedureModifiers(a, line, &R().SUB)) orelse return null;
+    return .{ .sub = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag } };
+}
+
+fn readBlockDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().BLOCK.match(line) orelse return null;
+    var name = m.group(1);
+    if (name) |n| if (n.len > 0) {
+        name = str.strip(try str.replace(a, n, ":", " "));
+    };
+    return .{ .block = name };
+}
+
+fn stripNoComment(a: Allocator, line: []const u8) E![]const u8 {
+    const stripped = try helpers.stripStrings(a, line, true);
+    return str.rstrip(str.beforeFirst(stripped, "!"));
+}
+
+fn readDoDef(a: Allocator, line: []const u8) E!?DefResult {
+    const nc = try stripNoComment(a, line);
+    const m = R().DO.match(nc) orelse return null;
+    return .{ .do_ = str.strip(m.group(1).?) };
+}
+
+fn readWhereDef(a: Allocator, line: []const u8) E!?DefResult {
+    const nc = try stripNoComment(a, line);
+    const m = R().WHERE.match(nc) orelse return null;
+    const trailing = str.from(line, m.end(0));
+    const close_paren = helpers.findParenMatch(trailing);
+    if (close_paren < 0) return .{ .where = true };
+    const after = str.strip(str.from(trailing, @as(usize, @intCast(close_paren)) + 1));
+    if (R().WORD.match(after) != null) return .{ .where = true };
+    return .{ .where = false };
+}
+
+fn readIfDef(a: Allocator, line: []const u8) E!?DefResult {
+    const nc = try stripNoComment(a, line);
+    if (R().IF.match(nc) != null and R().THEN.search(nc) != null) return .if_;
+    return null;
+}
+
+fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().ASSOCIATE.match(line) orelse return null;
+    const trailing = line[m.end(0)..];
+    const mc = helpers.findParenMatch(trailing);
+    if (mc < 0) return .{ .assoc = &.{} };
+    const words = try helpers.separateDefList(a, str.strip(trailing[0..@intCast(mc)]));
+    return .{ .assoc = words orelse &.{} };
+}
+
+fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
+    _ = a;
+    if (R().SELECT.match(line)) |m| {
+        const word = m.group(1).?;
+        var st: i32 = -1;
+        if (str.startsWithIgnoreCase(word, "case")) {
+            st = 1;
+        } else if (str.startsWithIgnoreCase(word, "type")) {
+            st = 2;
+        }
+        return .{ .select = .{ .type = st, .binding = m.group(2), .desc = null } };
+    }
+    if (R().SELECT_TYPE.match(line)) |m| {
+        var buf: [5]u8 = undefined;
+        const d = m.group(1).?;
+        const up = std.ascii.upperString(buf[0..d.len], d);
+        const desc: []const u8 = if (str.eql(up, "TYPE")) "TYPE" else "CLASS";
+        return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = desc } };
+    }
+    if (R().SELECT_DEFAULT.match(line) != null) return .{ .select = .{ .type = 4, .binding = null, .desc = null } };
+    return null;
+}
+
+fn readTypeDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().TYPE_DEF.match(line) orelse return null;
+    var trailing = str.strip(str.beforeFirst(line[m.end(1)..], "!"));
+    var keywords: std.ArrayList([]const u8) = .empty;
+    var parent: ?[]const u8 = null;
+    var km = R().TATTR_LIST.match(trailing);
+    while (km) |k| {
+        const ks = try str.upper(a, str.strip(try str.replace(a, k.str(), ",", " ")));
+        if (R().EXTENDS.match(ks)) |em| {
+            parent = try str.lower(a, em.group(1).?);
+        } else {
+            try keywords.append(a, ks);
+        }
+        trailing = trailing[k.end(0)..];
+        km = R().TATTR_LIST.match(trailing);
+    }
+    const line_split = try str.split(a, trailing, "::");
+    if (line_split.len == 1) {
+        if (keywords.items.len > 0 and parent == null) return null;
+        const first = try str.lower(a, str.strip(str.beforeFirst(trailing, "(")));
+        if (str.eql(first, "is")) return null;
+        trailing = line_split[0];
+    } else {
+        trailing = line_split[1];
+    }
+    const wm = R().WORD.match(str.strip(trailing)) orelse return null;
+    return .{ .typ = .{ .name = wm.str(), .parent = parent, .keywords = keywords.items } };
+}
+
+fn readEnumDef(a: Allocator, line: []const u8) E!?DefResult {
+    _ = a;
+    if (R().ENUM_DEF.match(line) != null) return .enum_;
+    return null;
+}
+
+fn readGenericDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().GENERIC_PRO.match(line) orelse return null;
+    const trailing = str.strip(str.beforeFirst(line[m.end(0) - 1 ..], "!"));
+    if (trailing.len == 0) return null;
+    var vis_flag: i8 = 0;
+    if (m.group(2)) |v| {
+        vis_flag = if (std.ascii.eqlIgnoreCase(v, "private")) -1 else 1;
+    }
+    const i_1 = std.mem.indexOf(u8, trailing, "=>") orelse return null;
+    const bound_name = str.strip(trailing[0..i_1]);
+    if (R().GEN_ASSIGN.match(bound_name) != null) return null;
+    var pro_out: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, trailing[i_1 + 2 ..], ',');
+    while (it.next()) |p| {
+        const s = str.strip(p);
+        if (s.len > 0) try pro_out.append(a, s);
+    }
+    if (pro_out.items.len == 0) return null;
+    return .{ .gen = .{ .bound_name = bound_name, .pro_links = pro_out.items, .vis_flag = vis_flag } };
+}
+
+fn readModDef(a: Allocator, line_in: []const u8) E!?DefResult {
+    const keywords = try R().SUB_MOD.findall(a, line_in);
+    const line = try R().SUB_MOD.sub(a, "", line_in);
+    const m = R().MOD.match(line) orelse return null;
+    const name = m.group(1).?;
+    if (std.ascii.eqlIgnoreCase(name, "procedure")) {
+        const trailing = line[m.end(1)..];
+        var names: std.ArrayList([]const u8) = .empty;
+        var it = std.mem.splitScalar(u8, trailing, ',');
+        while (it.next()) |n| try names.append(a, try str.lower(a, str.strip(n)));
+        return .{ .int_pro = names.items };
+    }
+    const trailing = line[m.start(1)..];
+    if (try readSubDef(a, trailing, true)) |r| return r;
+    if (try readVarDef(a, trailing, null, true)) |r| {
+        var res = r;
+        switch (res) {
+            .fun => |*f| {
+                f.mod_flag = true;
+                f.keywords = keywords;
+            },
+            .var_ => |*v| v.keywords = keywords,
+            else => {},
+        }
+        return res;
+    }
+    if (try readFunDef(a, trailing, null, true)) |r| {
+        var res = r;
+        switch (res) {
+            .fun => |*f| f.keywords = keywords,
+            .var_ => |*v| v.keywords = keywords,
+            else => {},
+        }
+        return res;
+    }
+    return .{ .mod = name };
+}
+
+fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().SUBMOD.match(line) orelse return null;
+    var parent_name: []const u8 = "";
+    var name: []const u8 = "";
+    var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    if (R().WORD.match(trailing)) |pm| {
+        parent_name = try str.lower(a, pm.str());
+        if (trailing.len > pm.end(0) + 1) {
+            trailing = str.strip(trailing[pm.end(0) + 1 ..]);
+        } else {
+            trailing = "";
+        }
+    }
+    if (R().WORD.search(trailing)) |nm| name = try str.lower(a, nm.str());
+    return .{ .smod = .{ .name = name, .parent = parent_name } };
+}
+
+fn readProgDef(a: Allocator, line: []const u8) E!?DefResult {
+    _ = a;
+    const m = R().PROG.match(line) orelse return null;
+    return .{ .prog = m.group(1).? };
+}
+
+fn readIntDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().INT.match(line) orelse return null;
+    const raw = m.group(2) orelse "";
+    const int_name = try str.lower(a, raw);
+    const is_abstract = m.group(1) != null;
+    if (int_name.len == 0) return .{ .int = .{ .name = null, .abstract = is_abstract } };
+    if (str.eql(int_name, "assignment") or str.eql(int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false } };
+    return .{ .int = .{ .name = raw, .abstract = is_abstract } };
+}
+
+pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().USE.match(line) orelse return null;
+    const trailing = str.beforeFirst(try str.lower(a, line[m.end(0)..]), "!");
+    const use_mod = m.group(2).?;
+    var only: std.ArrayList([]const u8) = .empty;
+    var renames: std.ArrayList([2][]const u8) = .empty;
+    if (m.group(3) != null and m.group(3).?.len > 0) {
+        var it = std.mem.splitScalar(u8, trailing, ',');
+        while (it.next()) |only_stmt| {
+            const parts = try str.split(a, only_stmt, "=>");
+            const only_name = str.strip(parts[0]);
+            var dup = false;
+            for (only.items) |o| if (str.eql(o, only_name)) {
+                dup = true;
+            };
+            if (!dup) try only.append(a, only_name);
+            if (parts.len == 2) {
+                var replaced = false;
+                for (renames.items) |*r| if (str.eql(r[0], only_name)) {
+                    r[1] = str.strip(parts[1]);
+                    replaced = true;
+                };
+                if (!replaced) try renames.append(a, .{ only_name, str.strip(parts[1]) });
+            }
+        }
+    }
+    return .{ .use = .{ .mod_name = use_mod, .only_list = only.items, .renames = renames.items } };
+}
+
+fn readImpStmt(a: Allocator, line: []const u8) E!?DefResult {
+    const re = &R().IMPORT;
+    const m = re.match(line) orelse return null;
+    const spec = m.named(re, "spec");
+    const is_empty = spec == null and m.named(re, "only") == null and m.named(re, "start1") == null and m.named(re, "start2") == null;
+    if (is_empty or (spec != null and std.ascii.eqlIgnoreCase(spec.?, "all"))) {
+        return .{ .import = .{ .import_type = .all } };
+    } else if (spec != null and std.ascii.eqlIgnoreCase(spec.?, "none")) {
+        return .{ .import = .{ .import_type = .none } };
+    }
+    const trailing = try str.lower(a, line[m.end(0) - 1 ..]);
+    var list: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, trailing, ',');
+    while (it.next()) |p| {
+        const s = str.strip(p);
+        var dup = false;
+        for (list.items) |o| if (str.eql(o, s)) {
+            dup = true;
+        };
+        if (!dup) try list.append(a, s);
+    }
+    return .{ .import = .{ .import_type = .only, .only_list = list.items } };
+}
+
+fn readIncStmt(a: Allocator, line: []const u8) E!?DefResult {
+    _ = a;
+    const m = R().INCLUDE.match(line) orelse return null;
+    return .{ .inc = m.group(1).? };
+}
+
+fn readVisStmnt(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().VIS.match(line) orelse return null;
+    const vis_type: i32 = if (std.ascii.eqlIgnoreCase(m.group(1).?, "private")) 1 else 0;
+    const trailing = str.beforeFirst(line[m.end(0)..], "!");
+    const words = try R().WORD.findall(a, trailing);
+    return .{ .vis = .{ .type = vis_type, .obj_names = words } };
+}
+
+const DefTest = *const fn (Allocator, []const u8) E!?DefResult;
+
+fn readVarDef1(a: Allocator, line: []const u8) E!?DefResult {
+    return readVarDef(a, line, null, false);
+}
+fn readSubDef1(a: Allocator, line: []const u8) E!?DefResult {
+    return readSubDef(a, line, false);
+}
+fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
+    return readFunDef(a, line, null, false);
+}
+
+const def_tests = [_]DefTest{
+    readVarDef1,
+    readSubDef1,
+    readFunDef1,
+    readBlockDef,
+    readWhereDef,
+    readDoDef,
+    readIfDef,
+    readAssociateDef,
+    readSelectDef,
+    readTypeDef,
+    readEnumDef,
+    readUseStmt,
+    readImpStmt,
+    readIntDef,
+    readGenericDef,
+    readModDef,
+    readProgDef,
+    readSubmodDef,
+    readIncStmt,
+    readVisStmnt,
+};
+
+pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
+    for (def_tests) |t| {
+        if (try t(a, line)) |r| return r;
+    }
+    return null;
+}
+
+pub const LineContext = enum {
+    var_key,
+    pro_line,
+    var_only,
+    mod_mems,
+    mod_only,
+    pro_link,
+    skip,
+    import,
+    vis,
+    call,
+    type_only,
+    int_only,
+    first,
+    default,
+};
+
+/// Get context of ending position in line (for completion)
+pub fn getLineContext(a: Allocator, line: []const u8) E!struct { ctx: LineContext, info: ?[]const u8 = null } {
+    const pl = try helpers.getParenLevel(a, line);
+    const last_level = pl.str;
+    const sections = pl.sections;
+    const lev1_end = sections[sections.len - 1].end;
+    const line_len: isize = @intCast(line.len);
+    if (try readVarDef(a, line, null, false)) |tm| {
+        if (tm == .var_) {
+            const v = tm.var_;
+            if (v.var_names == null and lev1_end == line_len) return .{ .ctx = .var_key };
+            if (str.eql(v.var_type, "PROCEDURE") and str.find(line, "=>") > 0) return .{ .ctx = .pro_link };
+            return .{ .ctx = .var_only };
+        }
+    }
+    if (try readUseStmt(a, line)) |u| {
+        if (u.use.only_list.len > 0) return .{ .ctx = .mod_mems, .info = u.use.mod_name };
+        return .{ .ctx = .mod_only };
+    }
+    if (R().PRO_LINK.match(line) != null) return .{ .ctx = .pro_link };
+    if (R().SCOPE_DEF.match(line) != null or R().END.match(line) != null) return .{ .ctx = .skip };
+    if (R().IMPORT.match(line) != null) return .{ .ctx = .import };
+    if (R().VIS.match(line) != null) return .{ .ctx = .vis };
+    const type_def = R().TYPE_DEF.match(line) != null;
+    if (lev1_end == line_len and R().CALL.match(last_level) != null) return .{ .ctx = .call };
+    if (sections.len == 1 and sections[0].start >= 1) {
+        const up = try helpers.getParenLevel(a, str.slice(line, 0, sections[0].start - 1));
+        const test_str = up.str;
+        if (R().TYPE_STMNT.match(test_str) != null or (type_def and R().EXTENDS.search(test_str) != null)) {
+            return .{ .ctx = .type_only };
+        }
+        if (R().PROCEDURE_STMNT.match(test_str) != null) return .{ .ctx = .int_only };
+    }
+    if (R().INT_STMNT.match(line) != null) return .{ .ctx = .first };
+    if (type_def) return .{ .ctx = .skip };
+    return .{ .ctx = .default };
+}
+
+// --------------------------------------------------------------------------
+// EXTERNAL handling
+
+fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
+    if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
+    var counter: usize = 0;
+    for (file_ast.variable_list.items) |v| {
+        if (!str.eql(name, v.name)) continue;
+        for (file_ast.external_objs.items) |e| if (e == v) return false;
+        try v.setExternalAttr();
+        try file_ast.external_objs.append(file_ast.allocator(), v);
+        counter += 1;
+    }
+    return counter == 1;
+}
+
+fn findExternalAttr(file_ast: *Ast, name: []const u8, new_var: *Obj) !bool {
+    var counter: usize = 0;
+    for (file_ast.external_objs.items) |v| {
+        if (!str.eql(v.name, name)) continue;
+        if (!std.ascii.eqlIgnoreCase(v.desc, "EXTERNAL")) continue;
+        if (counter == 0) {
+            v.desc = new_var.desc;
+            try v.setExternalAttr();
+        }
+        counter += 1;
+    }
+    return counter == 1;
+}
+
+fn findExternal(file_ast: *Ast, desc_string: []const u8, name: []const u8, new_var: *Obj) !bool {
+    if (try findExternalType(file_ast, desc_string, name)) return true;
+    if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) {
+        if (try findExternalAttr(file_ast, name, new_var)) return true;
+    }
+    return false;
+}
+
+// --------------------------------------------------------------------------
+// Paths
+
+/// `os.path.normpath`
+pub fn normPath(a: Allocator, path: []const u8) ![]const u8 {
+    return std.fs.path.resolve(a, &.{path}) catch path;
+}
+
+/// Split text into lines by \r\n, \n, or \r
+pub fn splitLines(a: Allocator, text: []const u8) ![][]const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) {
+        const c = text[i];
+        if (c == '\n' or c == '\r') {
+            try out.append(a, text[start..i]);
+            if (c == '\r' and i + 1 < text.len and text[i + 1] == '\n') i += 1;
+            i += 1;
+            start = i;
+        } else i += 1;
+    }
+    try out.append(a, text[start..]);
+    return out.items;
+}
+
+// --------------------------------------------------------------------------
+// FortranFile
+
+pub const Change = struct {
+    text: []const u8,
+    range: ?struct { sl: usize, sc: usize, el: usize, ec: usize } = null,
+};
+
+pub const CodeLine = struct {
+    pre: []const []const u8,
+    curr: ?[]const u8,
+    post: []const []const u8,
+};
+
+pub const FortranFile = struct {
+    gpa: Allocator,
+    path: []const u8,
+    /// Raw lines, each owned by `gpa`
+    lines: std.ArrayList([]u8) = .empty,
+    /// Preprocessed lines (null: identical to `lines`), owned by `pp_arena`
+    pp_lines: ?[][]const u8 = null,
+    pp_arena: std.heap.ArenaAllocator,
+    pp_defs: pp.Defs = .empty,
+    fixed: bool = false,
+    preproc: bool = false,
+    ast: ?*Ast = null,
+    hash: ?u64 = null,
+
+    pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
+        const self = try gpa.create(FortranFile);
+        self.* = .{
+            .gpa = gpa,
+            .path = try gpa.dupe(u8, path),
+            .pp_arena = std.heap.ArenaAllocator.init(gpa),
+        };
+        const ext = std.fs.path.extension(std.fs.path.basename(path));
+        if (pp_suffixes) |sfx| {
+            self.preproc = false;
+            for (sfx) |s| if (str.eql(s, ext)) {
+                self.preproc = true;
+            };
+        } else {
+            var upper_buf: [64]u8 = undefined;
+            if (ext.len <= upper_buf.len) {
+                const up = std.ascii.upperString(upper_buf[0..ext.len], ext);
+                self.preproc = str.eql(up, ext);
+            }
+        }
+        return self;
+    }
+
+    /// Frees the file but not its AST (ASTs are managed by the workspace)
+    pub fn destroy(self: *FortranFile) void {
+        self.freeLines();
+        self.lines.deinit(self.gpa);
+        self.pp_arena.deinit();
+        self.gpa.free(self.path);
+        self.gpa.destroy(self);
+    }
+
+    fn freeLines(self: *FortranFile) void {
+        for (self.lines.items) |l| self.gpa.free(l);
+        self.lines.clearRetainingCapacity();
+    }
+
+    pub fn nLines(self: *const FortranFile) usize {
+        return self.lines.items.len;
+    }
+
+    fn resetPp(self: *FortranFile) void {
+        self.pp_lines = null;
+        // pp_defs live in pp_arena too, keep them: they are replaced by preprocess
+    }
+
+    /// Set file contents (copies the lines)
+    pub fn setContents(self: *FortranFile, new_lines: []const []const u8, detect_format: bool) !void {
+        var fresh: std.ArrayList([]u8) = .empty;
+        errdefer {
+            for (fresh.items) |l| self.gpa.free(l);
+            fresh.deinit(self.gpa);
+        }
+        try fresh.ensureTotalCapacity(self.gpa, new_lines.len);
+        for (new_lines) |l| fresh.appendAssumeCapacity(try self.gpa.dupe(u8, l));
+        self.freeLines();
+        self.lines.deinit(self.gpa);
+        self.lines = fresh;
+        self.resetPp();
+        if (detect_format) self.fixed = helpers.detectFixedFormat(@ptrCast(self.lines.items));
+    }
+
+    /// Set contents from text; returns false if unchanged (same hash)
+    pub fn setText(self: *FortranFile, text_in: []const u8) !bool {
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const text = try str.replace(a, text_in, "\t", " ");
+        const h = std.hash.Wyhash.hash(0, text);
+        if (self.hash != null and self.hash.? == h) return false;
+        self.hash = h;
+        try self.setContents(try splitLines(a, text), true);
+        return true;
+    }
+
+    /// Read file from disk; returns error string or null, and whether changed
+    pub fn loadFromDisk(self: *FortranFile, io: Io) struct { err: ?[]const u8, changed: bool } {
+        const data = Io.Dir.cwd().readFileAlloc(io, self.path, self.gpa, .limited(1 << 30)) catch {
+            return .{ .err = "Could not read/decode file", .changed = false };
+        };
+        defer self.gpa.free(data);
+        const changed = self.setText(data) catch return .{ .err = "Could not read/decode file", .changed = false };
+        return .{ .err = null, .changed = changed };
+    }
+
+    pub fn getLine(self: *const FortranFile, line_no_in: i64, pp_content: bool) ?[]const u8 {
+        const n: i64 = @intCast(self.nLines());
+        var line_no = line_no_in;
+        if (line_no < 0) line_no += n;
+        if (line_no < 0 or line_no >= n) return null;
+        const idx: usize = @intCast(line_no);
+        if (pp_content) if (self.pp_lines) |pl| return pl[idx];
+        return self.lines.items[idx];
+    }
+
+    /// Get full code line from file including any adjacent continuations
+    pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: i64, forward: bool, backward: bool, pp_content: bool, strip_comment: bool) !CodeLine {
+        var curr_line = self.getLine(line_no, pp_content) orelse return .{ .pre = &.{}, .curr = null, .post = &.{} };
+        const n: i64 = @intCast(self.nLines());
+        var line_ind = line_no - 1;
+        var pre_lines: std.ArrayList([]const u8) = .empty;
+        if (backward) {
+            if (self.fixed) {
+                var tmp_line = curr_line;
+                while (line_ind > 0) {
+                    if (R().FIXED_CONT.match(tmp_line) != null) {
+                        const prev_line = tmp_line;
+                        tmp_line = self.getLine(line_ind, pp_content) orelse "";
+                        if (line_ind == line_no - 1) {
+                            curr_line = try str.concat(a, &.{ "      ", str.from(curr_line, 6) });
+                        } else {
+                            pre_lines.items[pre_lines.items.len - 1] = try str.concat(a, &.{ "      ", str.from(prev_line, 6) });
+                        }
+                        try pre_lines.append(a, tmp_line);
+                    } else break;
+                    line_ind -= 1;
+                }
+            } else {
+                if (R().FREE_CONT.match(curr_line)) |m| {
+                    curr_line = try str.concat(a, &.{ try str.spaces(a, m.end(0)), curr_line[m.end(0)..] });
+                }
+                while (line_ind > 0) {
+                    const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
+                    var tmp_no_comm = str.beforeFirst(tmp_line, "!");
+                    const cont_ind = str.rfind(tmp_no_comm, "&");
+                    if (R().FREE_CONT.match(tmp_no_comm)) |m| {
+                        if (cont_ind == @as(isize, @intCast(m.end(0))) - 1) break;
+                        tmp_no_comm = try str.concat(a, &.{ try str.spaces(a, m.end(0)), tmp_no_comm[m.end(0)..] });
+                    }
+                    if (cont_ind >= 0) {
+                        try pre_lines.append(a, tmp_no_comm[0..@intCast(cont_ind)]);
+                    } else break;
+                    line_ind -= 1;
+                }
+            }
+        }
+        line_ind = line_no + 1;
+        var post_lines: std.ArrayList([]const u8) = .empty;
+        if (forward) {
+            if (self.fixed) {
+                if (line_ind < n) {
+                    var next_line = self.getLine(line_ind, pp_content) orelse "";
+                    line_ind += 1;
+                    var cont = R().FIXED_CONT.match(next_line) != null;
+                    while (cont and line_ind < n) {
+                        try post_lines.append(a, try str.concat(a, &.{ "      ", str.from(next_line, 6) }));
+                        next_line = self.getLine(line_ind, pp_content) orelse "";
+                        line_ind += 1;
+                        cont = R().FIXED_CONT.match(next_line) != null;
+                    }
+                }
+            } else {
+                var line_stripped = try helpers.stripStrings(a, curr_line, true);
+                var i_amper = str.find(line_stripped, "&");
+                var i_comm = str.find(line_stripped, "!");
+                if (i_comm < 0) i_comm = i_amper + 1;
+                var next_line: []const u8 = "";
+                while (i_amper >= 0 and i_amper < i_comm) {
+                    if (line_ind == line_no + 1) {
+                        curr_line = str.upto(curr_line, @intCast(i_amper));
+                    } else if (next_line.len > 0) {
+                        post_lines.items[post_lines.items.len - 1] = str.upto(next_line, @intCast(i_amper));
+                    }
+                    next_line = self.getLine(line_ind, pp_content) orelse break;
+                    line_ind += 1;
+                    if (R().PP_ANY.match(next_line) != null) {
+                        next_line = "";
+                        try post_lines.append(a, "");
+                        continue;
+                    }
+                    if (str.rstrip(next_line).len == 0 or R().FREE_COMMENT.match(next_line) != null) {
+                        next_line = "";
+                        try post_lines.append(a, "");
+                        continue;
+                    }
+                    if (R().FREE_CONT.match(next_line)) |m| next_line = next_line[m.end(0)..];
+                    try post_lines.append(a, next_line);
+                    line_stripped = try helpers.stripStrings(a, next_line, true);
+                    i_amper = str.find(line_stripped, "&");
+                    i_comm = str.find(line_stripped, "!");
+                    if (i_comm < 0) i_comm = i_amper + 1;
+                }
+            }
+        }
+        if (strip_comment) curr_line = self.stripComment(curr_line);
+        std.mem.reverse([]const u8, pre_lines.items);
+        return .{ .pre = pre_lines.items, .curr = curr_line, .post = post_lines.items };
+    }
+
+    pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
+        if (self.fixed) {
+            if (R().FIXED_COMMENT.match(line) != null and R().FIXED_OPENMP.match(line) == null) return "";
+        } else {
+            if (R().FREE_OPENMP.match(line) == null) return str.beforeFirst(line, "!");
+        }
+        return line;
+    }
+
+    pub fn findWordInCodeLine(self: *const FortranFile, a: Allocator, line_no_in: i64, word: []const u8, forward: bool, backward: bool, pp_content: bool) !struct { line: i64, range: Range } {
+        var line_no = line_no_in;
+        const cl = try self.getCodeLine(a, line_no, forward, backward, pp_content, false);
+        var word_range: Range = .{ .start = -1, .end = -1 };
+        const word_lower = try str.lower(a, word);
+        if (cl.curr) |c| word_range = helpers.findWordInLine(try str.lower(a, c), word_lower);
+        if (backward and word_range.start < 0) {
+            var i: usize = cl.pre.len;
+            var k: i64 = 0;
+            while (i > 0) : (k += 1) {
+                i -= 1;
+                word_range = helpers.findWordInLine(try str.lower(a, cl.pre[i]), word_lower);
+                if (word_range.start >= 0) {
+                    line_no -= k + 1;
+                    return .{ .line = line_no, .range = word_range };
+                }
+            }
+        }
+        if (forward and word_range.start < 0) {
+            for (cl.post, 0..) |l, i| {
+                word_range = helpers.findWordInLine(try str.lower(a, l), word_lower);
+                if (word_range.start >= 0) {
+                    line_no += @as(i64, @intCast(i)) + 1;
+                    return .{ .line = line_no, .range = word_range };
+                }
+            }
+        }
+        return .{ .line = line_no, .range = word_range };
+    }
+
+    /// Apply a change to the file; returns whether a reparse is required
+    pub fn applyChange(self: *FortranFile, change: Change) !bool {
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        self.hash = null;
+        const text = change.text;
+        const text_split: []const []const u8 = if (text.len == 0) &.{""} else try splitLines(a, text);
+        const rng = change.range orelse {
+            try self.setContents(text_split, true);
+            return true;
+        };
+        const n = self.nLines();
+        if (rng.sl == n) {
+            var all: std.ArrayList([]const u8) = .empty;
+            for (self.lines.items) |l| try all.append(a, l);
+            try all.appendSlice(a, text_split);
+            try self.setContents(all.items, true);
+            return true;
+        }
+        if (rng.sl > n or rng.el >= n + 1) return error.InvalidRange;
+        const start_line = self.lines.items[rng.sl];
+        const end_line = if (rng.el < n) self.lines.items[rng.el] else "";
+        const start_col = @min(str.utf16ToByte(start_line, rng.sc), start_line.len);
+        const end_col = @min(str.utf16ToByte(end_line, rng.ec), end_line.len);
+
+        // Single line edit
+        if (rng.sl == rng.el and text_split.len == 1) {
+            const prev = self.lines.items[rng.sl];
+            const new_line = try str.concat(self.gpa, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
+            self.gpa.free(prev);
+            self.lines.items[rng.sl] = new_line;
+            if (self.pp_lines) |pl| pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, new_line);
+            return self.checkChangeReparse(@intCast(rng.sl));
+        }
+
+        var new_contents: std.ArrayList([]const u8) = .empty;
+        for (self.lines.items, 0..) |line, i| {
+            if (i < rng.sl or i > rng.el) {
+                try new_contents.append(a, line);
+                continue;
+            }
+            if (i == rng.sl) {
+                for (text_split, 0..) |cl, j| {
+                    if (j == 0) {
+                        try new_contents.append(a, try str.concat(a, &.{ line[0..start_col], cl }));
+                    } else {
+                        try new_contents.append(a, cl);
+                    }
+                }
+            }
+            if (i == rng.el) {
+                const last = new_contents.items.len - 1;
+                new_contents.items[last] = try str.concat(a, &.{ new_contents.items[last], line[end_col..] });
+            }
+        }
+        try self.setContents(new_contents.items, true);
+        return true;
+    }
+
+    fn checkChangeReparse(self: *FortranFile, line_no: i64) !bool {
+        if (line_no < 0 or line_no > @as(i64, @intCast(self.nLines())) - 1) return true;
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const cl = try self.getCodeLine(a, line_no, false, true, false, false);
+        const curr_line = cl.curr.?;
+        if (self.fixed) {
+            if (R().FIXED_COMMENT.match(curr_line) != null) return false;
+        } else {
+            if (R().FREE_COMMENT.match(curr_line) != null) return false;
+        }
+        var full_line: []const u8 = try str.concat(a, &.{ try str.concat(a, cl.pre), curr_line });
+        const lr = try helpers.stripLineLabel(a, full_line);
+        full_line = lr.line;
+        if (lr.label != null) return true;
+        const line_stripped = try helpers.stripStrings(a, full_line, true);
+        if (std.mem.indexOfScalar(u8, line_stripped, ';') != null) return true;
+        const line_no_comment = if (std.mem.indexOfScalar(u8, line_stripped, '!')) |ci| full_line[0..ci] else full_line;
+        if (R().END_WORD.match(line_no_comment) != null) return true;
+        if (R().IMPLICIT.match(line_no_comment) != null) return true;
+        if (R().CONTAINS.match(line_no_comment) != null) return true;
+        if (R().NON_DEF.match(line_no_comment) != null) return false;
+        for (def_tests) |t| {
+            if ((try t(a, line_no_comment)) != null) return true;
+        }
+        return false;
+    }
+
+    /// Run the preprocessor over the file contents
+    pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8) !pp.Output {
+        _ = self.pp_arena.reset(.free_all);
+        self.pp_lines = null;
+        self.pp_defs = .empty;
+        const a = self.pp_arena.allocator();
+        const out = try pp.preprocessFile(a, io, @ptrCast(self.lines.items), self.path, defs, include_dirs);
+        self.pp_lines = out.lines;
+        self.pp_defs = out.defs;
+        return out;
+    }
+
+    // ----------------------------------------------------------------------
+    // Diagnostics
+
+    pub const FileDiags = struct {
+        built: std.ArrayList(objects.BuiltDiag) = .empty,
+    };
+
+    /// Port of `FortranFile.check_file`
+    pub fn checkFile(self: *FortranFile, env: objects.Env, max_line_length: i64, max_comment_line_length: i64) ![]objects.BuiltDiag {
+        const a = env.tmp;
+        const ast = self.ast orelse return &.{};
+        var out: std.ArrayList(objects.BuiltDiag) = .empty;
+        const res = try ast.checkFile(env);
+        try out.appendSlice(a, res.parse_errors);
+        if (max_line_length > 0 or max_comment_line_length > 0) {
+            const msg_line = try str.print(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
+            const msg_comment = try str.print(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
+            const comment_re = if (self.fixed) &R().FIXED_COMMENT else &R().FREE_COMMENT;
+            for (self.lines.items, 0..) |line, i| {
+                const len: i64 = @intCast(str.codepointLen(line));
+                const ln: i64 = @intCast(i);
+                if (comment_re.match(line) == null) {
+                    if (0 < max_line_length and max_line_length < len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_line_length, .eln = ln, .ech = len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    }
+                } else {
+                    if (0 < max_comment_line_length and max_comment_line_length < len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_comment_line_length, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    }
+                }
+            }
+        }
+        for (res.errors) |e| try out.append(a, try e.build(a, self));
+        return out.items;
+    }
+
+    // ----------------------------------------------------------------------
+    // Parsing
+
+    /// Parse the file contents and build a new AST (the caller owns it)
+    pub fn parse(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8) !*Ast {
+        var p: Parser = .{
+            .file = self,
+            .file_ast = try Ast.create(self.gpa, self),
+            .scratch = std.heap.ArenaAllocator.init(self.gpa),
+        };
+        defer p.scratch.deinit();
+        errdefer p.file_ast.destroy();
+        if (self.preproc) {
+            dbg("=== PreProc Pass ===\n", .{});
+            const out = try self.preprocess(io, defs, include_dirs);
+            p.pp_skips = out.skips;
+            p.pp_defines = out.defines;
+            for (out.skips) |reg| {
+                try p.file_ast.startPpif(reg[0]);
+                p.file_ast.endPpif(reg[1]);
+            }
+            dbg("\n=== Parsing Pass ===\n", .{});
+        } else {
+            dbg("=== No PreProc ===\n", .{});
+            self.pp_lines = null;
+        }
+        try p.run();
+        return p.file_ast;
+    }
+};
+
+const Counters = struct {
+    do_: u32 = 0,
+    if_: u32 = 0,
+    block: u32 = 0,
+    select: u32 = 0,
+    interface: u32 = 0,
+};
+
+const Parser = struct {
+    file: *FortranFile,
+    file_ast: *Ast,
+    scratch: std.heap.ArenaAllocator,
+    pp_skips: []const [2]i64 = &.{},
+    pp_defines: []const i64 = &.{},
+    docs: std.ArrayList([]const u8) = .empty,
+    comment_re: *const regex.Regex = undefined,
+    cur_line: i64 = 0,
+    doc_re: *const regex.Regex = undefined,
+
+    fn run(p: *Parser) !void {
+        const f = p.file;
+        const ast = p.file_ast;
+        const sa = p.scratch.allocator();
+        if (f.fixed) {
+            p.comment_re = &R().FIXED_COMMENT;
+            p.doc_re = &R().FIXED_DOC;
+        } else {
+            p.comment_re = &R().FREE_COMMENT;
+            p.doc_re = &R().FREE_DOC;
+        }
+        const n_lines: i64 = @intCast(f.nLines());
+        var line_no: i64 = 0;
+        var line_no_end: i64 = 0;
+        var block_id_stack: std.ArrayList([]const u8) = .empty;
+        var counters: Counters = .{};
+        // stack of pending statements split by ';' (popped from the end)
+        var multi_lines: std.ArrayList([]const u8) = .empty;
+
+        // Per-line temporary arena
+        var line_arena = std.heap.ArenaAllocator.init(f.gpa);
+        defer line_arena.deinit();
+
+        while (line_no_end < n_lines or multi_lines.items.len > 0) {
+            if (multi_lines.items.len == 0) _ = line_arena.reset(.retain_capacity);
+            const a = line_arena.allocator();
+            var line: []const u8 = undefined;
+            var get_full: bool = undefined;
+            if (multi_lines.items.len == 0) {
+                line_no = if (line_no_end > line_no) line_no_end else line_no;
+                line = f.getLine(line_no, true) orelse "";
+                line_no += 1;
+                line_no_end = line_no;
+                get_full = true;
+            } else {
+                line = multi_lines.pop().?;
+                get_full = false;
+            }
+            if (line.len == 0) continue;
+
+            p.cur_line = line_no;
+            const idx = try p.parseDocs(line, line_no);
+            if (idx != 0) {
+                line_no = idx;
+                line_no_end = line_no;
+                continue;
+            }
+            // Handle preprocessing regions
+            var do_skip = false;
+            for (p.pp_skips) |reg| {
+                if (line_no >= reg[0] and line_no <= reg[1]) {
+                    do_skip = true;
+                    break;
+                }
+            }
+            for (p.pp_defines) |d| if (d == line_no) {
+                do_skip = true;
+            };
+            if (do_skip) continue;
+
+            if (get_full) {
+                const cl = try f.getCodeLine(a, line_no - 1, true, false, true, false);
+                line_no_end += @intCast(cl.post.len);
+                var parts: std.ArrayList([]const u8) = .empty;
+                try parts.append(a, cl.curr.?);
+                try parts.appendSlice(a, cl.post);
+                line = try str.concat(a, parts.items);
+            }
+            const lr = try helpers.stripLineLabel(a, line);
+            line = lr.line;
+            const line_label = lr.label;
+            var line_stripped = try helpers.stripStrings(a, line, true);
+            var line_no_comment = line;
+            if (std.mem.indexOfScalar(u8, line_stripped, '!')) |ci| {
+                line_no_comment = line[0..ci];
+                line_stripped = line_stripped[0..ci];
+                try p.setSingleLineDocstring(line[ci..]);
+            }
+            if (std.mem.indexOfScalar(u8, line_stripped, ';') != null) {
+                const pieces = try str.split(sa, line_stripped, ";");
+                // extendleft + pop: process pieces in order
+                var k: usize = pieces.len;
+                var tmp: std.ArrayList([]const u8) = .empty;
+                while (k > 0) {
+                    k -= 1;
+                    try tmp.append(sa, try sa.dupe(u8, pieces[k]));
+                }
+                // existing entries stay on the left (bottom) of the stack
+                var merged: std.ArrayList([]const u8) = .empty;
+                try merged.appendSlice(sa, multi_lines.items);
+                try merged.appendSlice(sa, tmp.items);
+                multi_lines = merged;
+                // deque.extendleft puts pieces on the left; pop() takes from the
+                // right, so existing entries are processed first. Since the
+                // stack is empty here in practice, take the first piece.
+                line = multi_lines.pop().?;
+                line_stripped = line;
+                line_no_comment = line;
+            }
+            // Test for scope end
+            if (ast.end_scope_regex != null) {
+                const m = R().END_WORD.match(line_no_comment);
+                if (try p.parseEndScopeWord(line_no_comment, line_no, m)) continue;
+                if (p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) continue;
+            }
+            if (R().NON_DEF.match(line_no_comment) != null) continue;
+            if (try p.parseImplicit(line_no_comment, line_no)) continue;
+            if (try p.parseContains(line_no_comment, line_no)) continue;
+            const obj_read = (try getFortranDefinition(a, line)) orelse continue;
+            try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
+        }
+        try ast.closeFile(line_no);
+    }
+
+    fn handleDef(p: *Parser, a: Allocator, obj_read: DefResult, line: []const u8, line_no: i64, counters: *Counters, block_id_stack: *std.ArrayList([]const u8)) !void {
+        const ast = p.file_ast;
+        const pa = ast.allocator();
+        switch (obj_read) {
+            .var_ => |info| {
+                const var_names = info.var_names orelse return;
+                var procedure_def = false;
+                if (str.startsWith(info.var_type, "PRO")) {
+                    if (ast.current_scope) |cs| if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
+                        for (var_names) |vn| try ast.addIntMember(vn);
+                        dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ str.strip(line), line_no });
+                        return;
+                    };
+                    procedure_def = true;
+                }
+                for (var_names) |var_name| {
+                    var desc: []const u8 = info.var_type;
+                    var link_name: ?[]const u8 = null;
+                    var name: []const u8 = undefined;
+                    if (std.mem.indexOf(u8, var_name, "=>")) |_| {
+                        const parts = try str.split(a, var_name, "=>");
+                        name = parts[0];
+                        const ln = str.strip(str.beforeFirst(parts[1], "("));
+                        link_name = if (std.ascii.eqlIgnoreCase(ln, "null")) null else ln;
+                    } else {
+                        name = str.beforeFirst(var_name, "=");
+                    }
+                    var var_keywords: std.ArrayList([]const u8) = .empty;
+                    try var_keywords.appendSlice(a, info.keywords);
+                    if (str.startsWith(name, "(")) continue;
+                    const dim = try parseImpDim(a, name);
+                    name = dim.line;
+                    const chr = try parseImpChar(a, name);
+                    name = chr.line;
+                    if (dim.extra) |d| try var_keywords.append(a, d);
+                    if (chr.extra) |c| desc = try str.concat(a, &.{ desc, c });
+                    name = str.strip(name);
+                    const mk = try helpers.mapKeywords(a, var_keywords.items);
+                    var new_var: *Obj = undefined;
+                    if (procedure_def) {
+                        new_var = try Obj.newMethod(ast, line_no, name, desc, mk.ids, mk.info, info.var_kind, link_name);
+                    } else {
+                        new_var = try Obj.newVariable(ast, line_no, name, desc, mk.ids, .{
+                            .keyword_info = mk.info,
+                            .kind = info.var_kind,
+                            .link_obj = link_name,
+                        });
+                        if (new_var.isParameter()) {
+                            const r = helpers.findWordInLine(line, name);
+                            const col: usize = @intCast(@max(r.end, 0));
+                            if (R().PARAMETER_VAL.match(str.from(line, col))) |m| {
+                                const words = try str.splitWhitespace(a, str.strip(m.group(1) orelse ""));
+                                new_var.param_val = try pa.dupe(u8, try str.join(a, " ", words));
+                            }
+                        }
+                        if (try findExternal(ast, desc, name, new_var)) continue;
+                    }
+                    try ast.addVariable(new_var);
+                }
+                dbg("{s} !!! VARIABLE - Ln:{d}", .{ line, line_no });
+            },
+            .mod => |name| {
+                const o = try Obj.newScope(ast, .module, line_no, name, &.{});
+                try ast.addScope(o, &R().END_MOD, true, false);
+                dbg("{s} !!! MODULE - Ln:{d}", .{ line, line_no });
+            },
+            .smod => |info| {
+                const o = try Obj.newSubmodule(ast, line_no, info.name, info.parent);
+                try ast.addScope(o, &R().END_SMOD, true, false);
+                dbg("{s} !!! SUBMODULE - Ln:{d}", .{ line, line_no });
+            },
+            .prog => |name| {
+                const o = try Obj.newScope(ast, .program, line_no, name, &.{});
+                try ast.addScope(o, &R().END_PROG, true, false);
+                dbg("{s} !!! PROGRAM - Ln:{d}", .{ line, line_no });
+            },
+            .sub => |info| {
+                const mk = try helpers.mapKeywords(a, info.keywords);
+                const o = try Obj.newSubroutine(ast, line_no, info.name, info.args, info.mod_flag, mk.ids);
+                try ast.addScope(o, &R().END_SUB, true, false);
+                dbg("{s} !!! SUBROUTINE - Ln:{d}", .{ line, line_no });
+            },
+            .fun => |info| {
+                const mk = try helpers.mapKeywords(a, info.keywords);
+                const o = try Obj.newFunction(ast, line_no, info.name, .{
+                    .args = info.args,
+                    .mod_flag = info.mod_flag,
+                    .keywords = mk.ids,
+                    .keyword_info = mk.info,
+                    .result_type = info.result.type,
+                    .result_name = info.result.name,
+                });
+                try ast.addScope(o, &R().END_FUN, true, false);
+                if (info.result.type) |rt| if (rt.len > 0) {
+                    const rk = try helpers.mapKeywords(a, info.result.keywords);
+                    const v = try Obj.newVariable(ast, line_no, info.result.name orelse info.name, rt, rk.ids, .{
+                        .keyword_info = rk.info,
+                        .kind = info.result.kind,
+                    });
+                    try ast.addVariable(v);
+                };
+                dbg("{s} !!! FUNCTION - Ln:{d}", .{ line, line_no });
+            },
+            .block => |name_opt| {
+                var name = name_opt orelse "";
+                if (name_opt == null) {
+                    counters.block += 1;
+                    name = try str.print(a, "#BLOCK{d}", .{counters.block});
+                }
+                const o = try Obj.newScope(ast, .block, line_no, name, &.{});
+                try ast.addScope(o, &R().END_BLOCK, true, true);
+                dbg("{s} !!! BLOCK - Ln:{d}", .{ line, line_no });
+            },
+            .do_ => |label| {
+                counters.do_ += 1;
+                const name = try str.print(a, "#DO{d}", .{counters.do_});
+                if (label.len > 0) try block_id_stack.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, label));
+                const o = try Obj.newScope(ast, .do_, line_no, name, &.{});
+                try ast.addScope(o, &R().END_DO, true, true);
+                dbg("{s} !!! DO - Ln:{d}", .{ line, line_no });
+            },
+            .where => |single| {
+                if (!single) {
+                    counters.do_ += 1;
+                    const name = try str.print(a, "#WHERE{d}", .{counters.do_});
+                    const o = try Obj.newScope(ast, .where, line_no, name, &.{});
+                    try ast.addScope(o, &R().END_WHERE, true, true);
+                }
+                dbg("{s} !!! WHERE - Ln:{d}", .{ line, line_no });
+            },
+            .assoc => |bound| {
+                counters.block += 1;
+                const name = try str.print(a, "#ASSOC{d}", .{counters.block});
+                const o = try Obj.newScope(ast, .associate, line_no, name, &.{});
+                try ast.addScope(o, &R().END_ASSOCIATE, true, true);
+                for (bound) |bv| {
+                    const parts = try str.split(a, bv, "=>");
+                    if (parts.len != 2) continue;
+                    const bind_name = str.strip(parts[0]);
+                    const link = str.strip(parts[1]);
+                    const v = try Obj.newVariable(ast, line_no, bind_name, "UNKNOWN", &.{}, .{});
+                    try o.links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
+                    try ast.addVariable(v);
+                }
+                dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
+            },
+            .if_ => {
+                counters.if_ += 1;
+                const name = try str.print(a, "#IF{d}", .{counters.if_});
+                const o = try Obj.newScope(ast, .if_, line_no, name, &.{});
+                try ast.addScope(o, &R().END_IF, true, true);
+                dbg("{s} !!! IF - Ln:{d}", .{ line, line_no });
+            },
+            .select => |info| {
+                counters.select += 1;
+                const name = try str.print(a, "#SELECT{d}", .{counters.select});
+                const o = try Obj.newSelect(ast, line_no, name, info);
+                try ast.addScope(o, &R().END_SELECT, true, true);
+                const var_desc = try str.print(a, "{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
+                if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.type)) |v| try ast.addVariable(v);
+                dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
+            },
+            .typ => |info| {
+                const mk = try helpers.mapKeywords(a, info.keywords);
+                const o = try Obj.newScope(ast, .type, line_no, info.name, mk.ids);
+                if (info.parent) |par| o.inherit = try pa.dupe(u8, par);
+                try ast.addScope(o, &R().END_TYPED, true, true);
+                dbg("{s} !!! TYPE - Ln:{d}", .{ line, line_no });
+            },
+            .enum_ => {
+                counters.block += 1;
+                const name = try str.print(a, "#ENUM{d}", .{counters.block});
+                const o = try Obj.newScope(ast, .enum_, line_no, name, &.{});
+                try ast.addScope(o, &R().END_ENUMD, true, true);
+                dbg("{s} !!! ENUM - Ln:{d}", .{ line, line_no });
+            },
+            .int => |info| {
+                var name = info.name orelse "";
+                if (info.name == null) {
+                    counters.interface += 1;
+                    name = try str.print(a, "#GEN_INT{d}", .{counters.interface});
+                }
+                const o = try Obj.newInterface(ast, line_no, name, info.abstract);
+                try ast.addScope(o, &R().END_INT, true, true);
+                dbg("{s} !!! INTERFACE - Ln:{d}", .{ line, line_no });
+            },
+            .gen => |info| {
+                const o = try Obj.newInterface(ast, line_no, info.bound_name, false);
+                o.vis = info.vis_flag;
+                try ast.addScope(o, &R().END_INT, true, true);
+                for (info.pro_links) |pl| try ast.addIntMember(pl);
+                ast.endScope(line_no, true);
+                dbg("{s} !!! GENERIC - Ln:{d}", .{ line, line_no });
+            },
+            .int_pro => |names| {
+                if (ast.current_scope) |cs| {
+                    if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
+                        for (names) |nm| try ast.addIntMember(nm);
+                        dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ line, line_no });
+                    } else if (cs.getType(false) == C.SUBMODULE_TYPE_ID) {
+                        const o = try Obj.newScope(ast, .scope, line_no, names[0], &.{});
+                        try ast.addScope(o, &R().END_PRO, true, false);
+                        dbg("{s} !!! INTERFACE-IMPL - Ln:{d}", .{ line, line_no });
+                    }
+                }
+            },
+            .use => |info| {
+                const u = try UseStmt.init(pa, info.mod_name, info.only_list, info.renames);
+                u.line_number = line_no;
+                try ast.addUse(u);
+                dbg("{s} !!! USE - Ln:{d}", .{ line, line_no });
+            },
+            .import => |info| {
+                // fortls appends counters["import"], which is always 0
+                const u = try UseStmt.init(pa, "#import0", info.only_list, &.{});
+                u.is_import = true;
+                u.import_type = info.import_type;
+                u.line_number = line_no;
+                try ast.addUse(u);
+                dbg("{s} !!! IMPORT - Ln:{d}", .{ line, line_no });
+            },
+            .inc => |path| {
+                try ast.addInclude(path, line_no);
+                dbg("{s} !!! INCLUDE - Ln:{d}", .{ line, line_no });
+            },
+            .vis => |info| {
+                if (ast.current_scope) |cs| {
+                    if (info.obj_names.len == 0 and info.type == 1) {
+                        cs.def_vis = -1;
+                    } else if (info.type == 1) {
+                        for (info.obj_names) |w| try ast.addPrivate(w);
+                    } else {
+                        for (info.obj_names) |w| try ast.addPublic(w);
+                    }
+                } else {
+                    try ast.addError("Visibility statement without enclosing scope", C.Severity.err, line_no, 0, null);
+                }
+                dbg("{s} !!! VISIBILITY - Ln:{d}", .{ line, line_no });
+            },
+        }
+    }
+
+    fn parseEndScopeWord(p: *Parser, line: []const u8, ln: i64, match: ?regex.Match) !bool {
+        const m = match orelse return false;
+        const ast = p.file_ast;
+        const cs = ast.current_scope orelse return false;
+        var end_scope_word: ?[]const u8 = null;
+        if (m.group(1) == null) {
+            end_scope_word = "";
+            if (cs.reqNamedEnd() and cs != ast.none_scope) {
+                try ast.end_errors.append(ast.allocator(), .{ ln, cs.sline });
+            }
+        } else {
+            if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| end_scope_word = sm.str();
+        }
+        if (end_scope_word != null) {
+            if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) ast.endScope(ln, true);
+            ast.endScope(ln, true);
+            if (debug_hook != null) {
+                var ub: [64]u8 = undefined;
+                const w = end_scope_word.?;
+                const n = @min(w.len, ub.len);
+                dbg("{s} !!! END {s} Scope - Ln:{d}", .{ line, std.ascii.upperString(ub[0..n], w[0..n]), ln });
+            }
+            return true;
+        }
+        return false;
+    }
+
+    fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: i64, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) bool {
+        const ast = p.file_ast;
+        const cs = ast.current_scope orelse return false;
+        const label = line_label orelse return false;
+        if (cs.getType(false) != C.DO_TYPE_ID) return false;
+        var did_close = false;
+        while (block_id_stack.items.len > 0 and str.eql(label, block_id_stack.items[block_id_stack.items.len - 1])) {
+            ast.endScope(ln, true);
+            _ = block_id_stack.pop();
+            did_close = true;
+            dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });
+        }
+        return did_close;
+    }
+
+    fn parseImplicit(p: *Parser, line: []const u8, ln: i64) !bool {
+        const m = R().IMPLICIT.match(line) orelse return false;
+        const ast = p.file_ast;
+        if (ast.current_scope) |cs| {
+            cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
+        } else {
+            try ast.addError("IMPLICIT statement without enclosing scope", C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
+        }
+        dbg("{s} !!! IMPLICIT - Ln:{d}", .{ line, ln });
+        return true;
+    }
+
+    fn parseContains(p: *Parser, line: []const u8, ln: i64) !bool {
+        const m = R().CONTAINS.match(line) orelse return false;
+        const ast = p.file_ast;
+        var msg: ?[]const u8 = null;
+        if (ast.current_scope) |cs| {
+            cs.markContains(ln) catch {
+                msg = "Multiple CONTAINS statements in scope";
+            };
+        } else {
+            msg = "CONTAINS statement without enclosing scope";
+        }
+        if (msg) |mm| try ast.addError(mm, C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
+        dbg("{s} !!! CONTAINS - Ln:{d}", .{ line, ln });
+        return true;
+    }
+
+    fn setSingleLineDocstring(p: *Parser, line: []const u8) !void {
+        p.docs = .empty;
+        const m = R().FREE_DOC.match(line) orelse return;
+        const doc = str.strip(line[m.end(0)..]);
+        if (doc.len > 0) try p.docs.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, doc));
+    }
+
+    fn formatDocs(p: *Parser, docs: []const []const u8) ![]const u8 {
+        const a = p.scratch.allocator();
+        if (docs.len == 1) return docs[0];
+        var docstr: std.ArrayList(u8) = .empty;
+        var has_args = true;
+        var idx_args: isize = -1;
+        for (docs) |line| {
+            if (str.startsWith(line, "@brief")) {
+                try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@brief", "")));
+                try docstr.append(a, '\n');
+            } else if (str.startsWith(line, "@param")) {
+                if (has_args) {
+                    try docstr.appendSlice(a, "\n**Parameters:**  \n");
+                    has_args = false;
+                    idx_args = @intCast(docstr.items.len);
+                }
+                try docstr.appendSlice(a, try R().DOC_PARAM.sub(a, "  \\n`\\1` - ", try str.concat(a, &.{ line, " " })));
+            } else if (str.startsWith(line, "@return")) {
+                try docstr.appendSlice(a, "\n**Returns:**  \n");
+                try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@return", "")));
+                try docstr.append(a, '\n');
+            } else {
+                try docstr.appendSlice(a, str.strip(line));
+                try docstr.append(a, '\n');
+            }
+        }
+        if (idx_args > 0) {
+            const ia: usize = @intCast(idx_args);
+            const head = str.slice(docstr.items, 0, idx_args - 3);
+            const tail = try str.replaceFirst(a, docstr.items[ia..], "  \n ", "");
+            return str.concat(a, &.{ head, tail });
+        }
+        return docstr.items;
+    }
+
+    fn addLineComment(p: *Parser) !void {
+        if (p.docs.items.len > 0) {
+            const fd = try p.formatDocs(p.docs.items);
+            try p.file_ast.addDoc(fd, false);
+            dbg("{s} !!! Doc string - Line:{d}", .{ fd, p.cur_line });
+            p.docs.clearRetainingCapacity();
+        }
+    }
+
+    /// Parse documentation strings; returns the new line number or 0
+    fn parseDocs(p: *Parser, line: []const u8, ln: i64) !i64 {
+        if (p.comment_re.match(line) == null) {
+            try p.addLineComment();
+            return 0;
+        }
+        const doc_match = p.doc_re.match(line) orelse {
+            try p.addLineComment();
+            return 0;
+        };
+        const sa = p.scratch.allocator();
+        // get_docstring
+        try p.docs.append(sa, str.strip(line[doc_match.end(0)..]));
+        const predocmark = str.eql(doc_match.group(1).?, ">");
+        var new_ln = ln;
+        const n: i64 = @intCast(p.file.nLines());
+        if (ln < n) {
+            var i = ln;
+            while (i < n) : (i += 1) {
+                const next_line = p.file.getLine(i, true) orelse "";
+                const m = p.doc_re.match(next_line) orelse {
+                    new_ln = i;
+                    break;
+                };
+                try p.docs.append(sa, str.strip(next_line[m.end(0)..]));
+            }
+        }
+        var total: usize = 0;
+        for (p.docs.items) |d| total += d.len;
+        if (total > 0) try p.file_ast.addDoc(try p.formatDocs(p.docs.items), predocmark);
+        for (p.docs.items, 0..) |d, k| dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + @as(i64, @intCast(k)) });
+        p.docs.clearRetainingCapacity();
+        return new_ln;
+    }
+};
+
+fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: i64, var_desc: []const u8, case_type: i32) !?*Obj {
+    const parent = self.parent orelse return null;
+    if (parent.getType(false) != C.SELECT_TYPE_ID) return null;
+    var binding_name: ?[]const u8 = null;
+    var bound_var: ?[]const u8 = null;
+    if (parent.isTypeBinding()) {
+        binding_name = parent.binding_name;
+        bound_var = parent.bound_var;
+    }
+    if (binding_name != null and case_type != 4) bound_var = null;
+    if (binding_name) |bn| {
+        return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .link_obj = bound_var });
+    } else if (bound_var) |bv| {
+        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{});
+    }
+    return null;
+}
+
+const Split = struct { line: []const u8, extra: ?[]const u8 };
+
+/// Parse the implicit dimension of an array e.g. var(3,4)
+fn parseImpDim(a: Allocator, line: []const u8) !Split {
+    const m = R().IMP_DIM.match(line) orelse return .{ .line = line, .extra = null };
+    const i = helpers.findParenMatch(line[m.end(1)..]);
+    if (i < 0) return .{ .line = line, .extra = null };
+    const iu: usize = @intCast(i);
+    const dims = line[m.start(1) .. m.end(1) + iu + 1];
+    const rest = try str.concat(a, &.{ line[0..m.start(1)], line[m.end(1) + iu + 1 ..] });
+    return .{ .line = rest, .extra = try str.concat(a, &.{ "dimension", dims }) };
+}
+
+/// Parse the implicit character length from a variable e.g. var_name*10
+fn parseImpChar(a: Allocator, line: []const u8) !Split {
+    const m = R().IMP_CHAR.match(line) orelse return .{ .line = line, .extra = null };
+    const g2 = m.group(2).?;
+    var char_len: []const u8 = undefined;
+    if (str.eql(g2, "(")) {
+        const i = helpers.findParenMatch(line[m.end(2)..]);
+        if (i < 0) return .{ .line = line, .extra = null };
+        char_len = line[m.start(2) .. m.end(2) + @as(usize, @intCast(i)) + 1];
+    } else {
+        char_len = g2;
+    }
+    return .{ .line = m.group(1).?, .extra = try str.concat(a, &.{ "*", char_len }) };
+}
+
+test "read definitions" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = (try readVarDef(a, "  integer(kind=8), intent(in) :: x, y(3)", null, false)).?;
+    try std.testing.expectEqualStrings("INTEGER", r.var_.var_type);
+    try std.testing.expectEqualStrings("(kind=8)", r.var_.var_kind.?);
+    try std.testing.expectEqual(@as(usize, 2), r.var_.var_names.?.len);
+    try std.testing.expectEqualStrings("INTENT(IN)", r.var_.keywords[0]);
+
+    const f = (try readFunDef(a, "pure real function foo(a, b) result(c)", null, false)).?;
+    try std.testing.expectEqualStrings("foo", f.fun.name);
+    try std.testing.expectEqualStrings("a,b", f.fun.args);
+
+    const s = (try getFortranDefinition(a, "subroutine bar(x)")).?;
+    try std.testing.expectEqualStrings("bar", s.sub.name);
+
+    const ctx = try getLineContext(a, "call foo");
+    try std.testing.expectEqual(LineContext.call, ctx.ctx);
+}

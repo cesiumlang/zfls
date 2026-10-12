@@ -1,0 +1,19 @@
+.{
+    .name = .zfls,
+    .fingerprint = 0x69d82c5be37a0c07,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .rstd = .{ .path = "vendor/rstd" },
+        // .rgui = .{ .path = "vendor/rgui" },
+    },
+
+    // package hash is computed from files in .paths
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "build",
+        "src",
+        "LICENSE",
+    },
+}

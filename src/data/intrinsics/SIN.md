@@ -1,0 +1,181 @@
+## `sin`
+
+### **Name**
+
+`sin` - `[MATHEMATICS:TRIGONOMETRIC]` Sine function
+
+### **Synopsis**
+
+```fortran
+    result = sin(x)
+```
+
+```fortran
+     elemental TYPE(kind=KIND) function sin(x)
+
+      TYPE(kind=KIND) :: x
+```
+
+### **Characteristics**
+
+- `x` may be any _real_ or _complex_ type
+- `KIND` may be any kind supported by the associated type of `x`.
+- The returned value will be of the same type and kind as the argument
+    `x`.
+
+### **Description**
+
+  `sin(X)` computes the sine of X, where X is an angle in radians. The
+  result is a scalar or array of the same type and kind as `x`. For
+  real inputs, the result is in the range [-1, 1]. For complex inputs,
+  the sine is computed using the complex trigonometric definition. That
+  is, for complex inputs,
+
+```text
+  SIN(X) = (EXP(i*X) - EXP(-i*X)) / (2*i)
+```
+
+  The sine of an angle in a right-angled triangle is the ratio of the
+  length of the side opposite the given angle divided by the length of
+  the hypotenuse.
+
+  For real inputs, ensure X is in radians, not degrees. Use
+
+```text
+  RADIAN = DEGREE * 3.14159265359 / 180.0
+```
+
+  for conversion.
+
+  where i is the imaginary unit. The result's kind matches the
+  input's kind.
+
+### **Options**
+
+- `x`
+  : The angle in radians to compute the sine of.
+
+### **Result**
+
+  The return value contains the processor-dependent approximation of
+  the sine of `x`
+
+  If X is of type _real_, it is regarded as a value in radians.
+
+  If X is of type _complex_, its real part is regarded as a value
+  in radians.
+
+### **Examples**
+
+Sample program:
+
+```fortran
+program sample_sin
+implicit none
+real :: x = 0.0
+   x = sin(x)
+   write(*,*)'X=',x
+end program sample_sin
+```
+
+Results:
+
+```text
+ >  X=  0.0000000E+00
+```
+
+### Extended Example
+
+#### Haversine Formula
+
+  From the article on "Haversine formula" in Wikipedia:
+
+```text
+   The haversine formula is an equation important in navigation,
+   giving great-circle distances between two points on a sphere from
+   their longitudes and latitudes.
+```
+
+  So to show the great-circle distance between the Nashville International
+  Airport (BNA) in TN, USA, and the Los Angeles International Airport
+  (LAX) in CA, USA you would start with their latitude and longitude,
+  commonly given as
+
+```text
+  BNA: N 36 degrees 7.2',   W 86 degrees 40.2'
+  LAX: N 33 degrees 56.4',  W 118 degrees 24.0'
+```
+
+  which converted to floating-point values in degrees is:
+
+- BNA
+  latitude=36.12, longitude=-86.67
+
+- LAX
+  latitude=33.94, longitude=-118.40
+
+  And then use the haversine formula to roughly calculate the distance
+  along the surface of the Earth between the locations:
+
+Sample program:
+
+```fortran
+program demo_sin
+implicit none
+real :: d
+    d = haversine(36.12,-86.67, 33.94,-118.40) ! BNA to LAX
+    print '(*(A,1x,F9.4,1x))','distance:',d,'km, or',d*0.62137119,'miles'
+contains
+function haversine(latA,lonA,latB,lonB) result (dist)
+!
+! calculate great circle distance in kilometers
+! given latitude and longitude in degrees
+!
+real,intent(in) :: latA,lonA,latB,lonB
+real            :: a,c,dist,delta_lat,delta_lon,lat1,lat2
+real,parameter  :: radius = 6371 ! mean earth radius in kilometers,
+! recommended by the International Union of Geodesy and Geophysics
+
+! generate constant pi/180
+real, parameter :: deg_to_rad = atan(1.0)/45.0
+   delta_lat = deg_to_rad*(latB-latA)
+   delta_lon = deg_to_rad*(lonB-lonA)
+   lat1 = deg_to_rad*(latA)
+   lat2 = deg_to_rad*(latB)
+   a = (sin(delta_lat/2))**2 + &
+          & cos(lat1)*cos(lat2)*(sin(delta_lon/2))**2
+   c = 2*asin(sqrt(a))
+   dist = radius*c
+end function haversine
+end program demo_sin
+```
+
+Results:
+
+```text
+ > distance: 2886.4446 km, or 1793.5536 miles
+```
+
+### **Standard**
+
+FORTRAN 77
+
+### **See Also**
+
+`asin`(3),
+`cos`(3),
+`tan`(3),
+`acosh`(3),
+`acos`(3),
+`asinh`(3),
+`atan2`(3),
+`atanh`(3),
+`acosh`(3),
+`asinh`(3),
+`atanh`(3)
+
+### **Resources**
+
+- [Wikipedia:sine and cosine](https://en.wikipedia.org/wiki/Sine_and_cosine)
+
+ _Fortran intrinsic descriptions (license: MIT) \@urbanjost_
