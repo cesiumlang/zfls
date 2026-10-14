@@ -13,6 +13,7 @@ tools/*
 packaging/*
 .github/workflows/exempt.txt
 .vscode/*
+*.code-workspace
 .cspell.jsonc
 .editorconfig
 .envrc
