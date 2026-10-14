@@ -88,7 +88,27 @@ def parse(s):
     return _V(s)
 '''
 
+# Runs fortls with its workspace loaded in descending path order. fortls lets
+# the file parsed last own a global name several files define; this hands it
+# to the file with the lowest path, which is the one zfls picks (README,
+# "Differences from fortls"), instead of one that depends on directory
+# listing and set iteration order.
+ORDERED_LAUNCHER = '''import runpy
+from fortls.langserver import LangServer
+
+_source_files = LangServer._get_source_files
+
+
+def _ordered(self):
+    return sorted(_source_files(self), reverse=True)
+
+
+LangServer._get_source_files = _ordered
+runpy.run_module("fortls", run_name="__main__", alter_sys=True)
+'''
+
 STUBS = {
+    "fortls_ordered.py": ORDERED_LAUNCHER,
     "json5.py": JSON5_STUB,
     "packaging/__init__.py": "",
     "packaging/version.py": VERSION_STUB,
@@ -153,6 +173,18 @@ def build_requests(path: Path, root: Path, kinds: set[str]):
     stream += rpc(
         None, "textDocument/didOpen", {"textDocument": {"uri": uri}}
     )
+    # An unchanged full-text change makes fortls parse the file again, which
+    # gives its own definitions of names other files also define precedence,
+    # as zfls does for code in that file
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = None
+    if text is not None:
+        stream += rpc(None, "textDocument/didChange", {
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": text}],
+        })
     reqs: list[tuple[int, str, dict]] = []
     rid = 10
 
@@ -303,12 +335,11 @@ def main() -> int:
     kinds = set(args.requests.split(","))
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join([write_stubs(), str(fortls_root)])
-    # fortls loads the workspace in the iteration order of a set of
-    # directory names; fix string hashing so that order (and which file wins
-    # a name several files define) is the same on every run
+    # fortls iterates sets of directory names; fix string hashing so runs on
+    # one machine are reproducible (ORDERED_LAUNCHER fixes the load order)
     env["PYTHONHASHSEED"] = "0"
     common = ["--incremental_sync", "--disable_autoupdate", *args.args.split()]
-    fortls_cmd = [sys.executable, "-m", "fortls", *common]
+    fortls_cmd = [sys.executable, "-m", "fortls_ordered", *common]
     zfls_cmd = [str(Path(args.zfls).resolve()), *common]
 
     exts = {".f", ".f90", ".f08", ".f03", ".f95", ".f77", ".for", ".fpp", ".h"}
