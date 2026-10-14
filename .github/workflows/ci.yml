@@ -311,7 +311,9 @@ jobs:
             exit 1
           fi
           touch "shipped/$name/zfls.prerelease"
-          echo "ZFLS=$PWD/shipped/$name/zfls" >> "$GITHUB_ENV"
+          exe=zfls
+          case "$TARGET" in *windows) exe=zfls.exe ;; esac
+          echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
 
       - name: Version under test
         run: |
