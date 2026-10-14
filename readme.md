@@ -127,6 +127,7 @@ zfls deliberately differs from fortls in a few places:
 ## Licenses
 
 zfls is distributed under the MIT license, see `LICENSE`. It is derived from
-fortls and its predecessor fortran-language-server; their licenses are in
-`licenses/`. The intrinsic procedure documentation comes from the
+fortls and its predecessor fortran-language-server, also MIT licensed, whose
+copyright notices `LICENSE` includes. The intrinsic procedure documentation
+comes from the
 [M_intrinsics](https://github.com/urbanjost/M_intrinsics) project via fortls.

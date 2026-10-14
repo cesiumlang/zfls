@@ -49,7 +49,7 @@ jobs:
       release: ${{ steps.ver.outputs.release }}
       sha: ${{ steps.ver.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -128,7 +128,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -174,7 +174,7 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
@@ -206,7 +206,6 @@ jobs:
             done
             cp LICENSE "$pkg/"
             cp readme.md "$pkg/README.md"
-            cp -r licenses "$pkg/"
             case "$target" in
               *windows) (cd pkg && zip -qr "../dist/$name.zip" "$name") ;;
               *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
@@ -239,13 +238,13 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
       - name: Check out fortls (reference implementation and test corpus)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.FORTLS_REPO }}
           ref: ${{ env.FORTLS_REF }}
@@ -358,7 +357,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
