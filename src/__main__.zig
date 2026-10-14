@@ -9,6 +9,7 @@ const settings = @import("settings.zig");
 const jsonrpc = @import("jsonrpc.zig");
 const server_mod = @import("server.zig");
 const debug = @import("debug.zig");
+const version_info = @import("version.zig");
 const Logger = @import("logger.zig");
 
 const app_name = if (@hasDecl(root, "app_name")) root.app_name else "zfls";
@@ -80,7 +81,8 @@ pub fn main(init: std.process.Init) !void {
     var args: std.ArrayList([]const u8) = .empty;
     for (argv[1..]) |arg| try args.append(arena, arg);
 
-    const parsed = try settings.parseArgs(arena, args.items, version);
+    version_info.reported = version_info.get(io, version);
+    const parsed = try settings.parseArgs(arena, args.items, version_info.reported);
     const s = switch (parsed) {
         .run => |s| s,
         .exit_ok => |text| {
