@@ -247,3 +247,4 @@ zthree
 arccosine
 
 Arctangent
+conda-forge

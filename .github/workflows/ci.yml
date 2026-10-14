@@ -162,6 +162,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
+          # the test matrix (6) and the conda package matrix (5)
+          JOBS: 11
         run: |
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
           for id in $runs; do
@@ -169,9 +171,11 @@ jobs:
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
             # all six test jobs must have run and passed, not been skipped
-            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (")) | select(.conclusion == "success")] | length')
-            if [ "$passed" != 6 ]; then
-              echo "run $id: $passed of 6 test jobs passed; not reusing it"
+            # all test and conda package jobs must have run and passed, not
+            # been skipped
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (") or startswith("Conda package (")) | select(.conclusion == "success")] | length')
+            if [ "$passed" != "$JOBS" ]; then
+              echo "run $id: $passed of $JOBS test and package jobs passed; not reusing it"
               continue
             fi
             rm -rf marker
@@ -270,7 +274,13 @@ jobs:
         run: |
           mkdir -p dist
           for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
-            zig build -Dtarget="$target" -Doptimize=ReleaseSafe --prefix "out/$target"
+            # macOS 11 and later, rather than Zig's default minimum (15)
+            case "$target" in
+              *macos) zig_target="$target.11.0" ;;
+              *) zig_target=$target ;;
+            esac
+            # the binary only (`bin`), without the API documentation
+            zig build bin -Dtarget="$zig_target" -Doptimize=ReleaseSafe --prefix "out/$target"
             name="zfls-v$VERSION-$target"
             pkg="pkg/$name"
             mkdir -p "$pkg"
@@ -285,6 +295,8 @@ jobs:
               *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
             esac
           done
+          # the sources, rstd included, for building from source (conda-forge)
+          bash tools/make_source_archive.sh dist
           ls -l dist
 
       - uses: actions/upload-artifact@v4
@@ -441,15 +453,66 @@ jobs:
             exit 1
           fi
 
+  conda:
+    name: Conda package (${{ matrix.platform }})
+    needs: [version, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl }
+          - { os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe }
+          - { os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin }
+          - { os: macos-15, platform: osx-arm64, rattler: aarch64-apple-darwin }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      RATTLER_BUILD_VERSION: v0.76.1
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Install rattler-build
+        env:
+          ASSET: rattler-build-${{ matrix.rattler }}
+        run: |
+          dir="$RUNNER_TEMP/rattler-build"
+          mkdir -p "$dir"
+          exe="$dir/rattler-build"
+          case "$ASSET" in *.exe) exe="$exe.exe" ;; esac
+          curl -fsSL --retry 5 -o "$exe" "https://github.com/prefix-dev/rattler-build/releases/download/$RATTLER_BUILD_VERSION/$ASSET"
+          chmod +x "$exe"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # The conda-forge recipe, built from this run's source archive with
+      # conda-forge's zig; its tests check the installed zfls
+      - name: Build and test the conda package
+        run: |
+          python packaging/conda-forge/local_recipe.py "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/recipe"
+          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
+
   release:
     name: Release v${{ needs.version.outputs.version }}
-    needs: [version, reuse, build, test]
+    needs: [version, reuse, build, test, conda]
     # with archives a pull request run tested, or ones this run built and
     # tested on every platform
     if: >-
       ${{ !cancelled() && needs.version.outputs.release == 'true'
       && (needs.reuse.outputs.run_id != ''
-      || (needs.build.result == 'success' && needs.test.result == 'success')) }}
+      || (needs.build.result == 'success' && needs.test.result == 'success'
+      && needs.conda.result == 'success')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -479,6 +542,10 @@ jobs:
               exit 1
             fi
           done
+          if [ ! -f "dist/zfls-v$VERSION-src.tar.gz" ]; then
+            echo "::error::no source archive at version $VERSION"
+            exit 1
+          fi
 
       - name: Tag the tested commit
         run: |
