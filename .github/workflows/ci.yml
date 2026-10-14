@@ -183,6 +183,17 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      # Downloads (lazy ones too) are retried: a dropped connection to a
+      # package host should not fail the run
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch=all && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch=all
+
       # Only differs from the checkout on pull requests whose version is
       # already released (on main the bump was committed)
       - name: Set version ${{ needs.version.outputs.version }}
@@ -258,6 +269,17 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      # Downloads (lazy ones too) are retried: a dropped connection to a
+      # package host should not fail the run
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch=all && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch=all
+
       # gfortran is the oracle for symbol extraction; the oracle test is
       # skipped where none is available (Windows on Arm)
       - name: gfortran (Linux)
@@ -286,9 +308,14 @@ jobs:
           install: mingw-w64-ucrt-x86_64-gcc-fortran
           path-type: inherit
 
+      # The image has other, older GCC toolchains on PATH: name MSYS2's
       - name: Put gfortran on PATH (Windows x64)
         if: matrix.target == 'x86_64-windows'
-        run: echo "${{ steps.msys2.outputs.msys2-location }}\\ucrt64\\bin" >> "$GITHUB_PATH"
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          echo "$MSYS2_LOCATION\\ucrt64\\bin" >> "$GITHUB_PATH"
+          echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
 
       - name: Unit tests
         run: zig build test --summary failures

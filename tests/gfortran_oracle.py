@@ -64,6 +64,8 @@ ZFLS_KINDS = {
 
 
 def find_gfortran() -> str | None:
+    if os.environ.get("GFORTRAN"):
+        return os.environ["GFORTRAN"]
     for cand in ("gfortran", r"C:\msys64\ucrt64\bin\gfortran.exe"):
         path = shutil.which(cand) or (cand if Path(cand).is_file() else None)
         if path:
@@ -72,7 +74,8 @@ def find_gfortran() -> str | None:
 
 
 def gfortran_entities(gfortran: str, src: Path, workdir: Path):
-    """Return {fqsn: category} from gfortran's dump, or None on errors."""
+    """Return ({fqsn: category}, dummies) from gfortran's dump, or
+    gfortran's error message when it rejects the file."""
     cmd = [
         gfortran, "-fsyntax-only", "-fdump-fortran-original",
         "-J", str(workdir), "-I", str(workdir),
@@ -86,7 +89,9 @@ def gfortran_entities(gfortran: str, src: Path, workdir: Path):
         cwd=workdir,
     )
     if proc.returncode != 0:
-        return None
+        errors = [x for x in proc.stderr.splitlines() if "rror" in x]
+        return (errors or proc.stderr.strip().splitlines() or
+                [f"exit code {proc.returncode}"])[0].strip()
     lines = proc.stdout.splitlines()
     entities: dict[str, str] = {}
     dummies: set[str] = set()
@@ -264,15 +269,26 @@ def main() -> int:
     if not gfortran:
         print("gfortran not found; skipping")
         return 0
+    version = subprocess.run(
+        [gfortran, "--version"], capture_output=True, text=True,
+        errors="replace",
+    ).stdout.splitlines()
+    print(f"gfortran: {gfortran} ({version[0] if version else '?'})")
+    # every fixture is valid Fortran; other corpora may contain files that
+    # are not
+    fixtures = not args.paths
     files = collect(args.paths or [HERE / "fortran"])
     checked = mismatched = 0
     with tempfile.TemporaryDirectory(prefix="zfls_gfortran_") as tmp:
         workdir = Path(tmp)
         for src in files:
             res = gfortran_entities(gfortran, src.resolve(), workdir)
-            if res is None:
-                if args.v:
-                    print(f"SKIP {src} (rejected by gfortran)")
+            if isinstance(res, str):
+                if fixtures:
+                    print(f"FAIL {src}: rejected by gfortran: {res}")
+                    mismatched += 1
+                elif args.v:
+                    print(f"SKIP {src} (rejected by gfortran: {res})")
                 continue
             ref, dummies = res
             got, bodies = zfls_entities(args.zfls, src.resolve())
