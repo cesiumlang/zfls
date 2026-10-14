@@ -23,6 +23,7 @@ import sys
 import tempfile
 from io import StringIO
 from pathlib import Path
+from urllib.parse import unquote
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -237,6 +238,16 @@ def notifications(res: dict, method: str) -> list:
     return [n["params"] for n in res["notifications"] if n["method"] == method]
 
 
+def own_file_definition(ref, got, own: str) -> bool:
+    """Whether zfls found the definition in the requesting file (path
+    suffix `own`) where fortls found one in another file."""
+    if not (isinstance(ref, dict) and isinstance(got, dict)):
+        return False
+    ref_uri = unquote(ref.get("uri", ""))
+    got_uri = unquote(got.get("uri", ""))
+    return got_uri.endswith(own) and not ref_uri.endswith(own)
+
+
 def first_difference(a, b, path="$"):
     """Return (json path, a value, b value) of the first difference."""
     if type(a) is not type(b):
@@ -292,6 +303,10 @@ def main() -> int:
     kinds = set(args.requests.split(","))
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join([write_stubs(), str(fortls_root)])
+    # fortls loads the workspace in the iteration order of a set of
+    # directory names; fix string hashing so that order (and which file wins
+    # a name several files define) is the same on every run
+    env["PYTHONHASHSEED"] = "0"
     common = ["--incremental_sync", "--disable_autoupdate", *args.args.split()]
     fortls_cmd = [sys.executable, "-m", "fortls", *common]
     zfls_cmd = [str(Path(args.zfls).resolve()), *common]
@@ -300,11 +315,12 @@ def main() -> int:
     files = sorted(
         p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts
     )
-    total = total_diff = crashes = 0
+    total = total_diff = crashes = own_file = 0
     for path in files:
         if args.k and args.k not in str(path):
             continue
         stream, reqs = build_requests(path, root, kinds)
+        own = "/" + path.relative_to(root).as_posix()
         ref = run_server(fortls_cmd, stream, env=env)
         got = run_server(zfls_cmd, stream)
         diffs = []
@@ -334,6 +350,11 @@ def main() -> int:
                 # fortls crashed (Python exception): no reference behavior
                 crashes += 1
                 continue
+            if kind == "definition" and own_file_definition(a, b, own):
+                # a global name defined in several files: zfls answers with
+                # the requesting file's own definition (README, "Differences")
+                own_file += 1
+                continue
             if a != b:
                 diffs.append((kind, params.get("position"), a, b))
         total_diff += len(diffs)
@@ -347,7 +368,9 @@ def main() -> int:
             print(f"      zfls  : {json.dumps(y)[:400]}")
     print(
         f"\n{total} requests compared, {total_diff} differences, "
-        f"{crashes} requests where fortls raised an error"
+        f"{crashes} requests where fortls raised an error, "
+        f"{own_file} definitions in the requesting file where fortls "
+        "picks another file's"
     )
     return 1 if total_diff else 0
 

@@ -1,0 +1,22 @@
+# Files that do not change the shipped binaries: a push to main that only
+# touches these is tested but not released.
+# One bash `case` glob per line, matched against the path from the repo
+# root (`*` also matches `/`). Lines starting with # and blank lines are
+# ignored.
+#
+# Note: src/data/** is embedded in the binary, so it is not listed here.
+
+readme.md
+LICENSE
+licenses/*
+tests/*
+tools/*
+.github/workflows/exempt.txt
+.vscode/*
+.cspell.jsonc
+.editorconfig
+.envrc
+.gitattributes
+.gitignore
+.markdownlint-cli2.jsonc
+.markdownlint.jsonc

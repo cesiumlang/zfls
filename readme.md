@@ -58,13 +58,43 @@ the resulting object tree, and `--debug_hover --debug_filepath file.f90
 | `zig build test` | Zig unit tests |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
+| `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
 
-The parity and differential tests need a fortls checkout, `../fortls` by
+The stress test edits a copy of fortls's test sources thousands of times,
+with saves, close/reopen and requests mixed in, and then checks that every
+edited file's symbols and diagnostics match a fresh server's. Run it on a
+Debug build so memory errors and leaks are caught; for longer runs call
+`python tests/stress_edit.py --seeds N --steps M` (see `--help`).
+
+The parity, differential and stress tests need a fortls checkout, `../fortls` by
 default or `-Dfortls=PATH`, and Python 3 (`-Dpython=EXE`); no third-party
 Python packages are required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+
+## Releases
+
+`zfls --version` reports the version in `build.zig.zon`, which is the
+version of the next release: with `-dev` in Debug builds, and with `-rc` in
+release builds while the `zfls.prerelease` file that `zig build` installs
+sits next to the executable. Release archives leave that file out, so a
+released binary reports the plain version.
+
+GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
+every pull request and every push to `main` once, and tests them as release
+candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
+suites above, longer stress runs and the differential test.
+
+When a push to `main` passes on every platform, the same archives are
+published on the GitHub releases page, the tested commit is tagged, and
+CI commits the next patch version to `build.zig.zon`. For a minor or major
+release, set the version in `build.zig.zon` by hand. A pull request to
+`main` fails its "Version is unreleased" check when it changes anything
+beyond the exempt files while `build.zig.zon` holds an already released (or
+older) version. Pushes that only change
+files listed in `.github/workflows/exempt.txt` (documentation, tests,
+editor settings) are tested but not released.
 
 ## Differences from fortls
 
@@ -84,6 +114,15 @@ zfls deliberately differs from fortls in a few places:
   markdownlint, so hover texts differ slightly in whitespace.
 - `--recursion_limit` limits the nesting depth of scopes, emulating the
   recursion error fortls reports for deeply nested code.
+- When several files define the same module, program or procedure name,
+  code in one of those files sees its own definition, and other files see
+  one definition chosen however the files were loaded or edited: a
+  workspace file over an intrinsic module, then the file with the lowest
+  path. fortls uses whichever file it parsed last, and parsing either file
+  again loses the name until the other is saved again.
+- Links that would loop (for example type-bound procedures or `ASSOCIATE`
+  names that refer to each other while code is being edited) are left
+  unresolved; fortls hits a recursion error on them.
 
 ## Licenses
 

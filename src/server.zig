@@ -353,7 +353,7 @@ pub const Server = struct {
         try self.addSourceDirs(a);
 
         try self.workspaceInit(a);
-        self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("build_options").version});
+        self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("version.zig").reported});
 
         var caps = json.newObject();
         try json.put(a, &caps, "completionProvider", try json.from(a, .{
@@ -462,7 +462,13 @@ pub const Server = struct {
         }
         self.intr.deinit();
         self.intr = new;
-        for (self.intr.mods) |m| try self.obj_tree.put(self.gpa, m.fqsn, .{ .obj = m, .path = null });
+        // a workspace module of the same name keeps it
+        for (self.intr.mods) |m| {
+            const gop = try self.obj_tree.getOrPut(self.gpa, m.fqsn);
+            if (gop.found_existing and gop.value_ptr.path != null) continue;
+            gop.key_ptr.* = m.fqsn;
+            gop.value_ptr.* = .{ .obj = m, .path = null };
+        }
         helpers.sort_keywords = self.s.sort_keywords;
     }
 
@@ -601,14 +607,54 @@ pub const Server = struct {
         try self.fullRelink(a);
     }
 
+    // Several files can define the same global name. Unlike fortls, where
+    // the last file parsed takes the name and re-parsing either file drops
+    // it for both, the tree keeps one owner per name chosen the same way
+    // whatever the order of events, so a long session agrees with a fresh
+    // start: any file over an intrinsic module, then the lowest path.
+
+    /// Whether a definition from `path` takes a name held by `held`.
+    fn treeOwnerBeats(path: ?[]const u8, held: ?[]const u8) bool {
+        const p = path orelse return false;
+        const h = held orelse return true;
+        return std.mem.order(u8, p, h) == .lt;
+    }
+
     fn addToTree(self: *Server, f: *FortranFile) !void {
         const ast = f.ast orelse return;
         var it = ast.global_dict.iterator();
-        while (it.next()) |e| try self.obj_tree.put(self.gpa, e.key_ptr.*, .{ .obj = e.value_ptr.*, .path = f.path });
+        while (it.next()) |e| {
+            const gop = try self.obj_tree.getOrPut(self.gpa, e.key_ptr.*);
+            if (gop.found_existing and !treeOwnerBeats(f.path, gop.value_ptr.path)) continue;
+            // the key is the owner's (it lives as long as the owner's AST)
+            gop.key_ptr.* = e.key_ptr.*;
+            gop.value_ptr.* = .{ .obj = e.value_ptr.*, .path = f.path };
+        }
     }
 
+    /// Drops the names `ast` owns, handing each to the next file (or
+    /// intrinsic module) that defines it.
     fn removeFromTree(self: *Server, ast: *Ast) void {
-        for (ast.global_dict.keys()) |key| _ = self.obj_tree.orderedRemove(key);
+        for (ast.global_dict.keys()) |key| {
+            const held = self.obj_tree.getEntry(key) orelse continue;
+            if (held.value_ptr.obj.file_ast != ast) continue;
+            var best: ?struct { key: []const u8, entry: objects.TreeEntry } = null;
+            for (self.workspace.values()) |f| {
+                const other = f.ast orelse continue;
+                if (other == ast) continue;
+                const e = other.global_dict.getEntry(key) orelse continue;
+                if (best == null or treeOwnerBeats(f.path, best.?.entry.path)) {
+                    best = .{ .key = e.key_ptr.*, .entry = .{ .obj = e.value_ptr.*, .path = f.path } };
+                }
+            }
+            if (best == null) for (self.intr.mods) |m| {
+                if (std.mem.eql(u8, m.fqsn, key)) best = .{ .key = m.fqsn, .entry = .{ .obj = m, .path = null } };
+            };
+            if (best) |b| {
+                held.key_ptr.* = b.key;
+                held.value_ptr.* = b.entry;
+            } else _ = self.obj_tree.orderedRemove(key);
+        }
     }
 
     fn retireFileAst(self: *Server, f: *FortranFile) !void {
@@ -817,6 +863,8 @@ pub const Server = struct {
     fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_prefix: []const u8, inc_globals: bool, public_only: bool, abstract_only: bool, no_use: bool) !Candidates {
         var var_list: std.ArrayList(*Obj) = .empty;
         var use_dict = std.array_hash_map.String(*objects.UseStmt).empty;
+        // global names resolve to the requesting file's own definitions first
+        const own: ?*objects.Ast = if (scope_list.len > 0) scope_list[0].file_ast else null;
         for (scope_list) |scope| {
             try childCandidates(a, scope, null, public_only, abstract_only, &var_list);
             if (!no_use) try objects.getUseTree(self.env(a), scope, &use_dict, null, null, &.{});
@@ -829,7 +877,7 @@ pub const Server = struct {
             const use_mod = e.key_ptr.*;
             const use_info = e.value_ptr.*;
             if (!use_info.is_import) {
-                const scope = (self.obj_tree.get(use_mod) orelse continue).obj;
+                const scope = (if (own) |ast| self.env(a).global(ast, use_mod) else if (self.obj_tree.get(use_mod)) |t| t.obj else null) orelse continue;
                 var only: objects.StrSet = .{};
                 for (try use_info.rename(a)) |o| try only.add(a, o);
                 var tmp: std.ArrayList(*Obj) = .empty;
@@ -855,8 +903,10 @@ pub const Server = struct {
             }
         }
         if (inc_globals) {
-            for (self.obj_tree.values()) |e| {
-                try var_list.append(a, e.obj);
+            var tree_it = self.obj_tree.iterator();
+            while (tree_it.next()) |e| {
+                const mine = if (own) |ast| ast.global_dict.get(e.key_ptr.*) else null;
+                try var_list.append(a, mine orelse e.value_ptr.obj);
                 try rename_list.append(a, null);
             }
             for (self.intr.funs) |f| {
@@ -978,9 +1028,9 @@ pub const Server = struct {
             .mod_mems => {
                 name_only = true;
                 const mod_name = try str.lower(a, lc.info orelse "");
-                const e = self.obj_tree.get(mod_name) orelse return .null;
+                const mod = self.env(a).global(ast, mod_name) orelse return .null;
                 const one = try a.alloc(*Obj, 1);
-                one[0] = e.obj;
+                one[0] = mod;
                 scope_list = one;
                 public_only = true;
                 include_globals = false;
@@ -1145,6 +1195,9 @@ pub const Server = struct {
         if (var_obj) |v| return v;
         if (is_member) return null;
         const key = try str.lower(a, def_name);
+        // the file's own global definition before another file's of the
+        // same name (fortls gets this from parsing the open file last)
+        if (ast.global_dict.get(key)) |o| return o;
         if (self.obj_tree.get(key)) |e| return e.obj;
         for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) return f;
         if (hover_req) if (curr_scope) |cs| {
@@ -1275,7 +1328,9 @@ pub const Server = struct {
         if (curr_scope) |cs| var_obj = try objects.findInScope(self.env(a), cs, sub_name, .{});
         if (var_obj == null) {
             const key = try str.lower(a, sub_name);
-            if (self.obj_tree.get(key)) |e| {
+            if (ast.global_dict.get(key)) |o| {
+                var_obj = o;
+            } else if (self.obj_tree.get(key)) |e| {
                 var_obj = e.obj;
             } else {
                 for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) {
