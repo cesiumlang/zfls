@@ -13,6 +13,12 @@ name: CI
 # next patch version. For a minor or major release, set the version in
 # build.zig.zon by hand. If a push to main finds its version already tagged,
 # the bump is committed before anything is built.
+#
+# Reuse: every run records the git tree it built (`tested-tree`). A release
+# from main publishes the archives of a passed pull request run that built
+# exactly the same tree, with the same version, instead of building and
+# testing them again; without one (main moved on after the pull request ran,
+# a direct push, expired artifacts) it builds and tests them itself.
 
 on:
   push:
@@ -48,6 +54,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       release: ${{ steps.ver.outputs.release }}
       sha: ${{ steps.ver.outputs.sha }}
+      tree: ${{ steps.ver.outputs.tree }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -102,6 +109,8 @@ jobs:
           release=false
           [ "$on_main" = true ] && [ "$releasable" = true ] && release=true
 
+          # whether the binaries are built from the checked-out tree as it is
+          as_checked_out=true
           if tagged "$version"; then
             next=$(next_patch "$version")
             while tagged "$next"; do next=$(next_patch "$next"); done
@@ -112,16 +121,68 @@ jobs:
               git commit -qam "Begin v$next development [skip ci]"
               # pushes made with GITHUB_TOKEN do not start another run
               git push origin HEAD:main
+            else
+              as_checked_out=false
             fi
             version=$next
           fi
           sha=$(git rev-parse HEAD)
+          tree=$(git rev-parse "HEAD^{tree}")
           {
             echo "version=$version"
             echo "release=$release"
             echo "sha=$sha"
+            echo "tree=$tree"
           } >> "$GITHUB_OUTPUT"
-          echo "version $version at $sha; release: $release" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$as_checked_out" = true ]; then
+            echo "$tree $version" > tested-tree.txt
+          fi
+          echo "version $version at $sha (tree $tree); release: $release" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # What this run builds, for a release to find (see the top); only kept
+      # from runs that pass
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tested-tree
+          path: tested-tree.txt
+          if-no-files-found: ignore
+
+  reuse:
+    name: Find tested release binaries
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+    steps:
+      - name: Look for a passed pull request run of this tree
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
+        run: |
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
+          for id in $runs; do
+            names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
+            case "$names" in *" tested-tree "*) ;; *) continue ;; esac
+            case "$names" in *" dist "*) ;; *) continue ;; esac
+            # all six test jobs must have run and passed, not been skipped
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (")) | select(.conclusion == "success")] | length')
+            if [ "$passed" != 6 ]; then
+              echo "run $id: $passed of 6 test jobs passed; not reusing it"
+              continue
+            fi
+            rm -rf marker
+            gh run download "$id" -R "$GITHUB_REPOSITORY" -n tested-tree -D marker || continue
+            if [ "$(cat marker/tested-tree.txt)" = "$WANT" ]; then
+              echo "run_id=$id" >> "$GITHUB_OUTPUT"
+              echo "Releasing the archives of run $id, which built and tested this tree." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "No passed pull request run built this tree; building and testing it here." | tee -a "$GITHUB_STEP_SUMMARY"
 
   version-check:
     name: Version is unreleased
@@ -171,7 +232,9 @@ jobs:
 
   build:
     name: Build release binaries
-    needs: version
+    needs: [version, reuse]
+    # reuse is skipped unless releasing, and its failure only means building
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.reuse.outputs.run_id == '' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -233,6 +296,9 @@ jobs:
   test:
     name: Test (${{ matrix.target }})
     needs: [version, build]
+    # explicit: a skipped job anywhere upstream (reuse, on pull requests)
+    # would otherwise skip the tests too
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -377,11 +443,17 @@ jobs:
 
   release:
     name: Release v${{ needs.version.outputs.version }}
-    needs: [version, build, test]
-    if: needs.version.outputs.release == 'true'
+    needs: [version, reuse, build, test]
+    # with archives a pull request run tested, or ones this run built and
+    # tested on every platform
+    if: >-
+      ${{ !cancelled() && needs.version.outputs.release == 'true'
+      && (needs.reuse.outputs.run_id != ''
+      || (needs.build.result == 'success' && needs.test.result == 'success')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     env:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
@@ -395,6 +467,18 @@ jobs:
         with:
           name: dist
           path: dist
+          run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Check the archives
+        run: |
+          ls -l dist
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            if ! ls "dist/zfls-v$VERSION-$target".* >/dev/null 2>&1; then
+              echo "::error::no archive for $target at version $VERSION"
+              exit 1
+            fi
+          done
 
       - name: Tag the tested commit
         run: |
