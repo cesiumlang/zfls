@@ -36,7 +36,8 @@ pub fn build(b: *std.Build) !void {
         .root_module = mod,
     });
     docs.addCompileStepDocs(b, exe, "zfls");
-    b.installArtifact(exe);
+    const install_exe = b.addInstallArtifact(exe, .{});
+    b.getInstallStep().dependOn(&install_exe.step);
 
     // While zfls.prerelease sits next to a release build, it reports a
     // release candidate version (src/version.zig). Only release packaging
@@ -46,7 +47,14 @@ pub fn build(b: *std.Build) !void {
         \\version. Release archives do not include it.
         \\
     );
-    b.getInstallStep().dependOn(&b.addInstallBinFile(sentinel, "zfls.prerelease").step);
+    const install_sentinel = b.addInstallBinFile(sentinel, "zfls.prerelease");
+    b.getInstallStep().dependOn(&install_sentinel.step);
+
+    // The default install also generates the API documentation (rstd's
+    // docs step), which packages do not ship
+    const bin_step = b.step("bin", "Install zfls without the API documentation");
+    bin_step.dependOn(&install_exe.step);
+    bin_step.dependOn(&install_sentinel.step);
 
     const run_cmd = b.addRunArtifact(exe);
     const run_cmd_step = &run_cmd.step;
