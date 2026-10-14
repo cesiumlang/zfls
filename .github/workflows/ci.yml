@@ -168,6 +168,12 @@ jobs:
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
+            # all six test jobs must have run and passed, not been skipped
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (")) | select(.conclusion == "success")] | length')
+            if [ "$passed" != 6 ]; then
+              echo "run $id: $passed of 6 test jobs passed; not reusing it"
+              continue
+            fi
             rm -rf marker
             gh run download "$id" -R "$GITHUB_REPOSITORY" -n tested-tree -D marker || continue
             if [ "$(cat marker/tested-tree.txt)" = "$WANT" ]; then
@@ -290,6 +296,9 @@ jobs:
   test:
     name: Test (${{ matrix.target }})
     needs: [version, build]
+    # explicit: a skipped job anywhere upstream (reuse, on pull requests)
+    # would otherwise skip the tests too
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
