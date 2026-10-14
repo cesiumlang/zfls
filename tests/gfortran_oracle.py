@@ -73,6 +73,16 @@ def find_gfortran() -> str | None:
     return None
 
 
+def gfortran_env(gfortran: str) -> dict[str, str]:
+    """The environment to run `gfortran` in: its own directory first on
+    PATH, so that on Windows its compiler loads the DLLs it was built with
+    rather than other copies (Git for Windows' bash puts its own first)."""
+    env = dict(os.environ)
+    exe = shutil.which(gfortran) or gfortran
+    env["PATH"] = str(Path(exe).resolve().parent) + os.pathsep + env["PATH"]
+    return env
+
+
 def gfortran_entities(gfortran: str, src: Path, workdir: Path):
     """Return ({fqsn: category}, dummies) from gfortran's dump, or
     gfortran's error message when it rejects the file."""
@@ -86,7 +96,7 @@ def gfortran_entities(gfortran: str, src: Path, workdir: Path):
         cmd.append("-ffixed-form")
     proc = subprocess.run(
         cmd + [str(src)], capture_output=True, text=True, errors="replace",
-        cwd=workdir,
+        cwd=workdir, env=gfortran_env(gfortran),
     )
     if proc.returncode != 0:
         errors = [x for x in proc.stderr.splitlines() if "rror" in x]
@@ -271,7 +281,7 @@ def main() -> int:
         return 0
     version = subprocess.run(
         [gfortran, "--version"], capture_output=True, text=True,
-        errors="replace",
+        errors="replace", env=gfortran_env(gfortran),
     ).stdout.splitlines()
     print(f"gfortran: {gfortran} ({version[0] if version else '?'})")
     # every fixture is valid Fortran; other corpora may contain files that
