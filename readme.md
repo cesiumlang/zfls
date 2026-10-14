@@ -38,6 +38,24 @@ the `vendor/rstd` submodule included (`tools/make_source_archive.sh`), which
 the conda-forge recipe in `packaging/conda-forge` builds from. CI builds and
 tests that recipe on Linux, macOS and Windows for every change.
 
+### VS Code extension
+
+`editors/vscode` is a VS Code extension that runs zfls for Fortran files and
+adds syntax highlighting. Each release publishes it as
+`zfls-vscode-v<version>-<platform>.vsix`, one per VS Code platform with that
+platform's zfls inside (`tools/package_vscode.sh`), plus a `universal` one
+that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
+from VSIX..." in VS Code.
+
+To work on it (Node.js 20 or later):
+
+```sh
+cd editors/vscode
+npm ci
+npm run typecheck
+ZFLS_PATH=../../zig-out/bin/zfls npm test   # in a downloaded VS Code
+```
+
 ## Usage
 
 Configure the editor's language client to start `zfls`; it communicates over

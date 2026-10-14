@@ -1,0 +1,11 @@
+# Only dist/, bin/, syntaxes/, the language configuration, the README and
+# the licenses go into the VSIX
+src/**
+node_modules/**
+tsconfig.json
+package-lock.json
+**/*.map
+.gitignore
+test/**
+out/**
+.vscode-test/**
