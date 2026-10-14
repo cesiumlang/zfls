@@ -96,6 +96,12 @@ older) version. Pushes that only change
 files listed in `.github/workflows/exempt.txt` (documentation, tests,
 editor settings) are tested but not released.
 
+A merged pull request is not built again: when a passed run of the pull
+request built exactly the code that lands on `main` (the same git tree and
+version), the release publishes that run's archives. Otherwise, for example
+when `main` changed after the pull request was tested, the push to `main`
+builds and tests the release binaries itself first.
+
 ## Differences from fortls
 
 zfls deliberately differs from fortls in a few places:
