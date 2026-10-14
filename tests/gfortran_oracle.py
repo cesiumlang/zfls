@@ -64,6 +64,8 @@ ZFLS_KINDS = {
 
 
 def find_gfortran() -> str | None:
+    if os.environ.get("GFORTRAN"):
+        return os.environ["GFORTRAN"]
     for cand in ("gfortran", r"C:\msys64\ucrt64\bin\gfortran.exe"):
         path = shutil.which(cand) or (cand if Path(cand).is_file() else None)
         if path:
@@ -71,8 +73,19 @@ def find_gfortran() -> str | None:
     return None
 
 
+def gfortran_env(gfortran: str) -> dict[str, str]:
+    """The environment to run `gfortran` in: its own directory first on
+    PATH, so that on Windows its compiler loads the DLLs it was built with
+    rather than other copies (Git for Windows' bash puts its own first)."""
+    env = dict(os.environ)
+    exe = shutil.which(gfortran) or gfortran
+    env["PATH"] = str(Path(exe).resolve().parent) + os.pathsep + env["PATH"]
+    return env
+
+
 def gfortran_entities(gfortran: str, src: Path, workdir: Path):
-    """Return {fqsn: category} from gfortran's dump, or None on errors."""
+    """Return ({fqsn: category}, dummies) from gfortran's dump, or
+    gfortran's error message when it rejects the file."""
     cmd = [
         gfortran, "-fsyntax-only", "-fdump-fortran-original",
         "-J", str(workdir), "-I", str(workdir),
@@ -83,13 +96,17 @@ def gfortran_entities(gfortran: str, src: Path, workdir: Path):
         cmd.append("-ffixed-form")
     proc = subprocess.run(
         cmd + [str(src)], capture_output=True, text=True, errors="replace",
-        cwd=workdir,
+        cwd=workdir, env=gfortran_env(gfortran),
     )
     if proc.returncode != 0:
-        return None
+        errors = [x for x in proc.stderr.splitlines() if "rror" in x]
+        return (errors or proc.stderr.strip().splitlines() or
+                [f"exit code {proc.returncode}"])[0].strip()
     lines = proc.stdout.splitlines()
     entities: dict[str, str] = {}
     dummies: set[str] = set()
+    # submodule namespace -> its parent's
+    parents: dict[str, str] = {}
     # stack of (indent, namespace path)
     stack: list[tuple[int, str]] = []
     i = 0
@@ -101,6 +118,9 @@ def gfortran_entities(gfortran: str, src: Path, workdir: Path):
             while stack and stack[-1][0] >= indent:
                 stack.pop()
             # submodules are named "ancestor.submodule"
+            if "." in name and not stack:
+                parent, name = name.rsplit(".", 1)
+                parents[name] = parent.rsplit(".", 1)[-1]
             name = name.rsplit(".", 1)[-1]
             path = f"{stack[-1][1]}::{name}" if stack else name
             stack.append((indent, path))
@@ -129,6 +149,18 @@ def gfortran_entities(gfortran: str, src: Path, workdir: Path):
         # e.g. "USE-ASSOC(shapes)" -> "USE-ASSOC"
         tokens = {t.split("(")[0] for t in attrs.split()}
         ns = stack[-1][1]
+        # Attributes gfortran 13 does not print, from what every version
+        # does: generic interfaces list their procedures; the interface of a
+        # separate module procedure is an external module procedure; a
+        # submodule sees what its parent declares unless it contains it
+        if any(b.strip().startswith("Generic interfaces:") for b in block):
+            tokens.add("GENERIC")
+        if {"MODULE-PROCEDURE", "EXTERNAL"} <= tokens \
+                and "CONTAINED" not in tokens:
+            tokens.add("IFSRC-IFBODY")
+        if ns in parents and f"{parents[ns]}::{name}" in entities \
+                and "CONTAINED" not in tokens:
+            tokens.add("USED-IN-SUBMODULE")
         own_name = ns.rsplit("::", 1)[-1]
         skip = (
             from_host
@@ -247,15 +279,26 @@ def main() -> int:
     if not gfortran:
         print("gfortran not found; skipping")
         return 0
+    version = subprocess.run(
+        [gfortran, "--version"], capture_output=True, text=True,
+        errors="replace", env=gfortran_env(gfortran),
+    ).stdout.splitlines()
+    print(f"gfortran: {gfortran} ({version[0] if version else '?'})")
+    # every fixture is valid Fortran; other corpora may contain files that
+    # are not
+    fixtures = not args.paths
     files = collect(args.paths or [HERE / "fortran"])
     checked = mismatched = 0
     with tempfile.TemporaryDirectory(prefix="zfls_gfortran_") as tmp:
         workdir = Path(tmp)
         for src in files:
             res = gfortran_entities(gfortran, src.resolve(), workdir)
-            if res is None:
-                if args.v:
-                    print(f"SKIP {src} (rejected by gfortran)")
+            if isinstance(res, str):
+                if fixtures:
+                    print(f"FAIL {src}: rejected by gfortran: {res}")
+                    mismatched += 1
+                elif args.v:
+                    print(f"SKIP {src} (rejected by gfortran: {res})")
                 continue
             ref, dummies = res
             got, bodies = zfls_entities(args.zfls, src.resolve())

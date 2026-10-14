@@ -169,6 +169,13 @@ pub const TreeEntry = struct { obj: *Obj, path: ?[]const u8 };
 pub const Env = struct {
     tree: *ObjTree,
     tmp: Allocator,
+
+    /// The global (module, program, top-level procedure) `name` as seen from
+    /// file `ast`: its own definition before another file's of that name.
+    pub fn global(env: Env, ast: *const Ast, name: []const u8) ?*Obj {
+        if (ast.global_dict.get(name)) |o| return o;
+        return if (env.tree.get(name)) |e| e.obj else null;
+    }
 };
 
 pub const Obj = struct {
@@ -976,10 +983,26 @@ pub const Obj = struct {
             .submodule => {
                 self.ancestor_obj = null;
                 if (self.ancestor_name.len == 0) return;
-                if (env.tree.get(self.ancestor_name)) |e| self.ancestor_obj = e.obj;
+                self.ancestor_obj = env.global(self.file_ast, self.ancestor_name);
             },
             else => {},
         }
+    }
+
+    /// Whether linking `self` to `target` would make a loop of `link_obj`s
+    /// (e.g. bindings naming each other while code is being edited), which
+    /// everything that follows links would recurse around forever. Python
+    /// fortls hits a RecursionError there.
+    fn linkLoops(self: *const Obj, target: *const Obj) bool {
+        var o: ?*const Obj = target;
+        var hops: usize = 0;
+        while (o) |cur| : (o = cur.link_obj) {
+            if (cur == self) return true;
+            hops += 1;
+            // a loop not through `self` (which no link made here allows)
+            if (hops > 1000) return true;
+        }
+        return false;
     }
 
     pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
@@ -989,7 +1012,9 @@ pub const Obj = struct {
                 self.type_obj = null;
                 const ln = self.link_name orelse return;
                 if (self.parent) |p| {
-                    if (try findInScope(env, p, ln, .{})) |l| self.link_obj = l;
+                    if (try findInScope(env, p, ln, .{})) |l| {
+                        if (!self.linkLoops(l)) self.link_obj = l;
+                    }
                 }
             },
             .method => {
@@ -1002,6 +1027,7 @@ pub const Obj = struct {
                 else
                     try findInScope(env, p, ln, .{});
                 if (link_obj) |l| {
+                    if (self.linkLoops(l)) return;
                     self.link_obj = l;
                     if (self.pass_name) |pn| {
                         const pnl = try str.lower(self.al(), pn);
@@ -1051,7 +1077,9 @@ pub const Obj = struct {
                     } else {
                         var_obj = try findInScope(env, self, assoc.link_name, .{});
                     }
-                    if (var_obj) |v| assoc.var_.link_obj = v;
+                    if (var_obj) |v| if (!assoc.var_.linkLoops(v)) {
+                        assoc.var_.link_obj = v;
+                    };
                 }
             },
             else => {},
@@ -1098,9 +1126,12 @@ pub const Obj = struct {
 
     /// `Subroutine.copy_interface`; returns lowercased child names
     fn copyInterface(self: *Obj, src: *Obj) !void {
+        // `src` is usually in another file's AST, which is freed when that
+        // file is re-parsed: own copies of its strings
+        const a = self.al();
         self.linked_from_interface = true;
-        self.args = src.args;
-        self.args_snip = src.args_snip;
+        self.args = try a.dupe(u8, src.args);
+        self.args_snip = try a.dupe(u8, src.args_snip);
         // Python shares the list object; copy the contents
         self.arg_objs.clearRetainingCapacity();
         try self.arg_objs.appendSlice(self.al(), src.arg_objs.items);
@@ -1110,8 +1141,8 @@ pub const Obj = struct {
             if (!self.hasChildNamed(child.name)) try self.in_children.append(self.al(), child);
         }
         if (self.kind == .function) {
-            self.result_name = src.result_name;
-            self.result_type = src.result_type;
+            self.result_name = if (src.result_name) |n| try a.dupe(u8, n) else null;
+            self.result_type = if (src.result_type) |t| try a.dupe(u8, t) else null;
             self.result_obj = src.result_obj;
             if (src.result_obj) |ro| {
                 if (!self.hasChildNamed(ro.name)) try self.in_children.append(self.al(), ro);
@@ -1911,7 +1942,7 @@ pub fn getUseTree(
             try use_dict.put(a, use_stmnt.mod_name, nu);
         }
         if (use_stmnt.is_import) continue;
-        const next = env.tree.get(use_stmnt.mod_name).?.obj;
+        const next = env.global(scope.file_ast, use_stmnt.mod_name).?;
         try getUseTree(env, next, use_dict, &merged_use_list, &merged_rename, new_path.items);
     }
 }
@@ -1986,7 +2017,7 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         const use_mod = entry.key_ptr.*;
         const use_info = entry.value_ptr.*;
         if (use_info.is_import) continue;
-        const use_scope = (env.tree.get(use_mod) orelse continue).obj;
+        const use_scope = env.global(scope.file_ast, use_mod) orelse continue;
         if (str.eql(use_mod, name_lower)) return use_scope;
         if (use_info.only_list.len() > 0 and !use_info.only_list.contains(name_lower)) continue;
         const mod_name = use_info.rename_map.get(name_lower) orelse name_lower;

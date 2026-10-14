@@ -1,0 +1,428 @@
+name: CI
+
+# Every pull request and every push to main is built and tested on all
+# supported platforms, and the tests run on the release binaries themselves.
+#
+# Versions: build.zig.zon holds the version the next release will have. The
+# release binaries are built once and packaged without the
+# `zfls.prerelease` file the build installs next to them; the tests put it
+# back, so under test a binary reports a release candidate (`0.1.1-rc`).
+# When a push to main passes on every platform, the same archives are
+# published as release v0.1.1 (where, without the file, the binary reports
+# `0.1.1`), the tested commit is tagged, and build.zig.zon is bumped to the
+# next patch version. For a minor or major release, set the version in
+# build.zig.zon by hand. If a push to main finds its version already tagged,
+# the bump is committed before anything is built.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ZIG_VERSION: 0.17.0
+  # The fortls commit the parity, differential and stress tests run against
+  FORTLS_REPO: fortran-lang/fortls
+  FORTLS_REF: 0392beb64fb93c1e8d35fe5aebfa3e160117651c
+  PYTHON_VERSION: "3.12"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      release: ${{ steps.ver.outputs.release }}
+      sha: ${{ steps.ver.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: ver
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          read_version() { sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon; }
+          version=$(read_version)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::cannot read a MAJOR.MINOR.PATCH .version from build.zig.zon (got '$version')"
+            exit 1
+          fi
+          tagged() { git rev-parse -q --verify "refs/tags/v$1" >/dev/null; }
+          next_patch() { IFS=. read -r ma mi pa <<< "$1"; echo "$ma.$mi.$((pa + 1))"; }
+
+          on_main=false
+          if [ "$EVENT" != pull_request ] && [ "$REF" = refs/heads/main ]; then
+            on_main=true
+            git fetch -q origin main
+            if [ "$(git rev-parse origin/main)" != "$(git rev-parse HEAD)" ]; then
+              # main moved on: the run for the newer commit releases it all
+              echo "main has moved past this commit; testing only" | tee -a "$GITHUB_STEP_SUMMARY"
+              on_main=stale
+            fi
+          fi
+
+          # Only changes outside .github/workflows/exempt.txt make a release;
+          # CI's own commits (version bumps, marked [skip ci]) do not count
+          base=$(git tag --sort=-version:refname | head -1)
+          if [ -n "$base" ]; then
+            changed=$(git log --format= --name-only --invert-grep --grep='\[skip ci\]' "$base..HEAD" | sort -u)
+          else
+            changed=$(git ls-files)
+          fi
+          mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
+          releasable=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            exempt=false
+            for pat in "${patterns[@]}"; do
+              # shellcheck disable=SC2254
+              case "$f" in $pat) exempt=true; break ;; esac
+            done
+            if [ "$exempt" = false ]; then releasable=true; break; fi
+          done <<< "$changed"
+
+          release=false
+          [ "$on_main" = true ] && [ "$releasable" = true ] && release=true
+
+          if tagged "$version"; then
+            next=$(next_patch "$version")
+            while tagged "$next"; do next=$(next_patch "$next"); done
+            sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
+            if [ "$release" = true ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git commit -qam "Begin v$next development [skip ci]"
+              # pushes made with GITHUB_TOKEN do not start another run
+              git push origin HEAD:main
+            fi
+            version=$next
+          fi
+          sha=$(git rev-parse HEAD)
+          {
+            echo "version=$version"
+            echo "release=$release"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $version at $sha; release: $release" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  version-check:
+    name: Version is unreleased
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # A pull request that changes anything outside exempt.txt must carry a
+      # version newer than the latest release (CI bumps it after each
+      # release; for a minor or major release, set it by hand)
+      - name: Check build.zig.zon's version against the latest tag
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
+          needs_version=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            exempt=false
+            for pat in "${patterns[@]}"; do
+              # shellcheck disable=SC2254
+              case "$f" in $pat) exempt=true; break ;; esac
+            done
+            if [ "$exempt" = false ]; then needs_version=true; echo "changed: $f"; break; fi
+          done <<< "$(git diff --name-only "$BASE_SHA...HEAD")"
+          if [ "$needs_version" = false ]; then
+            echo "Only exempt files changed; no version needed." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)
+          latest=$(git tag --list 'v[0-9]*' --sort=-version:refname | head -1)
+          latest=${latest#v}
+          if [ -z "$latest" ]; then
+            echo "No release yet; v$version will be the first." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          newest=$(printf '%s\n%s\n' "$version" "$latest" | sort -V | tail -1)
+          if [ "$version" = "$latest" ] || [ "$newest" != "$version" ]; then
+            echo "::error file=build.zig.zon::.version is $version, but v$latest is already released. Set it to a newer version (e.g. the next patch, minor or major)."
+            exit 1
+          fi
+          echo "v$version is newer than the latest release v$latest." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build release binaries
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # Downloads (lazy ones too) are retried: a dropped connection to a
+      # package host should not fail the run
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch=all && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch=all
+
+      # Only differs from the checkout on pull requests whose version is
+      # already released (on main the bump was committed)
+      - name: Set version ${{ needs.version.outputs.version }}
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$VERSION\2/" build.zig.zon
+
+      - name: Cross-compile and package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            zig build -Dtarget="$target" -Doptimize=ReleaseSafe --prefix "out/$target"
+            name="zfls-v$VERSION-$target"
+            pkg="pkg/$name"
+            mkdir -p "$pkg"
+            # the binary (and its PDB on Windows), not zfls.prerelease
+            for f in zfls zfls.exe zfls.pdb; do
+              if [ -e "out/$target/bin/$f" ]; then cp "out/$target/bin/$f" "$pkg/"; fi
+            done
+            cp LICENSE "$pkg/"
+            cp readme.md "$pkg/README.md"
+            case "$target" in
+              *windows) (cd pkg && zip -qr "../dist/$name.zip" "$name") ;;
+              *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
+            esac
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  test:
+    name: Test (${{ matrix.target }})
+    needs: [version, build]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-linux }
+          - { os: ubuntu-24.04-arm, target: aarch64-linux }
+          - { os: windows-2025, target: x86_64-windows }
+          - { os: windows-11-arm, target: aarch64-windows }
+          - { os: macos-15-intel, target: x86_64-macos }
+          - { os: macos-15, target: aarch64-macos }
+    env:
+      FORTLS: ${{ github.workspace }}/_fortls
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          submodules: recursive
+
+      - name: Check out fortls (reference implementation and test corpus)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.FORTLS_REPO }}
+          ref: ${{ env.FORTLS_REF }}
+          path: _fortls
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # Downloads (lazy ones too) are retried: a dropped connection to a
+      # package host should not fail the run
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch=all && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch=all
+
+      # gfortran is the oracle for symbol extraction; the oracle test is
+      # skipped where none is available (Windows on Arm)
+      - name: gfortran (Linux)
+        if: runner.os == 'Linux'
+        run: command -v gfortran || (sudo apt-get update && sudo apt-get install -y gfortran)
+
+      - name: gfortran (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          gf=$(ls "$(brew --prefix)"/bin/gfortran-* 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$gf" ]; then
+            brew install gcc
+            gf=$(ls "$(brew --prefix)"/bin/gfortran-* | sort -V | tail -1)
+          fi
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -sf "$gf" "$RUNNER_TEMP/bin/gfortran"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: gfortran (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc-fortran
+          path-type: inherit
+
+      # The image has other, older GCC toolchains on PATH: name MSYS2's
+      - name: Put gfortran on PATH (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          echo "$MSYS2_LOCATION\\ucrt64\\bin" >> "$GITHUB_PATH"
+          echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        run: zig build test --summary failures
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Unpack the release binary as a release candidate
+        run: |
+          name="zfls-v$VERSION-$TARGET"
+          mkdir -p shipped
+          case "$TARGET" in
+            *windows) python -m zipfile -e "dist/$name.zip" shipped ;;
+            *) tar -C shipped -xzf "dist/$name.tar.gz" ;;
+          esac
+          if [ -e "shipped/$name/zfls.prerelease" ]; then
+            echo "::error::release package $name contains zfls.prerelease"
+            exit 1
+          fi
+          touch "shipped/$name/zfls.prerelease"
+          exe=zfls
+          case "$TARGET" in *windows) exe=zfls.exe ;; esac
+          echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
+
+      - name: Version under test
+        run: |
+          got=$("$ZFLS" --version | tr -d '\r')
+          echo "$got" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$got" != "$VERSION-rc" ]; then
+            echo "::error::expected $VERSION-rc"
+            exit 1
+          fi
+
+      - name: fortls test suite
+        run: python tests/fortls_parity.py --zfls "$ZFLS" --fortls "$FORTLS"
+
+      - name: gfortran oracle
+        run: python tests/gfortran_oracle.py --zfls "$ZFLS"
+
+      - name: Stress sessions
+        run: |
+          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --seeds 10 --steps 3000
+          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 200 --seeds 4 --steps 3000 --no-incremental
+          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 300 --seeds 4 --steps 3000 --preprocessor
+
+      - name: Differential test against Python fortls
+        run: python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS"
+
+      - name: Version once released
+        run: |
+          rm "$(dirname "$ZFLS")/zfls.prerelease"
+          got=$("$ZFLS" --version | tr -d '\r')
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::without zfls.prerelease, --version printed '$got', expected '$VERSION'"
+            exit 1
+          fi
+
+  release:
+    name: Release v${{ needs.version.outputs.version }}
+    needs: [version, build, test]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Tag the tested commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "zfls v$VERSION" "$SHA"
+          git push origin "v$VERSION"
+          (cd dist && sha256sum -- * > SHA256SUMS)
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: zfls v${{ needs.version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+
+      - name: Begin the next version
+        run: |
+          git fetch -q origin main
+          if [ "$(git rev-parse origin/main)" != "$SHA" ]; then
+            # the run for the newer commit bumps the version before building
+            echo "main has moved on; leaving the bump to its run"
+            exit 0
+          fi
+          IFS=. read -r ma mi pa <<< "$VERSION"
+          next="$ma.$mi.$((pa + 1))"
+          git checkout -q -B main "$SHA"
+          sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
+          git commit -qam "Begin v$next development [skip ci]"
+          git push origin main
