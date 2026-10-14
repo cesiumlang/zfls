@@ -2,6 +2,10 @@
   "folders": [
     {
       "path": "."
+    },
+    {
+      // fork of conda-forge/staged-recipes, cloned next to this repository
+      "path": "../staged-recipes"
     }
   ],
   "settings": {
