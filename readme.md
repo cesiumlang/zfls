@@ -29,7 +29,14 @@ cd zfls
 zig build -Doptimize=ReleaseFast
 ```
 
-The executable is `zig-out/bin/zfls` (`zfls.exe` on Windows).
+The executable is `zig-out/bin/zfls` (`zfls.exe` on Windows). `zig build`
+also generates the API documentation in `zig-out/docs`; `zig build bin`
+installs only the executable.
+
+Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
+the `vendor/rstd` submodule included (`tools/make_source_archive.sh`), which
+the conda-forge recipe in `packaging/conda-forge` builds from. CI builds and
+tests that recipe on Linux, macOS and Windows for every change.
 
 ## Usage
 
