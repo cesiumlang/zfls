@@ -38,6 +38,16 @@ pub fn build(b: *std.Build) !void {
     docs.addCompileStepDocs(b, exe, "zfls");
     b.installArtifact(exe);
 
+    // While zfls.prerelease sits next to a release build, it reports a
+    // release candidate version (src/version.zig). Only release packaging
+    // leaves the file out; the binary is the same either way.
+    const sentinel = b.addWriteFiles().add("zfls.prerelease",
+        \\The presence of this file makes zfls report a release candidate
+        \\version. Release archives do not include it.
+        \\
+    );
+    b.getInstallStep().dependOn(&b.addInstallBinFile(sentinel, "zfls.prerelease").step);
+
     const run_cmd = b.addRunArtifact(exe);
     const run_cmd_step = &run_cmd.step;
     run_cmd_step.dependOn(b.getInstallStep());
@@ -74,13 +84,19 @@ fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
             .needs_fortls = false,
         },
         .{
+            .step = "test-stress",
+            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
+            .script = "tests/stress_edit.py",
+            .needs_fortls = true,
+        },
+        .{
             .step = "test-differential",
             .desc = "Compare zfls responses with Python fortls over its corpus (slow)",
             .script = "tests/differential.py",
             .needs_fortls = true,
         },
     };
-    const all = b.step("test-all", "Run unit tests, fortls parity and the gfortran oracle");
+    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
     all.dependOn(b.getInstallStep());
     if (b.top_level_steps.get("test")) |t| all.dependOn(&t.step);
     for (scripts) |s| {
