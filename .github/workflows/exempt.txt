@@ -10,6 +10,7 @@ readme.md
 LICENSE
 tests/*
 tools/*
+packaging/*
 .github/workflows/exempt.txt
 .vscode/*
 .cspell.jsonc
