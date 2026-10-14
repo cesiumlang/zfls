@@ -207,10 +207,20 @@ fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Regex)
     return .{ .name = name, .args = args, .trailing = trailing };
 }
 
+/// `SUB_MOD.findall` and `SUB_MOD.sub` of a line: its procedure prefixes
+/// (PURE, ELEMENTAL, ...) and the line without them. The pattern can only
+/// match where one of those words is, so the many lines without one skip
+/// both scans, which otherwise try a match at every character.
+fn splitSubMod(a: Allocator, line: []const u8) E!struct { []const []const u8, []const u8 } {
+    // IMPURE contains PURE
+    if (!str.containsIgnoreCase(line, "pure") and !str.containsIgnoreCase(line, "elemental") and
+        !str.containsIgnoreCase(line, "recursive")) return .{ &.{}, line };
+    return .{ try R().SUB_MOD.findall(a, line), try R().SUB_MOD.sub(a, "", line) };
+}
+
 /// Attempt to read FUNCTION definition line
 pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_flag: bool) E!?DefResult {
-    const keywords = try R().SUB_MOD.findall(a, line_in);
-    const line = try R().SUB_MOD.sub(a, "", line_in);
+    const keywords, const line = try splitSubMod(a, line_in);
     if (keywords.len > 0) {
         if (try readVarDef(a, line, null, true)) |tmp_var| {
             var tv = tmp_var;
@@ -233,8 +243,7 @@ pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_
 }
 
 pub fn readSubDef(a: Allocator, line_in: []const u8, mod_flag: bool) E!?DefResult {
-    const keywords = try R().SUB_MOD.findall(a, line_in);
-    const line = try R().SUB_MOD.sub(a, "", line_in);
+    const keywords, const line = try splitSubMod(a, line_in);
     const pm = (try getProcedureModifiers(a, line, &R().SUB)) orelse return null;
     return .{ .sub = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag } };
 }
@@ -365,8 +374,7 @@ fn readGenericDef(a: Allocator, line: []const u8) E!?DefResult {
 }
 
 fn readModDef(a: Allocator, line_in: []const u8) E!?DefResult {
-    const keywords = try R().SUB_MOD.findall(a, line_in);
-    const line = try R().SUB_MOD.sub(a, "", line_in);
+    const keywords, const line = try splitSubMod(a, line_in);
     const m = R().MOD.match(line) orelse return null;
     const name = m.group(1).?;
     if (std.ascii.eqlIgnoreCase(name, "procedure")) {
