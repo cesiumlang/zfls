@@ -248,8 +248,10 @@ pub const Regex = struct {
     ) bool {
         const prog = self.progs[prog_index];
         var regs: [max_loop_regs]usize = undefined;
-        @memset(&regs, std.math.maxInt(usize));
-        if (!is_sub) @memset(slots, null);
+        // only what this pattern uses: clearing all of them took much of a
+        // search, which runs this at every position
+        @memset(regs[0..self.nloop_regs], std.math.maxInt(usize));
+        if (!is_sub) @memset(slots[0 .. @as(usize, self.ngroups) * 2], null);
 
         var stack_buf: [256]Frame = undefined;
         var stack: std.ArrayList(Frame) = .initBuffer(&stack_buf);
@@ -428,10 +430,12 @@ pub const Match = struct {
     slots: [max_slots]?usize = undefined,
 
     pub fn start(self: Match, g: u16) usize {
+        if (g >= self.ngroups) return std.math.maxInt(usize);
         return self.slots[g * 2] orelse std.math.maxInt(usize);
     }
 
     pub fn end(self: Match, g: u16) usize {
+        if (g >= self.ngroups) return std.math.maxInt(usize);
         return self.slots[g * 2 + 1] orelse std.math.maxInt(usize);
     }
 
