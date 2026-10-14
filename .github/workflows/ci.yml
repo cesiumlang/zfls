@@ -39,6 +39,7 @@ env:
   FORTLS_REPO: fortran-lang/fortls
   FORTLS_REF: 0392beb64fb93c1e8d35fe5aebfa3e160117651c
   PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
 
 defaults:
   run:
@@ -299,6 +300,17 @@ jobs:
           bash tools/make_source_archive.sh dist
           ls -l dist
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The VS Code extension, once per VS Code platform with the matching
+      # zfls from dist/ in it, and once without one
+      - name: Package the VS Code extension
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: bash tools/package_vscode.sh dist "$VERSION"
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -316,12 +328,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, target: x86_64-linux }
-          - { os: ubuntu-24.04-arm, target: aarch64-linux }
-          - { os: windows-2025, target: x86_64-windows }
-          - { os: windows-11-arm, target: aarch64-windows }
-          - { os: macos-15-intel, target: x86_64-macos }
-          - { os: macos-15, target: aarch64-macos }
+          - { os: ubuntu-24.04, target: x86_64-linux, vscode: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-linux, vscode: linux-arm64 }
+          - { os: windows-2025, target: x86_64-windows, vscode: win32-x64 }
+          - { os: windows-11-arm, target: aarch64-windows, vscode: win32-arm64 }
+          - { os: macos-15-intel, target: x86_64-macos, vscode: darwin-x64 }
+          - { os: macos-15, target: aarch64-macos, vscode: darwin-arm64 }
     env:
       FORTLS: ${{ github.workspace }}/_fortls
       VERSION: ${{ needs.version.outputs.version }}
@@ -453,6 +465,34 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: VS Code's libraries and a display (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libgbm1 libasound2t64 libgtk-3-0t64 libxss1 libsecret-1-0
+
+      # This platform's VSIX, unpacked as VS Code would install it, run in a
+      # downloaded VS Code: hover, definition, completion and symbols through
+      # the extension's language client and its bundled zfls
+      - name: VS Code extension in VS Code
+        env:
+          VSIX: dist/zfls-vscode-v${{ needs.version.outputs.version }}-${{ matrix.vscode }}.vsix
+        run: |
+          python -m zipfile -e "$VSIX" "$RUNNER_TEMP/vsix"
+          cd editors/vscode
+          npm ci --no-audit --no-fund
+          npm run build-test
+          export ZFLS_EXTENSION_PATH="$RUNNER_TEMP/vsix/extension"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a node out/runTest.js
+          else
+            node out/runTest.js
+          fi
+
   conda:
     name: Conda package (${{ matrix.platform }})
     needs: [version, build]
@@ -546,6 +586,12 @@ jobs:
             echo "::error::no source archive at version $VERSION"
             exit 1
           fi
+          for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64 universal; do
+            if [ ! -f "dist/zfls-vscode-v$VERSION-$platform.vsix" ]; then
+              echo "::error::no VS Code extension for $platform at version $VERSION"
+              exit 1
+            fi
+          done
 
       - name: Tag the tested commit
         run: |

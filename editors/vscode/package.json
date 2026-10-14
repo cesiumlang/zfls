@@ -1,0 +1,174 @@
+{
+  "name": "zfls",
+  "displayName": "zfls: Fortran Language Server",
+  "description": "Fortran language support powered by zfls, a fast native reimplementation of fortls",
+  "version": "0.1.3",
+  "publisher": "emanspeaks",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emanspeaks/zfls"
+  },
+  "bugs": {
+    "url": "https://github.com/emanspeaks/zfls/issues"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "fortran",
+    "fortls",
+    "language server",
+    "lsp"
+  ],
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "FortranFreeForm",
+        "aliases": [
+          "Fortran",
+          "Fortran90"
+        ],
+        "extensions": [
+          ".f90",
+          ".F90",
+          ".f95",
+          ".F95",
+          ".f03",
+          ".F03",
+          ".f08",
+          ".F08",
+          ".f18",
+          ".F18",
+          ".fpp",
+          ".FPP",
+          ".pf",
+          ".PF",
+          ".fypp",
+          ".FYPP"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "FortranFixedForm",
+        "aliases": [
+          "Fortran77"
+        ],
+        "extensions": [
+          ".f",
+          ".F",
+          ".f77",
+          ".F77",
+          ".for",
+          ".FOR"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "FortranFreeForm",
+        "scopeName": "source.fortran.free",
+        "path": "./syntaxes/fortran_free-form.tmLanguage.json"
+      },
+      {
+        "scopeName": "source.openmp",
+        "path": "./syntaxes/openmp_lang.json",
+        "injectTo": [
+          "source.fortran.free"
+        ]
+      },
+      {
+        "scopeName": "source.openacc",
+        "path": "./syntaxes/openacc_lang.json",
+        "injectTo": [
+          "source.fortran.free"
+        ]
+      },
+      {
+        "language": "FortranFixedForm",
+        "scopeName": "source.fortran.fixed",
+        "path": "./syntaxes/fortran_fixed-form.tmLanguage.json"
+      },
+      {
+        "scopeName": "comment.line.fixed.injection",
+        "path": "./syntaxes/fortran_fixed-form-comments.injection.json",
+        "injectTo": [
+          "source.fortran.fixed"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "zfls",
+      "properties": {
+        "zfls.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to a `zfls` executable. Empty: the one bundled with this extension, or else `zfls` on the `PATH` (for example from `conda install -c conda-forge zfls`)."
+        },
+        "zfls.arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "--incremental_sync"
+          ],
+          "markdownDescription": "Command-line arguments for `zfls`; it accepts the same options as fortls (run `zfls --help`). Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply."
+        },
+        "zfls.disableModernFortranCheck": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Do not offer to turn off the fortls language server of the Modern Fortran extension when both are installed."
+        },
+        "zfls.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "markdownDescription": "Log the messages between VS Code and zfls in the `zfls` output channel."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "zfls.restart",
+        "title": "Restart Language Server",
+        "category": "zfls"
+      },
+      {
+        "command": "zfls.showOutput",
+        "title": "Show Output",
+        "category": "zfls"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --minify --sourcemap",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p test",
+    "package": "vsce package --no-dependencies",
+    "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node20 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node20",
+    "test": "npm run build && npm run build-test && node out/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "10.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.0",
+    "@types/vscode": "1.91.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

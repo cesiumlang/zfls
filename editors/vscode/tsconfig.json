@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2022",
+    "lib": ["es2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    // TypeScript 6+ includes no @types packages unless listed
+    "types": ["node", "vscode"]
+  },
+  "include": ["src"]
+}
