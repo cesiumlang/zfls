@@ -43,6 +43,20 @@ pub const Sink = struct {
 
 const PostMessage = struct { severity: i32, message: []const u8 };
 
+/// Ownership:
+/// - `workspace` owns its files and each file's `ast` (freed in `destroy`). An
+///   AST replaced by a re-parse moves to `retired` and is freed after the next
+///   `fullRelink`, once nothing points into it any more.
+/// - `obj_tree`, the intrinsic lookups and the candidate lists own only their
+///   own slots: the objects belong to the ASTs (or to `intr`).
+/// - `arena` owns the settings strings and other data that lives as long as
+///   the server; `pp_defs_arena` owns the preprocessor definitions.
+/// - Every request gets its own arena (`a`, reset per message): whatever only
+///   the reply needs is allocated there.
+/// - Errors: allocation failures and the file errors of `parser.FileError`
+///   propagate to the request, which answers with an error response (or posts a
+///   message for notifications). Sending to the client is best effort: a
+///   failure can only be logged.
 pub const Server = struct {
     gpa: Allocator,
     io: Io,
@@ -79,9 +93,12 @@ pub const Server = struct {
             .pp_defs_arena = std.heap.ArenaAllocator.init(gpa),
             .log = log,
         };
+        errdefer self.arena.deinit();
+        errdefer self.pp_defs_arena.deinit();
         self.sync_type = if (self.s.incremental_sync) 2 else 1;
         self.src_ext_regex = try patterns.createSrcFileExtsStr(self.arena.allocator(), self.s.incl_suffixes.slice());
         self.intr = try intrinsics.load(gpa, false);
+        errdefer self.intr.deinit();
         try self.syncPpDefsFromSettings();
         return self;
     }
@@ -159,8 +176,12 @@ pub const Server = struct {
         try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .id = id, .@"error" = err }));
     }
 
+    fn logSendFailure(self: *Server, e: anyerror) void {
+        self.log.err("could not send a message to the client: {s}", .{@errorName(e)});
+    }
+
     pub fn postMessage(self: *Server, a: Allocator, msg: []const u8, severity: i32) void {
-        self.sendNotification(a, "window/showMessage", json.from(a, lsp.ShowMessageParams{ .type = severity, .message = msg }) catch return) catch {};
+        self.sendNotification(a, "window/showMessage", json.from(a, lsp.ShowMessageParams{ .type = severity, .message = msg }) catch return) catch |e| self.logSendFailure(e);
         switch (severity) {
             1 => self.log.err("{s}", .{msg}),
             2 => self.log.warn("{s}", .{msg}),
@@ -184,13 +205,13 @@ pub const Server = struct {
             return;
         }
         if (result) |res| {
-            self.writeResponse(a, id.?, res) catch {};
+            self.writeResponse(a, id.?, res) catch |e| self.logSendFailure(e);
         } else |e| switch (e) {
-            error.InvalidParams => self.writeError(a, id.?, -32602, "invalid params", null) catch {},
-            error.MethodNotFound => self.writeError(a, id.?, -32601, std.fmt.allocPrint(a, "method {s} not found", .{method}) catch "method not found", null) catch {},
+            error.InvalidParams => self.writeError(a, id.?, -32602, "invalid params", null) catch |e2| self.logSendFailure(e2),
+            error.MethodNotFound => self.writeError(a, id.?, -32601, std.fmt.allocPrint(a, "method {s} not found", .{method}) catch "method not found", null) catch |e2| self.logSendFailure(e2),
             else => {
                 self.log.warn("error handling request {s}: {s}", .{ method, @errorName(e) });
-                self.writeError(a, id.?, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch {};
+                self.writeError(a, id.?, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
             },
         }
     }
@@ -319,9 +340,9 @@ pub const Server = struct {
         self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
         try self.s.source_dirs.add(sa, self.root_path);
 
-        self.loadConfigFile(a);
+        try self.loadConfigFile(a);
         try self.resolveGlobsInPaths(a);
-        self.configLogger();
+        try self.configLogger();
         try self.loadIntrinsics();
         try self.addSourceDirs(a);
 
@@ -337,11 +358,13 @@ pub const Server = struct {
         } });
     }
 
-    fn loadConfigFile(self: *Server, a: Allocator) void {
+    /// Problems with the user's configuration file are posted to the client;
+    /// only allocation failures are errors
+    fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!void {
         const candidates = [_][]const u8{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
         var config_path: ?[]const u8 = null;
         for (candidates) |f| {
-            const p = paths.join(a, &.{ self.root_path, f }) catch continue;
+            const p = try paths.join(a, &.{ self.root_path, f });
             if (paths.isFile(self.io, p)) {
                 config_path = p;
                 break;
@@ -350,28 +373,31 @@ pub const Server = struct {
         const cp = config_path orelse return;
         const sa = self.arena.allocator();
         const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
-            self.postMessage(a, std.fmt.allocPrint(a, "Configuration file '{s}' not found", .{self.s.config}) catch return, C.Severity.err);
+            self.postMessage(a, try std.fmt.allocPrint(a, "Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
             return;
         };
         var p: json.Parser = .{ .a = sa, .src = data };
         const cfg = p.parseDocument() catch {
-            const emsg = settings_mod.json5ErrorMessage(a, data, p.err_pos) catch "error";
-            const msg = std.fmt.allocPrint(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config }) catch return;
+            const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
+            const msg = try std.fmt.allocPrint(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
             self.postMessage(a, msg, C.Severity.err);
             return;
         };
         if (cfg != .object) {
-            self.postMessage(a, std.fmt.allocPrint(a, "Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}) catch return, C.Severity.err);
+            self.postMessage(a, try std.fmt.allocPrint(a, "Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
             return;
         }
-        settings_mod.applyConfig(sa, &self.s, cfg) catch return;
+        try settings_mod.applyConfig(sa, &self.s, cfg);
         self.sync_type = if (self.s.incremental_sync) 2 else 1;
         if (cfg.get("incl_suffixes") != null) {
             if (patterns.createSrcFileExtsStr(sa, self.s.incl_suffixes.slice())) |re| {
                 self.src_ext_regex = re;
-            } else |_| {}
+            } else |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => self.postMessage(a, "Invalid 'incl_suffixes' in the configuration file; keeping the default source file extensions", C.Severity.warn),
+            }
         }
-        self.syncPpDefsFromSettings() catch {};
+        try self.syncPpDefsFromSettings();
     }
 
     fn resolveGlobsInPaths(self: *Server, a: Allocator) !void {
@@ -400,11 +426,11 @@ pub const Server = struct {
         _ = a;
     }
 
-    fn configLogger(self: *Server) void {
+    fn configLogger(self: *Server) !void {
         if (self.s.debug_log and self.root_path.len > 0) {
-            const fname = paths.join(self.arena.allocator(), &.{ self.root_path, "fortls_debug.log" }) catch return;
+            const fname = try paths.join(self.arena.allocator(), &.{ self.root_path, "fortls_debug.log" });
             self.log.openFile(self.io, fname);
-            self.post_messages.append(self.gpa, .{ .severity = C.Severity.info, .message = "fortls debugging enabled" }) catch {};
+            try self.post_messages.append(self.gpa, .{ .severity = C.Severity.info, .message = "fortls debugging enabled" });
         }
     }
 
@@ -484,8 +510,9 @@ pub const Server = struct {
 
     const InitResult = union(enum) {
         none,
+        /// The file with its AST; the caller owns both
         ok: *FortranFile,
-        err: []const u8,
+        err: parser.FileError,
     };
 
     fn initWorker(job: *InitJob) void {
@@ -498,24 +525,24 @@ pub const Server = struct {
 
     /// Port of `file_init`
     fn fileInit(self: *Server, filepath: []const u8) InitResult {
-        const f = FortranFile.create(self.gpa, filepath, self.ppSuffixes()) catch return .{ .err = "Error during parsing" };
-        const lr = f.loadFromDisk(self.io);
-        if (lr.err) |e| {
-            f.destroy();
-            return .{ .err = e };
-        }
-        const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch {
-            f.destroy();
-            return .{ .err = "Error during parsing" };
-        };
-        f.ast = ast;
+        const f = self.loadFile(filepath) catch |e| return .{ .err = e };
+        return .{ .ok = f };
+    }
+
+    /// Create, read and parse a workspace file. The caller owns the result
+    /// (the file and its AST).
+    fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
+        const f = try FortranFile.create(self.gpa, filepath, self.ppSuffixes());
+        errdefer f.destroy();
+        _ = try f.loadFromDisk(self.io);
+        const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch return error.ParseFailed;
         // Emulate Python's recursion limit (deeply nested scopes)
         if (maxScopeDepth(ast) > self.s.recursion_limit) {
             ast.destroy();
-            f.destroy();
-            return .{ .err = "An exception has occured while initialising the workspace.\nException(<class 'RecursionError'>): maximum recursion depth exceeded" };
+            return error.RecursionLimit;
         }
-        return .{ .ok = f };
+        f.ast = ast;
+        return f;
     }
 
     fn maxScopeDepth(ast: *Ast) i64 {
@@ -547,7 +574,7 @@ pub const Server = struct {
         for (files, results) |path, res| {
             switch (res) {
                 .none => {},
-                .err => |e| self.postMessage(a, try std.fmt.allocPrint(a, "Initialization failed for file {s}: {s}", .{ path, e }), C.Severity.err),
+                .err => |e| self.postMessage(a, try std.fmt.allocPrint(a, "Initialization failed for file {s}: {s}", .{ path, parser.describeFileError(e) }), C.Severity.err),
                 .ok => |f| {
                     if (self.workspace.get(f.path)) |old| {
                         // Duplicate path (overlapping source dirs): keep the newest
@@ -618,8 +645,8 @@ pub const Server = struct {
 
     fn retireFileAst(self: *Server, f: *FortranFile) !void {
         if (f.ast) |old| {
-            self.removeFromTree(old);
             try self.retired.append(self.gpa, old);
+            self.removeFromTree(old);
         }
     }
 
@@ -1506,11 +1533,11 @@ pub const Server = struct {
 
     fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
         const res = self.diagnosticsOf(a, uri) catch |e| {
-            self.writeError(a, json.integer(-1), -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch {};
+            self.writeError(a, json.integer(-1), -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
             return;
         };
         if (res) |diags| {
-            self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch {};
+            self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
         }
     }
 
@@ -1526,7 +1553,12 @@ pub const Server = struct {
         const changes = params.contentChanges;
         var reparse_req = true;
         if (self.sync_type == 1) {
-            if (changes.len > 0) _ = file.applyChange(toChange(changes[0])) catch {};
+            if (changes.len > 0) {
+                _ = file.applyChange(toChange(changes[0])) catch {
+                    self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
+                    return .null;
+                };
+            }
         } else {
             reparse_req = false;
             for (changes) |c| {
@@ -1538,11 +1570,10 @@ pub const Server = struct {
             }
         }
         if (reparse_req) {
-            const res = self.updateWorkspaceFile(a, path, false, false, true);
-            if (res.err) |e| {
-                self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': {s}", .{ path, e }), C.Severity.err);
+            _ = self.updateWorkspaceFile(path, false, false, true) catch |e| {
+                self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
                 return .null;
-            }
+            };
             for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, path, a);
             if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, null, a);
             // Periodically reclaim memory of replaced ASTs
@@ -1571,69 +1602,73 @@ pub const Server = struct {
             if (self.workspace.get(filepath)) |f| if (f.ast) |ast| self.removeFromTree(ast);
             return .null;
         }
-        const res = self.updateWorkspaceFile(a, filepath, true, did_open, false);
-        if (res.err) |e| {
-            self.postMessage(a, try std.fmt.allocPrint(a, "Save request failed for file '{s}': {s}", .{ filepath, e }), C.Severity.err);
+        const changed = self.updateWorkspaceFile(filepath, true, did_open, false) catch |e| {
+            self.postMessage(a, try std.fmt.allocPrint(a, "Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
             return .null;
-        }
-        if (res.changed) try self.fullRelink(a);
+        };
+        if (changed) try self.fullRelink(a);
         if (!self.s.disable_diagnostics) self.sendDiagnostics(a, uri);
         return .null;
     }
 
-    const UpdateResult = struct { changed: bool, err: ?[]const u8 };
-
-    fn updateWorkspaceFile(self: *Server, a: Allocator, filepath: []const u8, read_file: bool, allow_empty: bool, update_links: bool) UpdateResult {
+    /// Read (if `read_file`) and parse a workspace file and link it into the
+    /// workspace; returns whether it changed. A file created here belongs to
+    /// the workspace once registered (until then it is destroyed on failure),
+    /// and a new AST belongs to its file once installed: the replaced one
+    /// goes to `retired`, which is freed after the next full relink.
+    fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool, allow_empty: bool, update_links: bool) parser.FileError!bool {
         var file = self.workspace.get(filepath);
-        var created = false;
+        var created: ?*FortranFile = null;
+        errdefer if (created) |f| f.destroy();
         if (read_file) {
             if (file == null) {
-                const nf = FortranFile.create(self.gpa, filepath, self.ppSuffixes()) catch return .{ .changed = false, .err = "Error during parsing" };
+                const nf = try FortranFile.create(self.gpa, filepath, self.ppSuffixes());
+                created = nf;
                 if (!paths.isFile(self.io, filepath)) {
-                    if (allow_empty) {
-                        nf.ast = Ast.create(self.gpa, nf) catch {
-                            nf.destroy();
-                            return .{ .changed = false, .err = "Error during parsing" };
-                        };
-                        self.workspace.put(self.gpa, nf.path, nf) catch {};
-                        return .{ .changed = false, .err = null };
-                    }
-                    nf.destroy();
-                    return .{ .changed = false, .err = "File does not exist" };
+                    if (!allow_empty) return error.FileNotFound;
+                    nf.ast = try Ast.create(self.gpa, nf);
+                    errdefer nf.ast.?.destroy();
+                    try self.workspace.put(self.gpa, nf.path, nf);
+                    created = null;
+                    return false;
                 }
                 file = nf;
-                created = true;
             }
-            const lr = file.?.loadFromDisk(self.io);
-            if (lr.err) |e| {
-                self.log.err("{s} : {s}", .{ e, filepath });
-                if (created) file.?.destroy();
-                return .{ .changed = false, .err = e };
-            }
-            if (!lr.changed) {
-                if (created) file.?.destroy();
-                return .{ .changed = false, .err = null };
+            const changed = file.?.loadFromDisk(self.io) catch |e| {
+                self.log.err("{s} : {s}", .{ parser.describeFileError(e), filepath });
+                return e;
+            };
+            if (!changed) {
+                if (created) |f| f.destroy();
+                created = null;
+                return false;
             }
         }
-        const f = file orelse return .{ .changed = false, .err = "File does not exist" };
+        const f = file orelse return error.FileNotFound;
         const ast_new = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch {
             self.log.err("Error while parsing file {s}", .{filepath});
-            if (created) f.destroy();
-            return .{ .changed = false, .err = "Error during parsing" };
+            return error.ParseFailed;
         };
-        self.mergePpDefs(&f.pp_defs) catch {};
-        self.retireFileAst(f) catch {};
+        {
+            // everything that can fail before the new AST is installed
+            errdefer ast_new.destroy();
+            try self.mergePpDefs(&f.pp_defs);
+            if (!self.workspace.contains(f.path)) {
+                try self.workspace.put(self.gpa, f.path, f);
+                created = null;
+            }
+            if (f.ast) |old| try self.retired.append(self.gpa, old);
+        }
+        if (f.ast) |old| self.removeFromTree(old);
         f.ast = ast_new;
-        if (!self.workspace.contains(f.path)) self.workspace.put(self.gpa, f.path, f) catch {};
-        self.addToTree(f) catch {};
+        try self.addToTree(f);
         if (update_links) {
             self.link_version = @mod(self.link_version + 1, 1000);
             var tmp = std.heap.ArenaAllocator.init(self.gpa);
             defer tmp.deinit();
-            ast_new.resolveLinks(self.env(tmp.allocator()), self.link_version) catch {};
+            try ast_new.resolveLinks(self.env(tmp.allocator()), self.link_version);
         }
-        _ = a;
-        return .{ .changed = true, .err = null };
+        return true;
     }
 };
 

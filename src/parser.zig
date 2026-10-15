@@ -44,6 +44,20 @@ pub const Options = struct {
 // --------------------------------------------------------------------------
 // Line definition readers
 
+/// What can go wrong with a workspace file
+pub const FileError = error{ ReadFailed, ParseFailed, FileNotFound, RecursionLimit, OutOfMemory };
+
+/// The text shown to the user for `e`
+pub fn describeFileError(e: FileError) []const u8 {
+    return switch (e) {
+        error.ReadFailed => "Could not read/decode file",
+        error.ParseFailed => "Error during parsing",
+        error.FileNotFound => "File does not exist",
+        error.RecursionLimit => "An exception has occured while initialising the workspace.\nException(<class 'RecursionError'>): maximum recursion depth exceeded",
+        error.OutOfMemory => "Out of memory",
+    };
+}
+
 pub const ResultSig = struct {
     name: ?[]const u8 = null,
     type: ?[]const u8 = null,
@@ -801,14 +815,16 @@ pub const FortranFile = struct {
         return true;
     }
 
-    /// Read file from disk; returns error string or null, and whether changed
-    pub fn loadFromDisk(self: *FortranFile, io: Io) struct { err: ?[]const u8, changed: bool } {
-        const data = Io.Dir.cwd().readFileAlloc(io, self.path, self.gpa, .limited(1 << 30)) catch {
-            return .{ .err = "Could not read/decode file", .changed = false };
+    pub const LoadError = error{ ReadFailed, OutOfMemory };
+
+    /// Read the file from disk; returns whether its contents changed
+    pub fn loadFromDisk(self: *FortranFile, io: Io) LoadError!bool {
+        const data = Io.Dir.cwd().readFileAlloc(io, self.path, self.gpa, .limited(1 << 30)) catch |e| return switch (e) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ReadFailed,
         };
         defer self.gpa.free(data);
-        const changed = self.setText(data) catch return .{ .err = "Could not read/decode file", .changed = false };
-        return .{ .err = null, .changed = changed };
+        return self.setText(data);
     }
 
     pub fn getLine(self: *const FortranFile, line_no_in: i64, pp_content: bool) ?[]const u8 {
@@ -1248,7 +1264,7 @@ const Parser = struct {
             if (ast.end_scope_regex != null) {
                 const m = R().END_WORD.match(line_no_comment);
                 if (try p.parseEndScopeWord(line_no_comment, line_no, m)) continue;
-                if (p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) continue;
+                if (try p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) continue;
             }
             if (R().NON_DEF.match(line_no_comment) != null) continue;
             if (try p.parseImplicit(line_no_comment, line_no)) continue;
@@ -1460,7 +1476,7 @@ const Parser = struct {
                 o.vis = info.vis_flag;
                 try ast.addScope(o, &R().END_INT, true, true);
                 for (info.pro_links) |pl| try ast.addIntMember(pl);
-                ast.endScope(line_no, true);
+                try ast.endScope(line_no, true);
                 p.dbg("{s} !!! GENERIC - Ln:{d}", .{ line, line_no });
             },
             .int_pro => |names| {
@@ -1525,8 +1541,8 @@ const Parser = struct {
             if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| end_scope_word = sm.str();
         }
         if (end_scope_word != null) {
-            if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) ast.endScope(ln, true);
-            ast.endScope(ln, true);
+            if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) try ast.endScope(ln, true);
+            try ast.endScope(ln, true);
             if (p.opts.trace != null) {
                 var ub: [64]u8 = undefined;
                 const w = end_scope_word.?;
@@ -1538,14 +1554,14 @@ const Parser = struct {
         return false;
     }
 
-    fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: i64, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) bool {
+    fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: i64, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) !bool {
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
         const label = line_label orelse return false;
         if (cs.getType(false) != C.DO_TYPE_ID) return false;
         var did_close = false;
         while (block_id_stack.items.len > 0 and std.mem.eql(u8, label, block_id_stack.items[block_id_stack.items.len - 1])) {
-            ast.endScope(ln, true);
+            try ast.endScope(ln, true);
             _ = block_id_stack.pop();
             did_close = true;
             p.dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });

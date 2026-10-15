@@ -139,8 +139,7 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     const cfg = try readConfig(a, io, o, s.debug_rootpath, s.config);
     o.print("  File = \"{s}\"\n", .{fp});
     const file = try parser.FortranFile.create(a, fp, cfg.pp_suffixes);
-    const lr = file.loadFromDisk(io);
-    if (lr.err) |e| return fail(o, "Reading file failed: {s}", .{e});
+    _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
     o.print("  Detected format: {s}\n", .{if (file.fixed) "fixed" else "free"});
     o.print("\n{s}\nParser Output\n{s}\n\n", .{ sep80, sep80 });
     const ast = try file.parse(io, &cfg.pp_defs, cfg.include_dirs, .{ .sort_keywords = true, .trace = traceTo(o) });
