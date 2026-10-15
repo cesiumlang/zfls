@@ -1410,6 +1410,84 @@ pub const Server = struct {
         };
     }
 
+    /// Whether `v` is the result variable of function `fun`: without a RESULT
+    /// clause it is named like the function, and renaming the function renames
+    /// it (upstream #322)
+    fn isImplicitResult(fun: *const Obj, v: *const Obj) bool {
+        return fun.kind == .function and v.kind == .variable and v.parent == fun and std.ascii.eqlIgnoreCase(v.name, fun.name);
+    }
+
+    /// Whether the name at `col` is the original name of a renamed import of
+    /// `def_obj`, as in `use m, only: local => NAME` where `m` defines it. The
+    /// original name is not visible under that name in the importing scope,
+    /// so the definition lookup cannot find it (upstream #52).
+    fn isRenamedOriginal(line: []const u8, col: usize, def_obj: *const Obj) bool {
+        const parent = def_obj.parent orelse return false;
+        if (parent.kind != .module) return false;
+        if (!std.mem.endsWith(u8, str.rstrip(line[0..col]), "=>")) return false;
+        const t = str.lstrip(line);
+        if (!std.ascii.startsWithIgnoreCase(t, "use")) return false;
+        var rest = str.lstrip(t[3..]);
+        if (std.mem.startsWith(u8, rest, "::")) rest = str.lstrip(rest[2..]);
+        var n: usize = 0;
+        while (n < rest.len and (std.ascii.isAlphanumeric(rest[n]) or rest[n] == '_')) n += 1;
+        return std.ascii.eqlIgnoreCase(rest[0..n], parent.name);
+    }
+
+    /// A name that a USE statement renamed (`local => original`) and the
+    /// scope of that statement
+    const RenamedImport = struct { alias: []const u8, scope: *Obj, use_line: i64 };
+
+    /// The renamed import that the word at (`line`, `col`) is the local name
+    /// of, if it is one (upstream #52)
+    fn renamedImport(a: Allocator, file: *FortranFile, line: i64, col: usize, target: *const Obj) !?RenamedImport {
+        const text = file.getLine(line, false) orelse return null;
+        var it = R().WORD.iterator(text);
+        const word = while (it.next()) |m| {
+            if (m.start(0) <= col and col <= m.end(0)) break m.str();
+        } else return null;
+        if (std.ascii.eqlIgnoreCase(word, target.name)) return null;
+        const lower = try std.ascii.allocLowerString(a, word);
+        var scope = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
+        while (true) {
+            for (scope.use.items) |u| {
+                if (!u.is_import and u.rename_map.get(lower) != null) return .{ .alias = lower, .scope = scope, .use_line = u.line_number };
+            }
+            scope = scope.parent orelse return null;
+        }
+    }
+
+    /// The uses of a renamed import: of its local name, in the scope of the
+    /// USE statement and the statement itself, not of the original name
+    fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj: *Obj, ri: RenamedImport) ![]FileRefs {
+        var name_re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "(?:\\W|^)({s})(?:\\W|$)", .{ri.alias}), regex.I) catch return &.{};
+        defer name_re.deinit();
+        var refs: std.ArrayList(Ref) = .empty;
+        const first: usize = @intCast(@max(ri.scope.sline - 1, 0));
+        const last: usize = @min(@as(usize, @intCast(@max(ri.scope.eline - 1, 0))), file.lines.items.len -| 1);
+        for (file.lines.items[first .. last + 1], first..) |raw_line, i_usize| {
+            const i: i64 = @intCast(i_usize);
+            const line = file.stripComment(raw_line);
+            if (line.len == 0 or line[0] == '#') continue;
+            var it = name_re.iterator(line);
+            while (it.next()) |m| {
+                if (i == ri.use_line - 1) {
+                    // in the USE statement only the local name, before the arrow
+                    const after = str.lstrip(line[m.end(1)..]);
+                    if (!std.mem.startsWith(u8, after, "=>")) continue;
+                } else {
+                    const var_def = (try self.getDefinition(a, file, i, m.start(1) + 1, false)) orelse continue;
+                    if (!std.mem.eql(u8, def_obj.fqsn, var_def.fqsn)) continue;
+                }
+                try refs.append(a, .{ .line = i, .start = @intCast(m.start(1)), .end = @intCast(m.end(1)) });
+            }
+        }
+        if (refs.items.len == 0) return &.{};
+        const out = try a.alloc(FileRefs, 1);
+        out[0] = .{ .path = file.path, .file = file, .refs = refs };
+        return out;
+    }
+
     fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile) ![]FileRefs {
         const def_name = try std.ascii.allocLowerString(a, def_obj.name);
         const def_fqsn = def_obj.fqsn;
@@ -1429,6 +1507,10 @@ pub const Server = struct {
                 if (line.len == 0 or line[0] == '#') continue;
                 var it = name_re.iterator(line);
                 while (it.next()) |m| {
+                    if (isRenamedOriginal(line, m.start(1), def_obj)) {
+                        try file_refs.append(a, .{ .line = i, .start = @intCast(m.start(1)), .end = @intCast(m.end(1)) });
+                        continue;
+                    }
                     const var_def = (try self.getDefinition(a, file, i, m.start(1) + 1, false)) orelse continue;
                     if (var_def.kind == .intrinsic) continue;
                     var ref_match = false;
@@ -1436,7 +1518,7 @@ pub const Server = struct {
                     for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                         in_cache = true;
                     };
-                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache) {
+                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def)) {
                         ref_match = true;
                     } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.CLASS_TYPE_ID) {
                         if (type_mem) {
@@ -1507,8 +1589,12 @@ pub const Server = struct {
             self.postMessage(a, "Rename failed: Cannot rename intrinsics", C.Severity.warn);
             return .null;
         }
-        const rs = self.referenceScope(d.obj) orelse return .null;
-        const all = try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict);
+        const all = if (try renamedImport(a, d.file, d.line, d.col, d.obj)) |ri|
+            try self.aliasReferences(a, d.file, d.obj, ri)
+        else blk: {
+            const rs = self.referenceScope(d.obj) orelse return .null;
+            break :blk try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict);
+        };
         if (all.len == 0) {
             self.postMessage(a, "Rename failed: No usages found to rename", C.Severity.warn);
             return .null;
