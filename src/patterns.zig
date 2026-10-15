@@ -88,6 +88,8 @@ const defs = [_]Def{
     .{ "LINE_LABEL", "[ ]*([0-9]+)[ ]+", true },
     // a preprocessor `#include "file"` or `#include <file>`, and its file name
     .{ "INCLUDE_DIRECTIVE", "[ ]*#[ ]*include[ ]*[\"<]([^\">]+)[\">]", true },
+    // the PARAMETER statement: `PARAMETER (name = value, ...)`
+    .{ "PARAMETER_STMT", "[ ]*PARAMETER[ ]*\\((.*)\\)[ ]*$", true },
     .{ "NON_DEF", "[ ]*(CALL[ ]+[a-z_]|[a-z_][\\w%]*[ ]*=)", true },
     .{ "FIXED_COMMENT", "([!cd*]|[ ]{1,4}!|[ ]{6,}!)", true },
     .{ "FIXED_CONT", "( {5}[\\S])", false },

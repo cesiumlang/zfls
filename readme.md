@@ -127,12 +127,17 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` once, and tests them as release
+every pull request and every push to `main` or `dev` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
 suites above, longer stress runs and the differential test.
 
 Changes are collected on the `dev` branch, which pull requests target, and
-released together by merging `dev` into `main`.
+released together by merging `dev` into `main`. Both branches take a change
+only when its checks pass (an administrator can override that when merging a
+pull request); `main` also takes changes only through pull requests, while
+`dev` takes pushes from maintainers. CI's own push to `dev` after a release
+uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
+lets bypass the checks.
 
 When a push to `main` passes on every platform, the same archives are
 published on the GitHub releases page and the tested commit is tagged. CI
@@ -179,6 +184,20 @@ zfls deliberately differs from fortls in a few places:
   unresolved; fortls hits a recursion error on them.
 - Go to definition on a preprocessor `#include "file"` opens the file (searched
   next to the including file and in `include_dirs`); fortls has no answer.
+- Hover shows the whole value of a parameter. fortls cuts it at the first
+  parenthesis or bracket, so `selected_real_kind(6)` shows as
+  `selected_real_kind`.
+- The `PARAMETER` statement (`parameter (n = 5)`) makes the variables it
+  names constants, with their values; fortls ignores it.
+- An `ASSOCIATE` name bound to an array element or section shows the
+  dimensions of that element or section; fortls shows those of the whole
+  array.
+- A variable that is declared with a type and then called, `real fff` and
+  `fff(1.2, 3.3)`, shows the signature of the global function of that name in
+  hover, and an `EXTERNAL` name shows the interface of its procedure and
+  has it as its implementation.
+- A `!>` documentation comment is dropped at an assignment, a `CALL`, `IMPLICIT`,
+  `CONTAINS` or an `END` statement, instead of waiting for the next object.
 
 ## Licenses
 

@@ -123,6 +123,7 @@ WORD = re.compile(
 # Typos fixed in zfls's copy of the fortls data files
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
+PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -255,6 +256,9 @@ def normalize(v):
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
+        # fortls cuts the value of a parameter at its first parenthesis or
+        # bracket; zfls shows it whole (upstream issue 124)
+        v = PARAM_VALUE.sub(r"\1", v)
         # zfls reformats the intrinsic manual pages for markdownlint
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -272,6 +276,31 @@ def on_include_directive(path: Path, position) -> bool:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     line = position.get("line", -1)
     return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
+
+
+ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
+
+
+def associate_names(source: str) -> set:
+    """Lowercase names bound by `name => array(...)` (ASSOCIATE or pointer
+    assignment) in a source file."""
+    return {m.group(1).lower() for m in ASSOC_BOUND.finditer(source)}
+
+
+def ignore_slice_dimensions(v, names: set):
+    """fortls gives an ASSOCIATE name bound to an element or a section the
+    dimensions of the whole array; zfls gives it those of the section
+    (upstream issue 108). Compare the dimensions of such names as equal."""
+    if isinstance(v, dict):
+        return {k: ignore_slice_dimensions(x, names) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_slice_dimensions(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return m.group(0) if m.group(3).lower() not in names else m.group(2) + m.group(3)
+
+        return re.sub(r"(, )?DIMENSION\([^)\n]*\)( :: )(\w+)", repl, v)
+    return v
 
 
 def is_error(v) -> bool:
@@ -376,9 +405,13 @@ def main() -> int:
                 b = normalize(notifications(got, method))
                 if a != b:
                     diffs.append((method, None, a, b))
+        assoc = associate_names(path.read_text(encoding="utf-8", errors="replace"))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
+            if assoc and kind in ("hover", "completion"):
+                a = ignore_slice_dimensions(a, assoc)
+                b = ignore_slice_dimensions(b, assoc)
             total += 1
             if kind == "references":
                 # cross-file order follows workspace iteration order
