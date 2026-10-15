@@ -207,24 +207,37 @@ const PyEval = struct {
         return e.parseComparison();
     }
 
-    const cmp_ops = [_][]const u8{ "==", "!=", "<=", ">=", "<", ">" };
+    const CmpOp = enum { eq, ne, le, ge, lt, gt };
+
+    /// Comparison operators by their text; two-character ones come first
+    const cmp_ops = [_]struct { []const u8, CmpOp }{
+        .{ "==", .eq },
+        .{ "!=", .ne },
+        .{ "<=", .le },
+        .{ ">=", .ge },
+        .{ "<", .lt },
+        .{ ">", .gt },
+    };
 
     fn parseComparison(e: *PyEval) Err!Value {
         var left = try e.parseBitOr();
         var result: ?bool = null;
         while (true) {
             e.skipWs();
-            var op: ?[]const u8 = null;
-            for (cmp_ops) |o| {
-                if (std.mem.startsWith(u8, e.src[e.pos..], o)) {
+            var op: ?CmpOp = null;
+            var op_len: usize = 0;
+            for (cmp_ops) |entry| {
+                const text, const kind = entry;
+                if (std.mem.startsWith(u8, e.src[e.pos..], text)) {
                     // don't confuse '<<' / '>>' with comparisons
-                    if ((std.mem.eql(u8, o, "<") or std.mem.eql(u8, o, ">")) and e.pos + 1 < e.src.len and e.src[e.pos + 1] == o[0]) break;
-                    op = o;
+                    if ((kind == .lt or kind == .gt) and e.pos + 1 < e.src.len and e.src[e.pos + 1] == text[0]) break;
+                    op = kind;
+                    op_len = text.len;
                     break;
                 }
             }
             const o = op orelse break;
-            e.pos += o.len;
+            e.pos += op_len;
             const right = try e.parseBitOr();
             const r = try compare(o, left, right);
             result = (result orelse true) and r;
@@ -234,8 +247,8 @@ const PyEval = struct {
         return left;
     }
 
-    fn compare(op: []const u8, l: Value, r: Value) Err!bool {
-        if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) {
+    fn compare(op: CmpOp, l: Value, r: Value) Err!bool {
+        if (op == .eq or op == .ne) {
             var eq: bool = undefined;
             if (l.isNumeric() and r.isNumeric()) {
                 eq = l.asFloat() == r.asFloat();
@@ -245,7 +258,7 @@ const PyEval = struct {
             } else if (l == .none and r == .none) {
                 eq = true;
             } else eq = false;
-            return if (op[0] == '=') eq else !eq;
+            return if (op == .eq) eq else !eq;
         }
         var ord: std.math.Order = undefined;
         if (l.isNumeric() and r.isNumeric()) {
@@ -257,10 +270,12 @@ const PyEval = struct {
         } else if (l == .string and r == .string) {
             ord = std.mem.order(u8, l.string, r.string);
         } else return error.Type;
-        if (std.mem.eql(u8, op, "<")) return ord == .lt;
-        if (std.mem.eql(u8, op, ">")) return ord == .gt;
-        if (std.mem.eql(u8, op, "<=")) return ord != .gt;
-        return ord != .lt;
+        return switch (op) {
+            .lt => ord == .lt,
+            .gt => ord == .gt,
+            .le => ord != .gt,
+            else => ord != .lt,
+        };
     }
 
     fn intBinop(l: Value, r: Value) Err![2]i128 {
