@@ -639,10 +639,11 @@ jobs:
     runs-on: ubuntu-24.04
     # No stored tokens where possible. Open VSX: trusted publishing (it
     # accepts this workflow's OIDC token for the `cesiumlang` namespace),
-    # else the OVSX_PAT secret. Marketplace, first that works: the managed identity in the AZURE_*
-    # repository variables, signed in with this workflow's OIDC token
-    # (Microsoft Entra ID, --azure-credential); vsce's trusted publishing
-    # (--oidc); the VSCE_PAT secret
+    # else the OVSX_PAT secret. Marketplace: the managed identity in the
+    # AZURE_* repository variables, signed in with this workflow's OIDC
+    # token (Microsoft Entra ID, --azure-credential), else the VSCE_PAT
+    # secret. (vsce's own --oidc trusted publishing is left out: the
+    # Marketplace rejected its token exchange with a 400 in October 2026.)
     permissions:
       contents: read
       id-token: write
@@ -684,23 +685,25 @@ jobs:
           # last resorts only
           MARKETPLACE_TOKEN: ${{ secrets.VSCE_PAT }}
           OPENVSX_TOKEN: ${{ secrets.OVSX_PAT }}
+        # --skip-duplicate: a version already published counts as published,
+        # so a re-run completes what a failed one left out
         run: |
           vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
+          ovsx() { npx --yes "ovsx@$OVSX_VERSION" "$@"; }
           marketplace() {
             if [ "$AZURE_SIGNED_IN" = true ]; then
-              vsce publish --azure-credential --packagePath "$1" && return 0
+              vsce publish --azure-credential --skip-duplicate --packagePath "$1" && return 0
               echo "::warning::Marketplace: publishing $1 as the Azure identity failed"
             fi
-            vsce publish --oidc --packagePath "$1" && return 0
             [ -n "$MARKETPLACE_TOKEN" ] || return 1
-            echo "::warning::Marketplace: token-free publishing of $1 failed; publishing with the VSCE_PAT secret"
-            VSCE_PAT="$MARKETPLACE_TOKEN" vsce publish --packagePath "$1"
+            echo "::warning::Marketplace: publishing $1 with the VSCE_PAT secret"
+            VSCE_PAT="$MARKETPLACE_TOKEN" vsce publish --skip-duplicate --packagePath "$1"
           }
           openvsx() {
-            npx --yes "ovsx@$OVSX_VERSION" publish "$1" --trusted-publishing && return 0
+            ovsx publish "$1" --trusted-publishing --skip-duplicate && return 0
             [ -n "$OPENVSX_TOKEN" ] || return 1
             echo "::warning::Open VSX: trusted publishing of $1 failed; publishing with the OVSX_PAT secret"
-            OVSX_PAT="$OPENVSX_TOKEN" npx --yes "ovsx@$OVSX_VERSION" publish "$1"
+            OVSX_PAT="$OPENVSX_TOKEN" ovsx publish "$1" --skip-duplicate
           }
           failed=0
           for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do

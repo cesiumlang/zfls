@@ -53,8 +53,9 @@ Open VSX accepts the workflow's OIDC token (trusted publishing), and for the
 Marketplace the workflow signs in with it as a Microsoft Entra managed
 identity that is a member of the publisher (the `AZURE_*` repository
 variables; the "Marketplace identity" workflow shows the ID to add). The
-job falls back to `vsce` trusted publishing and then to the `VSCE_PAT`
-repository secret, with a warning.
+job falls back to the `OVSX_PAT` and `VSCE_PAT` repository secrets, with a
+warning. Versions already published are skipped, so a failed publish job
+can be re-run.
 
 To work on it (Node.js 20 or later):
 
