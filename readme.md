@@ -47,9 +47,10 @@ platform's zfls inside (`tools/package_vscode.sh`), plus a `universal` one
 that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
 from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
-(VSCodium and other VS Code derivatives). Open VSX uses trusted publishing
-(the workflow's OIDC token stands in for an access token); the Marketplace
-uses the `VSCE_PAT` repository secret, or trusted publishing without it.
+(VSCodium and other VS Code derivatives), with trusted publishing: the
+workflow's OIDC token stands in for access tokens. Should trusted publishing
+to the Marketplace fail, the job falls back to the `VSCE_PAT` repository
+secret, if there is one, and warns.
 
 To work on it (Node.js 20 or later):
 
