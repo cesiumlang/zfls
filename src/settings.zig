@@ -12,12 +12,12 @@ pub const StrList = struct {
     items: std.ArrayList([]const u8) = .empty,
 
     pub fn add(self: *StrList, a: Allocator, s: []const u8) !void {
-        for (self.items.items) |it| if (str.eql(it, s)) return;
+        for (self.items.items) |it| if (std.mem.eql(u8, it, s)) return;
         try self.items.append(a, s);
     }
 
     pub fn contains(self: *const StrList, s: []const u8) bool {
-        for (self.items.items) |it| if (str.eql(it, s)) return true;
+        for (self.items.items) |it| if (std.mem.eql(u8, it, s)) return true;
         return false;
     }
 
@@ -91,7 +91,7 @@ pub const Settings = struct {
     debug_full_result: bool = false,
 
     pub fn setPpDef(self: *Settings, a: Allocator, name: []const u8, value: []const u8) !void {
-        for (self.pp_defs.items) |*d| if (str.eql(d.name, name)) {
+        for (self.pp_defs.items) |*d| if (std.mem.eql(u8, d.name, name)) {
             d.value = value;
             return;
         };
@@ -198,7 +198,7 @@ fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u
     for (opts) |o| {
         if (o.debug and !show_debug) continue;
         const g = if (o.debug) "DEBUG" else o.group;
-        if (!str.eql(g, group)) {
+        if (!std.mem.eql(u8, g, group)) {
             group = g;
             try out.print(a, "\n{s}:\n", .{g});
             if (o.debug) try out.appendSlice(a, "  Options for debugging language server\n\n");
@@ -230,18 +230,18 @@ fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u
 }
 
 fn findOpt(arg: []const u8) union(enum) { found: *const Opt, ambiguous, none } {
-    if (str.startsWith(arg, "--")) {
+    if (std.mem.startsWith(u8, arg, "--")) {
         const name = arg[2..];
-        for (&opts) |*o| if (str.eql(o.long, name)) return .{ .found = o };
+        for (&opts) |*o| if (std.mem.eql(u8, o.long, name)) return .{ .found = o };
         var match: ?*const Opt = null;
-        for (&opts) |*o| if (str.startsWith(o.long, name)) {
+        for (&opts) |*o| if (std.mem.startsWith(u8, o.long, name)) {
             if (match != null) return .ambiguous;
             match = o;
         };
         if (match) |m| return .{ .found = m };
         return .none;
     }
-    for (&opts) |*o| if (o.short) |s| if (str.eql(s, arg)) return .{ .found = o };
+    for (&opts) |*o| if (o.short) |s| if (std.mem.eql(u8, s, arg)) return .{ .found = o };
     return .none;
 }
 
@@ -261,12 +261,12 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
     while (i < args.len) : (i += 1) {
         var arg = args[i];
         var inline_val: ?[]const u8 = null;
-        if (str.startsWith(arg, "--")) {
+        if (std.mem.startsWith(u8, arg, "--")) {
             if (std.mem.indexOfScalar(u8, arg, '=')) |eq| {
                 inline_val = arg[eq + 1 ..];
                 arg = arg[0..eq];
             }
-        } else if (str.startsWith(arg, "-") and arg.len > 2) {
+        } else if (std.mem.startsWith(u8, arg, "-") and arg.len > 2) {
             // short option with attached value, e.g. -n1
             inline_val = arg[2..];
             arg = arg[0..2];
@@ -274,41 +274,41 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
         const res = findOpt(arg);
         const o = switch (res) {
             .found => |o| o,
-            .ambiguous => return .{ .exit_err = try str.print(a, "{s}fortls: error: ambiguous option: {s}\n", .{ usage, arg }) },
-            .none => return .{ .exit_err = try str.print(a, "{s}fortls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
+            .ambiguous => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: ambiguous option: {s}\n", .{ usage, arg }) },
+            .none => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
         };
         switch (o.kind) {
             .help => return .{ .exit_ok = try helpText(a, version, any_debug_arg) },
             .debug_help => return .{ .exit_ok = try helpText(a, version, true) },
-            .version => return .{ .exit_ok = try str.print(a, "{s}\n", .{version}) },
+            .version => return .{ .exit_ok = try std.fmt.allocPrint(a, "{s}\n", .{version}) },
             .flag => {
-                if (inline_val != null) return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
+                if (inline_val != null) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
-                    if (str.eql(fname, o.long)) {
+                    if (std.mem.eql(u8, fname, o.long)) {
                         if (@TypeOf(@field(s, fname)) == bool) @field(s, fname) = true;
                     }
                 }
             },
             .int, .string, .json => {
                 const val = inline_val orelse blk: {
-                    if (i + 1 >= args.len) return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
+                    if (i + 1 >= args.len) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
                     i += 1;
                     break :blk args[i];
                 };
                 if (o.kind == .json) {
                     const v = json.parse(a, val) catch {
-                        return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
+                        return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
                     };
                     try applyPpDefs(a, &s, v);
                     continue;
                 }
                 var handled = false;
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
-                    if (!handled and str.eql(fname, o.long)) {
+                    if (!handled and std.mem.eql(u8, fname, o.long)) {
                         const FT = @TypeOf(@field(s, fname));
                         if (FT == i64 or FT == ?i64) {
                             @field(s, fname) = std.fmt.parseInt(i64, str.strip(val), 10) catch {
-                                return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
+                                return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
                             };
                             handled = true;
                         } else if (FT == []const u8 or FT == ?[]const u8) {
@@ -321,16 +321,16 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
             .list => {
                 var list: StrList = .{};
                 if (inline_val) |v| try list.add(a, v);
-                while (i + 1 < args.len and !(str.startsWith(args[i + 1], "-") and args[i + 1].len > 1)) {
+                while (i + 1 < args.len and !(std.mem.startsWith(u8, args[i + 1], "-") and args[i + 1].len > 1)) {
                     i += 1;
                     try list.add(a, args[i]);
                 }
-                if (str.eql(o.long, "source_dirs")) s.source_dirs = list;
-                if (str.eql(o.long, "incl_suffixes")) s.incl_suffixes = list;
-                if (str.eql(o.long, "excl_suffixes")) s.excl_suffixes = list;
-                if (str.eql(o.long, "excl_paths")) s.excl_paths = list;
-                if (str.eql(o.long, "include_dirs")) s.include_dirs = list;
-                if (str.eql(o.long, "pp_suffixes")) s.pp_suffixes = list;
+                if (std.mem.eql(u8, o.long, "source_dirs")) s.source_dirs = list;
+                if (std.mem.eql(u8, o.long, "incl_suffixes")) s.incl_suffixes = list;
+                if (std.mem.eql(u8, o.long, "excl_suffixes")) s.excl_suffixes = list;
+                if (std.mem.eql(u8, o.long, "excl_paths")) s.excl_paths = list;
+                if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
+                if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
             },
         }
     }
@@ -355,8 +355,8 @@ pub fn applyPpDefs(a: Allocator, s: *Settings, v: json.Value) !void {
 pub fn jsonScalarString(a: Allocator, v: json.Value) ![]const u8 {
     return switch (v) {
         .string => |x| x,
-        .int => |x| try str.print(a, "{d}", .{x}),
-        .float => |x| try str.print(a, "{d}", .{x}),
+        .int => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
+        .float => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
         .bool => |x| if (x) "True" else "False",
         .null => "None",
         else => try json.stringify(a, v),
@@ -449,8 +449,8 @@ pub fn json5ErrorMessage(a: Allocator, src: []const u8, pos: usize) ![]const u8 
             col = 1;
         } else col += 1;
     }
-    if (pos >= src.len) return str.print(a, "<string>:{d} Unexpected end of input at column {d}", .{ line, col });
-    return str.print(a, "<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
+    if (pos >= src.len) return std.fmt.allocPrint(a, "<string>:{d} Unexpected end of input at column {d}", .{ line, col });
+    return std.fmt.allocPrint(a, "<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
 }
 
 test "cli parsing" {

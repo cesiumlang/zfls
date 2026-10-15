@@ -170,7 +170,7 @@ fn splitParts(a: Allocator, pattern: []const u8) ![][]const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     var it = std.mem.tokenizeAny(u8, pattern, "/\\");
     while (it.next()) |p| {
-        if (str.eql(p, ".")) continue;
+        if (std.mem.eql(u8, p, ".")) continue;
         try out.append(a, p);
     }
     return out.items;
@@ -184,13 +184,13 @@ fn globWalk(io: Io, a: Allocator, base: []const u8, parts: []const []const u8, o
     }
     const part = parts[0];
     const rest = parts[1..];
-    if (str.eql(part, "**")) {
+    if (std.mem.eql(u8, part, "**")) {
         // `**` matches this directory and all subdirectories
         const dirs = try walkDirs(io, a, base);
         for (dirs) |d| try globWalk(io, a, d, rest, out, depth + 1);
         return;
     }
-    if (str.eql(part, "..")) {
+    if (std.mem.eql(u8, part, "..")) {
         try globWalk(io, a, paths.dirname(base), rest, out, depth + 1);
         return;
     }
@@ -247,7 +247,7 @@ pub fn resolveGlobs(io: Io, a: Allocator, glob_path: []const u8, root_path: ?[]c
         if (!paths.exists(io, p)) continue;
         const rp = try paths.realpath(io, a, p);
         var dup = false;
-        for (out.items) |o| if (str.eql(o, rp)) {
+        for (out.items) |o| if (std.mem.eql(u8, o, rp)) {
             dup = true;
         };
         if (!dup) try out.append(a, rp);

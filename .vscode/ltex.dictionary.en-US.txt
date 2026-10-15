@@ -196,6 +196,7 @@ pteam
 pure-Zig
 pywebview
 pywin
+randyos
 rasterizer
 Rasterizer
 regexs

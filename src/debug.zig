@@ -41,7 +41,7 @@ var out_global: ?*Out = null;
 var fail_msg: []const u8 = "";
 
 fn fail(a: Allocator, comptime fmt: []const u8, args: anytype) DebugError {
-    fail_msg = str.print(a, fmt, args) catch "debug error";
+    fail_msg = std.fmt.allocPrint(a, fmt, args) catch "debug error";
     return error.DebugFailed;
 }
 
@@ -126,7 +126,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, input_config: []
 fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {
     for (try obj.getChildren(a, false)) |child| {
         o.print("  {s}{d}: {s}\n", .{ indent, child.getType(false), child.fqsn });
-        try printChildren(a, o, child, try str.concat(a, &.{ indent, "  " }));
+        try printChildren(a, o, child, try std.mem.concat(a, u8, &.{ indent, "  " }));
     }
 }
 
@@ -534,8 +534,8 @@ fn processFileChanges(rq: *Req, path: []const u8, changes: Value, file: *parser.
             const line = file.getLine(i, false) orelse "";
             rq.o.print("  - {s}\n", .{line});
             var content: []const u8 = line;
-            if (i == sl) content = try str.concat(rq.a, &.{ line[0..str.utf16ToByte(line, @intCast(@max(sc, 0)))], new_text });
-            if (i == el) content = try str.concat(rq.a, &.{ content, str.from(line, str.utf16ToByte(line, @intCast(@max(ec, 0)))) });
+            if (i == sl) content = try std.mem.concat(rq.a, u8, &.{ line[0..str.utf16ToByte(line, @intCast(@max(sc, 0)))], new_text });
+            if (i == el) content = try std.mem.concat(rq.a, u8, &.{ content, str.from(line, str.utf16ToByte(line, @intCast(@max(ec, 0)))) });
             try new_contents.append(rq.a, content);
         }
         for (new_contents.items) |l| rq.o.print("  + {s}\n", .{l});
