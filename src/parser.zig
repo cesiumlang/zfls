@@ -89,10 +89,10 @@ pub const FunSig = struct {
 
 pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8 };
 pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
-pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const []const u8, vis_flag: i8 };
+pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const []const u8, vis_flag: objects.Vis };
 pub const SmodInfo = struct { name: []const u8, parent: []const u8 };
 pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
-pub const VisInfo = struct { type: i32, obj_names: []const []const u8 };
+pub const VisInfo = struct { private: bool, obj_names: []const []const u8 };
 pub const UseInfo = struct {
     mod_name: []const u8,
     only_list: []const []const u8,
@@ -388,9 +388,9 @@ fn readGenericDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().GENERIC_PRO.match(line) orelse return null;
     const trailing = str.strip(str.beforeFirst(line[m.end(0) - 1 ..], "!"));
     if (trailing.len == 0) return null;
-    var vis_flag: i8 = 0;
+    var vis_flag: objects.Vis = .default;
     if (m.group(2)) |v| {
-        vis_flag = if (std.ascii.eqlIgnoreCase(v, "private")) -1 else 1;
+        vis_flag = if (std.ascii.eqlIgnoreCase(v, "private")) .private else .public;
     }
     const i_1 = std.mem.indexOf(u8, trailing, "=>") orelse return null;
     const bound_name = str.strip(trailing[0..i_1]);
@@ -536,10 +536,10 @@ fn readIncStmt(a: Allocator, line: []const u8) E!?DefResult {
 
 fn readVisStmnt(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().VIS.match(line) orelse return null;
-    const vis_type: i32 = if (std.ascii.eqlIgnoreCase(m.group(1).?, "private")) 1 else 0;
+    const is_private = std.ascii.eqlIgnoreCase(m.group(1).?, "private");
     const trailing = str.beforeFirst(line[m.end(0)..], "!");
     const words = try R().WORD.findall(a, trailing);
-    return .{ .vis = .{ .type = vis_type, .obj_names = words } };
+    return .{ .vis = .{ .private = is_private, .obj_names = words } };
 }
 
 const DefTest = *const fn (Allocator, []const u8) E!?DefResult;
@@ -1556,9 +1556,9 @@ const Parser = struct {
             },
             .vis => |info| {
                 if (ast.current_scope) |cs| {
-                    if (info.obj_names.len == 0 and info.type == 1) {
-                        cs.def_vis = -1;
-                    } else if (info.type == 1) {
+                    if (info.obj_names.len == 0 and info.private) {
+                        cs.def_vis = .private;
+                    } else if (info.private) {
                         for (info.obj_names) |w| try ast.addPrivate(w);
                     } else {
                         for (info.obj_names) |w| try ast.addPublic(w);
