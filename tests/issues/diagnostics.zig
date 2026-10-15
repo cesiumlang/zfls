@@ -20,7 +20,45 @@ test "#406 an external function declared in two subroutines is not a duplicate" 
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(406, .known_failure, w.expectNoDiagnostics("t.f90"));
+    try h.check(406, .fixed, w.expectNoDiagnostics("t.f90"));
+}
+
+test "#406 a real duplicate is still reported, an EXTERNAL before the type is not one (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\subroutine one
+        \\  external bar
+        \\  integer bar
+        \\end subroutine one
+        \\
+        \\subroutine two
+        \\  integer :: x
+        \\  integer :: x
+        \\end subroutine two
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const ds = try w.diagnostics("t.f90");
+    try h.expect(ds.len == 1, "expected the one duplicate, got {d} diagnostics", .{ds.len});
+    try h.expect(ds[0].line == 7 and std.mem.indexOf(u8, ds[0].message, "declared twice") != null, "unexpected: line {d}: {s}", .{ ds[0].line + 1, ds[0].message });
+}
+
+test "#172 more coarray declarations (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\subroutine co(a, b, c)
+        \\  real, intent(in) :: a(5)[*]
+        \\  integer, intent(out) :: b[*]
+        \\  integer, intent(inout) :: c[2, *]
+        \\end subroutine co
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("t.f90");
 }
 
 test "#568 a plain USE after a USE ONLY that goes through a re-exporting module" {
@@ -80,7 +118,43 @@ test "#568 a plain USE after a USE ONLY that goes through a re-exporting module"
     defer w.deinit();
     // the control: the same with the two USE lines swapped
     try w.expectNoDiagnostics("user_works.f90");
-    try h.check(568, .known_failure, w.expectNoDiagnostics("user_fails.f90"));
+    try h.check(568, .fixed, w.expectNoDiagnostics("user_fails.f90"));
+}
+
+test "#568 USE ONLY still limits what is visible (control)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "inner.f90", .text =
+        \\module inner
+        \\  type :: a_t
+        \\    integer :: n = 0
+        \\  end type a_t
+        \\  type :: b_t
+        \\    integer :: n = 0
+        \\  end type b_t
+        \\end module inner
+        \\
+        },
+        .{ .name = "umbrella.f90", .text =
+        \\module umbrella
+        \\  use inner
+        \\end module umbrella
+        \\
+        },
+        .{ .name = "user.f90", .text =
+        \\module user
+        \\  use umbrella, only: a_t
+        \\contains
+        \\  subroutine s()
+        \\    type(a_t) :: a
+        \\    type(b_t) :: b
+        \\  end subroutine s
+        \\end module user
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const ds = try w.diagnostics("user.f90");
+    try h.expect(ds.len == 1 and ds[0].line == 5, "expected only b_t (line 6) to be unknown, got {d} diagnostics", .{ds.len});
 }
 
 test "#519 IMPORT in an abstract interface, in each of its forms" {
@@ -153,7 +227,37 @@ test "#489 a comment after code in fixed form is not held to max_line_length" {
         ,
     }}, .{ .settings = .{ .max_line_length = 72, .max_comment_line_length = -1 } });
     defer w.deinit();
-    try h.check(489, .known_failure, w.expectNoDiagnostics("t.f"));
+    try h.check(489, .fixed, w.expectNoDiagnostics("t.f"));
+}
+
+test "#489 code and a trailing comment are held to their own limits (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  integer :: short ! a long trailing comment, past thirty
+        \\  integer :: a_very_long_declaration ! c
+        \\  integer :: ok ! fine
+        \\  ! a whole-line comment that is also long enough to be flagged
+        \\end program p
+        \\
+        ,
+    }}, .{ .settings = .{ .max_line_length = 30, .max_comment_line_length = 40 } });
+    defer w.deinit();
+    const ds = try w.diagnostics("t.f90");
+    var code_lines: usize = 0;
+    var comment_lines: usize = 0;
+    for (ds) |d| {
+        if (std.mem.startsWith(u8, d.message, "Line length")) {
+            try h.expect(d.line == 2, "code limit reported at line {d}", .{d.line + 1});
+            code_lines += 1;
+        } else if (std.mem.startsWith(u8, d.message, "Comment line length")) {
+            try h.expect(d.line == 1 or d.line == 4, "comment limit reported at line {d}", .{d.line + 1});
+            comment_lines += 1;
+        }
+    }
+    // the code of line 3 is too long; the comments of lines 2 and 5 are
+    try h.expect(code_lines == 1 and comment_lines == 2, "{d} code and {d} comment diagnostics", .{ code_lines, comment_lines });
 }
 
 test "#264 IMPLICIT NONE inside a fixed-form BLOCK DATA" {
@@ -195,7 +299,7 @@ test "#470 definitions after a BLOCK DATA unit (from the description; the report
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(470, .known_failure, w.expectNoDiagnostics("t.f90"));
+    try h.check(470, .fixed, w.expectNoDiagnostics("t.f90"));
 }
 
 test "#172 a coarray dummy argument is found in the argument list" {
@@ -213,7 +317,7 @@ test "#172 a coarray dummy argument is found in the argument list" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(172, .known_failure, w.expectNoDiagnostics("t.f90"));
+    try h.check(172, .fixed, w.expectNoDiagnostics("t.f90"));
 }
 
 test "#72 a single TYPE IS with an associated selector" {

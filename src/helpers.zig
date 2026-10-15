@@ -80,6 +80,27 @@ pub fn stripStrings(a: Allocator, in_line: []const u8, maintain_len: bool) ![]co
     return R().DQ_STRING.sub(a, "", tmp);
 }
 
+/// Split an argument list at its own commas: not those inside parentheses,
+/// brackets or string literals, as in `arr(2, 3), 'a,b'` (upstream #87). The
+/// pieces are slices of `s`.
+pub fn splitArgs(a: Allocator, s: []const u8) ![][]const u8 {
+    const stripped = try stripStrings(a, s, true);
+    var out: std.ArrayList([]const u8) = .empty;
+    var depth: isize = 0;
+    var start: usize = 0;
+    for (stripped, 0..) |c, i| switch (c) {
+        '(', '[' => depth += 1,
+        ')', ']' => depth -= 1,
+        ',' => if (depth == 0) {
+            try out.append(a, s[start..i]);
+            start = i + 1;
+        },
+        else => {},
+    };
+    try out.append(a, s[start..]);
+    return out.items;
+}
+
 /// Separate definition lists, skipping parenthesis and bracket groups
 pub fn separateDefList(a: Allocator, test_str: []const u8) !?[][]const u8 {
     const stripped = try stripStrings(a, test_str, false);
@@ -349,6 +370,12 @@ test "helper functions" {
     const l2 = (try separateDefList(a, "var, init_var(3) = [1,2,3], array(3,3)")).?;
     try testing.expectEqualStrings("init_var(3) = [1,2,3]", l2[1]);
     try testing.expectEqualStrings("array(3,3)", l2[2]);
+
+    const args = try splitArgs(a, "arr(2, 3), x=[1, 2], 'a,b', ");
+    try testing.expectEqual(@as(usize, 4), args.len);
+    try testing.expectEqualStrings("arr(2, 3)", args[0]);
+    try testing.expectEqualStrings(" 'a,b'", args[2]);
+    try testing.expectEqualStrings(" ", args[3]);
 
     try testing.expectEqualStrings("a, b, (c, d)", getParenSubstring("some line(a, b, (c, d))").?);
     try testing.expect(getParenSubstring("some line(a, b") == null);

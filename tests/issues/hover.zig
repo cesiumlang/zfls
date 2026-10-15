@@ -214,8 +214,8 @@ test "#87 signature help counts the commas of the call, not those inside an argu
     }}, .{});
     defer w.deinit();
     const sig = (try w.signature("t.f90", w.pos("t.f90", "arr(2, 3), 1", 0, 11))) orelse
-        return h.check(87, .known_failure, h.unmet("no signature help", .{}));
-    try h.check(87, .known_failure, h.expect(sig.active == 1, "active parameter {d}, expected 1", .{sig.active}));
+        return h.check(87, .fixed, h.unmet("no signature help", .{}));
+    try h.check(87, .fixed, h.expect(sig.active == 1, "active parameter {d}, expected 1", .{sig.active}));
 }
 
 test "#203 the PARAMETER statement makes a constant" {
