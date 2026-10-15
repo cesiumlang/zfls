@@ -12,7 +12,7 @@ const json = @import("json.zig");
 // --------------------------------------------------------------------------
 // Basic structures
 
-pub const Position = struct { line: i64, character: i64 };
+pub const Position = struct { line: usize, character: usize };
 
 pub const Range = struct { start: Position, end: Position };
 
