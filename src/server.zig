@@ -848,7 +848,11 @@ pub const Server = struct {
                     try childCandidates(a, child, only_list, filter_public, false, out);
                 } else {
                     if (nonly > 0) {
-                        const lname = try std.ascii.allocLowerString(a, child.name);
+                        var buf: [256]u8 = undefined;
+                        const lname = if (child.name.len <= buf.len)
+                            std.ascii.lowerString(&buf, child.name)
+                        else
+                            try std.ascii.allocLowerString(a, child.name);
                         if (!only_list.?.contains(lname)) continue;
                     }
                     try out.append(a, child);
@@ -885,10 +889,10 @@ pub const Server = struct {
                     for (tmp.items) |obj| {
                         try var_list.append(a, obj);
                         var rev: ?[]const u8 = null;
-                        const lname = try std.ascii.allocLowerString(a, obj.name);
-                        // reversed rename map (last key wins for duplicate values)
+                        // reversed rename map (last key wins for duplicate values);
+                        // the values are lowercase
                         for (use_info.rename_map.keys.items, use_info.rename_map.values.items) |k, v| {
-                            if (std.mem.eql(u8, v, lname)) rev = k;
+                            if (std.ascii.eqlIgnoreCase(v, obj.name)) rev = k;
                         }
                         try rename_list.append(a, rev);
                     }
@@ -923,7 +927,7 @@ pub const Server = struct {
         var out_renames: std.ArrayList(?[]const u8) = .empty;
         for (var_list.items, rename_list.items) |v, rn| {
             const name = rn orelse v.name;
-            if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, name), var_prefix)) {
+            if (std.ascii.startsWithIgnoreCase(name, var_prefix)) {
                 try out_objs.append(a, v);
                 try out_renames.append(a, rn);
             }
@@ -1018,7 +1022,7 @@ pub const Server = struct {
             .mod_only => {
                 for (self.obj_tree.values()) |e| {
                     const cand = e.obj;
-                    if (cand.getType(false) == C.MODULE_TYPE_ID and std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
+                    if (cand.getType(false) == C.MODULE_TYPE_ID and std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
                         try json.append(a, &item_list, try self.buildComp(a, cand, true, null, false, false));
                     }
                 }
@@ -1089,7 +1093,7 @@ pub const Server = struct {
                     }
                 }
                 for (try self.intr.keywordsFor(a, key_context)) |cand| {
-                    if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
+                    if (std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
                         try json.append(a, &item_list, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
                     }
                 }
@@ -1097,7 +1101,7 @@ pub const Server = struct {
             },
             .first => {
                 for (try self.intr.keywordsFor(a, 0)) |cand| {
-                    if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
+                    if (std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
                         try json.append(a, &item_list, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
                     }
                 }
