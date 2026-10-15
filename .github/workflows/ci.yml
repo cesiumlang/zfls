@@ -638,8 +638,8 @@ jobs:
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     # No stored tokens where possible. Open VSX: trusted publishing (it
-    # accepts this workflow's OIDC token for the `cesiumlang` namespace).
-    # Marketplace, first that works: the managed identity in the AZURE_*
+    # accepts this workflow's OIDC token for the `cesiumlang` namespace),
+    # else the OVSX_PAT secret. Marketplace, first that works: the managed identity in the AZURE_*
     # repository variables, signed in with this workflow's OIDC token
     # (Microsoft Entra ID, --azure-credential); vsce's trusted publishing
     # (--oidc); the VSCE_PAT secret
@@ -681,8 +681,9 @@ jobs:
       - name: Publish to the Visual Studio Marketplace and Open VSX
         env:
           AZURE_SIGNED_IN: ${{ steps.azure.outcome == 'success' }}
-          # last resort only
+          # last resorts only
           MARKETPLACE_TOKEN: ${{ secrets.VSCE_PAT }}
+          OPENVSX_TOKEN: ${{ secrets.OVSX_PAT }}
         run: |
           vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
           marketplace() {
@@ -695,12 +696,18 @@ jobs:
             echo "::warning::Marketplace: token-free publishing of $1 failed; publishing with the VSCE_PAT secret"
             VSCE_PAT="$MARKETPLACE_TOKEN" vsce publish --packagePath "$1"
           }
+          openvsx() {
+            npx --yes "ovsx@$OVSX_VERSION" publish "$1" --trusted-publishing && return 0
+            [ -n "$OPENVSX_TOKEN" ] || return 1
+            echo "::warning::Open VSX: trusted publishing of $1 failed; publishing with the OVSX_PAT secret"
+            OVSX_PAT="$OPENVSX_TOKEN" npx --yes "ovsx@$OVSX_VERSION" publish "$1"
+          }
           failed=0
           for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
             vsix="dist/zfls-vscode-v$VERSION-$platform.vsix"
             marketplace "$vsix" \
               || { echo "::error::Marketplace: publishing $platform failed"; failed=1; }
-            npx --yes "ovsx@$OVSX_VERSION" publish "$vsix" --trusted-publishing \
+            openvsx "$vsix" \
               || { echo "::error::Open VSX: publishing $platform failed"; failed=1; }
           done
           marketplace "dist/zfls-vscode-v$VERSION-universal.vsix" \
