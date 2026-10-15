@@ -36,16 +36,16 @@ give the same answer, and the test fails for the reason in the issue.
 | --- | --- | --- | --- | --- |
 | [#568](https://github.com/fortran-lang/fortls/issues/568) | plain `USE` after a `USE ONLY` through a re-exporting module | diagnostics | known failure | same |
 | [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | known failure | same |
-| [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | known failure | same |
+| [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | known failure | same |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | known failure | same |
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | known failure | same (and reported twice) |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | known failure | same |
-| [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | known failure | same |
-| [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | known failure | same |
+| [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
+| [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | known failure | same |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | known failure | same |
-| [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | known failure | same |
+| [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | known failure | same |
 | [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | known failure | same |
 | [#172](https://github.com/fortran-lang/fortls/issues/172) | coarray dummy argument | diagnostics | known failure | same |
