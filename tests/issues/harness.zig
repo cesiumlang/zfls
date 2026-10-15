@@ -87,8 +87,16 @@ pub const Edit = struct { uri: []const u8, line: i64, start: i64, end: i64, new_
 
 pub const File = struct { name: []const u8, text: []const u8 };
 
+pub const Link = struct { name: []const u8, target: []const u8 };
+
 pub const Options = struct {
     settings: Settings = .{},
+    /// symbolic links to create next to the files (a test is skipped where
+    /// the platform does not allow them)
+    links: []const Link = &.{},
+    /// directories to create without any permission (a test is skipped
+    /// where that is not possible, e.g. on Windows or as root)
+    unreadable: []const []const u8 = &.{},
     /// `--pp_defs`
     pp_defs: []const zfls.settings.PpDef = &.{},
 };
@@ -103,6 +111,7 @@ pub const Workspace = struct {
     server: *Server,
     root: []const u8,
     files: []const File,
+    unreadable: []const []const u8,
 
     /// Write `files` (names may contain subdirectories) to a temporary
     /// directory and start a server on it, as `initialize` would.
@@ -118,10 +127,24 @@ pub const Workspace = struct {
         errdefer w.arena.deinit();
         const aa = w.arena.allocator();
         w.files = files;
+        w.unreadable = &.{};
         for (files) |f| {
             if (std.fs.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
         }
+        for (opts.links) |l| w.tmp.dir.symLink(io, l.target, l.name, .{}) catch return error.SkipZigTest;
+        for (opts.unreadable) |d| {
+            if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+            try w.tmp.dir.createDirPath(io, d);
+            w.tmp.dir.setFilePermissions(io, d, @enumFromInt(0), .{}) catch return error.SkipZigTest;
+            // root reads it anyway
+            if (w.tmp.dir.openDir(io, d, .{ .iterate = true })) |opened| {
+                opened.close(io);
+                w.tmp.dir.setFilePermissions(io, d, .default_dir, .{}) catch {};
+                return error.SkipZigTest;
+            } else |_| {}
+        }
+        w.unreadable = opts.unreadable;
         w.root = try aa.dupe(u8, try w.tmp.dir.realPathFileAlloc(io, ".", aa));
         w.log = Logger.init(io);
         w.log.stderr_level = .off;
@@ -134,6 +157,7 @@ pub const Workspace = struct {
     }
 
     pub fn deinit(w: *Workspace) void {
+        for (w.unreadable) |d| w.tmp.dir.setFilePermissions(io, d, .default_dir, .{}) catch {};
         w.server.destroy();
         w.log.deinit();
         w.arena.deinit();
