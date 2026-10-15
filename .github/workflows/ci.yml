@@ -629,9 +629,9 @@ jobs:
     needs: [version, reuse, release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
-    # Trusted publishing: both registries accept this workflow's OIDC token
-    # in place of a stored access token (registered for the `cesiumlang`
-    # publisher and namespace)
+    # Open VSX by trusted publishing (it accepts this workflow's OIDC token
+    # for the `cesiumlang` namespace); the Marketplace with the VSCE_PAT
+    # secret, or likewise by trusted publishing when there is none
     permissions:
       contents: read
       id-token: write
@@ -655,11 +655,19 @@ jobs:
       # is only on the GitHub release); both registries are tried even if the
       # other fails
       - name: Publish to the Visual Studio Marketplace and Open VSX
+        env:
+          # the Marketplace token, which vsce reads from the environment;
+          # without the secret, trusted publishing (--oidc) is used instead
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
+          marketplace_auth=()
+          if [ -z "$VSCE_PAT" ]; then
+            marketplace_auth=(--oidc)
+          fi
           failed=0
           for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
             vsix="dist/zfls-vscode-v$VERSION-$platform.vsix"
-            npx --yes "@vscode/vsce@$VSCE_VERSION" publish --oidc --packagePath "$vsix" \
+            npx --yes "@vscode/vsce@$VSCE_VERSION" publish "${marketplace_auth[@]}" --packagePath "$vsix" \
               || { echo "::error::Marketplace: publishing $platform failed"; failed=1; }
             npx --yes "ovsx@$OVSX_VERSION" publish "$vsix" --trusted-publishing \
               || { echo "::error::Open VSX: publishing $platform failed"; failed=1; }
