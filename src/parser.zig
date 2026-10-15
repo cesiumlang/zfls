@@ -1340,8 +1340,8 @@ const Parser = struct {
                         if (new_var.isParameter()) {
                             const r = helpers.findWordInLine(line, name);
                             const col: usize = @intCast(@max(r.end, 0));
-                            if (R().PARAMETER_VAL.match(str.from(line, col))) |m| {
-                                const words = try str.splitWhitespace(a, str.strip(m.group(1) orelse ""));
+                            if (helpers.parameterValue(str.from(line, col))) |value| {
+                                const words = try str.splitWhitespace(a, value);
                                 new_var.param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
                             }
                         }

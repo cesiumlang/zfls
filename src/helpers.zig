@@ -80,6 +80,40 @@ pub fn stripStrings(a: Allocator, in_line: []const u8, maintain_len: bool) ![]co
     return R().DQ_STRING.sub(a, "", tmp);
 }
 
+/// The value of a PARAMETER given as `= value` right after its name: up to
+/// the next comma that is not inside parentheses, brackets or a string, so a
+/// function call or an array constructor is whole (upstream #124). Null when
+/// there is no `=` (or an `=>`).
+pub fn parameterValue(after_name: []const u8) ?[]const u8 {
+    const t = str.lstrip(after_name);
+    if (t.len == 0 or t[0] != '=' or (t.len > 1 and t[1] == '>')) return null;
+    const v = t[1..];
+    var depth: isize = 0;
+    var quote: u8 = 0;
+    var end = v.len;
+    for (v, 0..) |c, i| {
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        switch (c) {
+            '\'', '"' => quote = c,
+            '!' => {
+                end = i;
+                break;
+            },
+            '(', '[' => depth += 1,
+            ')', ']' => depth -= 1,
+            ',' => if (depth == 0) {
+                end = i;
+                break;
+            },
+            else => {},
+        }
+    }
+    return str.strip(v[0..end]);
+}
+
 /// Split an argument list at its own commas: not those inside parentheses,
 /// brackets or string literals, as in `arr(2, 3), 'a,b'` (upstream #87). The
 /// pieces are slices of `s`.
@@ -387,6 +421,11 @@ test "helper functions" {
     try testing.expectEqualStrings("arr(2, 3)", args[0]);
     try testing.expectEqualStrings(" 'a,b'", args[2]);
     try testing.expectEqualStrings(" ", args[3]);
+
+    try testing.expectEqualStrings("selected_real_kind(6, 30)", parameterValue(" = selected_real_kind(6, 30), b = 2").?);
+    try testing.expectEqualStrings("[1, 2, 3]", parameterValue("=[1, 2, 3]").?);
+    try testing.expectEqualStrings("'a,b'", parameterValue(" = 'a,b' , x").?);
+    try testing.expect(parameterValue(" => null()") == null);
 
     try testing.expectEqualStrings("a, b, (c, d)", getParenSubstring("some line(a, b, (c, d))").?);
     try testing.expect(getParenSubstring("some line(a, b") == null);

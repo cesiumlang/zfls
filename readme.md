@@ -177,6 +177,9 @@ zfls deliberately differs from fortls in a few places:
 - Links that would loop (for example type-bound procedures or `ASSOCIATE`
   names that refer to each other while code is being edited) are left
   unresolved; fortls hits a recursion error on them.
+- Hover shows the whole value of a parameter. fortls cuts it at the first
+  parenthesis or bracket, so `selected_real_kind(6)` shows as
+  `selected_real_kind`.
 
 ## Licenses
 

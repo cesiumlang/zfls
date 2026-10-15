@@ -123,6 +123,7 @@ WORD = re.compile(
 # Typos fixed in zfls's copy of the fortls data files
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
+PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -255,6 +256,9 @@ def normalize(v):
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
+        # fortls cuts the value of a parameter at its first parenthesis or
+        # bracket; zfls shows it whole (upstream issue 124)
+        v = PARAM_VALUE.sub(r"\1", v)
         # zfls reformats the intrinsic manual pages for markdownlint
         m = INTRINSIC_DOC.match(v)
         if m:

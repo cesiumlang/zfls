@@ -112,7 +112,7 @@ test "#124 hover on a parameter shows a value that is a function call" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(124, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "real(sp)", 0, 5), "selected_real_kind(6)"));
+    try h.check(124, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "real(sp)", 0, 5), "selected_real_kind(6)"));
 }
 
 test "#118 hover on a fixed-form function that the caller declares with a type" {

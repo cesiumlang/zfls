@@ -49,7 +49,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | known failure | same |
 | [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | known failure | same |
 | [#172](https://github.com/fortran-lang/fortls/issues/172) | coarray dummy argument | diagnostics | fixed (patched) | fails, same cause |
-| [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | known failure | same |
+| [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | fixed (patched) | fails, same cause |
 | [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | known failure | same |
 | [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | known failure | same |
 | [#87](https://github.com/fortran-lang/fortls/issues/87) | signature help with commas inside an argument | hover | fixed (patched) | fails, same cause |
