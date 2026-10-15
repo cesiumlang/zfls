@@ -368,7 +368,7 @@ pub const Obj = struct {
         // Close previous "TYPE IS" region if open
         if (file_ast.current_scope) |cs| {
             if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) {
-                file_ast.endScope(line_number, true);
+                try file_ast.endScope(line_number, true);
             }
         }
         return o;
@@ -1624,9 +1624,9 @@ pub const Ast = struct {
         }
     }
 
-    pub fn endScope(self: *Ast, line_number: i64, check: bool) void {
+    pub fn endScope(self: *Ast, line_number: i64, check: bool) !void {
         if ((self.current_scope == null or self.current_scope == self.none_scope) and check) {
-            self.end_errors.append(self.allocator(), .{ -1, line_number }) catch {};
+            try self.end_errors.append(self.allocator(), .{ -1, line_number });
             return;
         }
         self.current_scope.?.end(line_number);
@@ -1774,7 +1774,7 @@ pub const Ast = struct {
     }
 
     pub fn closeFile(self: *Ast, line_number: i64) !void {
-        while (self.current_scope != null) self.endScope(line_number, false);
+        while (self.current_scope != null) try self.endScope(line_number, false);
         if (self.none_scope) |ns| {
             ns.end(line_number);
             for (self.scope_list.items, 0..) |s, i| if (s == ns) {
