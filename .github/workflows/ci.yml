@@ -247,7 +247,7 @@ jobs:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      - uses: mlugg/setup-zig@v2
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24: v2.2.1 on Node.js 24
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -355,7 +355,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - uses: mlugg/setup-zig@v2
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24: v2.2.1 on Node.js 24
         with:
           version: ${{ env.ZIG_VERSION }}
 
