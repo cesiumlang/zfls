@@ -916,14 +916,13 @@ pub const FortranFile = struct {
         var line_no = line_no_in;
         const cl = try self.getCodeLine(a, line_no, forward, backward, pp_content, false);
         var word_range: Range = .{ .start = -1, .end = -1 };
-        const word_lower = try std.ascii.allocLowerString(a, word);
-        if (cl.curr) |c| word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, c), word_lower);
+        if (cl.curr) |c| word_range = helpers.findWordInLineIgnoreCase(c, word);
         if (backward and word_range.start < 0) {
             var i: usize = cl.pre.len;
             var k: i64 = 0;
             while (i > 0) : (k += 1) {
                 i -= 1;
-                word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, cl.pre[i]), word_lower);
+                word_range = helpers.findWordInLineIgnoreCase(cl.pre[i], word);
                 if (word_range.start >= 0) {
                     line_no -= k + 1;
                     return .{ .line = line_no, .range = word_range };
@@ -932,7 +931,7 @@ pub const FortranFile = struct {
         }
         if (forward and word_range.start < 0) {
             for (cl.post, 0..) |l, i| {
-                word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, l), word_lower);
+                word_range = helpers.findWordInLineIgnoreCase(l, word);
                 if (word_range.start >= 0) {
                     line_no += @as(i64, @intCast(i)) + 1;
                     return .{ .line = line_no, .range = word_range };
