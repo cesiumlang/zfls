@@ -25,6 +25,8 @@ const Out = struct {
     io: Io,
     buf: std.ArrayList(u8) = .empty,
     a: Allocator,
+    /// What `fail` reported
+    fail_msg: []const u8 = "",
 
     fn print(self: *Out, comptime fmt: []const u8, args: anytype) void {
         self.buf.print(self.a, fmt, args) catch {};
@@ -37,11 +39,8 @@ const Out = struct {
     }
 };
 
-var out_global: ?*Out = null;
-var fail_msg: []const u8 = "";
-
-fn fail(a: Allocator, comptime fmt: []const u8, args: anytype) DebugError {
-    fail_msg = std.fmt.allocPrint(a, fmt, args) catch "debug error";
+fn fail(o: *Out, comptime fmt: []const u8, args: anytype) DebugError {
+    o.fail_msg = std.fmt.allocPrint(o.a, fmt, args) catch "debug error";
     return error.DebugFailed;
 }
 
@@ -49,8 +48,13 @@ fn separator(o: *Out) void {
     o.print("{s}\n", .{sep80});
 }
 
-fn parserTrace(msg: []const u8) void {
-    if (out_global) |o| o.print("{s}\n", .{msg});
+fn traceWrite(ctx: *anyopaque, msg: []const u8) void {
+    const o: *Out = @ptrCast(@alignCast(ctx));
+    o.print("{s}\n", .{msg});
+}
+
+fn traceTo(o: *Out) parser.Trace {
+    return .{ .ctx = o, .writeFn = traceWrite };
 }
 
 /// Run the requested debug mode; returns the process exit code
@@ -59,8 +63,6 @@ pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
     defer arena.deinit();
     const a = arena.allocator();
     var o: Out = .{ .io = io, .a = a };
-    out_global = &o;
-    defer out_global = null;
     var s = s_in;
     const result = blk: {
         if (s.debug_parser) break :blk debugParser(a, io, &o, &s);
@@ -69,7 +71,7 @@ pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
     };
     result catch |e| switch (e) {
         error.DebugFailed => {
-            o.print("ERROR: {s}\n", .{fail_msg});
+            o.print("ERROR: {s}\n", .{o.fail_msg});
             return 255;
         },
         else => return e,
@@ -77,9 +79,9 @@ pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
     return 0;
 }
 
-fn ensureFileAccessible(a: Allocator, io: Io, o: *Out, filepath: ?[]const u8) DebugError![]const u8 {
-    const fp = filepath orelse return fail(a, "File 'None' does not exist or is not accessible", .{});
-    if (!paths.isFile(io, fp)) return fail(a, "File '{s}' does not exist or is not accessible", .{fp});
+fn ensureFileAccessible(io: Io, o: *Out, filepath: ?[]const u8) DebugError![]const u8 {
+    const fp = filepath orelse return fail(o, "File 'None' does not exist or is not accessible", .{});
+    if (!paths.isFile(io, fp)) return fail(o, "File '{s}' does not exist or is not accessible", .{fp});
     o.print("  File = \"{s}\"\n", .{fp});
     return fp;
 }
@@ -133,17 +135,14 @@ fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !
 fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting parser\n", .{});
     separator(o);
-    const fp = try ensureFileAccessible(a, io, o, s.debug_filepath);
+    const fp = try ensureFileAccessible(io, o, s.debug_filepath);
     const cfg = try readConfig(a, io, o, s.debug_rootpath, s.config);
     o.print("  File = \"{s}\"\n", .{fp});
     const file = try parser.FortranFile.create(a, fp, cfg.pp_suffixes);
-    _ = file.loadFromDisk(io) catch |e| return fail(a, "Reading file failed: {s}", .{parser.describeFileError(e)});
+    _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
     o.print("  Detected format: {s}\n", .{if (file.fixed) "fixed" else "free"});
     o.print("\n{s}\nParser Output\n{s}\n\n", .{ sep80, sep80 });
-    parser.debug_hook = parserTrace;
-    defer parser.debug_hook = null;
-    const ast = try file.parse(io, &cfg.pp_defs, cfg.include_dirs);
-    parser.debug_hook = null;
+    const ast = try file.parse(io, &cfg.pp_defs, cfg.include_dirs, .{ .sort_keywords = true, .trace = traceTo(o) });
     if (ast.end_errors.items.len > 0) {
         o.print("\n=== Scope Errors ===\n\n", .{});
         for (ast.end_errors.items) |e| {
@@ -174,8 +173,8 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
 fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting preprocessor\n", .{});
     separator(o);
-    const fp = try ensureFileAccessible(a, io, o, s.debug_filepath);
-    const data = Io.Dir.cwd().readFileAlloc(io, fp, a, .limited(1 << 30)) catch return fail(a, "File '{s}' does not exist or is not accessible", .{fp});
+    const fp = try ensureFileAccessible(io, o, s.debug_filepath);
+    const data = Io.Dir.cwd().readFileAlloc(io, fp, a, .limited(1 << 30)) catch return fail(o, "File '{s}' does not exist or is not accessible", .{fp});
     var lines = try parser.splitLines(a, data);
     // like Python's readlines(): no empty element after a final newline
     if (lines.len > 0 and lines[lines.len - 1].len == 0) lines = lines[0 .. lines.len - 1];
@@ -183,10 +182,7 @@ fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     const cfg = try readConfig(a, io, o, root, s.config);
     const sep2 = sep75;
     o.print("\n{s}\nPreprocessor Pass:\n{s}\n", .{ sep2, sep2 });
-    parser.debug_hook = parserTrace;
-    defer parser.debug_hook = null;
-    const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs);
-    parser.debug_hook = null;
+    const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, traceTo(o));
     o.print("\n{s}\nPreprocessor Skipped Lines:\n{s}\n", .{ sep2, sep2 });
     for (res.skips) |sk| o.print("  [{d}, {d}]\n", .{ sk[0], sk[1] });
     o.print("\n{s}\nPreprocessor Macros:\n{s}\n", .{ sep2, sep2 });
@@ -231,11 +227,11 @@ fn posParams(r: *Req) !Value {
 }
 
 fn checkRequestParams(r: *Req, loc_needed: bool) !void {
-    _ = try ensureFileAccessible(r.a, r.io, r.o, r.s.debug_filepath);
+    _ = try ensureFileAccessible(r.io, r.o, r.s.debug_filepath);
     if (loc_needed) {
-        const line = r.s.debug_line orelse return fail(r.a, "'debug_line' not specified for debug request", .{});
+        const line = r.s.debug_line orelse return fail(r.o, "'debug_line' not specified for debug request", .{});
         r.o.print("  Line = {d}\n", .{line});
-        const char = r.s.debug_char orelse return fail(r.a, "'debug_char' not specified for debug request", .{});
+        const char = r.s.debug_char orelse return fail(r.o, "'debug_char' not specified for debug request", .{});
         r.o.print("  Char = {d}\n\n", .{char});
     }
 }
@@ -275,7 +271,7 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     var r: Req = .{ .gpa = gpa, .a = a, .io = io, .o = o, .s = &server.s, .server = server };
 
     if (s.debug_rootpath) |rp| {
-        if (!paths.isDir(io, rp)) return fail(a, "'debug_rootpath' not specified for debug request", .{});
+        if (!paths.isDir(io, rp)) return fail(o, "'debug_rootpath' not specified for debug request", .{});
         o.print("\nTesting \"initialize\" request:\n", .{});
         o.print("  Root = \"{s}\"\n", .{rp});
         _ = try server.dispatchPublic(a, "initialize", try json.from(a, .{ .rootPath = rp }));
@@ -334,7 +330,7 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     if (s.debug_workspace_symbols) |_| {
         try generic(&r, "workspace/symbol", false, struct {
             fn req(rq: *Req) !Value {
-                if (rq.s.debug_rootpath == null) return fail(rq.a, "'debug_rootpath' not specified for debug request", .{});
+                if (rq.s.debug_rootpath == null) return fail(rq.o, "'debug_rootpath' not specified for debug request", .{});
                 return rq.server.dispatchPublic(rq.a, "workspace/symbol", try json.from(rq.a, .{ .query = rq.s.debug_workspace_symbols.? }));
             }
         }.req, struct {

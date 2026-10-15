@@ -97,10 +97,8 @@ pub const Server = struct {
         errdefer self.pp_defs_arena.deinit();
         self.sync_type = if (self.s.incremental_sync) 2 else 1;
         self.src_ext_regex = try patterns.createSrcFileExtsStr(self.arena.allocator(), self.s.incl_suffixes.slice());
-        helpers.sort_keywords = true;
         self.intr = try intrinsics.load(gpa, false);
         errdefer self.intr.deinit();
-        helpers.sort_keywords = self.s.sort_keywords;
         try self.syncPpDefsFromSettings();
         return self;
     }
@@ -453,7 +451,10 @@ pub const Server = struct {
             gop.key_ptr.* = m.fqsn;
             gop.value_ptr.* = .{ .obj = m, .path = null };
         }
-        helpers.sort_keywords = self.s.sort_keywords;
+    }
+
+    fn parseOptions(self: *const Server) parser.Options {
+        return .{ .sort_keywords = self.s.sort_keywords };
     }
 
     fn addSourceDirs(self: *Server, a: Allocator) !void {
@@ -534,7 +535,7 @@ pub const Server = struct {
         const f = try FortranFile.create(self.gpa, filepath, self.ppSuffixes());
         errdefer f.destroy();
         _ = try f.loadFromDisk(self.io);
-        const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice()) catch return error.ParseFailed;
+        const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch return error.ParseFailed;
         // Emulate Python's recursion limit (deeply nested scopes)
         if (maxScopeDepth(ast) > self.s.recursion_limit) {
             ast.destroy();
@@ -1578,7 +1579,7 @@ pub const Server = struct {
             // Periodically reclaim memory of replaced ASTs
             if (self.retired.items.len >= 16) try self.fullRelink(a);
         } else if (file.preproc) {
-            const out = try file.preprocess(self.io, &self.pp_defs, &.{});
+            const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
             try self.mergePpDefs(&out.defs);
         }
         return .null;
@@ -1644,7 +1645,7 @@ pub const Server = struct {
             }
         }
         const f = file orelse return error.FileNotFound;
-        const ast_new = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice()) catch {
+        const ast_new = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch {
             self.log.err("Error while parsing file {s}", .{filepath});
             return error.ParseFailed;
         };
