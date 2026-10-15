@@ -1,0 +1,39 @@
+name: Marketplace identity
+
+# Run by hand (Actions > Marketplace identity > Run workflow, on main) once,
+# to set up publishing to the Visual Studio Marketplace without a token: it
+# signs in as the managed identity in the AZURE_* repository variables and
+# prints the ID to add, with the Contributor role, as a member of the
+# `cesiumlang` publisher (Microsoft's "Retrieve Managed Identity Resource
+# ID" step, from GitHub Actions instead of Azure Pipelines).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  identity:
+    name: Show the identity to add to the publisher
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Visual Studio profile of the identity
+        run: |
+          # 499b84ac-...: the Azure DevOps (Visual Studio) resource
+          profile=$(az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798)
+          echo "$profile"
+          id=$(echo "$profile" | jq -r .id)
+          {
+            echo "### Add this member to the Marketplace publisher"
+            echo
+            echo "ID: \`$id\` (role: Contributor)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
