@@ -1380,7 +1380,7 @@ const Parser = struct {
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
-                dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
             .do_ => |label| {
                 counters.do_ += 1;
