@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const json = @import("json.zig");
+const lsp = @import("lsp.zig");
 const helpers = @import("helpers.zig");
 const patterns = @import("patterns.zig");
 const regex = @import("regex.zig");
@@ -172,12 +173,9 @@ pub const Server = struct {
         try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .id = id, .result = result }));
     }
 
-    fn writeError(self: *Server, a: Allocator, id: Value, code: i64, message: []const u8, data: ?Value) !void {
-        var e = json.newObject();
-        try json.put(a, &e, "code", json.integer(code));
-        try json.put(a, &e, "message", json.string(message));
-        if (data) |d| try json.put(a, &e, "data", d);
-        try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .id = id, .@"error" = e }));
+    fn writeError(self: *Server, a: Allocator, id: Value, code: i64, message: []const u8, data: ?lsp.ErrorData) !void {
+        const err: lsp.ResponseError = .{ .code = code, .message = message, .data = data };
+        try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .id = id, .@"error" = err }));
     }
 
     fn logSendFailure(self: *Server, e: anyerror) void {
@@ -185,7 +183,7 @@ pub const Server = struct {
     }
 
     pub fn postMessage(self: *Server, a: Allocator, msg: []const u8, severity: i32) void {
-        self.sendNotification(a, "window/showMessage", json.from(a, .{ .type = severity, .message = msg }) catch return) catch |e| self.logSendFailure(e);
+        self.sendNotification(a, "window/showMessage", json.from(a, lsp.ShowMessageParams{ .type = severity, .message = msg }) catch return) catch |e| self.logSendFailure(e);
         switch (severity) {
             1 => self.log.err("{s}", .{msg}),
             2 => self.log.warn("{s}", .{msg}),
@@ -211,11 +209,11 @@ pub const Server = struct {
         if (result) |res| {
             self.writeResponse(a, id.?, res) catch |e| self.logSendFailure(e);
         } else |e| switch (e) {
+            error.InvalidParams => self.writeError(a, id.?, -32602, "invalid params", null) catch |e2| self.logSendFailure(e2),
             error.MethodNotFound => self.writeError(a, id.?, -32601, std.fmt.allocPrint(a, "method {s} not found", .{method}) catch "method not found", null) catch |e2| self.logSendFailure(e2),
             else => {
                 self.log.warn("error handling request {s}: {s}", .{ method, @errorName(e) });
-                const data = json.from(a, .{ .traceback = @errorName(e) }) catch json.null_value;
-                self.writeError(a, id.?, -32603, @errorName(e), data) catch |e2| self.logSendFailure(e2);
+                self.writeError(a, id.?, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
             },
         }
     }
@@ -226,26 +224,27 @@ pub const Server = struct {
     }
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
-        if (std.mem.eql(u8, method, "initialize")) return self.serveInitialize(a, params);
-        if (std.mem.eql(u8, method, "textDocument/documentSymbol")) return self.serveDocumentSymbols(a, params);
-        if (std.mem.eql(u8, method, "textDocument/completion")) return self.serveAutocomplete(a, params);
-        if (std.mem.eql(u8, method, "textDocument/signatureHelp")) return self.serveSignature(a, params);
-        if (std.mem.eql(u8, method, "textDocument/definition")) return self.serveDefinition(a, params);
-        if (std.mem.eql(u8, method, "textDocument/references")) return self.serveReferences(a, params);
-        if (std.mem.eql(u8, method, "textDocument/documentHighlight")) return self.serveReferences(a, params);
-        if (std.mem.eql(u8, method, "textDocument/hover")) return self.serveHover(a, params);
-        if (std.mem.eql(u8, method, "textDocument/implementation")) return self.serveImplementation(a, params);
-        if (std.mem.eql(u8, method, "textDocument/rename")) return self.serveRename(a, params);
-        if (std.mem.eql(u8, method, "textDocument/didOpen")) return self.serveOnSave(a, params, true, false);
-        if (std.mem.eql(u8, method, "textDocument/didSave")) return self.serveOnSave(a, params, false, false);
-        if (std.mem.eql(u8, method, "textDocument/didClose")) return self.serveOnSave(a, params, false, true);
-        if (std.mem.eql(u8, method, "textDocument/didChange")) return self.serveOnChange(a, params);
-        if (std.mem.eql(u8, method, "textDocument/codeAction")) return self.serveCodeActions(a, params);
-        if (std.mem.eql(u8, method, "workspace/symbol")) return self.serveWorkspaceSymbol(a, params);
-        if (std.mem.eql(u8, method, "initialized") or std.mem.eql(u8, method, "workspace/didChangeWatchedFiles") or
-            std.mem.eql(u8, method, "workspace/didChangeConfiguration") or std.mem.eql(u8, method, "$/cancelRequest") or
-            std.mem.eql(u8, method, "$/setTrace") or std.mem.eql(u8, method, "shutdown")) return .null;
-        if (std.mem.eql(u8, method, "exit")) {
+        const eql = std.mem.eql;
+        if (eql(u8, method, "initialize")) return self.serveInitialize(a, try json.to(lsp.InitializeParams, a, params));
+        if (eql(u8, method, "textDocument/documentSymbol")) return self.serveDocumentSymbols(a, try json.to(lsp.TextDocumentParams, a, params));
+        if (eql(u8, method, "textDocument/completion")) return self.serveAutocomplete(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/signatureHelp")) return self.serveSignature(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/definition")) return self.serveDefinition(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/references")) return self.serveReferences(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/documentHighlight")) return self.serveReferences(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/hover")) return self.serveHover(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/implementation")) return self.serveImplementation(a, try json.to(lsp.PositionParams, a, params));
+        if (eql(u8, method, "textDocument/rename")) return self.serveRename(a, try json.to(lsp.RenameParams, a, params));
+        if (eql(u8, method, "textDocument/didOpen")) return self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), true, false);
+        if (eql(u8, method, "textDocument/didSave")) return self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, false);
+        if (eql(u8, method, "textDocument/didClose")) return self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, true);
+        if (eql(u8, method, "textDocument/didChange")) return self.serveOnChange(a, try json.to(lsp.DidChangeParams, a, params));
+        if (eql(u8, method, "textDocument/codeAction")) return self.serveCodeActions(a, try json.to(lsp.CodeActionParams, a, params));
+        if (eql(u8, method, "workspace/symbol")) return self.serveWorkspaceSymbol(a, try json.to(lsp.WorkspaceSymbolParams, a, params));
+        if (eql(u8, method, "initialized") or eql(u8, method, "workspace/didChangeWatchedFiles") or
+            eql(u8, method, "workspace/didChangeConfiguration") or eql(u8, method, "$/cancelRequest") or
+            eql(u8, method, "$/setTrace") or eql(u8, method, "shutdown")) return .null;
+        if (eql(u8, method, "exit")) {
             self.serveExit();
             return .null;
         }
@@ -265,16 +264,6 @@ pub const Server = struct {
 
     // ----------------------------------------------------------------------
     // Helpers
-
-    fn uriOf(params: Value) []const u8 {
-        return (params.path(&.{ "textDocument", "uri" }) orelse json.null_value).asStr() orelse "";
-    }
-
-    fn posOf(params: Value) struct { line: i64, char: i64 } {
-        const line = (params.path(&.{ "position", "line" }) orelse json.null_value).asInt() orelse 0;
-        const char = (params.path(&.{ "position", "character" }) orelse json.null_value).asInt() orelse 0;
-        return .{ .line = line, .char = char };
-    }
 
     fn pathFromUri(self: *Server, a: Allocator, uri: []const u8) ![]const u8 {
         return paths.pathFromUri(self.io, a, uri);
@@ -301,20 +290,17 @@ pub const Server = struct {
     }
 
     /// `range_json` with optional end values falling back to the start
-    fn rangeJson(a: Allocator, file: ?*const FortranFile, sln: i64, sch: i64, eln_in: ?i64, ech_in: ?i64) !Value {
+    fn rangeOf(file: ?*const FortranFile, sln: i64, sch: i64, eln_in: ?i64, ech_in: ?i64) lsp.Range {
         const eln = if (eln_in) |e| (if (e != 0) e else sln) else sln;
         const ech = if (ech_in) |e| (if (e != 0) e else sch) else sch;
-        return json.from(a, .{
+        return .{
             .start = .{ .line = sln, .character = toLspCol(file, sln, sch) },
             .end = .{ .line = eln, .character = toLspCol(file, eln, ech) },
-        });
+        };
     }
 
-    fn uriJson(a: Allocator, uri: []const u8, file: ?*const FortranFile, sln: i64, sch: i64, eln: ?i64, ech: ?i64) !Value {
-        var v = json.newObject();
-        try json.put(a, &v, "uri", json.string(uri));
-        try json.put(a, &v, "range", try rangeJson(a, file, sln, sch, eln, ech));
-        return v;
+    fn locationOf(uri: []const u8, file: ?*const FortranFile, sln: i64, sch: i64, eln: ?i64, ech: ?i64) lsp.Location {
+        return .{ .uri = uri, .range = rangeOf(file, sln, sch, eln, ech) };
     }
 
     fn fileForPath(self: *Server, path: ?[]const u8) ?*FortranFile {
@@ -322,45 +308,35 @@ pub const Server = struct {
         return self.workspace.get(p);
     }
 
-    fn builtDiagJson(self: *Server, a: Allocator, file: *const FortranFile, d: objects.BuiltDiag) !Value {
-        var v = json.newObject();
-        if (d.cols_are_codepoints) {
+    fn diagnosticOf(self: *Server, a: Allocator, file: *const FortranFile, d: objects.BuiltDiag) !lsp.Diagnostic {
+        const range: lsp.Range = if (d.cols_are_codepoints) blk: {
             const eln = if (d.eln) |e| (if (e != 0) e else d.sln) else d.sln;
             const ech = if (d.ech) |e| (if (e != 0) e else d.sch) else d.sch;
-            try json.put(a, &v, "range", try json.from(a, .{
+            break :blk .{
                 .start = .{ .line = d.sln, .character = d.sch },
                 .end = .{ .line = eln, .character = ech },
-            }));
-        } else {
-            try json.put(a, &v, "range", try rangeJson(a, file, d.sln, d.sch, d.eln, d.ech));
-        }
-        try json.put(a, &v, "message", json.string(d.message));
-        try json.put(a, &v, "severity", json.integer(d.severity));
+            };
+        } else rangeOf(file, d.sln, d.sch, d.eln, d.ech);
+        var related: ?[]const lsp.DiagnosticRelatedInformation = null;
         if (d.related) |rel| {
-            const rel_path = rel.path orelse "None";
-            const uri = try paths.pathToUri(a, rel_path);
-            var loc = try uriJson(a, uri, self.fileForPath(rel.path), rel.line, 0, null, null);
-            _ = &loc;
-            var info = json.newObject();
-            try json.put(a, &info, "location", loc);
-            try json.put(a, &info, "message", json.string(rel.message));
-            var arr = json.newArray();
-            try json.append(a, &arr, info);
-            try json.put(a, &v, "relatedInformation", arr);
+            const uri = try paths.pathToUri(a, rel.path orelse "None");
+            const info = try a.alloc(lsp.DiagnosticRelatedInformation, 1);
+            info[0] = .{ .location = locationOf(uri, self.fileForPath(rel.path), rel.line, 0, null, null), .message = rel.message };
+            related = info;
         }
-        return v;
+        return .{ .range = range, .message = d.message, .severity = d.severity, .relatedInformation = related };
     }
 
     // ----------------------------------------------------------------------
     // initialize
 
-    fn serveInitialize(self: *Server, a: Allocator, params: Value) !Value {
+    fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
         const sa = self.arena.allocator();
         var root_in: []const u8 = "";
-        if (params.get("rootUri")) |v| if (v.asStr()) |s| if (s.len > 0) {
+        if (params.rootUri) |s| if (s.len > 0) {
             root_in = s;
         };
-        if (root_in.len == 0) if (params.get("rootPath")) |v| if (v.asStr()) |s| {
+        if (root_in.len == 0) if (params.rootPath) |s| {
             root_in = s;
         };
         self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
@@ -375,30 +351,13 @@ pub const Server = struct {
         try self.workspaceInit(a);
         self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("version.zig").reported});
 
-        var caps = json.newObject();
-        try json.put(a, &caps, "completionProvider", try json.from(a, .{
-            .resolveProvider = false,
-            .triggerCharacters = &[_][]const u8{"%"},
-        }));
-        try json.put(a, &caps, "definitionProvider", .{ .bool = true });
-        try json.put(a, &caps, "documentSymbolProvider", .{ .bool = true });
-        try json.put(a, &caps, "documentHighlightProvider", .{ .bool = true });
-        try json.put(a, &caps, "referencesProvider", .{ .bool = true });
-        try json.put(a, &caps, "hoverProvider", .{ .bool = true });
-        try json.put(a, &caps, "implementationProvider", .{ .bool = true });
-        try json.put(a, &caps, "renameProvider", .{ .bool = true });
-        try json.put(a, &caps, "workspaceSymbolProvider", .{ .bool = true });
-        try json.put(a, &caps, "textDocumentSync", json.integer(self.sync_type));
-        if (self.s.use_signature_help) {
-            try json.put(a, &caps, "signatureHelpProvider", try json.from(a, .{
-                .triggerCharacters = &[_][]const u8{ "(", "," },
-            }));
-        }
-        if (self.s.enable_code_actions) try json.put(a, &caps, "codeActionProvider", .{ .bool = true });
         if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
-        var res = json.newObject();
-        try json.put(a, &res, "capabilities", caps);
-        return res;
+        return json.from(a, lsp.InitializeResult{ .capabilities = .{
+            .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{"%"} },
+            .textDocumentSync = self.sync_type,
+            .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
+            .codeActionProvider = if (self.s.enable_code_actions) true else null,
+        } });
     }
 
     /// Problems with the user's configuration file are posted to the client;
@@ -758,11 +717,9 @@ pub const Server = struct {
     // ----------------------------------------------------------------------
     // Workspace symbols / document symbols
 
-    fn serveWorkspaceSymbol(self: *Server, a: Allocator, params: Value) !Value {
-        const query = try std.ascii.allocLowerString(a, (params.get("query") orelse json.null_value).asStr() orelse "");
-        const Item = struct { name: []const u8, v: Value };
-        var items: std.ArrayList(Item) = .empty;
-        for (try objects.findInWorkspace(self.env(a), query, false, false)) |cand| {
+    fn serveWorkspaceSymbol(self: *Server, a: Allocator, params: lsp.WorkspaceSymbolParams) !Value {
+        var items: std.ArrayList(lsp.SymbolInformation) = .empty;
+        for (try objects.findInWorkspace(self.env(a), params.query, false, false)) |cand| {
             const kind: i64 = switch (cand.getType(false)) {
                 1 => 2,
                 2 => 6,
@@ -773,48 +730,42 @@ pub const Server = struct {
                 7 => 6,
                 else => 1,
             };
-            var v = json.newObject();
-            try json.put(a, &v, "name", json.string(cand.name));
-            try json.put(a, &v, "kind", json.integer(kind));
-            try json.put(a, &v, "location", try json.from(a, .{
-                .uri = try paths.pathToUri(a, cand.file_ast.path orelse "None"),
-                .range = .{
-                    .start = .{ .line = cand.sline - 1, .character = 0 },
-                    .end = .{ .line = cand.eline - 1, .character = 0 },
+            const container: ?[]const u8 = if (std.mem.indexOf(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
+            try items.append(a, .{
+                .name = cand.name,
+                .kind = kind,
+                .location = .{
+                    .uri = try paths.pathToUri(a, cand.file_ast.path orelse "None"),
+                    .range = .{
+                        .start = .{ .line = cand.sline - 1, .character = 0 },
+                        .end = .{ .line = cand.eline - 1, .character = 0 },
+                    },
                 },
-            }));
-            if (std.mem.indexOf(u8, cand.fqsn, "::")) |i| if (i > 0) {
-                try json.put(a, &v, "containerName", json.string(cand.fqsn[0..i]));
-            };
-            try items.append(a, .{ .name = cand.name, .v = v });
+                .containerName = container,
+            });
         }
-        std.mem.sort(Item, items.items, {}, struct {
-            fn lt(_: void, x: Item, y: Item) bool {
+        std.mem.sort(lsp.SymbolInformation, items.items, {}, struct {
+            fn lt(_: void, x: lsp.SymbolInformation, y: lsp.SymbolInformation) bool {
                 return std.mem.order(u8, x.name, y.name) == .lt;
             }
         }.lt);
-        var arr = json.newArray();
-        for (items.items) |it| try json.append(a, &arr, it.v);
-        return arr;
+        return json.from(a, items.items);
     }
 
-    fn symbolJson(a: Allocator, name: []const u8, kind: i64, uri: []const u8, sln: i64, eln: ?i64, container: ?[]const u8) !Value {
-        var v = json.newObject();
-        try json.put(a, &v, "name", json.string(name));
-        try json.put(a, &v, "kind", json.integer(kind));
-        var loc = json.newObject();
-        try json.put(a, &loc, "uri", json.string(uri));
-        try json.put(a, &loc, "range", try rangeJson(a, null, sln, 0, eln, 0));
-        try json.put(a, &v, "location", loc);
-        if (container) |c| if (c.len > 0) try json.put(a, &v, "containerName", json.string(c));
-        return v;
+    fn symbolOf(name: []const u8, kind: i64, uri: []const u8, sln: i64, eln: ?i64, container: ?[]const u8) lsp.SymbolInformation {
+        return .{
+            .name = name,
+            .kind = kind,
+            .location = locationOf(uri, null, sln, 0, eln, 0),
+            .containerName = if (container) |c| (if (c.len > 0) c else null) else null,
+        };
     }
 
-    fn serveDocumentSymbols(self: *Server, a: Allocator, params: Value) !Value {
-        const uri = uriOf(params);
+    fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
+        const uri = params.textDocument.uri;
         const file = (try self.fileFromUri(a, uri)) orelse return json.newArray();
         const ast = file.ast orelse return json.newArray();
-        var out = json.newArray();
+        var out: std.ArrayList(lsp.SymbolInformation) = .empty;
         for (try ast.getScopes(a, null)) |scope| {
             if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.SELECT_TYPE_ID) continue;
             const tree = try str.split(a, scope.fqsn, "::");
@@ -825,14 +776,14 @@ pub const Server = struct {
                 scope_type = mapDocSymbolType(scope.getType(false), false);
             }
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
-            try json.append(a, &out, try symbolJson(a, scope.name, scope_type, uri, scope.sline - 1, scope.eline - 1, container));
+            try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline - 1, scope.eline - 1, container));
             if (scope.getType(false) == C.CLASS_TYPE_ID and !self.s.symbol_skip_mem) {
                 for (scope.children.items) |child| {
-                    try json.append(a, &out, try symbolJson(a, child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline - 1, null, scope.name));
+                    try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline - 1, null, scope.name));
                 }
             }
         }
-        return out;
+        return json.from(a, out.items);
     }
 
     fn mapDocSymbolType(t: i32, in_class: bool) i64 {
@@ -875,7 +826,11 @@ pub const Server = struct {
                     try childCandidates(a, child, only_list, filter_public, false, out);
                 } else {
                     if (nonly > 0) {
-                        const lname = try std.ascii.allocLowerString(a, child.name);
+                        var buf: [256]u8 = undefined;
+                        const lname = if (child.name.len <= buf.len)
+                            std.ascii.lowerString(&buf, child.name)
+                        else
+                            try std.ascii.allocLowerString(a, child.name);
                         if (!only_list.?.contains(lname)) continue;
                     }
                     try out.append(a, child);
@@ -912,10 +867,10 @@ pub const Server = struct {
                     for (tmp.items) |obj| {
                         try var_list.append(a, obj);
                         var rev: ?[]const u8 = null;
-                        const lname = try std.ascii.allocLowerString(a, obj.name);
-                        // reversed rename map (last key wins for duplicate values)
+                        // reversed rename map (last key wins for duplicate values);
+                        // the values are lowercase
                         for (use_info.rename_map.keys.items, use_info.rename_map.values.items) |k, v| {
-                            if (std.mem.eql(u8, v, lname)) rev = k;
+                            if (std.ascii.eqlIgnoreCase(v, obj.name)) rev = k;
                         }
                         try rename_list.append(a, rev);
                     }
@@ -950,7 +905,7 @@ pub const Server = struct {
         var out_renames: std.ArrayList(?[]const u8) = .empty;
         for (var_list.items, rename_list.items) |v, rn| {
             const name = rn orelse v.name;
-            if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, name), var_prefix)) {
+            if (std.ascii.startsWithIgnoreCase(name, var_prefix)) {
                 try out_objs.append(a, v);
                 try out_renames.append(a, rn);
             }
@@ -968,12 +923,12 @@ pub const Server = struct {
         };
     }
 
-    fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, name_replace: ?[]const u8, is_interface: bool, is_member: bool) !Value {
-        var v = json.newObject();
+    fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, name_replace: ?[]const u8, is_interface: bool, is_member: bool) !lsp.CompletionItem {
         var call_sig: ?[]const u8 = null;
-        try json.put(a, &v, "label", json.string(candidate.name));
+        var label = candidate.name;
+        var insert_text: ?[]const u8 = null;
         if (!name_only) {
-            if (name_replace) |nr| try json.put(a, &v, "label", json.string(nr));
+            if (name_replace) |nr| label = nr;
             const sn = try candidate.getSnippet(a, name_replace, -1);
             call_sig = sn.call;
             var snippet = sn.snippet;
@@ -985,38 +940,41 @@ pub const Server = struct {
                         s = s[0..arg_open];
                     };
                 }
-                try json.put(a, &v, "insertText", json.string(s));
-                try json.put(a, &v, "insertTextFormat", json.integer(2));
+                insert_text = s;
             }
         }
         var kind = mapCompletionKind(candidate.getType(false));
         if (is_member and kind == 3) kind = 2;
-        try json.put(a, &v, "kind", json.integer(kind));
         var detail = try candidate.getDesc(a);
         if (call_sig) |cs| detail = try std.fmt.allocPrint(a, "{s} {s}", .{ detail, cs });
-        try json.put(a, &v, "detail", json.string(detail));
+        var documentation: ?lsp.MarkupContent = null;
         const hover_msg = try candidate.getHoverMd(a, true, -1);
         if (hover_msg.len > 0) {
-            const value = try str.replaceFirst(a, hover_msg, "```{langid}", try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language}));
-            try json.put(a, &v, "documentation", try json.from(a, .{ .kind = "markdown", .value = value }));
+            documentation = .{ .value = try str.replaceFirst(a, hover_msg, "```{langid}", try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language})) };
         }
-        return v;
+        return .{
+            .label = label,
+            .insertText = insert_text,
+            .insertTextFormat = if (insert_text != null) lsp.snippet_format else null,
+            .kind = kind,
+            .detail = detail,
+            .documentation = documentation,
+        };
     }
 
-    fn serveAutocomplete(self: *Server, a: Allocator, params: Value) !Value {
-        const uri = uriOf(params);
+    fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+        const uri = params.textDocument.uri;
         const file = (try self.fileFromUri(a, uri)) orelse return .null;
         const ast = file.ast orelse return .null;
-        const pos = posOf(params);
-        const ac_line = pos.line;
-        const ac_char = toByteCol(file, ac_line, pos.char);
+        const ac_line = params.position.line;
+        const ac_char = toByteCol(file, ac_line, params.position.character);
         const cl = try file.getCodeLine(a, ac_line, false, true, false, true);
         const line_prefix = (try helpers.getLinePrefix(a, cl.pre, cl.curr, ac_char, true)) orelse return .null;
         const var_stack = try helpers.getVarStack(a, line_prefix);
         const is_member = var_stack.len > 1;
         var var_prefix = str.strip(var_stack[var_stack.len - 1]);
 
-        var item_list = json.newArray();
+        var item_list: std.ArrayList(lsp.CompletionItem) = .empty;
         var name_only = self.s.autocomplete_name_only;
         var public_only = false;
         var include_globals = true;
@@ -1045,11 +1003,11 @@ pub const Server = struct {
             .mod_only => {
                 for (self.obj_tree.values()) |e| {
                     const cand = e.obj;
-                    if (cand.getType(false) == C.MODULE_TYPE_ID and std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
-                        try json.append(a, &item_list, try self.buildComp(a, cand, true, null, false, false));
+                    if (cand.getType(false) == C.MODULE_TYPE_ID and std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
+                        try item_list.append(a, try self.buildComp(a, cand, true, null, false, false));
                     }
                 }
-                return item_list;
+                return json.from(a, item_list.items);
             },
             .mod_mems => {
                 name_only = true;
@@ -1116,16 +1074,16 @@ pub const Server = struct {
                     }
                 }
                 for (try self.intr.keywordsFor(a, key_context)) |cand| {
-                    if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
-                        try json.append(a, &item_list, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
+                    if (std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
+                        try item_list.append(a, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
                     }
                 }
-                return item_list;
+                return json.from(a, item_list.items);
             },
             .first => {
                 for (try self.intr.keywordsFor(a, 0)) |cand| {
-                    if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
-                        try json.append(a, &item_list, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
+                    if (std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
+                        try item_list.append(a, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
                     }
                 }
             },
@@ -1148,13 +1106,13 @@ pub const Server = struct {
                     };
                     if (dup) continue;
                     try seen.append(a, text);
-                    try json.append(a, &item_list, try self.buildComp(a, member, self.s.autocomplete_name_only, name_replace, true, is_member));
+                    try item_list.append(a, try self.buildComp(a, member, self.s.autocomplete_name_only, name_replace, true, is_member));
                 }
                 continue;
             }
-            try json.append(a, &item_list, try self.buildComp(a, cand, name_only, name_replace, false, false));
+            try item_list.append(a, try self.buildComp(a, cand, name_only, name_replace, false, false));
         }
-        return item_list;
+        return json.from(a, item_list.items);
     }
 
     // ----------------------------------------------------------------------
@@ -1244,11 +1202,10 @@ pub const Server = struct {
         return null;
     }
 
-    fn definitionAt(self: *Server, a: Allocator, params: Value, hover_req: bool) !?struct { file: *FortranFile, obj: *Obj, line: i64, col: usize } {
-        const uri = uriOf(params);
-        const file = (try self.fileFromUri(a, uri)) orelse return null;
-        const pos = posOf(params);
-        const col = toByteCol(file, pos.line, pos.char);
+    fn definitionAt(self: *Server, a: Allocator, params: lsp.PositionParams, hover_req: bool) !?struct { file: *FortranFile, obj: *Obj, line: i64, col: usize } {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
+        const pos = params.position;
+        const col = toByteCol(file, pos.line, pos.character);
         const obj = (try self.getDefinition(a, file, pos.line, col, hover_req)) orelse return null;
         return .{ .file = file, .obj = obj, .line = pos.line, .col = col };
     }
@@ -1263,16 +1220,16 @@ pub const Server = struct {
             schar = 0;
             echar = 0;
         }
-        return uriJson(a, try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar);
+        return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
     }
 
-    fn serveDefinition(self: *Server, a: Allocator, params: Value) !Value {
+    fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
         return .null;
     }
 
-    fn serveHover(self: *Server, a: Allocator, params: Value) !Value {
+    fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, true)) orelse return .null;
         const var_obj = d.obj;
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
@@ -1300,7 +1257,7 @@ pub const Server = struct {
             }
         }
         if (hover_array.items.len == 0) return .null;
-        return json.from(a, .{ .contents = .{ .kind = "markdown", .value = try std.mem.join(a, "\n", hover_array.items) } });
+        return json.from(a, lsp.Hover{ .contents = .{ .value = try std.mem.join(a, "\n", hover_array.items) } });
     }
 
     /// `fortran_md(...).format(langid=...)`
@@ -1309,7 +1266,7 @@ pub const Server = struct {
         return pyFormatLangid(a, md, self.s.hover_language);
     }
 
-    fn serveImplementation(self: *Server, a: Allocator, params: Value) !Value {
+    fn serveImplementation(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         const var_obj = d.obj;
         if (var_obj.kind == .intrinsic) return .null;
@@ -1325,13 +1282,11 @@ pub const Server = struct {
     // ----------------------------------------------------------------------
     // Signature help
 
-    fn serveSignature(self: *Server, a: Allocator, params: Value) !Value {
-        const uri = uriOf(params);
-        const file = (try self.fileFromUri(a, uri)) orelse return .null;
+    fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
         const ast = file.ast orelse return .null;
-        const pos = posOf(params);
-        const sig_line = pos.line;
-        const sig_char = toByteCol(file, sig_line, pos.char);
+        const sig_line = params.position.line;
+        const sig_char = toByteCol(file, sig_line, params.position.character);
         const cl = try file.getCodeLine(a, sig_line, false, true, false, true);
         const curr_line = cl.curr orelse return .null;
         const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, sig_char, true)) orelse return .null;
@@ -1376,17 +1331,10 @@ pub const Server = struct {
         const sig = try vo.getSignature(a, -1);
         const label = sig.label orelse return .null;
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
-        var params_json = json.newArray();
-        for (sig.params) |p| {
-            var pv = json.newObject();
-            try json.put(a, &pv, "label", json.string(p.label));
-            if (p.doc_md) |md| {
-                try json.put(a, &pv, "documentation", try json.from(a, .{
-                    .kind = "markdown",
-                    .value = try str.replaceFirst(a, md, "```{langid}", lang_fence),
-                }));
-            }
-            try json.append(a, &params_json, pv);
+        const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
+        for (sig.params, parameters) |p, *pv| {
+            pv.* = .{ .label = p.label };
+            if (p.doc_md) |md| pv.documentation = .{ .value = try str.replaceFirst(a, md, "```{langid}", lang_fence) };
         }
         // Find current parameter by index or by last arg with optional name
         var param_num: i64 = @as(i64, @intCast(arg_strings.len)) - 1;
@@ -1397,21 +1345,9 @@ pub const Server = struct {
                 if (opt_num) |o| param_num = o + 1;
             }
         } else param_num = opt_num.?;
-        var signature = json.newObject();
-        try json.put(a, &signature, "label", json.string(label));
-        try json.put(a, &signature, "parameters", params_json);
-        if (sig.doc) |doc| {
-            try json.put(a, &signature, "documentation", try json.from(a, .{
-                .kind = "markdown",
-                .value = try pyFormatLangid(a, doc, self.s.hover_language),
-            }));
-        }
-        var sigs = json.newArray();
-        try json.append(a, &sigs, signature);
-        var res = json.newObject();
-        try json.put(a, &res, "signatures", sigs);
-        try json.put(a, &res, "activeParameter", json.integer(param_num));
-        return res;
+        var signature: lsp.SignatureInformation = .{ .label = label, .parameters = parameters };
+        if (sig.doc) |doc| signature.documentation = .{ .value = try pyFormatLangid(a, doc, self.s.hover_language) };
+        return json.from(a, lsp.SignatureHelp{ .signatures = &.{signature}, .activeParameter = param_num });
     }
 
     fn checkOptional(arg: []const u8, params: []const Obj.ArgSig) ?i64 {
@@ -1515,21 +1451,21 @@ pub const Server = struct {
         return .{ .type_mem = type_mem, .restrict = restrict };
     }
 
-    fn serveReferences(self: *Server, a: Allocator, params: Value) !Value {
+    fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
         const rs = self.referenceScope(d.obj) orelse return .null;
         const all = try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict);
-        var out = json.newArray();
+        var out: std.ArrayList(lsp.Location) = .empty;
         for (all) |fr| {
             const uri = try paths.pathToUri(a, fr.path);
-            for (fr.refs.items) |r| try json.append(a, &out, try uriJson(a, uri, fr.file, r.line, r.start, r.line, r.end));
+            for (fr.refs.items) |r| try out.append(a, locationOf(uri, fr.file, r.line, r.start, r.line, r.end));
         }
-        return out;
+        return json.from(a, out.items);
     }
 
-    fn serveRename(self: *Server, a: Allocator, params: Value) !Value {
-        const d = (try self.definitionAt(a, params, false)) orelse return .null;
+    fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value {
+        const d = (try self.definitionAt(a, .{ .textDocument = params.textDocument, .position = params.position }, false)) orelse return .null;
         if (d.obj.kind == .intrinsic) {
             self.postMessage(a, "Rename failed: Cannot rename intrinsics", C.Severity.warn);
             return .null;
@@ -1540,97 +1476,84 @@ pub const Server = struct {
             self.postMessage(a, "Rename failed: No usages found to rename", C.Severity.warn);
             return .null;
         }
-        const new_name = (params.get("newName") orelse json.null_value).asStr() orelse "";
-        var changes = json.newObject();
-        for (all) |fr| {
-            const uri = try paths.pathToUri(a, fr.path);
-            var edits = json.newArray();
-            for (fr.refs.items) |r| {
-                var e = json.newObject();
-                try json.put(a, &e, "range", try rangeJson(a, fr.file, r.line, r.start, r.line, r.end));
-                try json.put(a, &e, "newText", json.string(new_name));
-                try json.append(a, &edits, e);
+        const files = try a.alloc(lsp.Changes.File, all.len);
+        for (all, files) |fr, *f| {
+            const edits = try a.alloc(lsp.TextEdit, fr.refs.items.len);
+            for (fr.refs.items, edits) |r, *e| {
+                e.* = .{ .range = rangeOf(fr.file, r.line, r.start, r.line, r.end), .newText = params.newName };
             }
-            try json.put(a, &changes, uri, edits);
+            f.* = .{ .uri = try paths.pathToUri(a, fr.path), .edits = edits };
         }
-        var res = json.newObject();
-        try json.put(a, &res, "changes", changes);
-        return res;
+        return json.from(a, lsp.WorkspaceEdit{ .changes = .{ .files = files } });
     }
 
     // ----------------------------------------------------------------------
     // Code actions
 
-    fn serveCodeActions(self: *Server, a: Allocator, params: Value) !Value {
-        const uri = uriOf(params);
-        const file = (try self.fileFromUri(a, uri)) orelse return .null;
+    fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
         const ast = file.ast orelse return .null;
-        const sline = (params.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0;
-        const eline = (params.path(&.{ "range", "end", "line" }) orelse json.null_value).asInt() orelse 0;
+        const sline = params.range.start.line;
+        const eline = params.range.end.line;
         const curr_scope = ast.getInnerScope(sline) orelse return .null;
         const actions = (try curr_scope.getActions(a, sline, eline)) orelse return .null;
-        var out = json.newArray();
-        for (actions) |act| {
-            var edits = json.newArray();
+        const out = try a.alloc(lsp.CodeAction, actions.len);
+        for (actions, out) |act, *av| {
             const edit_file = self.fileForPath(act.uri_path);
-            for (act.edits) |e| {
-                var ev = json.newObject();
-                try json.put(a, &ev, "range", try rangeJson(a, edit_file, e.sline, e.schar, e.eline, e.echar));
-                try json.put(a, &ev, "newText", json.string(e.new_text));
-                try json.append(a, &edits, ev);
+            const edits = try a.alloc(lsp.TextEdit, act.edits.len);
+            for (act.edits, edits) |e, *ev| {
+                ev.* = .{ .range = rangeOf(edit_file, e.sline, e.schar, e.eline, e.echar), .newText = e.new_text };
             }
-            var changes = json.newObject();
-            try json.put(a, &changes, try paths.pathToUri(a, act.uri_path), edits);
-            var diags = json.newArray();
-            for (act.diagnostics) |dg| try json.append(a, &diags, try self.builtDiagJson(a, file, try dg.build(a, file)));
-            var av = json.newObject();
-            try json.put(a, &av, "title", json.string(act.title));
-            try json.put(a, &av, "kind", json.string(act.kind));
-            var edit = json.newObject();
-            try json.put(a, &edit, "changes", changes);
-            try json.put(a, &av, "edit", edit);
-            try json.put(a, &av, "diagnostics", diags);
-            try json.append(a, &out, av);
+            const files = try a.alloc(lsp.Changes.File, 1);
+            files[0] = .{ .uri = try paths.pathToUri(a, act.uri_path), .edits = edits };
+            const diags = try a.alloc(lsp.Diagnostic, act.diagnostics.len);
+            for (act.diagnostics, diags) |dg, *dv| dv.* = try self.diagnosticOf(a, file, try dg.build(a, file));
+            av.* = .{ .title = act.title, .kind = act.kind, .edit = .{ .changes = .{ .files = files } }, .diagnostics = diags };
         }
-        return out;
+        return json.from(a, out);
     }
 
     // ----------------------------------------------------------------------
     // Diagnostics
 
-    pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
+    fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
         const file = (try self.fileFromUri(a, uri)) orelse return null;
         const diags = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-        var arr = json.newArray();
-        for (diags) |d| try json.append(a, &arr, try self.builtDiagJson(a, file, d));
-        return arr;
+        const out = try a.alloc(lsp.Diagnostic, diags.len);
+        for (diags, out) |d, *o| o.* = try self.diagnosticOf(a, file, d);
+        return out;
+    }
+
+    /// The diagnostics of a file as a JSON array (used by the debug CLI)
+    pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
+        const diags = (try self.diagnosticsOf(a, uri)) orelse return null;
+        return try json.from(a, diags);
     }
 
     fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
-        const res = self.getDiagnostics(a, uri) catch |e| {
-            self.writeError(a, json.integer(-1), -32603, @errorName(e), json.from(a, .{ .traceback = @errorName(e) }) catch null) catch |e2| self.logSendFailure(e2);
+        const res = self.diagnosticsOf(a, uri) catch |e| {
+            self.writeError(a, json.integer(-1), -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
             return;
         };
         if (res) |diags| {
-            self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, .{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
+            self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
         }
     }
 
     // ----------------------------------------------------------------------
     // Document synchronization
 
-    fn serveOnChange(self: *Server, a: Allocator, params: Value) !Value {
-        const uri = uriOf(params);
-        const path = try self.pathFromUri(a, uri);
+    fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
+        const path = try self.pathFromUri(a, params.textDocument.uri);
         const file = self.workspace.get(path) orelse {
             self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for unknown file '{s}'", .{path}), C.Severity.err);
             return .null;
         };
-        const changes = (params.get("contentChanges") orelse json.null_value).items();
+        const changes = params.contentChanges;
         var reparse_req = true;
         if (self.sync_type == 1) {
             if (changes.len > 0) {
-                _ = file.applyChange(try toChange(changes[0])) catch {
+                _ = file.applyChange(toChange(changes[0])) catch {
                     self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
                     return .null;
                 };
@@ -1638,7 +1561,7 @@ pub const Server = struct {
         } else {
             reparse_req = false;
             for (changes) |c| {
-                const flag = file.applyChange(try toChange(c)) catch {
+                const flag = file.applyChange(toChange(c)) catch {
                     self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
                     return .null;
                 };
@@ -1661,24 +1584,18 @@ pub const Server = struct {
         return .null;
     }
 
-    fn toChange(v: Value) !parser.Change {
-        const text = (v.get("text") orelse json.null_value).asStr() orelse "";
-        const r = v.get("range") orelse return .{ .text = text };
-        if (r == .null) return .{ .text = text };
-        const sl = (r.path(&.{ "start", "line" }) orelse return error.InvalidParams).asInt() orelse 0;
-        const sc = (r.path(&.{ "start", "character" }) orelse return error.InvalidParams).asInt() orelse 0;
-        const el = (r.path(&.{ "end", "line" }) orelse return error.InvalidParams).asInt() orelse 0;
-        const ec = (r.path(&.{ "end", "character" }) orelse return error.InvalidParams).asInt() orelse 0;
-        return .{ .text = text, .range = .{
-            .sl = @intCast(@max(sl, 0)),
-            .sc = @intCast(@max(sc, 0)),
-            .el = @intCast(@max(el, 0)),
-            .ec = @intCast(@max(ec, 0)),
+    fn toChange(c: lsp.ContentChange) parser.Change {
+        const r = c.range orelse return .{ .text = c.text };
+        return .{ .text = c.text, .range = .{
+            .sl = @intCast(@max(r.start.line, 0)),
+            .sc = @intCast(@max(r.start.character, 0)),
+            .el = @intCast(@max(r.end.line, 0)),
+            .ec = @intCast(@max(r.end.character, 0)),
         } };
     }
 
-    pub fn serveOnSave(self: *Server, a: Allocator, params: Value, did_open: bool, did_close: bool) !Value {
-        const uri = uriOf(params);
+    pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
+        const uri = params.textDocument.uri;
         const filepath = try self.pathFromUri(a, uri);
         if (did_close and !paths.isFile(self.io, filepath)) {
             if (self.workspace.get(filepath)) |f| if (f.ast) |ast| self.removeFromTree(ast);
