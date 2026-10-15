@@ -35,7 +35,7 @@ give the same answer, and the test fails for the reason in the issue.
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
 | [#568](https://github.com/fortran-lang/fortls/issues/568) | plain `USE` after a `USE ONLY` through a re-exporting module | diagnostics | known failure | same |
-| [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | known failure | same |
+| [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | fixed (patched) | fails, same cause |
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | known failure | same |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | known failure | same |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | known failure | same |
