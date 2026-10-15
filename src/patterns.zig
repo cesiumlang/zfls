@@ -32,8 +32,13 @@ const defs = [_]Def{
     .{ "SUBMOD", "[ ]*SUBMODULE[ ]*\\(", true },
     .{ "END_SMOD", "SUBMODULE", true },
     .{ "END_PRO", "(MODULE)?[ ]*PROCEDURE", true },
-    .{ "BLOCK", "[ ]*([a-z_]\\w*[ ]*:[ ]*)?BLOCK|CRITICAL(?!\\w)", true },
+    // the keyword is the whole statement: not the start of a longer name, nor
+    // the name of a construct (#532, #292)
+    .{ "BLOCK", "[ ]*([a-z_]\\w*[ ]*:[ ]*)?(?:BLOCK|CRITICAL)[ ]*(?:!.*)?$", true },
     .{ "END_BLOCK", "BLOCK|CRITICAL", true },
+    // BLOCK DATA is a program unit of its own (#264, #470)
+    .{ "BLOCK_DATA", "[ ]*BLOCK[ ]*DATA(?:[ ]+([a-z_]\\w*))?[ ]*(?:!.*)?$", true },
+    .{ "END_BLOCK_DATA", "BLOCK[ ]*DATA", true },
     .{ "DO", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?DO([ ]+[0-9]*|$)", true },
     .{ "END_DO", "DO", true },
     .{ "WHERE", "[ ]*WHERE[ ]*\\(", true },
@@ -52,7 +57,7 @@ const defs = [_]Def{
     .{ "END_PROG", "PROGRAM", true },
     .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*(\\w*)", true },
     .{ "END_INT", "INTERFACE", true },
-    .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
+    .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK[ ]*DATA|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
         "|TYPE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
         "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?!\\W)|$)", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
