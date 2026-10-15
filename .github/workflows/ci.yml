@@ -617,8 +617,25 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-      # The next version is begun on dev: main keeps the version it released.
-      # A fast-forward when dev has not moved, else a merge commit.
+  # The next version is begun on dev: main keeps the version it released. A
+  # separate job, so that a push dev refuses does not stop the publishing.
+  begin-next-version:
+    name: Merge v${{ needs.version.outputs.version }} into dev and begin the next version
+    needs: [version, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+
+      # A fast-forward when dev has not moved, else a merge commit
       - name: Merge into dev and begin the next version
         run: |
           git config user.name "github-actions[bot]"
