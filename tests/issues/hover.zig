@@ -38,7 +38,7 @@ test "#483 hover on a call keeps the interface when the procedure is declared ex
     // the control: without the EXTERNAL statement
     try w.expectHoverContains("plain.f90", w.pos("plain.f90", "dgesv", 0, 1), "dgesv");
     const call = w.pos("ext.f90", "call dgesv", 0, 6);
-    try h.check(483, .known_failure, w.expectHoverContains("ext.f90", call, "nrhs"));
+    try h.check(483, .fixed, w.expectHoverContains("ext.f90", call, "nrhs"));
 }
 
 test "#281 hover shows the documentation of a function with a type prefix" {
@@ -92,12 +92,54 @@ test "#237 a Doxygen comment above an expression is not the documentation of a l
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(237, .known_failure, notContains(w, "t.f90", w.pos("t.f90", "call sub_no_doc", 0, 6), "Trying to add"));
+    try h.check(237, .fixed, notContains(w, "t.f90", w.pos("t.f90", "call sub_no_doc", 0, 6), "Trying to add"));
 }
 
 fn notContains(w: *h.Workspace, name: []const u8, p: h.Pos, fragment: []const u8) !void {
     const text = (try w.hover(name, p)) orelse return;
     if (std.mem.indexOf(u8, text, fragment) != null) return h.unmet("hover contains '{s}': {s}", .{ fragment, text });
+}
+
+test "#237 documentation still attaches to a variable and to a procedure (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\    !> The counter
+        \\    integer :: counter
+        \\contains
+        \\    !> Adds one
+        \\    subroutine bump()
+        \\        counter = counter + 1
+        \\    end subroutine bump
+        \\end module m
+        \\
+        \\program p
+        \\    use m
+        \\    call bump()
+        \\    counter = 0
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "counter = 0", 0, 1), "The counter");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "call bump", 0, 6), "Adds one");
+}
+
+test "#483 an EXTERNAL name without a procedure still hovers as external (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\subroutine caller()
+        \\    external unknown_proc
+        \\    call unknown_proc(1)
+        \\end subroutine caller
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "call unknown_proc", 0, 6), "EXTERNAL");
 }
 
 test "#124 hover on a parameter shows a value that is a function call" {
@@ -112,7 +154,7 @@ test "#124 hover on a parameter shows a value that is a function call" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(124, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "real(sp)", 0, 5), "selected_real_kind(6)"));
+    try h.check(124, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "real(sp)", 0, 5), "selected_real_kind(6)"));
 }
 
 test "#118 hover on a fixed-form function that the caller declares with a type" {
@@ -136,7 +178,7 @@ test "#118 hover on a fixed-form function that the caller declares with a type" 
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(118, .known_failure, w.expectHoverContains("t.f", w.pos("t.f", "fff(1.2", 0, 1), "FUNCTION"));
+    try h.check(118, .fixed, w.expectHoverContains("t.f", w.pos("t.f", "fff(1.2", 0, 1), "FUNCTION"));
 }
 
 test "#108 hover on an ASSOCIATE name bound to an array slice shows the slice's shape" {
@@ -154,7 +196,7 @@ test "#108 hover on an ASSOCIATE name bound to an array slice shows the slice's 
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(108, .known_failure, notContains(w, "t.f90", w.pos("t.f90", "ARRAY (3)", 0, 1), "(5,5)"));
+    try h.check(108, .fixed, notContains(w, "t.f90", w.pos("t.f90", "ARRAY (3)", 0, 1), "(5,5)"));
 }
 
 test "#23 go to implementation from an EXTERNAL statement reaches the procedure" {
@@ -185,7 +227,7 @@ test "#23 go to implementation from an EXTERNAL statement reaches the procedure"
     defer w.deinit();
     const impl = try w.implementation("t.f90", w.pos("t.f90", "sub1", 0, 1));
     const want = w.pos("t.f90", "subroutine sub1", 0, 0).line;
-    try h.check(23, .known_failure, blk: {
+    try h.check(23, .fixed, blk: {
         const l = impl orelse break :blk h.unmet("no implementation found for sub1", .{});
         break :blk h.expect(l.line == want, "implementation at line {d}, expected {d}", .{ l.line + 1, want + 1 });
     });
@@ -218,6 +260,64 @@ test "#87 signature help counts the commas of the call, not those inside an argu
     try h.check(87, .fixed, h.expect(sig.active == 1, "active parameter {d}, expected 1", .{sig.active}));
 }
 
+test "#203 several PARAMETER names with their values (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer n, m
+        \\  parameter (n = 5, m = n * 2)
+        \\  print *, n, m
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n, m", 0, 9), "PARAMETER :: n = 5");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n, m", 0, 12), "PARAMETER :: m = n * 2");
+}
+
+test "#108 an ASSOCIATE name bound to an element or a 2-D section (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\PROGRAM p
+        \\    REAL :: B(5,5), C(4,4,4)
+        \\    ASSOCIATE (ELEM => B(2,3), PLANE => C(:,:,1), WHOLE => B)
+        \\        ELEM = PLANE(1,1) + WHOLE(1,1)
+        \\    END ASSOCIATE
+        \\END PROGRAM p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const elem = (try w.hover("t.f90", w.pos("t.f90", "ELEM = PLANE", 0, 1))) orelse return h.check(108, .fixed, h.unmet("no hover for ELEM", .{}));
+    try h.expect(std.mem.indexOf(u8, elem, "DIMENSION") == null, "an element is a scalar: {s}", .{elem});
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "PLANE(1,1)", 0, 1), "DIMENSION(:,:)");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "WHOLE(1,1)", 0, 1), "DIMENSION(5,5)");
+}
+
+test "#118 a real array that is indexed is not mistaken for a function (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\function fff(x)
+        \\    real fff, x
+        \\    fff = x
+        \\end function
+        \\
+        \\program main
+        \\    real fff(3)
+        \\    fff(1) = 1.0
+        \\end program main
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "fff(1) = 1.0", 0, 1), "DIMENSION(3)");
+}
+
 test "#203 the PARAMETER statement makes a constant" {
     const w = try h.Workspace.init(&.{.{
         .name = "t.f90",
@@ -232,7 +332,7 @@ test "#203 the PARAMETER statement makes a constant" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(203, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n", 0, 9), "PARAMETER"));
+    try h.check(203, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n", 0, 9), "PARAMETER"));
 }
 
 test "#498 go to definition on an include directive opens the included file" {

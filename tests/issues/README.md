@@ -40,21 +40,21 @@ give the same answer, and the test fails for the reason in the issue.
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | known failure | same |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | known failure | same |
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
-| [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | known failure | same |
+| [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | fixed (patched) | fails, same cause |
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
-| [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | known failure | same |
-| [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | known failure | same |
+| [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | fixed (patched) | fails, same cause |
+| [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | fixed (patched) | fails, same cause |
 | [#172](https://github.com/fortran-lang/fortls/issues/172) | coarray dummy argument | diagnostics | fixed (patched) | fails, same cause |
-| [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | known failure | same |
-| [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | known failure | same |
-| [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | known failure | same |
+| [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | fixed (patched) | fails, same cause |
+| [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | fixed (patched) | fails, same cause |
+| [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | fixed (patched) | fails, same cause |
 | [#87](https://github.com/fortran-lang/fortls/issues/87) | signature help with commas inside an argument | hover | fixed (patched) | fails, same cause |
 | [#52](https://github.com/fortran-lang/fortls/issues/52) | rename of a name renamed on import | rename | fixed (patched) | fails, same cause |
-| [#23](https://github.com/fortran-lang/fortls/issues/23) | go to implementation from `EXTERNAL` | hover | known failure | same |
+| [#23](https://github.com/fortran-lang/fortls/issues/23) | go to implementation from `EXTERNAL` | hover | fixed (patched) | fails, same cause |
 | [#565](https://github.com/fortran-lang/fortls/issues/565) | edit a file included by an include file | workspace | fixed | `AttributeError` (as reported; not run here) |
 | [#486](https://github.com/fortran-lang/fortls/issues/486) | function-like macro with empty parentheses | parsing | fixed | fails (`re.error: invalid group reference`) |
 | [#433](https://github.com/fortran-lang/fortls/issues/433) | `ASSOCIATE` name that refers to itself | parsing | fixed | `RecursionError` |

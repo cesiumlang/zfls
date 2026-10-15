@@ -1230,9 +1230,38 @@ pub const Server = struct {
         return .null;
     }
 
+    /// The subroutine or function that an EXTERNAL declaration stands for: the
+    /// global procedure of that name, if there is one (upstream #483, #23)
+    fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
+        if (v.kind != .variable or !v.is_external) return null;
+        const key = try std.ascii.allocLowerString(a, v.name);
+        const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
+        return switch (cand.kind) {
+            .subroutine, .function => cand,
+            else => null,
+        };
+    }
+
+    /// The global function that a variable of the same name stands for when it
+    /// is called: `real fff` in the caller and then `fff(1.2, 3.3)` declares
+    /// the type of the function, not a variable (upstream #118)
+    fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj {
+        const v = d.obj;
+        if (v.kind != .variable or v.is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
+        if (v.parent) |p| if (p.getType(false) == C.CLASS_TYPE_ID) return null;
+        const text = d.file.getLine(d.line, false) orelse return null;
+        var end = d.col;
+        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
+        if (!std.mem.startsWith(u8, str.lstrip(text[end..]), "(")) return null;
+        const key = try std.ascii.allocLowerString(a, v.name);
+        const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
+        return if (cand.kind == .function) cand else null;
+    }
+
     fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, true)) orelse return .null;
-        const var_obj = d.obj;
+        const ast = d.file.ast.?;
+        const var_obj = (try self.externalTarget(a, ast, d.obj)) orelse (try self.calledFunction(a, ast, d)) orelse d.obj;
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         var hover_array: std.ArrayList([]const u8) = .empty;
         const vt = var_obj.getType(false);
@@ -1271,6 +1300,10 @@ pub const Server = struct {
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         const var_obj = d.obj;
         if (var_obj.kind == .intrinsic) return .null;
+        if (try self.externalTarget(a, d.file.ast.?, var_obj)) |target| {
+            if (target.file_ast.file != null) return self.createRefLink(a, target);
+            return .null;
+        }
         const parent = var_obj.parent orelse return .null;
         if (parent.getType(false) == C.CLASS_TYPE_ID) {
             if (var_obj.link_obj) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);

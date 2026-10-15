@@ -244,6 +244,9 @@ pub const Obj = struct {
     is_const: bool = false,
     is_external: bool = false,
     param_val: ?[]const u8 = null,
+    /// For an ASSOCIATE name bound to an array element or section, `b(:, 1)`:
+    /// the number of dimensions that remain (the sections), else -1
+    slice_rank: i32 = -1,
     link_name: ?[]const u8 = null,
     callable: bool = false,
     drop_arg: i64 = -1,
@@ -829,7 +832,27 @@ pub const Obj = struct {
     }
 
     pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
-        if (self.link_obj) |l| return helpers.getKeywords(a, l.keywords.items, l.keyword_info);
+        if (self.link_obj) |l| {
+            if (self.slice_rank >= 0 and l.kind == .variable) {
+                // a name bound to a section has the rank of the section, not
+                // of the array it is cut from (upstream #108)
+                var ids: std.ArrayList(u8) = .empty;
+                for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
+                var info = l.keyword_info;
+                info.dimension = null;
+                if (self.slice_rank > 0) {
+                    try ids.append(a, KW.dimension);
+                    var dims: std.ArrayList(u8) = .empty;
+                    for (0..@as(usize, @intCast(self.slice_rank))) |i| {
+                        if (i > 0) try dims.append(a, ',');
+                        try dims.append(a, ':');
+                    }
+                    info.dimension = dims.items;
+                }
+                return helpers.getKeywords(a, ids.items, info);
+            }
+            return helpers.getKeywords(a, l.keywords.items, l.keyword_info);
+        }
         return helpers.getKeywords(a, self.keywords.items, self.keyword_info);
     }
 
