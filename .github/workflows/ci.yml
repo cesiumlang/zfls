@@ -623,3 +623,45 @@ jobs:
           sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
           git commit -qam "Begin v$next development [skip ci]"
           git push origin main
+
+  publish-extension:
+    name: Publish VS Code extension v${{ needs.version.outputs.version }}
+    needs: [version, reuse, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    # Trusted publishing: both registries accept this workflow's OIDC token
+    # in place of a stored access token (registered for the `cesiumlang`
+    # publisher and namespace)
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      VSCE_VERSION: 4.0.0
+      OVSX_VERSION: 1.2.0
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+          run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      # the platform packages, each with its zfls (the universal one, without,
+      # is only on the GitHub release); both registries are tried even if the
+      # other fails
+      - name: Publish to the Visual Studio Marketplace and Open VSX
+        run: |
+          failed=0
+          for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
+            vsix="dist/zfls-vscode-v$VERSION-$platform.vsix"
+            npx --yes "@vscode/vsce@$VSCE_VERSION" publish --oidc --packagePath "$vsix" \
+              || { echo "::error::Marketplace: publishing $platform failed"; failed=1; }
+            npx --yes "ovsx@$OVSX_VERSION" publish "$vsix" --trusted-publishing \
+              || { echo "::error::Open VSX: publishing $platform failed"; failed=1; }
+          done
+          exit "$failed"
