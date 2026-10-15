@@ -1315,7 +1315,7 @@ pub const Server = struct {
         const arg_string = str.slice(line_prefix, pl.sections[0].start, pl.sections[pl.sections.len - 1].end);
         const pl2 = try helpers.getParenLevel(a, str.slice(line_prefix, 0, pl.sections[0].start - 1));
         const sub_name_raw = str.strip(pl2.str);
-        const arg_strings = try str.split(a, arg_string, ",");
+        const arg_strings = try helpers.splitArgs(a, arg_string);
         const sub_end = pl2.sections[pl2.sections.len - 1].start;
 
         const var_stack = try helpers.getVarStack(a, sub_name_raw);
