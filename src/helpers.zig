@@ -32,8 +32,8 @@ pub fn expandName(line: []const u8, char_pos: usize) []const u8 {
 pub fn detectFixedFormat(file_lines: []const []const u8) bool {
     var pp_continue = false;
     for (file_lines) |line| {
-        if (str.startsWith(line, "#") or pp_continue) {
-            pp_continue = str.endsWith(str.rstrip(line), "\\");
+        if (std.mem.startsWith(u8, line, "#") or pp_continue) {
+            pp_continue = std.mem.endsWith(u8, str.rstrip(line), "\\");
             continue;
         }
         if (R().FREE_FORMAT_TEST.match(line) != null) return false;
@@ -42,7 +42,7 @@ pub fn detectFixedFormat(file_lines: []const []const u8) bool {
         }
         if (R().FIXED_COMMENT.match(line) == null) {
             const line_end = str.strip(str.beforeFirst(line, "!"));
-            if (line_end.len > 0 and str.endsWith(line_end, "&")) return false;
+            if (line_end.len > 0 and std.mem.endsWith(u8, line_end, "&")) return false;
         }
     }
     return true;
@@ -140,11 +140,11 @@ pub fn findParenMatch(s: []const u8) isize {
 /// Get code line prefix from current line and preceding continuation lines
 pub fn getLinePrefix(a: Allocator, pre_lines: []const []const u8, curr_line_in: ?[]const u8, col_in: usize, qs: bool) !?[]const u8 {
     const curr = curr_line_in orelse return null;
-    if (col_in > curr.len or str.startsWith(curr, "#")) return null;
-    const prepend = try str.concat(a, pre_lines);
-    const curr_line = try str.concat(a, &.{ prepend, curr });
+    if (col_in > curr.len or std.mem.startsWith(u8, curr, "#")) return null;
+    const prepend = try std.mem.concat(a, u8, pre_lines);
+    const curr_line = try std.mem.concat(a, u8, &.{ prepend, curr });
     const col = col_in + prepend.len;
-    const line_prefix = try str.lower(a, curr_line[0..col]);
+    const line_prefix = try std.ascii.allocLowerString(a, curr_line[0..col]);
     if (qs and (std.mem.indexOfAny(u8, line_prefix, "'\"") != null)) {
         var sq: usize = 0;
         var dq: usize = 0;
@@ -224,14 +224,14 @@ pub fn getVarStack(a: Allocator, line: []const u8) ![][]const u8 {
     if (pl.str.len == 0) return empty;
     var i_last: usize = 0;
     for (pl.sections, 0..) |sec, i| {
-        if (!str.startsWith(str.strip(str.slice(line, sec.start, sec.end)), "%")) i_last = i;
+        if (!std.mem.startsWith(u8, str.strip(str.slice(line, sec.start, sec.end)), "%")) i_last = i;
     }
     var fv: std.ArrayList(u8) = .empty;
     for (pl.sections[i_last..]) |sec| try fv.appendSlice(a, str.slice(line, sec.start, sec.end));
     // "%".join(stripped parts)
     const parts = try str.split(a, fv.items, "%");
     for (parts) |*p| p.* = str.strip(p.*);
-    const final_var = try str.join(a, "%", parts);
+    const final_var = try std.mem.join(a, "%", parts);
     const op_split = try R().OBJBREAK.split(a, final_var);
     return str.split(a, op_split[op_split.len - 1], "%");
 }
@@ -245,13 +245,13 @@ pub fn getPlaceholders(a: Allocator, arg_list: []const []const u8) ![2][]const u
             // opt_split[1] is the text between the first and second '='
             const rest = arg[e + 1 ..];
             const val = str.beforeFirst(rest, "=");
-            try holders.append(a, try str.print(a, "{s}=${{{d}:{s}}}", .{ arg[0..e], i + 1, val }));
+            try holders.append(a, try std.fmt.allocPrint(a, "{s}=${{{d}:{s}}}", .{ arg[0..e], i + 1, val }));
         } else {
-            try holders.append(a, try str.print(a, "${{{d}:{s}}}", .{ i + 1, arg }));
+            try holders.append(a, try std.fmt.allocPrint(a, "${{{d}:{s}}}", .{ i + 1, arg }));
         }
     }
-    const arg_str = try str.print(a, "({s})", .{try str.join(a, ", ", arg_list)});
-    const arg_snip = try str.print(a, "({s})", .{try str.join(a, ", ", holders.items)});
+    const arg_str = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", arg_list)});
+    const arg_snip = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", holders.items)});
     return .{ arg_str, arg_snip };
 }
 
@@ -276,9 +276,9 @@ pub const KeywordInfo = struct {
     pass: ?[]const u8 = null,
 
     pub fn get(self: KeywordInfo, key: []const u8) ?[]const u8 {
-        if (str.eql(key, "intent")) return self.intent;
-        if (str.eql(key, "dimension")) return self.dimension;
-        if (str.eql(key, "pass")) return self.pass;
+        if (std.mem.eql(u8, key, "intent")) return self.intent;
+        if (std.mem.eql(u8, key, "dimension")) return self.dimension;
+        if (std.mem.eql(u8, key, "pass")) return self.pass;
         return null;
     }
 
@@ -301,14 +301,14 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8) !MappedKeywords {
     var info: KeywordInfo = .{};
     for (keywords) |kw| {
         const prefix_raw = str.strip(str.beforeFirst(kw, "("));
-        const prefix = try str.lower(a, prefix_raw);
+        const prefix = try std.ascii.allocLowerString(a, prefix_raw);
         const id = constants.keywordId(prefix) orelse continue;
         try ids.append(a, id);
-        if (str.eql(prefix, "intent") or str.eql(prefix, "dimension") or str.eql(prefix, "pass")) {
+        if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
             if (getParenSubstring(kw)) |sub| {
-                if (str.eql(prefix, "intent")) info.intent = sub;
-                if (str.eql(prefix, "dimension")) info.dimension = sub;
-                if (str.eql(prefix, "pass")) info.pass = sub;
+                if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
+                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub;
+                if (std.mem.eql(u8, prefix, "pass")) info.pass = sub;
             }
         }
     }
@@ -320,9 +320,9 @@ pub fn getKeywords(a: Allocator, ids: []const u8, info: KeywordInfo) ![][]const 
     var out: std.ArrayList([]const u8) = .empty;
     for (ids) |id| {
         const rep = constants.keyword_list[id];
-        const up = try str.upper(a, rep);
+        const up = try std.ascii.allocUpperString(a, rep);
         if (info.get(rep)) |addl| {
-            try out.append(a, try str.print(a, "{s}({s})", .{ up, addl }));
+            try out.append(a, try std.fmt.allocPrint(a, "{s}({s})", .{ up, addl }));
         } else {
             try out.append(a, up);
         }
