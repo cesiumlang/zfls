@@ -221,32 +221,78 @@ pub const Server = struct {
         return self.dispatch(a, method, params);
     }
 
+    /// The requests and notifications the server answers
+    const Method = enum {
+        initialize,
+        document_symbol,
+        completion,
+        signature_help,
+        definition,
+        references,
+        document_highlight,
+        hover,
+        implementation,
+        rename,
+        did_open,
+        did_save,
+        did_close,
+        did_change,
+        code_action,
+        workspace_symbol,
+        /// accepted and ignored
+        ignored,
+        exit,
+    };
+
+    const methods = std.StaticStringMap(Method).initComptime(.{
+        .{ "initialize", .initialize },
+        .{ "textDocument/documentSymbol", .document_symbol },
+        .{ "textDocument/completion", .completion },
+        .{ "textDocument/signatureHelp", .signature_help },
+        .{ "textDocument/definition", .definition },
+        .{ "textDocument/references", .references },
+        .{ "textDocument/documentHighlight", .document_highlight },
+        .{ "textDocument/hover", .hover },
+        .{ "textDocument/implementation", .implementation },
+        .{ "textDocument/rename", .rename },
+        .{ "textDocument/didOpen", .did_open },
+        .{ "textDocument/didSave", .did_save },
+        .{ "textDocument/didClose", .did_close },
+        .{ "textDocument/didChange", .did_change },
+        .{ "textDocument/codeAction", .code_action },
+        .{ "workspace/symbol", .workspace_symbol },
+        .{ "initialized", .ignored },
+        .{ "workspace/didChangeWatchedFiles", .ignored },
+        .{ "workspace/didChangeConfiguration", .ignored },
+        .{ "$/cancelRequest", .ignored },
+        .{ "$/setTrace", .ignored },
+        .{ "shutdown", .ignored },
+        .{ "exit", .exit },
+    });
+
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
-        const eql = std.mem.eql;
-        if (eql(u8, method, "initialize")) return self.serveInitialize(a, try json.to(lsp.InitializeParams, a, params));
-        if (eql(u8, method, "textDocument/documentSymbol")) return self.serveDocumentSymbols(a, try json.to(lsp.TextDocumentParams, a, params));
-        if (eql(u8, method, "textDocument/completion")) return self.serveAutocomplete(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/signatureHelp")) return self.serveSignature(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/definition")) return self.serveDefinition(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/references")) return self.serveReferences(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/documentHighlight")) return self.serveReferences(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/hover")) return self.serveHover(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/implementation")) return self.serveImplementation(a, try json.to(lsp.PositionParams, a, params));
-        if (eql(u8, method, "textDocument/rename")) return self.serveRename(a, try json.to(lsp.RenameParams, a, params));
-        if (eql(u8, method, "textDocument/didOpen")) return self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), true, false);
-        if (eql(u8, method, "textDocument/didSave")) return self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, false);
-        if (eql(u8, method, "textDocument/didClose")) return self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, true);
-        if (eql(u8, method, "textDocument/didChange")) return self.serveOnChange(a, try json.to(lsp.DidChangeParams, a, params));
-        if (eql(u8, method, "textDocument/codeAction")) return self.serveCodeActions(a, try json.to(lsp.CodeActionParams, a, params));
-        if (eql(u8, method, "workspace/symbol")) return self.serveWorkspaceSymbol(a, try json.to(lsp.WorkspaceSymbolParams, a, params));
-        if (eql(u8, method, "initialized") or eql(u8, method, "workspace/didChangeWatchedFiles") or
-            eql(u8, method, "workspace/didChangeConfiguration") or eql(u8, method, "$/cancelRequest") or
-            eql(u8, method, "$/setTrace") or eql(u8, method, "shutdown")) return .null;
-        if (eql(u8, method, "exit")) {
-            self.serveExit();
-            return .null;
-        }
-        return error.MethodNotFound;
+        return switch (methods.get(method) orelse return error.MethodNotFound) {
+            .initialize => self.serveInitialize(a, try json.to(lsp.InitializeParams, a, params)),
+            .document_symbol => self.serveDocumentSymbols(a, try json.to(lsp.TextDocumentParams, a, params)),
+            .completion => self.serveAutocomplete(a, try json.to(lsp.PositionParams, a, params)),
+            .signature_help => self.serveSignature(a, try json.to(lsp.PositionParams, a, params)),
+            .definition => self.serveDefinition(a, try json.to(lsp.PositionParams, a, params)),
+            .references, .document_highlight => self.serveReferences(a, try json.to(lsp.PositionParams, a, params)),
+            .hover => self.serveHover(a, try json.to(lsp.PositionParams, a, params)),
+            .implementation => self.serveImplementation(a, try json.to(lsp.PositionParams, a, params)),
+            .rename => self.serveRename(a, try json.to(lsp.RenameParams, a, params)),
+            .did_open => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), true, false),
+            .did_save => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, false),
+            .did_close => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, true),
+            .did_change => self.serveOnChange(a, try json.to(lsp.DidChangeParams, a, params)),
+            .code_action => self.serveCodeActions(a, try json.to(lsp.CodeActionParams, a, params)),
+            .workspace_symbol => self.serveWorkspaceSymbol(a, try json.to(lsp.WorkspaceSymbolParams, a, params)),
+            .ignored => .null,
+            .exit => blk: {
+                self.serveExit();
+                break :blk .null;
+            },
+        };
     }
 
     /// Flush messages queued during a request (`run()` loop tail)

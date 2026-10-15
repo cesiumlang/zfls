@@ -534,6 +534,18 @@ fn appendMultilineMacro(a: Allocator, d: Def, line: []const u8) !Def {
 
 /// An open conditional. `start` is the first line of its excluded part, null
 /// while the branch is included; `end` the last one, null until known.
+/// The conditional directives that `PP_REGEX` matches
+const Directive = enum { if_, ifdef, ifndef, else_, elif, endif };
+
+const directives = std.StaticStringMap(Directive).initComptime(.{
+    .{ "if ", .if_ },
+    .{ "ifdef", .ifdef },
+    .{ "ifndef", .ifndef },
+    .{ "else", .else_ },
+    .{ "elif", .elif },
+    .{ "endif", .endif },
+});
+
 const StackEntry = struct { start: ?usize = null, end: ?usize = null };
 
 fn skipOf(e: StackEntry) Skip {
@@ -601,16 +613,17 @@ fn preprocessInner(
         // Handle conditional statements
         if (R().PP_REGEX.match(line)) |m| {
             try output.append(a, line);
-            const kw = try std.ascii.allocLowerString(a, m.group(1).?);
+            var kw_buf: [8]u8 = undefined;
+            const kw = directives.get(std.ascii.lowerString(&kw_buf, m.group(1).?)).?;
             var if_start = false;
             var is_path = false;
-            if (std.mem.eql(u8, kw, "if ")) {
+            if (kw == .if_) {
                 is_path = evalPpIf(a, line[m.end(1)..], &defs_tmp);
                 if_start = true;
-            } else if (std.mem.eql(u8, kw, "ifdef")) {
+            } else if (kw == .ifdef) {
                 if_start = true;
                 is_path = defs_tmp.contains(str.strip(line[m.end(0)..]));
-            } else if (std.mem.eql(u8, kw, "ifndef")) {
+            } else if (kw == .ifndef) {
                 if_start = true;
                 is_path = !defs_tmp.contains(str.strip(line[m.end(0)..]));
             }
@@ -628,7 +641,7 @@ fn preprocessInner(
             const depth_now = pp_stack.items.len;
             const top = &pp_stack.items[pp_stack.items.len - 1];
             var cond: enum { none, included, excluded_start, excluded } = .none;
-            if (std.mem.eql(u8, kw, "elif")) {
+            if (kw == .elif) {
                 if (pp_stack_group.items.len == 0 or pp_stack_group.items[pp_stack_group.items.len - 1][0] != depth_now) {
                     try pp_stack_group.append(a, .{ depth_now, top.start == null });
                 }
@@ -644,7 +657,7 @@ fn preprocessInner(
                     try pp_stack.append(a, .{});
                     cond = .included;
                 } else cond = .excluded_start;
-            } else if (std.mem.eql(u8, kw, "else")) {
+            } else if (kw == .else_) {
                 if (top.start == null) {
                     top.start = i + 1;
                     cond = .excluded_start;
@@ -660,7 +673,7 @@ fn preprocessInner(
                     try pp_stack.append(a, .{});
                     cond = .included;
                 }
-            } else if (std.mem.eql(u8, kw, "endif")) {
+            } else if (kw == .endif) {
                 if (pp_stack_group.items.len > 0 and pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now) {
                     _ = pp_stack_group.pop();
                 }
