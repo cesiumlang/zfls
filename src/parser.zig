@@ -116,15 +116,15 @@ fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywords: 
     while (keyword_match) |m| {
         var tmp_str: []const u8 = lstripChars(m.str(), ", ");
         test_str = test_str[m.end(0)..];
-        if (str.startsWithIgnoreCase(tmp_str, "dimension")) {
+        if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension")) {
             const mc = helpers.findParenMatch(test_str);
             if (mc < 0) break;
             const mcu: usize = @intCast(mc);
-            tmp_str = try str.concat(a, &.{ tmp_str, test_str[0 .. mcu + 1] });
+            tmp_str = try std.mem.concat(a, u8, &.{ tmp_str, test_str[0 .. mcu + 1] });
             test_str = test_str[mcu + 1 ..];
         }
         tmp_str = lstripChars(tmp_str, ", ");
-        try keywords.append(a, try str.upper(a, str.strip(tmp_str)));
+        try keywords.append(a, try std.ascii.allocUpperString(a, str.strip(tmp_str)));
         keyword_match = R().KEYWORD_LIST.match(test_str);
     }
     return .{ .keywords = keywords.items, .rest = test_str };
@@ -134,13 +134,13 @@ const KindResult = struct { kind: ?[]const u8, line: []const u8 };
 
 fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
     const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
-    var kind_str: []const u8 = try str.replace(a, m.group(1).?, " ", "");
+    var kind_str: []const u8 = try std.mem.replaceOwned(u8, a, m.group(1).?, " ", "");
     var rest = line[m.end(0)..];
     if (std.mem.indexOfScalar(u8, kind_str, '(') != null) {
         const mc = helpers.findParenMatch(rest);
         if (mc < 0) return null; // Incomplete kind specification
         const mcu: usize = @intCast(mc);
-        kind_str = try str.concat(a, &.{ kind_str, str.strip(rest[0 .. mcu + 1]) });
+        kind_str = try std.mem.concat(a, u8, &.{ kind_str, str.strip(rest[0 .. mcu + 1]) });
         rest = rest[mcu + 1 ..];
     }
     return .{ .kind = kind_str, .line = rest };
@@ -158,7 +158,7 @@ pub fn readVarDef(a: Allocator, line: []const u8, var_type_in: ?[]const u8, fun_
         var_type = str.strip(tm.str());
         trailing = line[tm.end(0)..];
     }
-    var_type = try str.upper(a, var_type);
+    var_type = try std.ascii.allocUpperString(a, var_type);
     trailing = str.beforeFirst(trailing, "!");
     if (trailing.len == 0) return null;
 
@@ -166,7 +166,7 @@ pub fn readVarDef(a: Allocator, line: []const u8, var_type_in: ?[]const u8, fun_
     const kind_str = kr.kind;
     trailing = kr.line;
     const has_kind = kind_str != null and kind_str.?.len > 0;
-    if (!has_kind and (str.eql(var_type, "TYPE") or str.eql(var_type, "CLASS"))) return null;
+    if (!has_kind and (std.mem.eql(u8, var_type, "TYPE") or std.mem.eql(u8, var_type, "CLASS"))) return null;
     if (!has_kind) {
         if (trailing.len == 0) return null;
         const c0 = trailing[0];
@@ -201,7 +201,7 @@ fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Regex)
     var args: []const u8 = "";
     if (R().SUB_PAREN.match(trailing)) |pm| {
         const words = try R().WORD.findall(a, pm.str());
-        args = try str.join(a, ",", words);
+        args = try std.mem.join(a, ",", words);
         trailing = trailing[pm.end(0)..];
     }
     return .{ .name = name, .args = args, .trailing = trailing };
@@ -213,8 +213,8 @@ fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Regex)
 /// both scans, which otherwise try a match at every character.
 fn splitSubMod(a: Allocator, line: []const u8) E!struct { []const []const u8, []const u8 } {
     // IMPURE contains PURE
-    if (!str.containsIgnoreCase(line, "pure") and !str.containsIgnoreCase(line, "elemental") and
-        !str.containsIgnoreCase(line, "recursive")) return .{ &.{}, line };
+    if (!(std.ascii.findIgnoreCase(line, "pure") != null) and !(std.ascii.findIgnoreCase(line, "elemental") != null) and
+        !(std.ascii.findIgnoreCase(line, "recursive") != null)) return .{ &.{}, line };
     return .{ try R().SUB_MOD.findall(a, line), try R().SUB_MOD.sub(a, "", line) };
 }
 
@@ -236,7 +236,7 @@ pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_
     const trailing = str.strip(pm.trailing);
     var result = result_in orelse ResultSig{};
     if (R().RESULT.match(trailing)) |rm| {
-        result.name = try str.lower(a, str.strip(rm.group(1).?));
+        result.name = try std.ascii.allocLowerString(a, str.strip(rm.group(1).?));
     }
     if (result.name == null or result.name.?.len == 0) result.name = pm.name;
     return .{ .fun = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag, .result = result } };
@@ -252,7 +252,7 @@ fn readBlockDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().BLOCK.match(line) orelse return null;
     var name = m.group(1);
     if (name) |n| if (n.len > 0) {
-        name = str.strip(try str.replace(a, n, ":", " "));
+        name = str.strip(try std.mem.replaceOwned(u8, a, n, ":", " "));
     };
     return .{ .block = name };
 }
@@ -299,9 +299,9 @@ fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
     if (R().SELECT.match(line)) |m| {
         const word = m.group(1).?;
         var st: i32 = -1;
-        if (str.startsWithIgnoreCase(word, "case")) {
+        if (std.ascii.startsWithIgnoreCase(word, "case")) {
             st = 1;
-        } else if (str.startsWithIgnoreCase(word, "type")) {
+        } else if (std.ascii.startsWithIgnoreCase(word, "type")) {
             st = 2;
         }
         return .{ .select = .{ .type = st, .binding = m.group(2), .desc = null } };
@@ -310,7 +310,7 @@ fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
         var buf: [5]u8 = undefined;
         const d = m.group(1).?;
         const up = std.ascii.upperString(buf[0..d.len], d);
-        const desc: []const u8 = if (str.eql(up, "TYPE")) "TYPE" else "CLASS";
+        const desc: []const u8 = if (std.mem.eql(u8, up, "TYPE")) "TYPE" else "CLASS";
         return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = desc } };
     }
     if (R().SELECT_DEFAULT.match(line) != null) return .{ .select = .{ .type = 4, .binding = null, .desc = null } };
@@ -324,9 +324,9 @@ fn readTypeDef(a: Allocator, line: []const u8) E!?DefResult {
     var parent: ?[]const u8 = null;
     var km = R().TATTR_LIST.match(trailing);
     while (km) |k| {
-        const ks = try str.upper(a, str.strip(try str.replace(a, k.str(), ",", " ")));
+        const ks = try std.ascii.allocUpperString(a, str.strip(try std.mem.replaceOwned(u8, a, k.str(), ",", " ")));
         if (R().EXTENDS.match(ks)) |em| {
-            parent = try str.lower(a, em.group(1).?);
+            parent = try std.ascii.allocLowerString(a, em.group(1).?);
         } else {
             try keywords.append(a, ks);
         }
@@ -336,8 +336,8 @@ fn readTypeDef(a: Allocator, line: []const u8) E!?DefResult {
     const line_split = try str.split(a, trailing, "::");
     if (line_split.len == 1) {
         if (keywords.items.len > 0 and parent == null) return null;
-        const first = try str.lower(a, str.strip(str.beforeFirst(trailing, "(")));
-        if (str.eql(first, "is")) return null;
+        const first = try std.ascii.allocLowerString(a, str.strip(str.beforeFirst(trailing, "(")));
+        if (std.mem.eql(u8, first, "is")) return null;
         trailing = line_split[0];
     } else {
         trailing = line_split[1];
@@ -381,7 +381,7 @@ fn readModDef(a: Allocator, line_in: []const u8) E!?DefResult {
         const trailing = line[m.end(1)..];
         var names: std.ArrayList([]const u8) = .empty;
         var it = std.mem.splitScalar(u8, trailing, ',');
-        while (it.next()) |n| try names.append(a, try str.lower(a, str.strip(n)));
+        while (it.next()) |n| try names.append(a, try std.ascii.allocLowerString(a, str.strip(n)));
         return .{ .int_pro = names.items };
     }
     const trailing = line[m.start(1)..];
@@ -416,14 +416,14 @@ fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
     var name: []const u8 = "";
     var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
     if (R().WORD.match(trailing)) |pm| {
-        parent_name = try str.lower(a, pm.str());
+        parent_name = try std.ascii.allocLowerString(a, pm.str());
         if (trailing.len > pm.end(0) + 1) {
             trailing = str.strip(trailing[pm.end(0) + 1 ..]);
         } else {
             trailing = "";
         }
     }
-    if (R().WORD.search(trailing)) |nm| name = try str.lower(a, nm.str());
+    if (R().WORD.search(trailing)) |nm| name = try std.ascii.allocLowerString(a, nm.str());
     return .{ .smod = .{ .name = name, .parent = parent_name } };
 }
 
@@ -436,16 +436,16 @@ fn readProgDef(a: Allocator, line: []const u8) E!?DefResult {
 fn readIntDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().INT.match(line) orelse return null;
     const raw = m.group(2) orelse "";
-    const int_name = try str.lower(a, raw);
+    const int_name = try std.ascii.allocLowerString(a, raw);
     const is_abstract = m.group(1) != null;
     if (int_name.len == 0) return .{ .int = .{ .name = null, .abstract = is_abstract } };
-    if (str.eql(int_name, "assignment") or str.eql(int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false } };
+    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false } };
     return .{ .int = .{ .name = raw, .abstract = is_abstract } };
 }
 
 pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().USE.match(line) orelse return null;
-    const trailing = str.beforeFirst(try str.lower(a, line[m.end(0)..]), "!");
+    const trailing = str.beforeFirst(try std.ascii.allocLowerString(a, line[m.end(0)..]), "!");
     const use_mod = m.group(2).?;
     var only: std.ArrayList([]const u8) = .empty;
     var renames: std.ArrayList([2][]const u8) = .empty;
@@ -455,13 +455,13 @@ pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
             const parts = try str.split(a, only_stmt, "=>");
             const only_name = str.strip(parts[0]);
             var dup = false;
-            for (only.items) |o| if (str.eql(o, only_name)) {
+            for (only.items) |o| if (std.mem.eql(u8, o, only_name)) {
                 dup = true;
             };
             if (!dup) try only.append(a, only_name);
             if (parts.len == 2) {
                 var replaced = false;
-                for (renames.items) |*r| if (str.eql(r[0], only_name)) {
+                for (renames.items) |*r| if (std.mem.eql(u8, r[0], only_name)) {
                     r[1] = str.strip(parts[1]);
                     replaced = true;
                 };
@@ -482,13 +482,13 @@ fn readImpStmt(a: Allocator, line: []const u8) E!?DefResult {
     } else if (spec != null and std.ascii.eqlIgnoreCase(spec.?, "none")) {
         return .{ .import = .{ .import_type = .none } };
     }
-    const trailing = try str.lower(a, line[m.end(0) - 1 ..]);
+    const trailing = try std.ascii.allocLowerString(a, line[m.end(0) - 1 ..]);
     var list: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, trailing, ',');
     while (it.next()) |p| {
         const s = str.strip(p);
         var dup = false;
-        for (list.items) |o| if (str.eql(o, s)) {
+        for (list.items) |o| if (std.mem.eql(u8, o, s)) {
             dup = true;
         };
         if (!dup) try list.append(a, s);
@@ -580,7 +580,7 @@ pub fn getLineContext(a: Allocator, line: []const u8) E!struct { ctx: LineContex
         if (tm == .var_) {
             const v = tm.var_;
             if (v.var_names == null and lev1_end == line_len) return .{ .ctx = .var_key };
-            if (str.eql(v.var_type, "PROCEDURE") and str.find(line, "=>") > 0) return .{ .ctx = .pro_link };
+            if (std.mem.eql(u8, v.var_type, "PROCEDURE") and (std.mem.indexOf(u8, line, "=>") orelse 0) > 0) return .{ .ctx = .pro_link };
             return .{ .ctx = .var_only };
         }
     }
@@ -614,7 +614,7 @@ fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !
     if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
     var counter: usize = 0;
     for (file_ast.variable_list.items) |v| {
-        if (!str.eql(name, v.name)) continue;
+        if (!std.mem.eql(u8, name, v.name)) continue;
         for (file_ast.external_objs.items) |e| if (e == v) return false;
         try v.setExternalAttr();
         try file_ast.external_objs.append(file_ast.allocator(), v);
@@ -626,7 +626,7 @@ fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !
 fn findExternalAttr(file_ast: *Ast, name: []const u8, new_var: *Obj) !bool {
     var counter: usize = 0;
     for (file_ast.external_objs.items) |v| {
-        if (!str.eql(v.name, name)) continue;
+        if (!std.mem.eql(u8, v.name, name)) continue;
         if (!std.ascii.eqlIgnoreCase(v.desc, "EXTERNAL")) continue;
         if (counter == 0) {
             v.desc = new_var.desc;
@@ -685,6 +685,14 @@ pub const CodeLine = struct {
     post: []const []const u8,
 };
 
+/// Index of the `&` of a free-form line that continues on the next line: the
+/// first one, unless a comment starts before it
+fn continuationAmpersand(line: []const u8) ?usize {
+    const amper = std.mem.indexOfScalar(u8, line, '&') orelse return null;
+    const comment = std.mem.indexOfScalar(u8, line, '!') orelse return amper;
+    return if (amper < comment) amper else null;
+}
+
 pub const FortranFile = struct {
     gpa: Allocator,
     path: []const u8,
@@ -709,14 +717,14 @@ pub const FortranFile = struct {
         const ext = std.fs.path.extension(std.fs.path.basename(path));
         if (pp_suffixes) |sfx| {
             self.preproc = false;
-            for (sfx) |s| if (str.eql(s, ext)) {
+            for (sfx) |s| if (std.mem.eql(u8, s, ext)) {
                 self.preproc = true;
             };
         } else {
             var upper_buf: [64]u8 = undefined;
             if (ext.len <= upper_buf.len) {
                 const up = std.ascii.upperString(upper_buf[0..ext.len], ext);
-                self.preproc = str.eql(up, ext);
+                self.preproc = std.mem.eql(u8, up, ext);
             }
         }
         return self;
@@ -766,7 +774,7 @@ pub const FortranFile = struct {
         var arena = std.heap.ArenaAllocator.init(self.gpa);
         defer arena.deinit();
         const a = arena.allocator();
-        const text = try str.replace(a, text_in, "\t", " ");
+        const text = try std.mem.replaceOwned(u8, a, text_in, "\t", " ");
         const h = std.hash.Wyhash.hash(0, text);
         if (self.hash != null and self.hash.? == h) return false;
         self.hash = h;
@@ -808,9 +816,9 @@ pub const FortranFile = struct {
                         const prev_line = tmp_line;
                         tmp_line = self.getLine(line_ind, pp_content) orelse "";
                         if (line_ind == line_no - 1) {
-                            curr_line = try str.concat(a, &.{ "      ", str.from(curr_line, 6) });
+                            curr_line = try std.mem.concat(a, u8, &.{ "      ", str.from(curr_line, 6) });
                         } else {
-                            pre_lines.items[pre_lines.items.len - 1] = try str.concat(a, &.{ "      ", str.from(prev_line, 6) });
+                            pre_lines.items[pre_lines.items.len - 1] = try std.mem.concat(a, u8, &.{ "      ", str.from(prev_line, 6) });
                         }
                         try pre_lines.append(a, tmp_line);
                     } else break;
@@ -818,18 +826,18 @@ pub const FortranFile = struct {
                 }
             } else {
                 if (R().FREE_CONT.match(curr_line)) |m| {
-                    curr_line = try str.concat(a, &.{ try str.spaces(a, m.end(0)), curr_line[m.end(0)..] });
+                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, m.end(0)), curr_line[m.end(0)..] });
                 }
                 while (line_ind > 0) {
                     const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
                     var tmp_no_comm = str.beforeFirst(tmp_line, "!");
-                    const cont_ind = str.rfind(tmp_no_comm, "&");
+                    const cont_ind = std.mem.lastIndexOfScalar(u8, tmp_no_comm, '&');
                     if (R().FREE_CONT.match(tmp_no_comm)) |m| {
-                        if (cont_ind == @as(isize, @intCast(m.end(0))) - 1) break;
-                        tmp_no_comm = try str.concat(a, &.{ try str.spaces(a, m.end(0)), tmp_no_comm[m.end(0)..] });
+                        if (cont_ind == m.end(0) - 1) break;
+                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, m.end(0)), tmp_no_comm[m.end(0)..] });
                     }
-                    if (cont_ind >= 0) {
-                        try pre_lines.append(a, tmp_no_comm[0..@intCast(cont_ind)]);
+                    if (cont_ind) |ci| {
+                        try pre_lines.append(a, tmp_no_comm[0..ci]);
                     } else break;
                     line_ind -= 1;
                 }
@@ -844,7 +852,7 @@ pub const FortranFile = struct {
                     line_ind += 1;
                     var cont = R().FIXED_CONT.match(next_line) != null;
                     while (cont and line_ind < n) {
-                        try post_lines.append(a, try str.concat(a, &.{ "      ", str.from(next_line, 6) }));
+                        try post_lines.append(a, try std.mem.concat(a, u8, &.{ "      ", str.from(next_line, 6) }));
                         next_line = self.getLine(line_ind, pp_content) orelse "";
                         line_ind += 1;
                         cont = R().FIXED_CONT.match(next_line) != null;
@@ -852,15 +860,13 @@ pub const FortranFile = struct {
                 }
             } else {
                 var line_stripped = try helpers.stripStrings(a, curr_line, true);
-                var i_amper = str.find(line_stripped, "&");
-                var i_comm = str.find(line_stripped, "!");
-                if (i_comm < 0) i_comm = i_amper + 1;
+                var cont_amper = continuationAmpersand(line_stripped);
                 var next_line: []const u8 = "";
-                while (i_amper >= 0 and i_amper < i_comm) {
+                while (cont_amper) |amper| {
                     if (line_ind == line_no + 1) {
-                        curr_line = str.upto(curr_line, @intCast(i_amper));
+                        curr_line = str.upto(curr_line, amper);
                     } else if (next_line.len > 0) {
-                        post_lines.items[post_lines.items.len - 1] = str.upto(next_line, @intCast(i_amper));
+                        post_lines.items[post_lines.items.len - 1] = str.upto(next_line, amper);
                     }
                     next_line = self.getLine(line_ind, pp_content) orelse break;
                     line_ind += 1;
@@ -877,9 +883,7 @@ pub const FortranFile = struct {
                     if (R().FREE_CONT.match(next_line)) |m| next_line = next_line[m.end(0)..];
                     try post_lines.append(a, next_line);
                     line_stripped = try helpers.stripStrings(a, next_line, true);
-                    i_amper = str.find(line_stripped, "&");
-                    i_comm = str.find(line_stripped, "!");
-                    if (i_comm < 0) i_comm = i_amper + 1;
+                    cont_amper = continuationAmpersand(line_stripped);
                 }
             }
         }
@@ -901,14 +905,14 @@ pub const FortranFile = struct {
         var line_no = line_no_in;
         const cl = try self.getCodeLine(a, line_no, forward, backward, pp_content, false);
         var word_range: Range = .{ .start = -1, .end = -1 };
-        const word_lower = try str.lower(a, word);
-        if (cl.curr) |c| word_range = helpers.findWordInLine(try str.lower(a, c), word_lower);
+        const word_lower = try std.ascii.allocLowerString(a, word);
+        if (cl.curr) |c| word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, c), word_lower);
         if (backward and word_range.start < 0) {
             var i: usize = cl.pre.len;
             var k: i64 = 0;
             while (i > 0) : (k += 1) {
                 i -= 1;
-                word_range = helpers.findWordInLine(try str.lower(a, cl.pre[i]), word_lower);
+                word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, cl.pre[i]), word_lower);
                 if (word_range.start >= 0) {
                     line_no -= k + 1;
                     return .{ .line = line_no, .range = word_range };
@@ -917,7 +921,7 @@ pub const FortranFile = struct {
         }
         if (forward and word_range.start < 0) {
             for (cl.post, 0..) |l, i| {
-                word_range = helpers.findWordInLine(try str.lower(a, l), word_lower);
+                word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, l), word_lower);
                 if (word_range.start >= 0) {
                     line_no += @as(i64, @intCast(i)) + 1;
                     return .{ .line = line_no, .range = word_range };
@@ -956,7 +960,7 @@ pub const FortranFile = struct {
         // Single line edit
         if (rng.sl == rng.el and text_split.len == 1) {
             const prev = self.lines.items[rng.sl];
-            const new_line = try str.concat(self.gpa, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
+            const new_line = try std.mem.concat(self.gpa, u8, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
             self.gpa.free(prev);
             self.lines.items[rng.sl] = new_line;
             if (self.pp_lines) |pl| pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, new_line);
@@ -972,7 +976,7 @@ pub const FortranFile = struct {
             if (i == rng.sl) {
                 for (text_split, 0..) |cl, j| {
                     if (j == 0) {
-                        try new_contents.append(a, try str.concat(a, &.{ line[0..start_col], cl }));
+                        try new_contents.append(a, try std.mem.concat(a, u8, &.{ line[0..start_col], cl }));
                     } else {
                         try new_contents.append(a, cl);
                     }
@@ -980,7 +984,7 @@ pub const FortranFile = struct {
             }
             if (i == rng.el) {
                 const last = new_contents.items.len - 1;
-                new_contents.items[last] = try str.concat(a, &.{ new_contents.items[last], line[end_col..] });
+                new_contents.items[last] = try std.mem.concat(a, u8, &.{ new_contents.items[last], line[end_col..] });
             }
         }
         try self.setContents(new_contents.items, true);
@@ -999,7 +1003,7 @@ pub const FortranFile = struct {
         } else {
             if (R().FREE_COMMENT.match(curr_line) != null) return false;
         }
-        var full_line: []const u8 = try str.concat(a, &.{ try str.concat(a, cl.pre), curr_line });
+        var full_line: []const u8 = try std.mem.concat(a, u8, &.{ try std.mem.concat(a, u8, cl.pre), curr_line });
         const lr = try helpers.stripLineLabel(a, full_line);
         full_line = lr.line;
         if (lr.label != null) return true;
@@ -1043,8 +1047,8 @@ pub const FortranFile = struct {
         const res = try ast.checkFile(env);
         try out.appendSlice(a, res.parse_errors);
         if (max_line_length > 0 or max_comment_line_length > 0) {
-            const msg_line = try str.print(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
-            const msg_comment = try str.print(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
+            const msg_line = try std.fmt.allocPrint(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
+            const msg_comment = try std.fmt.allocPrint(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
             const comment_re = if (self.fixed) &R().FIXED_COMMENT else &R().FREE_COMMENT;
             for (self.lines.items, 0..) |line, i| {
                 const len: i64 = @intCast(str.codepointLen(line));
@@ -1180,7 +1184,7 @@ const Parser = struct {
                 var parts: std.ArrayList([]const u8) = .empty;
                 try parts.append(a, cl.curr.?);
                 try parts.appendSlice(a, cl.post);
-                line = try str.concat(a, parts.items);
+                line = try std.mem.concat(a, u8, parts.items);
             }
             const lr = try helpers.stripLineLabel(a, line);
             line = lr.line;
@@ -1235,7 +1239,7 @@ const Parser = struct {
             .var_ => |info| {
                 const var_names = info.var_names orelse return;
                 var procedure_def = false;
-                if (str.startsWith(info.var_type, "PRO")) {
+                if (std.mem.startsWith(u8, info.var_type, "PRO")) {
                     if (ast.current_scope) |cs| if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
                         for (var_names) |vn| try ast.addIntMember(vn);
                         dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ str.strip(line), line_no });
@@ -1257,13 +1261,13 @@ const Parser = struct {
                     }
                     var var_keywords: std.ArrayList([]const u8) = .empty;
                     try var_keywords.appendSlice(a, info.keywords);
-                    if (str.startsWith(name, "(")) continue;
+                    if (std.mem.startsWith(u8, name, "(")) continue;
                     const dim = try parseImpDim(a, name);
                     name = dim.line;
                     const chr = try parseImpChar(a, name);
                     name = chr.line;
                     if (dim.extra) |d| try var_keywords.append(a, d);
-                    if (chr.extra) |c| desc = try str.concat(a, &.{ desc, c });
+                    if (chr.extra) |c| desc = try std.mem.concat(a, u8, &.{ desc, c });
                     name = str.strip(name);
                     const mk = try helpers.mapKeywords(a, var_keywords.items);
                     var new_var: *Obj = undefined;
@@ -1280,7 +1284,7 @@ const Parser = struct {
                             const col: usize = @intCast(@max(r.end, 0));
                             if (R().PARAMETER_VAL.match(str.from(line, col))) |m| {
                                 const words = try str.splitWhitespace(a, str.strip(m.group(1) orelse ""));
-                                new_var.param_val = try pa.dupe(u8, try str.join(a, " ", words));
+                                new_var.param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
                             }
                         }
                         if (try findExternal(ast, desc, name, new_var)) continue;
@@ -1335,7 +1339,7 @@ const Parser = struct {
                 var name = name_opt orelse "";
                 if (name_opt == null) {
                     counters.block += 1;
-                    name = try str.print(a, "#BLOCK{d}", .{counters.block});
+                    name = try std.fmt.allocPrint(a, "#BLOCK{d}", .{counters.block});
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK, true, true);
@@ -1343,7 +1347,7 @@ const Parser = struct {
             },
             .do_ => |label| {
                 counters.do_ += 1;
-                const name = try str.print(a, "#DO{d}", .{counters.do_});
+                const name = try std.fmt.allocPrint(a, "#DO{d}", .{counters.do_});
                 if (label.len > 0) try block_id_stack.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, label));
                 const o = try Obj.newScope(ast, .do_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_DO, true, true);
@@ -1352,7 +1356,7 @@ const Parser = struct {
             .where => |single| {
                 if (!single) {
                     counters.do_ += 1;
-                    const name = try str.print(a, "#WHERE{d}", .{counters.do_});
+                    const name = try std.fmt.allocPrint(a, "#WHERE{d}", .{counters.do_});
                     const o = try Obj.newScope(ast, .where, line_no, name, &.{});
                     try ast.addScope(o, &R().END_WHERE, true, true);
                 }
@@ -1360,7 +1364,7 @@ const Parser = struct {
             },
             .assoc => |bound| {
                 counters.block += 1;
-                const name = try str.print(a, "#ASSOC{d}", .{counters.block});
+                const name = try std.fmt.allocPrint(a, "#ASSOC{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .associate, line_no, name, &.{});
                 try ast.addScope(o, &R().END_ASSOCIATE, true, true);
                 for (bound) |bv| {
@@ -1376,17 +1380,17 @@ const Parser = struct {
             },
             .if_ => {
                 counters.if_ += 1;
-                const name = try str.print(a, "#IF{d}", .{counters.if_});
+                const name = try std.fmt.allocPrint(a, "#IF{d}", .{counters.if_});
                 const o = try Obj.newScope(ast, .if_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_IF, true, true);
                 dbg("{s} !!! IF - Ln:{d}", .{ line, line_no });
             },
             .select => |info| {
                 counters.select += 1;
-                const name = try str.print(a, "#SELECT{d}", .{counters.select});
+                const name = try std.fmt.allocPrint(a, "#SELECT{d}", .{counters.select});
                 const o = try Obj.newSelect(ast, line_no, name, info);
                 try ast.addScope(o, &R().END_SELECT, true, true);
-                const var_desc = try str.print(a, "{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
+                const var_desc = try std.fmt.allocPrint(a, "{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
                 if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.type)) |v| try ast.addVariable(v);
                 dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
             },
@@ -1399,7 +1403,7 @@ const Parser = struct {
             },
             .enum_ => {
                 counters.block += 1;
-                const name = try str.print(a, "#ENUM{d}", .{counters.block});
+                const name = try std.fmt.allocPrint(a, "#ENUM{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .enum_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_ENUMD, true, true);
                 dbg("{s} !!! ENUM - Ln:{d}", .{ line, line_no });
@@ -1408,7 +1412,7 @@ const Parser = struct {
                 var name = info.name orelse "";
                 if (info.name == null) {
                     counters.interface += 1;
-                    name = try str.print(a, "#GEN_INT{d}", .{counters.interface});
+                    name = try std.fmt.allocPrint(a, "#GEN_INT{d}", .{counters.interface});
                 }
                 const o = try Obj.newInterface(ast, line_no, name, info.abstract);
                 try ast.addScope(o, &R().END_INT, true, true);
@@ -1503,7 +1507,7 @@ const Parser = struct {
         const label = line_label orelse return false;
         if (cs.getType(false) != C.DO_TYPE_ID) return false;
         var did_close = false;
-        while (block_id_stack.items.len > 0 and str.eql(label, block_id_stack.items[block_id_stack.items.len - 1])) {
+        while (block_id_stack.items.len > 0 and std.mem.eql(u8, label, block_id_stack.items[block_id_stack.items.len - 1])) {
             ast.endScope(ln, true);
             _ = block_id_stack.pop();
             did_close = true;
@@ -1554,17 +1558,17 @@ const Parser = struct {
         var has_args = true;
         var idx_args: isize = -1;
         for (docs) |line| {
-            if (str.startsWith(line, "@brief")) {
+            if (std.mem.startsWith(u8, line, "@brief")) {
                 try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@brief", "")));
                 try docstr.append(a, '\n');
-            } else if (str.startsWith(line, "@param")) {
+            } else if (std.mem.startsWith(u8, line, "@param")) {
                 if (has_args) {
                     try docstr.appendSlice(a, "\n**Parameters:**  \n");
                     has_args = false;
                     idx_args = @intCast(docstr.items.len);
                 }
-                try docstr.appendSlice(a, try R().DOC_PARAM.sub(a, "  \\n`\\1` - ", try str.concat(a, &.{ line, " " })));
-            } else if (str.startsWith(line, "@return")) {
+                try docstr.appendSlice(a, try R().DOC_PARAM.sub(a, "  \\n`\\1` - ", try std.mem.concat(a, u8, &.{ line, " " })));
+            } else if (std.mem.startsWith(u8, line, "@return")) {
                 try docstr.appendSlice(a, "\n**Returns:**  \n");
                 try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@return", "")));
                 try docstr.append(a, '\n');
@@ -1577,7 +1581,7 @@ const Parser = struct {
             const ia: usize = @intCast(idx_args);
             const head = str.slice(docstr.items, 0, idx_args - 3);
             const tail = try str.replaceFirst(a, docstr.items[ia..], "  \n ", "");
-            return str.concat(a, &.{ head, tail });
+            return std.mem.concat(a, u8, &.{ head, tail });
         }
         return docstr.items;
     }
@@ -1604,7 +1608,7 @@ const Parser = struct {
         const sa = p.scratch.allocator();
         // get_docstring
         try p.docs.append(sa, str.strip(line[doc_match.end(0)..]));
-        const predocmark = str.eql(doc_match.group(1).?, ">");
+        const predocmark = std.mem.eql(u8, doc_match.group(1).?, ">");
         var new_ln = ln;
         const n: i64 = @intCast(p.file.nLines());
         if (ln < n) {
@@ -1654,8 +1658,8 @@ fn parseImpDim(a: Allocator, line: []const u8) !Split {
     if (i < 0) return .{ .line = line, .extra = null };
     const iu: usize = @intCast(i);
     const dims = line[m.start(1) .. m.end(1) + iu + 1];
-    const rest = try str.concat(a, &.{ line[0..m.start(1)], line[m.end(1) + iu + 1 ..] });
-    return .{ .line = rest, .extra = try str.concat(a, &.{ "dimension", dims }) };
+    const rest = try std.mem.concat(a, u8, &.{ line[0..m.start(1)], line[m.end(1) + iu + 1 ..] });
+    return .{ .line = rest, .extra = try std.mem.concat(a, u8, &.{ "dimension", dims }) };
 }
 
 /// Parse the implicit character length from a variable e.g. var_name*10
@@ -1663,14 +1667,14 @@ fn parseImpChar(a: Allocator, line: []const u8) !Split {
     const m = R().IMP_CHAR.match(line) orelse return .{ .line = line, .extra = null };
     const g2 = m.group(2).?;
     var char_len: []const u8 = undefined;
-    if (str.eql(g2, "(")) {
+    if (std.mem.eql(u8, g2, "(")) {
         const i = helpers.findParenMatch(line[m.end(2)..]);
         if (i < 0) return .{ .line = line, .extra = null };
         char_len = line[m.start(2) .. m.end(2) + @as(usize, @intCast(i)) + 1];
     } else {
         char_len = g2;
     }
-    return .{ .line = m.group(1).?, .extra = try str.concat(a, &.{ "*", char_len }) };
+    return .{ .line = m.group(1).?, .extra = try std.mem.concat(a, u8, &.{ "*", char_len }) };
 }
 
 test "read definitions" {
