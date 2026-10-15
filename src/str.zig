@@ -1,4 +1,5 @@
-//! Python-like string helpers operating on byte slices
+//! Python-like string helpers operating on byte slices. Plain operations
+//! use `std.mem` and `std.ascii` directly; these keep Python's semantics.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -15,73 +16,6 @@ pub fn lstrip(s: []const u8) []const u8 {
 
 pub fn rstrip(s: []const u8) []const u8 {
     return std.mem.trimEnd(u8, s, whitespace);
-}
-
-pub fn lower(a: Allocator, s: []const u8) ![]u8 {
-    const out = try a.alloc(u8, s.len);
-    for (s, 0..) |c, i| out[i] = std.ascii.toLower(c);
-    return out;
-}
-
-pub fn upper(a: Allocator, s: []const u8) ![]u8 {
-    const out = try a.alloc(u8, s.len);
-    for (s, 0..) |c, i| out[i] = std.ascii.toUpper(c);
-    return out;
-}
-
-pub fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
-    return std.ascii.eqlIgnoreCase(a, b);
-}
-
-pub fn eql(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, a, b);
-}
-
-pub fn startsWith(s: []const u8, prefix: []const u8) bool {
-    return std.mem.startsWith(u8, s, prefix);
-}
-
-pub fn endsWith(s: []const u8, suffix: []const u8) bool {
-    return std.mem.endsWith(u8, s, suffix);
-}
-
-pub fn startsWithIgnoreCase(s: []const u8, prefix: []const u8) bool {
-    return s.len >= prefix.len and std.ascii.eqlIgnoreCase(s[0..prefix.len], prefix);
-}
-
-/// Python `str.find`: index or -1
-pub fn find(s: []const u8, needle: []const u8) isize {
-    const i = std.mem.indexOf(u8, s, needle) orelse return -1;
-    return @intCast(i);
-}
-
-pub fn findChar(s: []const u8, c: u8) isize {
-    const i = std.mem.indexOfScalar(u8, s, c) orelse return -1;
-    return @intCast(i);
-}
-
-pub fn rfind(s: []const u8, needle: []const u8) isize {
-    const i = std.mem.lastIndexOf(u8, s, needle) orelse return -1;
-    return @intCast(i);
-}
-
-pub fn contains(s: []const u8, needle: []const u8) bool {
-    return std.mem.indexOf(u8, s, needle) != null;
-}
-
-/// Python `a.lower().find(b.lower()) >= 0`
-pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > haystack.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
-    }
-    return false;
-}
-
-pub fn count(s: []const u8, needle: []const u8) usize {
-    return std.mem.count(u8, s, needle);
 }
 
 /// Python `s.split(sep)[0]`
@@ -106,48 +40,21 @@ pub fn splitWhitespace(a: Allocator, s: []const u8) ![][]const u8 {
     return out.toOwnedSlice(a);
 }
 
-pub fn join(a: Allocator, sep: []const u8, parts: []const []const u8) ![]u8 {
-    return std.mem.join(a, sep, parts);
-}
-
-pub fn concat(a: Allocator, parts: []const []const u8) ![]u8 {
-    return std.mem.concat(a, u8, parts);
-}
-
-/// Python `s.replace(old, new)` (all occurrences)
-pub fn replace(a: Allocator, s: []const u8, old: []const u8, new: []const u8) ![]u8 {
-    return std.mem.replaceOwned(u8, a, s, old, new);
-}
-
 /// Python `s.replace(old, new, 1)`
 pub fn replaceFirst(a: Allocator, s: []const u8, old: []const u8, new: []const u8) ![]u8 {
-    if (old.len == 0) return concat(a, &.{ new, s });
+    if (old.len == 0) return std.mem.concat(a, u8, &.{ new, s });
     const i = std.mem.indexOf(u8, s, old) orelse return a.dupe(u8, s);
-    return concat(a, &.{ s[0..i], new, s[i + old.len ..] });
-}
-
-pub fn dupe(a: Allocator, s: []const u8) ![]u8 {
-    return a.dupe(u8, s);
+    return std.mem.concat(a, u8, &.{ s[0..i], new, s[i + old.len ..] });
 }
 
 pub fn dupeOpt(a: Allocator, s: ?[]const u8) !?[]u8 {
     return if (s) |v| try a.dupe(u8, v) else null;
 }
 
-pub fn print(a: Allocator, comptime fmt: []const u8, args: anytype) ![]u8 {
-    return std.fmt.allocPrint(a, fmt, args);
-}
-
 pub fn spaces(a: Allocator, n: usize) ![]u8 {
     const out = try a.alloc(u8, n);
     @memset(out, ' ');
     return out;
-}
-
-pub fn isDigits(s: []const u8) bool {
-    if (s.len == 0) return false;
-    for (s) |c| if (!std.ascii.isDigit(c)) return false;
-    return true;
 }
 
 /// Slice `s[start..end]` with Python clamping semantics for possibly

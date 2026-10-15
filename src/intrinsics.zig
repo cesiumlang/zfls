@@ -78,7 +78,7 @@ const Loader = struct {
     lowercase: bool,
 
     fn case(l: *Loader, s: []const u8) ![]const u8 {
-        return if (l.lowercase) try str.lower(l.a, s) else s;
+        return if (l.lowercase) try std.ascii.allocLowerString(l.a, s) else s;
     }
 
     fn intObject(l: *Loader, name: []const u8, obj: json.Value, itype: i32) !*Obj {
