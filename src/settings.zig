@@ -428,11 +428,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Code Actions options
     s.enable_code_actions = jsonBool(cfg.get("enable_code_actions"), s.enable_code_actions);
     // Preprocessor options
-    s.pp_suffixes = null;
-    if (cfg.get("pp_suffixes")) |v| if (v != .null) {
-        s.pp_suffixes = try jsonList(a, v);
-    };
-    s.pp_defs = .empty;
+    // like every other option, a value in the file replaces the one from the
+    // command line, and no value leaves it alone (upstream #536)
+    if (cfg.get("pp_suffixes")) |v| s.pp_suffixes = if (v == .null) null else try jsonList(a, v);
     if (cfg.get("pp_defs")) |v| try applyPpDefs(a, s, v);
     if (cfg.get("include_dirs")) |v| s.include_dirs = try jsonList(a, v);
     // Debug options
@@ -451,6 +449,23 @@ pub fn json5ErrorMessage(a: Allocator, src: []const u8, pos: usize) ![]const u8 
     }
     if (pos >= src.len) return std.fmt.allocPrint(a, "<string>:{d} Unexpected end of input at column {d}", .{ line, col });
     return std.fmt.allocPrint(a, "<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
+}
+
+test "a config file only replaces the preprocessor options it sets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{};
+    try s.setPpDef(a, "FROM_CLI", "1");
+    s.pp_suffixes = .{};
+    try s.pp_suffixes.?.add(a, ".inc");
+    try applyConfig(a, &s, try json.parse(a, "{}"));
+    try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
+    try std.testing.expectEqual(@as(usize, 1), s.pp_suffixes.?.len());
+    try applyConfig(a, &s, try json.parse(a, "{\"pp_defs\": {\"FROM_FILE\": \"2\"}, \"pp_suffixes\": [\".a\", \".b\"]}"));
+    try std.testing.expectEqualStrings("FROM_FILE", s.pp_defs.items[0].name);
+    try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
+    try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());
 }
 
 test "cli parsing" {

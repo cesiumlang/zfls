@@ -263,7 +263,7 @@ test "#470 definitions after a BLOCK DATA unit (from the description; the report
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(470, .known_failure, w.expectNoDiagnostics("t.f90"));
+    try h.check(470, .fixed, w.expectNoDiagnostics("t.f90"));
 }
 
 test "#172 a coarray dummy argument is found in the argument list" {
