@@ -52,9 +52,10 @@ Marketplace for the platforms without their own. No stored token is needed:
 Open VSX accepts the workflow's OIDC token (trusted publishing), and for the
 Marketplace the workflow signs in with it as a Microsoft Entra managed
 identity that is a member of the publisher (the `AZURE_*` repository
-variables; the "Marketplace identity" workflow shows the ID to add). The
-job falls back to `vsce` trusted publishing and then to the `VSCE_PAT`
-repository secret, with a warning.
+variables; the "Marketplace identity" workflow shows the ID to add). Until
+the `cesiumlang` Open VSX namespace allows trusted publishing, the job falls
+back to the `OVSX_PAT` repository secret there, with a warning. Versions
+already published are skipped, so a failed publishing job can be re-run.
 
 To work on it (Node.js 20 or later):
 
