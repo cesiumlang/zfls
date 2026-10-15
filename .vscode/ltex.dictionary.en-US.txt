@@ -249,3 +249,5 @@ arccosine
 Arctangent
 conda-forge
 json-fortran
+VSIX
+VSCodium
