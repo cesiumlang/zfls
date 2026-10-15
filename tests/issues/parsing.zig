@@ -36,7 +36,41 @@ test "#532 identifiers that start like BLOCK are not BLOCK constructs" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(532, .known_failure, w.expectNoDiagnostics("t.f90"));
+    try h.check(532, .fixed, w.expectNoDiagnostics("t.f90"));
+}
+
+test "BLOCK, CRITICAL and BLOCK DATA are still recognized (control for #532, #292, #264)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\block data named_data
+        \\  common /c/ x
+        \\  real :: x
+        \\end block data named_data
+        \\
+        \\subroutine s()
+        \\  implicit none
+        \\  integer :: i
+        \\  outer: block ! a comment
+        \\    integer :: inner
+        \\    inner = 1
+        \\  end block outer
+        \\  critical
+        \\    i = 1
+        \\  end critical
+        \\  block
+        \\    integer :: other
+        \\    other = 2
+        \\  end block
+        \\end subroutine s
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("t.f90");
+    // the variable declared inside the construct belongs to it
+    const p = w.pos("t.f90", "inner = 1", 0, 0);
+    try w.expectHoverContains("t.f90", p, "INTEGER :: inner");
 }
 
 test "#292 a label or a variable named block" {
@@ -73,7 +107,7 @@ test "#292 a label or a variable named block" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(292, .known_failure, w.expectNoDiagnostics("t.f90"));
+    try h.check(292, .fixed, w.expectNoDiagnostics("t.f90"));
 }
 
 test "#411 a semicolon in a fixed-form comment does not start code" {
@@ -87,7 +121,7 @@ test "#411 a semicolon in a fixed-form comment does not start code" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(411, .known_failure, w.expectNoDiagnostics("invalid_comment.f"));
+    try h.check(411, .fixed, w.expectNoDiagnostics("invalid_comment.f"));
 }
 
 test "#486 a function-like macro with an empty argument list" {
