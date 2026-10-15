@@ -39,16 +39,16 @@ give the same answer, and the test fails for the reason in the issue.
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | known failure | same |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | known failure | same |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | known failure | same |
-| [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | known failure | same (and reported twice) |
+| [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | known failure | same |
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | known failure | same |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | known failure | same |
-| [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | known failure | same |
+| [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | known failure | same |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | known failure | same |
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | known failure | same |
 | [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | known failure | same |
-| [#172](https://github.com/fortran-lang/fortls/issues/172) | coarray dummy argument | diagnostics | known failure | same |
+| [#172](https://github.com/fortran-lang/fortls/issues/172) | coarray dummy argument | diagnostics | fixed (patched) | fails, same cause |
 | [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | known failure | same |
 | [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | known failure | same |
 | [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | known failure | same |
