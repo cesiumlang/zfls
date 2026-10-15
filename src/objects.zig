@@ -253,7 +253,7 @@ pub const Obj = struct {
     pass_name: ?[]const u8 = null,
 
     // Intrinsic
-    itype: i32 = 0,
+    itype: C.TypeId = .base,
 
     /// Set when `copyInterface` imported data from a submodule prototype
     linked_from_interface: bool = false,
@@ -370,7 +370,7 @@ pub const Obj = struct {
         }
         // Close previous "TYPE IS" region if open
         if (file_ast.current_scope) |cs| {
-            if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) {
+            if (cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) {
                 try file_ast.endScope(line_number, true);
             }
         }
@@ -427,7 +427,7 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newIntrinsic(file_ast: *Ast, name: []const u8, itype: i32, doc_str: ?[]const u8, args: []const u8) !*Obj {
+    pub fn newIntrinsic(file_ast: *Ast, name: []const u8, itype: C.TypeId, doc_str: ?[]const u8, args: []const u8) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         o.* = .{
@@ -445,24 +445,24 @@ pub const Obj = struct {
     // ------------------------------------------------------------------
     // Basic accessors
 
-    pub fn getType(self: *const Obj, no_link: bool) i32 {
+    pub fn getType(self: *const Obj, no_link: bool) C.TypeId {
         return switch (self.kind) {
-            .scope, .include => C.BASE_TYPE_ID,
-            .module, .program => C.MODULE_TYPE_ID,
-            .submodule => C.SUBMODULE_TYPE_ID,
-            .subroutine => C.SUBROUTINE_TYPE_ID,
-            .function => C.FUNCTION_TYPE_ID,
-            .type => C.CLASS_TYPE_ID,
-            .interface => C.INTERFACE_TYPE_ID,
-            .block => C.BLOCK_TYPE_ID,
-            .select => C.SELECT_TYPE_ID,
-            .do_ => C.DO_TYPE_ID,
-            .where => C.WHERE_TYPE_ID,
-            .if_ => C.IF_TYPE_ID,
-            .associate => C.ASSOC_TYPE_ID,
-            .enum_ => C.ENUM_TYPE_ID,
-            .variable => if (self.link_obj) |l| l.getType(false) else C.VAR_TYPE_ID,
-            .method => if (!no_link and self.link_obj != null) self.link_obj.?.getType(false) else C.METH_TYPE_ID,
+            .scope, .include => C.TypeId.base,
+            .module, .program => C.TypeId.module,
+            .submodule => C.TypeId.submodule,
+            .subroutine => C.TypeId.subroutine,
+            .function => C.TypeId.function,
+            .type => C.TypeId.class,
+            .interface => C.TypeId.interface,
+            .block => C.TypeId.block,
+            .select => C.TypeId.select,
+            .do_ => C.TypeId.do_,
+            .where => C.TypeId.where,
+            .if_ => C.TypeId.if_,
+            .associate => C.TypeId.assoc,
+            .enum_ => C.TypeId.enum_,
+            .variable => if (self.link_obj) |l| l.getType(false) else C.TypeId.variable,
+            .method => if (!no_link and self.link_obj != null) self.link_obj.?.getType(false) else C.TypeId.method,
             .intrinsic => self.itype,
         };
     }
@@ -496,9 +496,9 @@ pub const Obj = struct {
             .select => "SELECT",
             .variable, .method => if (self.link_obj) |l| l.getDesc(a) else self.getDescNoLink(a),
             .intrinsic => switch (self.itype) {
-                2 => "SUBROUTINE",
-                14 => "KEYWORD",
-                15 => "STATEMENT",
+                .subroutine => "SUBROUTINE",
+                C.keyword_itype => "KEYWORD",
+                C.statement_itype => "STATEMENT",
                 else => "INTRINSIC",
             },
         };
@@ -539,7 +539,7 @@ pub const Obj = struct {
         self.parent = parent_obj;
         if (self.kind == .method) {
             const p = parent_obj orelse return;
-            if (p.getType(false) == C.CLASS_TYPE_ID) {
+            if (p.getType(false) == C.TypeId.class) {
                 if (!self.hasKeyword(KW.nopass)) self.drop_arg = 0;
                 if (p.contains_start != null and self.sline > p.contains_start.? and self.link_name == null) {
                     self.link_name = std.ascii.allocLowerString(self.al(), self.name) catch self.name;
@@ -618,7 +618,7 @@ pub const Obj = struct {
             .interface, .subroutine, .method => true,
             .function => false,
             .variable => self.callable,
-            .intrinsic => self.itype == 2,
+            .intrinsic => self.itype == .subroutine,
             else => false,
         };
     }
@@ -650,12 +650,12 @@ pub const Obj = struct {
             .type => {
                 const p = self.parent orelse return false;
                 const pt = p.getType(false);
-                return pt != C.CLASS_TYPE_ID and pt < C.BLOCK_TYPE_ID;
+                return pt != C.TypeId.class and !pt.isInnerScope();
             },
             .subroutine, .function => {
                 if (self.parent) |p| {
                     const pt = p.getType(false);
-                    if (pt == C.CLASS_TYPE_ID or pt >= C.BLOCK_TYPE_ID) return false;
+                    if (pt == C.TypeId.class or pt.isInnerScope()) return false;
                 }
                 return true;
             },
@@ -717,7 +717,7 @@ pub const Obj = struct {
                 var arg_str: []const u8 = undefined;
                 var arg_snip: ?[]const u8 = null;
                 if (self.args.len == 0) {
-                    if (self.itype >= 14) return .{};
+                    if (self.itype == C.keyword_itype or self.itype == C.statement_itype) return .{};
                     arg_str = "()";
                 } else {
                     const ph = try helpers.getPlaceholders(a, try str.split(a, self.args, ","));
@@ -1043,7 +1043,7 @@ pub const Obj = struct {
                 self.type_obj = null;
                 const ln = self.link_name orelse return;
                 const p = self.parent orelse return;
-                const link_obj = if (p.getType(false) == C.CLASS_TYPE_ID)
+                const link_obj = if (p.getType(false) == C.TypeId.class)
                     try findInScope(env, p.parent, ln, .{})
                 else
                     try findInScope(env, p, ln, .{});
@@ -1190,10 +1190,10 @@ pub const Obj = struct {
         // Collect ancestor interface prototypes
         var interfaces: std.ArrayList(*Obj) = .empty;
         for (anc.children.items) |child| {
-            if (child.getType(false) != C.INTERFACE_TYPE_ID) continue;
+            if (child.getType(false) != C.TypeId.interface) continue;
             for (child.children.items) |iface| {
                 const it = iface.getType(false);
-                if ((it == C.SUBROUTINE_TYPE_ID or it == C.FUNCTION_TYPE_ID or it == C.BASE_TYPE_ID) and iface.isModScope()) {
+                if ((it == C.TypeId.subroutine or it == C.TypeId.function or it == C.TypeId.base) and iface.isModScope()) {
                     try interfaces.append(env.tmp, iface);
                 }
             }
@@ -1201,7 +1201,7 @@ pub const Obj = struct {
         for (interfaces.items) |iface| {
             for (self.children.items) |child| {
                 if (!std.ascii.eqlIgnoreCase(child.name, iface.name)) continue;
-                if (child.getType(false) == C.BASE_TYPE_ID) {
+                if (child.getType(false) == C.TypeId.base) {
                     // Convert the plain scope into a subroutine/function in place
                     if (iface.kind == .subroutine) {
                         child.kind = .subroutine;
@@ -1231,7 +1231,7 @@ pub const Obj = struct {
             const desc = try self.getDescNoLink(env.tmp);
             if (helpers.getParenSubstring(desc)) |tn| {
                 var search_scope: ?*Obj = p;
-                if (p.getType(false) == C.CLASS_TYPE_ID) search_scope = p.parent;
+                if (p.getType(false) == C.TypeId.class) search_scope = p.parent;
                 if (search_scope) |ss| {
                     const type_name = try std.ascii.allocLowerString(env.tmp, str.strip(tn));
                     if (try findInScope(env, ss, type_name, .{})) |t| self.type_obj = t;
@@ -1315,7 +1315,7 @@ pub const Obj = struct {
             } else {
                 const type_defs = try findInWorkspace(env, desc_obj_name, true, true);
                 try known_types.put(a, desc_obj_name, null);
-                const filter_id = if (std.mem.eql(u8, var_type, "class") or std.mem.eql(u8, var_type, "type")) C.CLASS_TYPE_ID else C.VAR_TYPE_ID;
+                const filter_id = if (std.mem.eql(u8, var_type, "class") or std.mem.eql(u8, var_type, "type")) C.TypeId.class else C.TypeId.variable;
                 for (type_defs) |td| {
                     if (td.getType(false) == filter_id) {
                         try known_types.put(a, desc_obj_name, .{ .kind = 1, .obj = td });
@@ -1343,7 +1343,7 @@ pub const Obj = struct {
         var known_types = KnownTypes.empty;
 
         for (self.children.items) |child| {
-            if (child.getType(false) == C.INTERFACE_TYPE_ID) continue;
+            if (child.getType(false) == C.TypeId.interface) continue;
             if (fqsn_dict.get(child.fqsn)) |v| {
                 if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline - 1);
             } else {
@@ -1353,29 +1353,29 @@ pub const Obj = struct {
 
         var contains_line: i64 = -1;
         const st = self.getType(false);
-        if (st == C.MODULE_TYPE_ID or st == C.SUBMODULE_TYPE_ID or st == C.SUBROUTINE_TYPE_ID or st == C.FUNCTION_TYPE_ID) {
+        if (st == C.TypeId.module or st == C.TypeId.submodule or st == C.TypeId.subroutine or st == C.TypeId.function) {
             contains_line = self.contains_start orelse self.eline;
         }
-        const is_interface = self.parent != null and self.parent.?.getType(false) == C.INTERFACE_TYPE_ID and !self.isModScope();
+        const is_interface = self.parent != null and self.parent.?.getType(false) == C.TypeId.interface and !self.isModScope();
 
         for (self.children.items) |child| {
             if (std.mem.startsWith(u8, child.name, "#")) continue;
             const line_number = child.sline - 1;
             if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
             const ct = child.getType(true);
-            if (contains_line >= child.sline and (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID)) {
+            if (contains_line >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function)) {
                 try errors.append(a, Diagnostic.init(line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
             }
-            if (st == C.INTERFACE_TYPE_ID or child.getType(false) == C.INTERFACE_TYPE_ID) continue;
+            if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
             if (fqsn_dict.get(child.fqsn)) |first| if (line_number > first) {
                 var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
                 d.addRelated(self.file_ast.path, first, "First declaration");
                 try errors.append(a, d);
                 continue;
             };
-            if (self.parent != null and (st == C.SUBROUTINE_TYPE_ID or st == C.FUNCTION_TYPE_ID or st == C.BLOCK_TYPE_ID)) {
+            if (self.parent != null and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
                 if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
-                    if (st == C.FUNCTION_TYPE_ID and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
+                    if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                     var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
                     d.addRelated(parent_var.file_ast.path, parent_var.sline - 1, "First declaration");
                     try errors.append(a, d);
@@ -1392,7 +1392,7 @@ pub const Obj = struct {
         for (self.use.items) |u| {
             last_use_line = @max(last_use_line, u.line_number);
             if (u.is_import) {
-                if (self.parent == null or self.parent.?.getType(false) != C.INTERFACE_TYPE_ID) {
+                if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
                     try errors.append(a, Diagnostic.init(u.line_number - 1, "IMPORT statement outside of interface", 1, null));
                 }
                 continue;
@@ -1431,7 +1431,7 @@ pub const Obj = struct {
             var first_sub_line = line_number;
             for (self.children.items) |child| {
                 const ct = child.getType(false);
-                if (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID) first_sub_line = @min(first_sub_line, child.sline - 1);
+                if (ct == C.TypeId.subroutine or ct == C.TypeId.function) first_sub_line = @min(first_sub_line, child.sline - 1);
             }
             try edits.append(a, .{ .sline = first_sub_line, .schar = 0, .eline = first_sub_line, .echar = 0, .new_text = "CONTAINS\n" });
         }
@@ -2067,7 +2067,7 @@ pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_m
         const top_obj = entry.value_ptr.obj;
         if (entry.value_ptr.path == null) continue;
         if ((std.ascii.findIgnoreCase(top_obj.name, query) != null)) try matching.append(a, top_obj);
-        if (top_obj.getType(false) == C.MODULE_TYPE_ID) {
+        if (top_obj.getType(false) == C.TypeId.module) {
             for (try top_obj.getChildren(a, filter_public)) |child| {
                 if ((std.ascii.findIgnoreCase(child.name, query) != null)) try matching.append(a, child);
             }

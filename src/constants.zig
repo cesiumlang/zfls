@@ -37,23 +37,35 @@ pub const Kw = enum(u8) {
 
 pub const KW = Kw;
 
-// Type identifiers
-pub const BASE_TYPE_ID: i32 = -1;
-pub const MODULE_TYPE_ID: i32 = 1;
-pub const SUBROUTINE_TYPE_ID: i32 = 2;
-pub const FUNCTION_TYPE_ID: i32 = 3;
-pub const CLASS_TYPE_ID: i32 = 4;
-pub const INTERFACE_TYPE_ID: i32 = 5;
-pub const VAR_TYPE_ID: i32 = 6;
-pub const METH_TYPE_ID: i32 = 7;
-pub const SUBMODULE_TYPE_ID: i32 = 8;
-pub const BLOCK_TYPE_ID: i32 = 9;
-pub const SELECT_TYPE_ID: i32 = 10;
-pub const DO_TYPE_ID: i32 = 11;
-pub const WHERE_TYPE_ID: i32 = 12;
-pub const IF_TYPE_ID: i32 = 13;
-pub const ASSOC_TYPE_ID: i32 = 14;
-pub const ENUM_TYPE_ID: i32 = 15;
+/// The type id of an object, with the numbers fortls gives them
+pub const TypeId = enum(i32) {
+    base = -1,
+    module = 1,
+    subroutine = 2,
+    function = 3,
+    class = 4,
+    interface = 5,
+    variable = 6,
+    method = 7,
+    submodule = 8,
+    block = 9,
+    select = 10,
+    do_ = 11,
+    where = 12,
+    if_ = 13,
+    assoc = 14,
+    enum_ = 15,
+
+    /// Scopes that sit inside other scopes (BLOCK, SELECT, DO, ...)
+    pub fn isInnerScope(self: TypeId) bool {
+        return @intFromEnum(self) >= @intFromEnum(TypeId.block);
+    }
+};
+
+/// fortls gives the intrinsic keyword and statement objects the ids of
+/// ASSOCIATE and ENUM
+pub const keyword_itype: TypeId = .assoc;
+pub const statement_itype: TypeId = .enum_;
 
 pub const Severity = struct {
     pub const err: i32 = 1;
