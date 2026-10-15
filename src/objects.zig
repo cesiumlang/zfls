@@ -1926,7 +1926,9 @@ pub fn getUseTree(
                 fresh.* = .{ .mod_name = use_stmnt.mod_name };
                 try use_dict.put(a, use_stmnt.mod_name, fresh);
             }
-            if (old_len == use_dict_mod.only_list.len()) continue;
+            // look the entry up again: a full import replaced a restricted one
+            // above, and what it imports in turn must be searched (upstream #568)
+            if (old_len == use_dict.get(use_stmnt.mod_name).?.only_list.len()) continue;
         } else {
             const nu = try a.create(UseStmt);
             nu.* = .{

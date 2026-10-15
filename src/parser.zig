@@ -83,6 +83,7 @@ pub const DefResult = union(enum) {
     sub: SubInfo,
     fun: FunSig,
     block: ?[]const u8,
+    block_data: ?[]const u8,
     do_: []const u8,
     where: bool,
     if_,
@@ -246,6 +247,12 @@ pub fn readSubDef(a: Allocator, line_in: []const u8, mod_flag: bool) E!?DefResul
     const keywords, const line = try splitSubMod(a, line_in);
     const pm = (try getProcedureModifiers(a, line, &R().SUB)) orelse return null;
     return .{ .sub = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag } };
+}
+
+fn readBlockDataDef(a: Allocator, line: []const u8) E!?DefResult {
+    _ = a;
+    const m = R().BLOCK_DATA.match(line) orelse return null;
+    return .{ .block_data = m.group(1) };
 }
 
 fn readBlockDef(a: Allocator, line: []const u8) E!?DefResult {
@@ -526,6 +533,7 @@ const def_tests = [_]DefTest{
     readVarDef1,
     readSubDef1,
     readFunDef1,
+    readBlockDataDef,
     readBlockDef,
     readWhereDef,
     readDoDef,
@@ -610,11 +618,14 @@ pub fn getLineContext(a: Allocator, line: []const u8) E!struct { ctx: LineContex
 // --------------------------------------------------------------------------
 // EXTERNAL handling
 
+// Both lookups are within the current scope: the same name can be declared
+// external in several procedures of a file (upstream #406).
+
 fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
     if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
     var counter: usize = 0;
     for (file_ast.variable_list.items) |v| {
-        if (!std.mem.eql(u8, name, v.name)) continue;
+        if (!std.mem.eql(u8, name, v.name) or v.parent != file_ast.current_scope) continue;
         for (file_ast.external_objs.items) |e| if (e == v) return false;
         try v.setExternalAttr();
         try file_ast.external_objs.append(file_ast.allocator(), v);
@@ -626,7 +637,7 @@ fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !
 fn findExternalAttr(file_ast: *Ast, name: []const u8, new_var: *Obj) !bool {
     var counter: usize = 0;
     for (file_ast.external_objs.items) |v| {
-        if (!std.mem.eql(u8, v.name, name)) continue;
+        if (!std.mem.eql(u8, v.name, name) or v.parent != file_ast.current_scope) continue;
         if (!std.ascii.eqlIgnoreCase(v.desc, "EXTERNAL")) continue;
         if (counter == 0) {
             v.desc = new_var.desc;
@@ -1054,8 +1065,18 @@ pub const FortranFile = struct {
                 const len: i64 = @intCast(str.codepointLen(line));
                 const ln: i64 = @intCast(i);
                 if (comment_re.match(line) == null) {
-                    if (0 < max_line_length and max_line_length < len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_line_length, .eln = ln, .ech = len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    // Code is held to max_line_length; a comment after it is
+                    // held to max_comment_line_length, not to the code limit
+                    // (upstream #489)
+                    const stripped = try helpers.stripStrings(a, line, true);
+                    const has_comment = std.mem.indexOfScalar(u8, stripped, '!');
+                    const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
+                    const code_len: i64 = @intCast(str.codepointLen(code));
+                    if (0 < max_line_length and max_line_length < code_len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_line_length, .eln = ln, .ech = code_len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    }
+                    if (has_comment != null and 0 < max_comment_line_length and max_comment_line_length < len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_comment_line_length, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
                     }
                 } else {
                     if (0 < max_comment_line_length and max_comment_line_length < len) {
@@ -1157,6 +1178,9 @@ const Parser = struct {
                 get_full = false;
             }
             if (line.len == 0) continue;
+            // a fixed-form comment line (C, D or * in column 1) has no code,
+            // whatever it contains, even a semicolon (#411)
+            if (get_full and f.fixed and std.mem.indexOfScalar(u8, "cCdD*", line[0]) != null) continue;
 
             p.cur_line = line_no;
             const idx = try p.parseDocs(line, line_no);
@@ -1268,6 +1292,8 @@ const Parser = struct {
                     name = chr.line;
                     if (dim.extra) |d| try var_keywords.append(a, d);
                     if (chr.extra) |c| desc = try std.mem.concat(a, u8, &.{ desc, c });
+                    // the codimensions of a coarray, x[:], are not part of its name (upstream #172)
+                    if (std.mem.indexOfScalar(u8, name, '[')) |bracket| name = name[0..bracket];
                     name = str.strip(name);
                     const mk = try helpers.mapKeywords(a, var_keywords.items);
                     var new_var: *Obj = undefined;
@@ -1344,6 +1370,16 @@ const Parser = struct {
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK, true, true);
                 dbg("{s} !!! BLOCK - Ln:{d}", .{ line, line_no });
+            },
+            .block_data => |name_opt| {
+                var name = name_opt orelse "";
+                if (name_opt == null) {
+                    counters.block += 1;
+                    name = try std.fmt.allocPrint(a, "#BLOCKDATA{d}", .{counters.block});
+                }
+                const o = try Obj.newScope(ast, .block, line_no, name, &.{});
+                try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
+                dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
             .do_ => |label| {
                 counters.do_ += 1;
