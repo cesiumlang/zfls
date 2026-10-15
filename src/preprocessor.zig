@@ -13,8 +13,6 @@ const regex = @import("regex.zig");
 const paths = @import("paths.zig");
 const parser = @import("parser.zig");
 
-const dbg = parser.dbg;
-
 fn R() *const patterns.Patterns {
     return patterns.get();
 }
@@ -526,6 +524,7 @@ pub fn preprocessFile(
     file_path: ?[]const u8,
     pp_defs: ?*const Defs,
     include_dirs_in: []const []const u8,
+    trace: ?parser.Trace,
 ) !Output {
     var include_dirs: std.ArrayList([]const u8) = .empty;
     if (file_path) |fp| {
@@ -538,7 +537,7 @@ pub fn preprocessFile(
         };
         if (!dup) try include_dirs.append(a, d);
     }
-    return preprocessInner(a, io, contents, pp_defs, &include_dirs, 0);
+    return preprocessInner(a, io, contents, pp_defs, &include_dirs, 0, trace);
 }
 
 fn preprocessInner(
@@ -548,6 +547,7 @@ fn preprocessInner(
     pp_defs: ?*const Defs,
     include_dirs: *std.ArrayList([]const u8),
     depth: usize,
+    trace: ?parser.Trace,
 ) !Output {
     var pp_skips: std.ArrayList([2]i64) = .empty;
     var pp_defines: std.ArrayList(i64) = .empty;
@@ -594,17 +594,17 @@ fn preprocessInner(
             if (if_start) {
                 if (is_path) {
                     try pp_stack.append(a, .{ -1, -1 });
-                    dbg("{s} !!! Conditional TRUE({d})", .{ str.strip(line), i + 1 });
+                    parser.Trace.print(trace, "{s} !!! Conditional TRUE({d})", .{ str.strip(line), i + 1 });
                 } else {
                     try pp_stack.append(a, .{ i + 1, -1 });
-                    dbg("{s} !!! Conditional FALSE({d})", .{ str.strip(line), i + 1 });
+                    parser.Trace.print(trace, "{s} !!! Conditional FALSE({d})", .{ str.strip(line), i + 1 });
                 }
                 continue;
             }
             if (pp_stack.items.len == 0) continue;
             const depth_now: i64 = @intCast(pp_stack.items.len);
             const top = &pp_stack.items[pp_stack.items.len - 1];
-            var trace: enum { none, included, excluded_start, excluded } = .none;
+            var cond: enum { none, included, excluded_start, excluded } = .none;
             if (std.mem.eql(u8, kw, "elif")) {
                 if (pp_stack_group.items.len == 0 or pp_stack_group.items[pp_stack_group.items.len - 1][0] != depth_now) {
                     try pp_stack_group.append(a, .{ depth_now, top[0] < 0 });
@@ -613,29 +613,29 @@ fn preprocessInner(
                 if (grp[1]) {
                     // An earlier if or elif in this group has been true
                     if (top[0] < 0) top[0] = i + 1;
-                    trace = .excluded;
+                    cond = .excluded;
                 } else if (evalPpIf(a, line[m.end(1)..], &defs_tmp)) {
                     top[1] = i + 1;
                     try pp_skips.append(a, pp_stack.pop().?);
                     grp[1] = true;
                     try pp_stack.append(a, .{ -1, -1 });
-                    trace = .included;
-                } else trace = .excluded_start;
+                    cond = .included;
+                } else cond = .excluded_start;
             } else if (std.mem.eql(u8, kw, "else")) {
                 if (top[0] < 0) {
                     top[0] = i + 1;
-                    trace = .excluded_start;
+                    cond = .excluded_start;
                 } else if (pp_stack_group.items.len > 0 and
                     pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now and
                     pp_stack_group.items[pp_stack_group.items.len - 1][1])
                 {
                     // An earlier if or elif in this group has been true
-                    trace = .excluded;
+                    cond = .excluded;
                 } else {
                     top[1] = i + 1;
                     try pp_skips.append(a, pp_stack.pop().?);
                     try pp_stack.append(a, .{ -1, -1 });
-                    trace = .included;
+                    cond = .included;
                 }
             } else if (std.mem.eql(u8, kw, "endif")) {
                 if (pp_stack_group.items.len > 0 and pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now) {
@@ -643,20 +643,20 @@ fn preprocessInner(
                 }
                 if (top[0] < 0) {
                     _ = pp_stack.pop();
-                    dbg("{s} !!! Conditional TRUE/END({d})", .{ str.strip(line), i + 1 });
+                    parser.Trace.print(trace, "{s} !!! Conditional TRUE/END({d})", .{ str.strip(line), i + 1 });
                     continue;
                 }
                 if (top[1] < 0) {
                     top[1] = i + 1;
-                    dbg("{s} !!! Conditional FALSE/END({d})", .{ str.strip(line), i + 1 });
+                    parser.Trace.print(trace, "{s} !!! Conditional FALSE/END({d})", .{ str.strip(line), i + 1 });
                 }
                 try pp_skips.append(a, pp_stack.pop().?);
             }
-            switch (trace) {
+            switch (cond) {
                 .none => {},
-                .included => dbg("{s} !!! Conditional TRUE({d})", .{ str.strip(line), i + 1 }),
-                .excluded_start => dbg("{s} !!! Conditional FALSE({d})", .{ str.strip(line), i + 1 }),
-                .excluded => dbg("{s} !!! Conditional EXCLUDED({d})", .{ str.strip(line), i + 1 }),
+                .included => parser.Trace.print(trace, "{s} !!! Conditional TRUE({d})", .{ str.strip(line), i + 1 }),
+                .excluded_start => parser.Trace.print(trace, "{s} !!! Conditional FALSE({d})", .{ str.strip(line), i + 1 }),
+                .excluded => parser.Trace.print(trace, "{s} !!! Conditional EXCLUDED({d})", .{ str.strip(line), i + 1 }),
             }
             continue;
         }
@@ -690,12 +690,12 @@ fn preprocessInner(
             } else if (std.mem.eql(u8, directive, "undef") and defs_tmp.contains(def_name)) {
                 _ = defs_tmp.orderedRemove(def_name);
             }
-            dbg("{s} !!! Define statement({d})", .{ str.strip(line), i + 1 });
+            parser.Trace.print(trace, "{s} !!! Define statement({d})", .{ str.strip(line), i + 1 });
             continue;
         };
         // Handle include files
         if (R().PP_INCLUDE.match(line)) |m| if (stack_is_true) {
-            dbg("{s} !!! Include statement({d})", .{ str.strip(line), i + 1 });
+            parser.Trace.print(trace, "{s} !!! Include statement({d})", .{ str.strip(line), i + 1 });
             const include_filename = try std.mem.replaceOwned(u8, a, m.group(1).?, "\"", "");
             var include_path: ?[]const u8 = null;
             for (include_dirs.items) |dir| {
@@ -716,15 +716,15 @@ fn preprocessInner(
                         dup = true;
                     };
                     if (!dup) try include_dirs.append(a, dir);
-                    dbg("\n!!! Parsing include file '{s}'", .{ip});
-                    const res = try preprocessInner(a, io, inc_lines, &defs_tmp, include_dirs, depth + 1);
+                    parser.Trace.print(trace, "\n!!! Parsing include file '{s}'", .{ip});
+                    const res = try preprocessInner(a, io, inc_lines, &defs_tmp, include_dirs, depth + 1, trace);
                     defs_tmp = res.defs;
-                    dbg("!!! Completed parsing include file\n", .{});
+                    parser.Trace.print(trace, "!!! Completed parsing include file\n", .{});
                 } else |_| {
-                    dbg("!!! Failed to parse include file: {s}", .{ip});
+                    parser.Trace.print(trace, "!!! Failed to parse include file: {s}", .{ip});
                 }
             } else {
-                dbg("{s} !!! Could not locate include file ({d})", .{ str.strip(line), i + 1 });
+                parser.Trace.print(trace, "{s} !!! Could not locate include file ({d})", .{ str.strip(line), i + 1 });
             }
         };
         // Substitute (if any) read in preprocessor macros
@@ -738,7 +738,7 @@ fn preprocessInner(
                 gop.key_ptr.* = def_tmp;
                 if (value.args) |args| {
                     gop.value_ptr.* = expandFuncMacro(a, def_tmp, args, value.value) catch |err| blk: {
-                        dbg("!!! bad macro {s}: {s}", .{ def_tmp, @errorName(err) });
+                        parser.Trace.print(trace, "!!! bad macro {s}: {s}", .{ def_tmp, @errorName(err) });
                         break :blk null;
                     };
                 } else {
@@ -751,7 +751,7 @@ fn preprocessInner(
             const res = try dr.re.subn(a, template, line);
             if (res.count > 0) {
                 const shown = if (value.args != null) dr.template else value.value;
-                dbg("{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, shown });
+                parser.Trace.print(trace, "{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, shown });
                 line = res.out;
             }
         }
@@ -801,7 +801,7 @@ test "pp macro expansion" {
         "#endif",
         "y = SQ(z)",
     };
-    const out = try preprocessFile(a, undefined, &lines, null, null, &.{});
+    const out = try preprocessFile(a, undefined, &lines, null, null, &.{}, null);
     try testing.expectEqualStrings("integer :: a(10)", out.lines[3]);
     try testing.expectEqualStrings("y = ((z)*(z))", out.lines[7]);
     try testing.expectEqual(@as(usize, 1), out.skips.len);

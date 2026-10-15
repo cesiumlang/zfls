@@ -105,7 +105,9 @@ pub fn put(a: Allocator, obj: *Value, key: []const u8, v: Value) !void {
 }
 
 /// Convert a Zig value into a JSON `Value`. Structs become objects with
-/// their fields in declaration order; `null` optionals become JSON null.
+/// their fields in declaration order; `null` optionals become JSON null,
+/// except those of fields that default to `null`, which are left out. A
+/// struct with a `toJson(self, a)` method converts itself.
 pub fn from(a: Allocator, x: anytype) Allocator.Error!Value {
     const T = @TypeOf(x);
     if (T == Value) return x;
@@ -135,11 +137,60 @@ pub fn from(a: Allocator, x: anytype) Allocator.Error!Value {
             return .{ .array = arr };
         },
         .@"struct" => |s| {
+            if (@hasDecl(T, "toJson")) return x.toJson(a);
             var obj: Object = .{};
-            inline for (s.field_names) |fname| {
-                try obj.entries.append(a, .{ .key = fname, .value = try from(a, @field(x, fname)) });
+            inline for (s.field_names, s.field_types, s.field_attrs) |fname, ftype, fattrs| {
+                const val = @field(x, fname);
+                const omit = comptime @typeInfo(ftype) == .optional and !fattrs.@"comptime" and fattrs.defaultValue(ftype) != null;
+                if (!(omit and val == null)) {
+                    try obj.entries.append(a, .{ .key = fname, .value = try from(a, val) });
+                }
             }
             return .{ .object = obj };
+        },
+        else => @compileError("unsupported type " ++ @typeName(T)),
+    }
+}
+
+pub const DecodeError = error{InvalidParams} || Allocator.Error;
+
+/// Decode a JSON `Value` into a Zig value of type `T`: the inverse of `from`
+/// for the types used by the protocol. Struct fields that are absent take
+/// their default (an absent field without one is an error), unknown
+/// properties are ignored, and strings and arrays point into / are allocated
+/// from `a`.
+pub fn to(comptime T: type, a: Allocator, v: Value) DecodeError!T {
+    if (T == Value) return v;
+    switch (@typeInfo(T)) {
+        .bool => return v.asBool() orelse error.InvalidParams,
+        .int => return std.math.cast(T, v.asInt() orelse return error.InvalidParams) orelse error.InvalidParams,
+        .float => return switch (v) {
+            .int => |i| @floatFromInt(i),
+            .float => |f| @floatCast(f),
+            else => error.InvalidParams,
+        },
+        .optional => |o| return if (v == .null) null else try to(o.child, a, v),
+        .pointer => |p| {
+            if (p.size != .slice) @compileError("unsupported pointer type " ++ @typeName(T));
+            if (p.child == u8) return v.asStr() orelse error.InvalidParams;
+            if (v != .array) return error.InvalidParams;
+            const out = try a.alloc(p.child, v.array.items.len);
+            for (v.array.items, out) |item, *slot| slot.* = try to(p.child, a, item);
+            return out;
+        },
+        .@"struct" => |s| {
+            if (v != .object and v != .null) return error.InvalidParams;
+            var r: T = undefined;
+            inline for (s.field_names, s.field_types, s.field_attrs) |fname, ftype, fattrs| {
+                if (v.get(fname)) |fv| {
+                    @field(r, fname) = try to(ftype, a, fv);
+                } else if (fattrs.defaultValue(ftype)) |d| {
+                    @field(r, fname) = d;
+                } else {
+                    return error.InvalidParams;
+                }
+            }
+            return r;
         },
         else => @compileError("unsupported type " ++ @typeName(T)),
     }
@@ -531,4 +582,26 @@ test "json round trip" {
     try std.testing.expectEqualStrings("{\"a\":[1,2.5,\"x\\u00e9\"],\"b\":true,\"c\":null,\"d\":{}}", out);
     const s = try from(a, .{ .label = "x", .n = @as(i64, 3), .opt = @as(?i64, null) });
     try std.testing.expectEqualStrings("{\"label\":\"x\",\"n\":3,\"opt\":null}", try stringify(a, s));
+}
+
+test "from omits null defaults; to decodes" {
+    const T = struct {
+        a: i64,
+        b: ?[]const u8 = null,
+        c: ?i64,
+        d: []const []const u8 = &.{},
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const out = try stringify(a, try from(a, T{ .a = 1, .c = null }));
+    try std.testing.expectEqualStrings("{\"a\":1,\"c\":null,\"d\":[]}", out);
+    const v = try parse(a, "{\"a\":2,\"b\":\"x\",\"c\":3,\"d\":[\"p\",\"q\"],\"extra\":true}");
+    const t = try to(T, a, v);
+    try std.testing.expectEqual(@as(i64, 2), t.a);
+    try std.testing.expectEqualStrings("x", t.b.?);
+    try std.testing.expectEqual(@as(?i64, 3), t.c);
+    try std.testing.expectEqualStrings("q", t.d[1]);
+    try std.testing.expectError(error.InvalidParams, to(T, a, try parse(a, "{\"b\":\"x\"}")));
+    try std.testing.expectError(error.InvalidParams, to(T, a, try parse(a, "{\"a\":\"s\",\"c\":1}")));
 }
