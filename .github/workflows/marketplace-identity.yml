@@ -19,7 +19,7 @@ jobs:
     name: Show the identity to add to the publisher
     runs-on: ubuntu-24.04
     steps:
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
