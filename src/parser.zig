@@ -108,6 +108,7 @@ pub const DefResult = union(enum) {
     sub: SubInfo,
     fun: FunSig,
     block: ?[]const u8,
+    block_data: ?[]const u8,
     do_: []const u8,
     where: bool,
     if_,
@@ -271,6 +272,12 @@ pub fn readSubDef(a: Allocator, line_in: []const u8, mod_flag: bool) E!?DefResul
     const keywords, const line = try splitSubMod(a, line_in);
     const pm = (try getProcedureModifiers(a, line, &R().SUB)) orelse return null;
     return .{ .sub = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag } };
+}
+
+fn readBlockDataDef(a: Allocator, line: []const u8) E!?DefResult {
+    _ = a;
+    const m = R().BLOCK_DATA.match(line) orelse return null;
+    return .{ .block_data = m.group(1) };
 }
 
 fn readBlockDef(a: Allocator, line: []const u8) E!?DefResult {
@@ -551,6 +558,7 @@ const def_tests = [_]DefTest{
     readVarDef1,
     readSubDef1,
     readFunDef1,
+    readBlockDataDef,
     readBlockDef,
     readWhereDef,
     readDoDef,
@@ -1189,6 +1197,9 @@ const Parser = struct {
                 get_full = false;
             }
             if (line.len == 0) continue;
+            // a fixed-form comment line (C, D or * in column 1) has no code,
+            // whatever it contains, even a semicolon (#411)
+            if (get_full and f.fixed and std.mem.indexOfScalar(u8, "cCdD*", line[0]) != null) continue;
 
             p.cur_line = line_no;
             const idx = try p.parseDocs(line, line_no);
@@ -1376,6 +1387,16 @@ const Parser = struct {
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK, true, true);
                 p.dbg("{s} !!! BLOCK - Ln:{d}", .{ line, line_no });
+            },
+            .block_data => |name_opt| {
+                var name = name_opt orelse "";
+                if (name_opt == null) {
+                    counters.block += 1;
+                    name = try std.fmt.allocPrint(a, "#BLOCKDATA{d}", .{counters.block});
+                }
+                const o = try Obj.newScope(ast, .block, line_no, name, &.{});
+                try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
+                dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
             .do_ => |label| {
                 counters.do_ += 1;
