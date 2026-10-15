@@ -55,7 +55,7 @@ identity that is a member of the publisher (the `AZURE_*` repository
 variables; the "Marketplace identity" workflow shows the ID to add). Until
 the `cesiumlang` Open VSX namespace allows trusted publishing, the job falls
 back to the `OVSX_PAT` repository secret there, with a warning. Versions
-already published are skipped, so a failed publish job can be re-run.
+already published are skipped, so a failed publishing job can be re-run.
 
 To work on it (Node.js 20 or later):
 
