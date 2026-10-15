@@ -293,10 +293,8 @@ pub const KeywordInfo = struct {
 
 pub const MappedKeywords = struct { ids: []u8, info: KeywordInfo };
 
-/// Global keyword ordering setting (`--sort_keywords`)
-pub var sort_keywords: bool = true;
-
-pub fn mapKeywords(a: Allocator, keywords: []const []const u8) !MappedKeywords {
+/// `sort` orders the keyword ids (`--sort_keywords`)
+pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !MappedKeywords {
     var ids: std.ArrayList(u8) = .empty;
     var info: KeywordInfo = .{};
     for (keywords) |kw| {
@@ -312,7 +310,7 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8) !MappedKeywords {
             }
         }
     }
-    if (sort_keywords) std.mem.sort(u8, ids.items, {}, std.sort.asc(u8));
+    if (sort) std.mem.sort(u8, ids.items, {}, std.sort.asc(u8));
     return .{ .ids = ids.items, .info = info };
 }
 

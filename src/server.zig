@@ -80,9 +80,7 @@ pub const Server = struct {
         };
         self.sync_type = if (self.s.incremental_sync) 2 else 1;
         self.src_ext_regex = try patterns.createSrcFileExtsStr(self.arena.allocator(), self.s.incl_suffixes.slice());
-        helpers.sort_keywords = true;
         self.intr = try intrinsics.load(gpa, false);
-        helpers.sort_keywords = self.s.sort_keywords;
         try self.syncPpDefsFromSettings();
         return self;
     }
@@ -468,7 +466,10 @@ pub const Server = struct {
             gop.key_ptr.* = m.fqsn;
             gop.value_ptr.* = .{ .obj = m, .path = null };
         }
-        helpers.sort_keywords = self.s.sort_keywords;
+    }
+
+    fn parseOptions(self: *const Server) parser.Options {
+        return .{ .sort_keywords = self.s.sort_keywords };
     }
 
     fn addSourceDirs(self: *Server, a: Allocator) !void {
@@ -544,7 +545,7 @@ pub const Server = struct {
             f.destroy();
             return .{ .err = e };
         }
-        const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice()) catch {
+        const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch {
             f.destroy();
             return .{ .err = "Error during parsing" };
         };
@@ -1624,7 +1625,7 @@ pub const Server = struct {
             // Periodically reclaim memory of replaced ASTs
             if (self.retired.items.len >= 16) try self.fullRelink(a);
         } else if (file.preproc) {
-            const out = try file.preprocess(self.io, &self.pp_defs, &.{});
+            const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
             try self.mergePpDefs(&out.defs);
         }
         return .null;
@@ -1698,7 +1699,7 @@ pub const Server = struct {
             }
         }
         const f = file orelse return .{ .changed = false, .err = "File does not exist" };
-        const ast_new = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice()) catch {
+        const ast_new = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), self.parseOptions()) catch {
             self.log.err("Error while parsing file {s}", .{filepath});
             if (created) f.destroy();
             return .{ .changed = false, .err = "Error during parsing" };
