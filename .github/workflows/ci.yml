@@ -1,6 +1,6 @@
 name: CI
 
-# Every pull request and every push to main is built and tested on all
+# Every pull request and every push to main or dev is built and tested on all
 # supported platforms, and the tests run on the release binaries themselves.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
@@ -25,7 +25,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # dev is tested too, so a bad combination of merged pull requests shows
+    # up at once (it is never released from there)
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -629,6 +631,10 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
+      # dev takes pushes only from pull requests whose checks pass, and from
+      # this deploy key, which the dev ruleset lets bypass that (GITHUB_TOKEN
+      # cannot be a bypass actor); without the secret the token is used
+      DEPLOY_KEY: ${{ secrets.DEV_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -641,6 +647,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           tagged() { git rev-parse -q --verify "refs/tags/v$1" >/dev/null; }
+          push_to=origin
+          if [ -n "$DEPLOY_KEY" ]; then
+            install -d -m 700 ~/.ssh
+            printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/dev_deploy_key
+            chmod 600 ~/.ssh/dev_deploy_key
+            ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+            export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/dev_deploy_key -o IdentitiesOnly=yes"
+            push_to="git@github.com:$GITHUB_REPOSITORY.git"
+          fi
           for attempt in 1 2 3; do
             git fetch -q origin dev
             git checkout -q -B dev origin/dev
@@ -659,7 +674,7 @@ jobs:
               sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
               git commit -qam "Begin v$next development [skip ci]"
             fi
-            if git push -q origin dev; then exit 0; fi
+            if git push -q "$push_to" dev; then exit 0; fi
             echo "dev moved while merging; trying again"
           done
           echo "::error::could not push to dev"

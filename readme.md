@@ -127,12 +127,17 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` once, and tests them as release
+every pull request and every push to `main` or `dev` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
 suites above, longer stress runs and the differential test.
 
 Changes are collected on the `dev` branch, which pull requests target, and
-released together by merging `dev` into `main`.
+released together by merging `dev` into `main`. Both branches take a change
+only when its checks pass (an administrator can override that when merging a
+pull request); `main` also takes changes only through pull requests, while
+`dev` takes pushes from maintainers. CI's own push to `dev` after a release
+uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
+lets bypass the checks.
 
 When a push to `main` passes on every platform, the same archives are
 published on the GitHub releases page and the tested commit is tagged. CI
