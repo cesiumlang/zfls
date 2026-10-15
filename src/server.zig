@@ -655,6 +655,7 @@ pub const Server = struct {
         // Reset cross-file references so that nothing points into retired ASTs
         for (self.workspace.values()) |f| {
             const ast = f.ast orelse continue;
+            ast.included_in = null;
             if (ast.inc_scope) |inc| {
                 ast.none_scope = inc;
                 for (inc.children.items) |c| c.parent = inc;

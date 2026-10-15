@@ -1131,6 +1131,8 @@ pub const FortranFile = struct {
             const out = try self.preprocess(io, defs, include_dirs, opts.trace);
             p.pp_skips = out.skips;
             p.pp_defines = out.defines;
+            // an `#include` links the file like an INCLUDE statement would
+            for (out.includes) |inc| try p.file_ast.addInclude(inc.path, inc.line);
             p.dbg("\n=== Parsing Pass ===\n", .{});
         } else {
             p.dbg("=== No PreProc ===\n", .{});

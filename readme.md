@@ -184,6 +184,9 @@ zfls deliberately differs from fortls in a few places:
   unresolved; fortls hits a recursion error on them.
 - Go to definition on a preprocessor `#include "file"` opens the file (searched
   next to the including file and in `include_dirs`); fortls has no answer.
+- A file that another file `#include`s into a scope sees the names of that scope
+  (as for `INCLUDE` statements, but also for files that hold whole procedures);
+  fortls reports them as unknown in the included file.
 - Hover shows the whole value of a parameter. fortls cuts it at the first
   parenthesis or bracket, so `selected_real_kind(6)` shows as
   `selected_real_kind`.
