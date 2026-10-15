@@ -1224,7 +1224,31 @@ pub const Server = struct {
         return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
     }
 
+    /// The file that the `#include` directive under the cursor names, searched
+    /// in the directory of the including file and in the include directories
+    /// (upstream #498)
+    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
+        const text = file.getLine(params.position.line, false) orelse return null;
+        const m = R().INCLUDE_DIRECTIVE.match(text) orelse return null;
+        const col = toByteCol(file, params.position.line, params.position.character);
+        if (col < m.start(1) or col > m.end(1)) return null;
+        const name = m.group(1).?;
+        var dirs: std.ArrayList([]const u8) = .empty;
+        try dirs.append(a, paths.dirname(file.path));
+        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+        for (dirs.items) |dir| {
+            const candidate = try paths.abspath(a, try paths.join(a, &.{ dir, name }));
+            if (paths.isFile(self.io, candidate)) return candidate;
+        }
+        return null;
+    }
+
     fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+        if (try self.includeDirectiveTarget(a, params)) |target| {
+            const start: lsp.Position = .{ .line = 0, .character = 0 };
+            return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
+        }
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
         return .null;

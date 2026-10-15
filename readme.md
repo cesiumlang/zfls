@@ -177,6 +177,8 @@ zfls deliberately differs from fortls in a few places:
 - Links that would loop (for example type-bound procedures or `ASSOCIATE`
   names that refer to each other while code is being edited) are left
   unresolved; fortls hits a recursion error on them.
+- Go to definition on a preprocessor `#include "file"` opens the file (searched
+  next to the including file and in `include_dirs`); fortls has no answer.
 
 ## Licenses
 

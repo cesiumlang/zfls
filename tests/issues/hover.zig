@@ -235,6 +235,28 @@ test "#203 the PARAMETER statement makes a constant" {
     try h.check(203, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n", 0, 9), "PARAMETER"));
 }
 
+test "#498 an include next to the file, a missing one, and a cursor off the name (control)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "a.F90", .text =
+        \\program a
+        \\#include "local.inc"
+        \\#include "missing.inc"
+        \\end program a
+        \\
+        },
+        .{ .name = "local.inc", .text =
+        \\integer :: x
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const def = (try w.definition("a.F90", w.pos("a.F90", "local.inc", 0, 2))) orelse
+        return h.check(498, .fixed, h.unmet("the include next to the file is not found", .{}));
+    try h.expect(std.mem.endsWith(u8, def.uri, "local.inc"), "definition is {s}", .{def.uri});
+    try h.expect((try w.definition("a.F90", w.pos("a.F90", "missing.inc", 0, 2))) == null, "a missing include has a definition", .{});
+    try h.expect((try w.definition("a.F90", w.pos("a.F90", "#include \"local", 0, 3))) == null, "the directive word has a definition", .{});
+}
+
 test "#498 go to definition on an include directive opens the included file" {
     const w = try h.Workspace.init(&.{
         .{ .name = ".fortlsrc", .text =
@@ -259,7 +281,7 @@ test "#498 go to definition on an include directive opens the included file" {
     }, .{});
     defer w.deinit();
     const def = try w.definition("src/a.F90", w.pos("src/a.F90", "sample.inc", 0, 2));
-    try h.check(498, .known_failure, blk: {
+    try h.check(498, .fixed, blk: {
         const l = def orelse break :blk h.unmet("no definition for the include", .{});
         break :blk h.expect(std.mem.endsWith(u8, l.uri, "sample.inc"), "definition is {s}", .{l.uri});
     });

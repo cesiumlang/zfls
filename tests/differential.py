@@ -262,6 +262,18 @@ def normalize(v):
     return v
 
 
+INCLUDE_DIRECTIVE = re.compile(r"\s*#\s*include\s*[\"<]", re.I)
+
+
+def on_include_directive(path: Path, position) -> bool:
+    """Whether the position is on a preprocessor `#include` line of the file."""
+    if not position:
+        return False
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line = position.get("line", -1)
+    return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
+
+
 def is_error(v) -> bool:
     return isinstance(v, dict) and "__error__" in v
 
@@ -380,6 +392,15 @@ def main() -> int:
             if is_error(a):
                 # fortls crashed (Python exception): no reference behavior
                 crashes += 1
+                continue
+            if (
+                kind == "definition"
+                and a is None
+                and isinstance(b, dict)
+                and on_include_directive(path, params.get("position"))
+            ):
+                # go to definition on a `#include` opens the included file
+                # (upstream issue 498); fortls has no answer
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with
