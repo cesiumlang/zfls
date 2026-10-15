@@ -659,9 +659,10 @@ jobs:
           run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
 
-      # the platform packages, each with its zfls (the universal one, without,
-      # is only on the GitHub release); both registries are tried even if the
-      # other fails
+      # the platform packages, each with its zfls, to both registries (tried
+      # even if the other fails); and on the Marketplace the universal one,
+      # without a zfls, which it serves to platforms with no package of their
+      # own (it runs zfls from the PATH)
       - name: Publish to the Visual Studio Marketplace and Open VSX
         env:
           # fallback only, should trusted publishing to the Marketplace fail
@@ -681,4 +682,6 @@ jobs:
             npx --yes "ovsx@$OVSX_VERSION" publish "$vsix" --trusted-publishing \
               || { echo "::error::Open VSX: publishing $platform failed"; failed=1; }
           done
+          marketplace "dist/zfls-vscode-v$VERSION-universal.vsix" \
+            || { echo "::error::Marketplace: publishing the universal package failed"; failed=1; }
           exit "$failed"
