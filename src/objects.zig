@@ -249,7 +249,7 @@ pub const Obj = struct {
     slice_rank: i32 = -1,
     link_name: ?[]const u8 = null,
     callable: bool = false,
-    drop_arg: i64 = -1,
+    drop_arg: ?usize = null,
     pass_name: ?[]const u8 = null,
 
     // Intrinsic
@@ -418,7 +418,7 @@ pub const Obj = struct {
         });
         const a = o.al();
         o.kind = .method;
-        o.drop_arg = -1;
+        o.drop_arg = null;
         o.pass_name = o.keyword_info.pass;
         if (link_obj == null) {
             const d = try std.ascii.allocLowerString(a, try o.getDescNoLink(a));
@@ -680,7 +680,7 @@ pub const Obj = struct {
 
     pub const Snippet = struct { call: ?[]const u8 = null, snippet: ?[]const u8 = null };
 
-    pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: i64) Allocator.Error!Snippet {
+    pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize) Allocator.Error!Snippet {
         switch (self.kind) {
             .variable => {
                 const name = name_replace orelse self.name;
@@ -697,9 +697,9 @@ pub const Obj = struct {
             .subroutine, .function => {
                 var arg_list: std.ArrayList([]const u8) = .empty;
                 try arg_list.appendSlice(a, try str.split(a, self.args_snip, ","));
-                if (drop_arg >= 0 and drop_arg < arg_list.items.len) {
-                    _ = arg_list.orderedRemove(@intCast(drop_arg));
-                }
+                if (drop_arg) |d| if (d < arg_list.items.len) {
+                    _ = arg_list.orderedRemove(d);
+                };
                 var arg_str: []const u8 = "()";
                 var arg_snip: ?[]const u8 = null;
                 if (arg_list.items.len > 0) {
@@ -736,7 +736,7 @@ pub const Obj = struct {
 
     pub const Hover = struct { msg: ?[]const u8 = null, docs: ?[]const u8 = null };
 
-    pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: i64) Allocator.Error!Hover {
+    pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Allocator.Error!Hover {
         switch (self.kind) {
             .module, .program, .submodule => return .{
                 .msg = try std.mem.concat(a, u8, &.{ try self.getDesc(a), " ", self.name }),
@@ -776,7 +776,7 @@ pub const Obj = struct {
                 try self.getDocsFull(a, &hover_array, &docs, long, drop_arg);
                 if (self.result_obj != null and long) {
                     const ro = self.result_obj.?;
-                    const h = try ro.getHover(a, false, -1);
+                    const h = try ro.getHover(a, false, null);
                     if (h.docs) |d| {
                         try docs.append(a, try std.fmt.allocPrint(a, "\n**Return:**  \n`{s}`{s}", .{ ro.name, d }));
                     }
@@ -816,7 +816,7 @@ pub const Obj = struct {
                         }
                     }
                 } else {
-                    const sig = try self.getSnippet(a, null, -1);
+                    const sig = try self.getSnippet(a, null, null);
                     hover_str = try std.fmt.allocPrint(a, "{s} {s}", .{ try self.getDesc(a), sig.call orelse "None" });
                 }
                 return .{ .msg = hover_str, .docs = docs };
@@ -826,7 +826,7 @@ pub const Obj = struct {
         }
     }
 
-    pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: i64) ![]const u8 {
+    pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) ![]const u8 {
         const h = try self.getHover(a, long, drop_arg);
         return helpers.fortranMd(a, h.msg, h.docs);
     }
@@ -856,14 +856,14 @@ pub const Obj = struct {
         return helpers.getKeywords(a, self.keywords.items, self.keyword_info);
     }
 
-    fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: i64) !void {
+    fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: ?usize) !void {
         if (self.getDocumentation()) |d| try doc_strs.append(a, d);
         if (!long) return;
         var has_args = true;
         for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse continue;
-            if (@as(i64, @intCast(i)) == drop_arg) continue;
-            const h = try arg_obj.getHover(a, false, -1);
+            if (i == drop_arg) continue;
+            const h = try arg_obj.getHover(a, false, null);
             try hover_array.append(a, h.msg orelse "None");
             if (h.docs) |d| if (d.len > 0) {
                 if (has_args) {
@@ -878,27 +878,27 @@ pub const Obj = struct {
     pub const ArgSig = struct { label: []const u8, doc_md: ?[]const u8 = null };
     pub const Signature = struct { label: ?[]const u8 = null, doc: ?[]const u8 = null, params: []ArgSig = &.{} };
 
-    pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: i64) Allocator.Error!Signature {
+    pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: ?usize) Allocator.Error!Signature {
         switch (self.kind) {
             .subroutine, .function => {
                 var arg_sigs: std.ArrayList(ArgSig) = .empty;
                 const arg_list = try str.split(a, self.args, ",");
                 for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
-                    if (@as(i64, @intCast(i)) == drop_arg) continue;
+                    if (i == drop_arg) continue;
                     if (arg_obj_opt) |arg_obj| {
                         const lname = try std.ascii.allocLowerString(a, arg_obj.name);
                         const label = if (arg_obj.isOptional()) try std.fmt.allocPrint(a, "{s}={s}", .{ lname, lname }) else lname;
-                        try arg_sigs.append(a, .{ .label = label, .doc_md = try arg_obj.getHoverMd(a, false, -1) });
+                        try arg_sigs.append(a, .{ .label = label, .doc_md = try arg_obj.getHoverMd(a, false, null) });
                     } else {
                         try arg_sigs.append(a, .{ .label = if (i < arg_list.len) arg_list[i] else "" });
                     }
                 }
-                const sig = try self.getSnippet(a, null, -1);
+                const sig = try self.getSnippet(a, null, null);
                 return .{ .label = sig.call, .doc = self.getDocumentation(), .params = arg_sigs.items };
             },
             .method => {
                 if (self.link_obj) |l| {
-                    const sig = try self.getSnippet(a, null, -1);
+                    const sig = try self.getSnippet(a, null, null);
                     const ls = try l.getSignature(a, self.drop_arg);
                     return .{ .label = sig.call, .doc = self.getDocumentation(), .params = ls.params };
                 }
@@ -907,21 +907,21 @@ pub const Obj = struct {
             .intrinsic => {
                 var arg_sigs: std.ArrayList(ArgSig) = .empty;
                 for (try str.split(a, self.args, ",")) |arg| try arg_sigs.append(a, .{ .label = arg });
-                const sig = try self.getSnippet(a, null, -1);
+                const sig = try self.getSnippet(a, null, null);
                 return .{ .label = sig.call, .doc = self.doc_str, .params = arg_sigs.items };
             },
             else => return .{},
         }
     }
 
-    fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: i64, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {
+    fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {
         var arr: std.ArrayList([]const u8) = .empty;
         try arr.append(a, try std.mem.concat(a, u8, &.{ try std.mem.join(a, " ", keywords), signature }));
         for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse return null;
-            const h = try arg_obj.getHover(a, false, -1);
+            const h = try arg_obj.getHover(a, false, null);
             var arg_doc = h.msg orelse "None";
-            if (@as(i64, @intCast(i)) == drop_arg) {
+            if (i == drop_arg) {
                 if (change_strings) |cs| {
                     if (std.ascii.findIgnoreCase(arg_doc, cs[0])) |i_0| {
                         arg_doc = try std.mem.concat(a, u8, &.{ arg_doc[0..i_0], cs[1], arg_doc[i_0 + cs[0].len ..] });
@@ -933,10 +933,10 @@ pub const Obj = struct {
         return arr;
     }
 
-    pub fn getInterface(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: i64, change_strings: ?[2][]const u8) Allocator.Error!?[]const u8 {
+    pub fn getInterface(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) Allocator.Error!?[]const u8 {
         switch (self.kind) {
             .subroutine => {
-                const sig = (try self.getSnippet(a, name_replace, -1)).call.?;
+                const sig = (try self.getSnippet(a, name_replace, null)).call.?;
                 var kw: std.ArrayList([]const u8) = .empty;
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "SUBROUTINE ");
@@ -946,7 +946,7 @@ pub const Obj = struct {
                 return try std.mem.join(a, "\n", arr.items);
             },
             .function => {
-                var sig = (try self.getSnippet(a, name_replace, -1)).call.?;
+                var sig = (try self.getSnippet(a, name_replace, null)).call.?;
                 sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ sig, self.result_name orelse self.name });
                 var kw: std.ArrayList([]const u8) = .empty;
                 if (self.result_type) |rt| if (rt.len > 0) try kw.append(a, rt);
@@ -954,7 +954,7 @@ pub const Obj = struct {
                 try kw.append(a, "FUNCTION ");
                 var arr = (try self.getInterfaceArray(a, kw.items, sig, drop_arg, change_strings)) orelse return null;
                 if (self.result_obj) |ro| {
-                    const h = try ro.getHover(a, false, -1);
+                    const h = try ro.getHover(a, false, null);
                     try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ h.msg orelse "None", ro.name }));
                 }
                 const name = name_replace orelse self.name;
@@ -1055,7 +1055,7 @@ pub const Obj = struct {
                         self.pass_name = pnl;
                         if (l.kind.isSubroutine()) {
                             var it = std.mem.splitScalar(u8, l.args_snip, ',');
-                            var i: i64 = 0;
+                            var i: usize = 0;
                             while (it.next()) |arg| : (i += 1) {
                                 if (std.ascii.eqlIgnoreCase(arg, pnl)) {
                                     self.drop_arg = i;
@@ -1453,7 +1453,7 @@ pub const Obj = struct {
         for (self.in_children.items) |in_child| {
             if (!in_child.hasKeyword(KW.deferred)) continue;
             const in_parent_name = if (in_child.parent) |p| p.name else "None";
-            const iface = (try in_child.getInterface(a, in_child.name, -1, .{
+            const iface = (try in_child.getInterface(a, in_child.name, null, .{
                 try std.fmt.allocPrint(a, "class({s})", .{in_parent_name}),
                 try std.fmt.allocPrint(a, "CLASS({s})", .{self.name}),
             })) orelse continue;
