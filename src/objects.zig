@@ -900,9 +900,7 @@ pub const Obj = struct {
             var arg_doc = h.msg orelse "None";
             if (@as(i64, @intCast(i)) == drop_arg) {
                 if (change_strings) |cs| {
-                    const lower_doc = try std.ascii.allocLowerString(a, arg_doc);
-                    const lower_cs = try std.ascii.allocLowerString(a, cs[0]);
-                    if (std.mem.indexOf(u8, lower_doc, lower_cs)) |i_0| {
+                    if (std.ascii.findIgnoreCase(arg_doc, cs[0])) |i_0| {
                         arg_doc = try std.mem.concat(a, u8, &.{ arg_doc[0..i_0], cs[1], arg_doc[i_0 + cs[0].len ..] });
                     }
                 }
@@ -1099,12 +1097,11 @@ pub const Obj = struct {
         self.missing_args.clearRetainingCapacity();
         for (self.children.items) |child| {
             var ind: ?usize = null;
-            const child_lower = try std.ascii.allocLowerString(t, child.name);
             for (arg_list_lower, 0..) |arg, i| {
-                if (std.mem.eql(u8, arg, child_lower)) {
+                if (std.ascii.eqlIgnoreCase(arg, child.name)) {
                     ind = i;
                     break;
-                } else if (std.mem.startsWith(u8, child_lower, "#gen_int")) {
+                } else if (std.ascii.startsWithIgnoreCase(child.name, "#gen_int")) {
                     for (child.children.items) |sub_child| {
                         if (std.ascii.eqlIgnoreCase(arg, sub_child.name)) {
                             self.arg_objs.items[i] = sub_child;
@@ -2039,9 +2036,8 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     return null;
 }
 
-pub fn findInWorkspace(env: Env, query_in: []const u8, filter_public: bool, exact_match: bool) ![]*Obj {
+pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_match: bool) ![]*Obj {
     const a = env.tmp;
-    const query = try std.ascii.allocLowerString(a, query_in);
     var matching: std.ArrayList(*Obj) = .empty;
     var it = env.tree.iterator();
     while (it.next()) |entry| {
