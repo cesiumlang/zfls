@@ -20,15 +20,26 @@ fn R() *const patterns.Patterns {
     return patterns.get();
 }
 
-/// Receives parser/preprocessor trace lines (debug CLI only; not thread-safe)
-pub var debug_hook: ?*const fn ([]const u8) void = null;
+/// Receives parser/preprocessor trace lines (debug CLI)
+pub const Trace = struct {
+    ctx: *anyopaque,
+    writeFn: *const fn (ctx: *anyopaque, msg: []const u8) void,
 
-pub fn dbg(comptime fmt: []const u8, args: anytype) void {
-    const h = debug_hook orelse return;
-    var buf: [16384]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, fmt, args) catch buf[0..];
-    h(s);
-}
+    /// Write a trace line to `t`, if there is one
+    pub fn print(t: ?Trace, comptime fmt: []const u8, args: anytype) void {
+        const tr = t orelse return;
+        var buf: [16384]u8 = undefined;
+        const s = std.fmt.bufPrint(&buf, fmt, args) catch buf[0..];
+        tr.writeFn(tr.ctx, s);
+    }
+};
+
+/// Parameters of parsing a file that do not depend on the file
+pub const Options = struct {
+    /// Order the keywords of a definition by id (`--sort_keywords`)
+    sort_keywords: bool = false,
+    trace: ?Trace = null,
+};
 
 // --------------------------------------------------------------------------
 // Line definition readers
@@ -916,14 +927,13 @@ pub const FortranFile = struct {
         var line_no = line_no_in;
         const cl = try self.getCodeLine(a, line_no, forward, backward, pp_content, false);
         var word_range: Range = .{ .start = -1, .end = -1 };
-        const word_lower = try std.ascii.allocLowerString(a, word);
-        if (cl.curr) |c| word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, c), word_lower);
+        if (cl.curr) |c| word_range = helpers.findWordInLineIgnoreCase(c, word);
         if (backward and word_range.start < 0) {
             var i: usize = cl.pre.len;
             var k: i64 = 0;
             while (i > 0) : (k += 1) {
                 i -= 1;
-                word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, cl.pre[i]), word_lower);
+                word_range = helpers.findWordInLineIgnoreCase(cl.pre[i], word);
                 if (word_range.start >= 0) {
                     line_no -= k + 1;
                     return .{ .line = line_no, .range = word_range };
@@ -932,7 +942,7 @@ pub const FortranFile = struct {
         }
         if (forward and word_range.start < 0) {
             for (cl.post, 0..) |l, i| {
-                word_range = helpers.findWordInLine(try std.ascii.allocLowerString(a, l), word_lower);
+                word_range = helpers.findWordInLineIgnoreCase(l, word);
                 if (word_range.start >= 0) {
                     line_no += @as(i64, @intCast(i)) + 1;
                     return .{ .line = line_no, .range = word_range };
@@ -1032,12 +1042,12 @@ pub const FortranFile = struct {
     }
 
     /// Run the preprocessor over the file contents
-    pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8) !pp.Output {
+    pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, trace: ?Trace) !pp.Output {
         _ = self.pp_arena.reset(.free_all);
         self.pp_lines = null;
         self.pp_defs = .empty;
         const a = self.pp_arena.allocator();
-        const out = try pp.preprocessFile(a, io, @ptrCast(self.lines.items), self.path, defs, include_dirs);
+        const out = try pp.preprocessFile(a, io, @ptrCast(self.lines.items), self.path, defs, include_dirs, trace);
         self.pp_lines = out.lines;
         self.pp_defs = out.defs;
         return out;
@@ -1093,8 +1103,9 @@ pub const FortranFile = struct {
     // Parsing
 
     /// Parse the file contents and build a new AST (the caller owns it)
-    pub fn parse(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8) !*Ast {
+    pub fn parse(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !*Ast {
         var p: Parser = .{
+            .opts = opts,
             .file = self,
             .file_ast = try Ast.create(self.gpa, self),
             .scratch = std.heap.ArenaAllocator.init(self.gpa),
@@ -1102,17 +1113,17 @@ pub const FortranFile = struct {
         defer p.scratch.deinit();
         errdefer p.file_ast.destroy();
         if (self.preproc) {
-            dbg("=== PreProc Pass ===\n", .{});
-            const out = try self.preprocess(io, defs, include_dirs);
+            p.dbg("=== PreProc Pass ===\n", .{});
+            const out = try self.preprocess(io, defs, include_dirs, opts.trace);
             p.pp_skips = out.skips;
             p.pp_defines = out.defines;
             for (out.skips) |reg| {
                 try p.file_ast.startPpif(reg[0]);
                 p.file_ast.endPpif(reg[1]);
             }
-            dbg("\n=== Parsing Pass ===\n", .{});
+            p.dbg("\n=== Parsing Pass ===\n", .{});
         } else {
-            dbg("=== No PreProc ===\n", .{});
+            p.dbg("=== No PreProc ===\n", .{});
             self.pp_lines = null;
         }
         try p.run();
@@ -1129,6 +1140,7 @@ const Counters = struct {
 };
 
 const Parser = struct {
+    opts: Options,
     file: *FortranFile,
     file_ast: *Ast,
     scratch: std.heap.ArenaAllocator,
@@ -1138,6 +1150,10 @@ const Parser = struct {
     comment_re: *const regex.Regex = undefined,
     cur_line: i64 = 0,
     doc_re: *const regex.Regex = undefined,
+
+    fn dbg(p: *const Parser, comptime fmt: []const u8, args: anytype) void {
+        Trace.print(p.opts.trace, fmt, args);
+    }
 
     fn run(p: *Parser) !void {
         const f = p.file;
@@ -1266,7 +1282,7 @@ const Parser = struct {
                 if (std.mem.startsWith(u8, info.var_type, "PRO")) {
                     if (ast.current_scope) |cs| if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
                         for (var_names) |vn| try ast.addIntMember(vn);
-                        dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ str.strip(line), line_no });
+                        p.dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ str.strip(line), line_no });
                         return;
                     };
                     procedure_def = true;
@@ -1295,7 +1311,7 @@ const Parser = struct {
                     // the codimensions of a coarray, x[:], are not part of its name (upstream #172)
                     if (std.mem.indexOfScalar(u8, name, '[')) |bracket| name = name[0..bracket];
                     name = str.strip(name);
-                    const mk = try helpers.mapKeywords(a, var_keywords.items);
+                    const mk = try helpers.mapKeywords(a, var_keywords.items, p.opts.sort_keywords);
                     var new_var: *Obj = undefined;
                     if (procedure_def) {
                         new_var = try Obj.newMethod(ast, line_no, name, desc, mk.ids, mk.info, info.var_kind, link_name);
@@ -1317,31 +1333,31 @@ const Parser = struct {
                     }
                     try ast.addVariable(new_var);
                 }
-                dbg("{s} !!! VARIABLE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! VARIABLE - Ln:{d}", .{ line, line_no });
             },
             .mod => |name| {
                 const o = try Obj.newScope(ast, .module, line_no, name, &.{});
                 try ast.addScope(o, &R().END_MOD, true, false);
-                dbg("{s} !!! MODULE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! MODULE - Ln:{d}", .{ line, line_no });
             },
             .smod => |info| {
                 const o = try Obj.newSubmodule(ast, line_no, info.name, info.parent);
                 try ast.addScope(o, &R().END_SMOD, true, false);
-                dbg("{s} !!! SUBMODULE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! SUBMODULE - Ln:{d}", .{ line, line_no });
             },
             .prog => |name| {
                 const o = try Obj.newScope(ast, .program, line_no, name, &.{});
                 try ast.addScope(o, &R().END_PROG, true, false);
-                dbg("{s} !!! PROGRAM - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! PROGRAM - Ln:{d}", .{ line, line_no });
             },
             .sub => |info| {
-                const mk = try helpers.mapKeywords(a, info.keywords);
+                const mk = try helpers.mapKeywords(a, info.keywords, p.opts.sort_keywords);
                 const o = try Obj.newSubroutine(ast, line_no, info.name, info.args, info.mod_flag, mk.ids);
                 try ast.addScope(o, &R().END_SUB, true, false);
-                dbg("{s} !!! SUBROUTINE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! SUBROUTINE - Ln:{d}", .{ line, line_no });
             },
             .fun => |info| {
-                const mk = try helpers.mapKeywords(a, info.keywords);
+                const mk = try helpers.mapKeywords(a, info.keywords, p.opts.sort_keywords);
                 const o = try Obj.newFunction(ast, line_no, info.name, .{
                     .args = info.args,
                     .mod_flag = info.mod_flag,
@@ -1352,14 +1368,14 @@ const Parser = struct {
                 });
                 try ast.addScope(o, &R().END_FUN, true, false);
                 if (info.result.type) |rt| if (rt.len > 0) {
-                    const rk = try helpers.mapKeywords(a, info.result.keywords);
+                    const rk = try helpers.mapKeywords(a, info.result.keywords, p.opts.sort_keywords);
                     const v = try Obj.newVariable(ast, line_no, info.result.name orelse info.name, rt, rk.ids, .{
                         .keyword_info = rk.info,
                         .kind = info.result.kind,
                     });
                     try ast.addVariable(v);
                 };
-                dbg("{s} !!! FUNCTION - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! FUNCTION - Ln:{d}", .{ line, line_no });
             },
             .block => |name_opt| {
                 var name = name_opt orelse "";
@@ -1369,7 +1385,7 @@ const Parser = struct {
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK, true, true);
-                dbg("{s} !!! BLOCK - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! BLOCK - Ln:{d}", .{ line, line_no });
             },
             .block_data => |name_opt| {
                 var name = name_opt orelse "";
@@ -1379,7 +1395,7 @@ const Parser = struct {
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
-                dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
             .do_ => |label| {
                 counters.do_ += 1;
@@ -1387,7 +1403,7 @@ const Parser = struct {
                 if (label.len > 0) try block_id_stack.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, label));
                 const o = try Obj.newScope(ast, .do_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_DO, true, true);
-                dbg("{s} !!! DO - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! DO - Ln:{d}", .{ line, line_no });
             },
             .where => |single| {
                 if (!single) {
@@ -1396,7 +1412,7 @@ const Parser = struct {
                     const o = try Obj.newScope(ast, .where, line_no, name, &.{});
                     try ast.addScope(o, &R().END_WHERE, true, true);
                 }
-                dbg("{s} !!! WHERE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! WHERE - Ln:{d}", .{ line, line_no });
             },
             .assoc => |bound| {
                 counters.block += 1;
@@ -1412,14 +1428,14 @@ const Parser = struct {
                     try o.links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
-                dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
             },
             .if_ => {
                 counters.if_ += 1;
                 const name = try std.fmt.allocPrint(a, "#IF{d}", .{counters.if_});
                 const o = try Obj.newScope(ast, .if_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_IF, true, true);
-                dbg("{s} !!! IF - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! IF - Ln:{d}", .{ line, line_no });
             },
             .select => |info| {
                 counters.select += 1;
@@ -1428,21 +1444,21 @@ const Parser = struct {
                 try ast.addScope(o, &R().END_SELECT, true, true);
                 const var_desc = try std.fmt.allocPrint(a, "{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
                 if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.type)) |v| try ast.addVariable(v);
-                dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
             },
             .typ => |info| {
-                const mk = try helpers.mapKeywords(a, info.keywords);
+                const mk = try helpers.mapKeywords(a, info.keywords, p.opts.sort_keywords);
                 const o = try Obj.newScope(ast, .type, line_no, info.name, mk.ids);
                 if (info.parent) |par| o.inherit = try pa.dupe(u8, par);
                 try ast.addScope(o, &R().END_TYPED, true, true);
-                dbg("{s} !!! TYPE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! TYPE - Ln:{d}", .{ line, line_no });
             },
             .enum_ => {
                 counters.block += 1;
                 const name = try std.fmt.allocPrint(a, "#ENUM{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .enum_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_ENUMD, true, true);
-                dbg("{s} !!! ENUM - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! ENUM - Ln:{d}", .{ line, line_no });
             },
             .int => |info| {
                 var name = info.name orelse "";
@@ -1452,7 +1468,7 @@ const Parser = struct {
                 }
                 const o = try Obj.newInterface(ast, line_no, name, info.abstract);
                 try ast.addScope(o, &R().END_INT, true, true);
-                dbg("{s} !!! INTERFACE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! INTERFACE - Ln:{d}", .{ line, line_no });
             },
             .gen => |info| {
                 const o = try Obj.newInterface(ast, line_no, info.bound_name, false);
@@ -1460,17 +1476,17 @@ const Parser = struct {
                 try ast.addScope(o, &R().END_INT, true, true);
                 for (info.pro_links) |pl| try ast.addIntMember(pl);
                 ast.endScope(line_no, true);
-                dbg("{s} !!! GENERIC - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! GENERIC - Ln:{d}", .{ line, line_no });
             },
             .int_pro => |names| {
                 if (ast.current_scope) |cs| {
                     if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
                         for (names) |nm| try ast.addIntMember(nm);
-                        dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ line, line_no });
+                        p.dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ line, line_no });
                     } else if (cs.getType(false) == C.SUBMODULE_TYPE_ID) {
                         const o = try Obj.newScope(ast, .scope, line_no, names[0], &.{});
                         try ast.addScope(o, &R().END_PRO, true, false);
-                        dbg("{s} !!! INTERFACE-IMPL - Ln:{d}", .{ line, line_no });
+                        p.dbg("{s} !!! INTERFACE-IMPL - Ln:{d}", .{ line, line_no });
                     }
                 }
             },
@@ -1478,7 +1494,7 @@ const Parser = struct {
                 const u = try UseStmt.init(pa, info.mod_name, info.only_list, info.renames);
                 u.line_number = line_no;
                 try ast.addUse(u);
-                dbg("{s} !!! USE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! USE - Ln:{d}", .{ line, line_no });
             },
             .import => |info| {
                 // fortls appends counters["import"], which is always 0
@@ -1487,11 +1503,11 @@ const Parser = struct {
                 u.import_type = info.import_type;
                 u.line_number = line_no;
                 try ast.addUse(u);
-                dbg("{s} !!! IMPORT - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! IMPORT - Ln:{d}", .{ line, line_no });
             },
             .inc => |path| {
                 try ast.addInclude(path, line_no);
-                dbg("{s} !!! INCLUDE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! INCLUDE - Ln:{d}", .{ line, line_no });
             },
             .vis => |info| {
                 if (ast.current_scope) |cs| {
@@ -1505,7 +1521,7 @@ const Parser = struct {
                 } else {
                     try ast.addError("Visibility statement without enclosing scope", C.Severity.err, line_no, 0, null);
                 }
-                dbg("{s} !!! VISIBILITY - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! VISIBILITY - Ln:{d}", .{ line, line_no });
             },
         }
     }
@@ -1526,11 +1542,11 @@ const Parser = struct {
         if (end_scope_word != null) {
             if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) ast.endScope(ln, true);
             ast.endScope(ln, true);
-            if (debug_hook != null) {
+            if (p.opts.trace != null) {
                 var ub: [64]u8 = undefined;
                 const w = end_scope_word.?;
                 const n = @min(w.len, ub.len);
-                dbg("{s} !!! END {s} Scope - Ln:{d}", .{ line, std.ascii.upperString(ub[0..n], w[0..n]), ln });
+                p.dbg("{s} !!! END {s} Scope - Ln:{d}", .{ line, std.ascii.upperString(ub[0..n], w[0..n]), ln });
             }
             return true;
         }
@@ -1547,7 +1563,7 @@ const Parser = struct {
             ast.endScope(ln, true);
             _ = block_id_stack.pop();
             did_close = true;
-            dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });
+            p.dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });
         }
         return did_close;
     }
@@ -1560,7 +1576,7 @@ const Parser = struct {
         } else {
             try ast.addError("IMPLICIT statement without enclosing scope", C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
         }
-        dbg("{s} !!! IMPLICIT - Ln:{d}", .{ line, ln });
+        p.dbg("{s} !!! IMPLICIT - Ln:{d}", .{ line, ln });
         return true;
     }
 
@@ -1576,7 +1592,7 @@ const Parser = struct {
             msg = "CONTAINS statement without enclosing scope";
         }
         if (msg) |mm| try ast.addError(mm, C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
-        dbg("{s} !!! CONTAINS - Ln:{d}", .{ line, ln });
+        p.dbg("{s} !!! CONTAINS - Ln:{d}", .{ line, ln });
         return true;
     }
 
@@ -1626,7 +1642,7 @@ const Parser = struct {
         if (p.docs.items.len > 0) {
             const fd = try p.formatDocs(p.docs.items);
             try p.file_ast.addDoc(fd, false);
-            dbg("{s} !!! Doc string - Line:{d}", .{ fd, p.cur_line });
+            p.dbg("{s} !!! Doc string - Line:{d}", .{ fd, p.cur_line });
             p.docs.clearRetainingCapacity();
         }
     }
@@ -1661,7 +1677,7 @@ const Parser = struct {
         var total: usize = 0;
         for (p.docs.items) |d| total += d.len;
         if (total > 0) try p.file_ast.addDoc(try p.formatDocs(p.docs.items), predocmark);
-        for (p.docs.items, 0..) |d, k| dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + @as(i64, @intCast(k)) });
+        for (p.docs.items, 0..) |d, k| p.dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + @as(i64, @intCast(k)) });
         p.docs.clearRetainingCapacity();
         return new_ln;
     }

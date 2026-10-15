@@ -127,7 +127,7 @@ const Loader = struct {
 
     fn createMember(l: *Loader, m: schema.Member, enc: *Obj) !*Obj {
         l.ast.enc_scope_name = enc.fqsn;
-        const mk = try helpers.mapKeywords(l.a, m.mods);
+        const mk = try helpers.mapKeywords(l.a, m.mods, true);
         const name = try l.case(m.name);
         const args = try l.case(m.args);
         return switch (m.kind) {
@@ -148,9 +148,6 @@ pub fn load(gpa: Allocator, lowercase: bool) !Intrinsics {
     const ast = try Ast.create(gpa, null);
     errdefer ast.destroy();
     const a = ast.allocator();
-    const saved_sort = helpers.sort_keywords;
-    helpers.sort_keywords = true;
-    defer helpers.sort_keywords = saved_sort;
 
     var l: Loader = .{ .a = a, .ast = ast, .lowercase = lowercase };
 
