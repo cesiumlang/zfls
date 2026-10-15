@@ -1292,6 +1292,10 @@ const Parser = struct {
                 ast.pending_doc = null;
                 continue;
             }
+            if (try p.parseParameterStmt(a, line_no_comment)) {
+                ast.pending_doc = null;
+                continue;
+            }
             if (try p.parseImplicit(line_no_comment, line_no)) {
                 ast.pending_doc = null;
                 continue;
@@ -1459,6 +1463,13 @@ const Parser = struct {
                     const bind_name = str.strip(parts[0]);
                     const link = str.strip(parts[1]);
                     const v = try Obj.newVariable(ast, line_no, bind_name, "UNKNOWN", &.{}, .{});
+                    if (helpers.getParenSubstring(link)) |subscripts| {
+                        var rank: i32 = 0;
+                        for (try helpers.splitArgs(a, subscripts)) |sub| {
+                            if (std.mem.indexOfScalar(u8, sub, ':') != null) rank += 1;
+                        }
+                        v.slice_rank = rank;
+                    }
                     try o.links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
@@ -1600,6 +1611,30 @@ const Parser = struct {
             p.dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });
         }
         return did_close;
+    }
+
+    /// `PARAMETER (name = value, ...)`: makes variables already declared in
+    /// the current scope constants, with their values (upstream #203)
+    fn parseParameterStmt(p: *Parser, a: Allocator, line: []const u8) !bool {
+        const m = R().PARAMETER_STMT.match(line) orelse return false;
+        const ast = p.file_ast;
+        const cs = ast.current_scope orelse return false;
+        const pa = ast.allocator();
+        for (try helpers.splitArgs(a, m.group(1) orelse "")) |item| {
+            const eq = std.mem.indexOfScalar(u8, item, '=') orelse continue;
+            const name = str.strip(item[0..eq]);
+            for (cs.children.items) |child| {
+                if (child.kind != .variable or !std.ascii.eqlIgnoreCase(child.name, name)) continue;
+                if (!child.is_const) {
+                    child.is_const = true;
+                    try child.keywords.append(pa, C.KW.parameter);
+                }
+                const words = try str.splitWhitespace(a, str.strip(item[eq + 1 ..]));
+                child.param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
+            }
+        }
+        p.dbg("{s} !!! PARAMETER statement - Ln:{d}", .{ str.strip(line), p.cur_line });
+        return true;
     }
 
     fn parseImplicit(p: *Parser, line: []const u8, ln: i64) !bool {

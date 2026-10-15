@@ -86,6 +86,8 @@ const defs = [_]Def{
     .{ "SQ_STRING", "\\'[^\\']*\\'", true },
     .{ "DQ_STRING", "\\\"[^\\\"]*\\\"", true },
     .{ "LINE_LABEL", "[ ]*([0-9]+)[ ]+", true },
+    // the PARAMETER statement: `PARAMETER (name = value, ...)`
+    .{ "PARAMETER_STMT", "[ ]*PARAMETER[ ]*\\((.*)\\)[ ]*$", true },
     .{ "NON_DEF", "[ ]*(CALL[ ]+[a-z_]|[a-z_][\\w%]*[ ]*=)", true },
     .{ "FIXED_COMMENT", "([!cd*]|[ ]{1,4}!|[ ]{6,}!)", true },
     .{ "FIXED_CONT", "( {5}[\\S])", false },

@@ -266,6 +266,31 @@ def normalize(v):
     return v
 
 
+ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
+
+
+def associate_names(source: str) -> set:
+    """Lowercase names bound by `name => array(...)` (ASSOCIATE or pointer
+    assignment) in a source file."""
+    return {m.group(1).lower() for m in ASSOC_BOUND.finditer(source)}
+
+
+def ignore_slice_dimensions(v, names: set):
+    """fortls gives an ASSOCIATE name bound to an element or a section the
+    dimensions of the whole array; zfls gives it those of the section
+    (upstream issue 108). Compare the dimensions of such names as equal."""
+    if isinstance(v, dict):
+        return {k: ignore_slice_dimensions(x, names) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_slice_dimensions(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return m.group(0) if m.group(3).lower() not in names else m.group(2) + m.group(3)
+
+        return re.sub(r"(, )?DIMENSION\([^)\n]*\)( :: )(\w+)", repl, v)
+    return v
+
+
 def is_error(v) -> bool:
     return isinstance(v, dict) and "__error__" in v
 
@@ -368,9 +393,13 @@ def main() -> int:
                 b = normalize(notifications(got, method))
                 if a != b:
                     diffs.append((method, None, a, b))
+        assoc = associate_names(path.read_text(encoding="utf-8", errors="replace"))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
+            if assoc and kind in ("hover", "completion"):
+                a = ignore_slice_dimensions(a, assoc)
+                b = ignore_slice_dimensions(b, assoc)
             total += 1
             if kind == "references":
                 # cross-file order follows workspace iteration order

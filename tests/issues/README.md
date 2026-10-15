@@ -47,11 +47,11 @@ give the same answer, and the test fails for the reason in the issue.
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | fixed (patched) | fails, same cause |
-| [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | known failure | same |
+| [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | fixed (patched) | fails, same cause |
 | [#172](https://github.com/fortran-lang/fortls/issues/172) | coarray dummy argument | diagnostics | fixed (patched) | fails, same cause |
 | [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | fixed (patched) | fails, same cause |
-| [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | known failure | same |
-| [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | known failure | same |
+| [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | fixed (patched) | fails, same cause |
+| [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | fixed (patched) | fails, same cause |
 | [#87](https://github.com/fortran-lang/fortls/issues/87) | signature help with commas inside an argument | hover | fixed (patched) | fails, same cause |
 | [#52](https://github.com/fortran-lang/fortls/issues/52) | rename of a name renamed on import | rename | fixed (patched) | fails, same cause |
 | [#23](https://github.com/fortran-lang/fortls/issues/23) | go to implementation from `EXTERNAL` | hover | fixed (patched) | fails, same cause |

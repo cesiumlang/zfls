@@ -178,7 +178,7 @@ test "#118 hover on a fixed-form function that the caller declares with a type" 
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(118, .known_failure, w.expectHoverContains("t.f", w.pos("t.f", "fff(1.2", 0, 1), "FUNCTION"));
+    try h.check(118, .fixed, w.expectHoverContains("t.f", w.pos("t.f", "fff(1.2", 0, 1), "FUNCTION"));
 }
 
 test "#108 hover on an ASSOCIATE name bound to an array slice shows the slice's shape" {
@@ -196,7 +196,7 @@ test "#108 hover on an ASSOCIATE name bound to an array slice shows the slice's 
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(108, .known_failure, notContains(w, "t.f90", w.pos("t.f90", "ARRAY (3)", 0, 1), "(5,5)"));
+    try h.check(108, .fixed, notContains(w, "t.f90", w.pos("t.f90", "ARRAY (3)", 0, 1), "(5,5)"));
 }
 
 test "#23 go to implementation from an EXTERNAL statement reaches the procedure" {
@@ -260,6 +260,64 @@ test "#87 signature help counts the commas of the call, not those inside an argu
     try h.check(87, .fixed, h.expect(sig.active == 1, "active parameter {d}, expected 1", .{sig.active}));
 }
 
+test "#203 several PARAMETER names with their values (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer n, m
+        \\  parameter (n = 5, m = n * 2)
+        \\  print *, n, m
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n, m", 0, 9), "PARAMETER :: n = 5");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n, m", 0, 12), "PARAMETER :: m = n * 2");
+}
+
+test "#108 an ASSOCIATE name bound to an element or a 2-D section (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\PROGRAM p
+        \\    REAL :: B(5,5), C(4,4,4)
+        \\    ASSOCIATE (ELEM => B(2,3), PLANE => C(:,:,1), WHOLE => B)
+        \\        ELEM = PLANE(1,1) + WHOLE(1,1)
+        \\    END ASSOCIATE
+        \\END PROGRAM p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const elem = (try w.hover("t.f90", w.pos("t.f90", "ELEM = PLANE", 0, 1))) orelse return h.check(108, .fixed, h.unmet("no hover for ELEM", .{}));
+    try h.expect(std.mem.indexOf(u8, elem, "DIMENSION") == null, "an element is a scalar: {s}", .{elem});
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "PLANE(1,1)", 0, 1), "DIMENSION(:,:)");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "WHOLE(1,1)", 0, 1), "DIMENSION(5,5)");
+}
+
+test "#118 a real array that is indexed is not mistaken for a function (control)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\function fff(x)
+        \\    real fff, x
+        \\    fff = x
+        \\end function
+        \\
+        \\program main
+        \\    real fff(3)
+        \\    fff(1) = 1.0
+        \\end program main
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "fff(1) = 1.0", 0, 1), "DIMENSION(3)");
+}
+
 test "#203 the PARAMETER statement makes a constant" {
     const w = try h.Workspace.init(&.{.{
         .name = "t.f90",
@@ -274,7 +332,7 @@ test "#203 the PARAMETER statement makes a constant" {
         ,
     }}, .{});
     defer w.deinit();
-    try h.check(203, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n", 0, 9), "PARAMETER"));
+    try h.check(203, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n", 0, 9), "PARAMETER"));
 }
 
 test "#498 go to definition on an include directive opens the included file" {
