@@ -487,10 +487,18 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build-test
           export ZFLS_EXTENSION_PATH="$RUNNER_TEMP/vsix/extension"
-          if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a node out/runTest.js
-          else
-            node out/runTest.js
+          run_vscode() {
+            if [ "$RUNNER_OS" = Linux ]; then
+              xvfb-run -a node out/runTest.js
+            else
+              node out/runTest.js
+            fi
+          }
+          # a VS Code window that hangs while starting on the runner fails
+          # the run before the test begins; a broken extension fails both
+          if ! run_vscode; then
+            echo "::warning::the VS Code test failed; running it once more"
+            run_vscode
           fi
 
   conda:

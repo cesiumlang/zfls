@@ -26,6 +26,8 @@ async function main(): Promise<void> {
       workspace,
       "--disable-extensions",
       "--disable-workspace-trust",
+      // CI runs on virtual displays, where GPU start-up can hang the window
+      "--disable-gpu",
       `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "zfls-vscode-"))}`,
     ],
     extensionTestsEnv: { ZFLS_PATH: process.env.ZFLS_PATH ?? "" },
