@@ -1,0 +1,286 @@
+//! Upstream issues about diagnostics.
+
+const std = @import("std");
+const h = @import("harness.zig");
+
+test "#406 an external function declared in two subroutines is not a duplicate" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\subroutine foo
+        \\  integer bar
+        \\  external bar
+        \\end subroutine foo
+        \\
+        \\subroutine foo2
+        \\  integer bar
+        \\  external bar
+        \\end subroutine foo2
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(406, .known_failure, w.expectNoDiagnostics("t.f90"));
+}
+
+test "#568 a plain USE after a USE ONLY that goes through a re-exporting module" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "inner.f90", .text =
+        \\module inner
+        \\  implicit none
+        \\  type :: a_t
+        \\    integer :: n = 0
+        \\  end type a_t
+        \\  type :: b_t
+        \\    integer :: n = 0
+        \\  end type b_t
+        \\end module inner
+        \\
+        },
+        .{ .name = "umbrella.f90", .text =
+        \\module umbrella
+        \\  use inner
+        \\  implicit none
+        \\end module umbrella
+        \\
+        },
+        .{ .name = "limited.f90", .text =
+        \\module limited
+        \\  use umbrella, only: a_t
+        \\  implicit none
+        \\  private
+        \\end module limited
+        \\
+        },
+        .{ .name = "user_fails.f90", .text =
+        \\module user_fails
+        \\  use limited
+        \\  use umbrella
+        \\  implicit none
+        \\contains
+        \\  subroutine s()
+        \\    type(b_t) :: b
+        \\  end subroutine s
+        \\end module user_fails
+        \\
+        },
+        .{ .name = "user_works.f90", .text =
+        \\module user_works
+        \\  use umbrella
+        \\  use limited
+        \\  implicit none
+        \\contains
+        \\  subroutine s()
+        \\    type(b_t) :: b
+        \\  end subroutine s
+        \\end module user_works
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    // the control: the same with the two USE lines swapped
+    try w.expectNoDiagnostics("user_works.f90");
+    try h.check(568, .known_failure, w.expectNoDiagnostics("user_fails.f90"));
+}
+
+test "#519 IMPORT in an abstract interface, in each of its forms" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module kinds
+        \\  integer, parameter :: wp = kind(1.0d0)
+        \\end module kinds
+        \\
+        \\module m
+        \\  use kinds, only: wp
+        \\  implicit none
+        \\  type :: mytype
+        \\    integer :: i
+        \\  end type mytype
+        \\  type :: other
+        \\    integer :: j
+        \\  end type other
+        \\  abstract interface
+        \\    subroutine cb1(x, t)
+        \\      import :: wp, mytype
+        \\      real(wp), intent(in) :: x
+        \\      type(mytype), intent(in) :: t
+        \\    end subroutine cb1
+        \\    subroutine cb2(x, t)
+        \\      import wp, mytype
+        \\      real(wp), intent(in) :: x
+        \\      type(mytype), intent(in) :: t
+        \\    end subroutine cb2
+        \\    subroutine cb3(x, t)
+        \\      import
+        \\      real(wp), intent(in) :: x
+        \\      type(mytype), intent(in) :: t
+        \\    end subroutine cb3
+        \\    subroutine cb4(t, o)
+        \\      import :: mytype, other
+        \\      type(mytype), intent(in) :: t
+        \\      type(other), intent(in) :: o
+        \\    end subroutine cb4
+        \\  end interface
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(519, .fixed, w.expectNoDiagnostics("t.f90"));
+}
+
+test "#489 a comment after code in fixed form is not held to max_line_length" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      program test
+        \\
+        \\      implicit none
+        \\c This is a comment line, it can go past the 72nd column as;dlfkjams;l ekrjm cw;elj
+        \\      integer :: i, j, k
+        \\      integer :: some_variable ! This is a comment, if it goes past the 72nd column
+        \\      integer :: another_variable ! then it will trigger a warning with fortls using max_line_length=72.
+        \\
+        \\      i = 1
+        \\      j = i + 1
+        \\      k = i + j
+        \\      some_variable = 10
+        \\      another_variable = 20
+        \\
+        \\      end program test
+        \\
+        ,
+    }}, .{ .settings = .{ .max_line_length = 72, .max_comment_line_length = -1 } });
+    defer w.deinit();
+    try h.check(489, .known_failure, w.expectNoDiagnostics("t.f"));
+}
+
+test "#264 IMPLICIT NONE inside a fixed-form BLOCK DATA" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      BLOCKDATA
+        \\      IMPLICIT NONE
+        \\      COMMON /GRAPHQWDATA/ CCLIENT
+        \\      CHARACTER*8 CCLIENT
+        \\      DATA CCLIENT /'SCANMF'C/
+        \\      ENDBLOCKDATA
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(264, .fixed, w.expectNoDiagnostics("t.f"));
+}
+
+test "#470 definitions after a BLOCK DATA unit (from the description; the report shows screenshots)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\block data bd
+        \\  common /c/ x
+        \\  real :: x
+        \\  data x /1.0/
+        \\end block data bd
+        \\
+        \\subroutine s()
+        \\end subroutine s
+        \\
+        \\module m
+        \\contains
+        \\  subroutine t()
+        \\  end subroutine t
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(470, .fixed, w.expectNoDiagnostics("t.f90"));
+}
+
+test "#172 a coarray dummy argument is found in the argument list" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program main
+        \\  implicit none
+        \\contains
+        \\  subroutine co_routine(coarray)
+        \\    real, allocatable, intent(inout) :: coarray[:]
+        \\  end subroutine co_routine
+        \\end program main
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(172, .known_failure, w.expectNoDiagnostics("t.f90"));
+}
+
+test "#72 a single TYPE IS with an associated selector" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\  implicit none
+        \\  type :: parent
+        \\    integer :: a
+        \\  end type parent
+        \\  type, extends(parent) :: child1
+        \\    integer :: b
+        \\  end type child1
+        \\contains
+        \\  subroutine test_select_sub(self)
+        \\    class(parent), intent(inout) :: self
+        \\    select type (this => self)
+        \\    type is (child1)
+        \\      this%a = 1
+        \\    end select
+        \\  end subroutine test_select_sub
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(72, .fixed, w.expectNoDiagnostics("t.f90"));
+}
+
+test "#485 local names are not reported as masking private names of a used module" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module Utils
+        \\  implicit none
+        \\  private
+        \\
+        \\  integer x
+        \\
+        \\  type :: TFileStream
+        \\  contains
+        \\    procedure :: Error
+        \\  end type
+        \\
+        \\  public TFileStream
+        \\contains
+        \\
+        \\  subroutine Error(this)
+        \\    class(TFileStream) :: this
+        \\  end subroutine
+        \\end module
+        \\
+        \\program name
+        \\  use Utils
+        \\
+        \\contains
+        \\
+        \\  subroutine test
+        \\    integer error
+        \\    integer x
+        \\  end subroutine
+        \\
+        \\end program name
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(485, .fixed, w.expectNoDiagnostics("t.f90"));
+}

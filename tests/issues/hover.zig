@@ -1,0 +1,266 @@
+//! Upstream issues about hover, go to definition / implementation and
+//! signature help.
+
+const std = @import("std");
+const h = @import("harness.zig");
+
+test "#483 hover on a call keeps the interface when the procedure is declared external" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "lapack.f90", .text =
+        \\subroutine dgesv(n, nrhs)
+        \\  integer, intent(in) :: n, nrhs
+        \\end subroutine dgesv
+        \\
+        },
+        .{ .name = "plain.f90", .text =
+        \\module plain
+        \\contains
+        \\  subroutine step()
+        \\    implicit none
+        \\    call dgesv(1, 1)
+        \\  end subroutine step
+        \\end module plain
+        \\
+        },
+        .{ .name = "ext.f90", .text =
+        \\module ext
+        \\contains
+        \\  subroutine step()
+        \\    implicit none(type, external)
+        \\    external dgesv
+        \\    call dgesv(1, 1)
+        \\  end subroutine step
+        \\end module ext
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    // the control: without the EXTERNAL statement
+    try w.expectHoverContains("plain.f90", w.pos("plain.f90", "dgesv", 0, 1), "dgesv");
+    const call = w.pos("ext.f90", "call dgesv", 0, 6);
+    try h.check(483, .known_failure, w.expectHoverContains("ext.f90", call, "nrhs"));
+}
+
+test "#281 hover shows the documentation of a function with a type prefix" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program main
+        \\    ! type a or be here:
+        \\    print*, a()
+        \\    print*, b()
+        \\contains
+        \\
+        \\function a()
+        \\    !! this shoes up
+        \\    logical a
+        \\    a = .true.
+        \\end function
+        \\
+        \\logical function b()
+        \\    !! this doesn't
+        \\    b = .false.
+        \\end function
+        \\
+        \\end program main
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "a()", 0, 0), "this shoes up");
+    try h.check(281, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "b()", 0, 0), "this doesn't"));
+}
+
+test "#237 a Doxygen comment above an expression is not the documentation of a later procedure" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\subroutine sub_before
+        \\    integer :: i
+        \\
+        \\    !> Trying to add a docstring to an expression
+        \\    i = 1
+        \\end subroutine
+        \\
+        \\subroutine sub_no_doc
+        \\end subroutine
+        \\
+        \\program p
+        \\    call sub_no_doc
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(237, .known_failure, notContains(w, "t.f90", w.pos("t.f90", "call sub_no_doc", 0, 6), "Trying to add"));
+}
+
+fn notContains(w: *h.Workspace, name: []const u8, p: h.Pos, fragment: []const u8) !void {
+    const text = (try w.hover(name, p)) orelse return;
+    if (std.mem.indexOf(u8, text, fragment) != null) return h.unmet("hover contains '{s}': {s}", .{ fragment, text });
+}
+
+test "#124 hover on a parameter shows a value that is a function call" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\    integer, parameter :: sp = selected_real_kind(6)
+        \\    real(sp) :: x
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(124, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "real(sp)", 0, 5), "selected_real_kind(6)"));
+}
+
+test "#118 hover on a fixed-form function that the caller declares with a type" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      function fff(x,y)
+        \\          implicit none
+        \\          real fff, x,y
+        \\          fff = x+y
+        \\          return
+        \\      end
+        \\
+        \\      program main
+        \\          implicit none
+        \\          real y, fff
+        \\          y = fff(1.2,3.3)
+        \\          write(*,*) y
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(118, .known_failure, w.expectHoverContains("t.f", w.pos("t.f", "fff(1.2", 0, 1), "FUNCTION"));
+}
+
+test "#108 hover on an ASSOCIATE name bound to an array slice shows the slice's shape" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\PROGRAM test_associate_block
+        \\    IMPLICIT NONE
+        \\    REAL :: A(5), B(5,5), C, III = 1
+        \\    ASSOCIATE (ARRAY => B(:,1))
+        \\        ARRAY (3) = ARRAY (1) + ARRAY (2)
+        \\    END ASSOCIATE
+        \\END PROGRAM test_associate_block
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(108, .known_failure, notContains(w, "t.f90", w.pos("t.f90", "ARRAY (3)", 0, 1), "(5,5)"));
+}
+
+test "#23 go to implementation from an EXTERNAL statement reaches the procedure" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program main
+        \\    external sub1
+        \\    integer,external :: fun1
+        \\    call bill(sub1,fun1)
+        \\end program
+        \\subroutine bill(proc,fun)
+        \\    integer :: fun,i
+        \\    i=fun()
+        \\    call proc(i)
+        \\end subroutine
+        \\subroutine sub1(i)
+        \\    integer :: i
+        \\    write(*,*) i
+        \\end subroutine
+        \\function fun1()
+        \\    integer :: fun1
+        \\    fun1 = 1
+        \\end function
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const impl = try w.implementation("t.f90", w.pos("t.f90", "sub1", 0, 1));
+    const want = w.pos("t.f90", "subroutine sub1", 0, 0).line;
+    try h.check(23, .known_failure, blk: {
+        const l = impl orelse break :blk h.unmet("no implementation found for sub1", .{});
+        break :blk h.expect(l.line == want, "implementation at line {d}, expected {d}", .{ l.line + 1, want + 1 });
+    });
+}
+
+test "#87 signature help counts the commas of the call, not those inside an argument" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\contains
+        \\  subroutine foo(arg1, arg2, arg3)
+        \\    implicit none
+        \\    integer(4), intent(in) :: arg1, arg2, arg3
+        \\  end subroutine foo
+        \\
+        \\  subroutine bar()
+        \\    implicit none
+        \\    integer(4) :: arr(4, 4)
+        \\    arr = 0
+        \\    call foo(arr(2, 3), 1, 2)
+        \\  end subroutine bar
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const sig = (try w.signature("t.f90", w.pos("t.f90", "arr(2, 3), 1", 0, 11))) orelse
+        return h.check(87, .known_failure, h.unmet("no signature help", .{}));
+    try h.check(87, .known_failure, h.expect(sig.active == 1, "active parameter {d}, expected 1", .{sig.active}));
+}
+
+test "#203 the PARAMETER statement makes a constant" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer n
+        \\  parameter (n = 5)
+        \\  print *, n
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.check(203, .known_failure, w.expectHoverContains("t.f90", w.pos("t.f90", "print *, n", 0, 9), "PARAMETER"));
+}
+
+test "#498 go to definition on an include directive opens the included file" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text =
+        \\{
+        \\  "source_dirs": ["./**"],
+        \\  "incl_suffixes": ["inc"],
+        \\  "pp_suffixes": ["inc"],
+        \\  "include_dirs": ["include", "src"]
+        \\}
+        \\
+        },
+        .{ .name = "src/a.F90", .text =
+        \\program a
+        \\#include "sample.inc"
+        \\end program a
+        \\
+        },
+        .{ .name = "include/sample.inc", .text =
+        \\integer :: from_include
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const def = try w.definition("src/a.F90", w.pos("src/a.F90", "sample.inc", 0, 2));
+    try h.check(498, .known_failure, blk: {
+        const l = def orelse break :blk h.unmet("no definition for the include", .{});
+        break :blk h.expect(std.mem.endsWith(u8, l.uri, "sample.inc"), "definition is {s}", .{l.uri});
+    });
+}
