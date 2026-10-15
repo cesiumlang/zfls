@@ -81,17 +81,17 @@ fn replaceVars(a: Allocator, line: []const u8, defs: *const Defs) VarErr![]const
         i_0 = m.end(0);
     }
     if (i_0 < line.len) try out.appendSlice(a, line[i_0..]);
-    var res = try str.replace(a, out.items, "@$@", "True");
-    res = try str.replace(a, res, "%$%", "False");
+    var res = try std.mem.replaceOwned(u8, a, out.items, "@$@", "True");
+    res = try std.mem.replaceOwned(u8, a, res, "%$%", "False");
     return res;
 }
 
 fn replaceOps(a: Allocator, expr: []const u8) ![]const u8 {
-    var e = try str.replace(a, expr, "&&", " and ");
-    e = try str.replace(a, e, "||", " or ");
-    e = try str.replace(a, e, "!=", " <> ");
-    e = try str.replace(a, e, "!", " not ");
-    e = try str.replace(a, e, " <> ", " != ");
+    var e = try std.mem.replaceOwned(u8, a, expr, "&&", " and ");
+    e = try std.mem.replaceOwned(u8, a, e, "||", " or ");
+    e = try std.mem.replaceOwned(u8, a, e, "!=", " <> ");
+    e = try std.mem.replaceOwned(u8, a, e, "!", " not ");
+    e = try std.mem.replaceOwned(u8, a, e, " <> ", " != ");
     return e;
 }
 
@@ -167,14 +167,14 @@ const PyEval = struct {
     fn peekKeyword(e: *PyEval, kw: []const u8) bool {
         e.skipWs();
         const rest = e.src[e.pos..];
-        if (!str.startsWith(rest, kw)) return false;
+        if (!std.mem.startsWith(u8, rest, kw)) return false;
         if (rest.len > kw.len and (std.ascii.isAlphanumeric(rest[kw.len]) or rest[kw.len] == '_')) return false;
         return true;
     }
 
     fn peekOp(e: *PyEval, op: []const u8) bool {
         e.skipWs();
-        return str.startsWith(e.src[e.pos..], op);
+        return std.mem.startsWith(u8, e.src[e.pos..], op);
     }
 
     fn parseOr(e: *PyEval) Err!Value {
@@ -215,9 +215,9 @@ const PyEval = struct {
             e.skipWs();
             var op: ?[]const u8 = null;
             for (cmp_ops) |o| {
-                if (str.startsWith(e.src[e.pos..], o)) {
+                if (std.mem.startsWith(u8, e.src[e.pos..], o)) {
                     // don't confuse '<<' / '>>' with comparisons
-                    if ((str.eql(o, "<") or str.eql(o, ">")) and e.pos + 1 < e.src.len and e.src[e.pos + 1] == o[0]) break;
+                    if ((std.mem.eql(u8, o, "<") or std.mem.eql(u8, o, ">")) and e.pos + 1 < e.src.len and e.src[e.pos + 1] == o[0]) break;
                     op = o;
                     break;
                 }
@@ -234,13 +234,13 @@ const PyEval = struct {
     }
 
     fn compare(op: []const u8, l: Value, r: Value) Err!bool {
-        if (str.eql(op, "==") or str.eql(op, "!=")) {
+        if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) {
             var eq: bool = undefined;
             if (l.isNumeric() and r.isNumeric()) {
                 eq = l.asFloat() == r.asFloat();
                 if (l.asInt() != null and r.asInt() != null) eq = l.asInt().? == r.asInt().?;
             } else if (l == .string and r == .string) {
-                eq = str.eql(l.string, r.string);
+                eq = std.mem.eql(u8, l.string, r.string);
             } else if (l == .none and r == .none) {
                 eq = true;
             } else eq = false;
@@ -256,9 +256,9 @@ const PyEval = struct {
         } else if (l == .string and r == .string) {
             ord = std.mem.order(u8, l.string, r.string);
         } else return error.Type;
-        if (str.eql(op, "<")) return ord == .lt;
-        if (str.eql(op, ">")) return ord == .gt;
-        if (str.eql(op, "<=")) return ord != .gt;
+        if (std.mem.eql(u8, op, "<")) return ord == .lt;
+        if (std.mem.eql(u8, op, ">")) return ord == .gt;
+        if (std.mem.eql(u8, op, "<=")) return ord != .gt;
         return ord != .lt;
     }
 
@@ -361,8 +361,8 @@ const PyEval = struct {
             e.skipWs();
             if (e.pos >= e.src.len) break;
             const rest = e.src[e.pos..];
-            if (str.startsWith(rest, "**")) break;
-            if (str.startsWith(rest, "//")) {
+            if (std.mem.startsWith(u8, rest, "**")) break;
+            if (std.mem.startsWith(u8, rest, "//")) {
                 e.pos += 2;
                 left = try arith('f', left, try e.parseUnary());
             } else if (rest[0] == '*' or rest[0] == '/' or rest[0] == '%') {
@@ -437,9 +437,9 @@ const PyEval = struct {
             const start = e.pos;
             while (e.pos < e.src.len and (std.ascii.isAlphanumeric(e.src[e.pos]) or e.src[e.pos] == '_')) e.pos += 1;
             const word = e.src[start..e.pos];
-            if (str.eql(word, "True")) return .{ .boolean = true };
-            if (str.eql(word, "False")) return .{ .boolean = false };
-            if (str.eql(word, "None")) return .none;
+            if (std.mem.eql(u8, word, "True")) return .{ .boolean = true };
+            if (std.mem.eql(u8, word, "False")) return .{ .boolean = false };
+            if (std.mem.eql(u8, word, "None")) return .none;
             return error.Name;
         }
         return error.Syntax;
@@ -479,7 +479,7 @@ const PyEval = struct {
         }
         // an identifier glued to a number is a syntax error in Python
         if (e.pos < s.len and (std.ascii.isAlphabetic(s[e.pos]) or s[e.pos] == '_')) return error.Syntax;
-        const text = try str.replace(e.a, s[start..e.pos], "_", "");
+        const text = try std.mem.replaceOwned(u8, e.a, s[start..e.pos], "_", "");
         if (is_float) return .{ .float = std.fmt.parseFloat(f64, text) catch return error.Syntax };
         // Python rejects leading zeros on non-zero decimal integers
         if (text.len > 1 and text[0] == '0') {
@@ -505,15 +505,15 @@ fn expandFuncMacro(a: Allocator, def_name: []const u8, args: []const u8, value: 
     try pat.appendSlice(a, "\\)");
     var sub = value;
     for (def_args, 0..) |arg, i| {
-        var arg_re = try regex.Regex.compile(a, try str.print(a, "\\b({s})\\b", .{str.strip(arg)}), .{});
+        var arg_re = try regex.Regex.compile(a, try std.fmt.allocPrint(a, "\\b({s})\\b", .{str.strip(arg)}), .{});
         defer arg_re.deinit();
-        sub = try arg_re.sub(a, try str.print(a, "\\\\{d}", .{i + 1}), sub);
+        sub = try arg_re.sub(a, try std.fmt.allocPrint(a, "\\\\{d}", .{i + 1}), sub);
     }
     return .{ .re = try regex.Regex.compile(a, pat.items, .{}), .template = sub };
 }
 
 fn appendMultilineMacro(a: Allocator, d: Def, line: []const u8) !Def {
-    return .{ .args = d.args, .value = try str.concat(a, &.{ d.value, line }) };
+    return .{ .args = d.args, .value = try std.mem.concat(a, u8, &.{ d.value, line }) };
 }
 
 const StackEntry = [2]i64;
@@ -533,7 +533,7 @@ pub fn preprocessFile(
     }
     for (include_dirs_in) |d| {
         var dup = false;
-        for (include_dirs.items) |e| if (str.eql(e, d)) {
+        for (include_dirs.items) |e| if (std.mem.eql(u8, e, d)) {
             dup = true;
         };
         if (!dup) try include_dirs.append(a, d);
@@ -578,16 +578,16 @@ fn preprocessInner(
         // Handle conditional statements
         if (R().PP_REGEX.match(line)) |m| {
             try output.append(a, line);
-            const kw = try str.lower(a, m.group(1).?);
+            const kw = try std.ascii.allocLowerString(a, m.group(1).?);
             var if_start = false;
             var is_path = false;
-            if (str.eql(kw, "if ")) {
+            if (std.mem.eql(u8, kw, "if ")) {
                 is_path = evalPpIf(a, line[m.end(1)..], &defs_tmp);
                 if_start = true;
-            } else if (str.eql(kw, "ifdef")) {
+            } else if (std.mem.eql(u8, kw, "ifdef")) {
                 if_start = true;
                 is_path = defs_tmp.contains(str.strip(line[m.end(0)..]));
-            } else if (str.eql(kw, "ifndef")) {
+            } else if (std.mem.eql(u8, kw, "ifndef")) {
                 if_start = true;
                 is_path = !defs_tmp.contains(str.strip(line[m.end(0)..]));
             }
@@ -605,7 +605,7 @@ fn preprocessInner(
             const depth_now: i64 = @intCast(pp_stack.items.len);
             const top = &pp_stack.items[pp_stack.items.len - 1];
             var trace: enum { none, included, excluded_start, excluded } = .none;
-            if (str.eql(kw, "elif")) {
+            if (std.mem.eql(u8, kw, "elif")) {
                 if (pp_stack_group.items.len == 0 or pp_stack_group.items[pp_stack_group.items.len - 1][0] != depth_now) {
                     try pp_stack_group.append(a, .{ depth_now, top[0] < 0 });
                 }
@@ -621,7 +621,7 @@ fn preprocessInner(
                     try pp_stack.append(a, .{ -1, -1 });
                     trace = .included;
                 } else trace = .excluded_start;
-            } else if (str.eql(kw, "else")) {
+            } else if (std.mem.eql(u8, kw, "else")) {
                 if (top[0] < 0) {
                     top[0] = i + 1;
                     trace = .excluded_start;
@@ -637,7 +637,7 @@ fn preprocessInner(
                     try pp_stack.append(a, .{ -1, -1 });
                     trace = .included;
                 }
-            } else if (str.eql(kw, "endif")) {
+            } else if (std.mem.eql(u8, kw, "endif")) {
                 if (pp_stack_group.items.len > 0 and pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now) {
                     _ = pp_stack_group.pop();
                 }
@@ -670,7 +670,7 @@ fn preprocessInner(
             try pp_defines.append(a, i + 1);
             const def_name = m.group(2).?;
             const directive = m.group(1).?;
-            if (str.eql(directive, "define") and !defs_tmp.contains(def_name)) {
+            if (std.mem.eql(u8, directive, "define") and !defs_tmp.contains(def_name)) {
                 var def_value: []const u8 = undefined;
                 const rest = line[m.end(0)..];
                 if (std.mem.indexOfScalar(u8, rest, ' ')) |eq_ind| {
@@ -687,7 +687,7 @@ fn preprocessInner(
                 var d: Def = .{ .value = try a.dupe(u8, def_value) };
                 if (m.group(3) != null) d.args = try a.dupe(u8, m.group(4) orelse "");
                 try defs_tmp.put(a, try a.dupe(u8, def_name), d);
-            } else if (str.eql(directive, "undef") and defs_tmp.contains(def_name)) {
+            } else if (std.mem.eql(u8, directive, "undef") and defs_tmp.contains(def_name)) {
                 _ = defs_tmp.orderedRemove(def_name);
             }
             dbg("{s} !!! Define statement({d})", .{ str.strip(line), i + 1 });
@@ -696,7 +696,7 @@ fn preprocessInner(
         // Handle include files
         if (R().PP_INCLUDE.match(line)) |m| if (stack_is_true) {
             dbg("{s} !!! Include statement({d})", .{ str.strip(line), i + 1 });
-            const include_filename = try str.replace(a, m.group(1).?, "\"", "");
+            const include_filename = try std.mem.replaceOwned(u8, a, m.group(1).?, "\"", "");
             var include_path: ?[]const u8 = null;
             for (include_dirs.items) |dir| {
                 const candidate = try paths.join(a, &.{ dir, include_filename });
@@ -708,11 +708,11 @@ fn preprocessInner(
             if (include_path) |ip| {
                 // guard against include cycles
                 if (depth >= 32) {} else if (Io.Dir.cwd().readFileAlloc(io, ip, a, .limited(1 << 28))) |data| {
-                    const text = try str.replace(a, data, "\t", " ");
+                    const text = try std.mem.replaceOwned(u8, a, data, "\t", " ");
                     const inc_lines = try parser.splitLines(a, text);
                     const dir = try paths.abspath(a, paths.dirname(ip));
                     var dup = false;
-                    for (include_dirs.items) |e| if (str.eql(e, dir)) {
+                    for (include_dirs.items) |e| if (std.mem.eql(u8, e, dir)) {
                         dup = true;
                     };
                     if (!dup) try include_dirs.append(a, dir);
@@ -742,7 +742,7 @@ fn preprocessInner(
                         break :blk null;
                     };
                 } else {
-                    const re = regex.Regex.compile(a, try str.print(a, "\\b{s}\\b", .{def_tmp}), .{}) catch null;
+                    const re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "\\b{s}\\b", .{def_tmp}), .{}) catch null;
                     gop.value_ptr.* = if (re) |r| .{ .re = r, .template = "" } else null;
                 }
             }

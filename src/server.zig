@@ -118,9 +118,9 @@ pub const Server = struct {
         var it = defs.iterator();
         while (it.next()) |e| {
             const existing = self.pp_defs.get(e.key_ptr.*);
-            const same = existing != null and str.eql(existing.?.value, e.value_ptr.value) and
+            const same = existing != null and std.mem.eql(u8, existing.?.value, e.value_ptr.value) and
                 ((existing.?.args == null) == (e.value_ptr.args == null)) and
-                (existing.?.args == null or str.eql(existing.?.args.?, e.value_ptr.args.?));
+                (existing.?.args == null or std.mem.eql(u8, existing.?.args.?, e.value_ptr.args.?));
             if (same) continue;
             const key = if (self.pp_defs.getKey(e.key_ptr.*)) |k| k else try a.dupe(u8, e.key_ptr.*);
             try self.pp_defs.put(a, key, .{
@@ -190,7 +190,7 @@ pub const Server = struct {
         if (result) |res| {
             self.writeResponse(a, id.?, res) catch {};
         } else |e| switch (e) {
-            error.MethodNotFound => self.writeError(a, id.?, -32601, str.print(a, "method {s} not found", .{method}) catch "method not found", null) catch {},
+            error.MethodNotFound => self.writeError(a, id.?, -32601, std.fmt.allocPrint(a, "method {s} not found", .{method}) catch "method not found", null) catch {},
             else => {
                 self.log.warn("error handling request {s}: {s}", .{ method, @errorName(e) });
                 const data = json.from(a, .{ .traceback = @errorName(e) }) catch json.null_value;
@@ -205,27 +205,26 @@ pub const Server = struct {
     }
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
-        const eql = str.eql;
-        if (eql(method, "initialize")) return self.serveInitialize(a, params);
-        if (eql(method, "textDocument/documentSymbol")) return self.serveDocumentSymbols(a, params);
-        if (eql(method, "textDocument/completion")) return self.serveAutocomplete(a, params);
-        if (eql(method, "textDocument/signatureHelp")) return self.serveSignature(a, params);
-        if (eql(method, "textDocument/definition")) return self.serveDefinition(a, params);
-        if (eql(method, "textDocument/references")) return self.serveReferences(a, params);
-        if (eql(method, "textDocument/documentHighlight")) return self.serveReferences(a, params);
-        if (eql(method, "textDocument/hover")) return self.serveHover(a, params);
-        if (eql(method, "textDocument/implementation")) return self.serveImplementation(a, params);
-        if (eql(method, "textDocument/rename")) return self.serveRename(a, params);
-        if (eql(method, "textDocument/didOpen")) return self.serveOnSave(a, params, true, false);
-        if (eql(method, "textDocument/didSave")) return self.serveOnSave(a, params, false, false);
-        if (eql(method, "textDocument/didClose")) return self.serveOnSave(a, params, false, true);
-        if (eql(method, "textDocument/didChange")) return self.serveOnChange(a, params);
-        if (eql(method, "textDocument/codeAction")) return self.serveCodeActions(a, params);
-        if (eql(method, "workspace/symbol")) return self.serveWorkspaceSymbol(a, params);
-        if (eql(method, "initialized") or eql(method, "workspace/didChangeWatchedFiles") or
-            eql(method, "workspace/didChangeConfiguration") or eql(method, "$/cancelRequest") or
-            eql(method, "$/setTrace") or eql(method, "shutdown")) return .null;
-        if (eql(method, "exit")) {
+        if (std.mem.eql(u8, method, "initialize")) return self.serveInitialize(a, params);
+        if (std.mem.eql(u8, method, "textDocument/documentSymbol")) return self.serveDocumentSymbols(a, params);
+        if (std.mem.eql(u8, method, "textDocument/completion")) return self.serveAutocomplete(a, params);
+        if (std.mem.eql(u8, method, "textDocument/signatureHelp")) return self.serveSignature(a, params);
+        if (std.mem.eql(u8, method, "textDocument/definition")) return self.serveDefinition(a, params);
+        if (std.mem.eql(u8, method, "textDocument/references")) return self.serveReferences(a, params);
+        if (std.mem.eql(u8, method, "textDocument/documentHighlight")) return self.serveReferences(a, params);
+        if (std.mem.eql(u8, method, "textDocument/hover")) return self.serveHover(a, params);
+        if (std.mem.eql(u8, method, "textDocument/implementation")) return self.serveImplementation(a, params);
+        if (std.mem.eql(u8, method, "textDocument/rename")) return self.serveRename(a, params);
+        if (std.mem.eql(u8, method, "textDocument/didOpen")) return self.serveOnSave(a, params, true, false);
+        if (std.mem.eql(u8, method, "textDocument/didSave")) return self.serveOnSave(a, params, false, false);
+        if (std.mem.eql(u8, method, "textDocument/didClose")) return self.serveOnSave(a, params, false, true);
+        if (std.mem.eql(u8, method, "textDocument/didChange")) return self.serveOnChange(a, params);
+        if (std.mem.eql(u8, method, "textDocument/codeAction")) return self.serveCodeActions(a, params);
+        if (std.mem.eql(u8, method, "workspace/symbol")) return self.serveWorkspaceSymbol(a, params);
+        if (std.mem.eql(u8, method, "initialized") or std.mem.eql(u8, method, "workspace/didChangeWatchedFiles") or
+            std.mem.eql(u8, method, "workspace/didChangeConfiguration") or std.mem.eql(u8, method, "$/cancelRequest") or
+            std.mem.eql(u8, method, "$/setTrace") or std.mem.eql(u8, method, "shutdown")) return .null;
+        if (std.mem.eql(u8, method, "exit")) {
             self.serveExit();
             return .null;
         }
@@ -394,18 +393,18 @@ pub const Server = struct {
         const cp = config_path orelse return;
         const sa = self.arena.allocator();
         const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
-            self.postMessage(a, str.print(a, "Configuration file '{s}' not found", .{self.s.config}) catch return, C.Severity.err);
+            self.postMessage(a, std.fmt.allocPrint(a, "Configuration file '{s}' not found", .{self.s.config}) catch return, C.Severity.err);
             return;
         };
         var p: json.Parser = .{ .a = sa, .src = data };
         const cfg = p.parseDocument() catch {
             const emsg = settings_mod.json5ErrorMessage(a, data, p.err_pos) catch "error";
-            const msg = str.print(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config }) catch return;
+            const msg = std.fmt.allocPrint(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config }) catch return;
             self.postMessage(a, msg, C.Severity.err);
             return;
         };
         if (cfg != .object) {
-            self.postMessage(a, str.print(a, "Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}) catch return, C.Severity.err);
+            self.postMessage(a, std.fmt.allocPrint(a, "Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}) catch return, C.Severity.err);
             return;
         }
         settings_mod.applyConfig(sa, &self.s, cfg) catch return;
@@ -501,7 +500,7 @@ pub const Server = struct {
                 const p = try paths.join(a, &.{ dir, f });
                 if (self.s.excl_paths.contains(p)) continue;
                 var excluded = false;
-                for (self.s.excl_suffixes.slice()) |ext| if (str.endsWith(f, ext)) {
+                for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, f, ext)) {
                     excluded = true;
                 };
                 if (excluded) continue;
@@ -588,7 +587,7 @@ pub const Server = struct {
         for (files, results) |path, res| {
             switch (res) {
                 .none => {},
-                .err => |e| self.postMessage(a, try str.print(a, "Initialization failed for file {s}: {s}", .{ path, e }), C.Severity.err),
+                .err => |e| self.postMessage(a, try std.fmt.allocPrint(a, "Initialization failed for file {s}: {s}", .{ path, e }), C.Severity.err),
                 .ok => |f| {
                     if (self.workspace.get(f.path)) |old| {
                         // Duplicate path (overlapping source dirs): keep the newest
@@ -733,7 +732,7 @@ pub const Server = struct {
     // Workspace symbols / document symbols
 
     fn serveWorkspaceSymbol(self: *Server, a: Allocator, params: Value) !Value {
-        const query = try str.lower(a, (params.get("query") orelse json.null_value).asStr() orelse "");
+        const query = try std.ascii.allocLowerString(a, (params.get("query") orelse json.null_value).asStr() orelse "");
         const Item = struct { name: []const u8, v: Value };
         var items: std.ArrayList(Item) = .empty;
         for (try objects.findInWorkspace(self.env(a), query, false, false)) |cand| {
@@ -790,11 +789,11 @@ pub const Server = struct {
         const ast = file.ast orelse return json.newArray();
         var out = json.newArray();
         for (try ast.getScopes(a, null)) |scope| {
-            if (scope.name.len == 0 or str.startsWith(scope.name, "#") or scope.getType(false) == C.SELECT_TYPE_ID) continue;
+            if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.SELECT_TYPE_ID) continue;
             const tree = try str.split(a, scope.fqsn, "::");
             var scope_type: i64 = undefined;
             if (tree.len > 2) {
-                if (str.startsWith(tree[1], "#gen_int")) scope_type = 11 else continue;
+                if (std.mem.startsWith(u8, tree[1], "#gen_int")) scope_type = 11 else continue;
             } else {
                 scope_type = mapDocSymbolType(scope.getType(false), false);
             }
@@ -849,7 +848,7 @@ pub const Server = struct {
                     try childCandidates(a, child, only_list, filter_public, false, out);
                 } else {
                     if (nonly > 0) {
-                        const lname = try str.lower(a, child.name);
+                        const lname = try std.ascii.allocLowerString(a, child.name);
                         if (!only_list.?.contains(lname)) continue;
                     }
                     try out.append(a, child);
@@ -886,10 +885,10 @@ pub const Server = struct {
                     for (tmp.items) |obj| {
                         try var_list.append(a, obj);
                         var rev: ?[]const u8 = null;
-                        const lname = try str.lower(a, obj.name);
+                        const lname = try std.ascii.allocLowerString(a, obj.name);
                         // reversed rename map (last key wins for duplicate values)
                         for (use_info.rename_map.keys.items, use_info.rename_map.values.items) |k, v| {
-                            if (str.eql(v, lname)) rev = k;
+                            if (std.mem.eql(u8, v, lname)) rev = k;
                         }
                         try rename_list.append(a, rev);
                     }
@@ -924,7 +923,7 @@ pub const Server = struct {
         var out_renames: std.ArrayList(?[]const u8) = .empty;
         for (var_list.items, rename_list.items) |v, rn| {
             const name = rn orelse v.name;
-            if (str.startsWith(try str.lower(a, name), var_prefix)) {
+            if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, name), var_prefix)) {
                 try out_objs.append(a, v);
                 try out_renames.append(a, rn);
             }
@@ -967,11 +966,11 @@ pub const Server = struct {
         if (is_member and kind == 3) kind = 2;
         try json.put(a, &v, "kind", json.integer(kind));
         var detail = try candidate.getDesc(a);
-        if (call_sig) |cs| detail = try str.print(a, "{s} {s}", .{ detail, cs });
+        if (call_sig) |cs| detail = try std.fmt.allocPrint(a, "{s} {s}", .{ detail, cs });
         try json.put(a, &v, "detail", json.string(detail));
         const hover_msg = try candidate.getHoverMd(a, true, -1);
         if (hover_msg.len > 0) {
-            const value = try str.replaceFirst(a, hover_msg, "```{langid}", try str.print(a, "```{s}", .{self.s.hover_language}));
+            const value = try str.replaceFirst(a, hover_msg, "```{langid}", try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language}));
             try json.put(a, &v, "documentation", try json.from(a, .{ .kind = "markdown", .value = value }));
         }
         return v;
@@ -1019,7 +1018,7 @@ pub const Server = struct {
             .mod_only => {
                 for (self.obj_tree.values()) |e| {
                     const cand = e.obj;
-                    if (cand.getType(false) == C.MODULE_TYPE_ID and str.startsWith(try str.lower(a, cand.name), var_prefix)) {
+                    if (cand.getType(false) == C.MODULE_TYPE_ID and std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
                         try json.append(a, &item_list, try self.buildComp(a, cand, true, null, false, false));
                     }
                 }
@@ -1027,7 +1026,7 @@ pub const Server = struct {
             },
             .mod_mems => {
                 name_only = true;
-                const mod_name = try str.lower(a, lc.info orelse "");
+                const mod_name = try std.ascii.allocLowerString(a, lc.info orelse "");
                 const mod = self.env(a).global(ast, mod_name) orelse return .null;
                 const one = try a.alloc(*Obj, 1);
                 one[0] = mod;
@@ -1090,7 +1089,7 @@ pub const Server = struct {
                     }
                 }
                 for (try self.intr.keywordsFor(a, key_context)) |cand| {
-                    if (str.startsWith(try str.lower(a, cand.name), var_prefix)) {
+                    if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
                         try json.append(a, &item_list, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
                     }
                 }
@@ -1098,7 +1097,7 @@ pub const Server = struct {
             },
             .first => {
                 for (try self.intr.keywordsFor(a, 0)) |cand| {
-                    if (str.startsWith(try str.lower(a, cand.name), var_prefix)) {
+                    if (std.mem.startsWith(u8, try std.ascii.allocLowerString(a, cand.name), var_prefix)) {
                         try json.append(a, &item_list, try self.buildComp(a, cand, self.s.autocomplete_name_only, null, false, false));
                     }
                 }
@@ -1117,7 +1116,7 @@ pub const Server = struct {
                 for (cand.mems.items) |member| {
                     const text = (try member.getSnippet(a, name_replace, -1)).call orelse "None";
                     var dup = false;
-                    for (seen.items) |s| if (str.eql(s, text)) {
+                    for (seen.items) |s| if (std.mem.eql(u8, s, text)) {
                         dup = true;
                     };
                     if (dup) continue;
@@ -1144,10 +1143,10 @@ pub const Server = struct {
             .sline = line,
             .eline = line,
             .desc = desc,
-            .fqsn = try str.lower(a, name),
+            .fqsn = try std.ascii.allocLowerString(a, name),
         };
         try o.keywords.appendSlice(a, keywords);
-        if (file_ast.enc_scope_name) |enc| o.fqsn = try str.concat(a, &.{ try str.lower(a, enc), "::", try str.lower(a, name) });
+        if (file_ast.enc_scope_name) |enc| o.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", try std.ascii.allocLowerString(a, name) });
         o.callable = R().CLASS_VAR.match(desc) != null;
         if (o.hasKeyword(C.KW.public)) o.vis = 1;
         if (o.hasKeyword(C.KW.private)) o.vis = -1;
@@ -1171,9 +1170,9 @@ pub const Server = struct {
             if (d.args) |args| {
                 var parts: std.ArrayList([]const u8) = .empty;
                 for (try str.split(a, args, ",")) |p| try parts.append(a, str.strip(p));
-                arg_str = try str.print(a, "({s})", .{try str.join(a, ", ", parts.items)});
+                arg_str = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", parts.items)});
             }
-            const desc = try str.print(a, "#define {s}{s} {s}", .{ def_name, arg_str, d.value });
+            const desc = try std.fmt.allocPrint(a, "#define {s}{s} {s}", .{ def_name, arg_str, d.value });
             return try tempVariable(a, ast, def_line + 1, def_name, desc, &.{});
         }
         var curr_scope = ast.getInnerScope(def_line + 1);
@@ -1185,7 +1184,7 @@ pub const Server = struct {
             var cs = cs0;
             if (cs.getType(false) == C.CLASS_TYPE_ID and !is_member) {
                 const lp = str.lstrip(line_prefix);
-                if ((str.startsWith(lp, "procedure") and str.count(line_prefix, "=>") > 0) or R().TYPE_DEF_CTX.match(line_prefix) != null) {
+                if ((std.mem.startsWith(u8, lp, "procedure") and std.mem.count(u8, line_prefix, "=>") > 0) or R().TYPE_DEF_CTX.match(line_prefix) != null) {
                     if (cs.parent) |p| cs = p;
                 }
             }
@@ -1194,7 +1193,7 @@ pub const Server = struct {
         }
         if (var_obj) |v| return v;
         if (is_member) return null;
-        const key = try str.lower(a, def_name);
+        const key = try std.ascii.allocLowerString(a, def_name);
         // the file's own global definition before another file's of the
         // same name (fortls gets this from parsing the open file last)
         if (ast.global_dict.get(key)) |o| return o;
@@ -1249,7 +1248,7 @@ pub const Server = struct {
     fn serveHover(self: *Server, a: Allocator, params: Value) !Value {
         const d = (try self.definitionAt(a, params, true)) orelse return .null;
         const var_obj = d.obj;
-        const lang_fence = try str.print(a, "```{s}", .{self.s.hover_language});
+        const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         var hover_array: std.ArrayList([]const u8) = .empty;
         const vt = var_obj.getType(false);
         if (vt == C.SUBROUTINE_TYPE_ID or vt == C.FUNCTION_TYPE_ID or vt == C.MODULE_TYPE_ID or vt == C.CLASS_TYPE_ID) {
@@ -1260,21 +1259,21 @@ pub const Server = struct {
                 if (h.msg != null) try hover_array.append(a, try self.createHover(a, h.msg, h.docs));
             }
         } else if (vt == C.VAR_TYPE_ID) {
-            if (!str.startsWith(var_obj.desc, C.FORTRAN_LITERAL)) {
+            if (!std.mem.startsWith(u8, var_obj.desc, C.FORTRAN_LITERAL)) {
                 try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, -1), "```{langid}", lang_fence));
-            } else if (str.endsWith(var_obj.desc, "REAL")) {
+            } else if (std.mem.endsWith(u8, var_obj.desc, "REAL")) {
                 try hover_array.append(a, try self.createHover(a, "REAL", null));
-            } else if (str.endsWith(var_obj.desc, "INTEGER")) {
+            } else if (std.mem.endsWith(u8, var_obj.desc, "INTEGER")) {
                 try hover_array.append(a, try self.createHover(a, "INTEGER", null));
-            } else if (str.endsWith(var_obj.desc, "LOGICAL")) {
+            } else if (std.mem.endsWith(u8, var_obj.desc, "LOGICAL")) {
                 try hover_array.append(a, try self.createHover(a, "LOGICAL", null));
-            } else if (str.endsWith(var_obj.desc, "STRING")) {
+            } else if (std.mem.endsWith(u8, var_obj.desc, "STRING")) {
                 const n = str.codepointLen(var_obj.name);
-                try hover_array.append(a, try self.createHover(a, try str.print(a, "CHARACTER(LEN={d})", .{@as(i64, @intCast(n)) - 2}), null));
+                try hover_array.append(a, try self.createHover(a, try std.fmt.allocPrint(a, "CHARACTER(LEN={d})", .{@as(i64, @intCast(n)) - 2}), null));
             }
         }
         if (hover_array.items.len == 0) return .null;
-        return json.from(a, .{ .contents = .{ .kind = "markdown", .value = try str.join(a, "\n", hover_array.items) } });
+        return json.from(a, .{ .contents = .{ .kind = "markdown", .value = try std.mem.join(a, "\n", hover_array.items) } });
     }
 
     /// `fortran_md(...).format(langid=...)`
@@ -1327,7 +1326,7 @@ pub const Server = struct {
         var var_obj: ?*Obj = null;
         if (curr_scope) |cs| var_obj = try objects.findInScope(self.env(a), cs, sub_name, .{});
         if (var_obj == null) {
-            const key = try str.lower(a, sub_name);
+            const key = try std.ascii.allocLowerString(a, sub_name);
             if (ast.global_dict.get(key)) |o| {
                 var_obj = o;
             } else if (self.obj_tree.get(key)) |e| {
@@ -1340,7 +1339,7 @@ pub const Server = struct {
             }
         }
         if (var_obj == null and R().INT_STMNT.match(str.slice(line_prefix, 0, sub_end)) != null) {
-            const key = try str.lower(a, sub_name);
+            const key = try std.ascii.allocLowerString(a, sub_name);
             for (try self.intr.keywordsFor(a, 0)) |cand| if (std.ascii.eqlIgnoreCase(cand.name, key)) {
                 var_obj = cand;
                 break;
@@ -1349,7 +1348,7 @@ pub const Server = struct {
         const vo = var_obj orelse return .null;
         const sig = try vo.getSignature(a, -1);
         const label = sig.label orelse return .null;
-        const lang_fence = try str.print(a, "```{s}", .{self.s.hover_language});
+        const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         var params_json = json.newArray();
         for (sig.params) |p| {
             var pv = json.newObject();
@@ -1412,9 +1411,9 @@ pub const Server = struct {
     }
 
     fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile) ![]FileRefs {
-        const def_name = try str.lower(a, def_obj.name);
+        const def_name = try std.ascii.allocLowerString(a, def_obj.name);
         const def_fqsn = def_obj.fqsn;
-        var name_re = regex.Regex.compile(a, try str.print(a, "(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
+        var name_re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
         defer name_re.deinit();
         var files: std.ArrayList(*FortranFile) = .empty;
         if (restrict) |f| try files.append(a, f) else try files.appendSlice(a, self.workspace.values());
@@ -1434,15 +1433,15 @@ pub const Server = struct {
                     if (var_def.kind == .intrinsic) continue;
                     var ref_match = false;
                     var in_cache = false;
-                    for (override_cache.items) |c| if (str.eql(c, var_def.fqsn)) {
+                    for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                         in_cache = true;
                     };
-                    if (str.eql(def_fqsn, var_def.fqsn) or in_cache) {
+                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache) {
                         ref_match = true;
                     } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.CLASS_TYPE_ID) {
                         if (type_mem) {
                             for (try var_def.parent.?.getOverridden(a, def_name)) |inherit_def| {
-                                if (str.eql(def_fqsn, inherit_def.fqsn)) {
+                                if (std.mem.eql(u8, def_fqsn, inherit_def.fqsn)) {
                                     ref_match = true;
                                     try override_cache.append(a, var_def.fqsn);
                                     break;
@@ -1452,7 +1451,7 @@ pub const Server = struct {
                         if (!hasLinkAttr(var_def)) {
                             ref_match = false;
                         } else if (var_def.sline - 1 == i and var_def.file_ast.path != null and
-                            str.eql(var_def.file_ast.path.?, filename) and str.count(line, "=>") == 0 and
+                            std.mem.eql(u8, var_def.file_ast.path.?, filename) and std.mem.count(u8, line, "=>") == 0 and
                             var_def.link_obj == def_obj)
                         {
                             try override_cache.append(a, var_def.fqsn);
@@ -1460,7 +1459,7 @@ pub const Server = struct {
                         }
                     } else if (def_obj.kind.isVariable() and def_obj.getType(true) == C.METH_TYPE_ID) {
                         if (def_obj.link_obj) |l| if (l.parent) |lp| if (var_def.parent) |vp| {
-                            if (str.eql(lp.fqsn, vp.fqsn)) {
+                            if (std.mem.eql(u8, lp.fqsn, vp.fqsn)) {
                                 ref_match = true;
                                 try override_cache.append(a, var_def.fqsn);
                             }
@@ -1478,7 +1477,7 @@ pub const Server = struct {
         _ = self;
         var type_mem = false;
         var restrict: ?*FortranFile = null;
-        if (str.count(def_obj.fqsn, ":") > 2) {
+        if (std.mem.count(u8, def_obj.fqsn, ":") > 2) {
             const parent = def_obj.parent orelse return null;
             if (parent.getType(false) == C.CLASS_TYPE_ID) {
                 type_mem = true;
@@ -1597,7 +1596,7 @@ pub const Server = struct {
         const uri = uriOf(params);
         const path = try self.pathFromUri(a, uri);
         const file = self.workspace.get(path) orelse {
-            self.postMessage(a, try str.print(a, "Change request failed for unknown file '{s}'", .{path}), C.Severity.err);
+            self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for unknown file '{s}'", .{path}), C.Severity.err);
             return .null;
         };
         const changes = (params.get("contentChanges") orelse json.null_value).items();
@@ -1608,7 +1607,7 @@ pub const Server = struct {
             reparse_req = false;
             for (changes) |c| {
                 const flag = file.applyChange(try toChange(c)) catch {
-                    self.postMessage(a, try str.print(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
+                    self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
                     return .null;
                 };
                 reparse_req = reparse_req or flag;
@@ -1617,7 +1616,7 @@ pub const Server = struct {
         if (reparse_req) {
             const res = self.updateWorkspaceFile(a, path, false, false, true);
             if (res.err) |e| {
-                self.postMessage(a, try str.print(a, "Change request failed for file '{s}': {s}", .{ path, e }), C.Severity.err);
+                self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': {s}", .{ path, e }), C.Severity.err);
                 return .null;
             }
             for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, path, a);
@@ -1656,7 +1655,7 @@ pub const Server = struct {
         }
         const res = self.updateWorkspaceFile(a, filepath, true, did_open, false);
         if (res.err) |e| {
-            self.postMessage(a, try str.print(a, "Save request failed for file '{s}': {s}", .{ filepath, e }), C.Severity.err);
+            self.postMessage(a, try std.fmt.allocPrint(a, "Save request failed for file '{s}': {s}", .{ filepath, e }), C.Severity.err);
             return .null;
         }
         if (res.changed) try self.fullRelink(a);
@@ -1726,13 +1725,13 @@ pub fn pyFormatLangid(a: Allocator, s: []const u8, langid: []const u8) ![]const 
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < s.len) {
-        if (str.startsWith(s[i..], "{langid}")) {
+        if (std.mem.startsWith(u8, s[i..], "{langid}")) {
             try out.appendSlice(a, langid);
             i += "{langid}".len;
-        } else if (str.startsWith(s[i..], "{{")) {
+        } else if (std.mem.startsWith(u8, s[i..], "{{")) {
             try out.append(a, '{');
             i += 2;
-        } else if (str.startsWith(s[i..], "}}")) {
+        } else if (std.mem.startsWith(u8, s[i..], "}}")) {
             try out.append(a, '}');
             i += 2;
         } else {
