@@ -1,7 +1,7 @@
 .{
     .name = .zfls,
     .fingerprint = 0x69d82c5be37a0c07,
-    .version = "0.1.7",
+    .version = "0.1.8",
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .rstd = .{ .path = "vendor/rstd" },
