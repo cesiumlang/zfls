@@ -637,9 +637,12 @@ jobs:
     needs: [version, reuse, release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
-    # Trusted publishing: both registries accept this workflow's OIDC token
-    # in place of an access token (registered for the `cesiumlang` publisher
-    # and namespace); the VSCE_PAT secret is the Marketplace's fallback
+    # No stored tokens where possible. Open VSX: trusted publishing (it
+    # accepts this workflow's OIDC token for the `cesiumlang` namespace).
+    # Marketplace, first that works: the managed identity in the AZURE_*
+    # repository variables, signed in with this workflow's OIDC token
+    # (Microsoft Entra ID, --azure-credential); vsce's trusted publishing
+    # (--oidc); the VSCE_PAT secret
     permissions:
       contents: read
       id-token: write
@@ -659,20 +662,38 @@ jobs:
           run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
 
+      # the managed identity the Marketplace publisher has as a member; its
+      # federated credential trusts this repository's main branch
+      - name: Sign in to Azure as the Marketplace publishing identity
+        id: azure
+        if: vars.AZURE_CLIENT_ID != ''
+        continue-on-error: true
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
       # the platform packages, each with its zfls, to both registries (tried
       # even if the other fails); and on the Marketplace the universal one,
       # without a zfls, which it serves to platforms with no package of their
       # own (it runs zfls from the PATH)
       - name: Publish to the Visual Studio Marketplace and Open VSX
         env:
-          # fallback only, should trusted publishing to the Marketplace fail
+          AZURE_SIGNED_IN: ${{ steps.azure.outcome == 'success' }}
+          # last resort only
           MARKETPLACE_TOKEN: ${{ secrets.VSCE_PAT }}
         run: |
+          vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
           marketplace() {
-            npx --yes "@vscode/vsce@$VSCE_VERSION" publish --oidc --packagePath "$1" && return 0
+            if [ "$AZURE_SIGNED_IN" = true ]; then
+              vsce publish --azure-credential --packagePath "$1" && return 0
+              echo "::warning::Marketplace: publishing $1 as the Azure identity failed"
+            fi
+            vsce publish --oidc --packagePath "$1" && return 0
             [ -n "$MARKETPLACE_TOKEN" ] || return 1
-            echo "::warning::Marketplace: trusted publishing of $1 failed; publishing with the VSCE_PAT secret"
-            VSCE_PAT="$MARKETPLACE_TOKEN" npx --yes "@vscode/vsce@$VSCE_VERSION" publish --packagePath "$1"
+            echo "::warning::Marketplace: token-free publishing of $1 failed; publishing with the VSCE_PAT secret"
+            VSCE_PAT="$MARKETPLACE_TOKEN" vsce publish --packagePath "$1"
           }
           failed=0
           for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
