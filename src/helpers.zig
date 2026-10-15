@@ -122,6 +122,19 @@ pub fn findWordInLine(line: []const u8, word: []const u8) Range {
     return .{ .start = i, .end = i + @as(isize, @intCast(word.len)) };
 }
 
+/// `findWordInLine` ignoring the case of the words in `line` and of `word`
+pub fn findWordInLineIgnoreCase(line: []const u8, word: []const u8) Range {
+    var i: isize = -1;
+    var it = R().WORD.iterator(line);
+    while (it.next()) |m| {
+        if (std.ascii.eqlIgnoreCase(m.str(), word)) {
+            i = @intCast(m.start(0));
+            break;
+        }
+    }
+    return .{ .start = i, .end = i + @as(isize, @intCast(word.len)) };
+}
+
 /// Find matching closing parenthesis from an already open parenthesis scope
 pub fn findParenMatch(s: []const u8) isize {
     var paren_count: isize = 1;
