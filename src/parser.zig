@@ -1276,12 +1276,30 @@ const Parser = struct {
             // Test for scope end
             if (ast.end_scope_regex != null) {
                 const m = R().END_WORD.match(line_no_comment);
-                if (try p.parseEndScopeWord(line_no_comment, line_no, m)) continue;
-                if (try p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) continue;
+                if (try p.parseEndScopeWord(line_no_comment, line_no, m)) {
+                    ast.pending_doc = null;
+                    continue;
+                }
+                if (try p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) {
+                    ast.pending_doc = null;
+                    continue;
+                }
             }
-            if (R().NON_DEF.match(line_no_comment) != null) continue;
-            if (try p.parseImplicit(line_no_comment, line_no)) continue;
-            if (try p.parseContains(line_no_comment, line_no)) continue;
+            // A `!>` comment documents what follows it, not a statement that
+            // cannot have documentation: it must not wait for a later
+            // procedure (upstream #237)
+            if (R().NON_DEF.match(line_no_comment) != null) {
+                ast.pending_doc = null;
+                continue;
+            }
+            if (try p.parseImplicit(line_no_comment, line_no)) {
+                ast.pending_doc = null;
+                continue;
+            }
+            if (try p.parseContains(line_no_comment, line_no)) {
+                ast.pending_doc = null;
+                continue;
+            }
             const obj_read = (try getFortranDefinition(a, line)) orelse continue;
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
         }

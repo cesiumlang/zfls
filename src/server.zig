@@ -1230,9 +1230,21 @@ pub const Server = struct {
         return .null;
     }
 
+    /// The subroutine or function that an EXTERNAL declaration stands for: the
+    /// global procedure of that name, if there is one (upstream #483, #23)
+    fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
+        if (v.kind != .variable or !v.is_external) return null;
+        const key = try std.ascii.allocLowerString(a, v.name);
+        const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
+        return switch (cand.kind) {
+            .subroutine, .function => cand,
+            else => null,
+        };
+    }
+
     fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, true)) orelse return .null;
-        const var_obj = d.obj;
+        const var_obj = (try self.externalTarget(a, d.file.ast.?, d.obj)) orelse d.obj;
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         var hover_array: std.ArrayList([]const u8) = .empty;
         const vt = var_obj.getType(false);
@@ -1271,6 +1283,10 @@ pub const Server = struct {
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         const var_obj = d.obj;
         if (var_obj.kind == .intrinsic) return .null;
+        if (try self.externalTarget(a, d.file.ast.?, var_obj)) |target| {
+            if (target.file_ast.file != null) return self.createRefLink(a, target);
+            return .null;
+        }
         const parent = var_obj.parent orelse return .null;
         if (parent.getType(false) == C.CLASS_TYPE_ID) {
             if (var_obj.link_obj) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);
