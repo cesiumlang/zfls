@@ -2,58 +2,40 @@
 
 const std = @import("std");
 
-pub const keyword_list = [_][]const u8{
-    "pointer",
-    "allocatable",
-    "optional",
-    "public",
-    "private",
-    "nopass",
-    "target",
-    "save",
-    "parameter",
-    "contiguous",
-    "deferred",
-    "dimension",
-    "intent",
-    "pass",
-    "pure",
-    "impure",
-    "elemental",
-    "recursive",
-    "abstract",
-    "external",
-};
+/// The keywords of declarations that objects keep, in the order fortls numbers them
+pub const Kw = enum(u8) {
+    pointer,
+    allocatable,
+    optional,
+    public,
+    private,
+    nopass,
+    target,
+    save,
+    parameter,
+    contiguous,
+    deferred,
+    dimension,
+    intent,
+    pass,
+    pure,
+    impure,
+    elemental,
+    recursive,
+    abstract,
+    external,
 
-pub fn keywordId(name: []const u8) ?u8 {
-    for (keyword_list, 0..) |k, i| {
-        if (std.mem.eql(u8, k, name)) return @intCast(i);
+    /// The keyword with this (lowercase) name
+    pub fn fromName(name: []const u8) ?Kw {
+        return std.meta.stringToEnum(Kw, name);
     }
-    return null;
-}
 
-pub const KW = struct {
-    pub const pointer: u8 = 0;
-    pub const allocatable: u8 = 1;
-    pub const optional: u8 = 2;
-    pub const public: u8 = 3;
-    pub const private: u8 = 4;
-    pub const nopass: u8 = 5;
-    pub const target: u8 = 6;
-    pub const save: u8 = 7;
-    pub const parameter: u8 = 8;
-    pub const contiguous: u8 = 9;
-    pub const deferred: u8 = 10;
-    pub const dimension: u8 = 11;
-    pub const intent: u8 = 12;
-    pub const pass: u8 = 13;
-    pub const pure: u8 = 14;
-    pub const impure: u8 = 15;
-    pub const elemental: u8 = 16;
-    pub const recursive: u8 = 17;
-    pub const abstract: u8 = 18;
-    pub const external: u8 = 19;
+    pub fn lessThan(_: void, x: Kw, y: Kw) bool {
+        return @intFromEnum(x) < @intFromEnum(y);
+    }
 };
+
+pub const KW = Kw;
 
 // Type identifiers
 pub const BASE_TYPE_ID: i32 = -1;

@@ -359,16 +359,16 @@ pub const KeywordInfo = struct {
     }
 };
 
-pub const MappedKeywords = struct { ids: []u8, info: KeywordInfo };
+pub const MappedKeywords = struct { ids: []constants.Kw, info: KeywordInfo };
 
 /// `sort` orders the keyword ids (`--sort_keywords`)
 pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !MappedKeywords {
-    var ids: std.ArrayList(u8) = .empty;
+    var ids: std.ArrayList(constants.Kw) = .empty;
     var info: KeywordInfo = .{};
     for (keywords) |kw| {
         const prefix_raw = str.strip(str.beforeFirst(kw, "("));
         const prefix = try std.ascii.allocLowerString(a, prefix_raw);
-        const id = constants.keywordId(prefix) orelse continue;
+        const id = constants.Kw.fromName(prefix) orelse continue;
         try ids.append(a, id);
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
             if (getParenSubstring(kw)) |sub| {
@@ -378,14 +378,14 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
             }
         }
     }
-    if (sort) std.mem.sort(u8, ids.items, {}, std.sort.asc(u8));
+    if (sort) std.mem.sort(constants.Kw, ids.items, {}, constants.Kw.lessThan);
     return .{ .ids = ids.items, .info = info };
 }
 
-pub fn getKeywords(a: Allocator, ids: []const u8, info: KeywordInfo) ![][]const u8 {
+pub fn getKeywords(a: Allocator, ids: []const constants.Kw, info: KeywordInfo) ![][]const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     for (ids) |id| {
-        const rep = constants.keyword_list[id];
+        const rep = @tagName(id);
         const up = try std.ascii.allocUpperString(a, rep);
         if (info.get(rep)) |addl| {
             try out.append(a, try std.fmt.allocPrint(a, "{s}({s})", .{ up, addl }));

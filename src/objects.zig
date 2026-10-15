@@ -190,7 +190,7 @@ pub const Obj = struct {
     parent: ?*Obj = null,
     implicit_vars: ?bool = null,
     file_ast: *Ast,
-    keywords: std.ArrayList(u8) = .empty,
+    keywords: std.ArrayList(C.Kw) = .empty,
     keyword_info: KeywordInfo = .{},
 
     // Scope
@@ -267,8 +267,8 @@ pub const Obj = struct {
         return std.ascii.eqlIgnoreCase(self.name, other);
     }
 
-    pub fn hasKeyword(self: *const Obj, id: u8) bool {
-        return std.mem.indexOfScalar(u8, self.keywords.items, id) != null;
+    pub fn hasKeyword(self: *const Obj, id: C.Kw) bool {
+        return std.mem.indexOfScalar(C.Kw, self.keywords.items, id) != null;
     }
 
     // ------------------------------------------------------------------
@@ -283,7 +283,7 @@ pub const Obj = struct {
     }
 
     /// Create a Scope-derived object (`Scope.__init__`)
-    pub fn newScope(file_ast: *Ast, kind: Kind, line_number: i64, name: []const u8, keywords: []const u8) !*Obj {
+    pub fn newScope(file_ast: *Ast, kind: Kind, line_number: i64, name: []const u8, keywords: []const C.Kw) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -321,7 +321,7 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newSubroutine(file_ast: *Ast, line_number: i64, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const u8) !*Obj {
+    pub fn newSubroutine(file_ast: *Ast, line_number: i64, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const C.Kw) !*Obj {
         const o = try newScope(file_ast, .subroutine, line_number, name, keywords);
         const a = o.al();
         o.args = try std.mem.replaceOwned(u8, a, args, " ", "");
@@ -333,7 +333,7 @@ pub const Obj = struct {
     pub const FunOpts = struct {
         args: []const u8 = "",
         mod_flag: bool = false,
-        keywords: []const u8 = &.{},
+        keywords: []const C.Kw = &.{},
         keyword_info: KeywordInfo = .{},
         result_type: ?[]const u8 = null,
         result_name: ?[]const u8 = null,
@@ -384,7 +384,7 @@ pub const Obj = struct {
     };
 
     /// `Variable.__init__`
-    pub fn newVariable(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const u8, opts: VarOpts) !*Obj {
+    pub fn newVariable(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const C.Kw, opts: VarOpts) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -410,7 +410,7 @@ pub const Obj = struct {
     }
 
     /// `Method.__init__` (type-bound procedure / procedure pointer)
-    pub fn newMethod(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const u8, keyword_info: KeywordInfo, proc_ptr: ?[]const u8, link_obj: ?[]const u8) !*Obj {
+    pub fn newMethod(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const C.Kw, keyword_info: KeywordInfo, proc_ptr: ?[]const u8, link_obj: ?[]const u8) !*Obj {
         const o = try newVariable(file_ast, line_number, name, var_desc, keywords, .{
             .keyword_info = keyword_info,
             .kind = proc_ptr,
@@ -836,7 +836,7 @@ pub const Obj = struct {
             if (self.slice_rank >= 0 and l.kind == .variable) {
                 // a name bound to a section has the rank of the section, not
                 // of the array it is cut from (upstream #108)
-                var ids: std.ArrayList(u8) = .empty;
+                var ids: std.ArrayList(C.Kw) = .empty;
                 for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
                 var info = l.keyword_info;
                 info.dimension = null;

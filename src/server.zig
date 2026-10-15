@@ -1120,7 +1120,7 @@ pub const Server = struct {
     // Definition lookup
 
     /// A temporary variable allocated in `a` (not owned by any AST)
-    fn tempVariable(a: Allocator, file_ast: *Ast, line: i64, name: []const u8, desc: []const u8, keywords: []const u8) !*Obj {
+    fn tempVariable(a: Allocator, file_ast: *Ast, line: i64, name: []const u8, desc: []const u8, keywords: []const C.Kw) !*Obj {
         const o = try a.create(Obj);
         o.* = .{
             .kind = .variable,
