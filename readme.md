@@ -130,11 +130,14 @@ every pull request and every push to `main` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
 suites above, longer stress runs and the differential test.
 
+Changes are collected on the `dev` branch, which pull requests target, and
+released together by merging `dev` into `main`.
+
 When a push to `main` passes on every platform, the same archives are
-published on the GitHub releases page, the tested commit is tagged, and
-CI commits the next patch version to `build.zig.zon`. For a minor or major
-release, set the version in `build.zig.zon` by hand. A pull request to
-`main` fails its "Version is unreleased" check when it changes anything
+published on the GitHub releases page and the tested commit is tagged. CI
+then merges `main` back into `dev` and commits the next patch version to
+`build.zig.zon` there. For a minor or major release, set the version in
+`build.zig.zon` on `dev` by hand. A pull request to `main` fails its "Version is unreleased" check when it changes anything
 beyond the exempt files while `build.zig.zon` holds an already released (or
 older) version. Pushes that only change
 files listed in `.github/workflows/exempt.txt` (documentation, tests,
