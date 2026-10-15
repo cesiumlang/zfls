@@ -51,5 +51,5 @@ test "#536 a configuration file does not discard the preprocessor definitions gi
     }, .{ .pp_defs = &.{.{ .name = "HAVE_FOO", .value = "1" }} });
     defer w.deinit();
     const syms = try w.workspaceSymbols("foo_mod");
-    try h.check(536, .known_failure, h.expect(syms.len > 0, "foo_mod is not found: the config file dropped --pp_defs", .{}));
+    try h.check(536, .fixed, h.expect(syms.len > 0, "foo_mod is not found: the config file dropped --pp_defs", .{}));
 }
