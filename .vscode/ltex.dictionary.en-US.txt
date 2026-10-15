@@ -14,10 +14,12 @@ amper
 ANINT
 apos
 AppLocker
+arccosine
 arcsin
 arcsine
 arctan
 arctangent
+Arctangent
 ASIND
 asinpi
 ATAND
@@ -43,6 +45,7 @@ cobounds
 codimension
 coindexed
 COMDAT
+conda-forge
 CONJG
 corank
 COSD
@@ -63,6 +66,7 @@ dshifr
 DSHIFTL
 DSHIFTR
 dxfs
+eastus
 echar
 eline
 Emscripten
@@ -131,6 +135,7 @@ ISHFTC
 istart
 istat
 ith
+json-fortran
 JSONC
 jth
 k-th
@@ -138,7 +143,11 @@ KLMNOP
 Krahn
 LCOBOUND
 LEADZ
+libasound
 libc
+libgbm
+libnss
+libxss
 ListObjects
 lname
 LNBLNK
@@ -151,8 +160,11 @@ MASKR
 MATMUL
 MCLOCK
 Mesures
+mlugg
 mshta
+msvc
 MSYS
+msystem
 MVBITS
 myarray
 n-th
@@ -171,6 +183,8 @@ nvar
 OOXML
 OpenACC
 OpenMP
+openvsx
+ovsx
 phasor
 Plotly
 Plotly's
@@ -228,6 +242,8 @@ UserForm
 UserForms
 usleep
 vkind
+VSCodium
+VSIX
 wasm
 wbgen
 WDAC
@@ -244,12 +260,3 @@ yvals
 zfls
 Zig
 zthree
-arccosine
-
-Arctangent
-conda-forge
-json-fortran
-VSIX
-VSCodium
-
-VSCodium
