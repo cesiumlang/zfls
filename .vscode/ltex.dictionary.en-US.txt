@@ -251,3 +251,5 @@ conda-forge
 json-fortran
 VSIX
 VSCodium
+
+VSCodium
