@@ -1485,6 +1485,7 @@ pub const Server = struct {
         for (file.lines.items[first .. last + 1], first..) |raw_line, i| {
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
+            if (std.ascii.findIgnoreCase(line, ri.alias) == null) continue;
             var it = name_re.iterator(line);
             while (it.next()) |m| {
                 if (i == ri.use_line -| 1) {
@@ -1523,6 +1524,7 @@ pub const Server = struct {
                 if (raw_line.len == 0) continue;
                 const line = file.stripComment(raw_line);
                 if (line.len == 0 or line[0] == '#') continue;
+                if (std.ascii.findIgnoreCase(line, def_name) == null) continue;
                 var it = name_re.iterator(line);
                 while (it.next()) |m| {
                     if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
