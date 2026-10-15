@@ -1488,7 +1488,10 @@ pub const Server = struct {
         return out;
     }
 
-    fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile) ![]FileRefs {
+    /// The references to `def_obj`. A rename also takes what only it must change:
+    /// the result variable of a function and the original name in a renamed
+    /// import; "find references" leaves them out, as fortls does.
+    fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile, for_rename: bool) ![]FileRefs {
         const def_name = try std.ascii.allocLowerString(a, def_obj.name);
         const def_fqsn = def_obj.fqsn;
         var name_re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
@@ -1507,7 +1510,7 @@ pub const Server = struct {
                 if (line.len == 0 or line[0] == '#') continue;
                 var it = name_re.iterator(line);
                 while (it.next()) |m| {
-                    if (isRenamedOriginal(line, m.start(1), def_obj)) {
+                    if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
                         try file_refs.append(a, .{ .line = i, .start = @intCast(m.start(1)), .end = @intCast(m.end(1)) });
                         continue;
                     }
@@ -1518,7 +1521,7 @@ pub const Server = struct {
                     for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                         in_cache = true;
                     };
-                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def)) {
+                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def))) {
                         ref_match = true;
                     } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.CLASS_TYPE_ID) {
                         if (type_mem) {
@@ -1574,7 +1577,7 @@ pub const Server = struct {
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
         const rs = self.referenceScope(d.obj) orelse return .null;
-        const all = try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict);
+        const all = try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict, false);
         var out = json.newArray();
         for (all) |fr| {
             const uri = try paths.pathToUri(a, fr.path);
@@ -1593,7 +1596,7 @@ pub const Server = struct {
             try self.aliasReferences(a, d.file, d.obj, ri)
         else blk: {
             const rs = self.referenceScope(d.obj) orelse return .null;
-            break :blk try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict);
+            break :blk try self.getAllReferences(a, d.obj, rs.type_mem, rs.restrict, true);
         };
         if (all.len == 0) {
             self.postMessage(a, "Rename failed: No usages found to rename", C.Severity.warn);
