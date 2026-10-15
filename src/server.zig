@@ -737,8 +737,8 @@ pub const Server = struct {
                 .location = .{
                     .uri = try paths.pathToUri(a, cand.file_ast.path orelse "None"),
                     .range = .{
-                        .start = .{ .line = cand.sline - 1, .character = 0 },
-                        .end = .{ .line = cand.eline - 1, .character = 0 },
+                        .start = .{ .line = cand.sline -| 1, .character = 0 },
+                        .end = .{ .line = cand.eline -| 1, .character = 0 },
                     },
                 },
                 .containerName = container,
@@ -776,10 +776,10 @@ pub const Server = struct {
                 scope_type = mapDocSymbolType(scope.getType(false), false);
             }
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
-            try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline - 1, scope.eline - 1, container));
+            try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
             if (scope.getType(false) == C.CLASS_TYPE_ID and !self.s.symbol_skip_mem) {
                 for (scope.children.items) |child| {
-                    try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline - 1, null, scope.name));
+                    try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
                 }
             }
         }
@@ -1213,7 +1213,7 @@ pub const Server = struct {
     fn createRefLink(self: *Server, a: Allocator, obj: *Obj) !Value {
         _ = self;
         const obj_file = obj.file_ast.file.?;
-        const res = try obj_file.findWordInCodeLine(a, obj.sline - 1, obj.name, true, false, false);
+        const res = try obj_file.findWordInCodeLine(a, obj.sline -| 1, obj.name, true, false, false);
         const found = res.range.start >= 0;
         const schar: usize = if (found) @intCast(res.range.start) else 0;
         const echar: usize = if (found) @intCast(res.range.end) else 0;
@@ -1487,7 +1487,7 @@ pub const Server = struct {
             if (line.len == 0 or line[0] == '#') continue;
             var it = name_re.iterator(line);
             while (it.next()) |m| {
-                if (i == ri.use_line - 1) {
+                if (i == ri.use_line -| 1) {
                     // in the USE statement only the local name, before the arrow
                     const after = str.lstrip(line[m.end(1)..]);
                     if (!std.mem.startsWith(u8, after, "=>")) continue;
@@ -1550,7 +1550,7 @@ pub const Server = struct {
                         }
                         if (!hasLinkAttr(var_def)) {
                             ref_match = false;
-                        } else if (var_def.sline - 1 == i and var_def.file_ast.path != null and
+                        } else if (var_def.sline -| 1 == i and var_def.file_ast.path != null and
                             std.mem.eql(u8, var_def.file_ast.path.?, filename) and std.mem.count(u8, line, "=>") == 0 and
                             var_def.link_obj == def_obj)
                         {

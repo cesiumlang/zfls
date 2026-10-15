@@ -1228,7 +1228,7 @@ const Parser = struct {
             if (do_skip) continue;
 
             if (get_full) {
-                const cl = try f.getCodeLine(a, line_no - 1, true, false, true, false);
+                const cl = try f.getCodeLine(a, line_no -| 1, true, false, true, false);
                 line_no_end += @intCast(cl.post.len);
                 var parts: std.ArrayList([]const u8) = .empty;
                 try parts.append(a, cl.curr.?);
