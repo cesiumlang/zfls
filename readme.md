@@ -45,7 +45,16 @@ adds syntax highlighting. Each release publishes it as
 `zfls-vscode-v<version>-<platform>.vsix`, one per VS Code platform with that
 platform's zfls inside (`tools/package_vscode.sh`), plus a `universal` one
 that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
-from VSIX..." in VS Code.
+from VSIX..." in VS Code. The release also publishes the platform packages,
+as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
+(VSCodium and other VS Code derivatives), and the universal one to the
+Marketplace for the platforms without their own. No stored token is needed:
+Open VSX accepts the workflow's OIDC token (trusted publishing), and for the
+Marketplace the workflow signs in with it as a Microsoft Entra managed
+identity that is a member of the publisher (the `AZURE_*` repository
+variables; the "Marketplace identity" workflow shows the ID to add). The
+job falls back to `vsce` trusted publishing and then to the `VSCE_PAT`
+repository secret, with a warning.
 
 To work on it (Node.js 20 or later):
 

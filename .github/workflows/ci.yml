@@ -487,10 +487,18 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build-test
           export ZFLS_EXTENSION_PATH="$RUNNER_TEMP/vsix/extension"
-          if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a node out/runTest.js
-          else
-            node out/runTest.js
+          run_vscode() {
+            if [ "$RUNNER_OS" = Linux ]; then
+              xvfb-run -a node out/runTest.js
+            else
+              node out/runTest.js
+            fi
+          }
+          # a VS Code window that hangs while starting on the runner fails
+          # the run before the test begins; a broken extension fails both
+          if ! run_vscode; then
+            echo "::warning::the VS Code test failed; running it once more"
+            run_vscode
           fi
 
   conda:
@@ -623,3 +631,85 @@ jobs:
           sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
           git commit -qam "Begin v$next development [skip ci]"
           git push origin main
+
+  publish-extension:
+    name: Publish VS Code extension v${{ needs.version.outputs.version }}
+    needs: [version, reuse, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    # No stored tokens where possible. Open VSX: trusted publishing (it
+    # accepts this workflow's OIDC token for the `cesiumlang` namespace),
+    # else the OVSX_PAT secret. Marketplace, first that works: the managed identity in the AZURE_*
+    # repository variables, signed in with this workflow's OIDC token
+    # (Microsoft Entra ID, --azure-credential); vsce's trusted publishing
+    # (--oidc); the VSCE_PAT secret
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      VSCE_VERSION: 4.0.0
+      OVSX_VERSION: 1.2.0
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+          run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      # the managed identity the Marketplace publisher has as a member; its
+      # federated credential trusts this repository's main branch
+      - name: Sign in to Azure as the Marketplace publishing identity
+        id: azure
+        if: vars.AZURE_CLIENT_ID != ''
+        continue-on-error: true
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # the platform packages, each with its zfls, to both registries (tried
+      # even if the other fails); and on the Marketplace the universal one,
+      # without a zfls, which it serves to platforms with no package of their
+      # own (it runs zfls from the PATH)
+      - name: Publish to the Visual Studio Marketplace and Open VSX
+        env:
+          AZURE_SIGNED_IN: ${{ steps.azure.outcome == 'success' }}
+          # last resorts only
+          MARKETPLACE_TOKEN: ${{ secrets.VSCE_PAT }}
+          OPENVSX_TOKEN: ${{ secrets.OVSX_PAT }}
+        run: |
+          vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
+          marketplace() {
+            if [ "$AZURE_SIGNED_IN" = true ]; then
+              vsce publish --azure-credential --packagePath "$1" && return 0
+              echo "::warning::Marketplace: publishing $1 as the Azure identity failed"
+            fi
+            vsce publish --oidc --packagePath "$1" && return 0
+            [ -n "$MARKETPLACE_TOKEN" ] || return 1
+            echo "::warning::Marketplace: token-free publishing of $1 failed; publishing with the VSCE_PAT secret"
+            VSCE_PAT="$MARKETPLACE_TOKEN" vsce publish --packagePath "$1"
+          }
+          openvsx() {
+            npx --yes "ovsx@$OVSX_VERSION" publish "$1" --trusted-publishing && return 0
+            [ -n "$OPENVSX_TOKEN" ] || return 1
+            echo "::warning::Open VSX: trusted publishing of $1 failed; publishing with the OVSX_PAT secret"
+            OVSX_PAT="$OPENVSX_TOKEN" npx --yes "ovsx@$OVSX_VERSION" publish "$1"
+          }
+          failed=0
+          for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
+            vsix="dist/zfls-vscode-v$VERSION-$platform.vsix"
+            marketplace "$vsix" \
+              || { echo "::error::Marketplace: publishing $platform failed"; failed=1; }
+            openvsx "$vsix" \
+              || { echo "::error::Open VSX: publishing $platform failed"; failed=1; }
+          done
+          marketplace "dist/zfls-vscode-v$VERSION-universal.vsix" \
+            || { echo "::error::Marketplace: publishing the universal package failed"; failed=1; }
+          exit "$failed"
