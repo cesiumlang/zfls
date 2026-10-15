@@ -1,7 +1,7 @@
 # zfls for VS Code
 
 Fortran language support powered by
-[zfls](https://github.com/emanspeaks/zfls), a fast native reimplementation
+[zfls](https://github.com/cesiumlang/zfls), a fast native reimplementation
 of the [fortls](https://github.com/fortran-lang/fortls) language server:
 
 - completion, hover, signature help
