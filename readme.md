@@ -92,6 +92,7 @@ the resulting object tree, and `--debug_hover --debug_filepath file.f90
 | --- | --- |
 | `zig build test` | Zig unit tests, and the tests of upstream fortls issues |
 | `zig build test-issues` | only the tests of the open issues of upstream fortls (see `tests/issues/README.md`) |
+| `zig build test-fuzz` | mutated programs thrown at an in-process server (crashes, leaks); `--fuzz` runs the fuzzer |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
