@@ -34,7 +34,7 @@ give the same answer, and the test fails for the reason in the issue.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
-| [#568](https://github.com/fortran-lang/fortls/issues/568) | plain `USE` after a `USE ONLY` through a re-exporting module | diagnostics | known failure | same |
+| [#568](https://github.com/fortran-lang/fortls/issues/568) | plain `USE` after a `USE ONLY` through a re-exporting module | diagnostics | fixed (patched) | fails, same cause |
 | [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | fixed (patched) | fails, same cause |
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | known failure | same |
@@ -44,7 +44,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
-| [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | known failure | same |
+| [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | known failure | same |
 | [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | known failure | same |
@@ -52,8 +52,8 @@ give the same answer, and the test fails for the reason in the issue.
 | [#124](https://github.com/fortran-lang/fortls/issues/124) | parameter value that is a function call | hover | known failure | same |
 | [#118](https://github.com/fortran-lang/fortls/issues/118) | fixed-form function declared with a type in the caller | hover | known failure | same |
 | [#108](https://github.com/fortran-lang/fortls/issues/108) | `ASSOCIATE` name bound to an array slice | hover | known failure | same |
-| [#87](https://github.com/fortran-lang/fortls/issues/87) | signature help with commas inside an argument | hover | known failure | same (its comment says fixed) |
-| [#52](https://github.com/fortran-lang/fortls/issues/52) | rename of a name renamed on import | rename | known failure | same |
+| [#87](https://github.com/fortran-lang/fortls/issues/87) | signature help with commas inside an argument | hover | fixed (patched) | fails, same cause |
+| [#52](https://github.com/fortran-lang/fortls/issues/52) | rename of a name renamed on import | rename | fixed (patched) | fails, same cause |
 | [#23](https://github.com/fortran-lang/fortls/issues/23) | go to implementation from `EXTERNAL` | hover | known failure | same |
 | [#565](https://github.com/fortran-lang/fortls/issues/565) | edit a file included by an include file | workspace | fixed | `AttributeError` (as reported; not run here) |
 | [#486](https://github.com/fortran-lang/fortls/issues/486) | function-like macro with empty parentheses | parsing | fixed | fails (`re.error: invalid group reference`) |

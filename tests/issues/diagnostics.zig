@@ -118,7 +118,43 @@ test "#568 a plain USE after a USE ONLY that goes through a re-exporting module"
     defer w.deinit();
     // the control: the same with the two USE lines swapped
     try w.expectNoDiagnostics("user_works.f90");
-    try h.check(568, .known_failure, w.expectNoDiagnostics("user_fails.f90"));
+    try h.check(568, .fixed, w.expectNoDiagnostics("user_fails.f90"));
+}
+
+test "#568 USE ONLY still limits what is visible (control)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "inner.f90", .text =
+        \\module inner
+        \\  type :: a_t
+        \\    integer :: n = 0
+        \\  end type a_t
+        \\  type :: b_t
+        \\    integer :: n = 0
+        \\  end type b_t
+        \\end module inner
+        \\
+        },
+        .{ .name = "umbrella.f90", .text =
+        \\module umbrella
+        \\  use inner
+        \\end module umbrella
+        \\
+        },
+        .{ .name = "user.f90", .text =
+        \\module user
+        \\  use umbrella, only: a_t
+        \\contains
+        \\  subroutine s()
+        \\    type(a_t) :: a
+        \\    type(b_t) :: b
+        \\  end subroutine s
+        \\end module user
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const ds = try w.diagnostics("user.f90");
+    try h.expect(ds.len == 1 and ds[0].line == 5, "expected only b_t (line 6) to be unknown, got {d} diagnostics", .{ds.len});
 }
 
 test "#519 IMPORT in an abstract interface, in each of its forms" {
