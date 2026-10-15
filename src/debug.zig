@@ -238,7 +238,7 @@ fn checkRequestParams(r: *Req, loc_needed: bool) !void {
 }
 
 fn save(r: *Req) !void {
-    _ = try r.server.serveOnSave(r.a, try textDoc(r.a, r.s.debug_filepath.?), false, false);
+    _ = try r.server.serveOnSave(r.a, .{ .textDocument = .{ .uri = r.s.debug_filepath.? } }, false, false);
 }
 
 fn printResults(r: *Req, results: Value, comptime fmtFn: fn (*Req, Value) anyerror!void) !void {
