@@ -91,7 +91,8 @@ pub const FunSig = struct {
 pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8 };
 pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
 pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const []const u8, vis_flag: objects.Vis };
-pub const SmodInfo = struct { name: []const u8, parent: []const u8 };
+/// `SUBMODULE (ancestor[:parent]) name`
+pub const SmodInfo = struct { name: []const u8, ancestor: []const u8, parent: []const u8 };
 pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
 pub const VisInfo = struct { private: bool, obj_names: []const []const u8 };
 pub const UseInfo = struct {
@@ -443,21 +444,25 @@ fn readModDef(a: Allocator, line_in: []const u8) E!?DefResult {
     return .{ .mod = name };
 }
 
+/// `SUBMODULE (ancestor[:parent]) name`: the name follows the parentheses,
+/// not the parent submodule inside them
 fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().SUBMOD.match(line) orelse return null;
+    var ancestor_name: []const u8 = "";
     var parent_name: []const u8 = "";
     var name: []const u8 = "";
-    var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
-    if (R().WORD.match(trailing)) |pm| {
+    const trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    const close = std.mem.indexOfScalar(u8, trailing, ')') orelse trailing.len;
+    const parents = trailing[0..close];
+    const colon = std.mem.indexOfScalar(u8, parents, ':') orelse parents.len;
+    if (R().WORD.search(parents[0..colon])) |am| ancestor_name = try std.ascii.allocLowerString(a, am.str());
+    if (colon < parents.len) if (R().WORD.search(parents[colon + 1 ..])) |pm| {
         parent_name = try std.ascii.allocLowerString(a, pm.str());
-        if (trailing.len > pm.end(0) + 1) {
-            trailing = str.strip(trailing[pm.end(0) + 1 ..]);
-        } else {
-            trailing = "";
-        }
-    }
-    if (R().WORD.search(trailing)) |nm| name = try std.ascii.allocLowerString(a, nm.str());
-    return .{ .smod = .{ .name = name, .parent = parent_name } };
+    };
+    if (close < trailing.len) if (R().WORD.search(trailing[close + 1 ..])) |nm| {
+        name = try std.ascii.allocLowerString(a, nm.str());
+    };
+    return .{ .smod = .{ .name = name, .ancestor = ancestor_name, .parent = parent_name } };
 }
 
 fn readProgDef(a: Allocator, line: []const u8) E!?DefResult {
@@ -482,7 +487,18 @@ pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     const use_mod = m.group(2).?;
     var only: std.ArrayList([]const u8) = .empty;
     var renames: std.ArrayList([2][]const u8) = .empty;
-    if (m.group(3) != null and m.group(3).?.len > 0) {
+    if (m.group(3) == null or m.group(3).?.len == 0) {
+        // without ONLY every public name comes, some renamed: `use m, a => b`
+        var it = std.mem.splitScalar(u8, trailing, ',');
+        while (it.next()) |item| {
+            const parts = try str.split(a, item, "=>");
+            if (parts.len != 2) continue;
+            const local = str.strip(parts[0]);
+            const original = str.strip(parts[1]);
+            if (local.len == 0 or original.len == 0) continue;
+            try renames.append(a, .{ local, original });
+        }
+    } else {
         var it = std.mem.splitScalar(u8, trailing, ',');
         while (it.next()) |only_stmt| {
             const parts = try str.split(a, only_stmt, "=>");
@@ -807,6 +823,9 @@ pub const FortranFile = struct {
     text: []u8 = &.{},
     /// Preprocessed lines (null: identical to `lines`), owned by `pp_arena`
     pp_lines: ?[][]const u8 = null,
+    /// Line ranges of `pp_lines` excluded by preprocessor conditionals,
+    /// owned by `pp_arena`
+    pp_skips: []const pp.Skip = &.{},
     pp_arena: std.heap.ArenaAllocator,
     pp_defs: pp.Defs = .empty,
     fixed: bool = false,
@@ -852,6 +871,7 @@ pub const FortranFile = struct {
 
     fn resetPp(self: *FortranFile) void {
         self.pp_lines = null;
+        self.pp_skips = &.{};
         // pp_defs live in pp_arena too, keep them: they are replaced by preprocess
     }
 
@@ -1010,7 +1030,9 @@ pub const FortranFile = struct {
                     }
                     next_line = self.getLine(line_ind, pp_content) orelse break;
                     line_ind += 1;
-                    if (helpers.isPpDirective(next_line)) {
+                    // a line of an inactive conditional branch is not part of
+                    // the statement (hansec #203)
+                    if (helpers.isPpDirective(next_line) or (pp_content and self.ppSkipped(line_ind - 1))) {
                         next_line = "";
                         try post_lines.append(a, "");
                         continue;
@@ -1030,6 +1052,13 @@ pub const FortranFile = struct {
         if (strip_comment) curr_line = self.stripComment(curr_line);
         std.mem.reverse([]const u8, pre_lines.items);
         return .{ .pre = pre_lines.items, .curr = curr_line, .post = post_lines.items };
+    }
+
+    /// Whether line `line_no` (0-based) is excluded by a preprocessor
+    /// conditional
+    fn ppSkipped(self: *const FortranFile, line_no: usize) bool {
+        for (self.pp_skips) |reg| if (reg.start <= line_no + 1 and line_no + 1 <= reg.end) return true;
+        return false;
     }
 
     pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
@@ -1105,6 +1134,7 @@ pub const FortranFile = struct {
             // The buffer is rebuilt, which the preprocessed lines that are
             // the raw lines themselves must follow; the others are in pp_arena
             const old_pp = self.pp_lines;
+            const old_skips = self.pp_skips;
             var raw: []bool = &.{};
             if (old_pp) |pl| {
                 raw = try a.alloc(bool, pl.len);
@@ -1119,6 +1149,7 @@ pub const FortranFile = struct {
                 }
                 pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, self.lines.items[rng.sl]);
                 self.pp_lines = pl;
+                self.pp_skips = old_skips;
             }
             return self.checkChangeReparse(@intCast(rng.sl));
         }
@@ -1173,10 +1204,12 @@ pub const FortranFile = struct {
     pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, trace: ?Trace) !pp.Output {
         _ = self.pp_arena.reset(.free_all);
         self.pp_lines = null;
+        self.pp_skips = &.{};
         self.pp_defs = .empty;
         const a = self.pp_arena.allocator();
         const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, trace);
         self.pp_lines = out.lines;
+        self.pp_skips = out.skips;
         self.pp_defs = out.defs;
         return out;
     }
@@ -1252,6 +1285,7 @@ pub const FortranFile = struct {
         } else {
             p.dbg("=== No PreProc ===\n", .{});
             self.pp_lines = null;
+            self.pp_skips = &.{};
         }
         try p.run();
         return p.file_ast;
@@ -1489,7 +1523,7 @@ const Parser = struct {
                 p.dbg("{s} !!! MODULE - Ln:{d}", .{ line, line_no });
             },
             .smod => |info| {
-                const o = try Obj.newSubmodule(ast, line_no, info.name, info.parent);
+                const o = try Obj.newSubmodule(ast, line_no, info.name, info.ancestor, info.parent);
                 try ast.addScope(o, &R().END_SMOD, true, false);
                 p.dbg("{s} !!! SUBMODULE - Ln:{d}", .{ line, line_no });
             },

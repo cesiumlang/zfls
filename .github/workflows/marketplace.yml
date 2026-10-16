@@ -1,0 +1,75 @@
+# Publishes a release's VS Code extension packages to the Visual Studio
+# Marketplace.
+#
+# No stored token: it signs in with this workflow's OIDC token as the
+# Microsoft Entra managed identity in the AZURE_* repository variables, a
+# member of the `cesiumlang` publisher (--azure-credential); the identity's
+# federated credential trusts this repository's main branch, so run it on
+# main. (No personal access token: the Marketplace retires them on
+# 2026-12-01. vsce's own --oidc is left out too: the Marketplace rejected its
+# token exchange with a 400 in October 2026.) The CI workflow starts it after
+# publishing a release; it can also be run by hand (Actions > Publish to the
+# Marketplace > Run workflow) to publish, or finish publishing, any released
+# version.
+name: Publish to the Marketplace
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released version to publish, without the v (e.g. 0.2.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: marketplace-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  VSCE_VERSION: 4.0.0
+
+jobs:
+  publish:
+    name: Publish zfls v${{ inputs.version }} to the Marketplace
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # the platform packages, each with its zfls; and the universal one,
+      # without a zfls, which the Marketplace serves to platforms with no
+      # package of their own (it runs zfls from the PATH)
+      - name: Download the release's extension packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --dir dist --pattern "zfls-vscode-v$VERSION-*.vsix"
+          ls dist
+
+      - name: Sign in to Azure as the Marketplace publishing identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # --skip-duplicate: a version already published counts as published,
+      # so a re-run completes what a failed one left out
+      - name: Publish
+        run: |
+          vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
+          failed=0
+          for vsix in dist/*.vsix; do
+            vsce publish --azure-credential --skip-duplicate --packagePath "$vsix" \
+              || { echo "::error::publishing $vsix failed"; failed=1; }
+          done
+          exit "$failed"

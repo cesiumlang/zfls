@@ -267,6 +267,36 @@ def normalize(v):
 
 
 INCLUDE_DIRECTIVE = re.compile(r"\s*#\s*include\s*[\"<]", re.I)
+USE_LINE = re.compile(r"\s*use\b", re.I)
+
+
+def on_use_rename_original(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on the original name of a rename on a USE
+    statement, `use m, local => ORIGINAL`."""
+    if not 0 <= line < len(lines) or not USE_LINE.match(lines[line]):
+        return False
+    text = lines[line]
+    start = char
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
+        start -= 1
+    return text[:start].rstrip().endswith("=>")
+
+
+def use_rename_extras(lines: list, a, b) -> bool:
+    """Whether references `b` are `a` plus locations on the original names
+    of USE renames only."""
+    if not isinstance(a, list) or not isinstance(b, list) or len(b) <= len(a):
+        return False
+    rest = list(b)
+    for loc in a:
+        if loc not in rest:
+            return False
+        rest.remove(loc)
+    for loc in rest:
+        start = loc.get("range", {}).get("start", {})
+        if not on_use_rename_original(lines, start.get("line", -1), start.get("character", 0)):
+            return False
+    return True
 
 
 def on_include_directive(path: Path, position) -> bool:
@@ -285,6 +315,42 @@ def associate_names(source: str) -> set:
     """Lowercase names bound by `name => array(...)` (ASSOCIATE or pointer
     assignment) in a source file."""
     return {m.group(1).lower() for m in ASSOC_BOUND.finditer(source)}
+
+
+PP_IF = re.compile(r"\s*#\s*if", re.I)
+PP_ENDIF = re.compile(r"\s*#\s*endif", re.I)
+CONT_ATTRIBUTE = re.compile(r"\s*,\s*(\w+)", re.I)
+
+
+def conditional_attributes(source: str) -> set:
+    """Uppercase attributes given on a continuation line inside a
+    preprocessor conditional, as in `REAL &` / `#ifdef X` / `, POINTER &`."""
+    depth = 0
+    out = set()
+    for line in source.splitlines():
+        if PP_IF.match(line):
+            depth += 1
+        elif PP_ENDIF.match(line):
+            depth = max(depth - 1, 0)
+        elif depth:
+            m = CONT_ATTRIBUTE.match(line)
+            if m:
+                out.add(m.group(1).upper())
+    return out
+
+
+def ignore_conditional_attributes(v, attrs: set):
+    """fortls joins the lines of inactive conditional branches into a
+    continued declaration; zfls leaves them out (hansec issue 203). Compare
+    declarations without the attributes such branches can add."""
+    if isinstance(v, dict):
+        return {k: ignore_conditional_attributes(x, attrs) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_conditional_attributes(x, attrs) for x in v]
+    if isinstance(v, str) and attrs:
+        alt = "|".join(sorted(attrs))
+        return re.sub(rf", (?:{alt})(?=[,\s])", "", v, flags=re.I)
+    return v
 
 
 def ignore_slice_dimensions(v, names: set):
@@ -433,10 +499,16 @@ def main() -> int:
                 b = normalize(notifications(got, method))
                 if a != b:
                     diffs.append((method, None, a, b))
-        assoc = associate_names(path.read_text(encoding="utf-8", errors="replace"))
+        source = path.read_text(encoding="utf-8", errors="replace")
+        assoc = associate_names(source)
+        src_lines = source.splitlines()
+        cond_attrs = conditional_attributes(source)
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
+            if cond_attrs and kind in ("hover", "completion"):
+                a = ignore_conditional_attributes(a, cond_attrs)
+                b = ignore_conditional_attributes(b, cond_attrs)
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
@@ -462,6 +534,19 @@ def main() -> int:
             ):
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
+                continue
+            pos = params.get("position") or {}
+            if (
+                kind in ("hover", "definition", "references")
+                and a is None
+                and on_use_rename_original(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # the original name of a USE rename is the module's entity
+                # (hansec #137); fortls has no answer there
+                continue
+            if kind == "references" and use_rename_extras(src_lines, a, b):
+                # references also find the original name on USE rename lines
+                # (hansec #137), which fortls misses
                 continue
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
