@@ -492,6 +492,9 @@ jobs:
           python -m zipfile -e "$VSIX" "$RUNNER_TEMP/vsix"
           cd editors/vscode
           npm ci --no-audit --no-fund
+          npm run typecheck
+          # the linter's parsers and paths, in plain Node.js
+          npm run test:unit
           npm run build-test
           export ZFLS_EXTENSION_PATH="$RUNNER_TEMP/vsix/extension"
           run_vscode() {

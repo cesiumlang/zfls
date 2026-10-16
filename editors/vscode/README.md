@@ -7,7 +7,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - completion, hover, signature help
 - go to definition and implementation, find references, rename
 - document and workspace symbols
-- diagnostics
+- diagnostics, and a compiler's errors and warnings (see
+  [Compiler diagnostics](#compiler-diagnostics))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives
 - snippets for program units and constructs (see [Snippets](#snippets))
@@ -45,9 +46,84 @@ With a TOML extension that supports `tomlValidation`, such as
 zfls registers the same Fortran language IDs as the
 [Modern Fortran](https://marketplace.visualstudio.com/items?itemName=fortran-lang.linter-gfortran)
 extension, so the two work together. Modern Fortran also starts fortls,
-though; when both are installed, zfls offers to turn that off
-(`fortran.fortls.disabled`), leaving Modern Fortran's other features, such
-as linting with a compiler, in place.
+and lints with a compiler, as zfls does; when both are installed, zfls
+offers to turn those off (`fortran.fortls.disabled`,
+`fortran.linter.compiler`), so that messages do not show twice, leaving
+Modern Fortran's other features in place.
+
+## Compiler diagnostics
+
+When a Fortran file is opened or saved, zfls has a compiler check it
+(without generating code) and shows the compiler's errors and warnings in
+the file and in the Problems panel, labelled with the compiler's name.
+They are cleared when the file is closed or compiler diagnostics are
+turned off. By default the compiler is gfortran; if it is not installed,
+zfls says so once and checks nothing.
+
+| Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
+| --- | --- | --- |
+| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form`/`-ffixed-form -J<dir>`, and `-Wall` by default |
+| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /module:<dir>`, `/warn:all`) |
+| `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed -mdir <dir> -I <dir>` |
+| `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>` |
+| `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed -module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
+| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -module-dir <dir>` |
+| `Disabled` | | No compiler diagnostics |
+
+Whether a file is free or fixed form follows its language in VS Code
+(`FortranFreeForm` or `FortranFixedForm`, from the file extension or
+`files.associations`), not the compiler's guess from the extension.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `zfls.linter.compiler` | `gfortran` | The compiler, or `Disabled` |
+| `zfls.linter.compilerPath` | empty | The compiler executable, when it is not the one on the `PATH` |
+| `zfls.linter.extraArgs` | `[]` | Further options, such as `-std=f2018`; when set, they replace the default warning options |
+| `zfls.linter.includePaths` | `[]` | Directories for `INCLUDE` and `.mod` files (`-I`); glob patterns such as `${workspaceFolder}/build/**/include` |
+| `zfls.linter.modOutput` | empty | Where the compiler writes `.mod` files; empty means a directory in VS Code's storage for the workspace, never the source tree |
+| `zfls.linter.lintOnSave` | `true` | Check files when they are saved |
+| `zfls.linter.lintOnType` | `false` | Check files while they are edited (a copy of the unsaved text is compiled) |
+| `zfls.linter.lintOnTypeDelay` | `1000` | Milliseconds after the last change before such a check |
+| `zfls.linter.resolveModules` | `true` | Build the modules a file uses first (see below) |
+| `zfls.linter.fypp.enabled` | `false` | Run [fypp](https://fypp.readthedocs.io) on files first; `.fypp` files are only checked with it |
+| `zfls.linter.fypp.path` | `fypp` | The fypp executable |
+| `zfls.linter.fypp.definitions` | `{}` | fypp definitions (`-DNAME=VALUE`) |
+| `zfls.linter.fypp.includes` | `[]` | fypp include directories |
+| `zfls.linter.fypp.extraArgs` | `[]` | Further fypp options |
+
+Path settings resolve `${workspaceFolder}`, `${workspaceFolder:name}`,
+`${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`,
+`${fileBasenameNoExtension}` and a leading `~`; relative paths are relative
+to the workspace folder.
+
+How it behaves:
+
+- **Modules.** A file that uses a module needs that module's `.mod` file.
+  Before checking a file, zfls compiles the workspace files that define the
+  modules it uses (those modules' own dependencies first), where their
+  `.mod` files are missing or older than the files, and saving a module
+  file checks the open files that use it again. Modules that come from
+  outside the workspace need their `.mod` directory in
+  `zfls.linter.includePaths`. A module whose file does not compile cannot
+  be used; the file using it then shows the compiler's error about the
+  missing module.
+- **Included files.** An error in a file brought in by `INCLUDE` or
+  `#include` shows at that `INCLUDE` line, prefixed with the included
+  file's name and line, with a link to the place in the included file.
+- **One compiler at a time.** Checks run one after another; a check is
+  started a moment after the last open, save or edit of a file, and a newer
+  check of a file stops the older one and its compiler, so that autosave
+  does not pile up compiler processes.
+- **No duplicates.** Each message shows once, even if the compiler prints
+  it twice.
+- **Clearing.** **zfls: Clear Compiler Diagnostics** clears the messages
+  and the `.mod` files in VS Code's storage (not those in a configured
+  `zfls.linter.modOutput`), and lists `zfls.linter.includePaths` glob
+  matches afresh. **zfls: Lint Current File with Compiler** checks the
+  active file now.
+
+The command lines and the compiler output are logged in the `zfls` output
+channel at the Debug log level (**Developer: Set Log Level...**).
 
 ## Snippets
 
@@ -74,3 +150,5 @@ Most snippets are adapted from those of Modern Fortran.
 
 - **zfls: Restart Language Server**
 - **zfls: Show Output**
+- **zfls: Lint Current File with Compiler**
+- **zfls: Clear Compiler Diagnostics**
