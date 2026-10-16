@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Generated from src/settings.zig by tools/gen_config_schema.py; do not edit",
+  "title": "zfls configuration",
+  "description": "Options of the zfls (and fortls) Fortran language server; they override the command-line options",
+  "type": "object",
+  "properties": {
+    "excl_paths": {
+      "description": "Folders to exclude from parsing",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "source_dirs": {
+      "description": "Folders containing source files (default: set())",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "incl_suffixes": {
+      "description": "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP (lower & upper casing))",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "excl_suffixes": {
+      "description": "Source file extensions to be excluded (default: set())",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "nthreads": {
+      "description": "Number of threads to use during workspace initialization (default: 4)",
+      "type": "integer",
+      "default": 4
+    },
+    "notify_init": {
+      "description": "Send notification message when workspace initialization is complete",
+      "type": "boolean",
+      "default": false
+    },
+    "incremental_sync": {
+      "description": "Use incremental document synchronization (beta)",
+      "type": "boolean",
+      "default": false
+    },
+    "recursion_limit": {
+      "description": "Set the maximum recursion depth for the parser (default: 1000)",
+      "type": "integer",
+      "default": 1000
+    },
+    "sort_keywords": {
+      "description": "Display variable keywords information, function/subroutine definitions, etc. in a consistent (sorted) manner default: no sorting, display code as is)",
+      "type": "boolean",
+      "default": false
+    },
+    "disable_autoupdate": {
+      "description": "Accepted for compatibility with fortls and ignored: zfls does not update itself.",
+      "type": "boolean",
+      "default": false
+    },
+    "autocomplete_no_prefix": {
+      "description": "Do not filter autocomplete results by variable prefix",
+      "type": "boolean",
+      "default": false
+    },
+    "autocomplete_no_snippets": {
+      "description": "Do not use snippets with place holders in autocomplete results",
+      "type": "boolean",
+      "default": false
+    },
+    "autocomplete_name_only": {
+      "description": "Complete only the name of procedures and not the parameters",
+      "type": "boolean",
+      "default": false
+    },
+    "lowercase_intrinsics": {
+      "description": "Use lowercase for intrinsics and keywords in autocomplete requests",
+      "type": "boolean",
+      "default": false
+    },
+    "use_signature_help": {
+      "description": "Use signature help instead of subroutine/function snippets. This effectively sets --autocomplete_no_snippets",
+      "type": "boolean",
+      "default": false
+    },
+    "hover_signature": {
+      "description": "Show signature information in hover for arguments",
+      "type": "boolean",
+      "default": false
+    },
+    "hover_language": {
+      "description": "Language used for responses to hover requests a VSCode language id (default: fortran90)",
+      "type": "string",
+      "default": "fortran90"
+    },
+    "max_line_length": {
+      "description": "Maximum line length (default: -1)",
+      "type": "integer",
+      "default": -1
+    },
+    "max_comment_line_length": {
+      "description": "Maximum comment line length (default: -1)",
+      "type": "integer",
+      "default": -1
+    },
+    "disable_diagnostics": {
+      "description": "Disable diagnostics",
+      "type": "boolean",
+      "default": false
+    },
+    "symbol_skip_mem": {
+      "description": "Do not include type members in document symbol results",
+      "type": "boolean",
+      "default": false
+    },
+    "enable_code_actions": {
+      "description": "Enable experimental code actions (default: false)",
+      "type": "boolean",
+      "default": false
+    },
+    "pp_suffixes": {
+      "description": "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "pp_defs": {
+      "description": "A dictionary with additional preprocessor definitions. Preprocessor definitions are normally included via INCLUDE_DIRS",
+      "type": [
+        "object",
+        "array"
+      ],
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      },
+      "items": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "include_dirs": {
+      "description": "Folders containing preprocessor files with extensions PP_SUFFIXES.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "debug_log": {
+      "description": "Generate debug log in project root folder",
+      "type": "boolean",
+      "default": false
+    }
+  }
+}

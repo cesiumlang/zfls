@@ -1,5 +1,5 @@
-# Only dist/, bin/, syntaxes/, snippets/, the language configuration, the
-# README and the licenses go into the VSIX
+# Only dist/, bin/, syntaxes/, snippets/, schemas/, the language
+# configuration, the README and the licenses go into the VSIX
 src/**
 node_modules/**
 tsconfig.json
