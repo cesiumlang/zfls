@@ -930,7 +930,7 @@ pub const Server = struct {
         var insert_text: ?[]const u8 = null;
         if (!name_only) {
             if (name_replace) |nr| label = nr;
-            const sn = try candidate.getSnippet(a, name_replace, -1);
+            const sn = try candidate.getSnippet(a, name_replace, null);
             call_sig = sn.call;
             var snippet = sn.snippet;
             if (self.s.autocomplete_no_snippets) snippet = call_sig;
@@ -949,7 +949,7 @@ pub const Server = struct {
         var detail = try candidate.getDesc(a);
         if (call_sig) |cs| detail = try std.fmt.allocPrint(a, "{s} {s}", .{ detail, cs });
         var documentation: ?lsp.MarkupContent = null;
-        const hover_msg = try candidate.getHoverMd(a, true, -1);
+        const hover_msg = try candidate.getHoverMd(a, true, null);
         if (hover_msg.len > 0) {
             documentation = .{ .value = try str.replaceFirst(a, hover_msg, "```{langid}", try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language})) };
         }
@@ -1100,7 +1100,7 @@ pub const Server = struct {
                 var seen: std.ArrayList([]const u8) = .empty;
                 if (name_replace == null) name_replace = cand.name;
                 for (cand.mems.items) |member| {
-                    const text = (try member.getSnippet(a, name_replace, -1)).call orelse "None";
+                    const text = (try member.getSnippet(a, name_replace, null)).call orelse "None";
                     var dup = false;
                     for (seen.items) |s| if (std.mem.eql(u8, s, text)) {
                         dup = true;
@@ -1290,15 +1290,15 @@ pub const Server = struct {
         var hover_array: std.ArrayList([]const u8) = .empty;
         const vt = var_obj.getType(false);
         if (vt == C.SUBROUTINE_TYPE_ID or vt == C.FUNCTION_TYPE_ID or vt == C.MODULE_TYPE_ID or vt == C.CLASS_TYPE_ID) {
-            try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, -1), "```{langid}", lang_fence));
+            try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
         } else if (vt == C.INTERFACE_TYPE_ID) {
             for (var_obj.mems.items) |member| {
-                const h = try member.getHover(a, true, -1);
+                const h = try member.getHover(a, true, null);
                 if (h.msg != null) try hover_array.append(a, try self.createHover(a, h.msg, h.docs));
             }
         } else if (vt == C.VAR_TYPE_ID) {
             if (!std.mem.startsWith(u8, var_obj.desc, C.FORTRAN_LITERAL)) {
-                try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, -1), "```{langid}", lang_fence));
+                try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
             } else if (std.mem.endsWith(u8, var_obj.desc, "REAL")) {
                 try hover_array.append(a, try self.createHover(a, "REAL", null));
             } else if (std.mem.endsWith(u8, var_obj.desc, "INTEGER")) {
@@ -1386,7 +1386,7 @@ pub const Server = struct {
             };
         }
         const vo = var_obj orelse return .null;
-        const sig = try vo.getSignature(a, -1);
+        const sig = try vo.getSignature(a, null);
         const label = sig.label orelse return .null;
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
