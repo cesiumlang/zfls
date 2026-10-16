@@ -48,14 +48,18 @@ that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
 from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 (VSCodium and other VS Code derivatives), and the universal one to the
-Marketplace for the platforms without their own. No stored token is needed:
-Open VSX accepts the workflow's OIDC token (trusted publishing), and for the
-Marketplace the workflow signs in with it as a Microsoft Entra managed
-identity that is a member of the publisher (the `AZURE_*` repository
-variables; the "Marketplace identity" workflow shows the ID to add). Until
-the `cesiumlang` Open VSX namespace allows trusted publishing, the job falls
-back to the `OVSX_PAT` repository secret there, with a warning. Versions
-already published are skipped, so a failed publishing job can be re-run.
+Marketplace for the platforms without their own. Each registry has its own
+workflow, which the release job starts and which takes the packages from the
+release: "Publish to the Marketplace" (`.github/workflows/marketplace.yml`)
+signs in with the workflow's OIDC token as a Microsoft Entra managed identity
+that is a member of the publisher (the `AZURE_*` repository variables; the
+"Marketplace identity" workflow shows the ID to add), and "Publish to Open
+VSX" (`.github/workflows/open-vsx.yml`) is the workflow whose OIDC token
+Open VSX trusts for the `cesiumlang` namespace (trusted publishing; the
+`OVSX_PAT` repository secret is used only if that is refused, with a
+warning). No stored token is needed. Either workflow can be run by hand, on
+`main`, for any released version; versions already published are skipped,
+so a failed run can simply be run again.
 
 The extension replaces the Modern Fortran extension (it registers the same
 Fortran languages, grammars and snippets, with zfls instead of fortls) and
