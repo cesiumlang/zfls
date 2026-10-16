@@ -3,7 +3,9 @@
 The files in `syntaxes/` and `language-configuration.json` are the Fortran
 grammars and language configuration of the
 [Modern Fortran](https://github.com/fortran-lang/vscode-fortran-support)
-extension, version 4.0.0, used under its MIT license:
+extension, version 4.0.0, and the snippets in `snippets/` up to "Module
+Documentation Header" are adapted from its `snippets/fortran90.json`, used
+under its MIT license:
 
 ```text
 MIT License

@@ -104,6 +104,16 @@
         ]
       }
     ],
+    "snippets": [
+      {
+        "language": "FortranFreeForm",
+        "path": "./snippets/fortran-free-form.json"
+      },
+      {
+        "language": "FortranFixedForm",
+        "path": "./snippets/fortran-fixed-form.json"
+      }
+    ],
     "configuration": {
       "title": "zfls",
       "properties": {
