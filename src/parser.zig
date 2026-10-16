@@ -830,21 +830,17 @@ pub const FortranFile = struct {
         return self.setText(data);
     }
 
-    pub fn getLine(self: *const FortranFile, line_no_in: i64, pp_content: bool) ?[]const u8 {
-        const n: i64 = @intCast(self.nLines());
-        var line_no = line_no_in;
-        if (line_no < 0) line_no += n;
-        if (line_no < 0 or line_no >= n) return null;
-        const idx: usize = @intCast(line_no);
-        if (pp_content) if (self.pp_lines) |pl| return pl[idx];
-        return self.lines.items[idx];
+    pub fn getLine(self: *const FortranFile, line_no: usize, pp_content: bool) ?[]const u8 {
+        if (line_no >= self.nLines()) return null;
+        if (pp_content) if (self.pp_lines) |pl| return pl[line_no];
+        return self.lines.items[line_no];
     }
 
     /// Get full code line from file including any adjacent continuations
-    pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: i64, forward: bool, backward: bool, pp_content: bool, strip_comment: bool) !CodeLine {
+    pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: usize, forward: bool, backward: bool, pp_content: bool, strip_comment: bool) !CodeLine {
         var curr_line = self.getLine(line_no, pp_content) orelse return .{ .pre = &.{}, .curr = null, .post = &.{} };
-        const n: i64 = @intCast(self.nLines());
-        var line_ind = line_no - 1;
+        const n = self.nLines();
+        var line_ind = line_no -| 1;
         var pre_lines: std.ArrayList([]const u8) = .empty;
         if (backward) {
             if (self.fixed) {
@@ -853,7 +849,7 @@ pub const FortranFile = struct {
                     if (R().FIXED_CONT.match(tmp_line) != null) {
                         const prev_line = tmp_line;
                         tmp_line = self.getLine(line_ind, pp_content) orelse "";
-                        if (line_ind == line_no - 1) {
+                        if (line_ind == line_no -| 1) {
                             curr_line = try std.mem.concat(a, u8, &.{ "      ", str.from(curr_line, 6) });
                         } else {
                             pre_lines.items[pre_lines.items.len - 1] = try std.mem.concat(a, u8, &.{ "      ", str.from(prev_line, 6) });
@@ -939,19 +935,19 @@ pub const FortranFile = struct {
         return line;
     }
 
-    pub fn findWordInCodeLine(self: *const FortranFile, a: Allocator, line_no_in: i64, word: []const u8, forward: bool, backward: bool, pp_content: bool) !struct { line: i64, range: Range } {
+    pub fn findWordInCodeLine(self: *const FortranFile, a: Allocator, line_no_in: usize, word: []const u8, forward: bool, backward: bool, pp_content: bool) !struct { line: usize, range: Range } {
         var line_no = line_no_in;
         const cl = try self.getCodeLine(a, line_no, forward, backward, pp_content, false);
         var word_range: Range = .{ .start = -1, .end = -1 };
         if (cl.curr) |c| word_range = helpers.findWordInLineIgnoreCase(c, word);
         if (backward and word_range.start < 0) {
             var i: usize = cl.pre.len;
-            var k: i64 = 0;
+            var k: usize = 0;
             while (i > 0) : (k += 1) {
                 i -= 1;
                 word_range = helpers.findWordInLineIgnoreCase(cl.pre[i], word);
                 if (word_range.start >= 0) {
-                    line_no -= k + 1;
+                    line_no -|= k + 1;
                     return .{ .line = line_no, .range = word_range };
                 }
             }
@@ -960,7 +956,7 @@ pub const FortranFile = struct {
             for (cl.post, 0..) |l, i| {
                 word_range = helpers.findWordInLineIgnoreCase(l, word);
                 if (word_range.start >= 0) {
-                    line_no += @as(i64, @intCast(i)) + 1;
+                    line_no += i + 1;
                     return .{ .line = line_no, .range = word_range };
                 }
             }
@@ -1028,8 +1024,8 @@ pub const FortranFile = struct {
         return true;
     }
 
-    fn checkChangeReparse(self: *FortranFile, line_no: i64) !bool {
-        if (line_no < 0 or line_no > @as(i64, @intCast(self.nLines())) - 1) return true;
+    fn checkChangeReparse(self: *FortranFile, line_no: usize) !bool {
+        if (line_no >= self.nLines()) return true;
         var arena = std.heap.ArenaAllocator.init(self.gpa);
         defer arena.deinit();
         const a = arena.allocator();
@@ -1087,9 +1083,11 @@ pub const FortranFile = struct {
             const msg_line = try std.fmt.allocPrint(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
             const msg_comment = try std.fmt.allocPrint(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
             const comment_re = if (self.fixed) &R().FIXED_COMMENT else &R().FREE_COMMENT;
-            for (self.lines.items, 0..) |line, i| {
-                const len: i64 = @intCast(str.codepointLen(line));
-                const ln: i64 = @intCast(i);
+            // a limit that is not positive is off
+            const max_code: usize = @intCast(@max(max_line_length, 0));
+            const max_comment: usize = @intCast(@max(max_comment_line_length, 0));
+            for (self.lines.items, 0..) |line, ln| {
+                const len = str.codepointLen(line);
                 if (comment_re.match(line) == null) {
                     // Code is held to max_line_length; a comment after it is
                     // held to max_comment_line_length, not to the code limit
@@ -1097,16 +1095,16 @@ pub const FortranFile = struct {
                     const stripped = try helpers.stripStrings(a, line, true);
                     const has_comment = std.mem.indexOfScalar(u8, stripped, '!');
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
-                    const code_len: i64 = @intCast(str.codepointLen(code));
-                    if (0 < max_line_length and max_line_length < code_len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_line_length, .eln = ln, .ech = code_len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    const code_len = str.codepointLen(code);
+                    if (0 < max_code and max_code < code_len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_code, .eln = ln, .ech = code_len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true });
                     }
-                    if (has_comment != null and 0 < max_comment_line_length and max_comment_line_length < len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_comment_line_length, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    if (has_comment != null and 0 < max_comment and max_comment < len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_comment, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
                     }
                 } else {
-                    if (0 < max_comment_line_length and max_comment_line_length < len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_comment_line_length, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                    if (0 < max_comment and max_comment < len) {
+                        try out.append(a, .{ .sln = ln, .sch = max_comment, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
                     }
                 }
             }
@@ -1133,10 +1131,6 @@ pub const FortranFile = struct {
             const out = try self.preprocess(io, defs, include_dirs, opts.trace);
             p.pp_skips = out.skips;
             p.pp_defines = out.defines;
-            for (out.skips) |reg| {
-                try p.file_ast.startPpif(reg[0]);
-                p.file_ast.endPpif(reg[1]);
-            }
             p.dbg("\n=== Parsing Pass ===\n", .{});
         } else {
             p.dbg("=== No PreProc ===\n", .{});
@@ -1160,11 +1154,11 @@ const Parser = struct {
     file: *FortranFile,
     file_ast: *Ast,
     scratch: std.heap.ArenaAllocator,
-    pp_skips: []const [2]i64 = &.{},
-    pp_defines: []const i64 = &.{},
+    pp_skips: []const pp.Skip = &.{},
+    pp_defines: []const usize = &.{},
     docs: std.ArrayList([]const u8) = .empty,
     comment_re: *const regex.Regex = undefined,
-    cur_line: i64 = 0,
+    cur_line: usize = 0,
     doc_re: *const regex.Regex = undefined,
 
     fn dbg(p: *const Parser, comptime fmt: []const u8, args: anytype) void {
@@ -1182,9 +1176,9 @@ const Parser = struct {
             p.comment_re = &R().FREE_COMMENT;
             p.doc_re = &R().FREE_DOC;
         }
-        const n_lines: i64 = @intCast(f.nLines());
-        var line_no: i64 = 0;
-        var line_no_end: i64 = 0;
+        const n_lines = f.nLines();
+        var line_no: usize = 0;
+        var line_no_end: usize = 0;
         var block_id_stack: std.ArrayList([]const u8) = .empty;
         var counters: Counters = .{};
         // stack of pending statements split by ';' (popped from the end)
@@ -1215,8 +1209,7 @@ const Parser = struct {
             if (get_full and f.fixed and std.mem.indexOfScalar(u8, "cCdD*", line[0]) != null) continue;
 
             p.cur_line = line_no;
-            const idx = try p.parseDocs(line, line_no);
-            if (idx != 0) {
+            if (try p.parseDocs(line, line_no)) |idx| {
                 line_no = idx;
                 line_no_end = line_no;
                 continue;
@@ -1224,7 +1217,7 @@ const Parser = struct {
             // Handle preprocessing regions
             var do_skip = false;
             for (p.pp_skips) |reg| {
-                if (line_no >= reg[0] and line_no <= reg[1]) {
+                if (line_no >= reg.start and line_no <= reg.end) {
                     do_skip = true;
                     break;
                 }
@@ -1235,7 +1228,7 @@ const Parser = struct {
             if (do_skip) continue;
 
             if (get_full) {
-                const cl = try f.getCodeLine(a, line_no - 1, true, false, true, false);
+                const cl = try f.getCodeLine(a, line_no -| 1, true, false, true, false);
                 line_no_end += @intCast(cl.post.len);
                 var parts: std.ArrayList([]const u8) = .empty;
                 try parts.append(a, cl.curr.?);
@@ -1310,7 +1303,7 @@ const Parser = struct {
         try ast.closeFile(line_no);
     }
 
-    fn handleDef(p: *Parser, a: Allocator, obj_read: DefResult, line: []const u8, line_no: i64, counters: *Counters, block_id_stack: *std.ArrayList([]const u8)) !void {
+    fn handleDef(p: *Parser, a: Allocator, obj_read: DefResult, line: []const u8, line_no: usize, counters: *Counters, block_id_stack: *std.ArrayList([]const u8)) !void {
         const ast = p.file_ast;
         const pa = ast.allocator();
         switch (obj_read) {
@@ -1571,7 +1564,7 @@ const Parser = struct {
         }
     }
 
-    fn parseEndScopeWord(p: *Parser, line: []const u8, ln: i64, match: ?regex.Match) !bool {
+    fn parseEndScopeWord(p: *Parser, line: []const u8, ln: usize, match: ?regex.Match) !bool {
         const m = match orelse return false;
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
@@ -1579,7 +1572,7 @@ const Parser = struct {
         if (m.group(1) == null) {
             end_scope_word = "";
             if (cs.reqNamedEnd() and cs != ast.none_scope) {
-                try ast.end_errors.append(ast.allocator(), .{ ln, cs.sline });
+                try ast.end_errors.append(ast.allocator(), .{ .end_line = ln, .scope_line = cs.sline });
             }
         } else {
             if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| end_scope_word = sm.str();
@@ -1598,7 +1591,7 @@ const Parser = struct {
         return false;
     }
 
-    fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: i64, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) !bool {
+    fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: usize, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) !bool {
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
         const label = line_label orelse return false;
@@ -1637,7 +1630,7 @@ const Parser = struct {
         return true;
     }
 
-    fn parseImplicit(p: *Parser, line: []const u8, ln: i64) !bool {
+    fn parseImplicit(p: *Parser, line: []const u8, ln: usize) !bool {
         const m = R().IMPLICIT.match(line) orelse return false;
         const ast = p.file_ast;
         if (ast.current_scope) |cs| {
@@ -1649,7 +1642,7 @@ const Parser = struct {
         return true;
     }
 
-    fn parseContains(p: *Parser, line: []const u8, ln: i64) !bool {
+    fn parseContains(p: *Parser, line: []const u8, ln: usize) !bool {
         const m = R().CONTAINS.match(line) orelse return false;
         const ast = p.file_ast;
         var msg: ?[]const u8 = null;
@@ -1716,22 +1709,22 @@ const Parser = struct {
         }
     }
 
-    /// Parse documentation strings; returns the new line number or 0
-    fn parseDocs(p: *Parser, line: []const u8, ln: i64) !i64 {
+    /// Parse documentation strings; returns the new line number, or null when the line is no documentation
+    fn parseDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
         if (p.comment_re.match(line) == null) {
             try p.addLineComment();
-            return 0;
+            return null;
         }
         const doc_match = p.doc_re.match(line) orelse {
             try p.addLineComment();
-            return 0;
+            return null;
         };
         const sa = p.scratch.allocator();
         // get_docstring
         try p.docs.append(sa, str.strip(line[doc_match.end(0)..]));
         const predocmark = std.mem.eql(u8, doc_match.group(1).?, ">");
         var new_ln = ln;
-        const n: i64 = @intCast(p.file.nLines());
+        const n = p.file.nLines();
         if (ln < n) {
             var i = ln;
             while (i < n) : (i += 1) {
@@ -1746,13 +1739,13 @@ const Parser = struct {
         var total: usize = 0;
         for (p.docs.items) |d| total += d.len;
         if (total > 0) try p.file_ast.addDoc(try p.formatDocs(p.docs.items), predocmark);
-        for (p.docs.items, 0..) |d, k| p.dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + @as(i64, @intCast(k)) });
+        for (p.docs.items, 0..) |d, k| p.dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + k });
         p.docs.clearRetainingCapacity();
         return new_ln;
     }
 };
 
-fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: i64, var_desc: []const u8, case_type: i32) !?*Obj {
+fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, case_type: i32) !?*Obj {
     const parent = self.parent orelse return null;
     if (parent.getType(false) != C.SELECT_TYPE_ID) return null;
     var binding_name: ?[]const u8 = null;

@@ -26,12 +26,15 @@ pub const Def = struct {
 /// Ordered macro table (insertion order matters for substitution)
 pub const Defs = std.array_hash_map.String(Def);
 
+/// A range of lines (1-based, inclusive) that a conditional excludes
+pub const Skip = struct { start: usize, end: usize };
+
 pub const Output = struct {
     lines: [][]const u8,
-    /// [start, end] 1-based line ranges excluded by conditionals
-    skips: [][2]i64,
+    /// 1-based line ranges excluded by conditionals
+    skips: []Skip,
     /// 1-based line numbers of #define/#undef statements
-    defines: []i64,
+    defines: []usize,
     defs: Defs,
 };
 
@@ -514,7 +517,13 @@ fn appendMultilineMacro(a: Allocator, d: Def, line: []const u8) !Def {
     return .{ .args = d.args, .value = try std.mem.concat(a, u8, &.{ d.value, line }) };
 }
 
-const StackEntry = [2]i64;
+/// An open conditional. `start` is the first line of its excluded part, null
+/// while the branch is included; `end` the last one, null until known.
+const StackEntry = struct { start: ?usize = null, end: ?usize = null };
+
+fn skipOf(e: StackEntry) Skip {
+    return .{ .start = e.start.?, .end = e.end.? };
+}
 
 /// Preprocess `contents`; all results are allocated in `a`.
 pub fn preprocessFile(
@@ -549,10 +558,10 @@ fn preprocessInner(
     depth: usize,
     trace: ?parser.Trace,
 ) !Output {
-    var pp_skips: std.ArrayList([2]i64) = .empty;
-    var pp_defines: std.ArrayList(i64) = .empty;
+    var pp_skips: std.ArrayList(Skip) = .empty;
+    var pp_defines: std.ArrayList(usize) = .empty;
     var pp_stack: std.ArrayList(StackEntry) = .empty;
-    var pp_stack_group: std.ArrayList(struct { i64, bool }) = .empty;
+    var pp_stack_group: std.ArrayList(struct { usize, bool }) = .empty;
     var defs_tmp: Defs = if (pp_defs) |d| try cloneDefs(a, d) else .empty;
     var def_regexes = std.array_hash_map.String(?DefRegex).empty;
     defer {
@@ -562,9 +571,8 @@ fn preprocessInner(
     var output: std.ArrayList([]const u8) = .empty;
     var def_cont_name: ?[]const u8 = null;
 
-    for (contents, 0..) |line_in, i_usize| {
+    for (contents, 0..) |line_in, i| {
         var line = line_in;
-        const i: i64 = @intCast(i_usize);
         // Handle multiline macro continuation
         if (def_cont_name) |dcn| {
             try output.append(a, "");
@@ -593,37 +601,37 @@ fn preprocessInner(
             }
             if (if_start) {
                 if (is_path) {
-                    try pp_stack.append(a, .{ -1, -1 });
+                    try pp_stack.append(a, .{});
                     parser.Trace.print(trace, "{s} !!! Conditional TRUE({d})", .{ str.strip(line), i + 1 });
                 } else {
-                    try pp_stack.append(a, .{ i + 1, -1 });
+                    try pp_stack.append(a, .{ .start = i + 1 });
                     parser.Trace.print(trace, "{s} !!! Conditional FALSE({d})", .{ str.strip(line), i + 1 });
                 }
                 continue;
             }
             if (pp_stack.items.len == 0) continue;
-            const depth_now: i64 = @intCast(pp_stack.items.len);
+            const depth_now = pp_stack.items.len;
             const top = &pp_stack.items[pp_stack.items.len - 1];
             var cond: enum { none, included, excluded_start, excluded } = .none;
             if (std.mem.eql(u8, kw, "elif")) {
                 if (pp_stack_group.items.len == 0 or pp_stack_group.items[pp_stack_group.items.len - 1][0] != depth_now) {
-                    try pp_stack_group.append(a, .{ depth_now, top[0] < 0 });
+                    try pp_stack_group.append(a, .{ depth_now, top.start == null });
                 }
                 const grp = &pp_stack_group.items[pp_stack_group.items.len - 1];
                 if (grp[1]) {
                     // An earlier if or elif in this group has been true
-                    if (top[0] < 0) top[0] = i + 1;
+                    if (top.start == null) top.start = i + 1;
                     cond = .excluded;
                 } else if (evalPpIf(a, line[m.end(1)..], &defs_tmp)) {
-                    top[1] = i + 1;
-                    try pp_skips.append(a, pp_stack.pop().?);
+                    top.end = i + 1;
+                    try pp_skips.append(a, skipOf(pp_stack.pop().?));
                     grp[1] = true;
-                    try pp_stack.append(a, .{ -1, -1 });
+                    try pp_stack.append(a, .{});
                     cond = .included;
                 } else cond = .excluded_start;
             } else if (std.mem.eql(u8, kw, "else")) {
-                if (top[0] < 0) {
-                    top[0] = i + 1;
+                if (top.start == null) {
+                    top.start = i + 1;
                     cond = .excluded_start;
                 } else if (pp_stack_group.items.len > 0 and
                     pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now and
@@ -632,25 +640,25 @@ fn preprocessInner(
                     // An earlier if or elif in this group has been true
                     cond = .excluded;
                 } else {
-                    top[1] = i + 1;
-                    try pp_skips.append(a, pp_stack.pop().?);
-                    try pp_stack.append(a, .{ -1, -1 });
+                    top.end = i + 1;
+                    try pp_skips.append(a, skipOf(pp_stack.pop().?));
+                    try pp_stack.append(a, .{});
                     cond = .included;
                 }
             } else if (std.mem.eql(u8, kw, "endif")) {
                 if (pp_stack_group.items.len > 0 and pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now) {
                     _ = pp_stack_group.pop();
                 }
-                if (top[0] < 0) {
+                if (top.start == null) {
                     _ = pp_stack.pop();
                     parser.Trace.print(trace, "{s} !!! Conditional TRUE/END({d})", .{ str.strip(line), i + 1 });
                     continue;
                 }
-                if (top[1] < 0) {
-                    top[1] = i + 1;
+                if (top.end == null) {
+                    top.end = i + 1;
                     parser.Trace.print(trace, "{s} !!! Conditional FALSE/END({d})", .{ str.strip(line), i + 1 });
                 }
-                try pp_skips.append(a, pp_stack.pop().?);
+                try pp_skips.append(a, skipOf(pp_stack.pop().?));
             }
             switch (cond) {
                 .none => {},
@@ -661,7 +669,7 @@ fn preprocessInner(
             continue;
         }
         var stack_is_true = true;
-        for (pp_stack.items) |s| if (s[0] >= 0) {
+        for (pp_stack.items) |s| if (s.start != null) {
             stack_is_true = false;
         };
         // Handle variable/macro definitions
@@ -805,6 +813,6 @@ test "pp macro expansion" {
     try testing.expectEqualStrings("integer :: a(10)", out.lines[3]);
     try testing.expectEqualStrings("y = ((z)*(z))", out.lines[7]);
     try testing.expectEqual(@as(usize, 1), out.skips.len);
-    try testing.expectEqual(@as(i64, 5), out.skips[0][0]);
-    try testing.expectEqual(@as(i64, 7), out.skips[0][1]);
+    try testing.expectEqual(@as(usize, 5), out.skips[0].start);
+    try testing.expectEqual(@as(usize, 7), out.skips[0].end);
 }
