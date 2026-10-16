@@ -743,7 +743,7 @@ pub const Server = struct {
             for (ast.include_statements.items) |inc| inc.scope_objs.clearRetainingCapacity();
         }
         for (self.workspace.values()) |f| {
-            if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, null, a);
+            if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try self.includeDirs(a), null, a);
         }
         self.link_version = @mod(self.link_version + 1, 1000);
         var tmp = std.heap.ArenaAllocator.init(self.gpa);
@@ -1262,19 +1262,29 @@ pub const Server = struct {
         return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
     }
 
-    /// The file that the `#include` directive under the cursor names, searched
-    /// in the directory of the including file and in the include directories
-    /// (upstream #498)
-    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
+    /// The include directories as absolute paths (relative ones are relative
+    /// to the workspace root)
+    fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
+        var dirs: std.ArrayList([]const u8) = .empty;
+        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+        return dirs.items;
+    }
+
+    /// The file that the `#include` directive (or, with `statement`, the
+    /// INCLUDE statement) under the cursor names, searched in the directory
+    /// of the including file and in the include directories (upstream #498,
+    /// #301)
+    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?[]const u8 {
         const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
         const text = file.getLine(params.position.line, false) orelse return null;
-        const m = R().INCLUDE_DIRECTIVE.match(text) orelse return null;
+        const re = if (statement) &R().INCLUDE else &R().INCLUDE_DIRECTIVE;
+        const m = re.match(text) orelse return null;
         const col = toByteCol(file, params.position.line, params.position.character);
         if (col < m.start(1) or col > m.end(1)) return null;
         const name = m.group(1).?;
         var dirs: std.ArrayList([]const u8) = .empty;
         try dirs.append(a, paths.dirname(file.path));
-        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+        try dirs.appendSlice(a, try self.includeDirs(a));
         for (dirs.items) |dir| {
             const candidate = try paths.abspath(a, try paths.join(a, &.{ dir, name }));
             if (paths.isFile(self.io, candidate)) return candidate;
@@ -1283,12 +1293,19 @@ pub const Server = struct {
     }
 
     fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-        if (try self.includeDirectiveTarget(a, params)) |target| {
-            const start: lsp.Position = .{ .line = 0, .character = 0 };
+        const start: lsp.Position = .{ .line = 0, .character = 0 };
+        if (try self.includeDirectiveTarget(a, params, false)) |target| {
             return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
         }
-        const d = (try self.definitionAt(a, params, false)) orelse return .null;
-        if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
+        if (try self.definitionAt(a, params, false)) |d| {
+            if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
+            return .null;
+        }
+        // an INCLUDE statement is its own definition when its file is in the
+        // workspace; open one that is not
+        if (try self.includeDirectiveTarget(a, params, true)) |target| {
+            return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
+        }
         return .null;
     }
 
@@ -1758,8 +1775,8 @@ pub const Server = struct {
                 self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
                 return .null;
             };
-            for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, path, a);
-            if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, null, a);
+            for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try self.includeDirs(a), path, a);
+            if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, try self.includeDirs(a), null, a);
             // Periodically reclaim memory of replaced ASTs
             if (self.retired.items.len >= 16) try self.fullRelink(a);
         } else if (file.preproc) {
