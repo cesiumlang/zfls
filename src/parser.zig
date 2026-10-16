@@ -876,7 +876,7 @@ pub const FortranFile = struct {
             if (self.fixed) {
                 var tmp_line = curr_line;
                 while (line_ind > 0) {
-                    if (R().FIXED_CONT.match(tmp_line) != null) {
+                    if (helpers.isFixedCont(tmp_line)) {
                         const prev_line = tmp_line;
                         tmp_line = self.getLine(line_ind, pp_content) orelse "";
                         if (line_ind == line_no -| 1) {
@@ -889,16 +889,16 @@ pub const FortranFile = struct {
                     line_ind -= 1;
                 }
             } else {
-                if (R().FREE_CONT.match(curr_line)) |m| {
-                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, m.end(0)), curr_line[m.end(0)..] });
+                if (helpers.freeContEnd(curr_line)) |e| {
+                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), curr_line[e..] });
                 }
                 while (line_ind > 0) {
                     const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
                     var tmp_no_comm = str.beforeFirst(tmp_line, "!");
                     const cont_ind = std.mem.lastIndexOfScalar(u8, tmp_no_comm, '&');
-                    if (R().FREE_CONT.match(tmp_no_comm)) |m| {
-                        if (cont_ind == m.end(0) - 1) break;
-                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, m.end(0)), tmp_no_comm[m.end(0)..] });
+                    if (helpers.freeContEnd(tmp_no_comm)) |e| {
+                        if (cont_ind == e - 1) break;
+                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), tmp_no_comm[e..] });
                     }
                     if (cont_ind) |ci| {
                         try pre_lines.append(a, tmp_no_comm[0..ci]);
@@ -914,12 +914,12 @@ pub const FortranFile = struct {
                 if (line_ind < n) {
                     var next_line = self.getLine(line_ind, pp_content) orelse "";
                     line_ind += 1;
-                    var cont = R().FIXED_CONT.match(next_line) != null;
+                    var cont = helpers.isFixedCont(next_line);
                     while (cont and line_ind < n) {
                         try post_lines.append(a, try std.mem.concat(a, u8, &.{ "      ", str.from(next_line, 6) }));
                         next_line = self.getLine(line_ind, pp_content) orelse "";
                         line_ind += 1;
-                        cont = R().FIXED_CONT.match(next_line) != null;
+                        cont = helpers.isFixedCont(next_line);
                     }
                 }
             } else {
@@ -934,17 +934,17 @@ pub const FortranFile = struct {
                     }
                     next_line = self.getLine(line_ind, pp_content) orelse break;
                     line_ind += 1;
-                    if (R().PP_ANY.match(next_line) != null) {
+                    if (helpers.isPpDirective(next_line)) {
                         next_line = "";
                         try post_lines.append(a, "");
                         continue;
                     }
-                    if (str.rstrip(next_line).len == 0 or R().FREE_COMMENT.match(next_line) != null) {
+                    if (str.rstrip(next_line).len == 0 or helpers.isFreeComment(next_line)) {
                         next_line = "";
                         try post_lines.append(a, "");
                         continue;
                     }
-                    if (R().FREE_CONT.match(next_line)) |m| next_line = next_line[m.end(0)..];
+                    if (helpers.freeContEnd(next_line)) |e| next_line = next_line[e..];
                     try post_lines.append(a, next_line);
                     line_stripped = try helpers.stripStrings(a, next_line, true);
                     cont_amper = continuationAmpersand(line_stripped);
@@ -958,9 +958,9 @@ pub const FortranFile = struct {
 
     pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
         if (self.fixed) {
-            if (R().FIXED_COMMENT.match(line) != null and R().FIXED_OPENMP.match(line) == null) return "";
+            if (helpers.isFixedComment(line) and !helpers.isOpenMp(true, line)) return "";
         } else {
-            if (R().FREE_OPENMP.match(line) == null) return str.beforeFirst(line, "!");
+            if (!helpers.isOpenMp(false, line)) return str.beforeFirst(line, "!");
         }
         return line;
     }
@@ -1078,11 +1078,7 @@ pub const FortranFile = struct {
         const a = arena.allocator();
         const cl = try self.getCodeLine(a, line_no, false, true, false, false);
         const curr_line = cl.curr.?;
-        if (self.fixed) {
-            if (R().FIXED_COMMENT.match(curr_line) != null) return false;
-        } else {
-            if (R().FREE_COMMENT.match(curr_line) != null) return false;
-        }
+        if (helpers.isComment(self.fixed, curr_line)) return false;
         var full_line: []const u8 = try std.mem.concat(a, u8, &.{ try std.mem.concat(a, u8, cl.pre), curr_line });
         const lr = try helpers.stripLineLabel(a, full_line);
         full_line = lr.line;
@@ -1129,13 +1125,12 @@ pub const FortranFile = struct {
         if (max_line_length > 0 or max_comment_line_length > 0) {
             const msg_line = try std.fmt.allocPrint(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
             const msg_comment = try std.fmt.allocPrint(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
-            const comment_re = if (self.fixed) &R().FIXED_COMMENT else &R().FREE_COMMENT;
             // a limit that is not positive is off
             const max_code: usize = @intCast(@max(max_line_length, 0));
             const max_comment: usize = @intCast(@max(max_comment_line_length, 0));
             for (self.lines.items, 0..) |line, ln| {
                 const len = str.codepointLen(line);
-                if (comment_re.match(line) == null) {
+                if (!helpers.isComment(self.fixed, line)) {
                     // Code is held to max_line_length; a comment after it is
                     // held to max_comment_line_length, not to the code limit
                     // (upstream #489)
@@ -1709,8 +1704,8 @@ const Parser = struct {
 
     fn setSingleLineDocstring(p: *Parser, line: []const u8) !void {
         p.docs = .empty;
-        const m = R().FREE_DOC.match(line) orelse return;
-        const doc = str.strip(line[m.end(0)..]);
+        const mark = helpers.docMark(false, line) orelse return;
+        const doc = str.strip(line[mark + 1 ..]);
         if (doc.len > 0) try p.docs.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, doc));
     }
 
@@ -1760,29 +1755,30 @@ const Parser = struct {
 
     /// Parse documentation strings; returns the new line number, or null when the line is no documentation
     fn parseDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
-        if (p.comment_re.match(line) == null) {
+        const fixed = p.file.fixed;
+        if (!helpers.isComment(fixed, line)) {
             try p.addLineComment();
             return null;
         }
-        const doc_match = p.doc_re.match(line) orelse {
+        const mark = helpers.docMark(fixed, line) orelse {
             try p.addLineComment();
             return null;
         };
         const sa = p.scratch.allocator();
         // get_docstring
-        try p.docs.append(sa, str.strip(line[doc_match.end(0)..]));
-        const predocmark = std.mem.eql(u8, doc_match.group(1).?, ">");
+        try p.docs.append(sa, str.strip(line[mark + 1 ..]));
+        const predocmark = line[mark] == '>';
         var new_ln = ln;
         const n = p.file.nLines();
         if (ln < n) {
             var i = ln;
             while (i < n) : (i += 1) {
                 const next_line = p.file.getLine(i, true) orelse "";
-                const m = p.doc_re.match(next_line) orelse {
+                const next_mark = helpers.docMark(fixed, next_line) orelse {
                     new_ln = i;
                     break;
                 };
-                try p.docs.append(sa, str.strip(next_line[m.end(0)..]));
+                try p.docs.append(sa, str.strip(next_line[next_mark + 1 ..]));
             }
         }
         var total: usize = 0;

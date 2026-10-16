@@ -1504,9 +1504,9 @@ pub const Server = struct {
     /// of, if it is one (upstream #52)
     fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?RenamedImport {
         const text = file.getLine(line, false) orelse return null;
-        var it = R().WORD.iterator(text);
+        var it = helpers.words(text);
         const word = while (it.next()) |m| {
-            if (m.start(0) <= col and col <= m.end(0)) break m.str();
+            if (m.start <= col and col <= m.end) break m.str;
         } else return null;
         if (std.ascii.eqlIgnoreCase(word, target.name)) return null;
         const lower = try std.ascii.allocLowerString(a, word);
