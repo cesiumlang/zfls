@@ -122,36 +122,48 @@ function ensureExecutable(file: string): void {
   }
 }
 
-/** Modern Fortran starts fortls for the same files, and lints them with a
- * compiler as zfls does; offer to turn those off so that each message comes
- * once. */
+/** zfls replaces the Modern Fortran extension: both register the same
+ * Fortran languages, grammars and snippets, Modern Fortran starts its own
+ * language server (fortls), and both lint with a compiler. Recommend
+ * disabling it; extensions cannot disable one another, so this opens its
+ * page where the user can. Keeping it with its fortls and linter turned off
+ * stays possible, for the features zfls does not have yet. */
 async function checkModernFortran(): Promise<void> {
   const config = vscode.workspace.getConfiguration("zfls");
   if (config.get<boolean>("disableModernFortranCheck", false)) {
     return;
   }
+  // only an enabled extension is found
   if (!vscode.extensions.getExtension(MODERN_FORTRAN)) {
     return;
   }
   const fortran = vscode.workspace.getConfiguration("fortran");
   const fortlsOn = !fortran.get<boolean>("fortls.disabled", false);
+  // both linting would show each compiler message twice
   const lintOn = config.get<string>("linter.compiler", "gfortran") !== "Disabled" &&
     fortran.get<string>("linter.compiler", "gfortran") !== "Disabled";
   if (!fortlsOn && !lintOn) {
+    // kept on purpose, with its language server and linter off
     return;
   }
-  const what = [fortlsOn ? "its language server (fortls)" : "", lintOn ? "its compiler linting" : ""]
-    .filter(Boolean)
-    .join(" and ");
-  const disable = "Turn them off";
+  const disable = "Disable Modern Fortran...";
+  const keep = "Keep it, turn off its fortls and linter";
   const never = "Don't ask again";
-  const choice = await vscode.window.showInformationMessage(
-    `The Modern Fortran extension also runs ${what}, which zfls provides. ` +
-      "Turn that off in Modern Fortran so that messages do not show twice? Modern Fortran keeps its other features.",
+  const choice = await vscode.window.showWarningMessage(
+    "The Modern Fortran extension is also enabled. zfls replaces it: the language server, " +
+      "compiler diagnostics, syntax highlighting, snippets and breakpoints. With both, two " +
+      "language servers, two linters and two sets of grammars compete for Fortran files, so " +
+      "disable Modern Fortran. (zfls does not have its formatting and run/debug commands yet.)",
     disable,
+    keep,
     never,
   );
   if (choice === disable) {
+    await vscode.commands.executeCommand("extension.open", MODERN_FORTRAN);
+    void vscode.window.showInformationMessage(
+      'Select "Disable" on the Modern Fortran page, then reload the window.',
+    );
+  } else if (choice === keep) {
     if (lintOn) {
       await fortran.update("linter.compiler", "Disabled", vscode.ConfigurationTarget.Global);
     }

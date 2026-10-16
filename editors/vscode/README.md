@@ -19,13 +19,17 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 The extension includes the `zfls` executable for Windows, Linux and macOS
 (x64 and ARM64). Nothing else needs to be installed.
 
+It replaces the Modern Fortran extension rather than working alongside it:
+disable Modern Fortran when you install zfls (see
+[Replacing Modern Fortran](#replacing-modern-fortran)).
+
 ## Settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `zfls.path` | empty | A `zfls` to run instead of the bundled one |
 | `zfls.arguments` | `["--incremental_sync", "--use_signature_help", "--enable_code_actions", "--hover_signature"]` | Command-line arguments; zfls accepts the same options as fortls (`zfls --help`). The default turns on signature help, code actions and signatures in hover, as Modern Fortran does |
-| `zfls.disableModernFortranCheck` | `false` | Do not offer to turn off Modern Fortran's fortls |
+| `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling Modern Fortran when both are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
 
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
@@ -41,15 +45,27 @@ With a TOML extension that supports `tomlValidation`, such as
 `fpm.toml` files are checked against the
 [fpm manifest schema](https://github.com/fortran-lang/fpm-metadata) too.
 
-## Using it with Modern Fortran
+## Replacing Modern Fortran
 
-zfls registers the same Fortran language IDs as the
+zfls is a replacement for the
 [Modern Fortran](https://marketplace.visualstudio.com/items?itemName=fortran-lang.linter-gfortran)
-extension, so the two work together. Modern Fortran also starts fortls,
-and lints with a compiler, as zfls does; when both are installed, zfls
-offers to turn those off (`fortran.fortls.disabled`,
-`fortran.linter.compiler`), so that messages do not show twice, leaving
-Modern Fortran's other features in place.
+extension, not a companion to it. Both register the same Fortran language
+IDs, grammars and snippets, and Modern Fortran starts its own language
+server (fortls) and compiler linting, so with both enabled they compete
+for Fortran files and you get duplicate completions, hovers and
+diagnostics.
+
+When Modern Fortran is enabled, zfls recommends disabling it and opens its
+page in the Extensions view, where you select **Disable** (an extension
+cannot disable another one), then reload the window.
+
+zfls does not have Modern Fortran's formatting (findent/fprettify) and
+run/debug commands yet. If you rely on those, you can choose **Keep it,
+turn off its fortls and linter** instead: that stops only Modern Fortran's
+language server (`fortran.fortls.disabled`) and its compiler linting
+(`fortran.linter.compiler`), so zfls answers the language requests and
+shows the compiler's messages while Modern Fortran keeps its other
+commands. Its grammars still apply alongside zfls's in that case.
 
 ## Compiler diagnostics
 
