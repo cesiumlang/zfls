@@ -487,7 +487,18 @@ pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     const use_mod = m.group(2).?;
     var only: std.ArrayList([]const u8) = .empty;
     var renames: std.ArrayList([2][]const u8) = .empty;
-    if (m.group(3) != null and m.group(3).?.len > 0) {
+    if (m.group(3) == null or m.group(3).?.len == 0) {
+        // without ONLY every public name comes, some renamed: `use m, a => b`
+        var it = std.mem.splitScalar(u8, trailing, ',');
+        while (it.next()) |item| {
+            const parts = try str.split(a, item, "=>");
+            if (parts.len != 2) continue;
+            const local = str.strip(parts[0]);
+            const original = str.strip(parts[1]);
+            if (local.len == 0 or original.len == 0) continue;
+            try renames.append(a, .{ local, original });
+        }
+    } else {
         var it = std.mem.splitScalar(u8, trailing, ',');
         while (it.next()) |only_stmt| {
             const parts = try str.split(a, only_stmt, "=>");

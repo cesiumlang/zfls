@@ -132,6 +132,11 @@ pub const StrMap = struct {
     keys: std.ArrayList([]const u8) = .empty,
     values: std.ArrayList([]const u8) = .empty,
 
+    pub fn hasValue(self: *const StrMap, v: []const u8) bool {
+        for (self.values.items) |value| if (std.mem.eql(u8, value, v)) return true;
+        return false;
+    }
+
     pub fn get(self: *const StrMap, k: []const u8) ?[]const u8 {
         for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) return self.values.items[i];
         return null;
@@ -1867,14 +1872,27 @@ pub const Ast = struct {
         for (self.linkable_objs.items) |o| try o.resolveLink(env);
     }
 
+    /// The workspace path of the file that an INCLUDE statement names: searched
+    /// in the directory of the including file, then in `include_dirs`
+    /// (absolute), as `#include` is (upstream #301)
+    fn findInclude(workspace: anytype, file_dir: []const u8, include_dirs: []const []const u8, name: []const u8, tmp: Allocator) !?[]const u8 {
+        // `#include` directives are resolved to absolute paths by the preprocessor
+        if (std.fs.path.isAbsolute(name)) return try parser.normPath(tmp, name);
+        const local = try parser.normPath(tmp, try std.fs.path.join(tmp, &.{ file_dir, name }));
+        if (workspace.get(local) != null) return local;
+        for (include_dirs) |dir| {
+            const candidate = try parser.normPath(tmp, try std.fs.path.join(tmp, &.{ dir, name }));
+            if (workspace.get(candidate) != null) return candidate;
+        }
+        return null;
+    }
+
     /// Link the objects of included files into the including scopes
-    pub fn resolveIncludes(self: *Ast, workspace: anytype, only_path: ?[]const u8, tmp: Allocator) !void {
+    pub fn resolveIncludes(self: *Ast, workspace: anytype, include_dirs: []const []const u8, only_path: ?[]const u8, tmp: Allocator) !void {
         const path = self.path orelse return;
         const file_dir = std.fs.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
-            // `#include` directives are resolved to absolute paths by the preprocessor
-            const joined = if (std.fs.path.isAbsolute(inc.path)) inc.path else try std.fs.path.join(tmp, &.{ file_dir, inc.path });
-            const file_path = try parser.normPath(tmp, joined);
+            const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse continue;
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
             const parent_scope = self.getInnerScope(inc.line_number);
             const include_file = workspace.get(file_path) orelse continue;
@@ -2096,7 +2114,10 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         const use_scope = env.global(scope.file_ast, use_mod) orelse continue;
         if (std.mem.eql(u8, use_mod, name_lower)) return use_scope;
         if (use_info.only_list.len() > 0 and !use_info.only_list.contains(name_lower)) continue;
-        const mod_name = use_info.rename_map.get(name_lower) orelse name_lower;
+        const renamed = use_info.rename_map.get(name_lower);
+        // a renamed entity is not accessible under its original name
+        if (renamed == null and use_info.rename_map.hasValue(name_lower)) continue;
+        const mod_name = renamed orelse name_lower;
         if (try checkScope(env, use_scope, mod_name, true, null)) |v| return v;
     }
     // Only search local and imported names for interfaces
