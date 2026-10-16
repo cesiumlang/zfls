@@ -807,6 +807,9 @@ pub const FortranFile = struct {
     text: []u8 = &.{},
     /// Preprocessed lines (null: identical to `lines`), owned by `pp_arena`
     pp_lines: ?[][]const u8 = null,
+    /// Line ranges of `pp_lines` excluded by preprocessor conditionals,
+    /// owned by `pp_arena`
+    pp_skips: []const pp.Skip = &.{},
     pp_arena: std.heap.ArenaAllocator,
     pp_defs: pp.Defs = .empty,
     fixed: bool = false,
@@ -852,6 +855,7 @@ pub const FortranFile = struct {
 
     fn resetPp(self: *FortranFile) void {
         self.pp_lines = null;
+        self.pp_skips = &.{};
         // pp_defs live in pp_arena too, keep them: they are replaced by preprocess
     }
 
@@ -1010,7 +1014,9 @@ pub const FortranFile = struct {
                     }
                     next_line = self.getLine(line_ind, pp_content) orelse break;
                     line_ind += 1;
-                    if (helpers.isPpDirective(next_line)) {
+                    // a line of an inactive conditional branch is not part of
+                    // the statement (hansec #203)
+                    if (helpers.isPpDirective(next_line) or (pp_content and self.ppSkipped(line_ind - 1))) {
                         next_line = "";
                         try post_lines.append(a, "");
                         continue;
@@ -1030,6 +1036,13 @@ pub const FortranFile = struct {
         if (strip_comment) curr_line = self.stripComment(curr_line);
         std.mem.reverse([]const u8, pre_lines.items);
         return .{ .pre = pre_lines.items, .curr = curr_line, .post = post_lines.items };
+    }
+
+    /// Whether line `line_no` (0-based) is excluded by a preprocessor
+    /// conditional
+    fn ppSkipped(self: *const FortranFile, line_no: usize) bool {
+        for (self.pp_skips) |reg| if (reg.start <= line_no + 1 and line_no + 1 <= reg.end) return true;
+        return false;
     }
 
     pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
@@ -1105,6 +1118,7 @@ pub const FortranFile = struct {
             // The buffer is rebuilt, which the preprocessed lines that are
             // the raw lines themselves must follow; the others are in pp_arena
             const old_pp = self.pp_lines;
+            const old_skips = self.pp_skips;
             var raw: []bool = &.{};
             if (old_pp) |pl| {
                 raw = try a.alloc(bool, pl.len);
@@ -1119,6 +1133,7 @@ pub const FortranFile = struct {
                 }
                 pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, self.lines.items[rng.sl]);
                 self.pp_lines = pl;
+                self.pp_skips = old_skips;
             }
             return self.checkChangeReparse(@intCast(rng.sl));
         }
@@ -1173,10 +1188,12 @@ pub const FortranFile = struct {
     pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, trace: ?Trace) !pp.Output {
         _ = self.pp_arena.reset(.free_all);
         self.pp_lines = null;
+        self.pp_skips = &.{};
         self.pp_defs = .empty;
         const a = self.pp_arena.allocator();
         const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, trace);
         self.pp_lines = out.lines;
+        self.pp_skips = out.skips;
         self.pp_defs = out.defs;
         return out;
     }
@@ -1252,6 +1269,7 @@ pub const FortranFile = struct {
         } else {
             p.dbg("=== No PreProc ===\n", .{});
             self.pp_lines = null;
+            self.pp_skips = &.{};
         }
         try p.run();
         return p.file_ast;

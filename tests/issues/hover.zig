@@ -412,3 +412,38 @@ test "#478 a Markdown list in a parameter's documentation does not indent the ne
     // a blank line ends the list, so `baz` is not a continuation of its last item
     try h.check(478, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "foo(1, 2)", 0, 1), "\n\n`baz`"));
 }
+
+test "hansec #203 preprocessor directives inside a continued declaration" {
+    const files = [_]h.File{.{
+        .name = "t.F90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  REAL &
+        \\#ifdef X
+        \\  , POINTER &
+        \\#else
+        \\  , ALLOCATABLE &
+        \\#endif
+        \\  :: v(:)
+        \\  print *, v
+        \\end program p
+        \\
+        ,
+    }};
+    const Case = struct { defs: []const @import("zfls").settings.PpDef, want: []const u8, not: []const u8 };
+    const outcome: anyerror!void = blk: {
+        for ([_]Case{
+            .{ .defs = &.{}, .want = "ALLOCATABLE", .not = "POINTER" },
+            .{ .defs = &.{.{ .name = "X", .value = "" }}, .want = "POINTER", .not = "ALLOCATABLE" },
+        }) |c| {
+            const w = try h.Workspace.init(&files, .{ .pp_defs = c.defs });
+            defer w.deinit();
+            const text = (try w.hover("t.F90", w.pos("t.F90", "print *, v", 0, 9))) orelse
+                break :blk h.unmet("no hover on v (X defined: {})", .{c.defs.len > 0});
+            if (std.mem.indexOf(u8, text, c.want) == null or std.mem.indexOf(u8, text, c.not) != null)
+                break :blk h.unmet("hover of v (X defined: {}): {s}", .{ c.defs.len > 0, text });
+        }
+    };
+    try h.checkIn(.hansec, 203, .fixed, outcome);
+}
