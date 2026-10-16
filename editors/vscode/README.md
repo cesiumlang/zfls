@@ -10,6 +10,7 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - diagnostics
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives
+- snippets for program units and constructs (see [Snippets](#snippets))
 - breakpoints in Fortran files, for debuggers such as C/C++ (cppdbg,
   cppvsdbg) and CodeLLDB
 - a Fortran file icon, in file icon themes that use the language's icon
@@ -38,6 +39,27 @@ extension, so the two work together. Modern Fortran also starts fortls,
 though; when both are installed, zfls offers to turn that off
 (`fortran.fortls.disabled`), leaving Modern Fortran's other features, such
 as linting with a compiler, in place.
+
+## Snippets
+
+Type a prefix and pick the snippet from the completion list:
+
+| Prefix | Inserts |
+| --- | --- |
+| `program`, `module`, `submodule` | A program unit with `implicit none` |
+| `fun`, `sub` | A function with a result variable, a subroutine |
+| `interface`, `abstract` | An interface block, an abstract interface |
+| `typ`, `typc`, `proc` | A derived type with `contains`, a type with a type-bound procedure, a type-bound procedure binding |
+| `if`, `ife`, `el`, `else` | A one-line `if`, an `if` block, an `if`/`else` block, `else if` and `else` branches |
+| `do`, `dow`, `doc` | `do`, `do while` and `do concurrent` loops |
+| `selc`, `selt` | `select case`, `select type` |
+| `block`, `associate`, `where`, `enum` | Those constructs |
+| `imp` | `implicit none` |
+| `modoc` | A module documentation header |
+
+The fixed-form snippets indent with spaces and keep every line at the
+column where the prefix was typed, so type the prefix at column 7 or later.
+Most snippets are adapted from those of Modern Fortran.
 
 ## Commands
 

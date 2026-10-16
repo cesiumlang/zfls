@@ -249,3 +249,61 @@ test "#495 hover and definition inside a file that is #included into a module" {
         break :blk h.expect(std.mem.endsWith(u8, l.uri, "hello.F90"), "definition is in {s}", .{l.uri});
     });
 }
+
+test "hansec #202 a comment inside a continued fixed-form declaration does not end it" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      program t
+        \\      real*8 x,y
+        \\     & ,z,a ! comment
+        \\     & ,d,dd
+        \\      dd=4
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 202, .fixed, w.expectHoverContains("t.f", w.pos("t.f", "dd=4", 0, 0), "REAL*8"));
+}
+
+test "hansec #155 a comment inside a continued fixed-form IF keeps its THEN" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      subroutine s(x, y, z)
+        \\      real x, y, z
+        \\      if ((x .ne. y) .and. ! c1
+        \\     &    (z .eq. x)) then
+        \\         x = 1
+        \\      end if
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    // the IF block opens, so the subroutine still contains it at `x = 1`
+    const syms = try w.documentSymbols("t.f");
+    try h.checkIn(.hansec, 155, .fixed, blk: {
+        try w.expectNoDiagnostics("t.f");
+        break :blk h.expect(syms.len > 0, "no symbols", .{});
+    });
+}
+
+test "a ! inside a string continued on the next fixed-form line is no comment" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      program t
+        \\      character*20 msg, other
+        \\      data msg /'hi there!
+        \\     & yes'/
+        \\      integer n
+        \\      n = 1
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f", w.pos("t.f", "n = 1", 0, 0), "INTEGER");
+}

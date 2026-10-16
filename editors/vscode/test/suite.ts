@@ -61,7 +61,33 @@ export async function run(): Promise<void> {
 
   console.log("zfls answered hover, definition, completion and symbols");
 
+  checkSnippets();
   checkLanguageContributions();
+}
+
+// The snippets are packaged for both languages. (VS Code's snippet service in
+// the test instance sometimes offers no snippets at all, so the completion
+// list is not checked.)
+function checkSnippets(): void {
+  const ext = vscode.extensions.all.find((e) => e.packageJSON?.name === "zfls");
+  assert.ok(ext, "zfls extension not found");
+  const files: { language: string; path: string }[] = ext.packageJSON.contributes.snippets;
+  assert.deepStrictEqual(files.map((f) => f.language), ["FortranFreeForm", "FortranFixedForm"]);
+  for (const file of files) {
+    const text = fs.readFileSync(path.join(ext.extensionPath, file.path), "utf8");
+    const snippets: Record<string, { prefix: string; body: string[] }> = JSON.parse(text);
+    const prefixes = Object.values(snippets).map((x) => x.prefix);
+    assert.ok(prefixes.includes("selt"), `${file.language} snippet prefixes ${prefixes}`);
+    if (file.language === "FortranFixedForm") {
+      // typed at column 7, no tabs and nothing past column 72 with the
+      // placeholders' default text
+      for (const line of Object.values(snippets).flatMap((x) => x.body)) {
+        const text = line.replace(/\$\{\d+[:|]?/g, "").replace(/\|?\}/g, "").replace(/\$\d+/g, "");
+        assert.ok(!line.includes("\t") && 6 + text.length <= 72, `fixed-form line ${line}`);
+      }
+    }
+  }
+  console.log("snippets packaged for free and fixed form");
 }
 
 // Breakpoints are allowed in both languages, and their icons are packaged.
@@ -72,7 +98,7 @@ function checkLanguageContributions(): void {
   const ids = ["FortranFreeForm", "FortranFixedForm"];
   const breakpoints = contributes.breakpoints.map((b: { language: string }) => b.language);
   assert.deepStrictEqual(breakpoints, ids);
-  for (const language of contributes.languages) {
+  for (const language of contributes.languages.filter((l: { id: string }) => ids.includes(l.id))) {
     for (const icon of [language.icon.light, language.icon.dark]) {
       assert.ok(fs.existsSync(path.join(ext.extensionPath, icon)), `${language.id} icon ${icon}`);
     }

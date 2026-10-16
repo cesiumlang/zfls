@@ -23,7 +23,7 @@
     "lsp"
   ],
   "engines": {
-    "vscode": "^1.91.0"
+    "vscode": "^1.102.0"
   },
   "main": "./dist/extension.js",
   "activationEvents": [],
@@ -120,6 +120,16 @@
         ]
       }
     ],
+    "snippets": [
+      {
+        "language": "FortranFreeForm",
+        "path": "./snippets/fortran-free-form.json"
+      },
+      {
+        "language": "FortranFixedForm",
+        "path": "./snippets/fortran-fixed-form.json"
+      }
+    ],
     "configuration": {
       "title": "zfls",
       "properties": {
@@ -184,7 +194,7 @@
   },
   "devDependencies": {
     "@types/node": "20.19.0",
-    "@types/vscode": "1.91.0",
+    "@types/vscode": "1.102.0",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",

@@ -781,6 +781,23 @@ fn continuationAmpersand(line: []const u8) ?usize {
     return if (amper < comment) amper else null;
 }
 
+/// A fixed-form line without its trailing `!` comment. A `!` inside a
+/// string, also one left open to continue on the next line, is no comment.
+fn fixedNoComment(a: Allocator, line: []const u8) ![]const u8 {
+    _ = a;
+    var quote: u8 = 0;
+    for (line, 0..) |c, i| {
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+        } else if (c == '\'' or c == '"') {
+            quote = c;
+        } else if (c == '!') {
+            return str.rstrip(line[0..i]);
+        }
+    }
+    return line;
+}
+
 pub const FortranFile = struct {
     gpa: Allocator,
     path: []const u8,
@@ -967,11 +984,18 @@ pub const FortranFile = struct {
                     var next_line = self.getLine(line_ind, pp_content) orelse "";
                     line_ind += 1;
                     var cont = helpers.isFixedCont(next_line);
+                    // a comment ends its line only: one before a continuation
+                    // must not cut off the rest of the statement (hansec #202)
+                    if (cont) curr_line = try fixedNoComment(a, curr_line);
                     while (cont and line_ind < n) {
                         try post_lines.append(a, try std.mem.concat(a, u8, &.{ "      ", str.from(next_line, 6) }));
                         next_line = self.getLine(line_ind, pp_content) orelse "";
                         line_ind += 1;
                         cont = helpers.isFixedCont(next_line);
+                        if (cont) {
+                            const last = &post_lines.items[post_lines.items.len - 1];
+                            last.* = try fixedNoComment(a, last.*);
+                        }
                     }
                 }
             } else {
