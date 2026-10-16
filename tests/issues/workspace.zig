@@ -53,3 +53,32 @@ test "#536 a configuration file does not discard the preprocessor definitions gi
     const syms = try w.workspaceSymbols("foo_mod");
     try h.check(536, .fixed, h.expect(syms.len > 0, "foo_mod is not found: the config file dropped --pp_defs", .{}));
 }
+
+test "#558 an unreadable directory under a source_dirs glob is skipped" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text = "{\"source_dirs\": [\"./*\"]}\n" },
+        .{ .name = "sub/bar.f90", .text =
+        \\module bar_mod
+        \\end module bar_mod
+        \\
+        },
+    }, .{
+        .unreadable = &.{"locked"},
+    });
+    defer w.deinit();
+    const syms = try w.workspaceSymbols("bar_mod");
+    try h.check(558, .fixed, h.expect(syms.len > 0, "bar_mod is not found: the unreadable directory broke indexing", .{}));
+}
+
+test "#536 a broken symlink under the workspace is skipped" {
+    const w = try h.Workspace.init(&.{.{ .name = "sub/bar.f90", .text =
+    \\module bar_mod
+    \\end module bar_mod
+    \\
+    }}, .{
+        .links = &.{.{ .name = "dangling.f90", .target = "does_not_exist.f90" }},
+    });
+    defer w.deinit();
+    const syms = try w.workspaceSymbols("bar_mod");
+    try h.check(536, .fixed, h.expect(syms.len > 0, "bar_mod is not found: the broken symlink broke indexing", .{}));
+}

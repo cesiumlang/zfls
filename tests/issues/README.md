@@ -36,6 +36,8 @@ give the same answer, and the test fails for the reason in the issue.
 | --- | --- | --- | --- | --- |
 | [#568](https://github.com/fortran-lang/fortls/issues/568) | plain `USE` after a `USE ONLY` through a re-exporting module | diagnostics | fixed (patched) | fails, same cause |
 | [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | fixed (patched) | fails, same cause |
+| [#536](https://github.com/fortran-lang/fortls/issues/536) | broken symlink under the workspace | workspace | fixed | crashes (per the issue) |
+| [#558](https://github.com/fortran-lang/fortls/issues/558) | unreadable directory under a `source_dirs` glob (POSIX only; skipped on Windows and as root) | workspace | fixed | crashes (per the issue) |
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#478](https://github.com/fortran-lang/fortls/issues/478) | Markdown list in a parameter's docs indents the next parameter (fixture rebuilt from the screenshot) | hover | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | fixed (patched) | fails, same cause |
@@ -76,10 +78,6 @@ Notes:
 
 ### Not tested
 
-- [#558](https://github.com/fortran-lang/fortls/issues/558) (an unreadable
-  directory under a `source_dirs` glob) and the broken symlink of
-  [#536](https://github.com/fortran-lang/fortls/issues/536) need file
-  permissions and symlinks, which the harness does not set up yet.
 - [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
   test suite on Python 3.14; it does not apply to zfls.
 - The feature requests and discussions have no behavior to test yet:
