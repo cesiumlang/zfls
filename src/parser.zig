@@ -732,8 +732,10 @@ fn continuationAmpersand(line: []const u8) ?usize {
 pub const FortranFile = struct {
     gpa: Allocator,
     path: []const u8,
-    /// Raw lines, each owned by `gpa`
-    lines: std.ArrayList([]u8) = .empty,
+    /// Raw lines: slices of `text`
+    lines: std.ArrayList([]const u8) = .empty,
+    /// The lines one after another, without line breaks, owned by `gpa`
+    text: []u8 = &.{},
     /// Preprocessed lines (null: identical to `lines`), owned by `pp_arena`
     pp_lines: ?[][]const u8 = null,
     pp_arena: std.heap.ArenaAllocator,
@@ -768,16 +770,11 @@ pub const FortranFile = struct {
 
     /// Frees the file but not its AST (ASTs are managed by the workspace)
     pub fn destroy(self: *FortranFile) void {
-        self.freeLines();
+        self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
         self.pp_arena.deinit();
         self.gpa.free(self.path);
         self.gpa.destroy(self);
-    }
-
-    fn freeLines(self: *FortranFile) void {
-        for (self.lines.items) |l| self.gpa.free(l);
-        self.lines.clearRetainingCapacity();
     }
 
     pub fn nLines(self: *const FortranFile) usize {
@@ -789,32 +786,66 @@ pub const FortranFile = struct {
         // pp_defs live in pp_arena too, keep them: they are replaced by preprocess
     }
 
-    /// Set file contents (copies the lines)
+    /// Set file contents (copies the lines into one buffer)
     pub fn setContents(self: *FortranFile, new_lines: []const []const u8, detect_format: bool) !void {
-        var fresh: std.ArrayList([]u8) = .empty;
-        errdefer {
-            for (fresh.items) |l| self.gpa.free(l);
-            fresh.deinit(self.gpa);
-        }
+        var total: usize = 0;
+        for (new_lines) |l| total += l.len;
+        const buf = try self.gpa.alloc(u8, total);
+        errdefer self.gpa.free(buf);
+        var fresh: std.ArrayList([]const u8) = .empty;
+        errdefer fresh.deinit(self.gpa);
         try fresh.ensureTotalCapacity(self.gpa, new_lines.len);
-        for (new_lines) |l| fresh.appendAssumeCapacity(try self.gpa.dupe(u8, l));
-        self.freeLines();
+        var at: usize = 0;
+        for (new_lines) |l| {
+            @memcpy(buf[at .. at + l.len], l);
+            fresh.appendAssumeCapacity(buf[at .. at + l.len]);
+            at += l.len;
+        }
+        self.replaceText(buf, fresh);
+        if (detect_format) self.fixed = helpers.detectFixedFormat(self.lines.items);
+    }
+
+    /// Take `buf` (owned by `gpa`) and the lines in it as the contents
+    fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
+        self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
-        self.lines = fresh;
+        self.text = buf;
+        self.lines = new_lines;
         self.resetPp();
-        if (detect_format) self.fixed = helpers.detectFixedFormat(@ptrCast(self.lines.items));
     }
 
     /// Set contents from text; returns false if unchanged (same hash)
     pub fn setText(self: *FortranFile, text_in: []const u8) !bool {
-        var arena = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena.deinit();
-        const a = arena.allocator();
-        const text = try std.mem.replaceOwned(u8, a, text_in, "\t", " ");
+        return self.setTextOwned(try self.gpa.dupe(u8, text_in));
+    }
+
+    /// `setText` taking ownership of `text` (allocated by `gpa`): the lines
+    /// are slices of it, without a copy
+    pub fn setTextOwned(self: *FortranFile, text: []u8) !bool {
+        errdefer self.gpa.free(text);
+        std.mem.replaceScalar(u8, text, '\t', ' ');
         const h = std.hash.Wyhash.hash(0, text);
-        if (self.hash != null and self.hash.? == h) return false;
+        if (self.hash != null and self.hash.? == h) {
+            self.gpa.free(text);
+            return false;
+        }
+        var fresh: std.ArrayList([]const u8) = .empty;
+        errdefer fresh.deinit(self.gpa);
+        var start: usize = 0;
+        var i: usize = 0;
+        while (i < text.len) {
+            const c = text[i];
+            if (c == '\n' or c == '\r') {
+                try fresh.append(self.gpa, text[start..i]);
+                if (c == '\r' and i + 1 < text.len and text[i + 1] == '\n') i += 1;
+                i += 1;
+                start = i;
+            } else i += 1;
+        }
+        try fresh.append(self.gpa, text[start..]);
         self.hash = h;
-        try self.setContents(try splitLines(a, text), true);
+        self.replaceText(text, fresh);
+        self.fixed = helpers.detectFixedFormat(self.lines.items);
         return true;
     }
 
@@ -826,8 +857,7 @@ pub const FortranFile = struct {
             error.OutOfMemory => error.OutOfMemory,
             else => error.ReadFailed,
         };
-        defer self.gpa.free(data);
-        return self.setText(data);
+        return self.setTextOwned(data);
     }
 
     pub fn getLine(self: *const FortranFile, line_no: usize, pp_content: bool) ?[]const u8 {
@@ -993,10 +1023,27 @@ pub const FortranFile = struct {
         // Single line edit
         if (rng.sl == rng.el and text_split.len == 1) {
             const prev = self.lines.items[rng.sl];
-            const new_line = try std.mem.concat(self.gpa, u8, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
-            self.gpa.free(prev);
-            self.lines.items[rng.sl] = new_line;
-            if (self.pp_lines) |pl| pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, new_line);
+            const new_line = try std.mem.concat(a, u8, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
+            const replaced = try a.dupe([]const u8, self.lines.items);
+            replaced[rng.sl] = new_line;
+            // The buffer is rebuilt, which the preprocessed lines that are
+            // the raw lines themselves must follow; the others are in pp_arena
+            const old_pp = self.pp_lines;
+            var raw: []bool = &.{};
+            if (old_pp) |pl| {
+                raw = try a.alloc(bool, pl.len);
+                const lo = @intFromPtr(self.text.ptr);
+                const hi = lo + self.text.len;
+                for (pl, raw) |l, *r| r.* = @intFromPtr(l.ptr) >= lo and @intFromPtr(l.ptr) < hi;
+            }
+            try self.setContents(replaced, false);
+            if (old_pp) |pl| {
+                for (pl, raw, 0..) |*l, r, i| {
+                    if (r) l.* = self.lines.items[i];
+                }
+                pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, self.lines.items[rng.sl]);
+                self.pp_lines = pl;
+            }
             return self.checkChangeReparse(@intCast(rng.sl));
         }
 
@@ -1059,7 +1106,7 @@ pub const FortranFile = struct {
         self.pp_lines = null;
         self.pp_defs = .empty;
         const a = self.pp_arena.allocator();
-        const out = try pp.preprocessFile(a, io, @ptrCast(self.lines.items), self.path, defs, include_dirs, trace);
+        const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, trace);
         self.pp_lines = out.lines;
         self.pp_defs = out.defs;
         return out;
