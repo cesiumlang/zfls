@@ -860,6 +860,7 @@ pub const Obj = struct {
         if (self.getDocumentation()) |d| try doc_strs.append(a, d);
         if (!long) return;
         var has_args = true;
+        var in_list = false;
         for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse continue;
             if (@as(i64, @intCast(i)) == drop_arg) continue;
@@ -870,9 +871,22 @@ pub const Obj = struct {
                     try doc_strs.append(a, "\n**Parameters:**  ");
                     has_args = false;
                 }
-                try doc_strs.append(a, str.strip(try std.fmt.allocPrint(a, "`{s}` {s}", .{ arg_obj.name, d })));
+                // a list in the previous parameter's text would swallow this one
+                const entry = str.strip(try std.fmt.allocPrint(a, "`{s}` {s}", .{ arg_obj.name, d }));
+                try doc_strs.append(a, if (in_list) try std.fmt.allocPrint(a, "\n{s}", .{entry}) else entry);
+                in_list = endsInListItem(entry);
             };
         }
+    }
+
+    /// Whether the last line of a Markdown text is a list item (`- x`, `* x`, `+ x`, `1. x`)
+    fn endsInListItem(text: []const u8) bool {
+        const nl = std.mem.lastIndexOfScalar(u8, text, '\n');
+        const line = std.mem.trimStart(u8, if (nl) |n| text[n + 1 ..] else text, " \t");
+        if (line.len >= 2 and (line[0] == '-' or line[0] == '*' or line[0] == '+') and line[1] == ' ') return true;
+        var i: usize = 0;
+        while (i < line.len and std.ascii.isDigit(line[i])) i += 1;
+        return i > 0 and i + 1 < line.len and (line[i] == '.' or line[i] == ')') and line[i + 1] == ' ';
     }
 
     pub const ArgSig = struct { label: []const u8, doc_md: ?[]const u8 = null };
