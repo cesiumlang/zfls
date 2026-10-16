@@ -59,6 +59,25 @@ export async function run(): Promise<void> {
   assert.ok(names.includes("shapes"), `symbols ${names}`);
 
   console.log("zfls answered hover, definition, completion and symbols");
+
+  await checkSnippets();
+}
+
+// The snippets are packaged and offered in both free and fixed form.
+async function checkSnippets(): Promise<void> {
+  for (const [language, line] of [["FortranFreeForm", "selt"], ["FortranFixedForm", "      selt"]]) {
+    const doc = await vscode.workspace.openTextDocument({ language, content: line });
+    const end = doc.lineAt(0).range.end;
+    const snippets = await poll(`${language} snippets`, async () => {
+      const list = await vscode.commands.executeCommand<vscode.CompletionList>(
+        "vscode.executeCompletionItemProvider", doc.uri, end);
+      const found = list.items.filter((i) => i.kind === vscode.CompletionItemKind.Snippet);
+      return found.length > 0 ? found : undefined;
+    });
+    const labels = snippets.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(labels.includes("selt"), `${language} snippets ${labels}`);
+  }
+  console.log("snippets offered in free and fixed form");
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {
