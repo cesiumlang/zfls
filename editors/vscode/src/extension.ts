@@ -10,6 +10,8 @@ import {
 } from "vscode-languageclient/node";
 
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
+/** The default of `zfls.arguments` (package.json), as Modern Fortran starts fortls */
+const defaultArguments = ["--incremental_sync", "--use_signature_help", "--enable_code_actions", "--hover_signature"];
 
 let client: LanguageClient | undefined;
 let output: vscode.LogOutputChannel | undefined;
@@ -54,7 +56,7 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     }
     return;
   }
-  const args = config.get<string[]>("arguments", ["--incremental_sync"]);
+  const args = config.get<string[]>("arguments", defaultArguments);
   output?.info(`Starting ${command} ${args.join(" ")}`);
 
   // no `transport`: stdio is the default, and TransportKind.stdio would
