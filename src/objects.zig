@@ -77,7 +77,7 @@ pub const UseStmt = struct {
     mod_name: []const u8,
     only_list: StrSet = .{},
     rename_map: StrMap = .{},
-    line_number: i64 = 0,
+    line_number: usize = 0,
     is_import: bool = false,
     import_type: ImportType = .default,
     /// Parent scope of IMPORT statement i.e. parent of the interface
@@ -182,8 +182,8 @@ pub const Obj = struct {
     kind: Kind,
     name: []const u8,
     fqsn: []const u8 = "",
-    sline: i64 = 0,
-    eline: i64 = -1,
+    sline: usize = 0,
+    eline: usize = 0,
     vis: i8 = 0,
     def_vis: i8 = 0,
     doc_str: ?[]const u8 = null,
@@ -198,8 +198,8 @@ pub const Obj = struct {
     members: std.ArrayList([]const u8) = .empty,
     use: std.ArrayList(*UseStmt) = .empty,
     inherit: ?[]const u8 = null,
-    contains_start: ?i64 = null,
-    implicit_line: ?i64 = null,
+    contains_start: ?usize = null,
+    implicit_line: ?usize = null,
 
     // Type
     in_children: std.ArrayList(*Obj) = .empty,
@@ -283,7 +283,7 @@ pub const Obj = struct {
     }
 
     /// Create a Scope-derived object (`Scope.__init__`)
-    pub fn newScope(file_ast: *Ast, kind: Kind, line_number: i64, name: []const u8, keywords: []const u8) !*Obj {
+    pub fn newScope(file_ast: *Ast, kind: Kind, line_number: usize, name: []const u8, keywords: []const u8) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -308,20 +308,20 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newInterface(file_ast: *Ast, line_number: i64, name: []const u8, abstract: bool) !*Obj {
+    pub fn newInterface(file_ast: *Ast, line_number: usize, name: []const u8, abstract: bool) !*Obj {
         const o = try newScope(file_ast, .interface, line_number, name, &.{});
         o.abstract = abstract;
         o.external = std.mem.startsWith(u8, name, "#GEN_INT") and !abstract;
         return o;
     }
 
-    pub fn newSubmodule(file_ast: *Ast, line_number: i64, name: []const u8, ancestor_name: []const u8) !*Obj {
+    pub fn newSubmodule(file_ast: *Ast, line_number: usize, name: []const u8, ancestor_name: []const u8) !*Obj {
         const o = try newScope(file_ast, .submodule, line_number, name, &.{});
         o.ancestor_name = try o.al().dupe(u8, ancestor_name);
         return o;
     }
 
-    pub fn newSubroutine(file_ast: *Ast, line_number: i64, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const u8) !*Obj {
+    pub fn newSubroutine(file_ast: *Ast, line_number: usize, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const u8) !*Obj {
         const o = try newScope(file_ast, .subroutine, line_number, name, keywords);
         const a = o.al();
         o.args = try std.mem.replaceOwned(u8, a, args, " ", "");
@@ -339,7 +339,7 @@ pub const Obj = struct {
         result_name: ?[]const u8 = null,
     };
 
-    pub fn newFunction(file_ast: *Ast, line_number: i64, name: []const u8, opts: FunOpts) !*Obj {
+    pub fn newFunction(file_ast: *Ast, line_number: usize, name: []const u8, opts: FunOpts) !*Obj {
         const o = try newScope(file_ast, .function, line_number, name, opts.keywords);
         const a = o.al();
         o.args = try std.ascii.allocLowerString(a, try std.mem.replaceOwned(u8, a, opts.args, " ", ""));
@@ -352,7 +352,7 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newSelect(file_ast: *Ast, line_number: i64, name: []const u8, info: parser.SelectInfo) !*Obj {
+    pub fn newSelect(file_ast: *Ast, line_number: usize, name: []const u8, info: parser.SelectInfo) !*Obj {
         const o = try newScope(file_ast, .select, line_number, name, &.{});
         const a = o.al();
         o.select_type = info.type;
@@ -384,7 +384,7 @@ pub const Obj = struct {
     };
 
     /// `Variable.__init__`
-    pub fn newVariable(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const u8, opts: VarOpts) !*Obj {
+    pub fn newVariable(file_ast: *Ast, line_number: usize, name: []const u8, var_desc: []const u8, keywords: []const u8, opts: VarOpts) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -410,7 +410,7 @@ pub const Obj = struct {
     }
 
     /// `Method.__init__` (type-bound procedure / procedure pointer)
-    pub fn newMethod(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const u8, keyword_info: KeywordInfo, proc_ptr: ?[]const u8, link_obj: ?[]const u8) !*Obj {
+    pub fn newMethod(file_ast: *Ast, line_number: usize, name: []const u8, var_desc: []const u8, keywords: []const u8, keyword_info: KeywordInfo, proc_ptr: ?[]const u8, link_obj: ?[]const u8) !*Obj {
         const o = try newVariable(file_ast, line_number, name, var_desc, keywords, .{
             .keyword_info = keyword_info,
             .kind = proc_ptr,
@@ -565,7 +565,7 @@ pub const Obj = struct {
         for (self.children.items) |child| try child.updateFqsn(self.fqsn);
     }
 
-    pub fn end(self: *Obj, line_number: i64) void {
+    pub fn end(self: *Obj, line_number: usize) void {
         self.eline = line_number;
     }
 
@@ -573,12 +573,12 @@ pub const Obj = struct {
         self.doc_str = doc;
     }
 
-    pub fn setImplicit(self: *Obj, flag: bool, line_number: i64) void {
+    pub fn setImplicit(self: *Obj, flag: bool, line_number: usize) void {
         self.implicit_vars = flag;
         self.implicit_line = line_number;
     }
 
-    pub fn markContains(self: *Obj, line_number: i64) error{MultipleContains}!void {
+    pub fn markContains(self: *Obj, line_number: usize) error{MultipleContains}!void {
         if (self.contains_start != null) return error.MultipleContains;
         self.contains_start = line_number;
     }
@@ -1277,8 +1277,8 @@ pub const Obj = struct {
             .type => {
                 for (self.in_children.items) |in_child| {
                     if (!self.abstract and in_child.hasKeyword(KW.deferred)) {
-                        var d = Diagnostic.init(self.eline - 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
-                        d.addRelated(in_child.file_ast.path, in_child.sline - 1, "Inherited procedure declaration");
+                        var d = Diagnostic.init(self.eline -| 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+                        d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
                         try errors.append(a, d);
                     }
                 }
@@ -1286,7 +1286,7 @@ pub const Obj = struct {
             .subroutine, .function => {
                 for (self.missing_args.items) |m| {
                     try errors.append(a, Diagnostic.init(
-                        m.sline - 1,
+                        m.sline -| 1,
                         try std.fmt.allocPrint(a, "Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
                         1,
                         m.name,
@@ -1299,7 +1299,7 @@ pub const Obj = struct {
                     if (arg_obj == null) {
                         const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
                         try errors.append(a, Diagnostic.init(
-                            self.sline - 1,
+                            self.sline -| 1,
                             try std.fmt.allocPrint(a, "No matching declaration found for argument \"{s}\"", .{arg_name}),
                             1,
                             arg_name,
@@ -1341,10 +1341,10 @@ pub const Obj = struct {
         const info = known_types.get(desc_obj_name).?;
         if (info) |ti| if (ti.kind == 1) {
             if (interface) {
-                return Diagnostic.init(self.sline - 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
+                return Diagnostic.init(self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
             }
-            var d = Diagnostic.init(self.sline - 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
-            d.addRelated(ti.obj.file_ast.path, ti.obj.sline - 1, "Possible object");
+            var d = Diagnostic.init(self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
+            d.addRelated(ti.obj.file_ast.path, ti.obj.sline -| 1, "Possible object");
             return d;
         };
         return null;
@@ -1352,20 +1352,20 @@ pub const Obj = struct {
 
     pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         const a = env.tmp;
-        var fqsn_dict = std.array_hash_map.String(i64).empty;
+        var fqsn_dict = std.array_hash_map.String(usize).empty;
         var errors: std.ArrayList(Diagnostic) = .empty;
         var known_types = KnownTypes.empty;
 
         for (self.children.items) |child| {
             if (child.getType(false) == C.INTERFACE_TYPE_ID) continue;
             if (fqsn_dict.get(child.fqsn)) |v| {
-                if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline - 1);
+                if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
             } else {
-                try fqsn_dict.put(a, child.fqsn, child.sline - 1);
+                try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
             }
         }
 
-        var contains_line: i64 = -1;
+        var contains_line: ?usize = null;
         const st = self.getType(false);
         if (st == C.MODULE_TYPE_ID or st == C.SUBMODULE_TYPE_ID or st == C.SUBROUTINE_TYPE_ID or st == C.FUNCTION_TYPE_ID) {
             contains_line = self.contains_start orelse self.eline;
@@ -1374,10 +1374,10 @@ pub const Obj = struct {
 
         for (self.children.items) |child| {
             if (std.mem.startsWith(u8, child.name, "#")) continue;
-            const line_number = child.sline - 1;
+            const line_number = child.sline -| 1;
             if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
             const ct = child.getType(true);
-            if (contains_line >= child.sline and (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID)) {
+            if (contains_line != null and contains_line.? >= child.sline and (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID)) {
                 try errors.append(a, Diagnostic.init(line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
             }
             if (st == C.INTERFACE_TYPE_ID or child.getType(false) == C.INTERFACE_TYPE_ID) continue;
@@ -1391,7 +1391,7 @@ pub const Obj = struct {
                 if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                     if (st == C.FUNCTION_TYPE_ID and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                     var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
-                    d.addRelated(parent_var.file_ast.path, parent_var.sline - 1, "First declaration");
+                    d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                     try errors.append(a, d);
                 }
             }
@@ -1402,18 +1402,19 @@ pub const Obj = struct {
     pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
         const a = env.tmp;
         var errors: std.ArrayList(Diagnostic) = .empty;
-        var last_use_line: i64 = -1;
+        // lines are 1-based, so 0 is before every USE statement
+        var last_use_line: usize = 0;
         for (self.use.items) |u| {
             last_use_line = @max(last_use_line, u.line_number);
             if (u.is_import) {
                 if (self.parent == null or self.parent.?.getType(false) != C.INTERFACE_TYPE_ID) {
-                    try errors.append(a, Diagnostic.init(u.line_number - 1, "IMPORT statement outside of interface", 1, null));
+                    try errors.append(a, Diagnostic.init(u.line_number -| 1, "IMPORT statement outside of interface", 1, null));
                 }
                 continue;
             }
             if (!env.tree.contains(u.mod_name)) {
                 try errors.append(a, Diagnostic.init(
-                    u.line_number - 1,
+                    u.line_number -| 1,
                     try std.fmt.allocPrint(a, "Module \"{s}\" not found in project", .{u.mod_name}),
                     3,
                     u.mod_name,
@@ -1421,7 +1422,7 @@ pub const Obj = struct {
             }
         }
         if (self.implicit_line) |il| if (last_use_line >= il) {
-            try errors.append(a, Diagnostic.init(il - 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
+            try errors.append(a, Diagnostic.init(il -| 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
         };
         return errors.items;
     }
@@ -1429,7 +1430,7 @@ pub const Obj = struct {
     // ------------------------------------------------------------------
     // Code actions
 
-    pub const Edit = struct { sline: i64, schar: i64, eline: i64, echar: i64, new_text: []const u8 };
+    pub const Edit = struct { sline: usize, schar: usize, eline: usize, echar: usize, new_text: []const u8 };
     pub const Action = struct {
         title: []const u8,
         kind: []const u8,
@@ -1440,12 +1441,12 @@ pub const Obj = struct {
 
     fn addSubroutine(self: *const Obj, a: Allocator, interface_string: []const u8, no_contains: bool) !struct { path: ?[]const u8, edits: []Edit } {
         var edits: std.ArrayList(Edit) = .empty;
-        const line_number = self.eline - 1;
+        const line_number = self.eline -| 1;
         if (self.contains_start == null and !no_contains) {
             var first_sub_line = line_number;
             for (self.children.items) |child| {
                 const ct = child.getType(false);
-                if (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID) first_sub_line = @min(first_sub_line, child.sline - 1);
+                if (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID) first_sub_line = @min(first_sub_line, child.sline -| 1);
             }
             try edits.append(a, .{ .sline = first_sub_line, .schar = 0, .eline = first_sub_line, .echar = 0, .new_text = "CONTAINS\n" });
         }
@@ -1453,11 +1454,11 @@ pub const Obj = struct {
         return .{ .path = self.file_ast.path, .edits = edits.items };
     }
 
-    pub fn getActions(self: *const Obj, a: Allocator, sline: i64, eline: i64) !?[]Action {
+    pub fn getActions(self: *const Obj, a: Allocator, sline: usize, eline: usize) !?[]Action {
         if (self.kind != .type) return null;
         var actions: std.ArrayList(Action) = .empty;
         var edits: std.ArrayList(Edit) = .empty;
-        const line_number = self.eline - 1;
+        const line_number = self.eline -| 1;
         if (line_number < sline or line_number > eline) return actions.items;
         if (self.contains_start == null) {
             try edits.append(a, .{ .sline = line_number, .schar = 0, .eline = line_number, .echar = 0, .new_text = "CONTAINS\n" });
@@ -1483,7 +1484,7 @@ pub const Obj = struct {
             });
             try edits.appendSlice(a, res.edits);
             var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
-            d.addRelated(in_child.file_ast.path, in_child.sline - 1, "Inherited procedure declaration");
+            d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
             try diagnostics.append(a, d);
             has_edits = true;
         }
@@ -1507,32 +1508,32 @@ fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 /// A diagnostic pending conversion into an LSP diagnostic
 pub const Diagnostic = struct {
-    sline: i64,
+    sline: usize,
     message: []const u8,
     severity: i32 = 1,
     find_word: ?[]const u8 = null,
     related: ?Related = null,
 
-    pub const Related = struct { path: ?[]const u8, line: i64, message: []const u8 };
+    pub const Related = struct { path: ?[]const u8, line: usize, message: []const u8 };
 
-    pub fn init(sline: i64, message: []const u8, severity: i32, find_word: ?[]const u8) Diagnostic {
+    pub fn init(sline: usize, message: []const u8, severity: i32, find_word: ?[]const u8) Diagnostic {
         return .{ .sline = sline, .message = message, .severity = severity, .find_word = find_word };
     }
 
-    pub fn addRelated(self: *Diagnostic, path: ?[]const u8, line: i64, message: []const u8) void {
+    pub fn addRelated(self: *Diagnostic, path: ?[]const u8, line: usize, message: []const u8) void {
         self.related = .{ .path = path, .line = line, .message = message };
     }
 
     pub fn build(self: Diagnostic, a: Allocator, file: *FortranFile) !BuiltDiag {
         var sline = self.sline;
-        var schar: i64 = 0;
-        var echar: i64 = 0;
+        var schar: usize = 0;
+        var echar: usize = 0;
         if (self.find_word) |w| {
             const res = try file.findWordInCodeLine(a, sline, w, true, false, false);
             sline = res.line;
             if (res.range.start >= 0) {
-                schar = res.range.start;
-                echar = res.range.end;
+                schar = @intCast(res.range.start);
+                echar = @intCast(res.range.end);
             }
         }
         return .{
@@ -1550,10 +1551,10 @@ pub const Diagnostic = struct {
 /// LSP-ready diagnostic with byte-based columns (range_json semantics:
 /// a zero end line/char falls back to the start value)
 pub const BuiltDiag = struct {
-    sln: i64,
-    sch: i64,
-    eln: ?i64,
-    ech: ?i64,
+    sln: usize,
+    sch: usize,
+    eln: ?usize,
+    ech: ?usize,
     message: []const u8,
     severity: i32,
     related: ?Diagnostic.Related = null,
@@ -1561,8 +1562,17 @@ pub const BuiltDiag = struct {
     cols_are_codepoints: bool = false,
 };
 
+/// An END statement that does not match the scope that is open
+pub const EndError = struct {
+    /// Line of the END statement; null when it is the unnamed END of no scope at all
+    end_line: ?usize,
+    /// Line the diagnostic is reported at: the first line of the open scope,
+    /// or the END statement itself when no scope is open
+    scope_line: usize,
+};
+
 pub const IncludeInfo = struct {
-    line_number: i64,
+    line_number: usize,
     path: []const u8,
     file: ?*FortranFile = null,
     scope_objs: std.ArrayList(*Obj) = .empty,
@@ -1584,9 +1594,8 @@ pub const Ast = struct {
     private_list: std.ArrayList([]const u8) = .empty,
     scope_stack: std.ArrayList(*Obj) = .empty,
     end_stack: std.ArrayList(*const regex.Regex) = .empty,
-    pp_if: std.ArrayList([2]i64) = .empty,
     include_statements: std.ArrayList(*IncludeInfo) = .empty,
-    end_errors: std.ArrayList([2]i64) = .empty,
+    end_errors: std.ArrayList(EndError) = .empty,
     parse_errors: std.ArrayList(BuiltDiag) = .empty,
     inherit_objs: std.ArrayList(*Obj) = .empty,
     linkable_objs: std.ArrayList(*Obj) = .empty,
@@ -1658,9 +1667,9 @@ pub const Ast = struct {
         }
     }
 
-    pub fn endScope(self: *Ast, line_number: i64, check: bool) !void {
+    pub fn endScope(self: *Ast, line_number: usize, check: bool) !void {
         if ((self.current_scope == null or self.current_scope == self.none_scope) and check) {
-            try self.end_errors.append(self.allocator(), .{ -1, line_number });
+            try self.end_errors.append(self.allocator(), .{ .end_line = null, .scope_line = line_number });
             return;
         }
         self.current_scope.?.end(line_number);
@@ -1704,7 +1713,7 @@ pub const Ast = struct {
         try self.current_scope.?.use.append(self.allocator(), use_mod);
     }
 
-    pub fn addInclude(self: *Ast, path: []const u8, line_number: i64) !void {
+    pub fn addInclude(self: *Ast, path: []const u8, line_number: usize) !void {
         const a = self.allocator();
         const inc = try a.create(IncludeInfo);
         inc.* = .{ .line_number = line_number, .path = try a.dupe(u8, path) };
@@ -1721,27 +1730,19 @@ pub const Ast = struct {
         }
     }
 
-    pub fn addError(self: *Ast, msg: []const u8, sev: i32, ln: i64, sch: i64, ech: ?i64) !void {
+    pub fn addError(self: *Ast, msg: []const u8, sev: i32, ln: usize, sch: usize, ech: ?usize) !void {
         try self.parse_errors.append(self.allocator(), .{
-            .sln = ln - 1,
+            .sln = ln -| 1,
             .sch = sch,
-            .eln = ln - 1,
+            .eln = ln -| 1,
             .ech = ech,
             .message = try self.allocator().dupe(u8, msg),
             .severity = sev,
         });
     }
 
-    pub fn startPpif(self: *Ast, line_number: i64) !void {
-        try self.pp_if.append(self.allocator(), .{ line_number - 1, -1 });
-    }
-
-    pub fn endPpif(self: *Ast, line_number: i64) void {
-        if (self.pp_if.items.len > 0) self.pp_if.items[self.pp_if.items.len - 1][1] = line_number - 1;
-    }
-
     /// All scopes containing the line (all scopes when null)
-    pub fn getScopes(self: *Ast, a: Allocator, line_number: ?i64) ![]*Obj {
+    pub fn getScopes(self: *Ast, a: Allocator, line_number: ?usize) ![]*Obj {
         const ln = line_number orelse return self.scope_list.items;
         var out: std.ArrayList(*Obj) = .empty;
         for (self.scope_list.items) |scope| {
@@ -1765,11 +1766,11 @@ pub const Ast = struct {
         return single;
     }
 
-    pub fn getInnerScope(self: *Ast, line_number: i64) ?*Obj {
-        var scope_sline: i64 = -1;
+    pub fn getInnerScope(self: *Ast, line_number: usize) ?*Obj {
+        var scope_sline: ?usize = null;
         var curr: ?*Obj = null;
         for (self.scope_list.items) |scope| {
-            if (scope.sline > scope_sline and scope.sline <= line_number and line_number <= scope.eline) {
+            if ((scope_sline == null or scope.sline > scope_sline.?) and scope.sline <= line_number and line_number <= scope.eline) {
                 curr = scope;
                 scope_sline = scope.sline;
             }
@@ -1807,7 +1808,7 @@ pub const Ast = struct {
         return current;
     }
 
-    pub fn closeFile(self: *Ast, line_number: i64) !void {
+    pub fn closeFile(self: *Ast, line_number: usize) !void {
         while (self.current_scope != null) try self.endScope(line_number, false);
         if (self.none_scope) |ns| {
             ns.end(line_number);
@@ -1872,16 +1873,16 @@ pub const Ast = struct {
         try tmp_list.appendSlice(a, self.scope_list.items);
         if (self.none_scope) |ns| try tmp_list.append(a, ns);
         for (self.end_errors.items) |e| {
-            const message = if (e[0] >= 0)
-                try std.fmt.allocPrint(a, "Unexpected end of scope at line {d}", .{e[0]})
+            const message = if (e.end_line) |el|
+                try std.fmt.allocPrint(a, "Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
-            try errors.append(a, Diagnostic.init(e[1] - 1, message, 1, null));
+            try errors.append(a, Diagnostic.init(e.scope_line -| 1, message, 1, null));
         }
         for (tmp_list.items) |scope| {
             if (!scope.checkValidParent()) {
                 try errors.append(a, Diagnostic.init(
-                    scope.sline - 1,
+                    scope.sline -| 1,
                     try std.fmt.allocPrint(a, "Invalid parent for \"{s}\" declaration", .{try scope.getDesc(a)}),
                     1,
                     null,
@@ -1986,10 +1987,10 @@ pub fn getUseTree(
 pub const FindOpts = struct {
     interface: bool = false,
     local_only: bool = false,
-    var_line_number: ?i64 = null,
+    var_line_number: ?usize = null,
 };
 
-fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?i64) Allocator.Error!?*Obj {
+fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!?*Obj {
     const children = try local_scope.getChildren(env.tmp, false);
     for (children) |child| {
         if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {

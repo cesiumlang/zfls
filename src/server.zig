@@ -273,22 +273,21 @@ pub const Server = struct {
     }
 
     /// LSP character offset (UTF-16) -> byte offset on a file line
-    fn toByteCol(file: *const FortranFile, line: i64, char: i64) usize {
-        if (char < 0) return 0;
-        const text = file.getLine(line, false) orelse return @intCast(char);
-        return str.utf16ToByte(text, @intCast(char));
+    fn toByteCol(file: *const FortranFile, line: usize, char: usize) usize {
+        const text = file.getLine(line, false) orelse return char;
+        return str.utf16ToByte(text, char);
     }
 
     /// Byte offset on a file line -> LSP character offset
-    fn toLspCol(file: ?*const FortranFile, line: i64, col: i64) i64 {
-        if (col <= 0) return col;
+    fn toLspCol(file: ?*const FortranFile, line: usize, col: usize) usize {
+        if (col == 0) return 0;
         const f = file orelse return col;
         const text = f.getLine(line, false) orelse return col;
-        return @intCast(str.byteToUtf16(text, @intCast(col)));
+        return str.byteToUtf16(text, col);
     }
 
     /// `range_json` with optional end values falling back to the start
-    fn rangeOf(file: ?*const FortranFile, sln: i64, sch: i64, eln_in: ?i64, ech_in: ?i64) lsp.Range {
+    fn rangeOf(file: ?*const FortranFile, sln: usize, sch: usize, eln_in: ?usize, ech_in: ?usize) lsp.Range {
         const eln = if (eln_in) |e| (if (e != 0) e else sln) else sln;
         const ech = if (ech_in) |e| (if (e != 0) e else sch) else sch;
         return .{
@@ -297,7 +296,7 @@ pub const Server = struct {
         };
     }
 
-    fn locationOf(uri: []const u8, file: ?*const FortranFile, sln: i64, sch: i64, eln: ?i64, ech: ?i64) lsp.Location {
+    fn locationOf(uri: []const u8, file: ?*const FortranFile, sln: usize, sch: usize, eln: ?usize, ech: ?usize) lsp.Location {
         return .{ .uri = uri, .range = rangeOf(file, sln, sch, eln, ech) };
     }
 
@@ -738,8 +737,8 @@ pub const Server = struct {
                 .location = .{
                     .uri = try paths.pathToUri(a, cand.file_ast.path orelse "None"),
                     .range = .{
-                        .start = .{ .line = cand.sline - 1, .character = 0 },
-                        .end = .{ .line = cand.eline - 1, .character = 0 },
+                        .start = .{ .line = cand.sline -| 1, .character = 0 },
+                        .end = .{ .line = cand.eline -| 1, .character = 0 },
                     },
                 },
                 .containerName = container,
@@ -753,7 +752,7 @@ pub const Server = struct {
         return json.from(a, items.items);
     }
 
-    fn symbolOf(name: []const u8, kind: i64, uri: []const u8, sln: i64, eln: ?i64, container: ?[]const u8) lsp.SymbolInformation {
+    fn symbolOf(name: []const u8, kind: i64, uri: []const u8, sln: usize, eln: ?usize, container: ?[]const u8) lsp.SymbolInformation {
         return .{
             .name = name,
             .kind = kind,
@@ -777,10 +776,10 @@ pub const Server = struct {
                 scope_type = mapDocSymbolType(scope.getType(false), false);
             }
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
-            try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline - 1, scope.eline - 1, container));
+            try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
             if (scope.getType(false) == C.CLASS_TYPE_ID and !self.s.symbol_skip_mem) {
                 for (scope.children.items) |child| {
-                    try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline - 1, null, scope.name));
+                    try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
                 }
             }
         }
@@ -1120,7 +1119,7 @@ pub const Server = struct {
     // Definition lookup
 
     /// A temporary variable allocated in `a` (not owned by any AST)
-    fn tempVariable(a: Allocator, file_ast: *Ast, line: i64, name: []const u8, desc: []const u8, keywords: []const u8) !*Obj {
+    fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8, desc: []const u8, keywords: []const u8) !*Obj {
         const o = try a.create(Obj);
         o.* = .{
             .kind = .variable,
@@ -1141,7 +1140,7 @@ pub const Server = struct {
     }
 
     /// `get_definition` with `def_char` as a byte offset on the line
-    pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_line: i64, def_char: usize, hover_req: bool) !?*Obj {
+    pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_line: usize, def_char: usize, hover_req: bool) !?*Obj {
         const ast = def_file.ast orelse return null;
         const cl = try def_file.getCodeLine(a, def_line, false, true, false, true);
         const curr_line = cl.curr orelse return null;
@@ -1203,7 +1202,7 @@ pub const Server = struct {
         return null;
     }
 
-    fn definitionAt(self: *Server, a: Allocator, params: lsp.PositionParams, hover_req: bool) !?struct { file: *FortranFile, obj: *Obj, line: i64, col: usize } {
+    fn definitionAt(self: *Server, a: Allocator, params: lsp.PositionParams, hover_req: bool) !?struct { file: *FortranFile, obj: *Obj, line: usize, col: usize } {
         const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
         const pos = params.position;
         const col = toByteCol(file, pos.line, pos.character);
@@ -1214,13 +1213,10 @@ pub const Server = struct {
     fn createRefLink(self: *Server, a: Allocator, obj: *Obj) !Value {
         _ = self;
         const obj_file = obj.file_ast.file.?;
-        const res = try obj_file.findWordInCodeLine(a, obj.sline - 1, obj.name, true, false, false);
-        var schar = res.range.start;
-        var echar = res.range.end;
-        if (schar < 0) {
-            schar = 0;
-            echar = 0;
-        }
+        const res = try obj_file.findWordInCodeLine(a, obj.sline -| 1, obj.name, true, false, false);
+        const found = res.range.start >= 0;
+        const schar: usize = if (found) @intCast(res.range.start) else 0;
+        const echar: usize = if (found) @intCast(res.range.end) else 0;
         return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
     }
 
@@ -1421,7 +1417,7 @@ pub const Server = struct {
     // ----------------------------------------------------------------------
     // References / rename
 
-    const Ref = struct { line: i64, start: i64, end: i64 };
+    const Ref = struct { line: usize, start: usize, end: usize };
     const FileRefs = struct { path: []const u8, file: *FortranFile, refs: std.ArrayList(Ref) };
 
     fn hasLinkAttr(o: *const Obj) bool {
@@ -1457,11 +1453,11 @@ pub const Server = struct {
 
     /// A name that a USE statement renamed (`local => original`) and the
     /// scope of that statement
-    const RenamedImport = struct { alias: []const u8, scope: *Obj, use_line: i64 };
+    const RenamedImport = struct { alias: []const u8, scope: *Obj, use_line: usize };
 
     /// The renamed import that the word at (`line`, `col`) is the local name
     /// of, if it is one (upstream #52)
-    fn renamedImport(a: Allocator, file: *FortranFile, line: i64, col: usize, target: *const Obj) !?RenamedImport {
+    fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?RenamedImport {
         const text = file.getLine(line, false) orelse return null;
         var it = R().WORD.iterator(text);
         const word = while (it.next()) |m| {
@@ -1484,15 +1480,14 @@ pub const Server = struct {
         var name_re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "(?:\\W|^)({s})(?:\\W|$)", .{ri.alias}), regex.I) catch return &.{};
         defer name_re.deinit();
         var refs: std.ArrayList(Ref) = .empty;
-        const first: usize = @intCast(@max(ri.scope.sline - 1, 0));
-        const last: usize = @min(@as(usize, @intCast(@max(ri.scope.eline - 1, 0))), file.lines.items.len -| 1);
-        for (file.lines.items[first .. last + 1], first..) |raw_line, i_usize| {
-            const i: i64 = @intCast(i_usize);
+        const first = ri.scope.sline -| 1;
+        const last = @min(ri.scope.eline -| 1, file.lines.items.len -| 1);
+        for (file.lines.items[first .. last + 1], first..) |raw_line, i| {
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
             var it = name_re.iterator(line);
             while (it.next()) |m| {
-                if (i == ri.use_line - 1) {
+                if (i == ri.use_line -| 1) {
                     // in the USE statement only the local name, before the arrow
                     const after = str.lstrip(line[m.end(1)..]);
                     if (!std.mem.startsWith(u8, after, "=>")) continue;
@@ -1500,7 +1495,7 @@ pub const Server = struct {
                     const var_def = (try self.getDefinition(a, file, i, m.start(1) + 1, false)) orelse continue;
                     if (!std.mem.eql(u8, def_obj.fqsn, var_def.fqsn)) continue;
                 }
-                try refs.append(a, .{ .line = i, .start = @intCast(m.start(1)), .end = @intCast(m.end(1)) });
+                try refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
             }
         }
         if (refs.items.len == 0) return &.{};
@@ -1524,15 +1519,14 @@ pub const Server = struct {
         for (files.items) |file| {
             var file_refs: std.ArrayList(Ref) = .empty;
             const filename = file.path;
-            for (file.lines.items, 0..) |raw_line, i_usize| {
-                const i: i64 = @intCast(i_usize);
+            for (file.lines.items, 0..) |raw_line, i| {
                 if (raw_line.len == 0) continue;
                 const line = file.stripComment(raw_line);
                 if (line.len == 0 or line[0] == '#') continue;
                 var it = name_re.iterator(line);
                 while (it.next()) |m| {
                     if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
-                        try file_refs.append(a, .{ .line = i, .start = @intCast(m.start(1)), .end = @intCast(m.end(1)) });
+                        try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
                         continue;
                     }
                     const var_def = (try self.getDefinition(a, file, i, m.start(1) + 1, false)) orelse continue;
@@ -1556,7 +1550,7 @@ pub const Server = struct {
                         }
                         if (!hasLinkAttr(var_def)) {
                             ref_match = false;
-                        } else if (var_def.sline - 1 == i and var_def.file_ast.path != null and
+                        } else if (var_def.sline -| 1 == i and var_def.file_ast.path != null and
                             std.mem.eql(u8, var_def.file_ast.path.?, filename) and std.mem.count(u8, line, "=>") == 0 and
                             var_def.link_obj == def_obj)
                         {
@@ -1571,7 +1565,7 @@ pub const Server = struct {
                             }
                         };
                     }
-                    if (ref_match) try file_refs.append(a, .{ .line = i, .start = @intCast(m.start(1)), .end = @intCast(m.end(1)) });
+                    if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
                 }
             }
             if (file_refs.items.len > 0) try out.append(a, .{ .path = filename, .file = file, .refs = file_refs });
