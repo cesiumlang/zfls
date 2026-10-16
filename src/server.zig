@@ -1493,6 +1493,17 @@ pub const Server = struct {
         return fun.kind == .function and v.kind == .variable and v.parent == fun and std.ascii.eqlIgnoreCase(v.name, fun.name);
     }
 
+    /// Whether `x` and `y` are the interface and the implementation of the
+    /// same separate module procedure, in either order (hansec #168)
+    fn isSeparateProcedurePair(x: *const Obj, y: *const Obj) bool {
+        return isSeparateInterfaceOf(x, y) or isSeparateInterfaceOf(y, x);
+    }
+
+    fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
+        const p = iface.parent orelse return false;
+        return p.kind == .interface and iface.isModScope() and iface.link_obj == impl;
+    }
+
     /// Whether the name at `col` is the original name of a renamed import of
     /// `def_obj`, as in `use m, only: local => NAME` where `m` defines it. The
     /// original name is not visible under that name in the importing scope,
@@ -1597,7 +1608,9 @@ pub const Server = struct {
                     for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                         in_cache = true;
                     };
-                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def))) {
+                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def)) or
+                        isSeparateProcedurePair(def_obj, var_def))
+                    {
                         ref_match = true;
                     } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
                         if (type_mem) {
@@ -1640,6 +1653,9 @@ pub const Server = struct {
         var restrict: ?*FortranFile = null;
         if (std.mem.count(u8, def_obj.fqsn, ":") > 2) {
             const parent = def_obj.parent orelse return null;
+            // the implementation of a separate module procedure may be in
+            // another file (hansec #168)
+            if (parent.kind == .interface and def_obj.isModScope() and def_obj.link_obj != null) return .{ .type_mem = false, .restrict = null };
             if (parent.getType(false) == C.TypeId.class) {
                 type_mem = true;
             } else {
