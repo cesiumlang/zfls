@@ -412,3 +412,100 @@ test "#478 a Markdown list in a parameter's documentation does not indent the ne
     // a blank line ends the list, so `baz` is not a continuation of its last item
     try h.check(478, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "foo(1, 2)", 0, 1), "\n\n`baz`"));
 }
+
+test "#534 fixed-form documentation comments do not keep the indentation of the code" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      SUBROUTINE MYFUNC(PARAM1)
+        \\      !> THIS IS AN EXAMPLE FUNCTION TO DEMONSTRATE
+        \\      !! THE BROKEN PARSING OF
+        \\      !! DOCSTRINGS FOR FIXED FORMAT CODE
+        \\
+        \\      REAL, INTENT(IN) :: PARAM1
+        \\      !> THE SAME PROBLEM OCCURS
+        \\      !! FOR DOCSTRINGS FOR PARAMETERS
+        \\
+        \\      END SUBROUTINE MYFUNC
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // `!>` documents the next object, PARAM1; its continuation lines are
+        // not indented by the six columns of fixed form (a Markdown code block)
+        const param = (try w.hover("t.f", w.pos("t.f", "PARAM1", 1, 1))) orelse break :blk h.unmet("no hover on PARAM1", .{});
+        const docs = param[(std.mem.indexOf(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
+        if (std.mem.indexOf(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
+        break :blk h.expect(std.mem.indexOf(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
+    };
+    try h.check(534, .fixed, outcome);
+}
+
+test "#481 an #include path with slashes is found in the include directories" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text =
+        \\{"source_dirs": ["./**"], "include_dirs": ["include"]}
+        \\
+        },
+        .{ .name = "src/main.F90", .text =
+        \\program p
+        \\#include "petsc/finclude/petscvec.h"
+        \\#ifdef PETSC_HAVE_VEC
+        \\  integer :: from_vec
+        \\#endif
+        \\  from_vec = 1
+        \\end program p
+        \\
+        },
+        .{ .name = "include/petsc/finclude/petscvec.h", .text =
+        \\#define PETSC_HAVE_VEC
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // the macro of the header is defined
+        w.expectHoverContains("src/main.F90", w.pos("src/main.F90", "from_vec = 1", 0, 1), "INTEGER :: from_vec") catch |e| break :blk e;
+        const def = (try w.definition("src/main.F90", w.pos("src/main.F90", "finclude", 0, 1))) orelse
+            break :blk h.unmet("no definition for the include", .{});
+        break :blk h.expect(std.mem.endsWith(u8, def.uri, "petsc/finclude/petscvec.h"), "definition is {s}", .{def.uri});
+    };
+    try h.check(481, .fixed, outcome);
+}
+
+test "hansec #178 signature help skips array constructors and nested calls" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\contains
+        \\  subroutine mysub(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b(:), c, d, e
+        \\  end subroutine mysub
+        \\  integer function myfun(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b, c, d, e
+        \\    myfun = a
+        \\  end function myfun
+        \\  subroutine caller(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b, c, d, e
+        \\    integer :: x
+        \\    call mysub(a, [1, 2, 3], c, d, e)
+        \\    call mysub(a, (/1, 2, 3/), c, d, e)
+        \\    x = myfun(a, myfun(a, b, c, d, e), c, d, e)
+        \\  end subroutine caller
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // just after the third argument, `c`
+        for ([_][]const u8{ "[1, 2, 3], c", "(/1, 2, 3/), c", "d, e), c" }) |needle| {
+            const sig = (try w.signature("t.f90", w.pos("t.f90", needle, 0, needle.len))) orelse
+                break :blk h.unmet("no signature help after '{s}'", .{needle});
+            if (sig.active != 2) break :blk h.unmet("after '{s}': active parameter {d}, expected 2", .{ needle, sig.active });
+        }
+    };
+    try h.checkIn(.hansec, 178, .fixed, outcome);
+}
