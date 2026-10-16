@@ -1,7 +1,7 @@
 {
   "name": "zfls",
   "displayName": "zfls: Fortran Language Server",
-  "description": "Fortran language support powered by zfls, a fast native re-implementation of fortls",
+  "description": "Fortran language support powered by zfls, a fast native re-implementation of fortls; a replacement for the Modern Fortran extension",
   "version": "0.1.3",
   "publisher": "cesiumlang",
   "license": "MIT",
@@ -53,7 +53,11 @@
           ".fypp",
           ".FYPP"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/fortran.svg",
+          "dark": "./icons/fortran.svg"
+        }
       },
       {
         "id": "FortranFixedForm",
@@ -68,7 +72,43 @@
           ".for",
           ".FOR"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/fortran.svg",
+          "dark": "./icons/fortran.svg"
+        }
+      },
+      {
+        "id": "jsonc",
+        "filenames": [
+          ".fortlsrc",
+          ".fortls.json",
+          ".fortls"
+        ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "FortranFreeForm"
+      },
+      {
+        "language": "FortranFixedForm"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          ".fortlsrc",
+          ".fortls.json",
+          ".fortls"
+        ],
+        "url": "./schemas/fortls.schema.json"
+      }
+    ],
+    "tomlValidation": [
+      {
+        "fileMatch": "fpm.toml",
+        "url": "https://github.com/fortran-lang/fpm-metadata/releases/download/v0.2.2/fpm-metadata-0.2.2.json"
       }
     ],
     "grammars": [
@@ -139,7 +179,7 @@
         "zfls.disableModernFortranCheck": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Do not offer to turn off the fortls language server of the Modern Fortran extension when both are installed."
+          "markdownDescription": "Do not recommend disabling the Modern Fortran extension, which zfls replaces, when both are enabled."
         },
         "zfls.trace.server": {
           "type": "string",
