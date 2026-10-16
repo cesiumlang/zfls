@@ -48,6 +48,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
+| [#301](https://github.com/fortran-lang/fortls/issues/301) | `INCLUDE` statement searched in `include_dirs`, go to definition on it | workspace | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | fixed (patched) | fails, same cause |

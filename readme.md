@@ -189,8 +189,11 @@ zfls deliberately differs from fortls in a few places:
 - Links that would loop (for example type-bound procedures or `ASSOCIATE`
   names that refer to each other while code is being edited) are left
   unresolved; fortls hits a recursion error on them.
-- Go to definition on a preprocessor `#include "file"` opens the file (searched
-  next to the including file and in `include_dirs`); fortls has no answer.
+- Go to definition on a preprocessor `#include "file"` or a Fortran
+  `INCLUDE 'file'` opens the file (searched next to the including file and in
+  `include_dirs`); fortls has no answer.
+- An `INCLUDE 'file'` statement is also searched in `include_dirs`, as
+  `#include` is; fortls only looks next to the including file.
 - A file that another file `#include`s into a scope sees the names of that scope
   (as for `INCLUDE` statements, but also for files that hold whole procedures);
   fortls reports them as unknown in the included file.
