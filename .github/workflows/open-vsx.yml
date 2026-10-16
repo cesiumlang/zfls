@@ -1,0 +1,73 @@
+# Publishes a release's VS Code extension packages to Open VSX.
+#
+# Open VSX trusts this workflow by its file name (trusted publishing for the
+# `cesiumlang` namespace): it accepts the OIDC token of a run of
+# `open-vsx.yml` in this repository, so no stored token is needed. The CI
+# workflow starts it after publishing a release; it can also be run by hand
+# (Actions > Publish to Open VSX > Run workflow) to publish, or finish
+# publishing, any released version.
+name: Publish to Open VSX
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released version to publish, without the v (e.g. 0.2.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: open-vsx-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  OVSX_VERSION: 1.2.0
+
+jobs:
+  publish:
+    name: Publish zfls v${{ inputs.version }} to Open VSX
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # the platform packages, each with its zfls (the universal package
+      # goes to the Marketplace only)
+      - name: Download the release's extension packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --dir dist --pattern "zfls-vscode-v$VERSION-*.vsix"
+          rm -f "dist/zfls-vscode-v$VERSION-universal.vsix"
+          ls dist
+
+      # --skip-duplicate: a version already published counts as published,
+      # so a re-run completes what a failed one left out
+      - name: Publish
+        env:
+          # a fallback only, for if trusted publishing is refused
+          OPENVSX_TOKEN: ${{ secrets.OVSX_PAT }}
+        run: |
+          ovsx() { npx --yes "ovsx@$OVSX_VERSION" "$@"; }
+          failed=0
+          for vsix in dist/*.vsix; do
+            if ovsx publish "$vsix" --trusted-publishing --skip-duplicate; then
+              continue
+            fi
+            if [ -n "$OPENVSX_TOKEN" ]; then
+              echo "::warning::trusted publishing of $vsix failed; publishing with the OVSX_PAT secret"
+              OVSX_PAT="$OPENVSX_TOKEN" ovsx publish "$vsix" --skip-duplicate && continue
+            fi
+            echo "::error::publishing $vsix failed"
+            failed=1
+          done
+          exit "$failed"
