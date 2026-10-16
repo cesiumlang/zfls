@@ -82,3 +82,35 @@ test "#536 a broken symlink under the workspace is skipped" {
     const syms = try w.workspaceSymbols("bar_mod");
     try h.check(536, .fixed, h.expect(syms.len > 0, "bar_mod is not found: the broken symlink broke indexing", .{}));
 }
+
+test "#301 an INCLUDE statement is searched in the include directories" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text =
+        \\{"source_dirs": ["./**"], "incl_suffixes": [".inc"], "include_dirs": ["inc"]}
+        \\
+        },
+        .{ .name = "src/main.f90", .text =
+        \\program p
+        \\  include 'consts.inc'
+        \\  print *, n
+        \\end program p
+        \\
+        },
+        .{ .name = "inc/consts.inc", .text =
+        \\integer, parameter :: n = 3
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        const use = w.pos("src/main.f90", "n\n", 0, 0);
+        w.expectHoverContains("src/main.f90", use, "INTEGER, PARAMETER :: n = 3") catch |e| break :blk e;
+        const def = (try w.definition("src/main.f90", use)) orelse break :blk h.unmet("no definition for n", .{});
+        h.expect(std.mem.endsWith(u8, def.uri, "consts.inc") and def.line == 0, "definition of n is {s}:{d}", .{ def.uri, def.line }) catch |e| break :blk e;
+        // go to definition on the statement opens the file, as for `#include` (#498)
+        const inc = (try w.definition("src/main.f90", w.pos("src/main.f90", "consts.inc", 0, 2))) orelse
+            break :blk h.unmet("no definition for the INCLUDE statement", .{});
+        break :blk h.expect(std.mem.endsWith(u8, inc.uri, "consts.inc"), "definition of the INCLUDE is {s}", .{inc.uri});
+    };
+    try h.check(301, .fixed, outcome);
+}
