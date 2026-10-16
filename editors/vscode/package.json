@@ -190,6 +190,77 @@
           ],
           "default": "off",
           "markdownDescription": "Log the messages between VS Code and zfls in the `zfls` output channel."
+        },
+        "zfls.run.compiler": {
+          "type": "string",
+          "default": "gfortran",
+          "scope": "resource",
+          "markdownDescription": "The compiler that builds the file for **Run Fortran File** and **Debug Fortran File**, for example `gfortran`, `ifx`, `flang`, `nvfortran`, `nagfor` or `lfortran`; it is looked up on the `PATH` unless `#zfls.run.compilerPath#` is set."
+        },
+        "zfls.run.compilerPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The compiler executable, or the directory that holds `#zfls.run.compiler#`, when it is not on the `PATH`. `${workspaceFolder}`, `${env:NAME}`, `${userHome}` and a leading `~` are expanded."
+        },
+        "zfls.run.buildArgs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null,
+          "scope": "resource",
+          "markdownDescription": "Compiler arguments, before the source file and the output file, which the extension adds. Not set (`null`): debug information without optimization, `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`). Variables are expanded as in `#zfls.run.compilerPath#`, and `${file}` and `${fileDirname}` too."
+        },
+        "zfls.run.outputDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Where the program and the compiler's module and object files go. Empty: a directory per source file in the extension's storage, so nothing is written next to the sources. A relative path is relative to the workspace folder."
+        },
+        "zfls.run.programArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Command-line arguments for the program."
+        },
+        "zfls.run.cwd": {
+          "type": "string",
+          "default": "${fileDirname}",
+          "scope": "resource",
+          "markdownDescription": "The working directory of the program; by default the directory of the file."
+        },
+        "zfls.run.debugger": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "cppdbg",
+            "cppvsdbg",
+            "lldb",
+            "gdb"
+          ],
+          "enumDescriptions": [
+            "The first installed of C/C++ (cppvsdbg for programs of ifx, ifort and LLVM Flang on Windows, else cppdbg), CodeLLDB and CDT GDB",
+            "C/C++ extension (ms-vscode.cpptools) with gdb, or lldb on macOS",
+            "C/C++ extension with the Visual Studio debugger (Windows, MSVC-ABI programs)",
+            "CodeLLDB (vadimcn.vscode-lldb)",
+            "CDT GDB Debug Adapter (eclipse-cdt.cdt-gdb-vscode)"
+          ],
+          "default": "auto",
+          "scope": "resource",
+          "markdownDescription": "The debugger for **Debug Fortran File**. None is bundled: install one of the extensions it names."
+        },
+        "zfls.run.gdbPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The `gdb` for the `cppdbg` and `gdb` debuggers. Empty: the `gdb` next to the compiler, else the one on the `PATH`."
         }
       }
     },
@@ -203,6 +274,69 @@
         "command": "zfls.showOutput",
         "title": "Show Output",
         "category": "zfls"
+      },
+      {
+        "command": "zfls.runFile",
+        "title": "Run Fortran File",
+        "category": "zfls",
+        "icon": "$(play)"
+      },
+      {
+        "command": "zfls.debugFile",
+        "title": "Debug Fortran File",
+        "category": "zfls",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "zfls.generateLaunchConfig",
+        "title": "Add Build Task and Debug Configuration for Fortran File",
+        "category": "zfls"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "zfls.runFile",
+          "group": "navigation@0",
+          "when": "resourceLangId =~ /^Fortran(Free|Fixed)Form$/ && !isInDiffEditor && !virtualWorkspace && shellExecutionSupported"
+        },
+        {
+          "command": "zfls.debugFile",
+          "group": "navigation@1",
+          "when": "resourceLangId =~ /^Fortran(Free|Fixed)Form$/ && !isInDiffEditor && !virtualWorkspace && shellExecutionSupported"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "zfls.runFile",
+          "when": "editorLangId =~ /^Fortran(Free|Fixed)Form$/ && !virtualWorkspace && shellExecutionSupported"
+        },
+        {
+          "command": "zfls.debugFile",
+          "when": "editorLangId =~ /^Fortran(Free|Fixed)Form$/ && !virtualWorkspace && shellExecutionSupported"
+        },
+        {
+          "command": "zfls.generateLaunchConfig",
+          "when": "editorLangId =~ /^Fortran(Free|Fixed)Form$/ && !virtualWorkspace && shellExecutionSupported"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "zfls",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "enum": [
+              "build",
+              "run"
+            ],
+            "description": "Building or running the file of zfls.runFile and zfls.debugFile"
+          }
+        }
       }
     ]
   },
@@ -211,7 +345,8 @@
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p test",
     "package": "vsce package --no-dependencies",
     "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node20 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node20",
-    "test": "npm run build && npm run build-test && node out/runTest.js"
+    "test": "npm run build && npm run build-test && node out/runTest.js",
+    "unit": "esbuild test/unit/*.test.ts --bundle --outdir=out/unit --platform=node --target=node20 --format=cjs && node --test out/unit/*.test.js"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.2"
