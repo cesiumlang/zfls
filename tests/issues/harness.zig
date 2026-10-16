@@ -47,18 +47,31 @@ pub fn expect(ok: bool, comptime fmt: []const u8, args: anytype) error{Unmet}!vo
     if (!ok) return unmet(fmt, args);
 }
 
-/// Evaluate the outcome `result` of a test's expectations for `issue`
-/// (see the module comment).
+/// The tracker an issue number belongs to
+pub const Repo = enum {
+    /// fortran-lang/fortls
+    fortls,
+    /// hansec/fortran-language-server, which fortls was forked from
+    hansec,
+};
+
+/// Evaluate the outcome `result` of a test's expectations for fortls issue
+/// `issue` (see the module comment).
 pub fn check(issue: u32, status: Status, result: anyerror!void) !void {
+    return checkIn(.fortls, issue, status, result);
+}
+
+/// `check` for an issue of another tracker
+pub fn checkIn(repo: Repo, issue: u32, status: Status, result: anyerror!void) !void {
     const why = if (result) |_| "passes" else |e| if (e == error.Unmet) note() else @errorName(e);
-    record(issue, status, why);
+    record(repo, issue, status, why);
     switch (status) {
         .fixed => result catch |e| {
-            std.debug.print("\nfortls issue #{d} is not handled correctly: {s}\n", .{ issue, why });
+            std.debug.print("\n{s} issue #{d} is not handled correctly: {s}\n", .{ @tagName(repo), issue, why });
             return e;
         },
         .known_failure => if (result) |_| {
-            std.debug.print("\nfortls issue #{d} is marked as a known failure but now passes: mark it .fixed\n", .{issue});
+            std.debug.print("\n{s} issue #{d} is marked as a known failure but now passes: mark it .fixed\n", .{ @tagName(repo), issue });
             return error.UnexpectedlyFixed;
         } else |_| {},
     }
@@ -68,9 +81,10 @@ pub fn check(issue: u32, status: Status, result: anyerror!void) !void {
 // .zig-cache/issue-tests.txt as the tests run
 var report: std.ArrayList(u8) = .empty;
 
-fn record(issue: u32, status: Status, why: []const u8) void {
+fn record(repo: Repo, issue: u32, status: Status, why: []const u8) void {
     const alloc = std.heap.page_allocator;
-    report.print(alloc, "#{d}\t{s}\t{s}\n", .{ issue, @tagName(status), why }) catch return;
+    const prefix = if (repo == .fortls) "" else @tagName(repo);
+    report.print(alloc, "{s}#{d}\t{s}\t{s}\n", .{ prefix, issue, @tagName(status), why }) catch return;
     Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/issue-tests.txt", .data = report.items }) catch {};
 }
 
