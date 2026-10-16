@@ -412,3 +412,67 @@ test "#478 a Markdown list in a parameter's documentation does not indent the ne
     // a blank line ends the list, so `baz` is not a continuation of its last item
     try h.check(478, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "foo(1, 2)", 0, 1), "\n\n`baz`"));
 }
+
+test "hansec #168 references to a separate module procedure include its implementation in a submodule" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "mod.f90", .text =
+        \\module test_module
+        \\    implicit none
+        \\    interface
+        \\        module subroutine test_subroutine()
+        \\        end subroutine
+        \\        module subroutine other()
+        \\        end subroutine
+        \\    end interface
+        \\end module test_module
+        \\
+        },
+        .{ .name = "smod.f90", .text =
+        \\submodule(test_module) test_submodule
+        \\contains
+        \\module subroutine test_subroutine()
+        \\end subroutine
+        \\module procedure other
+        \\end procedure
+        \\end
+        \\
+        },
+        .{ .name = "prog.f90", .text =
+        \\program p
+        \\    use test_module
+        \\    call test_subroutine()
+        \\end program p
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const Case = struct { file: []const u8, needle: []const u8 };
+    const outcome: anyerror!void = blk: {
+        for ([_][]const u8{ "test_subroutine", "other" }) |name| {
+            const iface = w.pos("mod.f90", name, 0, 1);
+            const impl = w.pos("smod.f90", name, 0, 1);
+            // from the interface, from the implementation
+            for ([_]Case{ .{ .file = "mod.f90", .needle = name }, .{ .file = "smod.f90", .needle = name } }) |c| {
+                const refs = try w.references(c.file, w.pos(c.file, c.needle, 0, 1));
+                var has_iface = false;
+                var has_impl = false;
+                for (refs) |r| {
+                    if (std.mem.endsWith(u8, r.uri, "mod.f90") and !std.mem.endsWith(u8, r.uri, "smod.f90") and r.line == iface.line) has_iface = true;
+                    if (std.mem.endsWith(u8, r.uri, "smod.f90") and r.line == impl.line) has_impl = true;
+                }
+                if (!has_iface or !has_impl) break :blk h.unmet("references to {s} from {s}: interface {}, implementation {} ({d} references)", .{ name, c.file, has_iface, has_impl, refs.len });
+            }
+        }
+        // a rename from the interface renames the implementation too
+        var renames_impl = false;
+        for (try w.rename("mod.f90", w.pos("mod.f90", "other", 0, 1), "renamed")) |e| {
+            if (std.mem.endsWith(u8, e.uri, "smod.f90")) renames_impl = true;
+        }
+        if (!renames_impl) break :blk h.unmet("renaming the interface does not rename the implementation", .{});
+        // the call still counts
+        const refs = try w.references("mod.f90", w.pos("mod.f90", "test_subroutine", 0, 1));
+        for (refs) |r| if (std.mem.endsWith(u8, r.uri, "prog.f90")) break :blk {};
+        break :blk h.unmet("the call is not a reference", .{});
+    };
+    try h.checkIn(.hansec, 168, .fixed, outcome);
+}

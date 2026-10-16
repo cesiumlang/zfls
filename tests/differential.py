@@ -350,6 +350,34 @@ def ref_key(r: dict):
     return (r["uri"], start["line"], start["character"])
 
 
+PROCEDURE_STMT = re.compile(r"\b(?:subroutine|function|procedure)\b", re.I)
+
+
+def uri_line(uri: str, line: int) -> str:
+    path = unquote(uri.removeprefix("file://"))
+    if os.name == "nt":
+        path = path.lstrip("/")
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return lines[line] if 0 <= line < len(lines) else ""
+
+
+def separate_procedure_refs(a, b) -> bool:
+    """zfls's references to a separate module procedure also list its
+    interface and its implementation in a submodule (hansec issue 168):
+    whether `b` is `a` plus locations on SUBROUTINE, FUNCTION or PROCEDURE
+    statements only."""
+    if not (isinstance(a, list) and isinstance(b, list)):
+        return False
+    ka = {ref_key(r) for r in a}
+    kb = {ref_key(r) for r in b}
+    if not ka < kb:
+        return False
+    return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fortls", default=str(REPO.parent / "fortls"))
@@ -434,6 +462,10 @@ def main() -> int:
             ):
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
+                continue
+            if kind == "references" and separate_procedure_refs(a, b):
+                # references to a separate module procedure include its
+                # interface and implementation (hansec issue 168)
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with
