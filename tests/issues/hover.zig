@@ -611,3 +611,27 @@ test "hansec #178 signature help skips array constructors and nested calls" {
     };
     try h.checkIn(.hansec, 178, .fixed, outcome);
 }
+
+test "hansec #229 an ASSOCIATE opened on the line of its DO: names inside are found" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer :: i
+        \\  real :: arr(3)
+        \\  do i=1,size(arr); associate(point => arr(i))
+        \\    point = 1.0
+        \\  end associate; end do
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    // the innermost of the scopes that open on the same line is the ASSOCIATE
+    try h.checkIn(.hansec, 229, .fixed, blk: {
+        w.expectHoverContains("t.f90", w.pos("t.f90", "point = 1.0", 0, 1), "REAL :: point") catch |e| break :blk e;
+        const def = (try w.definition("t.f90", w.pos("t.f90", "point = 1.0", 0, 1))) orelse break :blk h.unmet("no definition for point", .{});
+        break :blk h.expect(def.line == 4, "definition of point at line {d}", .{def.line + 1});
+    });
+}

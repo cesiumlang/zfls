@@ -103,3 +103,4 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#137](https://github.com/hansec/fortran-language-server/issues/137) | the original name on a USE rename line resolves to a local variable of that name | hover | fixed (patched) | fails, same cause |
 | [#178](https://github.com/hansec/fortran-language-server/issues/178) | signature help counts the commas inside an array constructor or a nested call | hover | fixed | fails, same cause |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
+| [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
