@@ -3,6 +3,7 @@
 // language client to zfls.
 
 import * as assert from "node:assert";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
@@ -59,6 +60,24 @@ export async function run(): Promise<void> {
   assert.ok(names.includes("shapes"), `symbols ${names}`);
 
   console.log("zfls answered hover, definition, completion and symbols");
+
+  checkLanguageContributions();
+}
+
+// Breakpoints are allowed in both languages, and their icons are packaged.
+function checkLanguageContributions(): void {
+  const ext = vscode.extensions.all.find((e) => e.packageJSON?.name === "zfls");
+  assert.ok(ext, "zfls extension not found");
+  const contributes = ext.packageJSON.contributes;
+  const ids = ["FortranFreeForm", "FortranFixedForm"];
+  const breakpoints = contributes.breakpoints.map((b: { language: string }) => b.language);
+  assert.deepStrictEqual(breakpoints, ids);
+  for (const language of contributes.languages) {
+    for (const icon of [language.icon.light, language.icon.dark]) {
+      assert.ok(fs.existsSync(path.join(ext.extensionPath, icon)), `${language.id} icon ${icon}`);
+    }
+  }
+  console.log("breakpoints and language icons contributed");
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {

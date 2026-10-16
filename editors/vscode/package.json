@@ -53,7 +53,11 @@
           ".fypp",
           ".FYPP"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/fortran.svg",
+          "dark": "./icons/fortran.svg"
+        }
       },
       {
         "id": "FortranFixedForm",
@@ -68,7 +72,19 @@
           ".for",
           ".FOR"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/fortran.svg",
+          "dark": "./icons/fortran.svg"
+        }
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "FortranFreeForm"
+      },
+      {
+        "language": "FortranFixedForm"
       }
     ],
     "grammars": [
