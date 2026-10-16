@@ -1,0 +1,280 @@
+{
+  "Program Skeleton": {
+    "prefix": "program",
+    "body": [
+      "program ${1:name}",
+      "   implicit none",
+      "   $0",
+      "end program ${1:name}"
+    ],
+    "description": "Program skeleton"
+  },
+  "Module Skeleton": {
+    "prefix": "module",
+    "body": [
+      "module ${1:name}",
+      "   implicit none",
+      "   $2",
+      "contains",
+      "   $0",
+      "end module ${1:name}"
+    ],
+    "description": "Module with implicit none and contains"
+  },
+  "Do Loop": {
+    "prefix": "do",
+    "body": [
+      "do ${1:index} = ${2:start}, ${3:end}",
+      "   $0",
+      "end do"
+    ],
+    "description": "do loop"
+  },
+  "Function": {
+    "prefix": "fun",
+    "body": [
+      "function ${1:func}(${2:arg}) result(${3:retval})",
+      "   ${4:integer}, intent(in) :: ${2:arg}",
+      "   ${5:integer} :: ${3:retval}",
+      "",
+      "   $0",
+      "end function ${1:func}"
+    ],
+    "description": "Function with a result variable"
+  },
+  "Subroutine": {
+    "prefix": "sub",
+    "body": [
+      "subroutine ${1:routine}(${2:arg1}, ${3:arg2})",
+      "   ${4:type1}, intent(${5:in}) :: ${2:arg1}",
+      "   ${6:type2}, intent(${7:out}) :: ${3:arg2}",
+      "",
+      "   $0",
+      "end subroutine ${1:routine}"
+    ],
+    "description": "Subroutine"
+  },
+  "Type": {
+    "prefix": "typ",
+    "body": [
+      "type, public :: ${1:type_name}",
+      "   ${2:integer} :: ${3:var}",
+      "   $4",
+      "",
+      "private",
+      "   $5",
+      "",
+      "contains",
+      "   $0",
+      "",
+      "end type ${1:type_name}"
+    ],
+    "description": "Derived type with private components and contains"
+  },
+  "If (single line)": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) $0"
+    ],
+    "description": "One-line if"
+  },
+  "If Block": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) then",
+      "   $0",
+      "end if"
+    ],
+    "description": "if then block"
+  },
+  "Else If": {
+    "prefix": "el",
+    "body": [
+      "else if (${1:condition}) then",
+      "   $0"
+    ],
+    "description": "else if branch"
+  },
+  "Implicit None": {
+    "prefix": "imp",
+    "body": [
+      "implicit none",
+      "$0"
+    ],
+    "description": "implicit none"
+  },
+  "Module Documentation Header": {
+    "prefix": "modoc",
+    "body": [
+      "!------------------------------------------------------------",
+      "! ${1:Institution}, ${2:Affiliation}",
+      "!------------------------------------------------------------",
+      "!",
+      "! MODULE: ${3:module name}",
+      "!",
+      "!> @author",
+      "!> ${4:author name}",
+      "!",
+      "! DESCRIPTION:",
+      "!> ${5:short module description}",
+      "!",
+      "! REVISION HISTORY:",
+      "! dd Mmm yyyy - Initial Version",
+      "!------------------------------------------------------------",
+      "$0"
+    ],
+    "description": "Module documentation header"
+  },
+  "If Else Block": {
+    "prefix": "ife",
+    "body": [
+      "if (${1:condition}) then",
+      "   $2",
+      "else",
+      "   $0",
+      "end if"
+    ],
+    "description": "if then else block"
+  },
+  "Else": {
+    "prefix": "else",
+    "body": [
+      "else",
+      "   $0"
+    ],
+    "description": "else branch"
+  },
+  "Do While Loop": {
+    "prefix": "dow",
+    "body": [
+      "do while (${1:condition})",
+      "   $0",
+      "end do"
+    ],
+    "description": "do while loop"
+  },
+  "Do Concurrent": {
+    "prefix": "doc",
+    "body": [
+      "do concurrent (${1:i} = ${2:1}:${3:n})",
+      "   $0",
+      "end do"
+    ],
+    "description": "do concurrent loop"
+  },
+  "Submodule": {
+    "prefix": "submodule",
+    "body": [
+      "submodule (${1:parent}) ${2:name}",
+      "   implicit none",
+      "contains",
+      "   $0",
+      "end submodule ${2:name}"
+    ],
+    "description": "Submodule of a module"
+  },
+  "Interface": {
+    "prefix": "interface",
+    "body": [
+      "interface ${1:name}",
+      "   $0",
+      "end interface ${1:name}"
+    ],
+    "description": "Generic or explicit interface block"
+  },
+  "Abstract Interface": {
+    "prefix": "abstract",
+    "body": [
+      "abstract interface",
+      "   ${1|subroutine,function|} ${2:name}(${3:arg})",
+      "      $0",
+      "   end ${1} ${2:name}",
+      "end interface"
+    ],
+    "description": "Abstract interface"
+  },
+  "Block": {
+    "prefix": "block",
+    "body": [
+      "block",
+      "   $0",
+      "end block"
+    ],
+    "description": "block construct"
+  },
+  "Associate": {
+    "prefix": "associate",
+    "body": [
+      "associate (${1:name} => ${2:expr})",
+      "   $0",
+      "end associate"
+    ],
+    "description": "associate construct"
+  },
+  "Select Case": {
+    "prefix": "selc",
+    "body": [
+      "select case (${1:expr})",
+      "case (${2:value})",
+      "   $3",
+      "case default",
+      "   $0",
+      "end select"
+    ],
+    "description": "select case construct"
+  },
+  "Select Type": {
+    "prefix": "selt",
+    "body": [
+      "select type (${1:obj})",
+      "type is (${2:type_name})",
+      "   $3",
+      "class is (${4:class_name})",
+      "   $5",
+      "class default",
+      "   $0",
+      "end select"
+    ],
+    "description": "select type construct"
+  },
+  "Type with Type-Bound Procedure": {
+    "prefix": "typc",
+    "body": [
+      "type${1:, extends(${2:parent})} :: ${3:type_name}",
+      "   ${4:integer} :: ${5:var}",
+      "contains",
+      "   procedure :: ${6:name} => ${7:${3:type_name}}_${6:name}",
+      "   $0",
+      "end type ${3:type_name}"
+    ],
+    "description": "Derived type with a type-bound procedure"
+  },
+  "Type-Bound Procedure": {
+    "prefix": "proc",
+    "body": [
+      "procedure${1:, pass(${2:self})} :: ${3:name} => ${4:implementation}"
+    ],
+    "description": "Type-bound procedure binding"
+  },
+  "Where": {
+    "prefix": "where",
+    "body": [
+      "where (${1:mask})",
+      "   $2",
+      "elsewhere",
+      "   $0",
+      "end where"
+    ],
+    "description": "where construct"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum, bind(c)",
+      "   enumerator :: ${1:name} = ${2:0}",
+      "   $0",
+      "end enum"
+    ],
+    "description": "Enumeration"
+  }
+}

@@ -388,3 +388,47 @@ test "#485 local names are not reported as masking private names of a used modul
     defer w.deinit();
     try h.check(485, .fixed, w.expectNoDiagnostics("t.f90"));
 }
+
+test "hansec #200 a dummy procedure's interface body does not mask the host's variables" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\subroutine foo(f)
+        \\  interface
+        \\    function f(x)
+        \\      real, intent(in) :: x
+        \\      real :: f
+        \\    end function
+        \\  end interface
+        \\  real :: x
+        \\end subroutine
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 200, .fixed, w.expectNoDiagnosticLike("t.f90", "masks"));
+}
+
+test "a separate module procedure interface still sees its module (control for hansec #200)" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\  real :: x
+        \\  interface
+        \\    module subroutine s()
+        \\      real :: x
+        \\    end subroutine
+        \\  end interface
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const diags = try w.diagnostics("t.f90");
+    var masks = false;
+    for (diags) |d| if (std.mem.indexOf(u8, d.message, "masks") != null) {
+        masks = true;
+    };
+    try h.expect(masks, "no masking warning in a module procedure interface", .{});
+}

@@ -69,6 +69,30 @@
           ".FOR"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "jsonc",
+        "filenames": [
+          ".fortlsrc",
+          ".fortls.json",
+          ".fortls"
+        ]
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          ".fortlsrc",
+          ".fortls.json",
+          ".fortls"
+        ],
+        "url": "./schemas/fortls.schema.json"
+      }
+    ],
+    "tomlValidation": [
+      {
+        "fileMatch": "fpm.toml",
+        "url": "https://github.com/fortran-lang/fpm-metadata/releases/download/v0.2.2/fpm-metadata-0.2.2.json"
       }
     ],
     "grammars": [
@@ -102,6 +126,16 @@
         "injectTo": [
           "source.fortran.fixed"
         ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "FortranFreeForm",
+        "path": "./snippets/fortran-free-form.json"
+      },
+      {
+        "language": "FortranFixedForm",
+        "path": "./snippets/fortran-fixed-form.json"
       }
     ],
     "configuration": {

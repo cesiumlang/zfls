@@ -189,8 +189,12 @@ zfls deliberately differs from fortls in a few places:
 - Links that would loop (for example type-bound procedures or `ASSOCIATE`
   names that refer to each other while code is being edited) are left
   unresolved; fortls hits a recursion error on them.
-- Go to definition on a preprocessor `#include "file"` opens the file (searched
-  next to the including file and in `include_dirs`); fortls has no answer.
+- Go to definition on a preprocessor `#include "file"`, or on a Fortran
+  `INCLUDE 'file'` whose file is not in the workspace, opens the file
+  (searched next to the including file and in `include_dirs`); fortls has no
+  answer.
+- An `INCLUDE 'file'` statement is also searched in `include_dirs`, as
+  `#include` is; fortls only looks next to the including file.
 - A file that another file `#include`s into a scope sees the names of that scope
   (as for `INCLUDE` statements, but also for files that hold whole procedures);
   fortls reports them as unknown in the included file.
@@ -210,6 +214,9 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- References to (and renames of) a separate module procedure include both
+  its interface and its implementation in a submodule; fortls does not
+  relate the two.
 - A rename without `ONLY` (`use m, local => original`) is read: the local
   name is the module's entity and the original name is not visible under
   that name. On the USE line, hover, definition and references on either

@@ -3,6 +3,8 @@
 // language client to zfls.
 
 import * as assert from "node:assert";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
@@ -59,6 +61,52 @@ export async function run(): Promise<void> {
   assert.ok(names.includes("shapes"), `symbols ${names}`);
 
   console.log("zfls answered hover, definition, completion and symbols");
+
+  checkSnippets();
+  await checkConfigSchema();
+}
+
+// The snippets are packaged for both languages. (VS Code's snippet service in
+// the test instance sometimes offers no snippets at all, so the completion
+// list is not checked.)
+function checkSnippets(): void {
+  const ext = vscode.extensions.all.find((e) => e.packageJSON?.name === "zfls");
+  assert.ok(ext, "zfls extension not found");
+  const files: { language: string; path: string }[] = ext.packageJSON.contributes.snippets;
+  assert.deepStrictEqual(files.map((f) => f.language), ["FortranFreeForm", "FortranFixedForm"]);
+  for (const file of files) {
+    const text = fs.readFileSync(path.join(ext.extensionPath, file.path), "utf8");
+    const snippets: Record<string, { prefix: string; body: string[] }> = JSON.parse(text);
+    const prefixes = Object.values(snippets).map((x) => x.prefix);
+    assert.ok(prefixes.includes("selt"), `${file.language} snippet prefixes ${prefixes}`);
+    if (file.language === "FortranFixedForm") {
+      // typed at column 7, no tabs and nothing past column 72 with the
+      // placeholders' default text
+      for (const line of Object.values(snippets).flatMap((x) => x.body)) {
+        const text = line.replace(/\$\{\d+[:|]?/g, "").replace(/\|?\}/g, "").replace(/\$\d+/g, "");
+        assert.ok(!line.includes("\t") && 6 + text.length <= 72, `fixed-form line ${line}`);
+      }
+    }
+  }
+  console.log("snippets packaged for free and fixed form");
+}
+
+// A .fortlsrc opens as JSON with comments and is checked against the schema.
+async function checkConfigSchema(): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-config-"));
+  const file = path.join(dir, ".fortlsrc");
+  fs.writeFileSync(file, '{\n  // comment\n  "nthreads": "four"\n}\n');
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  assert.strictEqual(doc.languageId, "jsonc");
+  const problems = await poll("schema diagnostics", async () => {
+    const found = vscode.languages.getDiagnostics(doc.uri);
+    return found.length > 0 ? found : undefined;
+  });
+  const messages = problems.map((d) => d.message);
+  assert.ok(messages.some((m) => /integer/i.test(m)), `diagnostics ${messages}`);
+  assert.strictEqual(problems.length, 1, `diagnostics ${messages}`);
+  console.log(`.fortlsrc checked against the schema: ${messages}`);
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {

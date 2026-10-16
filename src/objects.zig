@@ -1395,7 +1395,9 @@ pub const Obj = struct {
                 try errors.append(a, d);
                 continue;
             };
-            if (self.parent != null and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
+            // an interface body has no host association, so nothing in it masks
+            // a variable of the scope around the interface (hansec #200)
+            if (self.parent != null and !is_interface and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
                 if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                     if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                     var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
@@ -1842,14 +1844,27 @@ pub const Ast = struct {
         for (self.linkable_objs.items) |o| try o.resolveLink(env);
     }
 
+    /// The workspace path of the file that an INCLUDE statement names: searched
+    /// in the directory of the including file, then in `include_dirs`
+    /// (absolute), as `#include` is (upstream #301)
+    fn findInclude(workspace: anytype, file_dir: []const u8, include_dirs: []const []const u8, name: []const u8, tmp: Allocator) !?[]const u8 {
+        // `#include` directives are resolved to absolute paths by the preprocessor
+        if (std.fs.path.isAbsolute(name)) return try parser.normPath(tmp, name);
+        const local = try parser.normPath(tmp, try std.fs.path.join(tmp, &.{ file_dir, name }));
+        if (workspace.get(local) != null) return local;
+        for (include_dirs) |dir| {
+            const candidate = try parser.normPath(tmp, try std.fs.path.join(tmp, &.{ dir, name }));
+            if (workspace.get(candidate) != null) return candidate;
+        }
+        return null;
+    }
+
     /// Link the objects of included files into the including scopes
-    pub fn resolveIncludes(self: *Ast, workspace: anytype, only_path: ?[]const u8, tmp: Allocator) !void {
+    pub fn resolveIncludes(self: *Ast, workspace: anytype, include_dirs: []const []const u8, only_path: ?[]const u8, tmp: Allocator) !void {
         const path = self.path orelse return;
         const file_dir = std.fs.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
-            // `#include` directives are resolved to absolute paths by the preprocessor
-            const joined = if (std.fs.path.isAbsolute(inc.path)) inc.path else try std.fs.path.join(tmp, &.{ file_dir, inc.path });
-            const file_path = try parser.normPath(tmp, joined);
+            const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse continue;
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
             const parent_scope = self.getInnerScope(inc.line_number);
             const include_file = workspace.get(file_path) orelse continue;
