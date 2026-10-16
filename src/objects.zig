@@ -1778,8 +1778,11 @@ pub const Ast = struct {
     pub fn getInnerScope(self: *Ast, line_number: usize) ?*Obj {
         var scope_sline: ?usize = null;
         var curr: ?*Obj = null;
+        // scopes are listed as they open, so of those that open on the same
+        // line (`do i = 1, n; associate (...)`) the last is the innermost
+        // (hansec #229)
         for (self.scope_list.items) |scope| {
-            if ((scope_sline == null or scope.sline > scope_sline.?) and scope.sline <= line_number and line_number <= scope.eline) {
+            if ((scope_sline == null or scope.sline >= scope_sline.?) and scope.sline <= line_number and line_number <= scope.eline) {
                 curr = scope;
                 scope_sline = scope.sline;
             }

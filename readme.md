@@ -210,6 +210,9 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
+  the last is the innermost, so the names it declares are found; fortls uses
+  the first.
 
 ## Licenses
 

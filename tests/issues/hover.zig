@@ -412,3 +412,27 @@ test "#478 a Markdown list in a parameter's documentation does not indent the ne
     // a blank line ends the list, so `baz` is not a continuation of its last item
     try h.check(478, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "foo(1, 2)", 0, 1), "\n\n`baz`"));
 }
+
+test "hansec #229 an ASSOCIATE opened on the line of its DO: names inside are found" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer :: i
+        \\  real :: arr(3)
+        \\  do i=1,size(arr); associate(point => arr(i))
+        \\    point = 1.0
+        \\  end associate; end do
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    // the innermost of the scopes that open on the same line is the ASSOCIATE
+    try h.checkIn(.hansec, 229, .fixed, blk: {
+        w.expectHoverContains("t.f90", w.pos("t.f90", "point = 1.0", 0, 1), "REAL :: point") catch |e| break :blk e;
+        const def = (try w.definition("t.f90", w.pos("t.f90", "point = 1.0", 0, 1))) orelse break :blk h.unmet("no definition for point", .{});
+        break :blk h.expect(def.line == 4, "definition of point at line {d}", .{def.line + 1});
+    });
+}
