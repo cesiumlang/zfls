@@ -57,6 +57,11 @@ the `cesiumlang` Open VSX namespace allows trusted publishing, the job falls
 back to the `OVSX_PAT` repository secret there, with a warning. Versions
 already published are skipped, so a failed publishing job can be re-run.
 
+The extension replaces the Modern Fortran extension (it registers the same
+Fortran languages, grammars and snippets, with zfls instead of fortls) and
+recommends disabling Modern Fortran when both are enabled; see its
+[README](editors/vscode/README.md#replacing-modern-fortran).
+
 To work on it (Node.js 20 or later):
 
 ```sh
