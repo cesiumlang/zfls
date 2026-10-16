@@ -199,6 +199,8 @@ zfls deliberately differs from fortls in a few places:
   has it as its implementation.
 - A `!>` documentation comment is dropped at an assignment, a `CALL`, `IMPLICIT`,
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
+- A blank line follows a parameter whose documentation ends in a Markdown
+  list in hover, so the next parameter is not shown as part of the list.
 
 ## Licenses
 
