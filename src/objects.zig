@@ -1390,7 +1390,9 @@ pub const Obj = struct {
                 try errors.append(a, d);
                 continue;
             };
-            if (self.parent != null and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
+            // an interface body has no host association, so nothing in it masks
+            // a variable of the scope around the interface (hansec #200)
+            if (self.parent != null and !is_interface and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
                 if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                     if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                     var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
