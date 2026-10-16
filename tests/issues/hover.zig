@@ -386,3 +386,29 @@ test "#498 go to definition on an include directive opens the included file" {
         break :blk h.expect(std.mem.endsWith(u8, l.uri, "sample.inc"), "definition is {s}", .{l.uri});
     });
 }
+
+test "#478 a Markdown list in a parameter's documentation does not indent the next parameter" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\contains
+        \\  !> Does things
+        \\  subroutine foo(bar, baz)
+        \\    integer, intent(in) :: bar !! bar is a place you drink:
+        \\    !! - pub
+        \\    !! - cafe
+        \\    integer, intent(in) :: baz !! baz is a nonsense word
+        \\  end subroutine foo
+        \\end module m
+        \\program p
+        \\  use m
+        \\  call foo(1, 2)
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    // a blank line ends the list, so `baz` is not a continuation of its last item
+    try h.check(478, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "foo(1, 2)", 0, 1), "\n\n`baz`"));
+}

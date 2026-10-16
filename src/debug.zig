@@ -146,10 +146,10 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     if (ast.end_errors.items.len > 0) {
         o.print("\n=== Scope Errors ===\n\n", .{});
         for (ast.end_errors.items) |e| {
-            if (e[0] >= 0) {
-                o.print("{d}: Unexpected end of scope at line {d}\n", .{ e[1], e[0] });
+            if (e.end_line) |el| {
+                o.print("{d}: Unexpected end of scope at line {d}\n", .{ e.scope_line, el });
             } else {
-                o.print("{d}: Unexpected end statement: No open scopes\n", .{e[1]});
+                o.print("{d}: Unexpected end statement: No open scopes\n", .{e.scope_line});
             }
         }
     }
@@ -184,7 +184,7 @@ fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\n{s}\nPreprocessor Pass:\n{s}\n", .{ sep2, sep2 });
     const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, traceTo(o));
     o.print("\n{s}\nPreprocessor Skipped Lines:\n{s}\n", .{ sep2, sep2 });
-    for (res.skips) |sk| o.print("  [{d}, {d}]\n", .{ sk[0], sk[1] });
+    for (res.skips) |sk| o.print("  [{d}, {d}]\n", .{ sk.start, sk.end });
     o.print("\n{s}\nPreprocessor Macros:\n{s}\n", .{ sep2, sep2 });
     var it = res.defs.iterator();
     while (it.next()) |e| {
@@ -517,10 +517,10 @@ fn printLocation(rq: *Req, res: Value) !void {
 fn processFileChanges(rq: *Req, path: []const u8, changes: Value, file: *parser.FortranFile) !void {
     rq.o.print("File: \"{s}\"\n", .{path});
     for (changes.items()) |change| {
-        const sl = (change.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0;
-        const el = (change.path(&.{ "range", "end", "line" }) orelse json.null_value).asInt() orelse 0;
-        const sc = (change.path(&.{ "range", "start", "character" }) orelse json.null_value).asInt() orelse 0;
-        const ec = (change.path(&.{ "range", "end", "character" }) orelse json.null_value).asInt() orelse 0;
+        const sl: usize = @intCast(@max((change.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0, 0));
+        const el: usize = @intCast(@max((change.path(&.{ "range", "end", "line" }) orelse json.null_value).asInt() orelse 0, 0));
+        const sc: usize = @intCast(@max((change.path(&.{ "range", "start", "character" }) orelse json.null_value).asInt() orelse 0, 0));
+        const ec: usize = @intCast(@max((change.path(&.{ "range", "end", "character" }) orelse json.null_value).asInt() orelse 0, 0));
         const new_text = (change.get("newText") orelse json.null_value).asStr() orelse "";
         rq.o.print("  {d}, {d}\n", .{ sl + 1, el + 1 });
         var new_contents: std.ArrayList([]const u8) = .empty;
@@ -529,8 +529,8 @@ fn processFileChanges(rq: *Req, path: []const u8, changes: Value, file: *parser.
             const line = file.getLine(i, false) orelse "";
             rq.o.print("  - {s}\n", .{line});
             var content: []const u8 = line;
-            if (i == sl) content = try std.mem.concat(rq.a, u8, &.{ line[0..str.utf16ToByte(line, @intCast(@max(sc, 0)))], new_text });
-            if (i == el) content = try std.mem.concat(rq.a, u8, &.{ content, str.from(line, str.utf16ToByte(line, @intCast(@max(ec, 0)))) });
+            if (i == sl) content = try std.mem.concat(rq.a, u8, &.{ line[0..str.utf16ToByte(line, sc)], new_text });
+            if (i == el) content = try std.mem.concat(rq.a, u8, &.{ content, str.from(line, str.utf16ToByte(line, ec)) });
             try new_contents.append(rq.a, content);
         }
         for (new_contents.items) |l| rq.o.print("  + {s}\n", .{l});
