@@ -113,7 +113,7 @@ const Loader = struct {
         const obj = try Obj.newScope(l.ast, .module, 0, try l.case(m.name), &.{});
         if (m.use) |u| {
             const use = try objects.UseStmt.init(l.ast.allocator(), u, &.{}, &.{});
-            try obj.use.append(l.ast.allocator(), use);
+            try obj.scopeData().use.append(l.ast.allocator(), use);
         }
         for (m.members) |member| try l.addMember(obj, member);
         return obj;

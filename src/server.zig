@@ -701,39 +701,39 @@ pub const Server = struct {
             ast.included_in = null;
             if (ast.inc_scope) |inc| {
                 ast.none_scope = inc;
-                for (inc.children.items) |c| c.parent = inc;
+                for (inc.childList()) |c| c.parent = inc;
             }
             for (ast.include_statements.items) |inc| {
                 inc.inc_obj = null;
                 inc.file = null;
             }
             for (ast.variable_list.items) |v| {
-                v.type_obj = null;
-                v.link_obj = null;
+                v.varData().type_obj = null;
+                v.varData().link_obj = null;
             }
             for (ast.scope_list.items) |s| {
-                if (s.kind.isSubroutine()) s.link_obj = null;
-                if (s.linked_from_interface) s.resetInterfaceCopy();
-                if (s.kind == .interface) s.mems.clearRetainingCapacity();
+                if (s.kind.isSubroutine()) s.procData().link_obj = null;
+                if (s.procDataOpt()) |p| if (p.linked_from_interface) s.resetInterfaceCopy();
+                if (s.kind == .interface) s.ifaceData().mems.clearRetainingCapacity();
                 if (s.kind == .type) {
-                    s.inherit_var = null;
-                    s.in_children.clearRetainingCapacity();
-                    s.inherit_version = -1;
+                    s.typeData().inherit_var = null;
+                    s.scopeData().in_children.clearRetainingCapacity();
+                    s.typeData().inherit_version = -1;
                 }
-                if (s.kind == .submodule) s.ancestor_obj = null;
+                if (s.kind == .submodule) s.submodData().ancestor_obj = null;
                 // Children of scopes in other files added through INCLUDE
                 var k: usize = 0;
-                while (k < s.children.items.len) {
-                    if (s.children.items[k].file_ast != ast) {
-                        _ = s.children.orderedRemove(k);
+                while (k < s.childList().len) {
+                    if (s.childList()[k].file_ast != ast) {
+                        _ = s.scopeData().children.orderedRemove(k);
                     } else k += 1;
                 }
             }
             if (ast.none_scope) |ns| {
                 var k: usize = 0;
-                while (k < ns.children.items.len) {
-                    if (ns.children.items[k].file_ast != ast) {
-                        _ = ns.children.orderedRemove(k);
+                while (k < ns.childList().len) {
+                    if (ns.childList()[k].file_ast != ast) {
+                        _ = ns.scopeData().children.orderedRemove(k);
                     } else k += 1;
                 }
             }
@@ -822,7 +822,7 @@ pub const Server = struct {
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
             try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
             if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
-                for (scope.children.items) |child| {
+                for (scope.childList()) |child| {
                     try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
                 }
             }
@@ -1140,7 +1140,7 @@ pub const Server = struct {
             if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
                 var seen: std.ArrayList([]const u8) = .empty;
                 if (name_replace == null) name_replace = cand.name;
-                for (cand.mems.items) |member| {
+                for (cand.memList()) |member| {
                     const text = (try member.getSnippet(a, name_replace, null)).call orelse "None";
                     var dup = false;
                     for (seen.items) |s| if (std.mem.eql(u8, s, text)) {
@@ -1169,15 +1169,15 @@ pub const Server = struct {
             .file_ast = file_ast,
             .sline = line,
             .eline = line,
-            .desc = desc,
             .fqsn = try std.ascii.allocLowerString(a, name),
+            .data = .{ .variable = .{ .desc = desc } },
         };
         try o.keywords.appendSlice(a, keywords);
         if (file_ast.enc_scope_name) |enc| o.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", try std.ascii.allocLowerString(a, name) });
-        o.callable = R().CLASS_VAR.match(desc) != null;
+        o.varData().callable = R().CLASS_VAR.match(desc) != null;
         if (o.hasKeyword(C.KW.public)) o.vis = .public;
         if (o.hasKeyword(C.KW.private)) o.vis = .private;
-        if (o.hasKeyword(C.KW.parameter)) o.is_const = true;
+        if (o.hasKeyword(C.KW.parameter)) o.varData().is_const = true;
         return o;
     }
 
@@ -1312,7 +1312,7 @@ pub const Server = struct {
     /// The subroutine or function that an EXTERNAL declaration stands for: the
     /// global procedure of that name, if there is one (upstream #483, #23)
     fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
-        if (v.kind != .variable or !v.is_external) return null;
+        if (v.kind != .variable or !v.varDataConst().is_external) return null;
         const key = try std.ascii.allocLowerString(a, v.name);
         const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
         return switch (cand.kind) {
@@ -1326,7 +1326,7 @@ pub const Server = struct {
     /// the type of the function, not a variable (upstream #118)
     fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj {
         const v = d.obj;
-        if (v.kind != .variable or v.is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
+        if (v.kind != .variable or v.varData().is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
         if (v.parent) |p| if (p.getType(false) == C.TypeId.class) return null;
         const text = d.file.getLine(d.line, false) orelse return null;
         var end = d.col;
@@ -1347,20 +1347,20 @@ pub const Server = struct {
         if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
             try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
         } else if (vt == C.TypeId.interface) {
-            for (var_obj.mems.items) |member| {
+            for (var_obj.memList()) |member| {
                 const h = try member.getHover(a, true, null);
                 if (h.msg != null) try hover_array.append(a, try self.createHover(a, h.msg, h.docs));
             }
         } else if (vt == C.TypeId.variable) {
-            if (!std.mem.startsWith(u8, var_obj.desc, C.FORTRAN_LITERAL)) {
+            if (!std.mem.startsWith(u8, var_obj.descOf(), C.FORTRAN_LITERAL)) {
                 try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "REAL")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "REAL")) {
                 try hover_array.append(a, try self.createHover(a, "REAL", null));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "INTEGER")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "INTEGER")) {
                 try hover_array.append(a, try self.createHover(a, "INTEGER", null));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "LOGICAL")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "LOGICAL")) {
                 try hover_array.append(a, try self.createHover(a, "LOGICAL", null));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "STRING")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "STRING")) {
                 const n = str.codepointLen(var_obj.name);
                 try hover_array.append(a, try self.createHover(a, try std.fmt.allocPrint(a, "CHARACTER(LEN={d})", .{@as(i64, @intCast(n)) - 2}), null));
             }
@@ -1385,9 +1385,9 @@ pub const Server = struct {
         }
         const parent = var_obj.parent orelse return .null;
         if (parent.getType(false) == C.TypeId.class) {
-            if (var_obj.link_obj) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);
+            if (var_obj.linkObj()) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);
         } else if (parent.getType(false) == C.TypeId.interface) {
-            if (var_obj.link_obj) |impl| return self.createRefLink(a, impl);
+            if (var_obj.linkObj()) |impl| return self.createRefLink(a, impl);
         }
         return .null;
     }
@@ -1501,7 +1501,7 @@ pub const Server = struct {
 
     fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
         const p = iface.parent orelse return false;
-        return p.kind == .interface and iface.isModScope() and iface.link_obj == impl;
+        return p.kind == .interface and iface.isModScope() and iface.linkObj() == impl;
     }
 
     /// Whether the name at `col` is the original name of a renamed import of
@@ -1537,7 +1537,7 @@ pub const Server = struct {
         const lower = try std.ascii.allocLowerString(a, word);
         var scope = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
         while (true) {
-            for (scope.use.items) |u| {
+            for (scope.scopeData().use.items) |u| {
                 if (!u.is_import and u.rename_map.get(lower) != null) return .{ .alias = lower, .scope = scope, .use_line = u.line_number };
             }
             scope = scope.parent orelse return null;
@@ -1626,13 +1626,13 @@ pub const Server = struct {
                             ref_match = false;
                         } else if (var_def.sline -| 1 == i and var_def.file_ast.path != null and
                             std.mem.eql(u8, var_def.file_ast.path.?, filename) and std.mem.count(u8, line, "=>") == 0 and
-                            var_def.link_obj == def_obj)
+                            var_def.linkObj() == def_obj)
                         {
                             try override_cache.append(a, var_def.fqsn);
                             ref_match = true;
                         }
                     } else if (def_obj.kind.isVariable() and def_obj.getType(true) == C.TypeId.method) {
-                        if (def_obj.link_obj) |l| if (l.parent) |lp| if (var_def.parent) |vp| {
+                        if (def_obj.linkObj()) |l| if (l.parent) |lp| if (var_def.parent) |vp| {
                             if (std.mem.eql(u8, lp.fqsn, vp.fqsn)) {
                                 ref_match = true;
                                 try override_cache.append(a, var_def.fqsn);
@@ -1655,7 +1655,7 @@ pub const Server = struct {
             const parent = def_obj.parent orelse return null;
             // the implementation of a separate module procedure may be in
             // another file (hansec #168)
-            if (parent.kind == .interface and def_obj.isModScope() and def_obj.link_obj != null) return .{ .type_mem = false, .restrict = null };
+            if (parent.kind == .interface and def_obj.isModScope() and def_obj.linkObj() != null) return .{ .type_mem = false, .restrict = null };
             if (parent.getType(false) == C.TypeId.class) {
                 type_mem = true;
             } else {
