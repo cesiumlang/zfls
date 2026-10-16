@@ -96,6 +96,9 @@ def main(only):
     # (issue, file, request kind, needle, nth, plus, extra args)
     cases = [
         (406, "t.f90", "diag", None, 0, 0, []),
+        (534, "t.f", "hover", "PARAM1", 1, 1, []),
+        (481, "src/main.F90", "hover", "from_vec = 1", 0, 1, []),
+        (481, "src/main.F90", "def", "finclude", 0, 1, []),
         (568, "user_fails.f90", "diag", None, 0, 0, []),
         (519, "t.f90", "diag", None, 0, 0, []),
         (489, "t.f", "diag", None, 0, 0, ["--max_line_length", "72", "--max_comment_line_length", "-1"]),
