@@ -36,7 +36,7 @@ give the same answer, and the test fails for the reason in the issue.
 | --- | --- | --- | --- | --- |
 | [#568](https://github.com/fortran-lang/fortls/issues/568) | plain `USE` after a `USE ONLY` through a re-exporting module | diagnostics | fixed (patched) | fails, same cause |
 | [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | fixed (patched) | fails, same cause |
-| [#536](https://github.com/fortran-lang/fortls/issues/536) | broken symlink under the workspace | fixed | crashes (per the issue) |
+| [#536](https://github.com/fortran-lang/fortls/issues/536) | broken symlink under the workspace | workspace | fixed | crashes (per the issue) |
 | [#558](https://github.com/fortran-lang/fortls/issues/558) | unreadable directory under a `source_dirs` glob (POSIX only; skipped on Windows and as root) | workspace | fixed | crashes (per the issue) |
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#478](https://github.com/fortran-lang/fortls/issues/478) | Markdown list in a parameter's docs indents the next parameter (fixture rebuilt from the screenshot) | hover | fixed (patched) | fails, same cause |
@@ -83,3 +83,15 @@ Notes:
 - The feature requests and discussions have no behavior to test yet:
   #563, #547, #512, #502, #501, #496, #438, #424, #423, #417, #348, #309,
   #209, #171, #126, #125, #96, #85, #56, #28 and #6.
+
+## Issues of hansec/fortran-language-server
+
+fortls was forked from
+[hansec/fortran-language-server](https://github.com/hansec/fortran-language-server);
+some of its bugs were never reported again to fortls. Their tests use
+`h.checkIn(.hansec, ...)`.
+
+| Issue | Behavior | Test file | zfls | fortls |
+| --- | --- | --- | --- | --- |
+| [#202](https://github.com/hansec/fortran-language-server/issues/202) | `!` comment inside a continued fixed-form declaration hides the names after it | parsing | fixed (patched) | fails, same cause |
+| [#155](https://github.com/hansec/fortran-language-server/issues/155) | `!` comment inside a continued fixed-form `IF` loses its `THEN` | parsing | fixed (patched) | fails, same cause |
