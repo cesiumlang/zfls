@@ -179,7 +179,7 @@
         "zfls.disableModernFortranCheck": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Do not offer to turn off the fortls language server of the Modern Fortran extension when both are installed."
+          "markdownDescription": "Do not recommend disabling the Modern Fortran extension, which zfls replaces, when both are enabled."
         },
         "zfls.trace.server": {
           "type": "string",
