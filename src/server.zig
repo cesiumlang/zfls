@@ -1191,6 +1191,8 @@ pub const Server = struct {
         const is_member = var_stack.len > 1;
         const def_name = helpers.expandName(curr_line, def_char);
         if (def_name.len == 0) return null;
+        // On a USE statement, both names of a rename are the module's entity
+        if (try self.useRenameTarget(a, ast, curr_line, def_char, def_name)) |o| return o;
         // Search in Preprocessor defined variables
         if (def_file.pp_defs.get(def_name)) |d| {
             var arg_str: []const u8 = "";
@@ -1260,6 +1262,34 @@ pub const Server = struct {
         const schar: usize = if (found) @intCast(res.range.start) else 0;
         const echar: usize = if (found) @intCast(res.range.end) else 0;
         return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
+    }
+
+    /// The module entity that the name at `col` stands for when it is one of
+    /// the two names of a rename on a USE statement, `use m, local => original`
+    /// (hansec #137): the original name is not visible under that name in the
+    /// using scope, and a variable there may even have it.
+    fn useRenameTarget(self: *Server, a: Allocator, ast: *Ast, line: []const u8, col: usize, name: []const u8) !?*Obj {
+        const m = R().USE.match(line) orelse return null;
+        if (col < m.end(0)) return null;
+        var start = @min(col, line.len);
+        while (start > 0 and regex.isWordChar(line[start - 1])) start -= 1;
+        const before = str.rstrip(line[0..start]);
+        var end = start;
+        while (end < line.len and regex.isWordChar(line[end])) end += 1;
+        const after = str.lstrip(line[end..]);
+        const lower = try std.ascii.allocLowerString(a, name);
+        const original = if (std.mem.endsWith(u8, before, "=>"))
+            lower
+        else if (std.mem.startsWith(u8, after, "=>")) blk: {
+            const rest = str.lstrip(after[2..]);
+            var n: usize = 0;
+            while (n < rest.len and regex.isWordChar(rest[n])) n += 1;
+            if (n == 0) return null;
+            break :blk try std.ascii.allocLowerString(a, rest[0..n]);
+        } else return null;
+        const e = self.env(a);
+        const mod = e.global(ast, try std.ascii.allocLowerString(a, m.group(2).?)) orelse return null;
+        return objects.findInScope(e, mod, original, .{});
     }
 
     /// The file that the `#include` directive under the cursor names, searched

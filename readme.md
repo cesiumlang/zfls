@@ -210,6 +210,11 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- A rename without `ONLY` (`use m, local => original`) is read: the local
+  name is the module's entity and the original name is not visible under
+  that name. On the USE line, hover, definition and references on either
+  name reach the module's entity (hansec #137); fortls only reads renames
+  after `ONLY:` and has no answer on the original name.
 
 ## Licenses
 

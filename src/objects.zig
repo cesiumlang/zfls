@@ -132,6 +132,11 @@ pub const StrMap = struct {
     keys: std.ArrayList([]const u8) = .empty,
     values: std.ArrayList([]const u8) = .empty,
 
+    pub fn hasValue(self: *const StrMap, v: []const u8) bool {
+        for (self.values.items) |value| if (std.mem.eql(u8, value, v)) return true;
+        return false;
+    }
+
     pub fn get(self: *const StrMap, k: []const u8) ?[]const u8 {
         for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) return self.values.items[i];
         return null;
@@ -2066,7 +2071,10 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         const use_scope = env.global(scope.file_ast, use_mod) orelse continue;
         if (std.mem.eql(u8, use_mod, name_lower)) return use_scope;
         if (use_info.only_list.len() > 0 and !use_info.only_list.contains(name_lower)) continue;
-        const mod_name = use_info.rename_map.get(name_lower) orelse name_lower;
+        const renamed = use_info.rename_map.get(name_lower);
+        // a renamed entity is not accessible under its original name
+        if (renamed == null and use_info.rename_map.hasValue(name_lower)) continue;
+        const mod_name = renamed orelse name_lower;
         if (try checkScope(env, use_scope, mod_name, true, null)) |v| return v;
     }
     // Only search local and imported names for interfaces

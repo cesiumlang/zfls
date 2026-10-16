@@ -95,3 +95,4 @@ some of its bugs were never reported again to fortls. Their tests use
 | --- | --- | --- | --- | --- |
 | [#202](https://github.com/hansec/fortran-language-server/issues/202) | `!` comment inside a continued fixed-form declaration hides the names after it | parsing | fixed (patched) | fails, same cause |
 | [#155](https://github.com/hansec/fortran-language-server/issues/155) | `!` comment inside a continued fixed-form `IF` loses its `THEN` | parsing | fixed (patched) | fails, same cause |
+| [#137](https://github.com/hansec/fortran-language-server/issues/137) | the original name on a USE rename line resolves to a local variable of that name | hover | fixed (patched) | fails, same cause |
