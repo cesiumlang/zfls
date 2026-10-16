@@ -32,8 +32,8 @@ pub fn expandName(line: []const u8, char_pos: usize) []const u8 {
 pub fn detectFixedFormat(file_lines: []const []const u8) bool {
     var pp_continue = false;
     for (file_lines) |line| {
-        if (str.startsWith(line, "#") or pp_continue) {
-            pp_continue = str.endsWith(str.rstrip(line), "\\");
+        if (std.mem.startsWith(u8, line, "#") or pp_continue) {
+            pp_continue = std.mem.endsWith(u8, str.rstrip(line), "\\");
             continue;
         }
         if (R().FREE_FORMAT_TEST.match(line) != null) return false;
@@ -42,7 +42,7 @@ pub fn detectFixedFormat(file_lines: []const []const u8) bool {
         }
         if (R().FIXED_COMMENT.match(line) == null) {
             const line_end = str.strip(str.beforeFirst(line, "!"));
-            if (line_end.len > 0 and str.endsWith(line_end, "&")) return false;
+            if (line_end.len > 0 and std.mem.endsWith(u8, line_end, "&")) return false;
         }
     }
     return true;
@@ -78,6 +78,61 @@ pub fn stripStrings(a: Allocator, in_line: []const u8, maintain_len: bool) ![]co
     }
     const tmp = try R().SQ_STRING.sub(a, "", in_line);
     return R().DQ_STRING.sub(a, "", tmp);
+}
+
+/// The value of a PARAMETER given as `= value` right after its name: up to
+/// the next comma that is not inside parentheses, brackets or a string, so a
+/// function call or an array constructor is whole (upstream #124). Null when
+/// there is no `=` (or an `=>`).
+pub fn parameterValue(after_name: []const u8) ?[]const u8 {
+    const t = str.lstrip(after_name);
+    if (t.len == 0 or t[0] != '=' or (t.len > 1 and t[1] == '>')) return null;
+    const v = t[1..];
+    var depth: isize = 0;
+    var quote: u8 = 0;
+    var end = v.len;
+    for (v, 0..) |c, i| {
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        switch (c) {
+            '\'', '"' => quote = c,
+            '!' => {
+                end = i;
+                break;
+            },
+            '(', '[' => depth += 1,
+            ')', ']' => depth -= 1,
+            ',' => if (depth == 0) {
+                end = i;
+                break;
+            },
+            else => {},
+        }
+    }
+    return str.strip(v[0..end]);
+}
+
+/// Split an argument list at its own commas: not those inside parentheses,
+/// brackets or string literals, as in `arr(2, 3), 'a,b'` (upstream #87). The
+/// pieces are slices of `s`.
+pub fn splitArgs(a: Allocator, s: []const u8) ![][]const u8 {
+    const stripped = try stripStrings(a, s, true);
+    var out: std.ArrayList([]const u8) = .empty;
+    var depth: isize = 0;
+    var start: usize = 0;
+    for (stripped, 0..) |c, i| switch (c) {
+        '(', '[' => depth += 1,
+        ')', ']' => depth -= 1,
+        ',' => if (depth == 0) {
+            try out.append(a, s[start..i]);
+            start = i + 1;
+        },
+        else => {},
+    };
+    try out.append(a, s[start..]);
+    return out.items;
 }
 
 /// Separate definition lists, skipping parenthesis and bracket groups
@@ -122,6 +177,19 @@ pub fn findWordInLine(line: []const u8, word: []const u8) Range {
     return .{ .start = i, .end = i + @as(isize, @intCast(word.len)) };
 }
 
+/// `findWordInLine` ignoring the case of the words in `line` and of `word`
+pub fn findWordInLineIgnoreCase(line: []const u8, word: []const u8) Range {
+    var i: isize = -1;
+    var it = R().WORD.iterator(line);
+    while (it.next()) |m| {
+        if (std.ascii.eqlIgnoreCase(m.str(), word)) {
+            i = @intCast(m.start(0));
+            break;
+        }
+    }
+    return .{ .start = i, .end = i + @as(isize, @intCast(word.len)) };
+}
+
 /// Find matching closing parenthesis from an already open parenthesis scope
 pub fn findParenMatch(s: []const u8) isize {
     var paren_count: isize = 1;
@@ -140,11 +208,11 @@ pub fn findParenMatch(s: []const u8) isize {
 /// Get code line prefix from current line and preceding continuation lines
 pub fn getLinePrefix(a: Allocator, pre_lines: []const []const u8, curr_line_in: ?[]const u8, col_in: usize, qs: bool) !?[]const u8 {
     const curr = curr_line_in orelse return null;
-    if (col_in > curr.len or str.startsWith(curr, "#")) return null;
-    const prepend = try str.concat(a, pre_lines);
-    const curr_line = try str.concat(a, &.{ prepend, curr });
+    if (col_in > curr.len or std.mem.startsWith(u8, curr, "#")) return null;
+    const prepend = try std.mem.concat(a, u8, pre_lines);
+    const curr_line = try std.mem.concat(a, u8, &.{ prepend, curr });
     const col = col_in + prepend.len;
-    const line_prefix = try str.lower(a, curr_line[0..col]);
+    const line_prefix = try std.ascii.allocLowerString(a, curr_line[0..col]);
     if (qs and (std.mem.indexOfAny(u8, line_prefix, "'\"") != null)) {
         var sq: usize = 0;
         var dq: usize = 0;
@@ -224,14 +292,14 @@ pub fn getVarStack(a: Allocator, line: []const u8) ![][]const u8 {
     if (pl.str.len == 0) return empty;
     var i_last: usize = 0;
     for (pl.sections, 0..) |sec, i| {
-        if (!str.startsWith(str.strip(str.slice(line, sec.start, sec.end)), "%")) i_last = i;
+        if (!std.mem.startsWith(u8, str.strip(str.slice(line, sec.start, sec.end)), "%")) i_last = i;
     }
     var fv: std.ArrayList(u8) = .empty;
     for (pl.sections[i_last..]) |sec| try fv.appendSlice(a, str.slice(line, sec.start, sec.end));
     // "%".join(stripped parts)
     const parts = try str.split(a, fv.items, "%");
     for (parts) |*p| p.* = str.strip(p.*);
-    const final_var = try str.join(a, "%", parts);
+    const final_var = try std.mem.join(a, "%", parts);
     const op_split = try R().OBJBREAK.split(a, final_var);
     return str.split(a, op_split[op_split.len - 1], "%");
 }
@@ -245,13 +313,13 @@ pub fn getPlaceholders(a: Allocator, arg_list: []const []const u8) ![2][]const u
             // opt_split[1] is the text between the first and second '='
             const rest = arg[e + 1 ..];
             const val = str.beforeFirst(rest, "=");
-            try holders.append(a, try str.print(a, "{s}=${{{d}:{s}}}", .{ arg[0..e], i + 1, val }));
+            try holders.append(a, try std.fmt.allocPrint(a, "{s}=${{{d}:{s}}}", .{ arg[0..e], i + 1, val }));
         } else {
-            try holders.append(a, try str.print(a, "${{{d}:{s}}}", .{ i + 1, arg }));
+            try holders.append(a, try std.fmt.allocPrint(a, "${{{d}:{s}}}", .{ i + 1, arg }));
         }
     }
-    const arg_str = try str.print(a, "({s})", .{try str.join(a, ", ", arg_list)});
-    const arg_snip = try str.print(a, "({s})", .{try str.join(a, ", ", holders.items)});
+    const arg_str = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", arg_list)});
+    const arg_snip = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", holders.items)});
     return .{ arg_str, arg_snip };
 }
 
@@ -276,9 +344,9 @@ pub const KeywordInfo = struct {
     pass: ?[]const u8 = null,
 
     pub fn get(self: KeywordInfo, key: []const u8) ?[]const u8 {
-        if (str.eql(key, "intent")) return self.intent;
-        if (str.eql(key, "dimension")) return self.dimension;
-        if (str.eql(key, "pass")) return self.pass;
+        if (std.mem.eql(u8, key, "intent")) return self.intent;
+        if (std.mem.eql(u8, key, "dimension")) return self.dimension;
+        if (std.mem.eql(u8, key, "pass")) return self.pass;
         return null;
     }
 
@@ -291,38 +359,36 @@ pub const KeywordInfo = struct {
     }
 };
 
-pub const MappedKeywords = struct { ids: []u8, info: KeywordInfo };
+pub const MappedKeywords = struct { ids: []constants.Kw, info: KeywordInfo };
 
-/// Global keyword ordering setting (`--sort_keywords`)
-pub var sort_keywords: bool = true;
-
-pub fn mapKeywords(a: Allocator, keywords: []const []const u8) !MappedKeywords {
-    var ids: std.ArrayList(u8) = .empty;
+/// `sort` orders the keyword ids (`--sort_keywords`)
+pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !MappedKeywords {
+    var ids: std.ArrayList(constants.Kw) = .empty;
     var info: KeywordInfo = .{};
     for (keywords) |kw| {
         const prefix_raw = str.strip(str.beforeFirst(kw, "("));
-        const prefix = try str.lower(a, prefix_raw);
-        const id = constants.keywordId(prefix) orelse continue;
+        const prefix = try std.ascii.allocLowerString(a, prefix_raw);
+        const id = constants.Kw.fromName(prefix) orelse continue;
         try ids.append(a, id);
-        if (str.eql(prefix, "intent") or str.eql(prefix, "dimension") or str.eql(prefix, "pass")) {
+        if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
             if (getParenSubstring(kw)) |sub| {
-                if (str.eql(prefix, "intent")) info.intent = sub;
-                if (str.eql(prefix, "dimension")) info.dimension = sub;
-                if (str.eql(prefix, "pass")) info.pass = sub;
+                if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
+                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub;
+                if (std.mem.eql(u8, prefix, "pass")) info.pass = sub;
             }
         }
     }
-    if (sort_keywords) std.mem.sort(u8, ids.items, {}, std.sort.asc(u8));
+    if (sort) std.mem.sort(constants.Kw, ids.items, {}, constants.Kw.lessThan);
     return .{ .ids = ids.items, .info = info };
 }
 
-pub fn getKeywords(a: Allocator, ids: []const u8, info: KeywordInfo) ![][]const u8 {
+pub fn getKeywords(a: Allocator, ids: []const constants.Kw, info: KeywordInfo) ![][]const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     for (ids) |id| {
-        const rep = constants.keyword_list[id];
-        const up = try str.upper(a, rep);
+        const rep = @tagName(id);
+        const up = try std.ascii.allocUpperString(a, rep);
         if (info.get(rep)) |addl| {
-            try out.append(a, try str.print(a, "{s}({s})", .{ up, addl }));
+            try out.append(a, try std.fmt.allocPrint(a, "{s}({s})", .{ up, addl }));
         } else {
             try out.append(a, up);
         }
@@ -349,6 +415,17 @@ test "helper functions" {
     const l2 = (try separateDefList(a, "var, init_var(3) = [1,2,3], array(3,3)")).?;
     try testing.expectEqualStrings("init_var(3) = [1,2,3]", l2[1]);
     try testing.expectEqualStrings("array(3,3)", l2[2]);
+
+    const args = try splitArgs(a, "arr(2, 3), x=[1, 2], 'a,b', ");
+    try testing.expectEqual(@as(usize, 4), args.len);
+    try testing.expectEqualStrings("arr(2, 3)", args[0]);
+    try testing.expectEqualStrings(" 'a,b'", args[2]);
+    try testing.expectEqualStrings(" ", args[3]);
+
+    try testing.expectEqualStrings("selected_real_kind(6, 30)", parameterValue(" = selected_real_kind(6, 30), b = 2").?);
+    try testing.expectEqualStrings("[1, 2, 3]", parameterValue("=[1, 2, 3]").?);
+    try testing.expectEqualStrings("'a,b'", parameterValue(" = 'a,b' , x").?);
+    try testing.expect(parameterValue(" => null()") == null);
 
     try testing.expectEqualStrings("a, b, (c, d)", getParenSubstring("some line(a, b, (c, d))").?);
     try testing.expect(getParenSubstring("some line(a, b") == null);

@@ -70,6 +70,9 @@ pub const Kind = enum {
     }
 };
 
+/// Declared visibility of an object, `default` when no PUBLIC or PRIVATE applies
+pub const Vis = enum { private, default, public };
+
 pub const ImportType = enum(i8) { default = -1, none = 0, all = 1, only = 2 };
 
 /// USE or IMPORT statement
@@ -77,7 +80,7 @@ pub const UseStmt = struct {
     mod_name: []const u8,
     only_list: StrSet = .{},
     rename_map: StrMap = .{},
-    line_number: i64 = 0,
+    line_number: usize = 0,
     is_import: bool = false,
     import_type: ImportType = .default,
     /// Parent scope of IMPORT statement i.e. parent of the interface
@@ -86,9 +89,9 @@ pub const UseStmt = struct {
     /// Construct (lowercasing names like the Python `Use` initializer)
     pub fn init(a: Allocator, mod_name: []const u8, only: []const []const u8, renames: []const [2][]const u8) !*UseStmt {
         const u = try a.create(UseStmt);
-        u.* = .{ .mod_name = try str.lower(a, mod_name) };
-        for (only) |o| try u.only_list.add(a, try str.lower(a, o));
-        for (renames) |r| try u.rename_map.put(a, try str.lower(a, r[0]), try str.lower(a, r[1]));
+        u.* = .{ .mod_name = try std.ascii.allocLowerString(a, mod_name) };
+        for (only) |o| try u.only_list.add(a, try std.ascii.allocLowerString(a, o));
+        for (renames) |r| try u.rename_map.put(a, try std.ascii.allocLowerString(a, r[0]), try std.ascii.allocLowerString(a, r[1]));
         return u;
     }
 
@@ -107,7 +110,7 @@ pub const StrSet = struct {
     items: std.ArrayList([]const u8) = .empty,
 
     pub fn contains(self: *const StrSet, s: []const u8) bool {
-        for (self.items.items) |it| if (str.eql(it, s)) return true;
+        for (self.items.items) |it| if (std.mem.eql(u8, it, s)) return true;
         return false;
     }
 
@@ -130,12 +133,12 @@ pub const StrMap = struct {
     values: std.ArrayList([]const u8) = .empty,
 
     pub fn get(self: *const StrMap, k: []const u8) ?[]const u8 {
-        for (self.keys.items, 0..) |key, i| if (str.eql(key, k)) return self.values.items[i];
+        for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) return self.values.items[i];
         return null;
     }
 
     pub fn put(self: *StrMap, a: Allocator, k: []const u8, v: []const u8) !void {
-        for (self.keys.items, 0..) |key, i| if (str.eql(key, k)) {
+        for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) {
             self.values.items[i] = v;
             return;
         };
@@ -144,7 +147,7 @@ pub const StrMap = struct {
     }
 
     pub fn remove(self: *StrMap, k: []const u8) void {
-        for (self.keys.items, 0..) |key, i| if (str.eql(key, k)) {
+        for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) {
             _ = self.keys.orderedRemove(i);
             _ = self.values.orderedRemove(i);
             return;
@@ -182,15 +185,15 @@ pub const Obj = struct {
     kind: Kind,
     name: []const u8,
     fqsn: []const u8 = "",
-    sline: i64 = 0,
-    eline: i64 = -1,
-    vis: i8 = 0,
-    def_vis: i8 = 0,
+    sline: usize = 0,
+    eline: usize = 0,
+    vis: Vis = .default,
+    def_vis: Vis = .default,
     doc_str: ?[]const u8 = null,
     parent: ?*Obj = null,
     implicit_vars: ?bool = null,
     file_ast: *Ast,
-    keywords: std.ArrayList(u8) = .empty,
+    keywords: std.ArrayList(C.Kw) = .empty,
     keyword_info: KeywordInfo = .{},
 
     // Scope
@@ -198,8 +201,8 @@ pub const Obj = struct {
     members: std.ArrayList([]const u8) = .empty,
     use: std.ArrayList(*UseStmt) = .empty,
     inherit: ?[]const u8 = null,
-    contains_start: ?i64 = null,
-    implicit_line: ?i64 = null,
+    contains_start: ?usize = null,
+    implicit_line: ?usize = null,
 
     // Type
     in_children: std.ArrayList(*Obj) = .empty,
@@ -244,13 +247,16 @@ pub const Obj = struct {
     is_const: bool = false,
     is_external: bool = false,
     param_val: ?[]const u8 = null,
+    /// For an ASSOCIATE name bound to an array element or section, `b(:, 1)`:
+    /// the number of dimensions that remain (the sections), else -1
+    slice_rank: i32 = -1,
     link_name: ?[]const u8 = null,
     callable: bool = false,
-    drop_arg: i64 = -1,
+    drop_arg: ?usize = null,
     pass_name: ?[]const u8 = null,
 
     // Intrinsic
-    itype: i32 = 0,
+    itype: C.TypeId = .base,
 
     /// Set when `copyInterface` imported data from a submodule prototype
     linked_from_interface: bool = false,
@@ -264,23 +270,23 @@ pub const Obj = struct {
         return std.ascii.eqlIgnoreCase(self.name, other);
     }
 
-    pub fn hasKeyword(self: *const Obj, id: u8) bool {
-        return std.mem.indexOfScalar(u8, self.keywords.items, id) != null;
+    pub fn hasKeyword(self: *const Obj, id: C.Kw) bool {
+        return std.mem.indexOfScalar(C.Kw, self.keywords.items, id) != null;
     }
 
     // ------------------------------------------------------------------
     // Construction
 
     fn computeFqsn(a: Allocator, file_ast: *Ast, name: []const u8) ![]const u8 {
-        const lname = try str.lower(a, name);
+        const lname = try std.ascii.allocLowerString(a, name);
         if (file_ast.enc_scope_name) |enc| {
-            return str.concat(a, &.{ try str.lower(a, enc), "::", lname });
+            return std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", lname });
         }
         return lname;
     }
 
     /// Create a Scope-derived object (`Scope.__init__`)
-    pub fn newScope(file_ast: *Ast, kind: Kind, line_number: i64, name: []const u8, keywords: []const u8) !*Obj {
+    pub fn newScope(file_ast: *Ast, kind: Kind, line_number: usize, name: []const u8, keywords: []const C.Kw) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -296,8 +302,8 @@ pub const Obj = struct {
         switch (kind) {
             .type => {
                 o.abstract = o.hasKeyword(KW.abstract);
-                if (o.hasKeyword(KW.public)) o.vis = 1;
-                if (o.hasKeyword(KW.private)) o.vis = -1;
+                if (o.hasKeyword(KW.public)) o.vis = .public;
+                if (o.hasKeyword(KW.private)) o.vis = .private;
             },
             .interface => {},
             else => {},
@@ -305,23 +311,23 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newInterface(file_ast: *Ast, line_number: i64, name: []const u8, abstract: bool) !*Obj {
+    pub fn newInterface(file_ast: *Ast, line_number: usize, name: []const u8, abstract: bool) !*Obj {
         const o = try newScope(file_ast, .interface, line_number, name, &.{});
         o.abstract = abstract;
-        o.external = str.startsWith(name, "#GEN_INT") and !abstract;
+        o.external = std.mem.startsWith(u8, name, "#GEN_INT") and !abstract;
         return o;
     }
 
-    pub fn newSubmodule(file_ast: *Ast, line_number: i64, name: []const u8, ancestor_name: []const u8) !*Obj {
+    pub fn newSubmodule(file_ast: *Ast, line_number: usize, name: []const u8, ancestor_name: []const u8) !*Obj {
         const o = try newScope(file_ast, .submodule, line_number, name, &.{});
         o.ancestor_name = try o.al().dupe(u8, ancestor_name);
         return o;
     }
 
-    pub fn newSubroutine(file_ast: *Ast, line_number: i64, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const u8) !*Obj {
+    pub fn newSubroutine(file_ast: *Ast, line_number: usize, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const C.Kw) !*Obj {
         const o = try newScope(file_ast, .subroutine, line_number, name, keywords);
         const a = o.al();
-        o.args = try str.replace(a, args, " ", "");
+        o.args = try std.mem.replaceOwned(u8, a, args, " ", "");
         o.args_snip = o.args;
         o.mod_scope = mod_flag;
         return o;
@@ -330,16 +336,16 @@ pub const Obj = struct {
     pub const FunOpts = struct {
         args: []const u8 = "",
         mod_flag: bool = false,
-        keywords: []const u8 = &.{},
+        keywords: []const C.Kw = &.{},
         keyword_info: KeywordInfo = .{},
         result_type: ?[]const u8 = null,
         result_name: ?[]const u8 = null,
     };
 
-    pub fn newFunction(file_ast: *Ast, line_number: i64, name: []const u8, opts: FunOpts) !*Obj {
+    pub fn newFunction(file_ast: *Ast, line_number: usize, name: []const u8, opts: FunOpts) !*Obj {
         const o = try newScope(file_ast, .function, line_number, name, opts.keywords);
         const a = o.al();
-        o.args = try str.lower(a, try str.replace(a, opts.args, " ", ""));
+        o.args = try std.ascii.allocLowerString(a, try std.mem.replaceOwned(u8, a, opts.args, " ", ""));
         o.args_snip = o.args;
         o.mod_scope = opts.mod_flag;
         o.result_name = try str.dupeOpt(a, opts.result_name);
@@ -349,7 +355,7 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newSelect(file_ast: *Ast, line_number: i64, name: []const u8, info: parser.SelectInfo) !*Obj {
+    pub fn newSelect(file_ast: *Ast, line_number: usize, name: []const u8, info: parser.SelectInfo) !*Obj {
         const o = try newScope(file_ast, .select, line_number, name, &.{});
         const a = o.al();
         o.select_type = info.type;
@@ -367,8 +373,8 @@ pub const Obj = struct {
         }
         // Close previous "TYPE IS" region if open
         if (file_ast.current_scope) |cs| {
-            if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) {
-                file_ast.endScope(line_number, true);
+            if (cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) {
+                try file_ast.endScope(line_number, true);
             }
         }
         return o;
@@ -381,7 +387,7 @@ pub const Obj = struct {
     };
 
     /// `Variable.__init__`
-    pub fn newVariable(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const u8, opts: VarOpts) !*Obj {
+    pub fn newVariable(file_ast: *Ast, line_number: usize, name: []const u8, var_desc: []const u8, keywords: []const C.Kw, opts: VarOpts) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -398,16 +404,16 @@ pub const Obj = struct {
         };
         try o.keywords.appendSlice(a, keywords);
         o.callable = R().CLASS_VAR.match(try o.getDescNoLink(a)) != null;
-        if (opts.link_obj) |l| o.link_name = try str.lower(a, l);
-        if (o.hasKeyword(KW.public)) o.vis = 1;
-        if (o.hasKeyword(KW.private)) o.vis = -1;
+        if (opts.link_obj) |l| o.link_name = try std.ascii.allocLowerString(a, l);
+        if (o.hasKeyword(KW.public)) o.vis = .public;
+        if (o.hasKeyword(KW.private)) o.vis = .private;
         if (o.hasKeyword(KW.parameter)) o.is_const = true;
         if (o.hasKeyword(KW.external) or std.ascii.eqlIgnoreCase(o.desc, "external")) o.is_external = true;
         return o;
     }
 
     /// `Method.__init__` (type-bound procedure / procedure pointer)
-    pub fn newMethod(file_ast: *Ast, line_number: i64, name: []const u8, var_desc: []const u8, keywords: []const u8, keyword_info: KeywordInfo, proc_ptr: ?[]const u8, link_obj: ?[]const u8) !*Obj {
+    pub fn newMethod(file_ast: *Ast, line_number: usize, name: []const u8, var_desc: []const u8, keywords: []const C.Kw, keyword_info: KeywordInfo, proc_ptr: ?[]const u8, link_obj: ?[]const u8) !*Obj {
         const o = try newVariable(file_ast, line_number, name, var_desc, keywords, .{
             .keyword_info = keyword_info,
             .kind = proc_ptr,
@@ -415,16 +421,16 @@ pub const Obj = struct {
         });
         const a = o.al();
         o.kind = .method;
-        o.drop_arg = -1;
+        o.drop_arg = null;
         o.pass_name = o.keyword_info.pass;
         if (link_obj == null) {
-            const d = try str.lower(a, try o.getDescNoLink(a));
+            const d = try std.ascii.allocLowerString(a, try o.getDescNoLink(a));
             if (helpers.getParenSubstring(d)) |sub| o.link_name = sub else o.link_name = null;
         }
         return o;
     }
 
-    pub fn newIntrinsic(file_ast: *Ast, name: []const u8, itype: i32, doc_str: ?[]const u8, args: []const u8) !*Obj {
+    pub fn newIntrinsic(file_ast: *Ast, name: []const u8, itype: C.TypeId, doc_str: ?[]const u8, args: []const u8) !*Obj {
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         o.* = .{
@@ -433,7 +439,7 @@ pub const Obj = struct {
             .file_ast = file_ast,
             .itype = itype,
             .doc_str = try str.dupeOpt(a, doc_str),
-            .args = try str.replace(a, args, " ", ""),
+            .args = try std.mem.replaceOwned(u8, a, args, " ", ""),
             .fqsn = "",
         };
         return o;
@@ -442,24 +448,24 @@ pub const Obj = struct {
     // ------------------------------------------------------------------
     // Basic accessors
 
-    pub fn getType(self: *const Obj, no_link: bool) i32 {
+    pub fn getType(self: *const Obj, no_link: bool) C.TypeId {
         return switch (self.kind) {
-            .scope, .include => C.BASE_TYPE_ID,
-            .module, .program => C.MODULE_TYPE_ID,
-            .submodule => C.SUBMODULE_TYPE_ID,
-            .subroutine => C.SUBROUTINE_TYPE_ID,
-            .function => C.FUNCTION_TYPE_ID,
-            .type => C.CLASS_TYPE_ID,
-            .interface => C.INTERFACE_TYPE_ID,
-            .block => C.BLOCK_TYPE_ID,
-            .select => C.SELECT_TYPE_ID,
-            .do_ => C.DO_TYPE_ID,
-            .where => C.WHERE_TYPE_ID,
-            .if_ => C.IF_TYPE_ID,
-            .associate => C.ASSOC_TYPE_ID,
-            .enum_ => C.ENUM_TYPE_ID,
-            .variable => if (self.link_obj) |l| l.getType(false) else C.VAR_TYPE_ID,
-            .method => if (!no_link and self.link_obj != null) self.link_obj.?.getType(false) else C.METH_TYPE_ID,
+            .scope, .include => C.TypeId.base,
+            .module, .program => C.TypeId.module,
+            .submodule => C.TypeId.submodule,
+            .subroutine => C.TypeId.subroutine,
+            .function => C.TypeId.function,
+            .type => C.TypeId.class,
+            .interface => C.TypeId.interface,
+            .block => C.TypeId.block,
+            .select => C.TypeId.select,
+            .do_ => C.TypeId.do_,
+            .where => C.TypeId.where,
+            .if_ => C.TypeId.if_,
+            .associate => C.TypeId.assoc,
+            .enum_ => C.TypeId.enum_,
+            .variable => if (self.link_obj) |l| l.getType(false) else C.TypeId.variable,
+            .method => if (!no_link and self.link_obj != null) self.link_obj.?.getType(false) else C.TypeId.method,
             .intrinsic => self.itype,
         };
     }
@@ -467,7 +473,7 @@ pub const Obj = struct {
     /// Variable description without following links (`get_desc(True)`)
     pub fn getDescNoLink(self: *const Obj, a: Allocator) ![]const u8 {
         if (self.kind.isVariable()) {
-            if (self.vkind) |k| if (k.len > 0) return str.concat(a, &.{ self.desc, k });
+            if (self.vkind) |k| if (k.len > 0) return std.mem.concat(a, u8, &.{ self.desc, k });
             return self.desc;
         }
         return self.getDesc(a);
@@ -481,7 +487,7 @@ pub const Obj = struct {
             .program => "PROGRAM",
             .submodule => "SUBMODULE",
             .subroutine => "SUBROUTINE",
-            .function => if (self.result_type) |rt| (if (rt.len > 0) try str.concat(a, &.{ rt, " FUNCTION" }) else "FUNCTION") else "FUNCTION",
+            .function => if (self.result_type) |rt| (if (rt.len > 0) try std.mem.concat(a, u8, &.{ rt, " FUNCTION" }) else "FUNCTION") else "FUNCTION",
             .type => "TYPE",
             .interface => "INTERFACE",
             .block => "BLOCK",
@@ -493,9 +499,9 @@ pub const Obj = struct {
             .select => "SELECT",
             .variable, .method => if (self.link_obj) |l| l.getDesc(a) else self.getDescNoLink(a),
             .intrinsic => switch (self.itype) {
-                2 => "SUBROUTINE",
-                14 => "KEYWORD",
-                15 => "STATEMENT",
+                .subroutine => "SUBROUTINE",
+                C.keyword_itype => "KEYWORD",
+                C.statement_itype => "STATEMENT",
                 else => "INTRINSIC",
             },
         };
@@ -515,7 +521,7 @@ pub const Obj = struct {
                 if (!public_only) return a.dupe(*Obj, self.children.items);
                 var out: std.ArrayList(*Obj) = .empty;
                 for (self.children.items) |child| {
-                    if (child.vis < 0 or (self.def_vis < 0 and child.vis <= 0)) continue;
+                    if (child.vis == .private or (self.def_vis == .private and child.vis != .public)) continue;
                     try out.append(a, child);
                 }
                 return out.items;
@@ -536,10 +542,10 @@ pub const Obj = struct {
         self.parent = parent_obj;
         if (self.kind == .method) {
             const p = parent_obj orelse return;
-            if (p.getType(false) == C.CLASS_TYPE_ID) {
+            if (p.getType(false) == C.TypeId.class) {
                 if (!self.hasKeyword(KW.nopass)) self.drop_arg = 0;
                 if (p.contains_start != null and self.sline > p.contains_start.? and self.link_name == null) {
-                    self.link_name = str.lower(self.al(), self.name) catch self.name;
+                    self.link_name = std.ascii.allocLowerString(self.al(), self.name) catch self.name;
                 }
             }
         }
@@ -553,16 +559,16 @@ pub const Obj = struct {
     pub fn updateFqsn(self: *Obj, enc_scope: ?[]const u8) !void {
         if (!self.kind.isScope() and !self.kind.isVariable()) return;
         const a = self.al();
-        const lname = try str.lower(a, self.name);
+        const lname = try std.ascii.allocLowerString(a, self.name);
         if (enc_scope) |e| {
-            self.fqsn = try str.concat(a, &.{ try str.lower(a, e), "::", lname });
+            self.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, e), "::", lname });
         } else {
             self.fqsn = lname;
         }
         for (self.children.items) |child| try child.updateFqsn(self.fqsn);
     }
 
-    pub fn end(self: *Obj, line_number: i64) void {
+    pub fn end(self: *Obj, line_number: usize) void {
         self.eline = line_number;
     }
 
@@ -570,12 +576,12 @@ pub const Obj = struct {
         self.doc_str = doc;
     }
 
-    pub fn setImplicit(self: *Obj, flag: bool, line_number: i64) void {
+    pub fn setImplicit(self: *Obj, flag: bool, line_number: usize) void {
         self.implicit_vars = flag;
         self.implicit_line = line_number;
     }
 
-    pub fn markContains(self: *Obj, line_number: i64) error{MultipleContains}!void {
+    pub fn markContains(self: *Obj, line_number: usize) error{MultipleContains}!void {
         if (self.contains_start != null) return error.MultipleContains;
         self.contains_start = line_number;
     }
@@ -615,7 +621,7 @@ pub const Obj = struct {
             .interface, .subroutine, .method => true,
             .function => false,
             .variable => self.callable,
-            .intrinsic => self.itype == 2,
+            .intrinsic => self.itype == .subroutine,
             else => false,
         };
     }
@@ -647,12 +653,12 @@ pub const Obj = struct {
             .type => {
                 const p = self.parent orelse return false;
                 const pt = p.getType(false);
-                return pt != C.CLASS_TYPE_ID and pt < C.BLOCK_TYPE_ID;
+                return pt != C.TypeId.class and !pt.isInnerScope();
             },
             .subroutine, .function => {
                 if (self.parent) |p| {
                     const pt = p.getType(false);
-                    if (pt == C.CLASS_TYPE_ID or pt >= C.BLOCK_TYPE_ID) return false;
+                    if (pt == C.TypeId.class or pt.isInnerScope()) return false;
                 }
                 return true;
             },
@@ -677,7 +683,7 @@ pub const Obj = struct {
 
     pub const Snippet = struct { call: ?[]const u8 = null, snippet: ?[]const u8 = null };
 
-    pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: i64) Allocator.Error!Snippet {
+    pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize) Allocator.Error!Snippet {
         switch (self.kind) {
             .variable => {
                 const name = name_replace orelse self.name;
@@ -694,9 +700,9 @@ pub const Obj = struct {
             .subroutine, .function => {
                 var arg_list: std.ArrayList([]const u8) = .empty;
                 try arg_list.appendSlice(a, try str.split(a, self.args_snip, ","));
-                if (drop_arg >= 0 and drop_arg < arg_list.items.len) {
-                    _ = arg_list.orderedRemove(@intCast(drop_arg));
-                }
+                if (drop_arg) |d| if (d < arg_list.items.len) {
+                    _ = arg_list.orderedRemove(d);
+                };
                 var arg_str: []const u8 = "()";
                 var arg_snip: ?[]const u8 = null;
                 if (arg_list.items.len > 0) {
@@ -706,15 +712,15 @@ pub const Obj = struct {
                 }
                 const name = name_replace orelse self.name;
                 return .{
-                    .call = try str.concat(a, &.{ name, arg_str }),
-                    .snippet = if (arg_snip) |s| try str.concat(a, &.{ name, s }) else null,
+                    .call = try std.mem.concat(a, u8, &.{ name, arg_str }),
+                    .snippet = if (arg_snip) |s| try std.mem.concat(a, u8, &.{ name, s }) else null,
                 };
             },
             .intrinsic => {
                 var arg_str: []const u8 = undefined;
                 var arg_snip: ?[]const u8 = null;
                 if (self.args.len == 0) {
-                    if (self.itype >= 14) return .{};
+                    if (self.itype == C.keyword_itype or self.itype == C.statement_itype) return .{};
                     arg_str = "()";
                 } else {
                     const ph = try helpers.getPlaceholders(a, try str.split(a, self.args, ","));
@@ -723,8 +729,8 @@ pub const Obj = struct {
                 }
                 const name = name_replace orelse self.name;
                 return .{
-                    .call = try str.concat(a, &.{ name, arg_str }),
-                    .snippet = if (arg_snip) |s| try str.concat(a, &.{ name, s }) else null,
+                    .call = try std.mem.concat(a, u8, &.{ name, arg_str }),
+                    .snippet = if (arg_snip) |s| try std.mem.concat(a, u8, &.{ name, s }) else null,
                 };
             },
             else => return .{},
@@ -733,19 +739,19 @@ pub const Obj = struct {
 
     pub const Hover = struct { msg: ?[]const u8 = null, docs: ?[]const u8 = null };
 
-    pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: i64) Allocator.Error!Hover {
+    pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Allocator.Error!Hover {
         switch (self.kind) {
             .module, .program, .submodule => return .{
-                .msg = try str.concat(a, &.{ try self.getDesc(a), " ", self.name }),
+                .msg = try std.mem.concat(a, u8, &.{ try self.getDesc(a), " ", self.name }),
                 .docs = self.getDocumentation(),
             },
             .type => {
                 var kws: std.ArrayList([]const u8) = .empty;
                 try kws.append(a, "TYPE");
                 if (self.abstract) try kws.append(a, "ABSTRACT");
-                if (self.inherit) |inh| if (inh.len > 0) try kws.append(a, try str.print(a, "EXTENDS({s})", .{inh}));
-                const decl = try str.join(a, ", ", kws.items);
-                return .{ .msg = try str.print(a, "{s} :: {s}", .{ decl, self.name }), .docs = self.getDocumentation() };
+                if (self.inherit) |inh| if (inh.len > 0) try kws.append(a, try std.fmt.allocPrint(a, "EXTENDS({s})", .{inh}));
+                const decl = try std.mem.join(a, ", ", kws.items);
+                return .{ .msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ decl, self.name }), .docs = self.getDocumentation() };
             },
             .subroutine => {
                 const sig = try self.getSnippet(a, null, drop_arg);
@@ -753,37 +759,37 @@ pub const Obj = struct {
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "SUBROUTINE ");
                 var hover_array: std.ArrayList([]const u8) = .empty;
-                try hover_array.append(a, try str.concat(a, &.{ try str.join(a, " ", kw.items), sig.call.? }));
+                try hover_array.append(a, try std.mem.concat(a, u8, &.{ try std.mem.join(a, " ", kw.items), sig.call.? }));
                 var docs: std.ArrayList([]const u8) = .empty;
                 try self.getDocsFull(a, &hover_array, &docs, long, drop_arg);
                 return .{
-                    .msg = try str.join(a, "\n ", hover_array.items),
-                    .docs = try str.join(a, "   \n", docs.items),
+                    .msg = try std.mem.join(a, "\n ", hover_array.items),
+                    .docs = try std.mem.join(a, "   \n", docs.items),
                 };
             },
             .function => {
                 var fun_sig = (try self.getSnippet(a, null, drop_arg)).call.?;
-                if (long) fun_sig = try str.print(a, "{s} RESULT({s})", .{ fun_sig, self.result_name orelse self.name });
+                if (long) fun_sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ fun_sig, self.result_name orelse self.name });
                 var kw: std.ArrayList([]const u8) = .empty;
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "FUNCTION");
                 var hover_array: std.ArrayList([]const u8) = .empty;
-                try hover_array.append(a, try str.print(a, "{s} {s}", .{ try str.join(a, " ", kw.items), fun_sig }));
+                try hover_array.append(a, try std.fmt.allocPrint(a, "{s} {s}", .{ try std.mem.join(a, " ", kw.items), fun_sig }));
                 var docs: std.ArrayList([]const u8) = .empty;
                 try self.getDocsFull(a, &hover_array, &docs, long, drop_arg);
                 if (self.result_obj != null and long) {
                     const ro = self.result_obj.?;
-                    const h = try ro.getHover(a, false, -1);
+                    const h = try ro.getHover(a, false, null);
                     if (h.docs) |d| {
-                        try docs.append(a, try str.print(a, "\n**Return:**  \n`{s}`{s}", .{ ro.name, d }));
+                        try docs.append(a, try std.fmt.allocPrint(a, "\n**Return:**  \n`{s}`{s}", .{ ro.name, d }));
                     }
                     try hover_array.append(a, h.msg orelse "None");
                 } else if (self.result_type != null and self.result_type.?.len > 0 and long) {
-                    hover_array.items[0] = try str.print(a, "{s} {s}", .{ self.result_type.?, hover_array.items[0] });
+                    hover_array.items[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ self.result_type.?, hover_array.items[0] });
                 }
                 return .{
-                    .msg = try str.join(a, "\n ", hover_array.items),
-                    .docs = try str.join(a, "  \n", docs.items),
+                    .msg = try std.mem.join(a, "\n ", hover_array.items),
+                    .docs = try std.mem.join(a, "  \n", docs.items),
                 };
             },
             .variable => {
@@ -791,10 +797,10 @@ pub const Obj = struct {
                 var parts: std.ArrayList([]const u8) = .empty;
                 try parts.append(a, try self.getDesc(a));
                 try parts.appendSlice(a, try self.getKeywordStrings(a));
-                var hover = try str.join(a, ", ", parts.items);
-                if (!str.startsWith(hover, "#")) hover = try str.print(a, "{s} :: {s}", .{ hover, self.name });
+                var hover = try std.mem.join(a, ", ", parts.items);
+                if (!std.mem.startsWith(u8, hover, "#")) hover = try std.fmt.allocPrint(a, "{s} :: {s}", .{ hover, self.name });
                 if (self.isParameter()) if (self.param_val) |pv| {
-                    hover = try str.print(a, "{s} = {s}", .{ hover, pv });
+                    hover = try std.fmt.allocPrint(a, "{s} = {s}", .{ hover, pv });
                 };
                 return .{ .msg = hover, .docs = doc_str };
             },
@@ -809,12 +815,12 @@ pub const Obj = struct {
                         if (l.getDocumentation()) |top| {
                             docs = try str.replaceFirst(a, link_docs, top, docs orelse "None");
                         } else if (link_docs.len > 0) {
-                            docs = try str.concat(a, &.{ docs orelse "", "  \n", link_docs });
+                            docs = try std.mem.concat(a, u8, &.{ docs orelse "", "  \n", link_docs });
                         }
                     }
                 } else {
-                    const sig = try self.getSnippet(a, null, -1);
-                    hover_str = try str.print(a, "{s} {s}", .{ try self.getDesc(a), sig.call orelse "None" });
+                    const sig = try self.getSnippet(a, null, null);
+                    hover_str = try std.fmt.allocPrint(a, "{s} {s}", .{ try self.getDesc(a), sig.call orelse "None" });
                 }
                 return .{ .msg = hover_str, .docs = docs };
             },
@@ -823,59 +829,93 @@ pub const Obj = struct {
         }
     }
 
-    pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: i64) ![]const u8 {
+    pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) ![]const u8 {
         const h = try self.getHover(a, long, drop_arg);
         return helpers.fortranMd(a, h.msg, h.docs);
     }
 
     pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
-        if (self.link_obj) |l| return helpers.getKeywords(a, l.keywords.items, l.keyword_info);
+        if (self.link_obj) |l| {
+            if (self.slice_rank >= 0 and l.kind == .variable) {
+                // a name bound to a section has the rank of the section, not
+                // of the array it is cut from (upstream #108)
+                var ids: std.ArrayList(C.Kw) = .empty;
+                for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
+                var info = l.keyword_info;
+                info.dimension = null;
+                if (self.slice_rank > 0) {
+                    try ids.append(a, KW.dimension);
+                    var dims: std.ArrayList(u8) = .empty;
+                    for (0..@as(usize, @intCast(self.slice_rank))) |i| {
+                        if (i > 0) try dims.append(a, ',');
+                        try dims.append(a, ':');
+                    }
+                    info.dimension = dims.items;
+                }
+                return helpers.getKeywords(a, ids.items, info);
+            }
+            return helpers.getKeywords(a, l.keywords.items, l.keyword_info);
+        }
         return helpers.getKeywords(a, self.keywords.items, self.keyword_info);
     }
 
-    fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: i64) !void {
+    fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: ?usize) !void {
         if (self.getDocumentation()) |d| try doc_strs.append(a, d);
         if (!long) return;
         var has_args = true;
+        var in_list = false;
         for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse continue;
-            if (@as(i64, @intCast(i)) == drop_arg) continue;
-            const h = try arg_obj.getHover(a, false, -1);
+            if (i == drop_arg) continue;
+            const h = try arg_obj.getHover(a, false, null);
             try hover_array.append(a, h.msg orelse "None");
             if (h.docs) |d| if (d.len > 0) {
                 if (has_args) {
                     try doc_strs.append(a, "\n**Parameters:**  ");
                     has_args = false;
                 }
-                try doc_strs.append(a, str.strip(try str.print(a, "`{s}` {s}", .{ arg_obj.name, d })));
+                // a list in the previous parameter's text would swallow this one
+                const entry = str.strip(try std.fmt.allocPrint(a, "`{s}` {s}", .{ arg_obj.name, d }));
+                try doc_strs.append(a, if (in_list) try std.fmt.allocPrint(a, "\n{s}", .{entry}) else entry);
+                in_list = endsInListItem(entry);
             };
         }
+    }
+
+    /// Whether the last line of a Markdown text is a list item (`- x`, `* x`, `+ x`, `1. x`)
+    fn endsInListItem(text: []const u8) bool {
+        const nl = std.mem.lastIndexOfScalar(u8, text, '\n');
+        const line = std.mem.trimStart(u8, if (nl) |n| text[n + 1 ..] else text, " \t");
+        if (line.len >= 2 and (line[0] == '-' or line[0] == '*' or line[0] == '+') and line[1] == ' ') return true;
+        var i: usize = 0;
+        while (i < line.len and std.ascii.isDigit(line[i])) i += 1;
+        return i > 0 and i + 1 < line.len and (line[i] == '.' or line[i] == ')') and line[i + 1] == ' ';
     }
 
     pub const ArgSig = struct { label: []const u8, doc_md: ?[]const u8 = null };
     pub const Signature = struct { label: ?[]const u8 = null, doc: ?[]const u8 = null, params: []ArgSig = &.{} };
 
-    pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: i64) Allocator.Error!Signature {
+    pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: ?usize) Allocator.Error!Signature {
         switch (self.kind) {
             .subroutine, .function => {
                 var arg_sigs: std.ArrayList(ArgSig) = .empty;
                 const arg_list = try str.split(a, self.args, ",");
                 for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
-                    if (@as(i64, @intCast(i)) == drop_arg) continue;
+                    if (i == drop_arg) continue;
                     if (arg_obj_opt) |arg_obj| {
-                        const lname = try str.lower(a, arg_obj.name);
-                        const label = if (arg_obj.isOptional()) try str.print(a, "{s}={s}", .{ lname, lname }) else lname;
-                        try arg_sigs.append(a, .{ .label = label, .doc_md = try arg_obj.getHoverMd(a, false, -1) });
+                        const lname = try std.ascii.allocLowerString(a, arg_obj.name);
+                        const label = if (arg_obj.isOptional()) try std.fmt.allocPrint(a, "{s}={s}", .{ lname, lname }) else lname;
+                        try arg_sigs.append(a, .{ .label = label, .doc_md = try arg_obj.getHoverMd(a, false, null) });
                     } else {
                         try arg_sigs.append(a, .{ .label = if (i < arg_list.len) arg_list[i] else "" });
                     }
                 }
-                const sig = try self.getSnippet(a, null, -1);
+                const sig = try self.getSnippet(a, null, null);
                 return .{ .label = sig.call, .doc = self.getDocumentation(), .params = arg_sigs.items };
             },
             .method => {
                 if (self.link_obj) |l| {
-                    const sig = try self.getSnippet(a, null, -1);
+                    const sig = try self.getSnippet(a, null, null);
                     const ls = try l.getSignature(a, self.drop_arg);
                     return .{ .label = sig.call, .doc = self.getDocumentation(), .params = ls.params };
                 }
@@ -884,61 +924,59 @@ pub const Obj = struct {
             .intrinsic => {
                 var arg_sigs: std.ArrayList(ArgSig) = .empty;
                 for (try str.split(a, self.args, ",")) |arg| try arg_sigs.append(a, .{ .label = arg });
-                const sig = try self.getSnippet(a, null, -1);
+                const sig = try self.getSnippet(a, null, null);
                 return .{ .label = sig.call, .doc = self.doc_str, .params = arg_sigs.items };
             },
             else => return .{},
         }
     }
 
-    fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: i64, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {
+    fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {
         var arr: std.ArrayList([]const u8) = .empty;
-        try arr.append(a, try str.concat(a, &.{ try str.join(a, " ", keywords), signature }));
+        try arr.append(a, try std.mem.concat(a, u8, &.{ try std.mem.join(a, " ", keywords), signature }));
         for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse return null;
-            const h = try arg_obj.getHover(a, false, -1);
+            const h = try arg_obj.getHover(a, false, null);
             var arg_doc = h.msg orelse "None";
-            if (@as(i64, @intCast(i)) == drop_arg) {
+            if (i == drop_arg) {
                 if (change_strings) |cs| {
-                    const lower_doc = try str.lower(a, arg_doc);
-                    const lower_cs = try str.lower(a, cs[0]);
-                    if (std.mem.indexOf(u8, lower_doc, lower_cs)) |i_0| {
-                        arg_doc = try str.concat(a, &.{ arg_doc[0..i_0], cs[1], arg_doc[i_0 + cs[0].len ..] });
+                    if (std.ascii.findIgnoreCase(arg_doc, cs[0])) |i_0| {
+                        arg_doc = try std.mem.concat(a, u8, &.{ arg_doc[0..i_0], cs[1], arg_doc[i_0 + cs[0].len ..] });
                     }
                 }
             }
-            try arr.append(a, try str.print(a, "{s} :: {s}", .{ arg_doc, arg_obj.name }));
+            try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ arg_doc, arg_obj.name }));
         }
         return arr;
     }
 
-    pub fn getInterface(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: i64, change_strings: ?[2][]const u8) Allocator.Error!?[]const u8 {
+    pub fn getInterface(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) Allocator.Error!?[]const u8 {
         switch (self.kind) {
             .subroutine => {
-                const sig = (try self.getSnippet(a, name_replace, -1)).call.?;
+                const sig = (try self.getSnippet(a, name_replace, null)).call.?;
                 var kw: std.ArrayList([]const u8) = .empty;
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "SUBROUTINE ");
                 var arr = (try self.getInterfaceArray(a, kw.items, sig, drop_arg, change_strings)) orelse return null;
                 const name = name_replace orelse self.name;
-                try arr.append(a, try str.print(a, "END SUBROUTINE {s}", .{name}));
-                return try str.join(a, "\n", arr.items);
+                try arr.append(a, try std.fmt.allocPrint(a, "END SUBROUTINE {s}", .{name}));
+                return try std.mem.join(a, "\n", arr.items);
             },
             .function => {
-                var sig = (try self.getSnippet(a, name_replace, -1)).call.?;
-                sig = try str.print(a, "{s} RESULT({s})", .{ sig, self.result_name orelse self.name });
+                var sig = (try self.getSnippet(a, name_replace, null)).call.?;
+                sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ sig, self.result_name orelse self.name });
                 var kw: std.ArrayList([]const u8) = .empty;
                 if (self.result_type) |rt| if (rt.len > 0) try kw.append(a, rt);
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "FUNCTION ");
                 var arr = (try self.getInterfaceArray(a, kw.items, sig, drop_arg, change_strings)) orelse return null;
                 if (self.result_obj) |ro| {
-                    const h = try ro.getHover(a, false, -1);
-                    try arr.append(a, try str.print(a, "{s} :: {s}", .{ h.msg orelse "None", ro.name }));
+                    const h = try ro.getHover(a, false, null);
+                    try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ h.msg orelse "None", ro.name }));
                 }
                 const name = name_replace orelse self.name;
-                try arr.append(a, try str.print(a, "END FUNCTION {s}", .{name}));
-                return try str.join(a, "\n", arr.items);
+                try arr.append(a, try std.fmt.allocPrint(a, "END FUNCTION {s}", .{name}));
+                return try std.mem.join(a, "\n", arr.items);
             },
             .method => {
                 if (self.link_obj) |l| return l.getInterface(a, name_replace, self.drop_arg, change_strings);
@@ -1022,7 +1060,7 @@ pub const Obj = struct {
                 self.type_obj = null;
                 const ln = self.link_name orelse return;
                 const p = self.parent orelse return;
-                const link_obj = if (p.getType(false) == C.CLASS_TYPE_ID)
+                const link_obj = if (p.getType(false) == C.TypeId.class)
                     try findInScope(env, p.parent, ln, .{})
                 else
                     try findInScope(env, p, ln, .{});
@@ -1030,11 +1068,11 @@ pub const Obj = struct {
                     if (self.linkLoops(l)) return;
                     self.link_obj = l;
                     if (self.pass_name) |pn| {
-                        const pnl = try str.lower(self.al(), pn);
+                        const pnl = try std.ascii.allocLowerString(self.al(), pn);
                         self.pass_name = pnl;
                         if (l.kind.isSubroutine()) {
                             var it = std.mem.splitScalar(u8, l.args_snip, ',');
-                            var i: i64 = 0;
+                            var i: usize = 0;
                             while (it.next()) |arg| : (i += 1) {
                                 if (std.ascii.eqlIgnoreCase(arg, pnl)) {
                                     self.drop_arg = i;
@@ -1093,18 +1131,17 @@ pub const Obj = struct {
         defer arena.deinit();
         const t = arena.allocator();
         const arg_list = try str.split(t, self.args, ",");
-        const arg_list_lower = try str.split(t, try str.lower(t, self.args), ",");
+        const arg_list_lower = try str.split(t, try std.ascii.allocLowerString(t, self.args), ",");
         self.arg_objs.clearRetainingCapacity();
         try self.arg_objs.appendNTimes(a, null, arg_list.len);
         self.missing_args.clearRetainingCapacity();
         for (self.children.items) |child| {
             var ind: ?usize = null;
-            const child_lower = try str.lower(t, child.name);
             for (arg_list_lower, 0..) |arg, i| {
-                if (str.eql(arg, child_lower)) {
+                if (std.ascii.eqlIgnoreCase(arg, child.name)) {
                     ind = i;
                     break;
-                } else if (str.startsWith(child_lower, "#gen_int")) {
+                } else if (std.ascii.startsWithIgnoreCase(child.name, "#gen_int")) {
                     for (child.children.items) |sub_child| {
                         if (std.ascii.eqlIgnoreCase(arg, sub_child.name)) {
                             self.arg_objs.items[i] = sub_child;
@@ -1115,13 +1152,13 @@ pub const Obj = struct {
             }
             if (ind) |i| {
                 self.arg_objs.items[i] = child;
-                if (child.isOptional()) arg_list[i] = try str.print(t, "{s}={s}", .{ arg_list[i], arg_list[i] });
+                if (child.isOptional()) arg_list[i] = try std.fmt.allocPrint(t, "{s}={s}", .{ arg_list[i], arg_list[i] });
             } else if (child.hasKeyword(KW.intent)) {
                 try self.missing_args.append(a, child);
             }
         }
-        const snip = try str.join(t, ",", arg_list);
-        if (!str.eql(snip, self.args_snip)) self.args_snip = try a.dupe(u8, snip);
+        const snip = try std.mem.join(t, ",", arg_list);
+        if (!std.mem.eql(u8, snip, self.args_snip)) self.args_snip = try a.dupe(u8, snip);
     }
 
     /// `Subroutine.copy_interface`; returns lowercased child names
@@ -1170,10 +1207,10 @@ pub const Obj = struct {
         // Collect ancestor interface prototypes
         var interfaces: std.ArrayList(*Obj) = .empty;
         for (anc.children.items) |child| {
-            if (child.getType(false) != C.INTERFACE_TYPE_ID) continue;
+            if (child.getType(false) != C.TypeId.interface) continue;
             for (child.children.items) |iface| {
                 const it = iface.getType(false);
-                if ((it == C.SUBROUTINE_TYPE_ID or it == C.FUNCTION_TYPE_ID or it == C.BASE_TYPE_ID) and iface.isModScope()) {
+                if ((it == C.TypeId.subroutine or it == C.TypeId.function or it == C.TypeId.base) and iface.isModScope()) {
                     try interfaces.append(env.tmp, iface);
                 }
             }
@@ -1181,7 +1218,7 @@ pub const Obj = struct {
         for (interfaces.items) |iface| {
             for (self.children.items) |child| {
                 if (!std.ascii.eqlIgnoreCase(child.name, iface.name)) continue;
-                if (child.getType(false) == C.BASE_TYPE_ID) {
+                if (child.getType(false) == C.TypeId.base) {
                     // Convert the plain scope into a subroutine/function in place
                     if (iface.kind == .subroutine) {
                         child.kind = .subroutine;
@@ -1211,9 +1248,9 @@ pub const Obj = struct {
             const desc = try self.getDescNoLink(env.tmp);
             if (helpers.getParenSubstring(desc)) |tn| {
                 var search_scope: ?*Obj = p;
-                if (p.getType(false) == C.CLASS_TYPE_ID) search_scope = p.parent;
+                if (p.getType(false) == C.TypeId.class) search_scope = p.parent;
                 if (search_scope) |ss| {
-                    const type_name = try str.lower(env.tmp, str.strip(tn));
+                    const type_name = try std.ascii.allocLowerString(env.tmp, str.strip(tn));
                     if (try findInScope(env, ss, type_name, .{})) |t| self.type_obj = t;
                 }
             }
@@ -1243,8 +1280,8 @@ pub const Obj = struct {
             .type => {
                 for (self.in_children.items) |in_child| {
                     if (!self.abstract and in_child.hasKeyword(KW.deferred)) {
-                        var d = Diagnostic.init(self.eline - 1, try str.print(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
-                        d.addRelated(in_child.file_ast.path, in_child.sline - 1, "Inherited procedure declaration");
+                        var d = Diagnostic.init(self.eline -| 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+                        d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
                         try errors.append(a, d);
                     }
                 }
@@ -1252,21 +1289,21 @@ pub const Obj = struct {
             .subroutine, .function => {
                 for (self.missing_args.items) |m| {
                     try errors.append(a, Diagnostic.init(
-                        m.sline - 1,
-                        try str.print(a, "Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
+                        m.sline -| 1,
+                        try std.fmt.allocPrint(a, "Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
                         1,
                         m.name,
                     ));
                 }
                 const implicit_flag = self.getImplicit();
                 if (implicit_flag == null or implicit_flag.?) return errors.items;
-                const arg_list = try str.split(a, try str.replace(a, self.args, " ", ""), ",");
+                const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.args, " ", ""), ",");
                 for (self.arg_objs.items, 0..) |arg_obj, i| {
                     if (arg_obj == null) {
                         const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
                         try errors.append(a, Diagnostic.init(
-                            self.sline - 1,
-                            try str.print(a, "No matching declaration found for argument \"{s}\"", .{arg_name}),
+                            self.sline -| 1,
+                            try std.fmt.allocPrint(a, "No matching declaration found for argument \"{s}\"", .{arg_name}),
                             1,
                             arg_name,
                         ));
@@ -1285,9 +1322,9 @@ pub const Obj = struct {
         if (self.kind != .variable) return null;
         const a = env.tmp;
         const m = R().DEF_KIND.match(try self.getDescNoLink(a)) orelse return null;
-        const var_type = try str.lower(a, str.strip(m.group(1).?));
-        if (str.eql(var_type, "procedure")) return null;
-        const desc_obj_name = try str.lower(a, str.strip(m.group(2).?));
+        const var_type = try std.ascii.allocLowerString(a, str.strip(m.group(1).?));
+        if (std.mem.eql(u8, var_type, "procedure")) return null;
+        const desc_obj_name = try std.ascii.allocLowerString(a, str.strip(m.group(2).?));
         if (!known_types.contains(desc_obj_name)) {
             const type_def = try findInScope(env, self.parent, desc_obj_name, .{ .interface = interface });
             if (type_def) |td| {
@@ -1295,7 +1332,7 @@ pub const Obj = struct {
             } else {
                 const type_defs = try findInWorkspace(env, desc_obj_name, true, true);
                 try known_types.put(a, desc_obj_name, null);
-                const filter_id = if (str.eql(var_type, "class") or str.eql(var_type, "type")) C.CLASS_TYPE_ID else C.VAR_TYPE_ID;
+                const filter_id = if (std.mem.eql(u8, var_type, "class") or std.mem.eql(u8, var_type, "type")) C.TypeId.class else C.TypeId.variable;
                 for (type_defs) |td| {
                     if (td.getType(false) == filter_id) {
                         try known_types.put(a, desc_obj_name, .{ .kind = 1, .obj = td });
@@ -1307,10 +1344,10 @@ pub const Obj = struct {
         const info = known_types.get(desc_obj_name).?;
         if (info) |ti| if (ti.kind == 1) {
             if (interface) {
-                return Diagnostic.init(self.sline - 1, try str.print(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
+                return Diagnostic.init(self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
             }
-            var d = Diagnostic.init(self.sline - 1, try str.print(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
-            d.addRelated(ti.obj.file_ast.path, ti.obj.sline - 1, "Possible object");
+            var d = Diagnostic.init(self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
+            d.addRelated(ti.obj.file_ast.path, ti.obj.sline -| 1, "Possible object");
             return d;
         };
         return null;
@@ -1318,46 +1355,46 @@ pub const Obj = struct {
 
     pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         const a = env.tmp;
-        var fqsn_dict = std.array_hash_map.String(i64).empty;
+        var fqsn_dict = std.array_hash_map.String(usize).empty;
         var errors: std.ArrayList(Diagnostic) = .empty;
         var known_types = KnownTypes.empty;
 
         for (self.children.items) |child| {
-            if (child.getType(false) == C.INTERFACE_TYPE_ID) continue;
+            if (child.getType(false) == C.TypeId.interface) continue;
             if (fqsn_dict.get(child.fqsn)) |v| {
-                if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline - 1);
+                if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
             } else {
-                try fqsn_dict.put(a, child.fqsn, child.sline - 1);
+                try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
             }
         }
 
-        var contains_line: i64 = -1;
+        var contains_line: ?usize = null;
         const st = self.getType(false);
-        if (st == C.MODULE_TYPE_ID or st == C.SUBMODULE_TYPE_ID or st == C.SUBROUTINE_TYPE_ID or st == C.FUNCTION_TYPE_ID) {
+        if (st == C.TypeId.module or st == C.TypeId.submodule or st == C.TypeId.subroutine or st == C.TypeId.function) {
             contains_line = self.contains_start orelse self.eline;
         }
-        const is_interface = self.parent != null and self.parent.?.getType(false) == C.INTERFACE_TYPE_ID and !self.isModScope();
+        const is_interface = self.parent != null and self.parent.?.getType(false) == C.TypeId.interface and !self.isModScope();
 
         for (self.children.items) |child| {
-            if (str.startsWith(child.name, "#")) continue;
-            const line_number = child.sline - 1;
+            if (std.mem.startsWith(u8, child.name, "#")) continue;
+            const line_number = child.sline -| 1;
             if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
             const ct = child.getType(true);
-            if (contains_line >= child.sline and (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID)) {
+            if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function)) {
                 try errors.append(a, Diagnostic.init(line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
             }
-            if (st == C.INTERFACE_TYPE_ID or child.getType(false) == C.INTERFACE_TYPE_ID) continue;
+            if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
             if (fqsn_dict.get(child.fqsn)) |first| if (line_number > first) {
-                var d = Diagnostic.init(line_number, try str.print(a, "Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
+                var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
                 d.addRelated(self.file_ast.path, first, "First declaration");
                 try errors.append(a, d);
                 continue;
             };
-            if (self.parent != null and (st == C.SUBROUTINE_TYPE_ID or st == C.FUNCTION_TYPE_ID or st == C.BLOCK_TYPE_ID)) {
+            if (self.parent != null and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
                 if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
-                    if (st == C.FUNCTION_TYPE_ID and str.eql(parent_var.fqsn, self.fqsn)) continue;
-                    var d = Diagnostic.init(line_number, try str.print(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
-                    d.addRelated(parent_var.file_ast.path, parent_var.sline - 1, "First declaration");
+                    if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
+                    var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
+                    d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                     try errors.append(a, d);
                 }
             }
@@ -1368,26 +1405,27 @@ pub const Obj = struct {
     pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
         const a = env.tmp;
         var errors: std.ArrayList(Diagnostic) = .empty;
-        var last_use_line: i64 = -1;
+        // lines are 1-based, so 0 is before every USE statement
+        var last_use_line: usize = 0;
         for (self.use.items) |u| {
             last_use_line = @max(last_use_line, u.line_number);
             if (u.is_import) {
-                if (self.parent == null or self.parent.?.getType(false) != C.INTERFACE_TYPE_ID) {
-                    try errors.append(a, Diagnostic.init(u.line_number - 1, "IMPORT statement outside of interface", 1, null));
+                if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
+                    try errors.append(a, Diagnostic.init(u.line_number -| 1, "IMPORT statement outside of interface", 1, null));
                 }
                 continue;
             }
             if (!env.tree.contains(u.mod_name)) {
                 try errors.append(a, Diagnostic.init(
-                    u.line_number - 1,
-                    try str.print(a, "Module \"{s}\" not found in project", .{u.mod_name}),
+                    u.line_number -| 1,
+                    try std.fmt.allocPrint(a, "Module \"{s}\" not found in project", .{u.mod_name}),
                     3,
                     u.mod_name,
                 ));
             }
         }
         if (self.implicit_line) |il| if (last_use_line >= il) {
-            try errors.append(a, Diagnostic.init(il - 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
+            try errors.append(a, Diagnostic.init(il -| 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
         };
         return errors.items;
     }
@@ -1395,7 +1433,7 @@ pub const Obj = struct {
     // ------------------------------------------------------------------
     // Code actions
 
-    pub const Edit = struct { sline: i64, schar: i64, eline: i64, echar: i64, new_text: []const u8 };
+    pub const Edit = struct { sline: usize, schar: usize, eline: usize, echar: usize, new_text: []const u8 };
     pub const Action = struct {
         title: []const u8,
         kind: []const u8,
@@ -1406,24 +1444,24 @@ pub const Obj = struct {
 
     fn addSubroutine(self: *const Obj, a: Allocator, interface_string: []const u8, no_contains: bool) !struct { path: ?[]const u8, edits: []Edit } {
         var edits: std.ArrayList(Edit) = .empty;
-        const line_number = self.eline - 1;
+        const line_number = self.eline -| 1;
         if (self.contains_start == null and !no_contains) {
             var first_sub_line = line_number;
             for (self.children.items) |child| {
                 const ct = child.getType(false);
-                if (ct == C.SUBROUTINE_TYPE_ID or ct == C.FUNCTION_TYPE_ID) first_sub_line = @min(first_sub_line, child.sline - 1);
+                if (ct == C.TypeId.subroutine or ct == C.TypeId.function) first_sub_line = @min(first_sub_line, child.sline -| 1);
             }
             try edits.append(a, .{ .sline = first_sub_line, .schar = 0, .eline = first_sub_line, .echar = 0, .new_text = "CONTAINS\n" });
         }
-        try edits.append(a, .{ .sline = line_number, .schar = 0, .eline = line_number, .echar = 0, .new_text = try str.concat(a, &.{ interface_string, "\n" }) });
+        try edits.append(a, .{ .sline = line_number, .schar = 0, .eline = line_number, .echar = 0, .new_text = try std.mem.concat(a, u8, &.{ interface_string, "\n" }) });
         return .{ .path = self.file_ast.path, .edits = edits.items };
     }
 
-    pub fn getActions(self: *const Obj, a: Allocator, sline: i64, eline: i64) !?[]Action {
+    pub fn getActions(self: *const Obj, a: Allocator, sline: usize, eline: usize) !?[]Action {
         if (self.kind != .type) return null;
         var actions: std.ArrayList(Action) = .empty;
         var edits: std.ArrayList(Edit) = .empty;
-        const line_number = self.eline - 1;
+        const line_number = self.eline -| 1;
         if (line_number < sline or line_number > eline) return actions.items;
         if (self.contains_start == null) {
             try edits.append(a, .{ .sline = line_number, .schar = 0, .eline = line_number, .echar = 0, .new_text = "CONTAINS\n" });
@@ -1433,9 +1471,9 @@ pub const Obj = struct {
         for (self.in_children.items) |in_child| {
             if (!in_child.hasKeyword(KW.deferred)) continue;
             const in_parent_name = if (in_child.parent) |p| p.name else "None";
-            const iface = (try in_child.getInterface(a, in_child.name, -1, .{
-                try str.print(a, "class({s})", .{in_parent_name}),
-                try str.print(a, "CLASS({s})", .{self.name}),
+            const iface = (try in_child.getInterface(a, in_child.name, null, .{
+                try std.fmt.allocPrint(a, "class({s})", .{in_parent_name}),
+                try std.fmt.allocPrint(a, "CLASS({s})", .{self.name}),
             })) orelse continue;
             const parent = self.parent orelse continue;
             const res = try parent.addSubroutine(a, iface, has_edits);
@@ -1445,11 +1483,11 @@ pub const Obj = struct {
                 .schar = 0,
                 .eline = line_number,
                 .echar = 0,
-                .new_text = try str.print(a, "  PROCEDURE :: {s} => {s}\n", .{ in_child.name, in_child.name }),
+                .new_text = try std.fmt.allocPrint(a, "  PROCEDURE :: {s} => {s}\n", .{ in_child.name, in_child.name }),
             });
             try edits.appendSlice(a, res.edits);
-            var d = Diagnostic.init(line_number, try str.print(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
-            d.addRelated(in_child.file_ast.path, in_child.sline - 1, "Inherited procedure declaration");
+            var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+            d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
             try diagnostics.append(a, d);
             has_edits = true;
         }
@@ -1468,37 +1506,37 @@ pub const Obj = struct {
 
 fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
     if (a == null or b == null) return a == null and b == null;
-    return str.eql(a.?, b.?);
+    return std.mem.eql(u8, a.?, b.?);
 }
 
 /// A diagnostic pending conversion into an LSP diagnostic
 pub const Diagnostic = struct {
-    sline: i64,
+    sline: usize,
     message: []const u8,
     severity: i32 = 1,
     find_word: ?[]const u8 = null,
     related: ?Related = null,
 
-    pub const Related = struct { path: ?[]const u8, line: i64, message: []const u8 };
+    pub const Related = struct { path: ?[]const u8, line: usize, message: []const u8 };
 
-    pub fn init(sline: i64, message: []const u8, severity: i32, find_word: ?[]const u8) Diagnostic {
+    pub fn init(sline: usize, message: []const u8, severity: i32, find_word: ?[]const u8) Diagnostic {
         return .{ .sline = sline, .message = message, .severity = severity, .find_word = find_word };
     }
 
-    pub fn addRelated(self: *Diagnostic, path: ?[]const u8, line: i64, message: []const u8) void {
+    pub fn addRelated(self: *Diagnostic, path: ?[]const u8, line: usize, message: []const u8) void {
         self.related = .{ .path = path, .line = line, .message = message };
     }
 
     pub fn build(self: Diagnostic, a: Allocator, file: *FortranFile) !BuiltDiag {
         var sline = self.sline;
-        var schar: i64 = 0;
-        var echar: i64 = 0;
+        var schar: usize = 0;
+        var echar: usize = 0;
         if (self.find_word) |w| {
             const res = try file.findWordInCodeLine(a, sline, w, true, false, false);
             sline = res.line;
             if (res.range.start >= 0) {
-                schar = res.range.start;
-                echar = res.range.end;
+                schar = @intCast(res.range.start);
+                echar = @intCast(res.range.end);
             }
         }
         return .{
@@ -1516,10 +1554,10 @@ pub const Diagnostic = struct {
 /// LSP-ready diagnostic with byte-based columns (range_json semantics:
 /// a zero end line/char falls back to the start value)
 pub const BuiltDiag = struct {
-    sln: i64,
-    sch: i64,
-    eln: ?i64,
-    ech: ?i64,
+    sln: usize,
+    sch: usize,
+    eln: ?usize,
+    ech: ?usize,
     message: []const u8,
     severity: i32,
     related: ?Diagnostic.Related = null,
@@ -1527,8 +1565,17 @@ pub const BuiltDiag = struct {
     cols_are_codepoints: bool = false,
 };
 
+/// An END statement that does not match the scope that is open
+pub const EndError = struct {
+    /// Line of the END statement; null when it is the unnamed END of no scope at all
+    end_line: ?usize,
+    /// Line the diagnostic is reported at: the first line of the open scope,
+    /// or the END statement itself when no scope is open
+    scope_line: usize,
+};
+
 pub const IncludeInfo = struct {
-    line_number: i64,
+    line_number: usize,
     path: []const u8,
     file: ?*FortranFile = null,
     scope_objs: std.ArrayList(*Obj) = .empty,
@@ -1550,15 +1597,18 @@ pub const Ast = struct {
     private_list: std.ArrayList([]const u8) = .empty,
     scope_stack: std.ArrayList(*Obj) = .empty,
     end_stack: std.ArrayList(*const regex.Regex) = .empty,
-    pp_if: std.ArrayList([2]i64) = .empty,
     include_statements: std.ArrayList(*IncludeInfo) = .empty,
-    end_errors: std.ArrayList([2]i64) = .empty,
+    end_errors: std.ArrayList(EndError) = .empty,
     parse_errors: std.ArrayList(BuiltDiag) = .empty,
     inherit_objs: std.ArrayList(*Obj) = .empty,
     linkable_objs: std.ArrayList(*Obj) = .empty,
     external_objs: std.ArrayList(*Obj) = .empty,
     none_scope: ?*Obj = null,
     inc_scope: ?*Obj = null,
+    /// The scope of the including file that this file is included into, so
+    /// that names are looked up there after the file's own scopes (cleared
+    /// when the workspace is relinked)
+    included_in: ?*Obj = null,
     current_scope: ?*Obj = null,
     end_scope_regex: ?*const regex.Regex = null,
     enc_scope_name: ?[]const u8 = null,
@@ -1603,7 +1653,7 @@ pub const Ast = struct {
         if (self.current_scope == null) {
             if (req_container) {
                 try self.createNoneScope();
-                new_scope.fqsn = try str.concat(a, &.{ self.none_scope.?.fqsn, "::", try str.lower(a, new_scope.name) });
+                new_scope.fqsn = try std.mem.concat(a, u8, &.{ self.none_scope.?.fqsn, "::", try std.ascii.allocLowerString(a, new_scope.name) });
                 try self.current_scope.?.addChild(new_scope);
                 try self.scope_stack.append(a, self.current_scope.?);
             } else if (exportable) {
@@ -1624,9 +1674,9 @@ pub const Ast = struct {
         }
     }
 
-    pub fn endScope(self: *Ast, line_number: i64, check: bool) void {
+    pub fn endScope(self: *Ast, line_number: usize, check: bool) !void {
         if ((self.current_scope == null or self.current_scope == self.none_scope) and check) {
-            self.end_errors.append(self.allocator(), .{ -1, line_number }) catch {};
+            try self.end_errors.append(self.allocator(), .{ .end_line = null, .scope_line = line_number });
             return;
         }
         self.current_scope.?.end(line_number);
@@ -1639,7 +1689,7 @@ pub const Ast = struct {
         const a = self.allocator();
         if (self.current_scope == null) {
             try self.createNoneScope();
-            new_var.fqsn = try str.concat(a, &.{ self.none_scope.?.fqsn, "::", try str.lower(a, new_var.name) });
+            new_var.fqsn = try std.mem.concat(a, u8, &.{ self.none_scope.?.fqsn, "::", try std.ascii.allocLowerString(a, new_var.name) });
         }
         try self.current_scope.?.addChild(new_var);
         try self.variable_list.append(a, new_var);
@@ -1658,11 +1708,11 @@ pub const Ast = struct {
     }
 
     pub fn addPrivate(self: *Ast, name: []const u8) !void {
-        try self.private_list.append(self.allocator(), try str.print(self.allocator(), "{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
+        try self.private_list.append(self.allocator(), try std.fmt.allocPrint(self.allocator(), "{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
     }
 
     pub fn addPublic(self: *Ast, name: []const u8) !void {
-        try self.public_list.append(self.allocator(), try str.print(self.allocator(), "{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
+        try self.public_list.append(self.allocator(), try std.fmt.allocPrint(self.allocator(), "{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
     }
 
     pub fn addUse(self: *Ast, use_mod: *UseStmt) !void {
@@ -1670,7 +1720,7 @@ pub const Ast = struct {
         try self.current_scope.?.use.append(self.allocator(), use_mod);
     }
 
-    pub fn addInclude(self: *Ast, path: []const u8, line_number: i64) !void {
+    pub fn addInclude(self: *Ast, path: []const u8, line_number: usize) !void {
         const a = self.allocator();
         const inc = try a.create(IncludeInfo);
         inc.* = .{ .line_number = line_number, .path = try a.dupe(u8, path) };
@@ -1687,27 +1737,19 @@ pub const Ast = struct {
         }
     }
 
-    pub fn addError(self: *Ast, msg: []const u8, sev: i32, ln: i64, sch: i64, ech: ?i64) !void {
+    pub fn addError(self: *Ast, msg: []const u8, sev: i32, ln: usize, sch: usize, ech: ?usize) !void {
         try self.parse_errors.append(self.allocator(), .{
-            .sln = ln - 1,
+            .sln = ln -| 1,
             .sch = sch,
-            .eln = ln - 1,
+            .eln = ln -| 1,
             .ech = ech,
             .message = try self.allocator().dupe(u8, msg),
             .severity = sev,
         });
     }
 
-    pub fn startPpif(self: *Ast, line_number: i64) !void {
-        try self.pp_if.append(self.allocator(), .{ line_number - 1, -1 });
-    }
-
-    pub fn endPpif(self: *Ast, line_number: i64) void {
-        if (self.pp_if.items.len > 0) self.pp_if.items[self.pp_if.items.len - 1][1] = line_number - 1;
-    }
-
     /// All scopes containing the line (all scopes when null)
-    pub fn getScopes(self: *Ast, a: Allocator, line_number: ?i64) ![]*Obj {
+    pub fn getScopes(self: *Ast, a: Allocator, line_number: ?usize) ![]*Obj {
         const ln = line_number orelse return self.scope_list.items;
         var out: std.ArrayList(*Obj) = .empty;
         for (self.scope_list.items) |scope| {
@@ -1731,11 +1773,11 @@ pub const Ast = struct {
         return single;
     }
 
-    pub fn getInnerScope(self: *Ast, line_number: i64) ?*Obj {
-        var scope_sline: i64 = -1;
+    pub fn getInnerScope(self: *Ast, line_number: usize) ?*Obj {
+        var scope_sline: ?usize = null;
         var curr: ?*Obj = null;
         for (self.scope_list.items) |scope| {
-            if (scope.sline > scope_sline and scope.sline <= line_number and line_number <= scope.eline) {
+            if ((scope_sline == null or scope.sline > scope_sline.?) and scope.sline <= line_number and line_number <= scope.eline) {
                 curr = scope;
                 scope_sline = scope.sline;
             }
@@ -1746,9 +1788,9 @@ pub const Ast = struct {
 
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
         for (parent.children.items) |child| {
-            if (str.eql(child.name, name)) return child;
-            if (str.startsWith(child.name, "#GEN_INT")) {
-                for (child.children.items) |ic| if (str.eql(ic.name, name)) return ic;
+            if (std.mem.eql(u8, child.name, name)) return child;
+            if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
+                for (child.children.items) |ic| if (std.mem.eql(u8, ic.name, name)) return ic;
             }
         }
         return null;
@@ -1760,7 +1802,7 @@ pub const Ast = struct {
         var current: ?*Obj = self.global_dict.get(first);
         if (current == null) {
             for (self.scope_list.items) |scope| {
-                if (str.eql(scope.fqsn, first)) {
+                if (std.mem.eql(u8, scope.fqsn, first)) {
                     current = scope;
                     break;
                 }
@@ -1773,8 +1815,8 @@ pub const Ast = struct {
         return current;
     }
 
-    pub fn closeFile(self: *Ast, line_number: i64) !void {
-        while (self.current_scope != null) self.endScope(line_number, false);
+    pub fn closeFile(self: *Ast, line_number: usize) !void {
+        while (self.current_scope != null) try self.endScope(line_number, false);
         if (self.none_scope) |ns| {
             ns.end(line_number);
             for (self.scope_list.items, 0..) |s, i| if (s == ns) {
@@ -1783,10 +1825,10 @@ pub const Ast = struct {
             };
         }
         for (self.private_list.items) |name| {
-            if (self.getObject(name)) |o| o.vis = -1;
+            if (self.getObject(name)) |o| o.vis = .private;
         }
         for (self.public_list.items) |name| {
-            if (self.getObject(name)) |o| o.vis = 1;
+            if (self.getObject(name)) |o| o.vis = .public;
         }
     }
 
@@ -1800,14 +1842,16 @@ pub const Ast = struct {
         const path = self.path orelse return;
         const file_dir = std.fs.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
-            const joined = try std.fs.path.join(tmp, &.{ file_dir, inc.path });
+            // `#include` directives are resolved to absolute paths by the preprocessor
+            const joined = if (std.fs.path.isAbsolute(inc.path)) inc.path else try std.fs.path.join(tmp, &.{ file_dir, inc.path });
             const file_path = try parser.normPath(tmp, joined);
-            if (only_path) |p| if (!str.eql(p, file_path)) continue;
+            if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
             const parent_scope = self.getInnerScope(inc.line_number);
             const include_file = workspace.get(file_path) orelse continue;
             const include_ast = include_file.ast orelse continue;
             inc.file = include_file;
             inc.inc_obj = null;
+            include_ast.included_in = parent_scope;
             if (include_ast.none_scope == null) continue;
             if (include_ast.inc_scope == null) include_ast.inc_scope = include_ast.none_scope;
             // Remove old objects
@@ -1838,17 +1882,17 @@ pub const Ast = struct {
         try tmp_list.appendSlice(a, self.scope_list.items);
         if (self.none_scope) |ns| try tmp_list.append(a, ns);
         for (self.end_errors.items) |e| {
-            const message = if (e[0] >= 0)
-                try str.print(a, "Unexpected end of scope at line {d}", .{e[0]})
+            const message = if (e.end_line) |el|
+                try std.fmt.allocPrint(a, "Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
-            try errors.append(a, Diagnostic.init(e[1] - 1, message, 1, null));
+            try errors.append(a, Diagnostic.init(e.scope_line -| 1, message, 1, null));
         }
         for (tmp_list.items) |scope| {
             if (!scope.checkValidParent()) {
                 try errors.append(a, Diagnostic.init(
-                    scope.sline - 1,
-                    try str.print(a, "Invalid parent for \"{s}\" declaration", .{try scope.getDesc(a)}),
+                    scope.sline -| 1,
+                    try std.fmt.allocPrint(a, "Invalid parent for \"{s}\" declaration", .{try scope.getDesc(a)}),
                     1,
                     null,
                 ));
@@ -1879,7 +1923,7 @@ pub fn getUseTree(
     const only = only_list orelse &empty_set;
     const renames = rename_map orelse &empty_map;
 
-    for (curr_path) |p| if (str.eql(p, scope.fqsn)) return;
+    for (curr_path) |p| if (std.mem.eql(u8, p, scope.fqsn)) return;
     var new_path: std.ArrayList([]const u8) = .empty;
     try new_path.appendSlice(a, curr_path);
     try new_path.append(a, scope.fqsn);
@@ -1926,7 +1970,9 @@ pub fn getUseTree(
                 fresh.* = .{ .mod_name = use_stmnt.mod_name };
                 try use_dict.put(a, use_stmnt.mod_name, fresh);
             }
-            if (old_len == use_dict_mod.only_list.len()) continue;
+            // look the entry up again: a full import replaced a restricted one
+            // above, and what it imports in turn must be searched (upstream #568)
+            if (old_len == use_dict.get(use_stmnt.mod_name).?.only_list.len()) continue;
         } else {
             const nu = try a.create(UseStmt);
             nu.* = .{
@@ -1950,16 +1996,16 @@ pub fn getUseTree(
 pub const FindOpts = struct {
     interface: bool = false,
     local_only: bool = false,
-    var_line_number: ?i64 = null,
+    var_line_number: ?usize = null,
 };
 
-fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?i64) Allocator.Error!?*Obj {
+fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!?*Obj {
     const children = try local_scope.getChildren(env.tmp, false);
     for (children) |child| {
-        if (str.startsWith(child.name, "#GEN_INT")) {
+        if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
             if (try checkScope(env, child, name_lower, filter_public, null)) |v| return v;
         }
-        const is_private = child.vis < 0 or (local_scope.def_vis < 0 and child.vis <= 0);
+        const is_private = child.vis == .private or (local_scope.def_vis == .private and child.vis != .public);
         if (filter_public and is_private) continue;
         if (std.ascii.eqlIgnoreCase(child.name, name_lower)) {
             if (local_scope.kind == .function and std.ascii.eqlIgnoreCase(local_scope.name, child.name)) {
@@ -1988,15 +2034,15 @@ fn checkImportScope(scope: *const Obj, name_lower: []const u8) ?ImportType {
 pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindOpts) Allocator.Error!?*Obj {
     const scope = scope_opt orelse return null;
     const a = env.tmp;
-    const name_lower = try str.lower(a, var_name);
+    const name_lower = try std.ascii.allocLowerString(a, var_name);
     const tmp_var = try checkScope(env, scope, name_lower, false, opts.var_line_number);
     if (opts.local_only or tmp_var != null) return tmp_var;
     // Check INCLUDE statements
     if (scope.file_ast.include_statements.items.len > 0) {
-        const strip1 = try str.replace(a, var_name, "\"", "");
-        const strip_str = try str.replace(a, strip1, "'", "");
+        const strip1 = try std.mem.replaceOwned(u8, a, var_name, "\"", "");
+        const strip_str = try std.mem.replaceOwned(u8, a, strip1, "'", "");
         for (scope.file_ast.include_statements.items) |inc| {
-            if (str.eql(strip_str, inc.path)) {
+            if (std.mem.eql(u8, strip_str, inc.path)) {
                 const f = inc.file orelse return null;
                 const inc_ast = f.ast orelse return null;
                 if (inc.inc_obj == null) {
@@ -2018,7 +2064,7 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         const use_info = entry.value_ptr.*;
         if (use_info.is_import) continue;
         const use_scope = env.global(scope.file_ast, use_mod) orelse continue;
-        if (str.eql(use_mod, name_lower)) return use_scope;
+        if (std.mem.eql(u8, use_mod, name_lower)) return use_scope;
         if (use_info.only_list.len() > 0 and !use_info.only_list.contains(name_lower)) continue;
         const mod_name = use_info.rename_map.get(name_lower) orelse name_lower;
         if (try checkScope(env, use_scope, mod_name, true, null)) |v| return v;
@@ -2034,21 +2080,24 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     for (try scope.getAncestors(a)) |anc| {
         if (try findInScope(env, anc, var_name, .{})) |v| return v;
     }
+    // A file included into a scope sees that scope
+    if (scope.parent == null) if (scope.file_ast.included_in) |host| {
+        if (host.file_ast != scope.file_ast) return findInScope(env, host, var_name, .{});
+    };
     return null;
 }
 
-pub fn findInWorkspace(env: Env, query_in: []const u8, filter_public: bool, exact_match: bool) ![]*Obj {
+pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_match: bool) ![]*Obj {
     const a = env.tmp;
-    const query = try str.lower(a, query_in);
     var matching: std.ArrayList(*Obj) = .empty;
     var it = env.tree.iterator();
     while (it.next()) |entry| {
         const top_obj = entry.value_ptr.obj;
         if (entry.value_ptr.path == null) continue;
-        if (str.containsIgnoreCase(top_obj.name, query)) try matching.append(a, top_obj);
-        if (top_obj.getType(false) == C.MODULE_TYPE_ID) {
+        if ((std.ascii.findIgnoreCase(top_obj.name, query) != null)) try matching.append(a, top_obj);
+        if (top_obj.getType(false) == C.TypeId.module) {
             for (try top_obj.getChildren(a, filter_public)) |child| {
-                if (str.containsIgnoreCase(child.name, query)) try matching.append(a, child);
+                if ((std.ascii.findIgnoreCase(child.name, query) != null)) try matching.append(a, child);
             }
         }
     }
@@ -2063,14 +2112,14 @@ pub fn findInWorkspace(env: Env, query_in: []const u8, filter_public: bool, exac
 /// Walk up user-defined type sequence to determine final field type
 pub fn climbTypeTree(env: Env, var_stack: []const []const u8, curr_scope: ?*Obj) !?*Obj {
     var i_var: usize = 0;
-    const first = try str.lower(env.tmp, str.strip(var_stack[i_var]));
+    const first = try std.ascii.allocLowerString(env.tmp, str.strip(var_stack[i_var]));
     var var_obj = (try findInScope(env, curr_scope, first, .{})) orelse return null;
     var n: usize = 0;
     while (n < 30) : (n += 1) {
         const type_obj = (try var_obj.getTypeObj(env)) orelse return null;
         i_var += 1;
         if (i_var == var_stack.len - 1) return type_obj;
-        const name = try str.lower(env.tmp, str.strip(var_stack[i_var]));
+        const name = try std.ascii.allocLowerString(env.tmp, str.strip(var_stack[i_var]));
         var_obj = (try findInScope(env, type_obj, name, .{ .local_only = true })) orelse return null;
     }
     // Python raises KeyError here

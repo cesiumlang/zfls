@@ -1,0 +1,181 @@
+//! Types of the Language Server Protocol messages zfls receives and sends.
+//!
+//! Requests are decoded with `json.to` and responses encoded with
+//! `json.from`. When encoding, an optional field that defaults to `null` is
+//! left out while it is null, which is how LSP treats absent optional
+//! properties.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const json = @import("json.zig");
+
+// --------------------------------------------------------------------------
+// Basic structures
+
+pub const Position = struct { line: usize, character: usize };
+
+pub const Range = struct { start: Position, end: Position };
+
+pub const Location = struct { uri: []const u8, range: Range };
+
+pub const MarkupContent = struct {
+    kind: []const u8 = "markdown",
+    value: []const u8,
+};
+
+pub const TextEdit = struct { range: Range, newText: []const u8 };
+
+pub const DiagnosticRelatedInformation = struct { location: Location, message: []const u8 };
+
+pub const Diagnostic = struct {
+    range: Range,
+    message: []const u8,
+    severity: i64,
+    relatedInformation: ?[]const DiagnosticRelatedInformation = null,
+};
+
+/// The edits of each file, as the object `{uri: [TextEdit]}` of
+/// `WorkspaceEdit.changes`
+pub const Changes = struct {
+    pub const File = struct { uri: []const u8, edits: []const TextEdit };
+
+    files: []const File,
+
+    pub fn toJson(self: Changes, a: Allocator) Allocator.Error!json.Value {
+        var obj: json.Object = .{};
+        for (self.files) |f| try obj.put(a, f.uri, try json.from(a, f.edits));
+        return .{ .object = obj };
+    }
+};
+
+pub const WorkspaceEdit = struct { changes: Changes };
+
+// --------------------------------------------------------------------------
+// Responses
+
+pub const SymbolInformation = struct {
+    name: []const u8,
+    kind: i64,
+    location: Location,
+    containerName: ?[]const u8 = null,
+};
+
+/// `insertTextFormat` of a snippet
+pub const snippet_format: i64 = 2;
+
+pub const CompletionItem = struct {
+    label: []const u8,
+    insertText: ?[]const u8 = null,
+    insertTextFormat: ?i64 = null,
+    kind: i64,
+    detail: []const u8,
+    documentation: ?MarkupContent = null,
+};
+
+pub const Hover = struct { contents: MarkupContent };
+
+pub const ParameterInformation = struct {
+    label: []const u8,
+    documentation: ?MarkupContent = null,
+};
+
+pub const SignatureInformation = struct {
+    label: []const u8,
+    parameters: []const ParameterInformation,
+    documentation: ?MarkupContent = null,
+};
+
+pub const SignatureHelp = struct {
+    signatures: []const SignatureInformation,
+    activeParameter: i64,
+};
+
+pub const CodeAction = struct {
+    title: []const u8,
+    kind: []const u8,
+    edit: WorkspaceEdit,
+    diagnostics: []const Diagnostic,
+};
+
+pub const PublishDiagnosticsParams = struct {
+    uri: []const u8,
+    diagnostics: []const Diagnostic,
+};
+
+pub const ShowMessageParams = struct { type: i64, message: []const u8 };
+
+pub const CompletionOptions = struct {
+    resolveProvider: bool,
+    triggerCharacters: []const []const u8,
+};
+
+pub const SignatureHelpOptions = struct { triggerCharacters: []const []const u8 };
+
+pub const ServerCapabilities = struct {
+    completionProvider: CompletionOptions,
+    definitionProvider: bool = true,
+    documentSymbolProvider: bool = true,
+    documentHighlightProvider: bool = true,
+    referencesProvider: bool = true,
+    hoverProvider: bool = true,
+    implementationProvider: bool = true,
+    renameProvider: bool = true,
+    workspaceSymbolProvider: bool = true,
+    textDocumentSync: i64,
+    signatureHelpProvider: ?SignatureHelpOptions = null,
+    codeActionProvider: ?bool = null,
+};
+
+pub const InitializeResult = struct { capabilities: ServerCapabilities };
+
+/// The `data` of an error response
+pub const ErrorData = struct { traceback: []const u8 };
+
+pub const ResponseError = struct {
+    code: i64,
+    message: []const u8,
+    data: ?ErrorData = null,
+};
+
+// --------------------------------------------------------------------------
+// Request parameters
+
+pub const TextDocumentIdentifier = struct { uri: []const u8 };
+
+/// `didOpen`, `didSave`, `didClose` and `documentSymbol`
+pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
+
+/// `completion`, `hover`, `signatureHelp`, `definition`, `references`,
+/// `documentHighlight` and `implementation`
+pub const PositionParams = struct {
+    textDocument: TextDocumentIdentifier,
+    position: Position,
+};
+
+pub const RenameParams = struct {
+    textDocument: TextDocumentIdentifier,
+    position: Position,
+    newName: []const u8,
+};
+
+pub const CodeActionParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
+};
+
+pub const WorkspaceSymbolParams = struct { query: []const u8 };
+
+pub const ContentChange = struct {
+    range: ?Range = null,
+    text: []const u8,
+};
+
+pub const DidChangeParams = struct {
+    textDocument: TextDocumentIdentifier,
+    contentChanges: []const ContentChange,
+};
+
+pub const InitializeParams = struct {
+    rootUri: ?[]const u8 = null,
+    rootPath: ?[]const u8 = null,
+};

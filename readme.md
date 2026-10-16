@@ -90,7 +90,9 @@ the resulting object tree, and `--debug_hover --debug_filepath file.f90
 
 | Command | Checks |
 | --- | --- |
-| `zig build test` | Zig unit tests |
+| `zig build test` | Zig unit tests, and the tests of upstream fortls issues |
+| `zig build test-issues` | only the tests of the open issues of upstream fortls (see `tests/issues/README.md`) |
+| `zig build test-fuzz` | mutated programs thrown at an in-process server (crashes, leaks); `--fuzz` runs the fuzzer |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
@@ -126,15 +128,23 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` once, and tests them as release
+every pull request and every push to `main` or `dev` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
 suites above, longer stress runs and the differential test.
 
+Changes are collected on the `dev` branch, which pull requests target, and
+released together by merging `dev` into `main`. Both branches take a change
+only when its checks pass (an administrator can override that when merging a
+pull request); `main` also takes changes only through pull requests, while
+`dev` takes pushes from maintainers. CI's own push to `dev` after a release
+uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
+lets bypass the checks.
+
 When a push to `main` passes on every platform, the same archives are
-published on the GitHub releases page, the tested commit is tagged, and
-CI commits the next patch version to `build.zig.zon`. For a minor or major
-release, set the version in `build.zig.zon` by hand. A pull request to
-`main` fails its "Version is unreleased" check when it changes anything
+published on the GitHub releases page and the tested commit is tagged. CI
+then merges `main` back into `dev` and commits the next patch version to
+`build.zig.zon` there. For a minor or major release, set the version in
+`build.zig.zon` on `dev` by hand. A pull request to `main` fails its "Version is unreleased" check when it changes anything
 beyond the exempt files while `build.zig.zon` holds an already released (or
 older) version. Pushes that only change
 files listed in `.github/workflows/exempt.txt` (documentation, tests,
@@ -173,6 +183,27 @@ zfls deliberately differs from fortls in a few places:
 - Links that would loop (for example type-bound procedures or `ASSOCIATE`
   names that refer to each other while code is being edited) are left
   unresolved; fortls hits a recursion error on them.
+- Go to definition on a preprocessor `#include "file"` opens the file (searched
+  next to the including file and in `include_dirs`); fortls has no answer.
+- A file that another file `#include`s into a scope sees the names of that scope
+  (as for `INCLUDE` statements, but also for files that hold whole procedures);
+  fortls reports them as unknown in the included file.
+- Hover shows the whole value of a parameter. fortls cuts it at the first
+  parenthesis or bracket, so `selected_real_kind(6)` shows as
+  `selected_real_kind`.
+- The `PARAMETER` statement (`parameter (n = 5)`) makes the variables it
+  names constants, with their values; fortls ignores it.
+- An `ASSOCIATE` name bound to an array element or section shows the
+  dimensions of that element or section; fortls shows those of the whole
+  array.
+- A variable that is declared with a type and then called, `real fff` and
+  `fff(1.2, 3.3)`, shows the signature of the global function of that name in
+  hover, and an `EXTERNAL` name shows the interface of its procedure and
+  has it as its implementation.
+- A `!>` documentation comment is dropped at an assignment, a `CALL`, `IMPLICIT`,
+  `CONTAINS` or an `END` statement, instead of waiting for the next object.
+- A blank line follows a parameter whose documentation ends in a Markdown
+  list in hover, so the next parameter is not shown as part of the list.
 
 ## Licenses
 

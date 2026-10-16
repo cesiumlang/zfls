@@ -111,9 +111,9 @@ pub fn unquote(a: Allocator, s: []const u8) ![]u8 {
 
 /// Convert file uri to path (`fortls.jsonrpc.path_from_uri`)
 pub fn pathFromUri(io: Io, a: Allocator, uri: []const u8) ![]u8 {
-    if (!str.startsWith(uri, "file://")) return abspath(a, uri);
+    if (!std.mem.startsWith(u8, uri, "file://")) return abspath(a, uri);
     const rest = if (is_windows)
-        (if (str.startsWith(uri, "file:///")) uri["file:///".len..] else uri["file://".len..])
+        (if (std.mem.startsWith(u8, uri, "file:///")) uri["file:///".len..] else uri["file://".len..])
     else
         uri["file://".len..];
     const p = try unquote(a, rest);
@@ -123,10 +123,10 @@ pub fn pathFromUri(io: Io, a: Allocator, uri: []const u8) ![]u8 {
 /// Convert path to file uri (`fortls.jsonrpc.path_to_uri`)
 pub fn pathToUri(a: Allocator, path: []const u8) ![]u8 {
     if (is_windows) {
-        const fwd = try str.replace(a, path, "\\", "/");
-        return str.concat(a, &.{ "file:///", try quote(a, fwd) });
+        const fwd = try std.mem.replaceOwned(u8, a, path, "\\", "/");
+        return std.mem.concat(a, u8, &.{ "file:///", try quote(a, fwd) });
     }
-    return str.concat(a, &.{ "file://", try quote(a, path) });
+    return std.mem.concat(a, u8, &.{ "file://", try quote(a, path) });
 }
 
 test "uri round trip" {

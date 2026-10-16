@@ -22,6 +22,7 @@ pub const intrinsics = @import("intrinsics.zig");
 pub const settings = @import("settings.zig");
 pub const glob = @import("glob.zig");
 pub const jsonrpc = @import("jsonrpc.zig");
+pub const logger = @import("logger.zig");
 pub const server = @import("server.zig");
 pub const version_info = @import("version.zig");
 pub const debug = @import("debug.zig");

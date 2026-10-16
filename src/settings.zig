@@ -12,12 +12,12 @@ pub const StrList = struct {
     items: std.ArrayList([]const u8) = .empty,
 
     pub fn add(self: *StrList, a: Allocator, s: []const u8) !void {
-        for (self.items.items) |it| if (str.eql(it, s)) return;
+        for (self.items.items) |it| if (std.mem.eql(u8, it, s)) return;
         try self.items.append(a, s);
     }
 
     pub fn contains(self: *const StrList, s: []const u8) bool {
-        for (self.items.items) |it| if (str.eql(it, s)) return true;
+        for (self.items.items) |it| if (std.mem.eql(u8, it, s)) return true;
         return false;
     }
 
@@ -91,7 +91,7 @@ pub const Settings = struct {
     debug_full_result: bool = false,
 
     pub fn setPpDef(self: *Settings, a: Allocator, name: []const u8, value: []const u8) !void {
-        for (self.pp_defs.items) |*d| if (str.eql(d.name, name)) {
+        for (self.pp_defs.items) |*d| if (std.mem.eql(u8, d.name, name)) {
             d.value = value;
             return;
         };
@@ -127,10 +127,10 @@ const opts = [_]Opt{
     .{ .long = "incremental_sync", .kind = .flag, .help = "Use incremental document synchronization (beta)" },
     .{ .long = "recursion_limit", .kind = .int, .metavar = "INTEGER", .help = "Set the maximum recursion depth for the parser (default: 1000)" },
     .{ .long = "sort_keywords", .kind = .flag, .help = "Display variable keywords information, function/subroutine definitions, etc. in a consistent (sorted) manner default: no sorting, display code as is)" },
-    .{ .long = "disable_autoupdate", .kind = .flag, .help = "fortls automatically checks PyPi for newer version and installs them.Use this option to disable the autoupdate feature." },
+    .{ .long = "disable_autoupdate", .kind = .flag, .help = "Accepted for compatibility with fortls and ignored: zfls does not update itself." },
     .{ .long = "preserve_keyword_order", .kind = .flag, .help = "DEPRECATED, this is now the default. To sort use sort_keywords" },
     .{ .long = "debug_log", .kind = .flag, .help = "Generate debug log in project root folder" },
-    .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging fortls" },
+    .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
     .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP (lower & upper casing))", .group = "Sources file parsing options" },
@@ -186,7 +186,7 @@ pub const CliResult = union(enum) {
     exit_err: []const u8,
 };
 
-const usage = "usage: fortls [options] [debug options]\n";
+const usage = "usage: zfls [options] [debug options]\n";
 
 fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u8 {
     _ = prog_version;
@@ -198,7 +198,7 @@ fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u
     for (opts) |o| {
         if (o.debug and !show_debug) continue;
         const g = if (o.debug) "DEBUG" else o.group;
-        if (!str.eql(g, group)) {
+        if (!std.mem.eql(u8, g, group)) {
             group = g;
             try out.print(a, "\n{s}:\n", .{g});
             if (o.debug) try out.appendSlice(a, "  Options for debugging language server\n\n");
@@ -230,18 +230,18 @@ fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u
 }
 
 fn findOpt(arg: []const u8) union(enum) { found: *const Opt, ambiguous, none } {
-    if (str.startsWith(arg, "--")) {
+    if (std.mem.startsWith(u8, arg, "--")) {
         const name = arg[2..];
-        for (&opts) |*o| if (str.eql(o.long, name)) return .{ .found = o };
+        for (&opts) |*o| if (std.mem.eql(u8, o.long, name)) return .{ .found = o };
         var match: ?*const Opt = null;
-        for (&opts) |*o| if (str.startsWith(o.long, name)) {
+        for (&opts) |*o| if (std.mem.startsWith(u8, o.long, name)) {
             if (match != null) return .ambiguous;
             match = o;
         };
         if (match) |m| return .{ .found = m };
         return .none;
     }
-    for (&opts) |*o| if (o.short) |s| if (str.eql(s, arg)) return .{ .found = o };
+    for (&opts) |*o| if (o.short) |s| if (std.mem.eql(u8, s, arg)) return .{ .found = o };
     return .none;
 }
 
@@ -261,12 +261,12 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
     while (i < args.len) : (i += 1) {
         var arg = args[i];
         var inline_val: ?[]const u8 = null;
-        if (str.startsWith(arg, "--")) {
+        if (std.mem.startsWith(u8, arg, "--")) {
             if (std.mem.indexOfScalar(u8, arg, '=')) |eq| {
                 inline_val = arg[eq + 1 ..];
                 arg = arg[0..eq];
             }
-        } else if (str.startsWith(arg, "-") and arg.len > 2) {
+        } else if (std.mem.startsWith(u8, arg, "-") and arg.len > 2) {
             // short option with attached value, e.g. -n1
             inline_val = arg[2..];
             arg = arg[0..2];
@@ -274,41 +274,41 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
         const res = findOpt(arg);
         const o = switch (res) {
             .found => |o| o,
-            .ambiguous => return .{ .exit_err = try str.print(a, "{s}fortls: error: ambiguous option: {s}\n", .{ usage, arg }) },
-            .none => return .{ .exit_err = try str.print(a, "{s}fortls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
+            .ambiguous => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: ambiguous option: {s}\n", .{ usage, arg }) },
+            .none => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
         };
         switch (o.kind) {
             .help => return .{ .exit_ok = try helpText(a, version, any_debug_arg) },
             .debug_help => return .{ .exit_ok = try helpText(a, version, true) },
-            .version => return .{ .exit_ok = try str.print(a, "{s}\n", .{version}) },
+            .version => return .{ .exit_ok = try std.fmt.allocPrint(a, "{s}\n", .{version}) },
             .flag => {
-                if (inline_val != null) return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
+                if (inline_val != null) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
-                    if (str.eql(fname, o.long)) {
+                    if (std.mem.eql(u8, fname, o.long)) {
                         if (@TypeOf(@field(s, fname)) == bool) @field(s, fname) = true;
                     }
                 }
             },
             .int, .string, .json => {
                 const val = inline_val orelse blk: {
-                    if (i + 1 >= args.len) return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
+                    if (i + 1 >= args.len) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
                     i += 1;
                     break :blk args[i];
                 };
                 if (o.kind == .json) {
                     const v = json.parse(a, val) catch {
-                        return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
+                        return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
                     };
                     try applyPpDefs(a, &s, v);
                     continue;
                 }
                 var handled = false;
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
-                    if (!handled and str.eql(fname, o.long)) {
+                    if (!handled and std.mem.eql(u8, fname, o.long)) {
                         const FT = @TypeOf(@field(s, fname));
                         if (FT == i64 or FT == ?i64) {
                             @field(s, fname) = std.fmt.parseInt(i64, str.strip(val), 10) catch {
-                                return .{ .exit_err = try str.print(a, "{s}fortls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
+                                return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
                             };
                             handled = true;
                         } else if (FT == []const u8 or FT == ?[]const u8) {
@@ -321,16 +321,16 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
             .list => {
                 var list: StrList = .{};
                 if (inline_val) |v| try list.add(a, v);
-                while (i + 1 < args.len and !(str.startsWith(args[i + 1], "-") and args[i + 1].len > 1)) {
+                while (i + 1 < args.len and !(std.mem.startsWith(u8, args[i + 1], "-") and args[i + 1].len > 1)) {
                     i += 1;
                     try list.add(a, args[i]);
                 }
-                if (str.eql(o.long, "source_dirs")) s.source_dirs = list;
-                if (str.eql(o.long, "incl_suffixes")) s.incl_suffixes = list;
-                if (str.eql(o.long, "excl_suffixes")) s.excl_suffixes = list;
-                if (str.eql(o.long, "excl_paths")) s.excl_paths = list;
-                if (str.eql(o.long, "include_dirs")) s.include_dirs = list;
-                if (str.eql(o.long, "pp_suffixes")) s.pp_suffixes = list;
+                if (std.mem.eql(u8, o.long, "source_dirs")) s.source_dirs = list;
+                if (std.mem.eql(u8, o.long, "incl_suffixes")) s.incl_suffixes = list;
+                if (std.mem.eql(u8, o.long, "excl_suffixes")) s.excl_suffixes = list;
+                if (std.mem.eql(u8, o.long, "excl_paths")) s.excl_paths = list;
+                if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
+                if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
             },
         }
     }
@@ -355,8 +355,8 @@ pub fn applyPpDefs(a: Allocator, s: *Settings, v: json.Value) !void {
 pub fn jsonScalarString(a: Allocator, v: json.Value) ![]const u8 {
     return switch (v) {
         .string => |x| x,
-        .int => |x| try str.print(a, "{d}", .{x}),
-        .float => |x| try str.print(a, "{d}", .{x}),
+        .int => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
+        .float => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
         .bool => |x| if (x) "True" else "False",
         .null => "None",
         else => try json.stringify(a, v),
@@ -428,11 +428,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Code Actions options
     s.enable_code_actions = jsonBool(cfg.get("enable_code_actions"), s.enable_code_actions);
     // Preprocessor options
-    s.pp_suffixes = null;
-    if (cfg.get("pp_suffixes")) |v| if (v != .null) {
-        s.pp_suffixes = try jsonList(a, v);
-    };
-    s.pp_defs = .empty;
+    // like every other option, a value in the file replaces the one from the
+    // command line, and no value leaves it alone (upstream #536)
+    if (cfg.get("pp_suffixes")) |v| s.pp_suffixes = if (v == .null) null else try jsonList(a, v);
     if (cfg.get("pp_defs")) |v| try applyPpDefs(a, s, v);
     if (cfg.get("include_dirs")) |v| s.include_dirs = try jsonList(a, v);
     // Debug options
@@ -449,8 +447,25 @@ pub fn json5ErrorMessage(a: Allocator, src: []const u8, pos: usize) ![]const u8 
             col = 1;
         } else col += 1;
     }
-    if (pos >= src.len) return str.print(a, "<string>:{d} Unexpected end of input at column {d}", .{ line, col });
-    return str.print(a, "<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
+    if (pos >= src.len) return std.fmt.allocPrint(a, "<string>:{d} Unexpected end of input at column {d}", .{ line, col });
+    return std.fmt.allocPrint(a, "<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
+}
+
+test "a config file only replaces the preprocessor options it sets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{};
+    try s.setPpDef(a, "FROM_CLI", "1");
+    s.pp_suffixes = .{};
+    try s.pp_suffixes.?.add(a, ".inc");
+    try applyConfig(a, &s, try json.parse(a, "{}"));
+    try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
+    try std.testing.expectEqual(@as(usize, 1), s.pp_suffixes.?.len());
+    try applyConfig(a, &s, try json.parse(a, "{\"pp_defs\": {\"FROM_FILE\": \"2\"}, \"pp_suffixes\": [\".a\", \".b\"]}"));
+    try std.testing.expectEqualStrings("FROM_FILE", s.pp_defs.items[0].name);
+    try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
+    try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());
 }
 
 test "cli parsing" {

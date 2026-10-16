@@ -1,6 +1,6 @@
 name: CI
 
-# Every pull request and every push to main is built and tested on all
+# Every pull request and every push to main or dev is built and tested on all
 # supported platforms, and the tests run on the release binaries themselves.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
@@ -9,10 +9,13 @@ name: CI
 # back, so under test a binary reports a release candidate (`0.1.1-rc`).
 # When a push to main passes on every platform, the same archives are
 # published as release v0.1.1 (where, without the file, the binary reports
-# `0.1.1`), the tested commit is tagged, and build.zig.zon is bumped to the
-# next patch version. For a minor or major release, set the version in
-# build.zig.zon by hand. If a push to main finds its version already tagged,
-# the bump is committed before anything is built.
+# `0.1.1`), and the tested commit is tagged. Changes are collected on the
+# dev branch (pull requests target it) and released by merging dev into main.
+# After a release, main is merged back into dev, where build.zig.zon is bumped
+# to the next patch version; main keeps the released version. For a minor or
+# major release, set the version in build.zig.zon on dev by hand. main takes
+# no direct pushes; a push to main whose version is already tagged is tested
+# but not released.
 #
 # Reuse: every run records the git tree it built (`tested-tree`). A release
 # from main publishes the archives of a passed pull request run that built
@@ -22,7 +25,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # dev is tested too, so a bad combination of merged pull requests shows
+    # up at once (it is never released from there)
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -116,14 +121,11 @@ jobs:
             next=$(next_patch "$version")
             while tagged "$next"; do next=$(next_patch "$next"); done
             sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
+            as_checked_out=false
             if [ "$release" = true ]; then
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git commit -qam "Begin v$next development [skip ci]"
-              # pushes made with GITHUB_TOKEN do not start another run
-              git push origin HEAD:main
-            else
-              as_checked_out=false
+              # main takes no pushes, and dev is bumped after each release
+              echo "::warning::main holds v$version, which is already released; testing only. Set a newer version on dev and merge it."
+              release=false
             fi
             version=$next
           fi
@@ -199,7 +201,7 @@ jobs:
           fetch-depth: 0
 
       # A pull request that changes anything outside exempt.txt must carry a
-      # version newer than the latest release (CI bumps it after each
+      # version newer than the latest release (CI bumps dev after each
       # release; for a minor or major release, set it by hand)
       - name: Check build.zig.zon's version against the latest tag
         env:
@@ -262,8 +264,8 @@ jobs:
           done
           zig build --fetch=all
 
-      # Only differs from the checkout on pull requests whose version is
-      # already released (on main the bump was committed)
+      # Only differs from the checkout when the version is already released
+      # (such a run is tested but not released)
       - name: Set version ${{ needs.version.outputs.version }}
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -617,20 +619,66 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-      - name: Begin the next version
+  # The next version is begun on dev: main keeps the version it released. A
+  # separate job, so that a push dev refuses does not stop the publishing.
+  begin-next-version:
+    name: Merge v${{ needs.version.outputs.version }} into dev and begin the next version
+    needs: [version, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+      # dev takes pushes only from pull requests whose checks pass, and from
+      # this deploy key, which the dev ruleset lets bypass that (GITHUB_TOKEN
+      # cannot be a bypass actor); without the secret the token is used
+      DEPLOY_KEY: ${{ secrets.DEV_DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+
+      # A fast-forward when dev has not moved, else a merge commit
+      - name: Merge into dev and begin the next version
         run: |
-          git fetch -q origin main
-          if [ "$(git rev-parse origin/main)" != "$SHA" ]; then
-            # the run for the newer commit bumps the version before building
-            echo "main has moved on; leaving the bump to its run"
-            exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tagged() { git rev-parse -q --verify "refs/tags/v$1" >/dev/null; }
+          push_to=origin
+          if [ -n "$DEPLOY_KEY" ]; then
+            install -d -m 700 ~/.ssh
+            printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/dev_deploy_key
+            chmod 600 ~/.ssh/dev_deploy_key
+            ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+            export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/dev_deploy_key -o IdentitiesOnly=yes"
+            push_to="git@github.com:$GITHUB_REPOSITORY.git"
           fi
-          IFS=. read -r ma mi pa <<< "$VERSION"
-          next="$ma.$mi.$((pa + 1))"
-          git checkout -q -B main "$SHA"
-          sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
-          git commit -qam "Begin v$next development [skip ci]"
-          git push origin main
+          for attempt in 1 2 3; do
+            git fetch -q origin dev
+            git checkout -q -B dev origin/dev
+            if ! git merge -q -m "Merge v$VERSION into dev [skip ci]" "$SHA"; then
+              git merge --abort
+              echo "::error::v$VERSION conflicts with dev; merge main into dev by hand and set the next version"
+              exit 1
+            fi
+            version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)
+            if tagged "$version"; then
+              next=$version
+              while tagged "$next"; do
+                IFS=. read -r ma mi pa <<< "$next"
+                next="$ma.$mi.$((pa + 1))"
+              done
+              sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$next\2/" build.zig.zon
+              git commit -qam "Begin v$next development [skip ci]"
+            fi
+            if git push -q "$push_to" dev; then exit 0; fi
+            echo "dev moved while merging; trying again"
+          done
+          echo "::error::could not push to dev"
+          exit 1
 
   publish-extension:
     name: Publish VS Code extension v${{ needs.version.outputs.version }}
