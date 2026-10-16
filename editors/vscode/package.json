@@ -163,18 +163,171 @@
           "scope": "machine-overridable",
           "markdownDescription": "Path to a `zfls` executable. Empty: the one bundled with this extension, or else `zfls` on the `PATH` (for example from `conda install -c conda-forge zfls`)."
         },
+        "zfls.incrementalSync": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Send document changes incrementally (`--incremental_sync`)."
+        },
+        "zfls.signatureHelp": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Show signature help while typing procedure arguments, instead of argument snippets in completions (`--use_signature_help`)."
+        },
+        "zfls.codeActions": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Offer code actions, such as implementing deferred type-bound procedures (`--enable_code_actions`)."
+        },
+        "zfls.hoverSignature": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Show the signature of procedures in hover (`--hover_signature`)."
+        },
+        "zfls.lowercaseIntrinsics": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Complete intrinsics and keywords in lowercase (`--lowercase_intrinsics`)."
+        },
+        "zfls.autocompleteNameOnly": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Complete only procedure names, without their arguments (`--autocomplete_name_only`)."
+        },
+        "zfls.autocompleteNoSnippets": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Do not use snippets with placeholders in completions (`--autocomplete_no_snippets`)."
+        },
+        "zfls.sortKeywords": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Show variable keywords and procedure definitions sorted (`--sort_keywords`)."
+        },
+        "zfls.symbolSkipMembers": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Leave type members out of document symbols (`--symbol_skip_mem`)."
+        },
+        "zfls.disableDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Turn off zfls's diagnostics (`--disable_diagnostics`)."
+        },
+        "zfls.notifyInit": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Show a notification when the workspace has been indexed (`--notify_init`)."
+        },
+        "zfls.nthreads": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 1,
+          "scope": "resource",
+          "markdownDescription": "Threads used to index the workspace (`--nthreads`; zfls's default is 4)."
+        },
+        "zfls.maxLineLength": {
+          "type": "integer",
+          "default": -1,
+          "scope": "resource",
+          "markdownDescription": "Warn about code lines longer than this (`--max_line_length`; -1: off)."
+        },
+        "zfls.maxCommentLineLength": {
+          "type": "integer",
+          "default": -1,
+          "scope": "resource",
+          "markdownDescription": "Warn about comment lines longer than this (`--max_comment_line_length`; -1: off)."
+        },
+        "zfls.configFile": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Configuration file to read instead of `.fortlsrc`, `.fortls.json` or `.fortls` (`--config`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.sourceDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Folders with source files, relative to the workspace folder or absolute; globs allowed (`--source_dirs`; default: the whole workspace folder). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.includeDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Folders searched for `#include` and `INCLUDE` files (`--include_dirs`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.excludePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Folders not to index (`--excl_paths`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.includeSuffixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "More file extensions to index as Fortran, e.g. `.inc` (`--incl_suffixes`)."
+        },
+        "zfls.excludeSuffixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "File extensions not to index (`--excl_suffixes`)."
+        },
+        "zfls.ppSuffixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "File extensions to run the preprocessor on (`--pp_suffixes`; default: upper-case extensions such as `.F90`)."
+        },
+        "zfls.ppDefs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Preprocessor definitions, name to value (`--pp_defs`)."
+        },
         "zfls.arguments": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": [
-            "--incremental_sync",
-            "--use_signature_help",
-            "--enable_code_actions",
-            "--hover_signature"
-          ],
-          "markdownDescription": "Command-line arguments for `zfls`; it accepts the same options as fortls (run `zfls --help`). The default turns on incremental sync, signature help, code actions and signatures in hover; remove an option to turn that feature off. Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply."
+          "default": [],
+          "markdownDescription": "Extra command-line options for `zfls`, after those of the settings above; zfls accepts the same options as fortls (run `zfls --help`). Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply.",
+          "scope": "resource"
         },
         "zfls.disableModernFortranCheck": {
           "type": "boolean",
@@ -262,6 +415,46 @@
           "scope": "machine-overridable",
           "markdownDescription": "The `gdb` for the `cppdbg` and `gdb` debuggers. Empty: the `gdb` next to the compiler, else the one on the `PATH`."
         },
+        "zfls.formatting.formatter": {
+          "type": "string",
+          "enum": [
+            "Disabled",
+            "findent",
+            "fprettify"
+          ],
+          "enumDescriptions": [
+            "Do not format Fortran files",
+            "Indent with findent (free and fixed form)",
+            "Format with fprettify (free form only)"
+          ],
+          "default": "Disabled",
+          "scope": "language-overridable",
+          "markdownDescription": "The external tool that formats Fortran files and selections (**Format Document**, **Format Selection**, format on save). It must be installed separately: `pip install findent` or `pip install fprettify`. Can be set per language, for example `\"[FortranFixedForm]\": { \"zfls.formatting.formatter\": \"findent\" }`."
+        },
+        "zfls.formatting.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The formatter executable, or the directory that holds it, when it is not on the `PATH`. `${workspaceFolder}`, `${env:NAME}`, `${userHome}` and a leading `~` are expanded; a relative path is relative to the workspace folder."
+        },
+        "zfls.formatting.findentArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "Extra arguments for `findent`, one per item, for example `[\"-i4\"]`. The extension passes `-ifree` or `-ifixed` from the file's language unless these set the input format, and `-Ia` (keep the selection's indentation) when formatting a selection. Variables are expanded as in `#zfls.formatting.path#`."
+        },
+        "zfls.formatting.fprettifyArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "Extra arguments for `fprettify`, one per item, for example `[\"--indent\", \"4\", \"--enable-decl\"]`. fprettify also reads `.fprettify.rc` files from the file's directory and its parents. Variables are expanded as in `#zfls.formatting.path#`."
+        },
         "zfls.linter.compiler": {
           "type": "string",
           "enum": [
@@ -286,14 +479,12 @@
           ],
           "default": "gfortran",
           "scope": "resource",
-          "order": 0,
           "markdownDescription": "Compiler that checks Fortran files when they are opened and saved; its errors and warnings show in the file and in the Problems panel. `Disabled` turns compiler diagnostics off. If the compiler is not found, zfls says so once and checks nothing."
         },
         "zfls.linter.compilerPath": {
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "order": 1,
           "markdownDescription": "Path to the compiler executable. Empty: `zfls.linter.compiler` looked up on the `PATH`. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved; a relative path is relative to the workspace folder."
         },
         "zfls.linter.extraArgs": {
@@ -303,7 +494,6 @@
           },
           "default": [],
           "scope": "resource",
-          "order": 2,
           "markdownDescription": "Further compiler options, such as `-std=f2018` or `-DDEBUG`. When empty, the compiler's usual warnings are on (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for nvfortran); when set, these replace them. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved."
         },
         "zfls.linter.includePaths": {
@@ -313,28 +503,24 @@
           },
           "default": [],
           "scope": "resource",
-          "order": 3,
           "markdownDescription": "Directories searched for `INCLUDE` files and `.mod` files (`-I`). Glob patterns such as `${workspaceFolder}/build/**/include` match directories. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved; relative paths are relative to the workspace folder. Run **zfls: Clear Compiler Diagnostics** after creating directories that a pattern should match."
         },
         "zfls.linter.modOutput": {
           "type": "string",
           "default": "",
           "scope": "resource",
-          "order": 4,
           "markdownDescription": "Directory for the `.mod` files the compiler writes while checking. Empty: a directory in VS Code's storage for this workspace, never the source tree. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved."
         },
         "zfls.linter.lintOnSave": {
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "order": 5,
           "markdownDescription": "Check a file when it is saved (files are always checked when opened)."
         },
         "zfls.linter.lintOnType": {
           "type": "boolean",
           "default": false,
           "scope": "resource",
-          "order": 6,
           "markdownDescription": "Check a file while it is edited, `#zfls.linter.lintOnTypeDelay#` milliseconds after the last change, compiling a copy of the unsaved text."
         },
         "zfls.linter.lintOnTypeDelay": {
@@ -342,28 +528,24 @@
           "default": 1000,
           "minimum": 0,
           "scope": "resource",
-          "order": 7,
           "markdownDescription": "Milliseconds without changes before `#zfls.linter.lintOnType#` checks a file."
         },
         "zfls.linter.resolveModules": {
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "order": 8,
           "markdownDescription": "Before checking a file, compile the workspace files that define the modules it uses (and the modules those use), if their `.mod` files are missing or older than the files, so that `use` statements find them. Saving a module file checks the open files that use it again."
         },
         "zfls.linter.fypp.enabled": {
           "type": "boolean",
           "default": false,
           "scope": "resource",
-          "order": 10,
           "markdownDescription": "Run [fypp](https://fypp.readthedocs.io) on each file before compiling it. Without it, `.fypp` files are not checked."
         },
         "zfls.linter.fypp.path": {
           "type": "string",
           "default": "fypp",
           "scope": "machine-overridable",
-          "order": 11,
           "markdownDescription": "Path to the `fypp` executable. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved."
         },
         "zfls.linter.fypp.definitions": {
@@ -373,7 +555,6 @@
           },
           "default": {},
           "scope": "resource",
-          "order": 12,
           "markdownDescription": "Definitions passed to `fypp` as `-DNAME=VALUE` (`-DNAME` when the value is empty)."
         },
         "zfls.linter.fypp.includes": {
@@ -383,7 +564,6 @@
           },
           "default": [],
           "scope": "resource",
-          "order": 13,
           "markdownDescription": "Include directories passed to `fypp` (`-I`); glob patterns and variables as in `#zfls.linter.includePaths#`."
         },
         "zfls.linter.fypp.extraArgs": {
@@ -393,7 +573,6 @@
           },
           "default": [],
           "scope": "resource",
-          "order": 14,
           "markdownDescription": "Further `fypp` options. zfls passes `--line-numbering --line-marker-format=cpp`, and `--fixed-format` for fixed-form files."
         }
       }

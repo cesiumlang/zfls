@@ -233,6 +233,9 @@ zfls deliberately differs from fortls in a few places:
   after `ONLY:` and has no answer on the original name.
 - `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
   submodule (and through it the ancestor module); fortls names it `parent`.
+- Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
+  the last is the innermost, so the names it declares are found; fortls uses
+  the first.
 
 ## Licenses
 
