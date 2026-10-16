@@ -690,21 +690,21 @@ jobs:
     needs: [version, reuse, release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
-    # No stored tokens where possible. Open VSX: trusted publishing (it
-    # accepts this workflow's OIDC token for the `cesiumlang` namespace),
-    # else the OVSX_PAT secret. Marketplace: the managed identity in the
-    # AZURE_* repository variables, signed in with this workflow's OIDC
-    # token (Microsoft Entra ID, --azure-credential). (No personal access
+    # No stored tokens. Marketplace: the managed identity in the AZURE_*
+    # repository variables, signed in with this workflow's OIDC token
+    # (Microsoft Entra ID, --azure-credential). Open VSX: the open-vsx.yml
+    # workflow, which Open VSX trusts by name (trusted publishing), started
+    # here once the release exists. (No personal access
     # token: the Marketplace retires them on 2026-12-01. vsce's own --oidc
     # is left out too: the Marketplace rejected its token exchange with a
     # 400 in October 2026.)
     permissions:
       contents: read
       id-token: write
+      actions: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       VSCE_VERSION: 4.0.0
-      OVSX_VERSION: 1.2.0
     steps:
       - uses: actions/setup-node@v7
         with:
@@ -729,38 +729,28 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # the platform packages, each with its zfls, to both registries (tried
-      # even if the other fails); and on the Marketplace the universal one,
-      # without a zfls, which it serves to platforms with no package of their
-      # own (it runs zfls from the PATH)
-      - name: Publish to the Visual Studio Marketplace and Open VSX
+      # Open VSX: the platform packages from the release, by the workflow
+      # Open VSX trusts (started first, so that it runs even if the
+      # Marketplace fails)
+      - name: Start publishing to Open VSX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run open-vsx.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$VERSION"
+
+      # the platform packages, each with its zfls; and the universal one,
+      # without a zfls, which the Marketplace serves to platforms with no
+      # package of their own (it runs zfls from the PATH)
+      - name: Publish to the Visual Studio Marketplace
         env:
           AZURE_SIGNED_IN: ${{ steps.azure.outcome == 'success' }}
-          # until the Open VSX namespace allows trusted publishing
-          OPENVSX_TOKEN: ${{ secrets.OVSX_PAT }}
         # --skip-duplicate: a version already published counts as published,
         # so a re-run completes what a failed one left out
         run: |
           vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
-          ovsx() { npx --yes "ovsx@$OVSX_VERSION" "$@"; }
-          marketplace() {
-            [ "$AZURE_SIGNED_IN" = true ] || { echo "::error::Marketplace: the Azure sign-in failed"; return 1; }
-            vsce publish --azure-credential --skip-duplicate --packagePath "$1"
-          }
-          openvsx() {
-            ovsx publish "$1" --trusted-publishing --skip-duplicate && return 0
-            [ -n "$OPENVSX_TOKEN" ] || return 1
-            echo "::warning::Open VSX: trusted publishing of $1 failed; publishing with the OVSX_PAT secret"
-            OVSX_PAT="$OPENVSX_TOKEN" ovsx publish "$1" --skip-duplicate
-          }
+          [ "$AZURE_SIGNED_IN" = true ] || { echo "::error::Marketplace: the Azure sign-in failed"; exit 1; }
           failed=0
-          for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64; do
-            vsix="dist/zfls-vscode-v$VERSION-$platform.vsix"
-            marketplace "$vsix" \
+          for platform in win32-x64 win32-arm64 linux-x64 linux-arm64 alpine-x64 alpine-arm64 darwin-x64 darwin-arm64 universal; do
+            vsce publish --azure-credential --skip-duplicate --packagePath "dist/zfls-vscode-v$VERSION-$platform.vsix" \
               || { echo "::error::Marketplace: publishing $platform failed"; failed=1; }
-            openvsx "$vsix" \
-              || { echo "::error::Open VSX: publishing $platform failed"; failed=1; }
           done
-          marketplace "dist/zfls-vscode-v$VERSION-universal.vsix" \
-            || { echo "::error::Marketplace: publishing the universal package failed"; failed=1; }
           exit "$failed"

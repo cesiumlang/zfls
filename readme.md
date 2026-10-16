@@ -49,13 +49,15 @@ from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 (VSCodium and other VS Code derivatives), and the universal one to the
 Marketplace for the platforms without their own. No stored token is needed:
-Open VSX accepts the workflow's OIDC token (trusted publishing), and for the
-Marketplace the workflow signs in with it as a Microsoft Entra managed
-identity that is a member of the publisher (the `AZURE_*` repository
-variables; the "Marketplace identity" workflow shows the ID to add). Until
-the `cesiumlang` Open VSX namespace allows trusted publishing, the job falls
-back to the `OVSX_PAT` repository secret there, with a warning. Versions
-already published are skipped, so a failed publishing job can be re-run.
+for the Marketplace the release job signs in with the workflow's OIDC token
+as a Microsoft Entra managed identity that is a member of the publisher (the
+`AZURE_*` repository variables; the "Marketplace identity" workflow shows the
+ID to add). For Open VSX it starts the "Publish to Open VSX" workflow
+(`.github/workflows/open-vsx.yml`), whose OIDC token Open VSX trusts for the
+`cesiumlang` namespace (trusted publishing); the `OVSX_PAT` repository
+secret is used only if that is refused, with a warning. That workflow can
+also be run by hand for any released version. Versions already published
+are skipped, so a failed publishing run can be re-run.
 
 To work on it (Node.js 20 or later):
 
