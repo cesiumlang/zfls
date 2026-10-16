@@ -11,6 +11,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives
 - snippets for program units and constructs (see [Snippets](#snippets))
+- formatting of documents and selections with findent or fprettify (see
+  [Formatting](#formatting))
 - breakpoints in Fortran files, for debuggers such as C/C++ (cppdbg,
   cppvsdbg) and CodeLLDB
 - run and debug the current file with one click (see
@@ -32,6 +34,10 @@ disable Modern Fortran when you install zfls (see
 | `zfls.arguments` | `["--incremental_sync", "--use_signature_help", "--enable_code_actions", "--hover_signature"]` | Command-line arguments; zfls accepts the same options as fortls (`zfls --help`). The default turns on signature help, code actions and signatures in hover, as Modern Fortran does |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling Modern Fortran when both are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
+| `zfls.formatting.formatter` | `Disabled` | `findent` or `fprettify` to format Fortran files (see [Formatting](#formatting)) |
+| `zfls.formatting.path` | empty | The formatter, or its directory, when it is not on the `PATH` |
+| `zfls.formatting.findentArgs` | `[]` | Extra arguments for findent |
+| `zfls.formatting.fprettifyArgs` | `[]` | Extra arguments for fprettify |
 | `zfls.run.*` | | Compiler, arguments and debugger for running and debugging a file (see [Running and debugging](#running-and-debugging)) |
 
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
@@ -60,12 +66,56 @@ When Modern Fortran is enabled, zfls recommends disabling it and opens its
 page in the Extensions view, where you select **Disable** (an extension
 cannot disable another one), then reload the window.
 
-zfls does not have Modern Fortran's compiler linting and formatting
-(findent/fprettify) yet. If you rely on those, you
-can choose **Keep it, turn off its fortls** instead: that stops only Modern
-Fortran's language server (`fortran.fortls.disabled`), so zfls answers the
-language requests while Modern Fortran keeps its other commands. Its
+zfls does not have Modern Fortran's compiler linting yet. If you rely on
+that, you can choose **Keep it, turn off its fortls** instead: that stops
+only Modern Fortran's language server (`fortran.fortls.disabled`), so zfls
+answers the language requests while Modern Fortran keeps its other
+commands. Its
 grammars still apply alongside zfls's in that case.
+
+## Formatting
+
+**Format Document**, **Format Selection** and format on save
+(`editor.formatOnSave`) use an external formatter, which must be installed
+separately:
+
+| Formatter | Install | Formats |
+| --- | --- | --- |
+| [findent](https://pypi.org/project/findent/) | `pip install findent` or `conda install -c conda-forge findent` | Indentation of free-form and fixed-form files |
+| [fprettify](https://github.com/fortran-lang/fprettify) | `pip install fprettify` or `conda install -c conda-forge fprettify` | Indentation, whitespace and more, free-form files only |
+
+Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so
+that no formatter runs, and VS Code offers formatters of other extensions,
+until one is chosen. The setting can differ per language, for example
+fprettify for free form and findent for fixed form:
+
+```jsonc
+"zfls.formatting.formatter": "fprettify",
+"[FortranFixedForm]": {
+  "zfls.formatting.formatter": "findent"
+}
+```
+
+The extension sends the text to the formatter on its standard input and
+reads the result from its standard output, so no files are written, and
+changes only the lines the formatter changed. findent is told the source
+form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs`
+sets one. fprettify reads `.fprettify.rc` files from the directory of the
+file and its parents, as when it formats the file itself. Changes to these
+settings apply to the next formatting, without a restart. In
+`zfls.formatting.path` and the argument settings, `${workspaceFolder}`,
+`${workspaceFolder:name}`, `${userHome}`, `${env:NAME}`, `${file}`,
+`${fileDirname}` and a leading `~` are expanded.
+
+**Format Selection** formats the whole lines the selection touches. The
+formatter sees only those lines, not the code around them: findent starts
+at the indentation of the first selected line (`-Ia`), and fprettify keeps
+it too, but select whole constructs (a complete `do` loop, `if` block or
+procedure) for the indentation inside them to come out right.
+
+When the formatter is missing, fails, or prints nothing, the document is
+left as it is and the error is shown once, with details in the `zfls`
+output channel (**zfls: Show Output**).
 
 ## Running and debugging
 

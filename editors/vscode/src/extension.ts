@@ -8,6 +8,7 @@ import {
   LanguageClientOptions,
   ServerOptions,
 } from "vscode-languageclient/node";
+import { registerFormatting } from "./formatting";
 import { registerRunCommands } from "./runFile";
 
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
@@ -19,6 +20,7 @@ let output: vscode.LogOutputChannel | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("zfls", { log: true });
+  registerFormatting(context, output);
   registerRunCommands(context, output);
   context.subscriptions.push(
     output,
