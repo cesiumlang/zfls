@@ -190,6 +190,46 @@
           ],
           "default": "off",
           "markdownDescription": "Log the messages between VS Code and zfls in the `zfls` output channel."
+        },
+        "zfls.formatting.formatter": {
+          "type": "string",
+          "enum": [
+            "Disabled",
+            "findent",
+            "fprettify"
+          ],
+          "enumDescriptions": [
+            "Do not format Fortran files",
+            "Indent with findent (free and fixed form)",
+            "Format with fprettify (free form only)"
+          ],
+          "default": "Disabled",
+          "scope": "language-overridable",
+          "markdownDescription": "The external tool that formats Fortran files and selections (**Format Document**, **Format Selection**, format on save). It must be installed separately: `pip install findent` or `pip install fprettify`. Can be set per language, for example `\"[FortranFixedForm]\": { \"zfls.formatting.formatter\": \"findent\" }`."
+        },
+        "zfls.formatting.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The formatter executable, or the directory that holds it, when it is not on the `PATH`. `${workspaceFolder}`, `${env:NAME}`, `${userHome}` and a leading `~` are expanded; a relative path is relative to the workspace folder."
+        },
+        "zfls.formatting.findentArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "Extra arguments for `findent`, one per item, for example `[\"-i4\"]`. The extension passes `-ifree` or `-ifixed` from the file's language unless these set the input format, and `-Ia` (keep the selection's indentation) when formatting a selection. Variables are expanded as in `#zfls.formatting.path#`."
+        },
+        "zfls.formatting.fprettifyArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "Extra arguments for `fprettify`, one per item, for example `[\"--indent\", \"4\", \"--enable-decl\"]`. fprettify also reads `.fprettify.rc` files from the file's directory and its parents. Variables are expanded as in `#zfls.formatting.path#`."
         }
       }
     },
@@ -211,7 +251,8 @@
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p test",
     "package": "vsce package --no-dependencies",
     "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node20 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node20",
-    "test": "npm run build && npm run build-test && node out/runTest.js"
+    "test": "npm run build && npm run build-test && node out/runTest.js",
+    "unit": "esbuild test/unit/*.test.ts --bundle --outdir=out/unit --platform=node --target=node20 --format=cjs && node --test out/unit/*.test.js"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.2"

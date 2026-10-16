@@ -5,7 +5,8 @@ grammars and language configuration of the
 [Modern Fortran](https://github.com/fortran-lang/vscode-fortran-support)
 extension, version 4.0.0, and the snippets in `snippets/` up to "Module
 Documentation Header" are adapted from its `snippets/fortran90.json`, used
-under its MIT license:
+under its MIT license. The formatting settings (`zfls.formatting.*`) follow
+its `fortran.formatting.*` settings:
 
 ```text
 MIT License
