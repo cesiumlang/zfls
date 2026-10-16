@@ -30,6 +30,15 @@ The extension includes the `zfls` executable for Windows, Linux and macOS
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
 workspace root configures source directories, preprocessor definitions and
 other options.
+VS Code opens these files as JSON with comments and checks them against a
+schema of the options zfls reads from them, with their descriptions and
+defaults in completion and hover. The schema is generated from zfls's option
+table (`tools/gen_config_schema.py`).
+
+With a TOML extension that supports `tomlValidation`, such as
+[Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
+`fpm.toml` files are checked against the
+[fpm manifest schema](https://github.com/fortran-lang/fpm-metadata) too.
 
 ## Using it with Modern Fortran
 
