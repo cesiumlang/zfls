@@ -476,3 +476,41 @@ test "hansec #168 references to a separate module procedure include its implemen
     };
     try h.checkIn(.hansec, 168, .fixed, outcome);
 }
+
+const rename_fixture = [_]h.File{.{
+    .name = "t.f90",
+    .text =
+    \\module m
+    \\contains
+    \\  function func_1(x)
+    \\    integer :: x, func_1
+    \\    func_1 = x
+    \\  end function func_1
+    \\end module m
+    \\program p
+    \\  use m, func_1_ref => func_1
+    \\  logical :: func_1
+    \\  print *, func_1_ref(3), func_1
+    \\end program p
+    \\
+    ,
+}};
+
+test "hansec #137 the original name on a USE rename line is the module's entity" {
+    const w = try h.Workspace.init(&rename_fixture, .{});
+    defer w.deinit();
+    const def = try w.definition("t.f90", w.pos("t.f90", "=> func_1", 0, 4));
+    try h.checkIn(.hansec, 137, .fixed, blk: {
+        const l = def orelse break :blk h.unmet("no definition for the original name", .{});
+        break :blk h.expect(l.line == 2, "definition at line {d}, expected the function at line 3", .{l.line + 1});
+    });
+}
+
+test "a rename without ONLY makes the local name the module's entity, and hides the original name" {
+    const w = try h.Workspace.init(&rename_fixture, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "func_1_ref(3)", 0, 1), "FUNCTION");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "func_1_ref =>", 0, 1), "FUNCTION");
+    // the local variable of the same name as the original is not the function
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "(3), func_1", 0, 6), "LOGICAL");
+}

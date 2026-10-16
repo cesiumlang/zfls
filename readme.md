@@ -217,6 +217,11 @@ zfls deliberately differs from fortls in a few places:
 - References to (and renames of) a separate module procedure include both
   its interface and its implementation in a submodule; fortls does not
   relate the two.
+- A rename without `ONLY` (`use m, local => original`) is read: the local
+  name is the module's entity and the original name is not visible under
+  that name. On the USE line, hover, definition and references on either
+  name reach the module's entity (hansec #137); fortls only reads renames
+  after `ONLY:` and has no answer on the original name.
 
 ## Licenses
 
