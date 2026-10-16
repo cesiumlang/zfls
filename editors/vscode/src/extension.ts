@@ -118,29 +118,43 @@ function ensureExecutable(file: string): void {
   }
 }
 
-/** Modern Fortran starts fortls for the same files; offer to turn that off
- * so that only one language server answers. */
+/** zfls replaces the Modern Fortran extension: both register the same
+ * Fortran languages, grammars and snippets, and Modern Fortran starts its own
+ * language server (fortls). Recommend disabling it; extensions cannot disable
+ * one another, so this opens its page where the user can. Keeping it with its
+ * fortls turned off stays possible, for the features zfls does not have yet. */
 async function checkModernFortran(): Promise<void> {
   const config = vscode.workspace.getConfiguration("zfls");
   if (config.get<boolean>("disableModernFortranCheck", false)) {
     return;
   }
+  // only an enabled extension is found
   if (!vscode.extensions.getExtension(MODERN_FORTRAN)) {
     return;
   }
   const fortran = vscode.workspace.getConfiguration("fortran");
   if (fortran.get<boolean>("fortls.disabled", false)) {
+    // kept on purpose, with its language server off
     return;
   }
-  const disable = "Turn off its fortls";
+  const disable = "Disable Modern Fortran...";
+  const keep = "Keep it, turn off its fortls";
   const never = "Don't ask again";
-  const choice = await vscode.window.showInformationMessage(
-    "The Modern Fortran extension also runs a Fortran language server (fortls). " +
-      "Turn it off so that zfls alone answers? Modern Fortran keeps its other features.",
+  const choice = await vscode.window.showWarningMessage(
+    "The Modern Fortran extension is also enabled. zfls replaces it: the language server, " +
+      "syntax highlighting, snippets and breakpoints. With both, two language servers and two " +
+      "sets of grammars compete for Fortran files, so disable Modern Fortran. (zfls does not " +
+      "have its compiler linting, formatting and run/debug commands yet.)",
     disable,
+    keep,
     never,
   );
   if (choice === disable) {
+    await vscode.commands.executeCommand("extension.open", MODERN_FORTRAN);
+    void vscode.window.showInformationMessage(
+      'Select "Disable" on the Modern Fortran page, then reload the window.',
+    );
+  } else if (choice === keep) {
     await fortran.update("fortls.disabled", true, vscode.ConfigurationTarget.Global);
     const reload = await vscode.window.showInformationMessage(
       "Modern Fortran's fortls is turned off; reload the window to stop it.",

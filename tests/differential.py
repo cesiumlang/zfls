@@ -267,6 +267,36 @@ def normalize(v):
 
 
 INCLUDE_DIRECTIVE = re.compile(r"\s*#\s*include\s*[\"<]", re.I)
+USE_LINE = re.compile(r"\s*use\b", re.I)
+
+
+def on_use_rename_original(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on the original name of a rename on a USE
+    statement, `use m, local => ORIGINAL`."""
+    if not 0 <= line < len(lines) or not USE_LINE.match(lines[line]):
+        return False
+    text = lines[line]
+    start = char
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
+        start -= 1
+    return text[:start].rstrip().endswith("=>")
+
+
+def use_rename_extras(lines: list, a, b) -> bool:
+    """Whether references `b` are `a` plus locations on the original names
+    of USE renames only."""
+    if not isinstance(a, list) or not isinstance(b, list) or len(b) <= len(a):
+        return False
+    rest = list(b)
+    for loc in a:
+        if loc not in rest:
+            return False
+        rest.remove(loc)
+    for loc in rest:
+        start = loc.get("range", {}).get("start", {})
+        if not on_use_rename_original(lines, start.get("line", -1), start.get("character", 0)):
+            return False
+    return True
 
 
 def on_include_directive(path: Path, position) -> bool:
@@ -433,7 +463,9 @@ def main() -> int:
                 b = normalize(notifications(got, method))
                 if a != b:
                     diffs.append((method, None, a, b))
-        assoc = associate_names(path.read_text(encoding="utf-8", errors="replace"))
+        source = path.read_text(encoding="utf-8", errors="replace")
+        assoc = associate_names(source)
+        src_lines = source.splitlines()
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
@@ -462,6 +494,19 @@ def main() -> int:
             ):
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
+                continue
+            pos = params.get("position") or {}
+            if (
+                kind in ("hover", "definition", "references")
+                and a is None
+                and on_use_rename_original(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # the original name of a USE rename is the module's entity
+                # (hansec #137); fortls has no answer there
+                continue
+            if kind == "references" and use_rename_extras(src_lines, a, b):
+                # references also find the original name on USE rename lines
+                # (hansec #137), which fortls misses
                 continue
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
