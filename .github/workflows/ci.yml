@@ -493,7 +493,8 @@ jobs:
           python -m zipfile -e "$VSIX" "$RUNNER_TEMP/vsix"
           cd editors/vscode
           npm ci --no-audit --no-fund
-          # the helpers that need no VS Code, in plain Node.js
+          npm run typecheck
+          # the helpers that need no VS Code (run, tools, linter), in plain Node.js
           npm run unit
           npm run build-test
           export ZFLS_EXTENSION_PATH="$RUNNER_TEMP/vsix/extension"

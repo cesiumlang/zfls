@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { findExecutable } from "../src/lint/paths";
 
 const TIMEOUT_MS = 60_000;
 
@@ -65,6 +66,7 @@ export async function run(): Promise<void> {
   checkSnippets();
   checkLanguageContributions();
   await checkConfigSchema();
+  await checkCompilerDiagnostics();
 }
 
 // The snippets are packaged for both languages. (VS Code's snippet service in
@@ -124,6 +126,32 @@ async function checkConfigSchema(): Promise<void> {
   assert.ok(messages.some((m) => /integer/i.test(m)), `diagnostics ${messages}`);
   assert.strictEqual(problems.length, 1, `diagnostics ${messages}`);
   console.log(`.fortlsrc checked against the schema: ${messages}`);
+}
+
+// A file with an error opened: gfortran's message shows in it (where the
+// runner has gfortran).
+async function checkCompilerDiagnostics(): Promise<void> {
+  const commands = await vscode.commands.getCommands(true);
+  assert.ok(commands.includes("zfls.linter.lint") && commands.includes("zfls.linter.clear"), "linter commands");
+  if (!findExecutable("gfortran")) {
+    console.log("no gfortran on the PATH: compiler diagnostics not checked");
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-lint-"));
+  const file = path.join(dir, "lint_me.f90");
+  fs.writeFileSync(file, "program lint_me\n  implicit none\n  i = 1\nend program lint_me\n");
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  const found = await poll("gfortran diagnostics", async () => {
+    const mine = vscode.languages.getDiagnostics(doc.uri).filter((d) => d.source === "gfortran");
+    return mine.length > 0 ? mine : undefined;
+  });
+  assert.strictEqual(found.length, 1, `diagnostics ${found.map((d) => d.message)}`);
+  assert.match(found[0].message, /IMPLICIT/);
+  assert.strictEqual(found[0].range.start.line, 2);
+  assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith(".mod") || f.endsWith(".o")), "files written beside the source");
+  await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  console.log(`gfortran diagnostics shown: ${found[0].message}`);
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {

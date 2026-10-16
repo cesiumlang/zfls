@@ -454,6 +454,126 @@
           "default": [],
           "scope": "language-overridable",
           "markdownDescription": "Extra arguments for `fprettify`, one per item, for example `[\"--indent\", \"4\", \"--enable-decl\"]`. fprettify also reads `.fprettify.rc` files from the file's directory and its parents. Variables are expanded as in `#zfls.formatting.path#`."
+        },
+        "zfls.linter.compiler": {
+          "type": "string",
+          "enum": [
+            "gfortran",
+            "ifx",
+            "ifort",
+            "nagfor",
+            "lfortran",
+            "nvfortran",
+            "flang",
+            "Disabled"
+          ],
+          "enumDescriptions": [
+            "GNU Fortran",
+            "Intel Fortran Compiler (LLVM-based)",
+            "Intel Fortran Compiler Classic",
+            "NAG Fortran Compiler",
+            "LFortran",
+            "NVIDIA HPC SDK Fortran",
+            "LLVM Flang (flang, or flang-new)",
+            "No compiler diagnostics"
+          ],
+          "default": "gfortran",
+          "scope": "resource",
+          "markdownDescription": "Compiler that checks Fortran files when they are opened and saved; its errors and warnings show in the file and in the Problems panel. `Disabled` turns compiler diagnostics off. If the compiler is not found, zfls says so once and checks nothing."
+        },
+        "zfls.linter.compilerPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to the compiler executable. Empty: `zfls.linter.compiler` looked up on the `PATH`. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved; a relative path is relative to the workspace folder."
+        },
+        "zfls.linter.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Further compiler options, such as `-std=f2018` or `-DDEBUG`. When empty, the compiler's usual warnings are on (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for nvfortran); when set, these replace them. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved."
+        },
+        "zfls.linter.includePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Directories searched for `INCLUDE` files and `.mod` files (`-I`). Glob patterns such as `${workspaceFolder}/build/**/include` match directories. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved; relative paths are relative to the workspace folder. Run **zfls: Clear Compiler Diagnostics** after creating directories that a pattern should match."
+        },
+        "zfls.linter.modOutput": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Directory for the `.mod` files the compiler writes while checking. Empty: a directory in VS Code's storage for this workspace, never the source tree. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved."
+        },
+        "zfls.linter.lintOnSave": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Check a file when it is saved (files are always checked when opened)."
+        },
+        "zfls.linter.lintOnType": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Check a file while it is edited, `#zfls.linter.lintOnTypeDelay#` milliseconds after the last change, compiling a copy of the unsaved text."
+        },
+        "zfls.linter.lintOnTypeDelay": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "Milliseconds without changes before `#zfls.linter.lintOnType#` checks a file."
+        },
+        "zfls.linter.resolveModules": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Before checking a file, compile the workspace files that define the modules it uses (and the modules those use), if their `.mod` files are missing or older than the files, so that `use` statements find them. Saving a module file checks the open files that use it again."
+        },
+        "zfls.linter.fypp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Run [fypp](https://fypp.readthedocs.io) on each file before compiling it. Without it, `.fypp` files are not checked."
+        },
+        "zfls.linter.fypp.path": {
+          "type": "string",
+          "default": "fypp",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to the `fypp` executable. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved."
+        },
+        "zfls.linter.fypp.definitions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Definitions passed to `fypp` as `-DNAME=VALUE` (`-DNAME` when the value is empty)."
+        },
+        "zfls.linter.fypp.includes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Include directories passed to `fypp` (`-I`); glob patterns and variables as in `#zfls.linter.includePaths#`."
+        },
+        "zfls.linter.fypp.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Further `fypp` options. zfls passes `--line-numbering --line-marker-format=cpp`, and `--fixed-format` for fixed-form files."
         }
       }
     },
@@ -483,6 +603,16 @@
       {
         "command": "zfls.generateLaunchConfig",
         "title": "Add Build Task and Debug Configuration for Fortran File",
+        "category": "zfls"
+      },
+      {
+        "command": "zfls.linter.lint",
+        "title": "Lint Current File with Compiler",
+        "category": "zfls"
+      },
+      {
+        "command": "zfls.linter.clear",
+        "title": "Clear Compiler Diagnostics",
         "category": "zfls"
       }
     ],
