@@ -127,10 +127,10 @@ const opts = [_]Opt{
     .{ .long = "incremental_sync", .kind = .flag, .help = "Use incremental document synchronization (beta)" },
     .{ .long = "recursion_limit", .kind = .int, .metavar = "INTEGER", .help = "Set the maximum recursion depth for the parser (default: 1000)" },
     .{ .long = "sort_keywords", .kind = .flag, .help = "Display variable keywords information, function/subroutine definitions, etc. in a consistent (sorted) manner default: no sorting, display code as is)" },
-    .{ .long = "disable_autoupdate", .kind = .flag, .help = "fortls automatically checks PyPi for newer version and installs them.Use this option to disable the autoupdate feature." },
+    .{ .long = "disable_autoupdate", .kind = .flag, .help = "Accepted for compatibility with fortls and ignored: zfls does not update itself." },
     .{ .long = "preserve_keyword_order", .kind = .flag, .help = "DEPRECATED, this is now the default. To sort use sort_keywords" },
     .{ .long = "debug_log", .kind = .flag, .help = "Generate debug log in project root folder" },
-    .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging fortls" },
+    .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
     .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP (lower & upper casing))", .group = "Sources file parsing options" },
@@ -186,7 +186,7 @@ pub const CliResult = union(enum) {
     exit_err: []const u8,
 };
 
-const usage = "usage: fortls [options] [debug options]\n";
+const usage = "usage: zfls [options] [debug options]\n";
 
 fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u8 {
     _ = prog_version;
@@ -274,15 +274,15 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
         const res = findOpt(arg);
         const o = switch (res) {
             .found => |o| o,
-            .ambiguous => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: ambiguous option: {s}\n", .{ usage, arg }) },
-            .none => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
+            .ambiguous => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: ambiguous option: {s}\n", .{ usage, arg }) },
+            .none => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
         };
         switch (o.kind) {
             .help => return .{ .exit_ok = try helpText(a, version, any_debug_arg) },
             .debug_help => return .{ .exit_ok = try helpText(a, version, true) },
             .version => return .{ .exit_ok = try std.fmt.allocPrint(a, "{s}\n", .{version}) },
             .flag => {
-                if (inline_val != null) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
+                if (inline_val != null) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
                     if (std.mem.eql(u8, fname, o.long)) {
                         if (@TypeOf(@field(s, fname)) == bool) @field(s, fname) = true;
@@ -291,13 +291,13 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
             },
             .int, .string, .json => {
                 const val = inline_val orelse blk: {
-                    if (i + 1 >= args.len) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
+                    if (i + 1 >= args.len) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
                     i += 1;
                     break :blk args[i];
                 };
                 if (o.kind == .json) {
                     const v = json.parse(a, val) catch {
-                        return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
+                        return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
                     };
                     try applyPpDefs(a, &s, v);
                     continue;
@@ -308,7 +308,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                         const FT = @TypeOf(@field(s, fname));
                         if (FT == i64 or FT == ?i64) {
                             @field(s, fname) = std.fmt.parseInt(i64, str.strip(val), 10) catch {
-                                return .{ .exit_err = try std.fmt.allocPrint(a, "{s}fortls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
+                                return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
                             };
                             handled = true;
                         } else if (FT == []const u8 or FT == ?[]const u8) {
