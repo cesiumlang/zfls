@@ -11,6 +11,7 @@ const str = @import("str.zig");
 const patterns = @import("patterns.zig");
 const regex = @import("regex.zig");
 const paths = @import("paths.zig");
+const helpers = @import("helpers.zig");
 const parser = @import("parser.zig");
 
 fn R() *const patterns.Patterns {
@@ -78,18 +79,18 @@ const VarErr = error{TupleValue} || Allocator.Error;
 
 fn replaceVars(a: Allocator, line: []const u8, defs: *const Defs) VarErr![]const u8 {
     var out: std.ArrayList(u8) = .empty;
-    var it = R().WORD.iterator(line);
+    var it = helpers.words(line);
     var i_0: usize = 0;
     while (it.next()) |m| {
-        try out.appendSlice(a, line[i_0..m.start(0)]);
-        if (defs.get(m.str())) |d| {
+        try out.appendSlice(a, line[i_0..m.start]);
+        if (defs.get(m.str)) |d| {
             // fortls fails on function-like macros here
             if (d.args != null) return error.TupleValue;
             try out.appendSlice(a, d.value);
         } else {
             try out.appendSlice(a, "False");
         }
-        i_0 = m.end(0);
+        i_0 = m.end;
     }
     if (i_0 < line.len) try out.appendSlice(a, line[i_0..]);
     var res = try std.mem.replaceOwned(u8, a, out.items, "@$@", "True");
