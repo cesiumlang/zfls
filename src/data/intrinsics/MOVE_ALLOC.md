@@ -124,9 +124,9 @@ Fortran 2003, STAT and ERRMSG options added 2018
     5 allocatable and shall not be a coindexed object. It shall be polymorphic if FROM is polymorphic.
     6 It is an INTENT (OUT) argument. Each nondeferred parameter of the declared type of TO shall
     7 have the same value as the corresponding parameter of the declared type of FROM.
-    8 STAT (optional) shall be a noncoindexed integer scalar with a decimal exponent range of at least four. It is an
+    8 STAT (optional) shall be a non-coindexed integer scalar with a decimal exponent range of at least four. It is an
     9 INTENT (OUT) argument.
-    10 ERRMSG(optional) shall be a noncoindexed default character scalar. It is an INTENT (INOUT) argument.
+    10 ERRMSG(optional) shall be a non-coindexed default character scalar. It is an INTENT (INOUT) argument.
 
 ```text
 11  4 If execution of MOVE_ALLOC is successful, or if STAT_FAILED_IMAGE is assigned to STAT,

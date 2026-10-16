@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const json = @import("json.zig");
+const json5 = @import("json5.zig");
 const lsp = @import("lsp.zig");
 const helpers = @import("helpers.zig");
 const patterns = @import("patterns.zig");
@@ -156,11 +157,7 @@ pub const Server = struct {
     fn sendJson(self: *Server, a: Allocator, body: Value) !void {
         const text = try json.stringify(a, body);
         self.sink.send(text);
-        if (self.log.enabled(.debug)) {
-            var pretty: std.ArrayList(u8) = .empty;
-            try json.writePretty(&pretty, a, body, 0);
-            self.log.debug("SEND {s}", .{pretty.items});
-        }
+        if (self.log.enabled(.debug)) self.log.debug("SEND {s}", .{try json.pretty(a, body)});
     }
 
     pub fn sendNotification(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
@@ -195,10 +192,10 @@ pub const Server = struct {
 
     /// Handle one decoded JSON-RPC message
     pub fn handle(self: *Server, a: Allocator, request: Value) void {
-        const method = (request.get("method") orelse json.null_value).asStr() orelse "";
-        const id = request.get("id");
+        const method = json.str(json.get(request, "method")) orelse "";
+        const id = json.get(request, "id");
         self.log.debug("REQUEST {s} {s}", .{ if (id) |i| (json.stringify(a, i) catch "?") else "None", method });
-        const params = request.get("params") orelse json.null_value;
+        const params = json.get(request, "params") orelse .null;
         const result = self.dispatch(a, method, params);
         if (id == null) {
             if (result) |_| {} else |e| self.log.err("error handling request: {s} ({s})", .{ method, @errorName(e) });
@@ -272,21 +269,21 @@ pub const Server = struct {
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
         return switch (methods.get(method) orelse return error.MethodNotFound) {
-            .initialize => self.serveInitialize(a, try json.to(lsp.InitializeParams, a, params)),
-            .document_symbol => self.serveDocumentSymbols(a, try json.to(lsp.TextDocumentParams, a, params)),
-            .completion => self.serveAutocomplete(a, try json.to(lsp.PositionParams, a, params)),
-            .signature_help => self.serveSignature(a, try json.to(lsp.PositionParams, a, params)),
-            .definition => self.serveDefinition(a, try json.to(lsp.PositionParams, a, params)),
-            .references, .document_highlight => self.serveReferences(a, try json.to(lsp.PositionParams, a, params)),
-            .hover => self.serveHover(a, try json.to(lsp.PositionParams, a, params)),
-            .implementation => self.serveImplementation(a, try json.to(lsp.PositionParams, a, params)),
-            .rename => self.serveRename(a, try json.to(lsp.RenameParams, a, params)),
-            .did_open => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), true, false),
-            .did_save => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, false),
-            .did_close => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, true),
-            .did_change => self.serveOnChange(a, try json.to(lsp.DidChangeParams, a, params)),
-            .code_action => self.serveCodeActions(a, try json.to(lsp.CodeActionParams, a, params)),
-            .workspace_symbol => self.serveWorkspaceSymbol(a, try json.to(lsp.WorkspaceSymbolParams, a, params)),
+            .initialize => self.serveInitialize(a, try json.decode(lsp.InitializeParams, a, params)),
+            .document_symbol => self.serveDocumentSymbols(a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .completion => self.serveAutocomplete(a, try json.decode(lsp.PositionParams, a, params)),
+            .signature_help => self.serveSignature(a, try json.decode(lsp.PositionParams, a, params)),
+            .definition => self.serveDefinition(a, try json.decode(lsp.PositionParams, a, params)),
+            .references, .document_highlight => self.serveReferences(a, try json.decode(lsp.PositionParams, a, params)),
+            .hover => self.serveHover(a, try json.decode(lsp.PositionParams, a, params)),
+            .implementation => self.serveImplementation(a, try json.decode(lsp.PositionParams, a, params)),
+            .rename => self.serveRename(a, try json.decode(lsp.RenameParams, a, params)),
+            .did_open => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
+            .did_save => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
+            .did_close => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
+            .did_change => self.serveOnChange(a, try json.decode(lsp.DidChangeParams, a, params)),
+            .code_action => self.serveCodeActions(a, try json.decode(lsp.CodeActionParams, a, params)),
+            .workspace_symbol => self.serveWorkspaceSymbol(a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
             .ignored => .null,
             .exit => blk: {
                 self.serveExit();
@@ -421,7 +418,7 @@ pub const Server = struct {
             self.postMessage(a, try std.fmt.allocPrint(a, "Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
             return;
         };
-        var p: json.Parser = .{ .a = sa, .src = data };
+        var p: json5.Parser = .{ .a = sa, .src = data };
         const cfg = p.parseDocument() catch {
             const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
             const msg = try std.fmt.allocPrint(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
@@ -434,7 +431,7 @@ pub const Server = struct {
         }
         try settings_mod.applyConfig(sa, &self.s, cfg);
         self.sync_type = if (self.s.incremental_sync) 2 else 1;
-        if (cfg.get("incl_suffixes") != null) {
+        if (cfg.object.get("incl_suffixes") != null) {
             if (patterns.createSrcFileExtsStr(sa, self.s.incl_suffixes.slice())) |re| {
                 self.src_ext_regex = re;
             } else |e| switch (e) {
@@ -810,8 +807,8 @@ pub const Server = struct {
 
     fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
         const uri = params.textDocument.uri;
-        const file = (try self.fileFromUri(a, uri)) orelse return json.newArray();
-        const ast = file.ast orelse return json.newArray();
+        const file = (try self.fileFromUri(a, uri)) orelse return .{ .array = .init(a) };
+        const ast = file.ast orelse return .{ .array = .init(a) };
         var out: std.ArrayList(lsp.SymbolInformation) = .empty;
         for (try ast.getScopes(a, null)) |scope| {
             if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
@@ -1504,9 +1501,9 @@ pub const Server = struct {
     /// of, if it is one (upstream #52)
     fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?RenamedImport {
         const text = file.getLine(line, false) orelse return null;
-        var it = R().WORD.iterator(text);
+        var it = helpers.words(text);
         const word = while (it.next()) |m| {
-            if (m.start(0) <= col and col <= m.end(0)) break m.str();
+            if (m.start <= col and col <= m.end) break m.str;
         } else return null;
         if (std.ascii.eqlIgnoreCase(word, target.name)) return null;
         const lower = try std.ascii.allocLowerString(a, word);
@@ -1720,7 +1717,7 @@ pub const Server = struct {
 
     fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
         const res = self.diagnosticsOf(a, uri) catch |e| {
-            self.writeError(a, json.integer(-1), -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
+            self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
             return;
         };
         if (res) |diags| {

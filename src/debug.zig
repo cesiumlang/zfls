@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const json = @import("json.zig");
+const json5 = @import("json5.zig");
 const paths = @import("paths.zig");
 const glob = @import("glob.zig");
 const parser = @import("parser.zig");
@@ -107,7 +108,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, input_config: []
     o.print("  Config file = {s}\n", .{config_path orelse "None"});
     const cp = config_path orelse return info;
     const data = Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 26)) catch return info;
-    var p: json.Parser = .{ .a = a, .src = data };
+    var p: json5.Parser = .{ .a = a, .src = data };
     const cfg = p.parseDocument() catch {
         const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
         o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, cp });
@@ -219,7 +220,7 @@ fn textDoc(a: Allocator, uri: []const u8) !Value {
 
 fn posParams(r: *Req) !Value {
     var p = try textDoc(r.a, r.s.debug_filepath.?);
-    try json.put(r.a, &p, "position", try json.from(r.a, .{
+    try p.object.put(r.a, "position", try json.from(r.a, .{
         .line = (r.s.debug_line orelse 1) - 1,
         .character = (r.s.debug_char orelse 1) - 1,
     }));
@@ -246,9 +247,7 @@ fn printResults(r: *Req, results: Value, comptime fmtFn: fn (*Req, Value) anyerr
         return;
     }
     if (r.s.debug_full_result) {
-        var buf: std.ArrayList(u8) = .empty;
-        try json.writePretty(&buf, r.a, results, 0);
-        r.o.print("{s}\n", .{buf.items});
+        r.o.print("{s}\n", .{try json.pretty(r.a, results)});
         return;
     }
     try fmtFn(r, results);
@@ -295,13 +294,13 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
                 const sev_map = [_][]const u8{ "ERROR", "WARNING", "INFO" };
-                if (res.items().len == 0) {
+                if (json.items(res).len == 0) {
                     rq.o.print("No errors or warnings\n", .{});
                 } else rq.o.print("Reported Diagnostics:\n", .{});
-                for (res.items()) |d| {
-                    const sline = (d.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0;
-                    const sev = (d.get("severity") orelse json.null_value).asInt() orelse 1;
-                    const msg = (d.get("message") orelse json.null_value).asStr() orelse "";
+                for (json.items(res)) |d| {
+                    const sline = json.int(json.path(d, &.{ "range", "start", "line" })) orelse 0;
+                    const sev = json.int(json.get(d, "severity")) orelse 1;
+                    const msg = json.str(json.get(d, "message")) orelse "";
                     rq.o.print("  {d:>5}:{s}  \"{s}\"\n", .{ sline, sev_map[@intCast(std.math.clamp(sev - 1, 0, 2))], msg });
                 }
             }
@@ -316,11 +315,11 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                for (res.items()) |sym| {
-                    const sline = (sym.path(&.{ "location", "range", "start", "line" }) orelse json.null_value).asInt() orelse 0;
-                    const parent = if (sym.get("containerName")) |c| c.asStr() orelse "null" else "null";
-                    const kind = (sym.get("kind") orelse json.null_value).asInt() orelse 0;
-                    const name = (sym.get("name") orelse json.null_value).asStr() orelse "";
+                for (json.items(res)) |sym| {
+                    const sline = json.int(json.path(sym, &.{ "location", "range", "start", "line" })) orelse 0;
+                    const parent = json.str(json.get(sym, "containerName")) orelse "null";
+                    const kind = json.int(json.get(sym, "kind")) orelse 0;
+                    const name = json.str(json.get(sym, "name")) orelse "";
                     rq.o.print("  line {d:>5}  symbol -> {d:>3}:{s:<30} parent = {s}\n", .{ sline, kind, name, parent });
                 }
             }
@@ -335,12 +334,12 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                for (res.items()) |sym| {
-                    const uri = (sym.path(&.{ "location", "uri" }) orelse json.null_value).asStr() orelse "";
+                for (json.items(res)) |sym| {
+                    const uri = json.str(json.path(sym, &.{ "location", "uri" })) orelse "";
                     const path = try paths.pathFromUri(rq.io, rq.a, uri);
-                    const sline = (sym.path(&.{ "location", "range", "start", "line" }) orelse json.null_value).asInt() orelse 0;
-                    const parent = if (sym.get("containerName")) |c| c.asStr() orelse "null" else "null";
-                    const name = (sym.get("name") orelse json.null_value).asStr() orelse "";
+                    const sline = json.int(json.path(sym, &.{ "location", "range", "start", "line" })) orelse 0;
+                    const parent = json.str(json.get(sym, "containerName")) orelse "null";
+                    const name = json.str(json.get(sym, "name")) orelse "";
                     const rel = std.fs.path.relativeAlloc(rq.a, paths.getCwd(), null, rq.s.debug_rootpath.?, path) catch path;
                     rq.o.print("  {s}::{d}  symbol -> {s:<30} parent = {s}\n", .{ parent, sline, name, rel });
                 }
@@ -356,10 +355,10 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                for (res.items()) |item| {
-                    const kind = (item.get("kind") orelse json.null_value).asInt() orelse 0;
-                    const label = (item.get("label") orelse json.null_value).asStr() orelse "";
-                    const detail = (item.get("detail") orelse json.null_value).asStr() orelse "";
+                for (json.items(res)) |item| {
+                    const kind = json.int(json.get(item, "kind")) orelse 0;
+                    const label = json.str(json.get(item, "label")) orelse "";
+                    const detail = json.str(json.get(item, "detail")) orelse "";
                     rq.o.print("    {d}: {s} -> {s}\n", .{ kind, label, detail });
                 }
             }
@@ -374,9 +373,9 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                const contents = res.get("contents") orelse json.null_value;
+                const contents = json.get(res, "contents") orelse .null;
                 if (contents == .object) {
-                    rq.o.print("{s}\n", .{(contents.get("value") orelse json.null_value).asStr() orelse ""});
+                    rq.o.print("{s}\n", .{json.str(json.get(contents, "value")) orelse ""});
                 } else {
                     rq.o.print("{s}\n", .{try json.stringify(rq.a, contents)});
                 }
@@ -392,16 +391,16 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                const active_param = (res.get("activeParameter") orelse json.integer(0)).asInt() orelse 0;
+                const active_param = json.int(json.get(res, "activeParameter")) orelse 0;
                 rq.o.print("    Active param = {d}\n", .{active_param});
-                const active_sig = (res.get("activeSignature") orelse json.integer(0)).asInt() orelse 0;
+                const active_sig = json.int(json.get(res, "activeSignature")) orelse 0;
                 rq.o.print("    Active sig   = {d}\n", .{active_sig});
-                for ((res.get("signatures") orelse json.null_value).items(), 0..) |sig, i| {
-                    rq.o.print("    {s}\n", .{(sig.get("label") orelse json.null_value).asStr() orelse ""});
-                    for ((sig.get("parameters") orelse json.null_value).items(), 0..) |p, j| {
+                for (json.items(json.get(res, "signatures")), 0..) |sig, i| {
+                    rq.o.print("    {s}\n", .{json.str(json.get(sig, "label")) orelse ""});
+                    for (json.items(json.get(sig, "parameters")), 0..) |p, j| {
                         const mark: []const u8 = if (i == active_sig and j == active_param) "*" else " ";
-                        const label = (p.get("label") orelse json.null_value).asStr() orelse "";
-                        if (p.get("documentation")) |d| {
+                        const label = json.str(json.get(p, "label")) orelse "";
+                        if (json.get(p, "documentation")) |d| {
                             rq.o.print("{s}     {s} :: {s}\n", .{ mark, try json.stringify(rq.a, d), label });
                         } else {
                             rq.o.print("{s}     {s}\n", .{ mark, label });
@@ -429,10 +428,10 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                for (res.items()) |loc| {
-                    const uri = (loc.get("uri") orelse json.null_value).asStr() orelse "";
-                    const line = (loc.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0;
-                    const char = (loc.path(&.{ "range", "start", "character" }) orelse json.null_value).asInt() orelse 0;
+                for (json.items(res)) |loc| {
+                    const uri = json.str(json.get(loc, "uri")) orelse "";
+                    const line = json.int(json.path(loc, &.{ "range", "start", "line" })) orelse 0;
+                    const char = json.int(json.path(loc, &.{ "range", "start", "character" })) orelse 0;
                     rq.o.print("  {s}  ({d}, {d})\n", .{ uri, line + 1, char + 1 });
                 }
             }
@@ -453,20 +452,20 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             fn req(rq: *Req) !Value {
                 try save(rq);
                 var p = try posParams(rq);
-                try json.put(rq.a, &p, "newName", json.string(rq.s.debug_rename.?));
+                try p.object.put(rq.a, "newName", try json.from(rq.a, rq.s.debug_rename.?));
                 return rq.server.dispatchPublic(rq.a, "textDocument/rename", p);
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                const changes = res.get("changes") orelse return;
+                const changes = json.get(res, "changes") orelse return;
                 if (changes != .object) return;
-                for (changes.object.entries.items) |e| {
-                    const path = try paths.pathFromUri(rq.io, rq.a, e.key);
+                for (changes.object.keys(), changes.object.values()) |uri, edits| {
+                    const path = try paths.pathFromUri(rq.io, rq.a, uri);
                     const file = rq.server.workspace.get(path) orelse {
                         rq.o.print("Unknown file: \"{s}\"\n", .{path});
                         continue;
                     };
-                    try processFileChanges(rq, path, e.value, file);
+                    try processFileChanges(rq, path, edits, file);
                 }
             }
         }.f);
@@ -479,7 +478,7 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
                 const line = (rq.s.debug_line orelse 1) - 1;
                 const char = (rq.s.debug_char orelse 1) - 1;
                 var p = try textDoc(rq.a, rq.s.debug_filepath.?);
-                try json.put(rq.a, &p, "range", try json.from(rq.a, .{
+                try p.object.put(rq.a, "range", try json.from(rq.a, .{
                     .start = .{ .line = line, .character = char },
                     .end = .{ .line = line, .character = char },
                 }));
@@ -487,18 +486,16 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
             }
         }.req, struct {
             fn f(rq: *Req, res: Value) !void {
-                for (res.items()) |act| {
+                for (json.items(res)) |act| {
                     rq.o.print("Kind = '{s}', Title = '{s}'\n", .{
-                        (act.get("kind") orelse json.null_value).asStr() orelse "",
-                        (act.get("title") orelse json.null_value).asStr() orelse "",
+                        json.str(json.get(act, "kind")) orelse "",
+                        json.str(json.get(act, "title")) orelse "",
                     });
-                    const changes = act.path(&.{ "edit", "changes" }) orelse continue;
+                    const changes = json.path(act, &.{ "edit", "changes" }) orelse continue;
                     if (changes != .object) continue;
-                    for (changes.object.entries.items) |e| {
-                        rq.o.print("\nChange: URI = '{s}'\n", .{e.key});
-                        var buf: std.ArrayList(u8) = .empty;
-                        try json.writePretty(&buf, rq.a, e.value, 0);
-                        rq.o.print("{s}\n", .{buf.items});
+                    for (changes.object.keys(), changes.object.values()) |uri, edits| {
+                        rq.o.print("\nChange: URI = '{s}'\n", .{uri});
+                        rq.o.print("{s}\n", .{try json.pretty(rq.a, edits)});
                     }
                     rq.o.print("\n", .{});
                 }
@@ -509,19 +506,19 @@ fn debugLsp(gpa: Allocator, a: Allocator, io: Io, o: *Out, s: *Settings) !void {
 }
 
 fn printLocation(rq: *Req, res: Value) !void {
-    rq.o.print("    URI  = \"{s}\"\n", .{(res.get("uri") orelse json.null_value).asStr() orelse ""});
-    rq.o.print("    Line = {d}\n", .{((res.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0) + 1});
-    rq.o.print("    Char = {d}\n", .{((res.path(&.{ "range", "start", "character" }) orelse json.null_value).asInt() orelse 0) + 1});
+    rq.o.print("    URI  = \"{s}\"\n", .{json.str(json.get(res, "uri")) orelse ""});
+    rq.o.print("    Line = {d}\n", .{(json.int(json.path(res, &.{ "range", "start", "line" })) orelse 0) + 1});
+    rq.o.print("    Char = {d}\n", .{(json.int(json.path(res, &.{ "range", "start", "character" })) orelse 0) + 1});
 }
 
 fn processFileChanges(rq: *Req, path: []const u8, changes: Value, file: *parser.FortranFile) !void {
     rq.o.print("File: \"{s}\"\n", .{path});
-    for (changes.items()) |change| {
-        const sl: usize = @intCast(@max((change.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse 0, 0));
-        const el: usize = @intCast(@max((change.path(&.{ "range", "end", "line" }) orelse json.null_value).asInt() orelse 0, 0));
-        const sc: usize = @intCast(@max((change.path(&.{ "range", "start", "character" }) orelse json.null_value).asInt() orelse 0, 0));
-        const ec: usize = @intCast(@max((change.path(&.{ "range", "end", "character" }) orelse json.null_value).asInt() orelse 0, 0));
-        const new_text = (change.get("newText") orelse json.null_value).asStr() orelse "";
+    for (json.items(changes)) |change| {
+        const sl: usize = @intCast(@max(json.int(json.path(change, &.{ "range", "start", "line" })) orelse 0, 0));
+        const el: usize = @intCast(@max(json.int(json.path(change, &.{ "range", "end", "line" })) orelse 0, 0));
+        const sc: usize = @intCast(@max(json.int(json.path(change, &.{ "range", "start", "character" })) orelse 0, 0));
+        const ec: usize = @intCast(@max(json.int(json.path(change, &.{ "range", "end", "character" })) orelse 0, 0));
+        const new_text = json.str(json.get(change, "newText")) orelse "";
         rq.o.print("  {d}, {d}\n", .{ sl + 1, el + 1 });
         var new_contents: std.ArrayList([]const u8) = .empty;
         var i = sl;

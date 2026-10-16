@@ -903,7 +903,7 @@
       "match": "(?i)\\G\\s*\\b(contiguous)\\b",
       "captures": {
         "1": {
-          "name": "storage.modifier.contigous.fortran"
+          "name": "storage.modifier.contiguous.fortran"
         }
       }
     },
@@ -4111,7 +4111,7 @@
     },
     "string-operators": {
       "comment": "Introduced in the Fortran 19?? standard.",
-      "name": "keyword.other.concatination.fortran",
+      "name": "keyword.other.concatenation.fortran",
       "match": "(\\/\\/)"
     },
     "string-line-continuation-operator": {
@@ -5009,7 +5009,7 @@
           "begin": "(?:\\G|(,))",
           "beginCaptures": {
             "1": {
-              "name": "puntuation.comma.fortran"
+              "name": "punctuation.comma.fortran"
             }
           },
           "end": "(?=[,;!\\n])",
@@ -5417,7 +5417,7 @@
       ]
     },
     "array-constructor": {
-      "name": "meta.contructor.array",
+      "name": "meta.constructor.array",
       "begin": "(?<!\\n)(?=\\s*(\\[|\\(\\/))",
       "end": "(?<!\\G)",
       "patterns": [

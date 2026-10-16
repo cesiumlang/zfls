@@ -72,11 +72,11 @@ real                       :: x, y
    write (*,g) 'For reference ...'
 
    write (*,ref) 'TINY    ',tiny(0.0)
-   write (*,ref) 'HUGE    ',huge(0.0) 
+   write (*,ref) 'HUGE    ',huge(0.0)
    write (*,ref) 'EPSILON ',epsilon(0.0)
    write (*,ref) 'SPACING ',spacing(tiny(0.0)),spacing(huge(0.0))
 
-   write (*,g) 'Tesing the limits ...'
+   write (*,g) 'Testing the limits ...'
 
    write (*,lim) 'For TINY()', &
     nearest(tiny(0.0),1.0),    &
@@ -101,10 +101,10 @@ Results:
    > HUGE     .340282346638529E+39
    > EPSILON  .119209289550781E-06
    > SPACING  .117549435082229E-37 .202824096036517E+32
-   > Tesing the limits ...
-   > For TINY() .117549449095213E-37 .117549421069244E-37 
+   > Testing the limits ...
+   > For TINY() .117549449095213E-37 .117549421069244E-37
    > .280259692864963E-44
-   > For HUGE()             Infinity .340282326356119E+39 
+   > For HUGE()             Infinity .340282326356119E+39
    > Infinity
 ```
 
