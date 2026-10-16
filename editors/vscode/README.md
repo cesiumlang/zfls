@@ -63,8 +63,8 @@ When Modern Fortran is enabled, zfls recommends disabling it and opens its
 page in the Extensions view, where you select **Disable** (an extension
 cannot disable another one), then reload the window.
 
-zfls does not have Modern Fortran's compiler linting, formatting
-(findent/fprettify) and run/debug commands yet. If you rely on those, you
+zfls does not have Modern Fortran's compiler linting and run/debug
+commands yet. If you rely on those, you
 can choose **Keep it, turn off its fortls** instead: that stops only Modern
 Fortran's language server (`fortran.fortls.disabled`), so zfls answers the
 language requests while Modern Fortran keeps its other commands. Its
