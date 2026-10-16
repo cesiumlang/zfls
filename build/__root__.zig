@@ -82,6 +82,19 @@ pub fn build(b: *std.Build) !void {
     issues_step.dependOn(&run_issue_tests.step);
     test_step.dependOn(&run_issue_tests.step);
 
+    // Mutated and arbitrary programs thrown at an in-process server
+    // (tests/fuzz.zig); `zig build test --fuzz` runs the fuzzer on it
+    const fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fuzz.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const run_fuzz_tests = b.addRunArtifact(b.addTest(.{ .root_module = fuzz_mod }));
+    const fuzz_step = b.step("test-fuzz", "Run the robustness tests (mutated programs, fuzzing with --fuzz)");
+    fuzz_step.dependOn(&run_fuzz_tests.step);
+    test_step.dependOn(&run_fuzz_tests.step);
+
     addScriptTests(b, exe);
 }
 
