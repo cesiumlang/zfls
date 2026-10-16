@@ -3,6 +3,8 @@
 // language client to zfls.
 
 import * as assert from "node:assert";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
@@ -59,6 +61,26 @@ export async function run(): Promise<void> {
   assert.ok(names.includes("shapes"), `symbols ${names}`);
 
   console.log("zfls answered hover, definition, completion and symbols");
+
+  await checkConfigSchema();
+}
+
+// A .fortlsrc opens as JSON with comments and is checked against the schema.
+async function checkConfigSchema(): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-config-"));
+  const file = path.join(dir, ".fortlsrc");
+  fs.writeFileSync(file, '{\n  // comment\n  "nthreads": "four"\n}\n');
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  assert.strictEqual(doc.languageId, "jsonc");
+  const problems = await poll("schema diagnostics", async () => {
+    const found = vscode.languages.getDiagnostics(doc.uri);
+    return found.length > 0 ? found : undefined;
+  });
+  const messages = problems.map((d) => d.message);
+  assert.ok(messages.some((m) => /integer/i.test(m)), `diagnostics ${messages}`);
+  assert.strictEqual(problems.length, 1, `diagnostics ${messages}`);
+  console.log(`.fortlsrc checked against the schema: ${messages}`);
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {
