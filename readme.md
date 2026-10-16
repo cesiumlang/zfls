@@ -138,7 +138,13 @@ only when its checks pass (an administrator can override that when merging a
 pull request); `main` also takes changes only through pull requests, while
 `dev` takes pushes from maintainers. CI's own push to `dev` after a release
 uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
-lets bypass the checks.
+lets bypass the checks. A separate ruleset keeps `dev` from being deleted,
+with no exceptions, so merging the release pull request does not remove it.
+
+The release notes are generated from the pull requests merged since the last
+release, in sections by label (`.github/release.yml`): `fix`, `feature`,
+`performance`, `tests`, `refactor` and `ci`. `skip-changelog` leaves a pull
+request out, for example the `dev` to `main` pull request of a release.
 
 When a push to `main` passes on every platform, the same archives are
 published on the GitHub releases page and the tested commit is tagged. CI
