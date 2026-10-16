@@ -768,13 +768,13 @@ pub const Server = struct {
         var items: std.ArrayList(lsp.SymbolInformation) = .empty;
         for (try objects.findInWorkspace(self.env(a), params.query, false, false)) |cand| {
             const kind: i64 = switch (cand.getType(false)) {
-                1 => 2,
-                2 => 6,
-                3 => 12,
-                4 => 5,
-                5 => 11,
-                6 => 13,
-                7 => 6,
+                .module => 2,
+                .subroutine => 6,
+                .function => 12,
+                .class => 5,
+                .interface => 11,
+                .variable => 13,
+                .method => 6,
                 else => 1,
             };
             const container: ?[]const u8 = if (std.mem.indexOf(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
@@ -814,7 +814,7 @@ pub const Server = struct {
         const ast = file.ast orelse return json.newArray();
         var out: std.ArrayList(lsp.SymbolInformation) = .empty;
         for (try ast.getScopes(a, null)) |scope| {
-            if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.SELECT_TYPE_ID) continue;
+            if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
             const tree = try str.split(a, scope.fqsn, "::");
             var scope_type: i64 = undefined;
             if (tree.len > 2) {
@@ -824,7 +824,7 @@ pub const Server = struct {
             }
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
             try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
-            if (scope.getType(false) == C.CLASS_TYPE_ID and !self.s.symbol_skip_mem) {
+            if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
                 for (scope.children.items) |child| {
                     try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
                 }
@@ -833,14 +833,14 @@ pub const Server = struct {
         return json.from(a, out.items);
     }
 
-    fn mapDocSymbolType(t: i32, in_class: bool) i64 {
+    fn mapDocSymbolType(t: C.TypeId, in_class: bool) i64 {
         return switch (t) {
-            1, 8 => 2,
-            2, 3 => if (in_class) 6 else 12,
-            4 => 5,
-            5 => 11,
-            6 => 13,
-            7 => 6,
+            .module, .submodule => 2,
+            .subroutine, .function => if (in_class) 6 else 12,
+            .class => 5,
+            .interface => 11,
+            .variable => 13,
+            .method => 6,
             else => 1,
         };
     }
@@ -848,19 +848,15 @@ pub const Server = struct {
     // ----------------------------------------------------------------------
     // Completion
 
-    const TypeMask = [16]bool;
+    /// The types of objects that completion leaves out
+    const TypeMask = std.EnumSet(C.TypeId);
 
+    /// The inner scopes and the base type are always left out; `def` is
+    /// whether the types of named objects are
     fn setTypeMask(def: bool) TypeMask {
-        var m: TypeMask = undefined;
-        for (&m, 0..) |*x, i| x.* = if (i < 8) def else true;
+        var m = TypeMask.initMany(&.{ .base, .submodule, .block, .select, .do_, .where, .if_, .assoc, .enum_ });
+        if (def) m.setUnion(TypeMask.initMany(&.{ .module, .subroutine, .function, .class, .interface, .variable, .method }));
         return m;
-    }
-
-    fn maskGet(m: *const TypeMask, t: i32) bool {
-        // Python negative indexing for BASE_TYPE_ID (-1)
-        const idx: i64 = if (t < 0) 16 + t else t;
-        if (idx < 0 or idx >= 16) return false;
-        return m[@intCast(idx)];
     }
 
     fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, req_abstract: bool, out: *std.ArrayList(*Obj)) !void {
@@ -960,13 +956,15 @@ pub const Server = struct {
         return .{ .objs = out_objs.items, .renames = out_renames.items };
     }
 
-    fn mapCompletionKind(t: i32) i64 {
+    /// The LSP completion item kind; the ids of the types that have no kind of
+    /// their own are used as they are, as fortls does
+    fn mapCompletionKind(t: C.TypeId) i64 {
         return switch (t) {
-            1 => 9,
-            2 => 3,
-            4 => 7,
-            6 => 6,
-            else => t,
+            .module => 9,
+            .subroutine => 3,
+            .class => 7,
+            .variable => 6,
+            else => @intFromEnum(t),
         };
     }
 
@@ -1044,13 +1042,13 @@ pub const Server = struct {
         var abstract_only = false;
         var no_use = false;
         var type_mask = setTypeMask(false);
-        type_mask[C.MODULE_TYPE_ID] = true;
-        type_mask[C.CLASS_TYPE_ID] = true;
+        type_mask.insert(.module);
+        type_mask.insert(.class);
         switch (lc.ctx) {
             .mod_only => {
                 for (self.obj_tree.values()) |e| {
                     const cand = e.obj;
-                    if (cand.getType(false) == C.MODULE_TYPE_ID and std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
+                    if (cand.getType(false) == C.TypeId.module and std.ascii.startsWithIgnoreCase(cand.name, var_prefix)) {
                         try item_list.append(a, try self.buildComp(a, cand, true, null, false, false));
                     }
                 }
@@ -1065,12 +1063,12 @@ pub const Server = struct {
                 scope_list = one;
                 public_only = true;
                 include_globals = false;
-                type_mask[C.CLASS_TYPE_ID] = false;
+                type_mask.remove(.class);
             },
             .pro_link => {
                 type_mask = setTypeMask(true);
-                type_mask[C.SUBROUTINE_TYPE_ID] = false;
-                type_mask[C.FUNCTION_TYPE_ID] = false;
+                type_mask.remove(.subroutine);
+                type_mask.remove(.function);
                 name_only = true;
                 include_globals = false;
                 no_use = true;
@@ -1078,45 +1076,45 @@ pub const Server = struct {
             .call => req_callable = true,
             .type_only => {
                 type_mask = setTypeMask(true);
-                type_mask[C.CLASS_TYPE_ID] = false;
+                type_mask.remove(.class);
             },
             .import => {
                 name_only = true;
                 type_mask = setTypeMask(true);
-                type_mask[C.CLASS_TYPE_ID] = false;
-                type_mask[C.VAR_TYPE_ID] = false;
+                type_mask.remove(.class);
+                type_mask.remove(.variable);
             },
             .vis => {
                 include_globals = false;
                 name_only = true;
                 type_mask = setTypeMask(true);
-                type_mask[C.CLASS_TYPE_ID] = false;
-                type_mask[C.VAR_TYPE_ID] = false;
-                type_mask[C.SUBROUTINE_TYPE_ID] = false;
-                type_mask[C.FUNCTION_TYPE_ID] = false;
+                type_mask.remove(.class);
+                type_mask.remove(.variable);
+                type_mask.remove(.subroutine);
+                type_mask.remove(.function);
             },
             .int_only => {
                 abstract_only = true;
                 include_globals = false;
                 name_only = true;
                 type_mask = setTypeMask(true);
-                type_mask[C.SUBROUTINE_TYPE_ID] = false;
-                type_mask[C.FUNCTION_TYPE_ID] = false;
+                type_mask.remove(.subroutine);
+                type_mask.remove(.function);
             },
             .var_only => {
                 name_only = true;
-                type_mask[C.SUBROUTINE_TYPE_ID] = true;
-                type_mask[C.FUNCTION_TYPE_ID] = true;
+                type_mask.insert(.subroutine);
+                type_mask.insert(.function);
             },
             .var_key => {
                 var key_context: i32 = 0;
                 if (scope_list.len > 0) {
                     const enc = scope_list[scope_list.len - 1].getType(false);
-                    if (enc == C.MODULE_TYPE_ID) {
+                    if (enc == C.TypeId.module) {
                         key_context = 1;
-                    } else if (enc == C.SUBROUTINE_TYPE_ID or enc == C.FUNCTION_TYPE_ID) {
+                    } else if (enc == C.TypeId.subroutine or enc == C.TypeId.function) {
                         key_context = 2;
-                    } else if (enc == C.CLASS_TYPE_ID) {
+                    } else if (enc == C.TypeId.class) {
                         key_context = 3;
                     }
                 }
@@ -1139,10 +1137,10 @@ pub const Server = struct {
         const cands = try self.getCandidates(a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
         for (cands.objs, cands.renames) |cand, rename| {
             const ctype = cand.getType(false);
-            if (maskGet(&type_mask, ctype)) continue;
+            if (type_mask.contains(ctype)) continue;
             if (req_callable and !cand.isCallable()) continue;
             var name_replace = rename;
-            if (ctype == C.INTERFACE_TYPE_ID and lc.ctx != .mod_mems) {
+            if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
                 var seen: std.ArrayList([]const u8) = .empty;
                 if (name_replace == null) name_replace = cand.name;
                 for (cand.mems.items) |member| {
@@ -1214,7 +1212,7 @@ pub const Server = struct {
         var var_obj: ?*Obj = null;
         if (curr_scope) |cs0| {
             var cs = cs0;
-            if (cs.getType(false) == C.CLASS_TYPE_ID and !is_member) {
+            if (cs.getType(false) == C.TypeId.class and !is_member) {
                 const lp = str.lstrip(line_prefix);
                 if ((std.mem.startsWith(u8, lp, "procedure") and std.mem.count(u8, line_prefix, "=>") > 0) or R().TYPE_DEF_CTX.match(line_prefix) != null) {
                     if (cs.parent) |p| cs = p;
@@ -1315,7 +1313,7 @@ pub const Server = struct {
     fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj {
         const v = d.obj;
         if (v.kind != .variable or v.is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
-        if (v.parent) |p| if (p.getType(false) == C.CLASS_TYPE_ID) return null;
+        if (v.parent) |p| if (p.getType(false) == C.TypeId.class) return null;
         const text = d.file.getLine(d.line, false) orelse return null;
         var end = d.col;
         while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
@@ -1332,14 +1330,14 @@ pub const Server = struct {
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         var hover_array: std.ArrayList([]const u8) = .empty;
         const vt = var_obj.getType(false);
-        if (vt == C.SUBROUTINE_TYPE_ID or vt == C.FUNCTION_TYPE_ID or vt == C.MODULE_TYPE_ID or vt == C.CLASS_TYPE_ID) {
+        if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
             try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
-        } else if (vt == C.INTERFACE_TYPE_ID) {
+        } else if (vt == C.TypeId.interface) {
             for (var_obj.mems.items) |member| {
                 const h = try member.getHover(a, true, null);
                 if (h.msg != null) try hover_array.append(a, try self.createHover(a, h.msg, h.docs));
             }
-        } else if (vt == C.VAR_TYPE_ID) {
+        } else if (vt == C.TypeId.variable) {
             if (!std.mem.startsWith(u8, var_obj.desc, C.FORTRAN_LITERAL)) {
                 try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
             } else if (std.mem.endsWith(u8, var_obj.desc, "REAL")) {
@@ -1372,9 +1370,9 @@ pub const Server = struct {
             return .null;
         }
         const parent = var_obj.parent orelse return .null;
-        if (parent.getType(false) == C.CLASS_TYPE_ID) {
+        if (parent.getType(false) == C.TypeId.class) {
             if (var_obj.link_obj) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);
-        } else if (parent.getType(false) == C.INTERFACE_TYPE_ID) {
+        } else if (parent.getType(false) == C.TypeId.interface) {
             if (var_obj.link_obj) |impl| return self.createRefLink(a, impl);
         }
         return .null;
@@ -1587,7 +1585,7 @@ pub const Server = struct {
                     };
                     if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def))) {
                         ref_match = true;
-                    } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.CLASS_TYPE_ID) {
+                    } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
                         if (type_mem) {
                             for (try var_def.parent.?.getOverridden(a, def_name)) |inherit_def| {
                                 if (std.mem.eql(u8, def_fqsn, inherit_def.fqsn)) {
@@ -1606,7 +1604,7 @@ pub const Server = struct {
                             try override_cache.append(a, var_def.fqsn);
                             ref_match = true;
                         }
-                    } else if (def_obj.kind.isVariable() and def_obj.getType(true) == C.METH_TYPE_ID) {
+                    } else if (def_obj.kind.isVariable() and def_obj.getType(true) == C.TypeId.method) {
                         if (def_obj.link_obj) |l| if (l.parent) |lp| if (var_def.parent) |vp| {
                             if (std.mem.eql(u8, lp.fqsn, vp.fqsn)) {
                                 ref_match = true;
@@ -1628,7 +1626,7 @@ pub const Server = struct {
         var restrict: ?*FortranFile = null;
         if (std.mem.count(u8, def_obj.fqsn, ":") > 2) {
             const parent = def_obj.parent orelse return null;
-            if (parent.getType(false) == C.CLASS_TYPE_ID) {
+            if (parent.getType(false) == C.TypeId.class) {
                 type_mem = true;
             } else {
                 restrict = def_obj.file_ast.file orelse return null;

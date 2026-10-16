@@ -1313,7 +1313,7 @@ const Parser = struct {
                 const var_names = info.var_names orelse return;
                 var procedure_def = false;
                 if (std.mem.startsWith(u8, info.var_type, "PRO")) {
-                    if (ast.current_scope) |cs| if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
+                    if (ast.current_scope) |cs| if (cs.getType(false) == C.TypeId.interface) {
                         for (var_names) |vn| try ast.addIntMember(vn);
                         p.dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ str.strip(line), line_no });
                         return;
@@ -1520,10 +1520,10 @@ const Parser = struct {
             },
             .int_pro => |names| {
                 if (ast.current_scope) |cs| {
-                    if (cs.getType(false) == C.INTERFACE_TYPE_ID) {
+                    if (cs.getType(false) == C.TypeId.interface) {
                         for (names) |nm| try ast.addIntMember(nm);
                         p.dbg("{s} !!! INTERFACE-PRO - Ln:{d}", .{ line, line_no });
-                    } else if (cs.getType(false) == C.SUBMODULE_TYPE_ID) {
+                    } else if (cs.getType(false) == C.TypeId.submodule) {
                         const o = try Obj.newScope(ast, .scope, line_no, names[0], &.{});
                         try ast.addScope(o, &R().END_PRO, true, false);
                         p.dbg("{s} !!! INTERFACE-IMPL - Ln:{d}", .{ line, line_no });
@@ -1580,7 +1580,7 @@ const Parser = struct {
             if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| end_scope_word = sm.str();
         }
         if (end_scope_word != null) {
-            if (cs.getType(false) == C.SELECT_TYPE_ID and cs.isTypeRegion()) try ast.endScope(ln, true);
+            if (cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) try ast.endScope(ln, true);
             try ast.endScope(ln, true);
             if (p.opts.trace != null) {
                 var ub: [64]u8 = undefined;
@@ -1597,7 +1597,7 @@ const Parser = struct {
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
         const label = line_label orelse return false;
-        if (cs.getType(false) != C.DO_TYPE_ID) return false;
+        if (cs.getType(false) != C.TypeId.do_) return false;
         var did_close = false;
         while (block_id_stack.items.len > 0 and std.mem.eql(u8, label, block_id_stack.items[block_id_stack.items.len - 1])) {
             try ast.endScope(ln, true);
@@ -1749,7 +1749,7 @@ const Parser = struct {
 
 fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, case_type: i32) !?*Obj {
     const parent = self.parent orelse return null;
-    if (parent.getType(false) != C.SELECT_TYPE_ID) return null;
+    if (parent.getType(false) != C.TypeId.select) return null;
     var binding_name: ?[]const u8 = null;
     var bound_var: ?[]const u8 = null;
     if (parent.isTypeBinding()) {
