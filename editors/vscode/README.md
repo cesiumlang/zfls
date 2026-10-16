@@ -19,7 +19,7 @@ The extension includes the `zfls` executable for Windows, Linux and macOS
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `zfls.path` | empty | A `zfls` to run instead of the bundled one |
-| `zfls.arguments` | `["--incremental_sync"]` | Command-line arguments; zfls accepts the same options as fortls (`zfls --help`) |
+| `zfls.arguments` | `["--incremental_sync", "--use_signature_help", "--enable_code_actions", "--hover_signature"]` | Command-line arguments; zfls accepts the same options as fortls (`zfls --help`). The default turns on signature help, code actions and signatures in hover, as Modern Fortran does |
 | `zfls.disableModernFortranCheck` | `false` | Do not offer to turn off Modern Fortran's fortls |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
 
