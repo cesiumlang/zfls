@@ -1,7 +1,7 @@
 {
   "name": "zfls",
   "displayName": "zfls: Fortran Language Server",
-  "description": "Fortran language support powered by zfls, a fast native reimplementation of fortls",
+  "description": "Fortran language support powered by zfls, a fast native re-implementation of fortls",
   "version": "0.1.3",
   "publisher": "cesiumlang",
   "license": "MIT",
@@ -119,9 +119,12 @@
             "type": "string"
           },
           "default": [
-            "--incremental_sync"
+            "--incremental_sync",
+            "--use_signature_help",
+            "--enable_code_actions",
+            "--hover_signature"
           ],
-          "markdownDescription": "Command-line arguments for `zfls`; it accepts the same options as fortls (run `zfls --help`). Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply."
+          "markdownDescription": "Command-line arguments for `zfls`; it accepts the same options as fortls (run `zfls --help`). The default turns on incremental sync, signature help, code actions and signatures in hover; remove an option to turn that feature off. Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply."
         },
         "zfls.disableModernFortranCheck": {
           "type": "boolean",

@@ -6,6 +6,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const str = @import("str.zig");
 const json = @import("json.zig");
+const json5 = @import("json5.zig");
 
 /// Ordered list of unique strings (stand-in for Python `set[str]`)
 pub const StrList = struct {
@@ -296,7 +297,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     break :blk args[i];
                 };
                 if (o.kind == .json) {
-                    const v = json.parse(a, val) catch {
+                    const v = json5.parse(a, val) catch {
                         return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
                     };
                     try applyPpDefs(a, &s, v);
@@ -341,8 +342,8 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
 pub fn applyPpDefs(a: Allocator, s: *Settings, v: json.Value) !void {
     s.pp_defs = .empty;
     switch (v) {
-        .object => |o| for (o.entries.items) |e| {
-            try s.setPpDef(a, e.key, try jsonScalarString(a, e.value));
+        .object => |o| for (o.keys(), o.values()) |k, x| {
+            try s.setPpDef(a, k, try jsonScalarString(a, x));
         },
         .array => |arr| for (arr.items) |item| {
             try s.setPpDef(a, try jsonScalarString(a, item), "");
@@ -355,7 +356,7 @@ pub fn applyPpDefs(a: Allocator, s: *Settings, v: json.Value) !void {
 pub fn jsonScalarString(a: Allocator, v: json.Value) ![]const u8 {
     return switch (v) {
         .string => |x| x,
-        .int => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
+        .integer => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
         .float => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
         .bool => |x| if (x) "True" else "False",
         .null => "None",
@@ -371,7 +372,7 @@ fn jsonList(a: Allocator, v: json.Value) !StrList {
             // Python's set("abc") iterates characters
             for (x, 0..) |_, k| try list.add(a, x[k .. k + 1]);
         },
-        .object => |o| for (o.entries.items) |e| try list.add(a, e.key),
+        .object => |o| for (o.keys()) |k| try list.add(a, k),
         else => {},
     }
     return list;
@@ -381,7 +382,7 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
     const x = v orelse return default;
     return switch (x) {
         .bool => |b| b,
-        .int => |i| i != 0,
+        .integer => |i| i != 0,
         .null => false,
         .string => |s| s.len > 0,
         else => default,
@@ -390,51 +391,49 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
 
 fn jsonInt(v: ?json.Value, default: i64) i64 {
     const x = v orelse return default;
-    return x.asInt() orelse default;
+    return json.int(x) orelse default;
 }
 
 /// Port of `_load_config_file_dirs`, `_load_config_file_general` and
 /// `_load_config_file_preproc`
 pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Include and Exclude directories
-    if (cfg.get("excl_paths")) |v| s.excl_paths = try jsonList(a, v);
-    if (cfg.get("source_dirs")) |v| s.source_dirs = try jsonList(a, v);
-    if (cfg.get("incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
-    if (cfg.get("excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
+    if (json.get(cfg, "excl_paths")) |v| s.excl_paths = try jsonList(a, v);
+    if (json.get(cfg, "source_dirs")) |v| s.source_dirs = try jsonList(a, v);
+    if (json.get(cfg, "incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
+    if (json.get(cfg, "excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
     // General options
-    s.nthreads = jsonInt(cfg.get("nthreads"), s.nthreads);
-    s.notify_init = jsonBool(cfg.get("notify_init"), s.notify_init);
-    s.incremental_sync = jsonBool(cfg.get("incremental_sync"), s.incremental_sync);
-    s.recursion_limit = jsonInt(cfg.get("recursion_limit"), s.recursion_limit);
-    s.sort_keywords = jsonBool(cfg.get("sort_keywords"), s.sort_keywords);
-    s.disable_autoupdate = jsonBool(cfg.get("disable_autoupdate"), s.disable_autoupdate);
+    s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
+    s.notify_init = jsonBool(json.get(cfg, "notify_init"), s.notify_init);
+    s.incremental_sync = jsonBool(json.get(cfg, "incremental_sync"), s.incremental_sync);
+    s.recursion_limit = jsonInt(json.get(cfg, "recursion_limit"), s.recursion_limit);
+    s.sort_keywords = jsonBool(json.get(cfg, "sort_keywords"), s.sort_keywords);
+    s.disable_autoupdate = jsonBool(json.get(cfg, "disable_autoupdate"), s.disable_autoupdate);
     // Autocomplete options
-    s.autocomplete_no_prefix = jsonBool(cfg.get("autocomplete_no_prefix"), s.autocomplete_no_prefix);
-    s.autocomplete_no_snippets = jsonBool(cfg.get("autocomplete_no_snippets"), s.autocomplete_no_snippets);
-    s.autocomplete_name_only = jsonBool(cfg.get("autocomplete_name_only"), s.autocomplete_name_only);
-    s.lowercase_intrinsics = jsonBool(cfg.get("lowercase_intrinsics"), s.lowercase_intrinsics);
-    s.use_signature_help = jsonBool(cfg.get("use_signature_help"), s.use_signature_help);
+    s.autocomplete_no_prefix = jsonBool(json.get(cfg, "autocomplete_no_prefix"), s.autocomplete_no_prefix);
+    s.autocomplete_no_snippets = jsonBool(json.get(cfg, "autocomplete_no_snippets"), s.autocomplete_no_snippets);
+    s.autocomplete_name_only = jsonBool(json.get(cfg, "autocomplete_name_only"), s.autocomplete_name_only);
+    s.lowercase_intrinsics = jsonBool(json.get(cfg, "lowercase_intrinsics"), s.lowercase_intrinsics);
+    s.use_signature_help = jsonBool(json.get(cfg, "use_signature_help"), s.use_signature_help);
     // Hover options
-    s.hover_signature = jsonBool(cfg.get("hover_signature"), s.hover_signature);
-    if (cfg.get("hover_language")) |v| if (v.asStr()) |hl| {
-        s.hover_language = hl;
-    };
+    s.hover_signature = jsonBool(json.get(cfg, "hover_signature"), s.hover_signature);
+    if (json.str(json.get(cfg, "hover_language"))) |hl| s.hover_language = hl;
     // Diagnostic options
-    s.max_line_length = jsonInt(cfg.get("max_line_length"), s.max_line_length);
-    s.max_comment_line_length = jsonInt(cfg.get("max_comment_line_length"), s.max_comment_line_length);
-    s.disable_diagnostics = jsonBool(cfg.get("disable_diagnostics"), s.disable_diagnostics);
+    s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
+    s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
+    s.disable_diagnostics = jsonBool(json.get(cfg, "disable_diagnostics"), s.disable_diagnostics);
     // Symbols options
-    s.symbol_skip_mem = jsonBool(cfg.get("symbol_skip_mem"), s.symbol_skip_mem);
+    s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
     // Code Actions options
-    s.enable_code_actions = jsonBool(cfg.get("enable_code_actions"), s.enable_code_actions);
+    s.enable_code_actions = jsonBool(json.get(cfg, "enable_code_actions"), s.enable_code_actions);
     // Preprocessor options
     // like every other option, a value in the file replaces the one from the
     // command line, and no value leaves it alone (upstream #536)
-    if (cfg.get("pp_suffixes")) |v| s.pp_suffixes = if (v == .null) null else try jsonList(a, v);
-    if (cfg.get("pp_defs")) |v| try applyPpDefs(a, s, v);
-    if (cfg.get("include_dirs")) |v| s.include_dirs = try jsonList(a, v);
+    if (json.get(cfg, "pp_suffixes")) |v| s.pp_suffixes = if (v == .null) null else try jsonList(a, v);
+    if (json.get(cfg, "pp_defs")) |v| try applyPpDefs(a, s, v);
+    if (json.get(cfg, "include_dirs")) |v| s.include_dirs = try jsonList(a, v);
     // Debug options
-    if (jsonBool(cfg.get("debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
+    if (jsonBool(json.get(cfg, "debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
 }
 
 /// Format a JSON5 parse error like the Python json5 library
@@ -459,10 +458,10 @@ test "a config file only replaces the preprocessor options it sets" {
     try s.setPpDef(a, "FROM_CLI", "1");
     s.pp_suffixes = .{};
     try s.pp_suffixes.?.add(a, ".inc");
-    try applyConfig(a, &s, try json.parse(a, "{}"));
+    try applyConfig(a, &s, try json5.parse(a, "{}"));
     try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
     try std.testing.expectEqual(@as(usize, 1), s.pp_suffixes.?.len());
-    try applyConfig(a, &s, try json.parse(a, "{\"pp_defs\": {\"FROM_FILE\": \"2\"}, \"pp_suffixes\": [\".a\", \".b\"]}"));
+    try applyConfig(a, &s, try json5.parse(a, "{\"pp_defs\": {\"FROM_FILE\": \"2\"}, \"pp_suffixes\": [\".a\", \".b\"]}"));
     try std.testing.expectEqualStrings("FROM_FILE", s.pp_defs.items[0].name);
     try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
     try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());

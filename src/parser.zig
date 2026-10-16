@@ -2,6 +2,7 @@
 //! `fortls.parsers.internal.parser`)
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
@@ -544,6 +545,15 @@ fn readVisStmnt(a: Allocator, line: []const u8) E!?DefResult {
 
 const DefTest = *const fn (Allocator, []const u8) E!?DefResult;
 
+/// A definition test and the words a line it can match may start with
+/// (lowercase prefixes of the line's first word, so that fixed-form words
+/// written together, `DOUBLEPRECISION` or `BLOCKDATA`, still qualify)
+const DefTestEntry = struct { read: DefTest, starts: []const []const u8 };
+
+/// PURE, IMPURE, ELEMENTAL and RECURSIVE are removed from a line before it is
+/// tested for a procedure (`splitSubMod`), so they can come first
+const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive" };
+
 fn readVarDef1(a: Allocator, line: []const u8) E!?DefResult {
     return readVarDef(a, line, null, false);
 }
@@ -554,35 +564,77 @@ fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
     return readFunDef(a, line, null, false);
 }
 
-const def_tests = [_]DefTest{
-    readVarDef1,
-    readSubDef1,
-    readFunDef1,
-    readBlockDataDef,
-    readBlockDef,
-    readWhereDef,
-    readDoDef,
-    readIfDef,
-    readAssociateDef,
-    readSelectDef,
-    readTypeDef,
-    readEnumDef,
-    readUseStmt,
-    readImpStmt,
-    readIntDef,
-    readGenericDef,
-    readModDef,
-    readProgDef,
-    readSubmodDef,
-    readIncStmt,
-    readVisStmnt,
+/// The definition tests in the order fortls tries them. Each pattern is
+/// anchored at the start of the line, after spaces; the words are those its
+/// pattern (VAR, SUB, FUN, BLOCK_DATA, ...) can begin with.
+const def_tests = [_]DefTestEntry{
+    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type" } },
+    .{ .read = readSubDef1, .starts = &(.{"subroutine"} ++ proc_prefixes) },
+    .{ .read = readFunDef1, .starts = &(.{"function"} ++ proc_prefixes) },
+    .{ .read = readBlockDataDef, .starts = &.{"block"} },
+    .{ .read = readBlockDef, .starts = &.{ "block", "critical" } },
+    .{ .read = readWhereDef, .starts = &.{"where"} },
+    .{ .read = readDoDef, .starts = &.{"do"} },
+    .{ .read = readIfDef, .starts = &.{"if"} },
+    .{ .read = readAssociateDef, .starts = &.{"associate"} },
+    .{ .read = readSelectDef, .starts = &.{ "select", "type", "class" } },
+    .{ .read = readTypeDef, .starts = &.{"type"} },
+    .{ .read = readEnumDef, .starts = &.{"enum"} },
+    .{ .read = readUseStmt, .starts = &.{"use"} },
+    .{ .read = readImpStmt, .starts = &.{"import"} },
+    .{ .read = readIntDef, .starts = &.{ "abstract", "interface" } },
+    .{ .read = readGenericDef, .starts = &.{"generic"} },
+    .{ .read = readModDef, .starts = &(.{"module"} ++ proc_prefixes) },
+    .{ .read = readProgDef, .starts = &.{"program"} },
+    .{ .read = readSubmodDef, .starts = &.{"submodule"} },
+    .{ .read = readIncStmt, .starts = &.{"include"} },
+    .{ .read = readVisStmnt, .starts = &.{ "public", "private" } },
 };
 
+/// The first word of a line, lowercased into `buf`, when the definition
+/// tests can be chosen by it. Null when they cannot: no word (the line starts
+/// with something else), a word too long for `buf`, or a construct label
+/// (`name: DO`), whose name can be any word.
+fn firstWord(line: []const u8, buf: []u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < line.len and line[i] == ' ') i += 1;
+    const start = i;
+    if (i >= line.len or !std.ascii.isAlphabetic(line[i])) return null;
+    // a word as the patterns see it (`\w`, which takes bytes past ASCII)
+    while (i < line.len and regex.isWordChar(line[i])) i += 1;
+    if (i - start > buf.len) return null;
+    var j = i;
+    while (j < line.len and line[j] == ' ') j += 1;
+    if (j < line.len and line[j] == ':' and !(j + 1 < line.len and line[j + 1] == ':')) return null;
+    return std.ascii.lowerString(buf[0 .. i - start], line[start..i]);
+}
+
+fn canStart(entry: DefTestEntry, word: []const u8) bool {
+    for (entry.starts) |w| if (std.mem.startsWith(u8, word, w)) return true;
+    return false;
+}
+
+/// The first definition test that matches the line (`get_fortran_definition`).
+/// Only the tests whose pattern can begin with the line's first word run,
+/// in order; a line without a usable first word runs all of them. Debug builds
+/// also run all of them and check that the result is the same.
 pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
-    for (def_tests) |t| {
-        if (try t(a, line)) |r| return r;
+    var buf: [32]u8 = undefined;
+    const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
+    const found = try runDefTests(a, line, word);
+    if (builtin.mode == .debug) {
+        const all = try runDefTests(a, line, null);
+        if (all.index != found.index) std.debug.panic("definition test {?d} matches \"{s}\" but the first-word dispatch chose {?d}", .{ all.index, line, found.index });
     }
-    return null;
+    return found.result;
+}
+
+fn runDefTests(a: Allocator, line: []const u8, word: ?[]const u8) E!struct { index: ?usize, result: ?DefResult } {
+    for (def_tests, 0..) |t, i| {
+        if (word) |w| if (!canStart(t, w)) continue;
+        if (try t.read(a, line)) |r| return .{ .index = i, .result = r };
+    }
+    return .{ .index = null, .result = null };
 }
 
 pub const LineContext = enum {
@@ -893,7 +945,7 @@ pub const FortranFile = struct {
             if (self.fixed) {
                 var tmp_line = curr_line;
                 while (line_ind > 0) {
-                    if (R().FIXED_CONT.match(tmp_line) != null) {
+                    if (helpers.isFixedCont(tmp_line)) {
                         const prev_line = tmp_line;
                         tmp_line = self.getLine(line_ind, pp_content) orelse "";
                         if (line_ind == line_no -| 1) {
@@ -906,16 +958,16 @@ pub const FortranFile = struct {
                     line_ind -= 1;
                 }
             } else {
-                if (R().FREE_CONT.match(curr_line)) |m| {
-                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, m.end(0)), curr_line[m.end(0)..] });
+                if (helpers.freeContEnd(curr_line)) |e| {
+                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), curr_line[e..] });
                 }
                 while (line_ind > 0) {
                     const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
                     var tmp_no_comm = str.beforeFirst(tmp_line, "!");
                     const cont_ind = std.mem.lastIndexOfScalar(u8, tmp_no_comm, '&');
-                    if (R().FREE_CONT.match(tmp_no_comm)) |m| {
-                        if (cont_ind == m.end(0) - 1) break;
-                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, m.end(0)), tmp_no_comm[m.end(0)..] });
+                    if (helpers.freeContEnd(tmp_no_comm)) |e| {
+                        if (cont_ind == e - 1) break;
+                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), tmp_no_comm[e..] });
                     }
                     if (cont_ind) |ci| {
                         try pre_lines.append(a, tmp_no_comm[0..ci]);
@@ -931,7 +983,7 @@ pub const FortranFile = struct {
                 if (line_ind < n) {
                     var next_line = self.getLine(line_ind, pp_content) orelse "";
                     line_ind += 1;
-                    var cont = R().FIXED_CONT.match(next_line) != null;
+                    var cont = helpers.isFixedCont(next_line);
                     // a comment ends its line only: one before a continuation
                     // must not cut off the rest of the statement (hansec #202)
                     if (cont) curr_line = try fixedNoComment(a, curr_line);
@@ -939,7 +991,7 @@ pub const FortranFile = struct {
                         try post_lines.append(a, try std.mem.concat(a, u8, &.{ "      ", str.from(next_line, 6) }));
                         next_line = self.getLine(line_ind, pp_content) orelse "";
                         line_ind += 1;
-                        cont = R().FIXED_CONT.match(next_line) != null;
+                        cont = helpers.isFixedCont(next_line);
                         if (cont) {
                             const last = &post_lines.items[post_lines.items.len - 1];
                             last.* = try fixedNoComment(a, last.*);
@@ -958,17 +1010,17 @@ pub const FortranFile = struct {
                     }
                     next_line = self.getLine(line_ind, pp_content) orelse break;
                     line_ind += 1;
-                    if (R().PP_ANY.match(next_line) != null) {
+                    if (helpers.isPpDirective(next_line)) {
                         next_line = "";
                         try post_lines.append(a, "");
                         continue;
                     }
-                    if (str.rstrip(next_line).len == 0 or R().FREE_COMMENT.match(next_line) != null) {
+                    if (str.rstrip(next_line).len == 0 or helpers.isFreeComment(next_line)) {
                         next_line = "";
                         try post_lines.append(a, "");
                         continue;
                     }
-                    if (R().FREE_CONT.match(next_line)) |m| next_line = next_line[m.end(0)..];
+                    if (helpers.freeContEnd(next_line)) |e| next_line = next_line[e..];
                     try post_lines.append(a, next_line);
                     line_stripped = try helpers.stripStrings(a, next_line, true);
                     cont_amper = continuationAmpersand(line_stripped);
@@ -982,9 +1034,9 @@ pub const FortranFile = struct {
 
     pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
         if (self.fixed) {
-            if (R().FIXED_COMMENT.match(line) != null and R().FIXED_OPENMP.match(line) == null) return "";
+            if (helpers.isFixedComment(line) and !helpers.isOpenMp(true, line)) return "";
         } else {
-            if (R().FREE_OPENMP.match(line) == null) return str.beforeFirst(line, "!");
+            if (!helpers.isOpenMp(false, line)) return str.beforeFirst(line, "!");
         }
         return line;
     }
@@ -1102,11 +1154,7 @@ pub const FortranFile = struct {
         const a = arena.allocator();
         const cl = try self.getCodeLine(a, line_no, false, true, false, false);
         const curr_line = cl.curr.?;
-        if (self.fixed) {
-            if (R().FIXED_COMMENT.match(curr_line) != null) return false;
-        } else {
-            if (R().FREE_COMMENT.match(curr_line) != null) return false;
-        }
+        if (helpers.isComment(self.fixed, curr_line)) return false;
         var full_line: []const u8 = try std.mem.concat(a, u8, &.{ try std.mem.concat(a, u8, cl.pre), curr_line });
         const lr = try helpers.stripLineLabel(a, full_line);
         full_line = lr.line;
@@ -1118,10 +1166,7 @@ pub const FortranFile = struct {
         if (R().IMPLICIT.match(line_no_comment) != null) return true;
         if (R().CONTAINS.match(line_no_comment) != null) return true;
         if (R().NON_DEF.match(line_no_comment) != null) return false;
-        for (def_tests) |t| {
-            if ((try t(a, line_no_comment)) != null) return true;
-        }
-        return false;
+        return (try getFortranDefinition(a, line_no_comment)) != null;
     }
 
     /// Run the preprocessor over the file contents
@@ -1153,13 +1198,12 @@ pub const FortranFile = struct {
         if (max_line_length > 0 or max_comment_line_length > 0) {
             const msg_line = try std.fmt.allocPrint(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
             const msg_comment = try std.fmt.allocPrint(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
-            const comment_re = if (self.fixed) &R().FIXED_COMMENT else &R().FREE_COMMENT;
             // a limit that is not positive is off
             const max_code: usize = @intCast(@max(max_line_length, 0));
             const max_comment: usize = @intCast(@max(max_comment_line_length, 0));
             for (self.lines.items, 0..) |line, ln| {
                 const len = str.codepointLen(line);
-                if (comment_re.match(line) == null) {
+                if (!helpers.isComment(self.fixed, line)) {
                     // Code is held to max_line_length; a comment after it is
                     // held to max_comment_line_length, not to the code limit
                     // (upstream #489)
@@ -1733,8 +1777,8 @@ const Parser = struct {
 
     fn setSingleLineDocstring(p: *Parser, line: []const u8) !void {
         p.docs = .empty;
-        const m = R().FREE_DOC.match(line) orelse return;
-        const doc = str.strip(line[m.end(0)..]);
+        const mark = helpers.docMark(false, line) orelse return;
+        const doc = str.strip(line[mark + 1 ..]);
         if (doc.len > 0) try p.docs.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, doc));
     }
 
@@ -1784,29 +1828,30 @@ const Parser = struct {
 
     /// Parse documentation strings; returns the new line number, or null when the line is no documentation
     fn parseDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
-        if (p.comment_re.match(line) == null) {
+        const fixed = p.file.fixed;
+        if (!helpers.isComment(fixed, line)) {
             try p.addLineComment();
             return null;
         }
-        const doc_match = p.doc_re.match(line) orelse {
+        const mark = helpers.docMark(fixed, line) orelse {
             try p.addLineComment();
             return null;
         };
         const sa = p.scratch.allocator();
         // get_docstring
-        try p.docs.append(sa, str.strip(line[doc_match.end(0)..]));
-        const predocmark = std.mem.eql(u8, doc_match.group(1).?, ">");
+        try p.docs.append(sa, str.strip(line[mark + 1 ..]));
+        const predocmark = line[mark] == '>';
         var new_ln = ln;
         const n = p.file.nLines();
         if (ln < n) {
             var i = ln;
             while (i < n) : (i += 1) {
                 const next_line = p.file.getLine(i, true) orelse "";
-                const m = p.doc_re.match(next_line) orelse {
+                const next_mark = helpers.docMark(fixed, next_line) orelse {
                     new_ln = i;
                     break;
                 };
-                try p.docs.append(sa, str.strip(next_line[m.end(0)..]));
+                try p.docs.append(sa, str.strip(next_line[next_mark + 1 ..]));
             }
         }
         var total: usize = 0;
@@ -1884,4 +1929,16 @@ test "read definitions" {
 
     const ctx = try getLineContext(a, "call foo");
     try std.testing.expectEqual(LineContext.call, ctx.ctx);
+}
+
+test "the definition tests are chosen by the first word, labels fall back to all" {
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("integer", firstWord("  INTEGER :: x", &buf).?);
+    try std.testing.expectEqualStrings("doubleprecision", firstWord("      DOUBLEPRECISION X", &buf).?);
+    try std.testing.expect(firstWord("  outer: do i = 1, n", &buf) == null);
+    // `\w` takes bytes past ASCII, so this is a construct label too
+    try std.testing.expect(firstWord("add\xe2\x88\x911 : BLOCK", &buf) == null);
+    try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
+    try std.testing.expect(firstWord("_x: block", &buf) == null);
+    try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
 }

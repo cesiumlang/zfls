@@ -1,6 +1,6 @@
 //! Types of the Language Server Protocol messages zfls receives and sends.
 //!
-//! Requests are decoded with `json.to` and responses encoded with
+//! Requests are decoded with `json.decode` and responses encoded with
 //! `json.from`. When encoding, an optional field that defaults to `null` is
 //! left out while it is null, which is how LSP treats absent optional
 //! properties.
@@ -42,8 +42,8 @@ pub const Changes = struct {
     files: []const File,
 
     pub fn toJson(self: Changes, a: Allocator) Allocator.Error!json.Value {
-        var obj: json.Object = .{};
-        for (self.files) |f| try obj.put(a, f.uri, try json.from(a, f.edits));
+        var obj: json.ObjectMap = .empty;
+        for (self.files) |f| try obj.put(a, try json.validUtf8(a, f.uri), try json.from(a, f.edits));
         return .{ .object = obj };
     }
 };

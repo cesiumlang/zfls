@@ -60,11 +60,7 @@ fn runServer(ctx: *Ctx) void {
             server.postMessage(a, "Unexpected error: invalid JSON message", 1);
             break;
         };
-        if (log.enabled(.debug)) {
-            var pretty: std.ArrayList(u8) = .empty;
-            json.writePretty(&pretty, a, request, 0) catch {};
-            log.debug("RECV {s}", .{pretty.items});
-        }
+        if (log.enabled(.debug)) log.debug("RECV {s}", .{json.pretty(a, request) catch ""});
         server.handle(a, request);
         server.flushPostMessages(a);
     }
