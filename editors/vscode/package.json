@@ -1,7 +1,7 @@
 {
   "name": "zfls",
   "displayName": "zfls: Fortran Language Server",
-  "description": "Fortran language support powered by zfls, a fast native reimplementation of fortls",
+  "description": "Fortran language support powered by zfls, a fast native re-implementation of fortls",
   "version": "0.1.3",
   "publisher": "cesiumlang",
   "license": "MIT",

@@ -98,7 +98,7 @@ integer,allocatable        :: undef(:,:,:)
    print *,'but for 2''s-complement whole numbers -1-huge(0)='
    print *,  -1-huge(0)
    print *,'is a valid number too, but huge(0)+1 will cause an overflow!'
-   print *,'Almost all computers use 2''s-complement integers now-adays.'
+   print *,'Almost all computers use 2''s-complement integers nowadays.'
    print *,'so -huge(0)-1 is often used as a "magic number" to designate'
    print *,'invalid whole numbers, as INTEGER types do not have a Nan'
    print *,'or Infinite value like floats do if it is not a "possible"'
@@ -106,7 +106,7 @@ integer,allocatable        :: undef(:,:,:)
    print *
    print *,'for a single byte a value can be from -128 to 127 so maybe'
    print *,'-128 is not unlikely to be used though, for example:'
-   print *,'range of a 2''scomplement one-byte kind is',-huge(0_int8)-1,&
+   print *,'range of a 2''s complement one-byte kind is',-huge(0_int8)-1,&
          & 'to',huge(0_int8)
    print *,'so there is no "perfect" integer value to represent an '
    print *,'invalid number except on a case-by-case basis.'
@@ -184,7 +184,7 @@ Results:
  >  but for 2's-complement whole numbers -1-huge(0)=
  >  -2147483648
  >  is a valid number too, but huge(0)+1 will cause an overflow!
- >  Almost all computers use 2's-complement integers now-adays.
+ >  Almost all computers use 2's-complement integers nowadays.
  >  so -huge(0)-1 is often used as a "magic number" to designate
  >  invalid whole numbers, as INTEGER types do not have a Nan
  >  or Infinite value like floats do if it is not a "possible"
@@ -192,7 +192,7 @@ Results:
  >
  >  for a single byte a value can be from -128 to 127 so maybe
  >  -128 is not unlikely to be used though, for example:
- >  range of a 2'scomplement one-byte kind is        -128 to  127
+ >  range of a 2's complement one-byte kind is        -128 to  127
  >  so there is no "perfect" integer value to represent an
  >  invalid number except on a case-by-case basis.
  >  advanced:

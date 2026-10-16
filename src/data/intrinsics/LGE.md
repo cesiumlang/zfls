@@ -7,7 +7,7 @@
 ### **Synopsis**
 
 ```fortran
-    result = lge(string_a, stringb)
+    result = lge(string_a, string_b)
 ```
 
 ```fortran
