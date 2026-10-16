@@ -2,6 +2,7 @@
 //! `fortls.parsers.internal.parser`)
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
@@ -544,6 +545,15 @@ fn readVisStmnt(a: Allocator, line: []const u8) E!?DefResult {
 
 const DefTest = *const fn (Allocator, []const u8) E!?DefResult;
 
+/// A definition test and the words a line it can match may start with
+/// (lowercase prefixes of the line's first word, so that fixed-form words
+/// written together, `DOUBLEPRECISION` or `BLOCKDATA`, still qualify)
+const DefTestEntry = struct { read: DefTest, starts: []const []const u8 };
+
+/// PURE, IMPURE, ELEMENTAL and RECURSIVE are removed from a line before it is
+/// tested for a procedure (`splitSubMod`), so they can come first
+const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive" };
+
 fn readVarDef1(a: Allocator, line: []const u8) E!?DefResult {
     return readVarDef(a, line, null, false);
 }
@@ -554,35 +564,77 @@ fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
     return readFunDef(a, line, null, false);
 }
 
-const def_tests = [_]DefTest{
-    readVarDef1,
-    readSubDef1,
-    readFunDef1,
-    readBlockDataDef,
-    readBlockDef,
-    readWhereDef,
-    readDoDef,
-    readIfDef,
-    readAssociateDef,
-    readSelectDef,
-    readTypeDef,
-    readEnumDef,
-    readUseStmt,
-    readImpStmt,
-    readIntDef,
-    readGenericDef,
-    readModDef,
-    readProgDef,
-    readSubmodDef,
-    readIncStmt,
-    readVisStmnt,
+/// The definition tests in the order fortls tries them. Each pattern is
+/// anchored at the start of the line, after spaces; the words are those its
+/// pattern (VAR, SUB, FUN, BLOCK_DATA, ...) can begin with.
+const def_tests = [_]DefTestEntry{
+    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type" } },
+    .{ .read = readSubDef1, .starts = &(.{"subroutine"} ++ proc_prefixes) },
+    .{ .read = readFunDef1, .starts = &(.{"function"} ++ proc_prefixes) },
+    .{ .read = readBlockDataDef, .starts = &.{"block"} },
+    .{ .read = readBlockDef, .starts = &.{ "block", "critical" } },
+    .{ .read = readWhereDef, .starts = &.{"where"} },
+    .{ .read = readDoDef, .starts = &.{"do"} },
+    .{ .read = readIfDef, .starts = &.{"if"} },
+    .{ .read = readAssociateDef, .starts = &.{"associate"} },
+    .{ .read = readSelectDef, .starts = &.{ "select", "type", "class" } },
+    .{ .read = readTypeDef, .starts = &.{"type"} },
+    .{ .read = readEnumDef, .starts = &.{"enum"} },
+    .{ .read = readUseStmt, .starts = &.{"use"} },
+    .{ .read = readImpStmt, .starts = &.{"import"} },
+    .{ .read = readIntDef, .starts = &.{ "abstract", "interface" } },
+    .{ .read = readGenericDef, .starts = &.{"generic"} },
+    .{ .read = readModDef, .starts = &(.{"module"} ++ proc_prefixes) },
+    .{ .read = readProgDef, .starts = &.{"program"} },
+    .{ .read = readSubmodDef, .starts = &.{"submodule"} },
+    .{ .read = readIncStmt, .starts = &.{"include"} },
+    .{ .read = readVisStmnt, .starts = &.{ "public", "private" } },
 };
 
+/// The first word of a line, lowercased into `buf`, when the definition
+/// tests can be chosen by it. Null when they cannot: no word (the line starts
+/// with something else), a word too long for `buf`, or a construct label
+/// (`name: DO`), whose name can be any word.
+fn firstWord(line: []const u8, buf: []u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < line.len and line[i] == ' ') i += 1;
+    const start = i;
+    if (i >= line.len or !std.ascii.isAlphabetic(line[i])) return null;
+    // a word as the patterns see it (`\w`, which takes bytes past ASCII)
+    while (i < line.len and regex.isWordChar(line[i])) i += 1;
+    if (i - start > buf.len) return null;
+    var j = i;
+    while (j < line.len and line[j] == ' ') j += 1;
+    if (j < line.len and line[j] == ':' and !(j + 1 < line.len and line[j + 1] == ':')) return null;
+    return std.ascii.lowerString(buf[0 .. i - start], line[start..i]);
+}
+
+fn canStart(entry: DefTestEntry, word: []const u8) bool {
+    for (entry.starts) |w| if (std.mem.startsWith(u8, word, w)) return true;
+    return false;
+}
+
+/// The first definition test that matches the line (`get_fortran_definition`).
+/// Only the tests whose pattern can begin with the line's first word run,
+/// in order; a line without a usable first word runs all of them. Debug builds
+/// also run all of them and check that the result is the same.
 pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
-    for (def_tests) |t| {
-        if (try t(a, line)) |r| return r;
+    var buf: [32]u8 = undefined;
+    const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
+    const found = try runDefTests(a, line, word);
+    if (builtin.mode == .debug) {
+        const all = try runDefTests(a, line, null);
+        if (all.index != found.index) std.debug.panic("definition test {?d} matches \"{s}\" but the first-word dispatch chose {?d}", .{ all.index, line, found.index });
     }
-    return null;
+    return found.result;
+}
+
+fn runDefTests(a: Allocator, line: []const u8, word: ?[]const u8) E!struct { index: ?usize, result: ?DefResult } {
+    for (def_tests, 0..) |t, i| {
+        if (word) |w| if (!canStart(t, w)) continue;
+        if (try t.read(a, line)) |r| return .{ .index = i, .result = r };
+    }
+    return .{ .index = null, .result = null };
 }
 
 pub const LineContext = enum {
@@ -1094,10 +1146,7 @@ pub const FortranFile = struct {
         if (R().IMPLICIT.match(line_no_comment) != null) return true;
         if (R().CONTAINS.match(line_no_comment) != null) return true;
         if (R().NON_DEF.match(line_no_comment) != null) return false;
-        for (def_tests) |t| {
-            if ((try t(a, line_no_comment)) != null) return true;
-        }
-        return false;
+        return (try getFortranDefinition(a, line_no_comment)) != null;
     }
 
     /// Run the preprocessor over the file contents
@@ -1860,4 +1909,16 @@ test "read definitions" {
 
     const ctx = try getLineContext(a, "call foo");
     try std.testing.expectEqual(LineContext.call, ctx.ctx);
+}
+
+test "the definition tests are chosen by the first word, labels fall back to all" {
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("integer", firstWord("  INTEGER :: x", &buf).?);
+    try std.testing.expectEqualStrings("doubleprecision", firstWord("      DOUBLEPRECISION X", &buf).?);
+    try std.testing.expect(firstWord("  outer: do i = 1, n", &buf) == null);
+    // `\w` takes bytes past ASCII, so this is a construct label too
+    try std.testing.expect(firstWord("add\xe2\x88\x911 : BLOCK", &buf) == null);
+    try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
+    try std.testing.expect(firstWord("_x: block", &buf) == null);
+    try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
 }
