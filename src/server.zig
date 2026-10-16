@@ -1180,8 +1180,8 @@ pub const Server = struct {
         try o.keywords.appendSlice(a, keywords);
         if (file_ast.enc_scope_name) |enc| o.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", try std.ascii.allocLowerString(a, name) });
         o.callable = R().CLASS_VAR.match(desc) != null;
-        if (o.hasKeyword(C.KW.public)) o.vis = 1;
-        if (o.hasKeyword(C.KW.private)) o.vis = -1;
+        if (o.hasKeyword(C.KW.public)) o.vis = .public;
+        if (o.hasKeyword(C.KW.private)) o.vis = .private;
         if (o.hasKeyword(C.KW.parameter)) o.is_const = true;
         return o;
     }
