@@ -123,6 +123,12 @@ def run(name: str, cmd: list[str], src: Path, args) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix=f"bench_{name}_"))
     work = tmp / "ws"
     shutil.copytree(src, work, ignore=shutil.ignore_patterns(".git"))
+    # Read the copy once: the first read of a file that was just written can be
+    # far slower than later ones (on Windows, the antivirus scans it), which
+    # would otherwise be measured as part of `initialize`
+    for f in work.rglob("*"):
+        if f.is_file():
+            f.read_bytes()
     big = largest_file(work)
     uri = big.as_uri()
     text = big.read_text(encoding="utf-8", errors="replace")
