@@ -484,7 +484,8 @@ jobs:
 
       # This platform's VSIX, unpacked as VS Code would install it, run in a
       # downloaded VS Code: hover, definition, completion and symbols through
-      # the extension's language client and its bundled zfls
+      # the extension's language client and its bundled zfls (after the unit
+      # tests of the extension's helpers)
       - name: VS Code extension in VS Code
         env:
           VSIX: dist/zfls-vscode-v${{ needs.version.outputs.version }}-${{ matrix.vscode }}.vsix
@@ -493,8 +494,8 @@ jobs:
           cd editors/vscode
           npm ci --no-audit --no-fund
           npm run typecheck
-          # the linter's parsers and paths, in plain Node.js
-          npm run test:unit
+          # the helpers that need no VS Code (run, tools, linter), in plain Node.js
+          npm run unit
           npm run build-test
           export ZFLS_EXTENSION_PATH="$RUNNER_TEMP/vsix/extension"
           run_vscode() {

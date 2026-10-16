@@ -5,6 +5,9 @@ grammars and language configuration of the
 [Modern Fortran](https://github.com/fortran-lang/vscode-fortran-support)
 extension, version 4.0.0, and the snippets in `snippets/` up to "Module
 Documentation Header" are adapted from its `snippets/fortran90.json`. The
+**Run Fortran File** and **Debug Fortran File** commands and their editor
+title buttons follow its `fortran.build.run` and `fortran.build.debug`, and
+the choice among debugger extensions its `src/debug/configuration.ts`. The
 compiler linting in `src/linter.ts` and `src/lint/` follows the design of
 its `src/lint/` (settings, compiler options, and the message formats of
 gfortran, Intel, NAG and LFortran). These are used under its MIT license:

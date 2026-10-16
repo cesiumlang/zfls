@@ -231,6 +231,8 @@ zfls deliberately differs from fortls in a few places:
   that name. On the USE line, hover, definition and references on either
   name reach the module's entity (hansec #137); fortls only reads renames
   after `ONLY:` and has no answer on the original name.
+- `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
+  submodule (and through it the ancestor module); fortls names it `parent`.
 
 ## Licenses
 

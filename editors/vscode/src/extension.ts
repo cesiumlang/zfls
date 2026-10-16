@@ -10,6 +10,7 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 import { Linter } from "./linter";
+import { registerRunCommands } from "./runFile";
 
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
 /** The default of `zfls.arguments` (package.json), as Modern Fortran starts fortls */
@@ -21,6 +22,7 @@ let output: vscode.LogOutputChannel | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("zfls", { log: true });
   const linter = new Linter(context, output);
+  registerRunCommands(context, output);
   context.subscriptions.push(
     output,
     linter,
@@ -153,7 +155,7 @@ async function checkModernFortran(): Promise<void> {
     "The Modern Fortran extension is also enabled. zfls replaces it: the language server, " +
       "compiler diagnostics, syntax highlighting, snippets and breakpoints. With both, two " +
       "language servers, two linters and two sets of grammars compete for Fortran files, so " +
-      "disable Modern Fortran. (zfls does not have its formatting and run/debug commands yet.)",
+      "disable Modern Fortran. (zfls does not have its formatting yet.)",
     disable,
     keep,
     never,
