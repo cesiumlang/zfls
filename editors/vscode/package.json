@@ -163,18 +163,171 @@
           "scope": "machine-overridable",
           "markdownDescription": "Path to a `zfls` executable. Empty: the one bundled with this extension, or else `zfls` on the `PATH` (for example from `conda install -c conda-forge zfls`)."
         },
+        "zfls.incrementalSync": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Send document changes incrementally (`--incremental_sync`)."
+        },
+        "zfls.signatureHelp": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Show signature help while typing procedure arguments, instead of argument snippets in completions (`--use_signature_help`)."
+        },
+        "zfls.codeActions": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Offer code actions, such as implementing deferred type-bound procedures (`--enable_code_actions`)."
+        },
+        "zfls.hoverSignature": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Show the signature of procedures in hover (`--hover_signature`)."
+        },
+        "zfls.lowercaseIntrinsics": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Complete intrinsics and keywords in lowercase (`--lowercase_intrinsics`)."
+        },
+        "zfls.autocompleteNameOnly": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Complete only procedure names, without their arguments (`--autocomplete_name_only`)."
+        },
+        "zfls.autocompleteNoSnippets": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Do not use snippets with placeholders in completions (`--autocomplete_no_snippets`)."
+        },
+        "zfls.sortKeywords": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Show variable keywords and procedure definitions sorted (`--sort_keywords`)."
+        },
+        "zfls.symbolSkipMembers": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Leave type members out of document symbols (`--symbol_skip_mem`)."
+        },
+        "zfls.disableDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Turn off zfls's diagnostics (`--disable_diagnostics`)."
+        },
+        "zfls.notifyInit": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Show a notification when the workspace has been indexed (`--notify_init`)."
+        },
+        "zfls.nthreads": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 1,
+          "scope": "resource",
+          "markdownDescription": "Threads used to index the workspace (`--nthreads`; zfls's default is 4)."
+        },
+        "zfls.maxLineLength": {
+          "type": "integer",
+          "default": -1,
+          "scope": "resource",
+          "markdownDescription": "Warn about code lines longer than this (`--max_line_length`; -1: off)."
+        },
+        "zfls.maxCommentLineLength": {
+          "type": "integer",
+          "default": -1,
+          "scope": "resource",
+          "markdownDescription": "Warn about comment lines longer than this (`--max_comment_line_length`; -1: off)."
+        },
+        "zfls.configFile": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Configuration file to read instead of `.fortlsrc`, `.fortls.json` or `.fortls` (`--config`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.sourceDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Folders with source files, relative to the workspace folder or absolute; globs allowed (`--source_dirs`; default: the whole workspace folder). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.includeDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Folders searched for `#include` and `INCLUDE` files (`--include_dirs`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.excludePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Folders not to index (`--excl_paths`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.includeSuffixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "More file extensions to index as Fortran, e.g. `.inc` (`--incl_suffixes`)."
+        },
+        "zfls.excludeSuffixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "File extensions not to index (`--excl_suffixes`)."
+        },
+        "zfls.ppSuffixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "File extensions to run the preprocessor on (`--pp_suffixes`; default: upper-case extensions such as `.F90`)."
+        },
+        "zfls.ppDefs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Preprocessor definitions, name to value (`--pp_defs`)."
+        },
         "zfls.arguments": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": [
-            "--incremental_sync",
-            "--use_signature_help",
-            "--enable_code_actions",
-            "--hover_signature"
-          ],
-          "markdownDescription": "Command-line arguments for `zfls`; it accepts the same options as fortls (run `zfls --help`). The default turns on incremental sync, signature help, code actions and signatures in hover; remove an option to turn that feature off. Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply."
+          "default": [],
+          "markdownDescription": "Extra command-line options for `zfls`, after those of the settings above; zfls accepts the same options as fortls (run `zfls --help`). Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply.",
+          "scope": "resource"
         },
         "zfls.disableModernFortranCheck": {
           "type": "boolean",

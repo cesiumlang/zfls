@@ -9,42 +9,97 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 
+import { affectsServer, serverArguments } from "./options";
+
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
-/** The default of `zfls.arguments` (package.json), as Modern Fortran starts fortls */
-const defaultArguments = ["--incremental_sync", "--use_signature_help", "--enable_code_actions", "--hover_signature"];
+const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 
-let client: LanguageClient | undefined;
+/** The running servers: one per outermost workspace folder (keyed by its
+ * URI), and one per directory of a Fortran file outside every folder (keyed
+ * by the directory's URI), as in VS Code's multi-root language server sample */
+const clients = new Map<string, Promise<LanguageClient | undefined>>();
 let output: vscode.LogOutputChannel | undefined;
+let context: vscode.ExtensionContext;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
+  context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
   context.subscriptions.push(
     output,
-    vscode.commands.registerCommand("zfls.restart", () => restart(context)),
+    vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("zfls.path") || e.affectsConfiguration("zfls.arguments")) {
-        void restart(context);
+      if (affectsServer(e)) {
+        void restartAll();
       }
     }),
+    vscode.workspace.onDidOpenTextDocument((doc) => void ensureClient(doc)),
+    vscode.workspace.onDidChangeWorkspaceFolders((e) => {
+      for (const folder of e.removed) {
+        void stopClient(folder.uri.toString());
+      }
+      // a folder that now contains a separately served file takes it over
+      void restartAll();
+    }),
   );
-  await start(context);
+  for (const doc of vscode.workspace.textDocuments) {
+    await ensureClient(doc);
+  }
   void checkModernFortran();
 }
 
 export async function deactivate(): Promise<void> {
-  await client?.stop();
-  client = undefined;
+  await Promise.all([...clients.keys()].map((key) => stopClient(key)));
 }
 
-async function restart(context: vscode.ExtensionContext): Promise<void> {
-  await client?.stop();
-  client = undefined;
-  await start(context);
+async function stopClient(key: string): Promise<void> {
+  const client = clients.get(key);
+  clients.delete(key);
+  await (await client)?.stop();
 }
 
-async function start(context: vscode.ExtensionContext): Promise<void> {
-  const config = vscode.workspace.getConfiguration("zfls");
+async function restartAll(): Promise<void> {
+  await deactivate();
+  for (const doc of vscode.workspace.textDocuments) {
+    await ensureClient(doc);
+  }
+}
+
+/** The outermost workspace folder containing `folder` (a nested folder is
+ * served by the server of the folder it is in) */
+function outermost(folder: vscode.WorkspaceFolder): vscode.WorkspaceFolder {
+  let best = folder;
+  for (const f of vscode.workspace.workspaceFolders ?? []) {
+    const root = f.uri.toString().replace(/\/?$/, "/");
+    if (folder.uri.toString().startsWith(root) && f.uri.toString().length < best.uri.toString().length) {
+      best = f;
+    }
+  }
+  return best;
+}
+
+/** Starts the server for a Fortran file, unless it has one */
+async function ensureClient(doc: vscode.TextDocument): Promise<void> {
+  if (!LANGUAGES.includes(doc.languageId) || doc.uri.scheme !== "file") {
+    return;
+  }
+  const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  const folder = inFolder ? outermost(inFolder) : undefined;
+  const root = folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
+  const key = root.toString();
+  if (clients.has(key)) {
+    return;
+  }
+  // the start in progress is recorded, so that files opened meanwhile share it
+  const client = startClient(root, folder);
+  clients.set(key, client);
+  if (!(await client)) {
+    clients.delete(key);
+  }
+}
+
+async function startClient(root: vscode.Uri, folder: vscode.WorkspaceFolder | undefined): Promise<LanguageClient | undefined> {
+  const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
   const command = findServer(context, config.get<string>("path", ""));
   if (!command) {
     const choice = await vscode.window.showErrorMessage(
@@ -54,28 +109,32 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     if (choice) {
       await vscode.commands.executeCommand("workbench.action.openSettings", "zfls.path");
     }
-    return;
+    return undefined;
   }
-  const args = config.get<string[]>("arguments", defaultArguments);
-  output?.info(`Starting ${command} ${args.join(" ")}`);
+  const args = serverArguments(folder);
+  output?.info(`Starting ${command} ${args.join(" ")} for ${root.fsPath}`);
 
   // no `transport`: stdio is the default, and TransportKind.stdio would
   // also pass --stdio, which zfls (like fortls) does not accept
-  const executable = { command, args };
+  const executable = { command, args, options: { cwd: root.fsPath } };
   const serverOptions: ServerOptions = { run: executable, debug: executable };
+  // a folder's server takes the files under it; a directory's server only
+  // the files directly in it
+  const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [
-      { scheme: "file", language: "FortranFreeForm" },
-      { scheme: "file", language: "FortranFixedForm" },
-    ],
+    documentSelector: LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
+    workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
     outputChannel: output,
   };
-  client = new LanguageClient("zfls", "zfls", serverOptions, clientOptions);
+  const name = folder ? `zfls (${folder.name})` : `zfls (${root.fsPath})`;
+  const client = new LanguageClient("zfls", name, serverOptions, clientOptions);
   try {
     await client.start();
   } catch (err) {
     void vscode.window.showErrorMessage(`zfls failed to start: ${String(err)}`);
+    return undefined;
   }
+  return client;
 }
 
 /** The zfls to run: the configured one, else the bundled one, else `zfls`
