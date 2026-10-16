@@ -6,7 +6,10 @@ grammars and language configuration of the
 extension, version 4.0.0, and the snippets in `snippets/` up to "Module
 Documentation Header" are adapted from its `snippets/fortran90.json`, used
 under its MIT license. The formatting settings (`zfls.formatting.*`) follow
-its `fortran.formatting.*` settings:
+its `fortran.formatting.*` settings, the **Run Fortran File** and **Debug
+Fortran File** commands and their editor title buttons its
+`fortran.build.run` and `fortran.build.debug`, and the choice among
+debugger extensions its `src/debug/configuration.ts`:
 
 ```text
 MIT License

@@ -38,6 +38,8 @@ give the same answer, and the test fails for the reason in the issue.
 | [#536](https://github.com/fortran-lang/fortls/issues/536) | config file drops `--pp_defs` | workspace | fixed (patched) | fails, same cause |
 | [#536](https://github.com/fortran-lang/fortls/issues/536) | broken symlink under the workspace | workspace | fixed | crashes (per the issue) |
 | [#558](https://github.com/fortran-lang/fortls/issues/558) | unreadable directory under a `source_dirs` glob (POSIX only; skipped on Windows and as root) | workspace | fixed | crashes (per the issue) |
+| [#534](https://github.com/fortran-lang/fortls/issues/534) | fixed-form documentation comments keep the indentation of the code (closed) | hover | fixed | fixed (upstream #535) |
+| [#481](https://github.com/fortran-lang/fortls/issues/481) | `#include` path with slashes (closed) | hover | fixed | fixed (upstream #527); no definition on the `#include` (#498) |
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#478](https://github.com/fortran-lang/fortls/issues/478) | Markdown list in a parameter's docs indents the next parameter (fixture rebuilt from the screenshot) | hover | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | fixed (patched) | fails, same cause |
@@ -99,3 +101,5 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#200](https://github.com/hansec/fortran-language-server/issues/200) | "masks variable" warning for a variable of a dummy procedure's interface body | diagnostics | fixed (patched) | fails, same cause |
 | [#168](https://github.com/hansec/fortran-language-server/issues/168) | references to a separate module procedure miss its implementation in a submodule | hover | fixed (patched) | fails, same cause |
 | [#137](https://github.com/hansec/fortran-language-server/issues/137) | the original name on a USE rename line resolves to a local variable of that name | hover | fixed (patched) | fails, same cause |
+| [#178](https://github.com/hansec/fortran-language-server/issues/178) | signature help counts the commas inside an array constructor or a nested call | hover | fixed | fails, same cause |
+| [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
