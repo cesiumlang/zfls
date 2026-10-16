@@ -245,11 +245,11 @@ pub const Workspace = struct {
         try w.save(name);
         const v = (try w.server.getDiagnostics(w.a(), try w.uri(name))) orelse return &.{};
         var out: std.ArrayList(Diagnostic) = .empty;
-        for (v.items()) |d| {
+        for (json.items(v)) |d| {
             try out.append(w.a(), .{
-                .line = (d.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse -1,
-                .severity = (d.get("severity") orelse json.null_value).asInt() orelse 0,
-                .message = (d.get("message") orelse json.null_value).asStr() orelse "",
+                .line = json.int(json.path(d, &.{ "range", "start", "line" })) orelse -1,
+                .severity = json.int(json.get(d, "severity")) orelse 0,
+                .message = json.str(json.get(d, "message")) orelse "",
             });
         }
         return out.items;
@@ -257,16 +257,15 @@ pub const Workspace = struct {
 
     pub fn hover(w: *Workspace, name: []const u8, p: Pos) !?[]const u8 {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/hover", try w.posParams(name, p));
-        const c = v.get("contents") orelse return null;
-        return (c.get("value") orelse return null).asStr();
+        return json.str(json.path(v, &.{ "contents", "value" }));
     }
 
     fn location(v: Value) ?Location {
         if (v == .null) return null;
         return .{
-            .uri = (v.get("uri") orelse return null).asStr() orelse return null,
-            .line = (v.path(&.{ "range", "start", "line" }) orelse return null).asInt() orelse return null,
-            .col = (v.path(&.{ "range", "start", "character" }) orelse return null).asInt() orelse return null,
+            .uri = json.str(json.get(v, "uri")) orelse return null,
+            .line = json.int(json.path(v, &.{ "range", "start", "line" })) orelse return null,
+            .col = json.int(json.path(v, &.{ "range", "start", "character" })) orelse return null,
         };
     }
 
@@ -281,7 +280,7 @@ pub const Workspace = struct {
     pub fn references(w: *Workspace, name: []const u8, p: Pos) ![]const Location {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/references", try w.posParams(name, p));
         var out: std.ArrayList(Location) = .empty;
-        for (v.items()) |item| if (location(item)) |l| try out.append(w.a(), l);
+        for (json.items(v)) |item| if (location(item)) |l| try out.append(w.a(), l);
         return out.items;
     }
 
@@ -294,16 +293,16 @@ pub const Workspace = struct {
         });
         const v = try w.server.dispatchPublic(w.a(), "textDocument/rename", params);
         var out: std.ArrayList(Edit) = .empty;
-        const changes = v.get("changes") orelse return &.{};
+        const changes = json.get(v, "changes") orelse return &.{};
         if (changes != .object) return &.{};
-        for (changes.object.entries.items) |entry| {
-            for (entry.value.items()) |e| {
+        for (changes.object.keys(), changes.object.values()) |file_uri, edits| {
+            for (json.items(edits)) |e| {
                 try out.append(w.a(), .{
-                    .uri = entry.key,
-                    .line = (e.path(&.{ "range", "start", "line" }) orelse json.null_value).asInt() orelse -1,
-                    .start = (e.path(&.{ "range", "start", "character" }) orelse json.null_value).asInt() orelse -1,
-                    .end = (e.path(&.{ "range", "end", "character" }) orelse json.null_value).asInt() orelse -1,
-                    .new_text = (e.get("newText") orelse json.null_value).asStr() orelse "",
+                    .uri = file_uri,
+                    .line = json.int(json.path(e, &.{ "range", "start", "line" })) orelse -1,
+                    .start = json.int(json.path(e, &.{ "range", "start", "character" })) orelse -1,
+                    .end = json.int(json.path(e, &.{ "range", "end", "character" })) orelse -1,
+                    .new_text = json.str(json.get(e, "newText")) orelse "",
                 });
             }
         }
@@ -314,7 +313,7 @@ pub const Workspace = struct {
     pub fn completion(w: *Workspace, name: []const u8, p: Pos) ![]const []const u8 {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/completion", try w.posParams(name, p));
         var out: std.ArrayList([]const u8) = .empty;
-        for (v.items()) |item| try out.append(w.a(), (item.get("label") orelse json.null_value).asStr() orelse "");
+        for (json.items(v)) |item| try out.append(w.a(), json.str(json.get(item, "label")) orelse "");
         return out.items;
     }
 
@@ -323,11 +322,11 @@ pub const Workspace = struct {
     pub fn signature(w: *Workspace, name: []const u8, p: Pos) !?Signature {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/signatureHelp", try w.posParams(name, p));
         if (v == .null) return null;
-        const sigs = (v.get("signatures") orelse return null).items();
+        const sigs = json.items(json.get(v, "signatures"));
         if (sigs.len == 0) return null;
         return .{
-            .label = (sigs[0].get("label") orelse json.null_value).asStr() orelse "",
-            .active = (v.get("activeParameter") orelse json.null_value).asInt() orelse -1,
+            .label = json.str(json.get(sigs[0], "label")) orelse "",
+            .active = json.int(json.get(v, "activeParameter")) orelse -1,
         };
     }
 
@@ -335,7 +334,7 @@ pub const Workspace = struct {
     pub fn documentSymbols(w: *Workspace, name: []const u8) ![]const []const u8 {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/documentSymbol", try w.docParams(name));
         var out: std.ArrayList([]const u8) = .empty;
-        for (v.items()) |s| try out.append(w.a(), (s.get("name") orelse json.null_value).asStr() orelse "");
+        for (json.items(v)) |s| try out.append(w.a(), json.str(json.get(s, "name")) orelse "");
         return out.items;
     }
 
@@ -343,7 +342,7 @@ pub const Workspace = struct {
     pub fn workspaceSymbols(w: *Workspace, query: []const u8) ![]const []const u8 {
         const v = try w.request("workspace/symbol", .{ .query = query });
         var out: std.ArrayList([]const u8) = .empty;
-        for (v.items()) |s| try out.append(w.a(), (s.get("name") orelse json.null_value).asStr() orelse "");
+        for (json.items(v)) |s| try out.append(w.a(), json.str(json.get(s, "name")) orelse "");
         return out.items;
     }
 
