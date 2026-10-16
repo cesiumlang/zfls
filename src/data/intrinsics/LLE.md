@@ -7,7 +7,7 @@
 ### **Synopsis**
 
 ```fortran
-     result = lle(string_a, stringb)
+     result = lle(string_a, string_b)
 ```
 
 ```fortran

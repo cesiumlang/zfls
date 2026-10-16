@@ -249,3 +249,120 @@ test "#495 hover and definition inside a file that is #included into a module" {
         break :blk h.expect(std.mem.endsWith(u8, l.uri, "hello.F90"), "definition is in {s}", .{l.uri});
     });
 }
+
+test "hansec #202 a comment inside a continued fixed-form declaration does not end it" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      program t
+        \\      real*8 x,y
+        \\     & ,z,a ! comment
+        \\     & ,d,dd
+        \\      dd=4
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 202, .fixed, w.expectHoverContains("t.f", w.pos("t.f", "dd=4", 0, 0), "REAL*8"));
+}
+
+test "hansec #155 a comment inside a continued fixed-form IF keeps its THEN" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      subroutine s(x, y, z)
+        \\      real x, y, z
+        \\      if ((x .ne. y) .and. ! c1
+        \\     &    (z .eq. x)) then
+        \\         x = 1
+        \\      end if
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    // the IF block opens, so the subroutine still contains it at `x = 1`
+    const syms = try w.documentSymbols("t.f");
+    try h.checkIn(.hansec, 155, .fixed, blk: {
+        try w.expectNoDiagnostics("t.f");
+        break :blk h.expect(syms.len > 0, "no symbols", .{});
+    });
+}
+
+test "a ! inside a string continued on the next fixed-form line is no comment" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      program t
+        \\      character*20 msg, other
+        \\      data msg /'hi there!
+        \\     & yes'/
+        \\      integer n
+        \\      n = 1
+        \\      end
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f", w.pos("t.f", "n = 1", 0, 0), "INTEGER");
+}
+
+// Not reported upstream (fortls has the same bug): `SUBMODULE (anc:parent)
+// child` was named after its parent submodule. The files are named so that
+// the child is loaded before its parent and its ancestor module.
+test "a submodule of a submodule is named after the parentheses and extends its parent" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "a_child.f90", .text =
+        \\submodule (anc:parent) child
+        \\  implicit none
+        \\contains
+        \\  module subroutine s(x)
+        \\    integer, intent(in) :: x
+        \\    print *, x + from_parent
+        \\  end subroutine s
+        \\  module procedure f
+        \\    f = from_parent
+        \\  end procedure f
+        \\end submodule child
+        \\
+        },
+        .{ .name = "b_parent.f90", .text =
+        \\submodule (anc) parent
+        \\  implicit none
+        \\  integer :: from_parent = 1
+        \\end submodule parent
+        \\
+        },
+        .{ .name = "c_anc.f90", .text =
+        \\module anc
+        \\  implicit none
+        \\  interface
+        \\    module subroutine s(x)
+        \\      integer, intent(in) :: x
+        \\    end subroutine s
+        \\    module integer function f()
+        \\    end function f
+        \\  end interface
+        \\end module anc
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const syms = try w.workspaceSymbols("child");
+    var named = false;
+    for (syms) |s| named = named or std.mem.eql(u8, s, "child");
+    try h.expect(named, "no workspace symbol 'child': {any}", .{syms});
+    // a name of the parent submodule is visible in the child
+    const use = w.pos("a_child.f90", "from_parent", 0, 1);
+    try w.expectHoverContains("a_child.f90", use, "INTEGER :: from_parent");
+    const def = (try w.definition("a_child.f90", use)) orelse return h.unmet("no definition for from_parent", .{});
+    try h.expect(std.mem.endsWith(u8, def.uri, "b_parent.f90"), "definition of from_parent is in {s}", .{def.uri});
+    // the interfaces of the ancestor module link to the child's procedures
+    for ([_][]const u8{ "subroutine s", "function f" }) |needle| {
+        const impl = (try w.implementation("c_anc.f90", w.pos("c_anc.f90", needle, 0, needle.len - 1))) orelse
+            return h.unmet("no implementation for '{s}'", .{needle});
+        try h.expect(std.mem.endsWith(u8, impl.uri, "a_child.f90"), "implementation of '{s}' is in {s}", .{ needle, impl.uri });
+    }
+    try w.expectHoverContains("a_child.f90", w.pos("a_child.f90", "procedure f", 0, 10), "FUNCTION f() RESULT(f)");
+}

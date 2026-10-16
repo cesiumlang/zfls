@@ -412,3 +412,261 @@ test "#478 a Markdown list in a parameter's documentation does not indent the ne
     // a blank line ends the list, so `baz` is not a continuation of its last item
     try h.check(478, .fixed, w.expectHoverContains("t.f90", w.pos("t.f90", "foo(1, 2)", 0, 1), "\n\n`baz`"));
 }
+
+test "hansec #168 references to a separate module procedure include its implementation in a submodule" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "mod.f90", .text =
+        \\module test_module
+        \\    implicit none
+        \\    interface
+        \\        module subroutine test_subroutine()
+        \\        end subroutine
+        \\        module subroutine other()
+        \\        end subroutine
+        \\    end interface
+        \\end module test_module
+        \\
+        },
+        .{ .name = "smod.f90", .text =
+        \\submodule(test_module) test_submodule
+        \\contains
+        \\module subroutine test_subroutine()
+        \\end subroutine
+        \\module procedure other
+        \\end procedure
+        \\end
+        \\
+        },
+        .{ .name = "prog.f90", .text =
+        \\program p
+        \\    use test_module
+        \\    call test_subroutine()
+        \\end program p
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const Case = struct { file: []const u8, needle: []const u8 };
+    const outcome: anyerror!void = blk: {
+        for ([_][]const u8{ "test_subroutine", "other" }) |name| {
+            const iface = w.pos("mod.f90", name, 0, 1);
+            const impl = w.pos("smod.f90", name, 0, 1);
+            // from the interface, from the implementation
+            for ([_]Case{ .{ .file = "mod.f90", .needle = name }, .{ .file = "smod.f90", .needle = name } }) |c| {
+                const refs = try w.references(c.file, w.pos(c.file, c.needle, 0, 1));
+                var has_iface = false;
+                var has_impl = false;
+                for (refs) |r| {
+                    if (std.mem.endsWith(u8, r.uri, "mod.f90") and !std.mem.endsWith(u8, r.uri, "smod.f90") and r.line == iface.line) has_iface = true;
+                    if (std.mem.endsWith(u8, r.uri, "smod.f90") and r.line == impl.line) has_impl = true;
+                }
+                if (!has_iface or !has_impl) break :blk h.unmet("references to {s} from {s}: interface {}, implementation {} ({d} references)", .{ name, c.file, has_iface, has_impl, refs.len });
+            }
+        }
+        // a rename from the interface renames the implementation too
+        var renames_impl = false;
+        for (try w.rename("mod.f90", w.pos("mod.f90", "other", 0, 1), "renamed")) |e| {
+            if (std.mem.endsWith(u8, e.uri, "smod.f90")) renames_impl = true;
+        }
+        if (!renames_impl) break :blk h.unmet("renaming the interface does not rename the implementation", .{});
+        // the call still counts
+        const refs = try w.references("mod.f90", w.pos("mod.f90", "test_subroutine", 0, 1));
+        for (refs) |r| if (std.mem.endsWith(u8, r.uri, "prog.f90")) break :blk {};
+        break :blk h.unmet("the call is not a reference", .{});
+    };
+    try h.checkIn(.hansec, 168, .fixed, outcome);
+}
+
+const rename_fixture = [_]h.File{.{
+    .name = "t.f90",
+    .text =
+    \\module m
+    \\contains
+    \\  function func_1(x)
+    \\    integer :: x, func_1
+    \\    func_1 = x
+    \\  end function func_1
+    \\end module m
+    \\program p
+    \\  use m, func_1_ref => func_1
+    \\  logical :: func_1
+    \\  print *, func_1_ref(3), func_1
+    \\end program p
+    \\
+    ,
+}};
+
+test "hansec #137 the original name on a USE rename line is the module's entity" {
+    const w = try h.Workspace.init(&rename_fixture, .{});
+    defer w.deinit();
+    const def = try w.definition("t.f90", w.pos("t.f90", "=> func_1", 0, 4));
+    try h.checkIn(.hansec, 137, .fixed, blk: {
+        const l = def orelse break :blk h.unmet("no definition for the original name", .{});
+        break :blk h.expect(l.line == 2, "definition at line {d}, expected the function at line 3", .{l.line + 1});
+    });
+}
+
+test "a rename without ONLY makes the local name the module's entity, and hides the original name" {
+    const w = try h.Workspace.init(&rename_fixture, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "func_1_ref(3)", 0, 1), "FUNCTION");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "func_1_ref =>", 0, 1), "FUNCTION");
+    // the local variable of the same name as the original is not the function
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "(3), func_1", 0, 6), "LOGICAL");
+}
+
+test "#534 fixed-form documentation comments do not keep the indentation of the code" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      SUBROUTINE MYFUNC(PARAM1)
+        \\      !> THIS IS AN EXAMPLE FUNCTION TO DEMONSTRATE
+        \\      !! THE BROKEN PARSING OF
+        \\      !! DOCSTRINGS FOR FIXED FORMAT CODE
+        \\
+        \\      REAL, INTENT(IN) :: PARAM1
+        \\      !> THE SAME PROBLEM OCCURS
+        \\      !! FOR DOCSTRINGS FOR PARAMETERS
+        \\
+        \\      END SUBROUTINE MYFUNC
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // `!>` documents the next object, PARAM1; its continuation lines are
+        // not indented by the six columns of fixed form (a Markdown code block)
+        const param = (try w.hover("t.f", w.pos("t.f", "PARAM1", 1, 1))) orelse break :blk h.unmet("no hover on PARAM1", .{});
+        const docs = param[(std.mem.indexOf(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
+        if (std.mem.indexOf(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
+        break :blk h.expect(std.mem.indexOf(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
+    };
+    try h.check(534, .fixed, outcome);
+}
+
+test "#481 an #include path with slashes is found in the include directories" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text =
+        \\{"source_dirs": ["./**"], "include_dirs": ["include"]}
+        \\
+        },
+        .{ .name = "src/main.F90", .text =
+        \\program p
+        \\#include "petsc/finclude/petscvec.h"
+        \\#ifdef PETSC_HAVE_VEC
+        \\  integer :: from_vec
+        \\#endif
+        \\  from_vec = 1
+        \\end program p
+        \\
+        },
+        .{ .name = "include/petsc/finclude/petscvec.h", .text =
+        \\#define PETSC_HAVE_VEC
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // the macro of the header is defined
+        w.expectHoverContains("src/main.F90", w.pos("src/main.F90", "from_vec = 1", 0, 1), "INTEGER :: from_vec") catch |e| break :blk e;
+        const def = (try w.definition("src/main.F90", w.pos("src/main.F90", "finclude", 0, 1))) orelse
+            break :blk h.unmet("no definition for the include", .{});
+        break :blk h.expect(std.mem.endsWith(u8, def.uri, "petsc/finclude/petscvec.h"), "definition is {s}", .{def.uri});
+    };
+    try h.check(481, .fixed, outcome);
+}
+
+test "hansec #178 signature help skips array constructors and nested calls" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\contains
+        \\  subroutine mysub(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b(:), c, d, e
+        \\  end subroutine mysub
+        \\  integer function myfun(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b, c, d, e
+        \\    myfun = a
+        \\  end function myfun
+        \\  subroutine caller(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b, c, d, e
+        \\    integer :: x
+        \\    call mysub(a, [1, 2, 3], c, d, e)
+        \\    call mysub(a, (/1, 2, 3/), c, d, e)
+        \\    x = myfun(a, myfun(a, b, c, d, e), c, d, e)
+        \\  end subroutine caller
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // just after the third argument, `c`
+        for ([_][]const u8{ "[1, 2, 3], c", "(/1, 2, 3/), c", "d, e), c" }) |needle| {
+            const sig = (try w.signature("t.f90", w.pos("t.f90", needle, 0, needle.len))) orelse
+                break :blk h.unmet("no signature help after '{s}'", .{needle});
+            if (sig.active != 2) break :blk h.unmet("after '{s}': active parameter {d}, expected 2", .{ needle, sig.active });
+        }
+    };
+    try h.checkIn(.hansec, 178, .fixed, outcome);
+}
+
+test "hansec #229 an ASSOCIATE opened on the line of its DO: names inside are found" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer :: i
+        \\  real :: arr(3)
+        \\  do i=1,size(arr); associate(point => arr(i))
+        \\    point = 1.0
+        \\  end associate; end do
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    // the innermost of the scopes that open on the same line is the ASSOCIATE
+    try h.checkIn(.hansec, 229, .fixed, blk: {
+        w.expectHoverContains("t.f90", w.pos("t.f90", "point = 1.0", 0, 1), "REAL :: point") catch |e| break :blk e;
+        const def = (try w.definition("t.f90", w.pos("t.f90", "point = 1.0", 0, 1))) orelse break :blk h.unmet("no definition for point", .{});
+        break :blk h.expect(def.line == 4, "definition of point at line {d}", .{def.line + 1});
+    });
+}
+
+test "hansec #203 preprocessor directives inside a continued declaration" {
+    const files = [_]h.File{.{
+        .name = "t.F90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  REAL &
+        \\#ifdef X
+        \\  , POINTER &
+        \\#else
+        \\  , ALLOCATABLE &
+        \\#endif
+        \\  :: v(:)
+        \\  print *, v
+        \\end program p
+        \\
+        ,
+    }};
+    const Case = struct { defs: []const @import("zfls").settings.PpDef, want: []const u8, not: []const u8 };
+    const outcome: anyerror!void = blk: {
+        for ([_]Case{
+            .{ .defs = &.{}, .want = "ALLOCATABLE", .not = "POINTER" },
+            .{ .defs = &.{.{ .name = "X", .value = "" }}, .want = "POINTER", .not = "ALLOCATABLE" },
+        }) |c| {
+            const w = try h.Workspace.init(&files, .{ .pp_defs = c.defs });
+            defer w.deinit();
+            const text = (try w.hover("t.F90", w.pos("t.F90", "print *, v", 0, 9))) orelse
+                break :blk h.unmet("no hover on v (X defined: {})", .{c.defs.len > 0});
+            if (std.mem.indexOf(u8, text, c.want) == null or std.mem.indexOf(u8, text, c.not) != null)
+                break :blk h.unmet("hover of v (X defined: {}): {s}", .{ c.defs.len > 0, text });
+        }
+    };
+    try h.checkIn(.hansec, 203, .fixed, outcome);
+}

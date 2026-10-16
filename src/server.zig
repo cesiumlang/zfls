@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const json = @import("json.zig");
+const json5 = @import("json5.zig");
 const lsp = @import("lsp.zig");
 const helpers = @import("helpers.zig");
 const patterns = @import("patterns.zig");
@@ -156,11 +157,7 @@ pub const Server = struct {
     fn sendJson(self: *Server, a: Allocator, body: Value) !void {
         const text = try json.stringify(a, body);
         self.sink.send(text);
-        if (self.log.enabled(.debug)) {
-            var pretty: std.ArrayList(u8) = .empty;
-            try json.writePretty(&pretty, a, body, 0);
-            self.log.debug("SEND {s}", .{pretty.items});
-        }
+        if (self.log.enabled(.debug)) self.log.debug("SEND {s}", .{try json.pretty(a, body)});
     }
 
     pub fn sendNotification(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
@@ -195,10 +192,10 @@ pub const Server = struct {
 
     /// Handle one decoded JSON-RPC message
     pub fn handle(self: *Server, a: Allocator, request: Value) void {
-        const method = (request.get("method") orelse json.null_value).asStr() orelse "";
-        const id = request.get("id");
+        const method = json.str(json.get(request, "method")) orelse "";
+        const id = json.get(request, "id");
         self.log.debug("REQUEST {s} {s}", .{ if (id) |i| (json.stringify(a, i) catch "?") else "None", method });
-        const params = request.get("params") orelse json.null_value;
+        const params = json.get(request, "params") orelse .null;
         const result = self.dispatch(a, method, params);
         if (id == null) {
             if (result) |_| {} else |e| self.log.err("error handling request: {s} ({s})", .{ method, @errorName(e) });
@@ -272,21 +269,21 @@ pub const Server = struct {
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
         return switch (methods.get(method) orelse return error.MethodNotFound) {
-            .initialize => self.serveInitialize(a, try json.to(lsp.InitializeParams, a, params)),
-            .document_symbol => self.serveDocumentSymbols(a, try json.to(lsp.TextDocumentParams, a, params)),
-            .completion => self.serveAutocomplete(a, try json.to(lsp.PositionParams, a, params)),
-            .signature_help => self.serveSignature(a, try json.to(lsp.PositionParams, a, params)),
-            .definition => self.serveDefinition(a, try json.to(lsp.PositionParams, a, params)),
-            .references, .document_highlight => self.serveReferences(a, try json.to(lsp.PositionParams, a, params)),
-            .hover => self.serveHover(a, try json.to(lsp.PositionParams, a, params)),
-            .implementation => self.serveImplementation(a, try json.to(lsp.PositionParams, a, params)),
-            .rename => self.serveRename(a, try json.to(lsp.RenameParams, a, params)),
-            .did_open => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), true, false),
-            .did_save => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, false),
-            .did_close => self.serveOnSave(a, try json.to(lsp.TextDocumentParams, a, params), false, true),
-            .did_change => self.serveOnChange(a, try json.to(lsp.DidChangeParams, a, params)),
-            .code_action => self.serveCodeActions(a, try json.to(lsp.CodeActionParams, a, params)),
-            .workspace_symbol => self.serveWorkspaceSymbol(a, try json.to(lsp.WorkspaceSymbolParams, a, params)),
+            .initialize => self.serveInitialize(a, try json.decode(lsp.InitializeParams, a, params)),
+            .document_symbol => self.serveDocumentSymbols(a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .completion => self.serveAutocomplete(a, try json.decode(lsp.PositionParams, a, params)),
+            .signature_help => self.serveSignature(a, try json.decode(lsp.PositionParams, a, params)),
+            .definition => self.serveDefinition(a, try json.decode(lsp.PositionParams, a, params)),
+            .references, .document_highlight => self.serveReferences(a, try json.decode(lsp.PositionParams, a, params)),
+            .hover => self.serveHover(a, try json.decode(lsp.PositionParams, a, params)),
+            .implementation => self.serveImplementation(a, try json.decode(lsp.PositionParams, a, params)),
+            .rename => self.serveRename(a, try json.decode(lsp.RenameParams, a, params)),
+            .did_open => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
+            .did_save => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
+            .did_close => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
+            .did_change => self.serveOnChange(a, try json.decode(lsp.DidChangeParams, a, params)),
+            .code_action => self.serveCodeActions(a, try json.decode(lsp.CodeActionParams, a, params)),
+            .workspace_symbol => self.serveWorkspaceSymbol(a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
             .ignored => .null,
             .exit => blk: {
                 self.serveExit();
@@ -421,7 +418,7 @@ pub const Server = struct {
             self.postMessage(a, try std.fmt.allocPrint(a, "Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
             return;
         };
-        var p: json.Parser = .{ .a = sa, .src = data };
+        var p: json5.Parser = .{ .a = sa, .src = data };
         const cfg = p.parseDocument() catch {
             const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
             const msg = try std.fmt.allocPrint(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
@@ -434,7 +431,7 @@ pub const Server = struct {
         }
         try settings_mod.applyConfig(sa, &self.s, cfg);
         self.sync_type = if (self.s.incremental_sync) 2 else 1;
-        if (cfg.get("incl_suffixes") != null) {
+        if (cfg.object.get("incl_suffixes") != null) {
             if (patterns.createSrcFileExtsStr(sa, self.s.incl_suffixes.slice())) |re| {
                 self.src_ext_regex = re;
             } else |e| switch (e) {
@@ -704,39 +701,39 @@ pub const Server = struct {
             ast.included_in = null;
             if (ast.inc_scope) |inc| {
                 ast.none_scope = inc;
-                for (inc.children.items) |c| c.parent = inc;
+                for (inc.childList()) |c| c.parent = inc;
             }
             for (ast.include_statements.items) |inc| {
                 inc.inc_obj = null;
                 inc.file = null;
             }
             for (ast.variable_list.items) |v| {
-                v.type_obj = null;
-                v.link_obj = null;
+                v.varData().type_obj = null;
+                v.varData().link_obj = null;
             }
             for (ast.scope_list.items) |s| {
-                if (s.kind.isSubroutine()) s.link_obj = null;
-                if (s.linked_from_interface) s.resetInterfaceCopy();
-                if (s.kind == .interface) s.mems.clearRetainingCapacity();
+                if (s.kind.isSubroutine()) s.procData().link_obj = null;
+                if (s.procDataOpt()) |p| if (p.linked_from_interface) s.resetInterfaceCopy();
+                if (s.kind == .interface) s.ifaceData().mems.clearRetainingCapacity();
                 if (s.kind == .type) {
-                    s.inherit_var = null;
-                    s.in_children.clearRetainingCapacity();
-                    s.inherit_version = -1;
+                    s.typeData().inherit_var = null;
+                    s.scopeData().in_children.clearRetainingCapacity();
+                    s.typeData().inherit_version = -1;
                 }
-                if (s.kind == .submodule) s.ancestor_obj = null;
+                if (s.kind == .submodule) s.submodData().ancestor_obj = null;
                 // Children of scopes in other files added through INCLUDE
                 var k: usize = 0;
-                while (k < s.children.items.len) {
-                    if (s.children.items[k].file_ast != ast) {
-                        _ = s.children.orderedRemove(k);
+                while (k < s.childList().len) {
+                    if (s.childList()[k].file_ast != ast) {
+                        _ = s.scopeData().children.orderedRemove(k);
                     } else k += 1;
                 }
             }
             if (ast.none_scope) |ns| {
                 var k: usize = 0;
-                while (k < ns.children.items.len) {
-                    if (ns.children.items[k].file_ast != ast) {
-                        _ = ns.children.orderedRemove(k);
+                while (k < ns.childList().len) {
+                    if (ns.childList()[k].file_ast != ast) {
+                        _ = ns.scopeData().children.orderedRemove(k);
                     } else k += 1;
                 }
             }
@@ -746,7 +743,7 @@ pub const Server = struct {
             for (ast.include_statements.items) |inc| inc.scope_objs.clearRetainingCapacity();
         }
         for (self.workspace.values()) |f| {
-            if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, null, a);
+            if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try self.includeDirs(a), null, a);
         }
         self.link_version = @mod(self.link_version + 1, 1000);
         var tmp = std.heap.ArenaAllocator.init(self.gpa);
@@ -810,8 +807,8 @@ pub const Server = struct {
 
     fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
         const uri = params.textDocument.uri;
-        const file = (try self.fileFromUri(a, uri)) orelse return json.newArray();
-        const ast = file.ast orelse return json.newArray();
+        const file = (try self.fileFromUri(a, uri)) orelse return .{ .array = .init(a) };
+        const ast = file.ast orelse return .{ .array = .init(a) };
         var out: std.ArrayList(lsp.SymbolInformation) = .empty;
         for (try ast.getScopes(a, null)) |scope| {
             if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
@@ -825,7 +822,7 @@ pub const Server = struct {
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
             try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
             if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
-                for (scope.children.items) |child| {
+                for (scope.childList()) |child| {
                     try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
                 }
             }
@@ -1143,7 +1140,7 @@ pub const Server = struct {
             if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
                 var seen: std.ArrayList([]const u8) = .empty;
                 if (name_replace == null) name_replace = cand.name;
-                for (cand.mems.items) |member| {
+                for (cand.memList()) |member| {
                     const text = (try member.getSnippet(a, name_replace, null)).call orelse "None";
                     var dup = false;
                     for (seen.items) |s| if (std.mem.eql(u8, s, text)) {
@@ -1172,15 +1169,15 @@ pub const Server = struct {
             .file_ast = file_ast,
             .sline = line,
             .eline = line,
-            .desc = desc,
             .fqsn = try std.ascii.allocLowerString(a, name),
+            .data = .{ .variable = .{ .desc = desc } },
         };
         try o.keywords.appendSlice(a, keywords);
         if (file_ast.enc_scope_name) |enc| o.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", try std.ascii.allocLowerString(a, name) });
-        o.callable = R().CLASS_VAR.match(desc) != null;
+        o.varData().callable = R().CLASS_VAR.match(desc) != null;
         if (o.hasKeyword(C.KW.public)) o.vis = .public;
         if (o.hasKeyword(C.KW.private)) o.vis = .private;
-        if (o.hasKeyword(C.KW.parameter)) o.is_const = true;
+        if (o.hasKeyword(C.KW.parameter)) o.varData().is_const = true;
         return o;
     }
 
@@ -1194,6 +1191,8 @@ pub const Server = struct {
         const is_member = var_stack.len > 1;
         const def_name = helpers.expandName(curr_line, def_char);
         if (def_name.len == 0) return null;
+        // On a USE statement, both names of a rename are the module's entity
+        if (try self.useRenameTarget(a, ast, curr_line, def_char, def_name)) |o| return o;
         // Search in Preprocessor defined variables
         if (def_file.pp_defs.get(def_name)) |d| {
             var arg_str: []const u8 = "";
@@ -1265,19 +1264,57 @@ pub const Server = struct {
         return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
     }
 
-    /// The file that the `#include` directive under the cursor names, searched
-    /// in the directory of the including file and in the include directories
-    /// (upstream #498)
-    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
+    /// The module entity that the name at `col` stands for when it is one of
+    /// the two names of a rename on a USE statement, `use m, local => original`
+    /// (hansec #137): the original name is not visible under that name in the
+    /// using scope, and a variable there may even have it.
+    fn useRenameTarget(self: *Server, a: Allocator, ast: *Ast, line: []const u8, col: usize, name: []const u8) !?*Obj {
+        const m = R().USE.match(line) orelse return null;
+        if (col < m.end(0)) return null;
+        var start = @min(col, line.len);
+        while (start > 0 and regex.isWordChar(line[start - 1])) start -= 1;
+        const before = str.rstrip(line[0..start]);
+        var end = start;
+        while (end < line.len and regex.isWordChar(line[end])) end += 1;
+        const after = str.lstrip(line[end..]);
+        const lower = try std.ascii.allocLowerString(a, name);
+        const original = if (std.mem.endsWith(u8, before, "=>"))
+            lower
+        else if (std.mem.startsWith(u8, after, "=>")) blk: {
+            const rest = str.lstrip(after[2..]);
+            var n: usize = 0;
+            while (n < rest.len and regex.isWordChar(rest[n])) n += 1;
+            if (n == 0) return null;
+            break :blk try std.ascii.allocLowerString(a, rest[0..n]);
+        } else return null;
+        const e = self.env(a);
+        const mod = e.global(ast, try std.ascii.allocLowerString(a, m.group(2).?)) orelse return null;
+        return objects.findInScope(e, mod, original, .{});
+    }
+
+    /// The include directories as absolute paths (relative ones are relative
+    /// to the workspace root)
+    fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
+        var dirs: std.ArrayList([]const u8) = .empty;
+        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+        return dirs.items;
+    }
+
+    /// The file that the `#include` directive (or, with `statement`, the
+    /// INCLUDE statement) under the cursor names, searched in the directory
+    /// of the including file and in the include directories (upstream #498,
+    /// #301)
+    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?[]const u8 {
         const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
         const text = file.getLine(params.position.line, false) orelse return null;
-        const m = R().INCLUDE_DIRECTIVE.match(text) orelse return null;
+        const re = if (statement) &R().INCLUDE else &R().INCLUDE_DIRECTIVE;
+        const m = re.match(text) orelse return null;
         const col = toByteCol(file, params.position.line, params.position.character);
         if (col < m.start(1) or col > m.end(1)) return null;
         const name = m.group(1).?;
         var dirs: std.ArrayList([]const u8) = .empty;
         try dirs.append(a, paths.dirname(file.path));
-        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+        try dirs.appendSlice(a, try self.includeDirs(a));
         for (dirs.items) |dir| {
             const candidate = try paths.abspath(a, try paths.join(a, &.{ dir, name }));
             if (paths.isFile(self.io, candidate)) return candidate;
@@ -1286,19 +1323,26 @@ pub const Server = struct {
     }
 
     fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-        if (try self.includeDirectiveTarget(a, params)) |target| {
-            const start: lsp.Position = .{ .line = 0, .character = 0 };
+        const start: lsp.Position = .{ .line = 0, .character = 0 };
+        if (try self.includeDirectiveTarget(a, params, false)) |target| {
             return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
         }
-        const d = (try self.definitionAt(a, params, false)) orelse return .null;
-        if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
+        if (try self.definitionAt(a, params, false)) |d| {
+            if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
+            return .null;
+        }
+        // an INCLUDE statement is its own definition when its file is in the
+        // workspace; open one that is not
+        if (try self.includeDirectiveTarget(a, params, true)) |target| {
+            return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
+        }
         return .null;
     }
 
     /// The subroutine or function that an EXTERNAL declaration stands for: the
     /// global procedure of that name, if there is one (upstream #483, #23)
     fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
-        if (v.kind != .variable or !v.is_external) return null;
+        if (v.kind != .variable or !v.varDataConst().is_external) return null;
         const key = try std.ascii.allocLowerString(a, v.name);
         const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
         return switch (cand.kind) {
@@ -1312,7 +1356,7 @@ pub const Server = struct {
     /// the type of the function, not a variable (upstream #118)
     fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj {
         const v = d.obj;
-        if (v.kind != .variable or v.is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
+        if (v.kind != .variable or v.varData().is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
         if (v.parent) |p| if (p.getType(false) == C.TypeId.class) return null;
         const text = d.file.getLine(d.line, false) orelse return null;
         var end = d.col;
@@ -1333,20 +1377,20 @@ pub const Server = struct {
         if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
             try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
         } else if (vt == C.TypeId.interface) {
-            for (var_obj.mems.items) |member| {
+            for (var_obj.memList()) |member| {
                 const h = try member.getHover(a, true, null);
                 if (h.msg != null) try hover_array.append(a, try self.createHover(a, h.msg, h.docs));
             }
         } else if (vt == C.TypeId.variable) {
-            if (!std.mem.startsWith(u8, var_obj.desc, C.FORTRAN_LITERAL)) {
+            if (!std.mem.startsWith(u8, var_obj.descOf(), C.FORTRAN_LITERAL)) {
                 try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "REAL")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "REAL")) {
                 try hover_array.append(a, try self.createHover(a, "REAL", null));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "INTEGER")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "INTEGER")) {
                 try hover_array.append(a, try self.createHover(a, "INTEGER", null));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "LOGICAL")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "LOGICAL")) {
                 try hover_array.append(a, try self.createHover(a, "LOGICAL", null));
-            } else if (std.mem.endsWith(u8, var_obj.desc, "STRING")) {
+            } else if (std.mem.endsWith(u8, var_obj.descOf(), "STRING")) {
                 const n = str.codepointLen(var_obj.name);
                 try hover_array.append(a, try self.createHover(a, try std.fmt.allocPrint(a, "CHARACTER(LEN={d})", .{@as(i64, @intCast(n)) - 2}), null));
             }
@@ -1371,9 +1415,9 @@ pub const Server = struct {
         }
         const parent = var_obj.parent orelse return .null;
         if (parent.getType(false) == C.TypeId.class) {
-            if (var_obj.link_obj) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);
+            if (var_obj.linkObj()) |impl| if (impl.file_ast.file != null) return self.createRefLink(a, impl);
         } else if (parent.getType(false) == C.TypeId.interface) {
-            if (var_obj.link_obj) |impl| return self.createRefLink(a, impl);
+            if (var_obj.linkObj()) |impl| return self.createRefLink(a, impl);
         }
         return .null;
     }
@@ -1479,6 +1523,17 @@ pub const Server = struct {
         return fun.kind == .function and v.kind == .variable and v.parent == fun and std.ascii.eqlIgnoreCase(v.name, fun.name);
     }
 
+    /// Whether `x` and `y` are the interface and the implementation of the
+    /// same separate module procedure, in either order (hansec #168)
+    fn isSeparateProcedurePair(x: *const Obj, y: *const Obj) bool {
+        return isSeparateInterfaceOf(x, y) or isSeparateInterfaceOf(y, x);
+    }
+
+    fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
+        const p = iface.parent orelse return false;
+        return p.kind == .interface and iface.isModScope() and iface.linkObj() == impl;
+    }
+
     /// Whether the name at `col` is the original name of a renamed import of
     /// `def_obj`, as in `use m, only: local => NAME` where `m` defines it. The
     /// original name is not visible under that name in the importing scope,
@@ -1504,15 +1559,15 @@ pub const Server = struct {
     /// of, if it is one (upstream #52)
     fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?RenamedImport {
         const text = file.getLine(line, false) orelse return null;
-        var it = R().WORD.iterator(text);
+        var it = helpers.words(text);
         const word = while (it.next()) |m| {
-            if (m.start(0) <= col and col <= m.end(0)) break m.str();
+            if (m.start <= col and col <= m.end) break m.str;
         } else return null;
         if (std.ascii.eqlIgnoreCase(word, target.name)) return null;
         const lower = try std.ascii.allocLowerString(a, word);
         var scope = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
         while (true) {
-            for (scope.use.items) |u| {
+            for (scope.scopeData().use.items) |u| {
                 if (!u.is_import and u.rename_map.get(lower) != null) return .{ .alias = lower, .scope = scope, .use_line = u.line_number };
             }
             scope = scope.parent orelse return null;
@@ -1583,7 +1638,9 @@ pub const Server = struct {
                     for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                         in_cache = true;
                     };
-                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def))) {
+                    if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def)) or
+                        isSeparateProcedurePair(def_obj, var_def))
+                    {
                         ref_match = true;
                     } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
                         if (type_mem) {
@@ -1599,13 +1656,13 @@ pub const Server = struct {
                             ref_match = false;
                         } else if (var_def.sline -| 1 == i and var_def.file_ast.path != null and
                             std.mem.eql(u8, var_def.file_ast.path.?, filename) and std.mem.count(u8, line, "=>") == 0 and
-                            var_def.link_obj == def_obj)
+                            var_def.linkObj() == def_obj)
                         {
                             try override_cache.append(a, var_def.fqsn);
                             ref_match = true;
                         }
                     } else if (def_obj.kind.isVariable() and def_obj.getType(true) == C.TypeId.method) {
-                        if (def_obj.link_obj) |l| if (l.parent) |lp| if (var_def.parent) |vp| {
+                        if (def_obj.linkObj()) |l| if (l.parent) |lp| if (var_def.parent) |vp| {
                             if (std.mem.eql(u8, lp.fqsn, vp.fqsn)) {
                                 ref_match = true;
                                 try override_cache.append(a, var_def.fqsn);
@@ -1626,6 +1683,9 @@ pub const Server = struct {
         var restrict: ?*FortranFile = null;
         if (std.mem.count(u8, def_obj.fqsn, ":") > 2) {
             const parent = def_obj.parent orelse return null;
+            // the implementation of a separate module procedure may be in
+            // another file (hansec #168)
+            if (parent.kind == .interface and def_obj.isModScope() and def_obj.linkObj() != null) return .{ .type_mem = false, .restrict = null };
             if (parent.getType(false) == C.TypeId.class) {
                 type_mem = true;
             } else {
@@ -1720,7 +1780,7 @@ pub const Server = struct {
 
     fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
         const res = self.diagnosticsOf(a, uri) catch |e| {
-            self.writeError(a, json.integer(-1), -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
+            self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
             return;
         };
         if (res) |diags| {
@@ -1761,8 +1821,8 @@ pub const Server = struct {
                 self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
                 return .null;
             };
-            for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, path, a);
-            if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, null, a);
+            for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try self.includeDirs(a), path, a);
+            if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, try self.includeDirs(a), null, a);
             // Periodically reclaim memory of replaced ASTs
             if (self.retired.items.len >= 16) try self.fullRelink(a);
         } else if (file.preproc) {

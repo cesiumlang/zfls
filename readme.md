@@ -48,14 +48,23 @@ that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
 from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 (VSCodium and other VS Code derivatives), and the universal one to the
-Marketplace for the platforms without their own. No stored token is needed:
-Open VSX accepts the workflow's OIDC token (trusted publishing), and for the
-Marketplace the workflow signs in with it as a Microsoft Entra managed
-identity that is a member of the publisher (the `AZURE_*` repository
-variables; the "Marketplace identity" workflow shows the ID to add). Until
-the `cesiumlang` Open VSX namespace allows trusted publishing, the job falls
-back to the `OVSX_PAT` repository secret there, with a warning. Versions
-already published are skipped, so a failed publishing job can be re-run.
+Marketplace for the platforms without their own. Each registry has its own
+workflow, which the release job starts and which takes the packages from the
+release: "Publish to the Marketplace" (`.github/workflows/marketplace.yml`)
+signs in with the workflow's OIDC token as a Microsoft Entra managed identity
+that is a member of the publisher (the `AZURE_*` repository variables; the
+"Marketplace identity" workflow shows the ID to add), and "Publish to Open
+VSX" (`.github/workflows/open-vsx.yml`) is the workflow whose OIDC token
+Open VSX trusts for the `cesiumlang` namespace (trusted publishing; the
+`OVSX_PAT` repository secret is used only if that is refused, with a
+warning). No stored token is needed. Either workflow can be run by hand, on
+`main`, for any released version; versions already published are skipped,
+so a failed run can simply be run again.
+
+The extension replaces the Modern Fortran extension (it registers the same
+Fortran languages, grammars and snippets, with zfls instead of fortls) and
+recommends disabling Modern Fortran when both are enabled; see its
+[README](editors/vscode/README.md#replacing-modern-fortran).
 
 To work on it (Node.js 20 or later):
 
@@ -138,7 +147,13 @@ only when its checks pass (an administrator can override that when merging a
 pull request); `main` also takes changes only through pull requests, while
 `dev` takes pushes from maintainers. CI's own push to `dev` after a release
 uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
-lets bypass the checks.
+lets bypass the checks. A separate ruleset keeps `dev` from being deleted,
+with no exceptions, so merging the release pull request does not remove it.
+
+The release notes are generated from the pull requests merged since the last
+release, in sections by label (`.github/release.yml`): `fix`, `feature`,
+`performance`, `tests`, `refactor` and `ci`. `skip-changelog` leaves a pull
+request out, for example the `dev` to `main` pull request of a release.
 
 When a push to `main` passes on every platform, the same archives are
 published on the GitHub releases page and the tested commit is tagged. CI
@@ -183,8 +198,12 @@ zfls deliberately differs from fortls in a few places:
 - Links that would loop (for example type-bound procedures or `ASSOCIATE`
   names that refer to each other while code is being edited) are left
   unresolved; fortls hits a recursion error on them.
-- Go to definition on a preprocessor `#include "file"` opens the file (searched
-  next to the including file and in `include_dirs`); fortls has no answer.
+- Go to definition on a preprocessor `#include "file"`, or on a Fortran
+  `INCLUDE 'file'` whose file is not in the workspace, opens the file
+  (searched next to the including file and in `include_dirs`); fortls has no
+  answer.
+- An `INCLUDE 'file'` statement is also searched in `include_dirs`, as
+  `#include` is; fortls only looks next to the including file.
 - A file that another file `#include`s into a scope sees the names of that scope
   (as for `INCLUDE` statements, but also for files that hold whole procedures);
   fortls reports them as unknown in the included file.
@@ -204,6 +223,22 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- References to (and renames of) a separate module procedure include both
+  its interface and its implementation in a submodule; fortls does not
+  relate the two.
+- A rename without `ONLY` (`use m, local => original`) is read: the local
+  name is the module's entity and the original name is not visible under
+  that name. On the USE line, hover, definition and references on either
+  name reach the module's entity (hansec #137); fortls only reads renames
+  after `ONLY:` and has no answer on the original name.
+- `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
+  submodule (and through it the ancestor module); fortls names it `parent`.
+- Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
+  the last is the innermost, so the names it declares are found; fortls uses
+  the first.
+- The lines of an inactive preprocessor branch inside a continued statement
+  (`REAL &` / `#ifdef X` / `, POINTER &` / `#endif`) are left out of it; fortls
+  joins them, so the declaration gets the attributes of every branch.
 
 ## Licenses
 
