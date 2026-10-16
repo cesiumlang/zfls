@@ -210,6 +210,8 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
+  submodule (and through it the ancestor module); fortls names it `parent`.
 
 ## Licenses
 
