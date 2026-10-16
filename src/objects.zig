@@ -186,6 +186,117 @@ pub const Env = struct {
     }
 };
 
+/// What a scope keeps beyond its children, by kind
+pub const ScopeExt = union(enum) {
+    /// plain scopes, modules, programs, blocks, INCLUDE objects
+    none,
+    submodule: Submodule,
+    procedure: Procedure,
+    type: TypeDef,
+    interface: Interface,
+    associate: Associate,
+    select: Select,
+};
+
+/// A program unit or block: anything that has children (`Scope`)
+pub const Scope = struct {
+    children: std.ArrayList(*Obj) = .empty,
+    members: std.ArrayList([]const u8) = .empty,
+    use: std.ArrayList(*UseStmt) = .empty,
+    inherit: ?[]const u8 = null,
+    contains_start: ?usize = null,
+    implicit_line: ?usize = null,
+    /// Inherited children: of a type from its parent type, of a procedure
+    /// from the submodule prototype it implements
+    in_children: std.ArrayList(*Obj) = .empty,
+    ext: ScopeExt = .none,
+};
+
+pub const Submodule = struct {
+    /// the ancestor module
+    ancestor_name: []const u8 = "",
+    /// the parent submodule, if any: `SUBMODULE (ancestor:parent) name`
+    parent_smod_name: []const u8 = "",
+    /// the parent submodule, or else the ancestor module
+    ancestor_obj: ?*Obj = null,
+};
+
+/// A subroutine or function
+pub const Procedure = struct {
+    args: []const u8 = "",
+    args_snip: []const u8 = "",
+    arg_objs: std.ArrayList(?*Obj) = .empty,
+    missing_args: std.ArrayList(*Obj) = .empty,
+    mod_scope: bool = false,
+    /// The prototype in a submodule's ancestor that this procedure implements
+    link_obj: ?*Obj = null,
+    result_name: ?[]const u8 = null,
+    result_type: ?[]const u8 = null,
+    result_obj: ?*Obj = null,
+    /// Set when `copyInterface` imported data from a submodule prototype
+    linked_from_interface: bool = false,
+};
+
+/// A derived type
+pub const TypeDef = struct {
+    inherit_var: ?*Obj = null,
+    inherit_tmp: ?[]const u8 = null,
+    inherit_version: i64 = -1,
+    abstract: bool = false,
+};
+
+pub const Interface = struct {
+    mems: std.ArrayList(*Obj) = .empty,
+    external: bool = false,
+    abstract: bool = false,
+};
+
+pub const Associate = struct {
+    links: std.ArrayList(AssocLink) = .empty,
+};
+
+pub const Select = struct {
+    select_type: i32 = 0,
+    binding_name: ?[]const u8 = null,
+    bound_var: ?[]const u8 = null,
+    binding_type: ?[]const u8 = null,
+};
+
+/// A variable, or a method (type-bound procedure or procedure pointer)
+pub const Variable = struct {
+    desc: []const u8 = "",
+    vkind: ?[]const u8 = null,
+    type_obj: ?*Obj = null,
+    is_const: bool = false,
+    is_external: bool = false,
+    param_val: ?[]const u8 = null,
+    /// For an ASSOCIATE name bound to an array element or section, `b(:, 1)`:
+    /// the number of dimensions that remain (the sections), else -1
+    slice_rank: i32 = -1,
+    link_name: ?[]const u8 = null,
+    /// What the variable stands for: the procedure of a procedure pointer or
+    /// type-bound procedure, the selector of an ASSOCIATE name
+    link_obj: ?*Obj = null,
+    callable: bool = false,
+    drop_arg: ?usize = null,
+    pass_name: ?[]const u8 = null,
+};
+
+/// A built-in procedure, keyword or statement
+pub const Intrinsic = struct {
+    itype: C.TypeId = .base,
+    args: []const u8 = "",
+};
+
+/// The data of an object: what fortls's `Scope`, `Variable` and
+/// `Intrinsic` classes hold. `Obj.kind` says which; the accessors
+/// (`scope()`, `variable()`, `procedure()`, ...) check it in safe builds.
+pub const Data = union(enum) {
+    scope: Scope,
+    variable: Variable,
+    intrinsic: Intrinsic,
+};
+
 pub const Obj = struct {
     kind: Kind,
     name: []const u8,
@@ -200,75 +311,7 @@ pub const Obj = struct {
     file_ast: *Ast,
     keywords: std.ArrayList(C.Kw) = .empty,
     keyword_info: KeywordInfo = .{},
-
-    // Scope
-    children: std.ArrayList(*Obj) = .empty,
-    members: std.ArrayList([]const u8) = .empty,
-    use: std.ArrayList(*UseStmt) = .empty,
-    inherit: ?[]const u8 = null,
-    contains_start: ?usize = null,
-    implicit_line: ?usize = null,
-
-    // Type
-    in_children: std.ArrayList(*Obj) = .empty,
-    inherit_var: ?*Obj = null,
-    inherit_tmp: ?[]const u8 = null,
-    inherit_version: i64 = -1,
-    abstract: bool = false,
-
-    // Interface
-    mems: std.ArrayList(*Obj) = .empty,
-    external: bool = false,
-
-    // Submodule
-    /// the ancestor module
-    ancestor_name: []const u8 = "",
-    /// the parent submodule, if any: `SUBMODULE (ancestor:parent) name`
-    parent_smod_name: []const u8 = "",
-    /// the parent submodule, or else the ancestor module
-    ancestor_obj: ?*Obj = null,
-
-    // Subroutine / Function
-    args: []const u8 = "",
-    args_snip: []const u8 = "",
-    arg_objs: std.ArrayList(?*Obj) = .empty,
-    missing_args: std.ArrayList(*Obj) = .empty,
-    mod_scope: bool = false,
-    /// Subroutine/Function prototype link, Variable/Method link
-    link_obj: ?*Obj = null,
-    result_name: ?[]const u8 = null,
-    result_type: ?[]const u8 = null,
-    result_obj: ?*Obj = null,
-
-    // Associate
-    links: std.ArrayList(AssocLink) = .empty,
-
-    // Select
-    select_type: i32 = 0,
-    binding_name: ?[]const u8 = null,
-    bound_var: ?[]const u8 = null,
-    binding_type: ?[]const u8 = null,
-
-    // Variable / Method
-    desc: []const u8 = "",
-    vkind: ?[]const u8 = null,
-    type_obj: ?*Obj = null,
-    is_const: bool = false,
-    is_external: bool = false,
-    param_val: ?[]const u8 = null,
-    /// For an ASSOCIATE name bound to an array element or section, `b(:, 1)`:
-    /// the number of dimensions that remain (the sections), else -1
-    slice_rank: i32 = -1,
-    link_name: ?[]const u8 = null,
-    callable: bool = false,
-    drop_arg: ?usize = null,
-    pass_name: ?[]const u8 = null,
-
-    // Intrinsic
-    itype: C.TypeId = .base,
-
-    /// Set when `copyInterface` imported data from a submodule prototype
-    linked_from_interface: bool = false,
+    data: Data,
 
     /// Allocator owning this object's persistent data
     pub fn al(self: *const Obj) Allocator {
@@ -284,6 +327,161 @@ pub const Obj = struct {
     }
 
     // ------------------------------------------------------------------
+    // Data by kind
+
+    pub fn scopeData(self: *Obj) *Scope {
+        return &self.data.scope;
+    }
+
+    pub fn scopeDataConst(self: *const Obj) *const Scope {
+        return &self.data.scope;
+    }
+
+    pub fn varData(self: *Obj) *Variable {
+        return &self.data.variable;
+    }
+
+    pub fn varDataConst(self: *const Obj) *const Variable {
+        return &self.data.variable;
+    }
+
+    pub fn intrinsicData(self: *const Obj) *const Intrinsic {
+        return &self.data.intrinsic;
+    }
+
+    /// The procedure data of a subroutine or function
+    pub fn procData(self: *Obj) *Procedure {
+        return &self.data.scope.ext.procedure;
+    }
+
+    pub fn procDataConst(self: *const Obj) *const Procedure {
+        return &self.data.scope.ext.procedure;
+    }
+
+    pub fn typeData(self: *Obj) *TypeDef {
+        return &self.data.scope.ext.type;
+    }
+
+    pub fn typeDataConst(self: *const Obj) *const TypeDef {
+        return &self.data.scope.ext.type;
+    }
+
+    pub fn ifaceData(self: *Obj) *Interface {
+        return &self.data.scope.ext.interface;
+    }
+
+    pub fn ifaceDataConst(self: *const Obj) *const Interface {
+        return &self.data.scope.ext.interface;
+    }
+
+    pub fn submodData(self: *Obj) *Submodule {
+        return &self.data.scope.ext.submodule;
+    }
+
+    pub fn submodDataConst(self: *const Obj) *const Submodule {
+        return &self.data.scope.ext.submodule;
+    }
+
+    pub fn assocData(self: *Obj) *Associate {
+        return &self.data.scope.ext.associate;
+    }
+
+    pub fn assocDataConst(self: *const Obj) *const Associate {
+        return &self.data.scope.ext.associate;
+    }
+
+    pub fn selectData(self: *Obj) *Select {
+        return &self.data.scope.ext.select;
+    }
+
+    pub fn selectDataConst(self: *const Obj) *const Select {
+        return &self.data.scope.ext.select;
+    }
+
+    /// The children of a scope; none for a variable or intrinsic
+    pub fn childList(self: *const Obj) []*Obj {
+        return switch (self.data) {
+            .scope => |s| s.children.items,
+            else => &.{},
+        };
+    }
+
+    /// The members of an interface (its procedures); none for other objects
+    pub fn memList(self: *const Obj) []*Obj {
+        if (self.kind != .interface) return &.{};
+        return self.data.scope.ext.interface.mems.items;
+    }
+
+    /// The procedure data, when the object is a subroutine or function
+    pub fn procDataOpt(self: *Obj) ?*Procedure {
+        return switch (self.data) {
+            .scope => |*s| switch (s.ext) {
+                .procedure => |*p| p,
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    pub fn procDataOptConst(self: *const Obj) ?*const Procedure {
+        return switch (self.data) {
+            .scope => |*s| switch (s.ext) {
+                .procedure => |*p| p,
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    /// The variable data, when the object is a variable or method
+    pub fn varDataOpt(self: *Obj) ?*Variable {
+        return switch (self.data) {
+            .variable => |*v| v,
+            else => null,
+        };
+    }
+
+    pub fn varDataOptConst(self: *const Obj) ?*const Variable {
+        return switch (self.data) {
+            .variable => |*v| v,
+            else => null,
+        };
+    }
+
+    /// `link_obj` of a procedure (its prototype) or a variable (what it
+    /// stands for); null for other objects
+    pub fn linkObj(self: *const Obj) ?*Obj {
+        return switch (self.data) {
+            .scope => |s| switch (s.ext) {
+                .procedure => |p| p.link_obj,
+                else => null,
+            },
+            .variable => |v| v.link_obj,
+            .intrinsic => null,
+        };
+    }
+
+    /// The argument list of a procedure or intrinsic, "" for others
+    pub fn argList(self: *const Obj) []const u8 {
+        return switch (self.data) {
+            .scope => |s| switch (s.ext) {
+                .procedure => |p| p.args,
+                else => "",
+            },
+            .intrinsic => |i| i.args,
+            .variable => "",
+        };
+    }
+
+    /// The `desc` of a variable or method, "" for others
+    pub fn descOf(self: *const Obj) []const u8 {
+        return switch (self.data) {
+            .variable => |v| v.desc,
+            else => "",
+        };
+    }
+
+    // ------------------------------------------------------------------
     // Construction
 
     fn computeFqsn(a: Allocator, file_ast: *Ast, name: []const u8) ![]const u8 {
@@ -294,8 +492,30 @@ pub const Obj = struct {
         return lname;
     }
 
+    /// The scope data a new object of `kind` starts with
+    fn scopeExtFor(kind: Kind) ScopeExt {
+        return switch (kind) {
+            .submodule => .{ .submodule = .{} },
+            .subroutine, .function => .{ .procedure = .{} },
+            .type => .{ .type = .{} },
+            .interface => .{ .interface = .{} },
+            .associate => .{ .associate = .{} },
+            .select => .{ .select = .{} },
+            else => .none,
+        };
+    }
+
+    /// Turn a plain scope into a subroutine or function in place (a
+    /// MODULE PROCEDURE implementing a prototype), keeping its children
+    pub fn becomeProcedure(self: *Obj, kind: Kind) void {
+        std.debug.assert(kind == .subroutine or kind == .function);
+        self.kind = kind;
+        if (self.data.scope.ext != .procedure) self.data.scope.ext = .{ .procedure = .{} };
+    }
+
     /// Create a Scope-derived object (`Scope.__init__`)
     pub fn newScope(file_ast: *Ast, kind: Kind, line_number: usize, name: []const u8, keywords: []const C.Kw) !*Obj {
+        std.debug.assert(kind.isScope());
         const a = file_ast.allocator();
         const o = try a.create(Obj);
         const nm = try a.dupe(u8, name);
@@ -306,15 +526,15 @@ pub const Obj = struct {
             .sline = line_number,
             .eline = line_number,
             .fqsn = try computeFqsn(a, file_ast, nm),
+            .data = .{ .scope = .{ .ext = scopeExtFor(kind) } },
         };
         try o.keywords.appendSlice(a, keywords);
         switch (kind) {
             .type => {
-                o.abstract = o.hasKeyword(KW.abstract);
+                o.typeData().abstract = o.hasKeyword(KW.abstract);
                 if (o.hasKeyword(KW.public)) o.vis = .public;
                 if (o.hasKeyword(KW.private)) o.vis = .private;
             },
-            .interface => {},
             else => {},
         }
         return o;
@@ -322,24 +542,25 @@ pub const Obj = struct {
 
     pub fn newInterface(file_ast: *Ast, line_number: usize, name: []const u8, abstract: bool) !*Obj {
         const o = try newScope(file_ast, .interface, line_number, name, &.{});
-        o.abstract = abstract;
-        o.external = std.mem.startsWith(u8, name, "#GEN_INT") and !abstract;
+        o.ifaceData().abstract = abstract;
+        o.ifaceData().external = std.mem.startsWith(u8, name, "#GEN_INT") and !abstract;
         return o;
     }
 
     pub fn newSubmodule(file_ast: *Ast, line_number: usize, name: []const u8, ancestor_name: []const u8, parent_smod_name: []const u8) !*Obj {
         const o = try newScope(file_ast, .submodule, line_number, name, &.{});
-        o.ancestor_name = try o.al().dupe(u8, ancestor_name);
-        o.parent_smod_name = try o.al().dupe(u8, parent_smod_name);
+        o.submodData().ancestor_name = try o.al().dupe(u8, ancestor_name);
+        o.submodData().parent_smod_name = try o.al().dupe(u8, parent_smod_name);
         return o;
     }
 
     pub fn newSubroutine(file_ast: *Ast, line_number: usize, name: []const u8, args: []const u8, mod_flag: bool, keywords: []const C.Kw) !*Obj {
         const o = try newScope(file_ast, .subroutine, line_number, name, keywords);
         const a = o.al();
-        o.args = try std.mem.replaceOwned(u8, a, args, " ", "");
-        o.args_snip = o.args;
-        o.mod_scope = mod_flag;
+        const p = o.procData();
+        p.args = try std.mem.replaceOwned(u8, a, args, " ", "");
+        p.args_snip = p.args;
+        p.mod_scope = mod_flag;
         return o;
     }
 
@@ -355,31 +576,33 @@ pub const Obj = struct {
     pub fn newFunction(file_ast: *Ast, line_number: usize, name: []const u8, opts: FunOpts) !*Obj {
         const o = try newScope(file_ast, .function, line_number, name, opts.keywords);
         const a = o.al();
-        o.args = try std.ascii.allocLowerString(a, try std.mem.replaceOwned(u8, a, opts.args, " ", ""));
-        o.args_snip = o.args;
-        o.mod_scope = opts.mod_flag;
-        o.result_name = try str.dupeOpt(a, opts.result_name);
-        o.result_type = try str.dupeOpt(a, opts.result_type);
+        const p = o.procData();
+        p.args = try std.ascii.allocLowerString(a, try std.mem.replaceOwned(u8, a, opts.args, " ", ""));
+        p.args_snip = p.args;
+        p.mod_scope = opts.mod_flag;
+        p.result_name = try str.dupeOpt(a, opts.result_name);
+        p.result_type = try str.dupeOpt(a, opts.result_type);
         o.keyword_info = try opts.keyword_info.dupe(a);
-        if (o.result_name == null) o.result_name = o.name;
+        if (p.result_name == null) p.result_name = o.name;
         return o;
     }
 
     pub fn newSelect(file_ast: *Ast, line_number: usize, name: []const u8, info: parser.SelectInfo) !*Obj {
         const o = try newScope(file_ast, .select, line_number, name, &.{});
         const a = o.al();
-        o.select_type = info.type;
-        if (o.select_type == 2) {
+        const sel = o.selectData();
+        sel.select_type = info.type;
+        if (sel.select_type == 2) {
             const binding = info.binding orelse "";
             const parts = try str.split(a, binding, "=>");
             if (parts.len == 1) {
-                o.bound_var = try a.dupe(u8, str.strip(parts[0]));
+                sel.bound_var = try a.dupe(u8, str.strip(parts[0]));
             } else if (parts.len == 2) {
-                o.binding_name = try a.dupe(u8, str.strip(parts[0]));
-                o.bound_var = try a.dupe(u8, str.strip(parts[1]));
+                sel.binding_name = try a.dupe(u8, str.strip(parts[0]));
+                sel.bound_var = try a.dupe(u8, str.strip(parts[1]));
             }
-        } else if (o.select_type == 3) {
-            o.binding_type = try str.dupeOpt(a, info.binding);
+        } else if (sel.select_type == 3) {
+            sel.binding_type = try str.dupeOpt(a, info.binding);
         }
         // Close previous "TYPE IS" region if open
         if (file_ast.current_scope) |cs| {
@@ -407,18 +630,21 @@ pub const Obj = struct {
             .file_ast = file_ast,
             .sline = line_number,
             .eline = line_number,
-            .desc = try a.dupe(u8, var_desc),
             .keyword_info = try opts.keyword_info.dupe(a),
-            .vkind = try str.dupeOpt(a, opts.kind),
             .fqsn = try computeFqsn(a, file_ast, nm),
+            .data = .{ .variable = .{
+                .desc = try a.dupe(u8, var_desc),
+                .vkind = try str.dupeOpt(a, opts.kind),
+            } },
         };
         try o.keywords.appendSlice(a, keywords);
-        o.callable = R().CLASS_VAR.match(try o.getDescNoLink(a)) != null;
-        if (opts.link_obj) |l| o.link_name = try std.ascii.allocLowerString(a, l);
+        const v = o.varData();
+        v.callable = R().CLASS_VAR.match(try o.getDescNoLink(a)) != null;
+        if (opts.link_obj) |l| v.link_name = try std.ascii.allocLowerString(a, l);
         if (o.hasKeyword(KW.public)) o.vis = .public;
         if (o.hasKeyword(KW.private)) o.vis = .private;
-        if (o.hasKeyword(KW.parameter)) o.is_const = true;
-        if (o.hasKeyword(KW.external) or std.ascii.eqlIgnoreCase(o.desc, "external")) o.is_external = true;
+        if (o.hasKeyword(KW.parameter)) v.is_const = true;
+        if (o.hasKeyword(KW.external) or std.ascii.eqlIgnoreCase(v.desc, "external")) v.is_external = true;
         return o;
     }
 
@@ -431,11 +657,12 @@ pub const Obj = struct {
         });
         const a = o.al();
         o.kind = .method;
-        o.drop_arg = null;
-        o.pass_name = o.keyword_info.pass;
+        const v = o.varData();
+        v.drop_arg = null;
+        v.pass_name = o.keyword_info.pass;
         if (link_obj == null) {
             const d = try std.ascii.allocLowerString(a, try o.getDescNoLink(a));
-            if (helpers.getParenSubstring(d)) |sub| o.link_name = sub else o.link_name = null;
+            if (helpers.getParenSubstring(d)) |sub| v.link_name = sub else v.link_name = null;
         }
         return o;
     }
@@ -447,10 +674,12 @@ pub const Obj = struct {
             .kind = .intrinsic,
             .name = try a.dupe(u8, name),
             .file_ast = file_ast,
-            .itype = itype,
             .doc_str = try str.dupeOpt(a, doc_str),
-            .args = try std.mem.replaceOwned(u8, a, args, " ", ""),
             .fqsn = "",
+            .data = .{ .intrinsic = .{
+                .itype = itype,
+                .args = try std.mem.replaceOwned(u8, a, args, " ", ""),
+            } },
         };
         return o;
     }
@@ -474,17 +703,17 @@ pub const Obj = struct {
             .if_ => C.TypeId.if_,
             .associate => C.TypeId.assoc,
             .enum_ => C.TypeId.enum_,
-            .variable => if (self.link_obj) |l| l.getType(false) else C.TypeId.variable,
-            .method => if (!no_link and self.link_obj != null) self.link_obj.?.getType(false) else C.TypeId.method,
-            .intrinsic => self.itype,
+            .variable => if (self.linkObj()) |l| l.getType(false) else C.TypeId.variable,
+            .method => if (!no_link and self.linkObj() != null) self.linkObj().?.getType(false) else C.TypeId.method,
+            .intrinsic => self.intrinsicData().itype,
         };
     }
 
     /// Variable description without following links (`get_desc(True)`)
     pub fn getDescNoLink(self: *const Obj, a: Allocator) ![]const u8 {
         if (self.kind.isVariable()) {
-            if (self.vkind) |k| if (k.len > 0) return std.mem.concat(a, u8, &.{ self.desc, k });
-            return self.desc;
+            if (self.varDataConst().vkind) |k| if (k.len > 0) return std.mem.concat(a, u8, &.{ self.varDataConst().desc, k });
+            return self.varDataConst().desc;
         }
         return self.getDesc(a);
     }
@@ -497,7 +726,7 @@ pub const Obj = struct {
             .program => "PROGRAM",
             .submodule => "SUBMODULE",
             .subroutine => "SUBROUTINE",
-            .function => if (self.result_type) |rt| (if (rt.len > 0) try std.mem.concat(a, u8, &.{ rt, " FUNCTION" }) else "FUNCTION") else "FUNCTION",
+            .function => if (self.procDataConst().result_type) |rt| (if (rt.len > 0) try std.mem.concat(a, u8, &.{ rt, " FUNCTION" }) else "FUNCTION") else "FUNCTION",
             .type => "TYPE",
             .interface => "INTERFACE",
             .block => "BLOCK",
@@ -507,8 +736,8 @@ pub const Obj = struct {
             .enum_ => "ENUM",
             .associate => "ASSOCIATE",
             .select => "SELECT",
-            .variable, .method => if (self.link_obj) |l| l.getDesc(a) else self.getDescNoLink(a),
-            .intrinsic => switch (self.itype) {
+            .variable, .method => if (self.linkObj()) |l| l.getDesc(a) else self.getDescNoLink(a),
+            .intrinsic => switch (self.intrinsicData().itype) {
                 .subroutine => "SUBROUTINE",
                 C.keyword_itype => "KEYWORD",
                 C.statement_itype => "STATEMENT",
@@ -522,15 +751,15 @@ pub const Obj = struct {
             .variable, .method, .intrinsic => return &.{},
             .type, .subroutine, .function => {
                 var out: std.ArrayList(*Obj) = .empty;
-                try out.appendSlice(a, self.children.items);
-                try out.appendSlice(a, self.in_children.items);
+                try out.appendSlice(a, self.childList());
+                try out.appendSlice(a, self.scopeDataConst().in_children.items);
                 return out.items;
             },
-            .block, .do_, .if_, .where, .enum_, .associate, .select => return a.dupe(*Obj, self.children.items),
+            .block, .do_, .if_, .where, .enum_, .associate, .select => return a.dupe(*Obj, self.childList()),
             else => {
-                if (!public_only) return a.dupe(*Obj, self.children.items);
+                if (!public_only) return a.dupe(*Obj, self.childList());
                 var out: std.ArrayList(*Obj) = .empty;
-                for (self.children.items) |child| {
+                for (self.childList()) |child| {
                     if (child.vis == .private or (self.def_vis == .private and child.vis != .public)) continue;
                     try out.append(a, child);
                 }
@@ -546,7 +775,7 @@ pub const Obj = struct {
         var out: std.ArrayList(*Obj) = .empty;
         var cur = self;
         while (cur.kind == .submodule) {
-            const anc = cur.ancestor_obj orelse break;
+            const anc = cur.submodDataConst().ancestor_obj orelse break;
             // submodules that name each other while code is being edited
             for (out.items) |o| if (o == anc) return out.items;
             if (anc == self) break;
@@ -559,11 +788,12 @@ pub const Obj = struct {
     /// The scope a submodule extends: its parent submodule, if that is a
     /// submodule of the same module, or else its ancestor module
     fn findSubmoduleParent(self: *const Obj, env: Env) ?*Obj {
-        if (self.parent_smod_name.len > 0) if (env.global(self.file_ast, self.parent_smod_name)) |p| {
-            if (p != self and p.kind == .submodule and std.mem.eql(u8, p.ancestor_name, self.ancestor_name)) return p;
+        const sm = self.submodDataConst();
+        if (sm.parent_smod_name.len > 0) if (env.global(self.file_ast, sm.parent_smod_name)) |p| {
+            if (p != self and p.kind == .submodule and std.mem.eql(u8, p.submodData().ancestor_name, sm.ancestor_name)) return p;
         };
-        if (self.ancestor_name.len == 0) return null;
-        return env.global(self.file_ast, self.ancestor_name);
+        if (sm.ancestor_name.len == 0) return null;
+        return env.global(self.file_ast, sm.ancestor_name);
     }
 
     pub fn setParent(self: *Obj, parent_obj: ?*Obj) void {
@@ -571,16 +801,16 @@ pub const Obj = struct {
         if (self.kind == .method) {
             const p = parent_obj orelse return;
             if (p.getType(false) == C.TypeId.class) {
-                if (!self.hasKeyword(KW.nopass)) self.drop_arg = 0;
-                if (p.contains_start != null and self.sline > p.contains_start.? and self.link_name == null) {
-                    self.link_name = std.ascii.allocLowerString(self.al(), self.name) catch self.name;
+                if (!self.hasKeyword(KW.nopass)) self.varData().drop_arg = 0;
+                if (p.scopeData().contains_start != null and self.sline > p.scopeData().contains_start.? and self.varData().link_name == null) {
+                    self.varData().link_name = std.ascii.allocLowerString(self.al(), self.name) catch self.name;
                 }
             }
         }
     }
 
     pub fn addChild(self: *Obj, child: *Obj) !void {
-        try self.children.append(self.al(), child);
+        try self.scopeData().children.append(self.al(), child);
         child.setParent(self);
     }
 
@@ -593,7 +823,7 @@ pub const Obj = struct {
         } else {
             self.fqsn = lname;
         }
-        for (self.children.items) |child| try child.updateFqsn(self.fqsn);
+        for (self.childList()) |child| try child.updateFqsn(self.fqsn);
     }
 
     pub fn end(self: *Obj, line_number: usize) void {
@@ -606,25 +836,25 @@ pub const Obj = struct {
 
     pub fn setImplicit(self: *Obj, flag: bool, line_number: usize) void {
         self.implicit_vars = flag;
-        self.implicit_line = line_number;
+        self.scopeData().implicit_line = line_number;
     }
 
     pub fn markContains(self: *Obj, line_number: usize) error{MultipleContains}!void {
-        if (self.contains_start != null) return error.MultipleContains;
-        self.contains_start = line_number;
+        if (self.scopeData().contains_start != null) return error.MultipleContains;
+        self.scopeData().contains_start = line_number;
     }
 
     pub fn isTypeRegion(self: *const Obj) bool {
-        return self.kind == .select and (self.select_type == 3 or self.select_type == 4);
+        return self.kind == .select and (self.selectDataConst().select_type == 3 or self.selectDataConst().select_type == 4);
     }
 
     pub fn isTypeBinding(self: *const Obj) bool {
-        return self.kind == .select and self.select_type == 2;
+        return self.kind == .select and self.selectDataConst().select_type == 2;
     }
 
     pub fn getDocumentation(self: *const Obj) ?[]const u8 {
         if (self.kind == .method) {
-            if (self.link_obj) |l| if (self.doc_str == null) return l.getDocumentation();
+            if (self.linkObj()) |l| if (self.doc_str == null) return l.getDocumentation();
         }
         return self.doc_str;
     }
@@ -641,25 +871,25 @@ pub const Obj = struct {
     }
 
     pub fn isModScope(self: *const Obj) bool {
-        return self.kind.isSubroutine() and self.mod_scope;
+        return self.kind.isSubroutine() and self.procDataConst().mod_scope;
     }
 
     pub fn isCallable(self: *const Obj) bool {
         return switch (self.kind) {
             .interface, .subroutine, .method => true,
             .function => false,
-            .variable => self.callable,
-            .intrinsic => self.itype == .subroutine,
+            .variable => self.varDataConst().callable,
+            .intrinsic => self.intrinsicData().itype == .subroutine,
             else => false,
         };
     }
 
     pub fn isExternalInt(self: *const Obj) bool {
-        return self.kind == .interface and self.external;
+        return self.kind == .interface and self.ifaceDataConst().external;
     }
 
     pub fn isAbstract(self: *const Obj) bool {
-        return self.kind == .interface and self.abstract;
+        return self.kind == .interface and self.ifaceDataConst().abstract;
     }
 
     pub fn reqNamedEnd(self: *const Obj) bool {
@@ -667,12 +897,12 @@ pub const Obj = struct {
     }
 
     pub fn isParameter(self: *const Obj) bool {
-        return self.is_const;
+        return self.varDataConst().is_const;
     }
 
     pub fn setExternalAttr(self: *Obj) !void {
         try self.keywords.append(self.al(), KW.external);
-        self.is_external = true;
+        self.varData().is_external = true;
     }
 
     pub fn checkValidParent(self: *const Obj) bool {
@@ -700,7 +930,7 @@ pub const Obj = struct {
 
     pub fn requireLink(self: *const Obj) bool {
         return switch (self.kind) {
-            .variable, .method => self.link_name != null,
+            .variable, .method => self.varDataConst().link_name != null,
             .interface, .subroutine, .function, .submodule, .associate => true,
             else => false,
         };
@@ -715,19 +945,19 @@ pub const Obj = struct {
         switch (self.kind) {
             .variable => {
                 const name = name_replace orelse self.name;
-                if (self.link_obj) |l| return l.getSnippet(a, name, drop_arg);
+                if (self.linkObj()) |l| return l.getSnippet(a, name, drop_arg);
                 return .{};
             },
             .method => {
-                if (self.link_obj) |l| {
+                if (self.linkObj()) |l| {
                     const name = name_replace orelse self.name;
-                    return l.getSnippet(a, name, self.drop_arg);
+                    return l.getSnippet(a, name, self.varDataConst().drop_arg);
                 }
                 return .{};
             },
             .subroutine, .function => {
                 var arg_list: std.ArrayList([]const u8) = .empty;
-                try arg_list.appendSlice(a, try str.split(a, self.args_snip, ","));
+                try arg_list.appendSlice(a, try str.split(a, self.procDataConst().args_snip, ","));
                 if (drop_arg) |d| if (d < arg_list.items.len) {
                     _ = arg_list.orderedRemove(d);
                 };
@@ -747,11 +977,11 @@ pub const Obj = struct {
             .intrinsic => {
                 var arg_str: []const u8 = undefined;
                 var arg_snip: ?[]const u8 = null;
-                if (self.args.len == 0) {
-                    if (self.itype == C.keyword_itype or self.itype == C.statement_itype) return .{};
+                if (self.argList().len == 0) {
+                    if (self.intrinsicData().itype == C.keyword_itype or self.intrinsicData().itype == C.statement_itype) return .{};
                     arg_str = "()";
                 } else {
-                    const ph = try helpers.getPlaceholders(a, try str.split(a, self.args, ","));
+                    const ph = try helpers.getPlaceholders(a, try str.split(a, self.argList(), ","));
                     arg_str = ph[0];
                     arg_snip = ph[1];
                 }
@@ -776,8 +1006,8 @@ pub const Obj = struct {
             .type => {
                 var kws: std.ArrayList([]const u8) = .empty;
                 try kws.append(a, "TYPE");
-                if (self.abstract) try kws.append(a, "ABSTRACT");
-                if (self.inherit) |inh| if (inh.len > 0) try kws.append(a, try std.fmt.allocPrint(a, "EXTENDS({s})", .{inh}));
+                if (self.typeDataConst().abstract) try kws.append(a, "ABSTRACT");
+                if (self.scopeDataConst().inherit) |inh| if (inh.len > 0) try kws.append(a, try std.fmt.allocPrint(a, "EXTENDS({s})", .{inh}));
                 const decl = try std.mem.join(a, ", ", kws.items);
                 return .{ .msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ decl, self.name }), .docs = self.getDocumentation() };
             },
@@ -796,8 +1026,9 @@ pub const Obj = struct {
                 };
             },
             .function => {
+                const proc = self.procDataConst();
                 var fun_sig = (try self.getSnippet(a, null, drop_arg)).call.?;
-                if (long) fun_sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ fun_sig, self.result_name orelse self.name });
+                if (long) fun_sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ fun_sig, proc.result_name orelse self.name });
                 var kw: std.ArrayList([]const u8) = .empty;
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "FUNCTION");
@@ -805,15 +1036,15 @@ pub const Obj = struct {
                 try hover_array.append(a, try std.fmt.allocPrint(a, "{s} {s}", .{ try std.mem.join(a, " ", kw.items), fun_sig }));
                 var docs: std.ArrayList([]const u8) = .empty;
                 try self.getDocsFull(a, &hover_array, &docs, long, drop_arg);
-                if (self.result_obj != null and long) {
-                    const ro = self.result_obj.?;
+                if (proc.result_obj != null and long) {
+                    const ro = proc.result_obj.?;
                     const h = try ro.getHover(a, false, null);
                     if (h.docs) |d| {
                         try docs.append(a, try std.fmt.allocPrint(a, "\n**Return:**  \n`{s}`{s}", .{ ro.name, d }));
                     }
                     try hover_array.append(a, h.msg orelse "None");
-                } else if (self.result_type != null and self.result_type.?.len > 0 and long) {
-                    hover_array.items[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ self.result_type.?, hover_array.items[0] });
+                } else if (proc.result_type != null and proc.result_type.?.len > 0 and long) {
+                    hover_array.items[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ proc.result_type.?, hover_array.items[0] });
                 }
                 return .{
                     .msg = try std.mem.join(a, "\n ", hover_array.items),
@@ -827,7 +1058,7 @@ pub const Obj = struct {
                 try parts.appendSlice(a, try self.getKeywordStrings(a));
                 var hover = try std.mem.join(a, ", ", parts.items);
                 if (!std.mem.startsWith(u8, hover, "#")) hover = try std.fmt.allocPrint(a, "{s} :: {s}", .{ hover, self.name });
-                if (self.isParameter()) if (self.param_val) |pv| {
+                if (self.isParameter()) if (self.varDataConst().param_val) |pv| {
                     hover = try std.fmt.allocPrint(a, "{s} = {s}", .{ hover, pv });
                 };
                 return .{ .msg = hover, .docs = doc_str };
@@ -835,8 +1066,8 @@ pub const Obj = struct {
             .method => {
                 var docs = self.getDocumentation();
                 var hover_str: []const u8 = undefined;
-                if (self.link_obj) |l| {
-                    const lh = try l.getHover(a, true, self.drop_arg);
+                if (self.linkObj()) |l| {
+                    const lh = try l.getHover(a, true, self.varDataConst().drop_arg);
                     const link_msg = lh.msg orelse "None";
                     hover_str = try str.replaceFirst(a, link_msg, l.name, self.name);
                     if (lh.docs) |link_docs| {
@@ -863,18 +1094,18 @@ pub const Obj = struct {
     }
 
     pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
-        if (self.link_obj) |l| {
-            if (self.slice_rank >= 0 and l.kind == .variable) {
+        if (self.linkObj()) |l| {
+            if (self.varDataConst().slice_rank >= 0 and l.kind == .variable) {
                 // a name bound to a section has the rank of the section, not
                 // of the array it is cut from (upstream #108)
                 var ids: std.ArrayList(C.Kw) = .empty;
                 for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
                 var info = l.keyword_info;
                 info.dimension = null;
-                if (self.slice_rank > 0) {
+                if (self.varDataConst().slice_rank > 0) {
                     try ids.append(a, KW.dimension);
                     var dims: std.ArrayList(u8) = .empty;
-                    for (0..@as(usize, @intCast(self.slice_rank))) |i| {
+                    for (0..@as(usize, @intCast(self.varDataConst().slice_rank))) |i| {
                         if (i > 0) try dims.append(a, ',');
                         try dims.append(a, ':');
                     }
@@ -892,7 +1123,7 @@ pub const Obj = struct {
         if (!long) return;
         var has_args = true;
         var in_list = false;
-        for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
+        for (self.procDataConst().arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse continue;
             if (i == drop_arg) continue;
             const h = try arg_obj.getHover(a, false, null);
@@ -927,8 +1158,8 @@ pub const Obj = struct {
         switch (self.kind) {
             .subroutine, .function => {
                 var arg_sigs: std.ArrayList(ArgSig) = .empty;
-                const arg_list = try str.split(a, self.args, ",");
-                for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
+                const arg_list = try str.split(a, self.argList(), ",");
+                for (self.procDataConst().arg_objs.items, 0..) |arg_obj_opt, i| {
                     if (i == drop_arg) continue;
                     if (arg_obj_opt) |arg_obj| {
                         const lname = try std.ascii.allocLowerString(a, arg_obj.name);
@@ -942,16 +1173,16 @@ pub const Obj = struct {
                 return .{ .label = sig.call, .doc = self.getDocumentation(), .params = arg_sigs.items };
             },
             .method => {
-                if (self.link_obj) |l| {
+                if (self.linkObj()) |l| {
                     const sig = try self.getSnippet(a, null, null);
-                    const ls = try l.getSignature(a, self.drop_arg);
+                    const ls = try l.getSignature(a, self.varDataConst().drop_arg);
                     return .{ .label = sig.call, .doc = self.getDocumentation(), .params = ls.params };
                 }
                 return .{};
             },
             .intrinsic => {
                 var arg_sigs: std.ArrayList(ArgSig) = .empty;
-                for (try str.split(a, self.args, ",")) |arg| try arg_sigs.append(a, .{ .label = arg });
+                for (try str.split(a, self.argList(), ",")) |arg| try arg_sigs.append(a, .{ .label = arg });
                 const sig = try self.getSnippet(a, null, null);
                 return .{ .label = sig.call, .doc = self.doc_str, .params = arg_sigs.items };
             },
@@ -962,7 +1193,7 @@ pub const Obj = struct {
     fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {
         var arr: std.ArrayList([]const u8) = .empty;
         try arr.append(a, try std.mem.concat(a, u8, &.{ try std.mem.join(a, " ", keywords), signature }));
-        for (self.arg_objs.items, 0..) |arg_obj_opt, i| {
+        for (self.procDataConst().arg_objs.items, 0..) |arg_obj_opt, i| {
             const arg_obj = arg_obj_opt orelse return null;
             const h = try arg_obj.getHover(a, false, null);
             var arg_doc = h.msg orelse "None";
@@ -992,13 +1223,13 @@ pub const Obj = struct {
             },
             .function => {
                 var sig = (try self.getSnippet(a, name_replace, null)).call.?;
-                sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ sig, self.result_name orelse self.name });
+                sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ sig, self.procDataConst().result_name orelse self.name });
                 var kw: std.ArrayList([]const u8) = .empty;
-                if (self.result_type) |rt| if (rt.len > 0) try kw.append(a, rt);
+                if (self.procDataConst().result_type) |rt| if (rt.len > 0) try kw.append(a, rt);
                 try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
                 try kw.append(a, "FUNCTION ");
                 var arr = (try self.getInterfaceArray(a, kw.items, sig, drop_arg, change_strings)) orelse return null;
-                if (self.result_obj) |ro| {
+                if (self.procDataConst().result_obj) |ro| {
                     const h = try ro.getHover(a, false, null);
                     try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ h.msg orelse "None", ro.name }));
                 }
@@ -1007,7 +1238,7 @@ pub const Obj = struct {
                 return try std.mem.join(a, "\n", arr.items);
             },
             .method => {
-                if (self.link_obj) |l| return l.getInterface(a, name_replace, self.drop_arg, change_strings);
+                if (self.linkObj()) |l| return l.getInterface(a, name_replace, self.varDataConst().drop_arg, change_strings);
                 return null;
             },
             else => return null,
@@ -1020,33 +1251,35 @@ pub const Obj = struct {
     pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Error!void {
         switch (self.kind) {
             .type => {
-                if (self.inherit == null or self.inherit_version == inherit_version) return;
-                self.inherit_version = inherit_version;
-                self.inherit_var = try findInScope(env, self.parent, self.inherit.?, .{});
-                if (self.inherit_var) |iv| {
+                const sc = self.scopeData();
+                const td = self.typeData();
+                if (sc.inherit == null or td.inherit_version == inherit_version) return;
+                td.inherit_version = inherit_version;
+                td.inherit_var = try findInScope(env, self.parent, sc.inherit.?, .{});
+                if (td.inherit_var) |iv| {
                     // Resolve parent inheritance while avoiding circular recursion
-                    self.inherit_tmp = self.inherit;
-                    self.inherit = null;
+                    td.inherit_tmp = sc.inherit;
+                    sc.inherit = null;
                     try iv.resolveInherit(env, inherit_version);
-                    self.inherit = self.inherit_tmp;
-                    self.inherit_tmp = null;
-                    self.in_children.clearRetainingCapacity();
+                    sc.inherit = td.inherit_tmp;
+                    td.inherit_tmp = null;
+                    sc.in_children.clearRetainingCapacity();
                     const parent_children = try iv.getChildren(env.tmp, false);
                     for (parent_children) |child| {
                         var found = false;
-                        for (self.children.items) |own| {
+                        for (sc.children.items) |own| {
                             if (std.ascii.eqlIgnoreCase(own.name, child.name)) {
                                 found = true;
                                 break;
                             }
                         }
-                        if (!found) try self.in_children.append(self.al(), child);
+                        if (!found) try sc.in_children.append(self.al(), child);
                     }
                 } else {
-                    self.in_children.clearRetainingCapacity();
+                    sc.in_children.clearRetainingCapacity();
                 }
             },
-            .submodule => self.ancestor_obj = self.findSubmoduleParent(env),
+            .submodule => self.submodData().ancestor_obj = self.findSubmoduleParent(env),
             else => {},
         }
     }
@@ -1058,7 +1291,7 @@ pub const Obj = struct {
     fn linkLoops(self: *const Obj, target: *const Obj) bool {
         var o: ?*const Obj = target;
         var hops: usize = 0;
-        while (o) |cur| : (o = cur.link_obj) {
+        while (o) |cur| : (o = cur.linkObj()) {
             if (cur == self) return true;
             hops += 1;
             // a loop not through `self` (which no link made here allows)
@@ -1070,19 +1303,21 @@ pub const Obj = struct {
     pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         switch (self.kind) {
             .variable => {
-                self.link_obj = null;
-                self.type_obj = null;
-                const ln = self.link_name orelse return;
+                const v = self.varData();
+                v.link_obj = null;
+                v.type_obj = null;
+                const ln = v.link_name orelse return;
                 if (self.parent) |p| {
                     if (try findInScope(env, p, ln, .{})) |l| {
-                        if (!self.linkLoops(l)) self.link_obj = l;
+                        if (!self.linkLoops(l)) v.link_obj = l;
                     }
                 }
             },
             .method => {
-                self.link_obj = null;
-                self.type_obj = null;
-                const ln = self.link_name orelse return;
+                const v = self.varData();
+                v.link_obj = null;
+                v.type_obj = null;
+                const ln = v.link_name orelse return;
                 const p = self.parent orelse return;
                 const link_obj = if (p.getType(false) == C.TypeId.class)
                     try findInScope(env, p.parent, ln, .{})
@@ -1090,16 +1325,16 @@ pub const Obj = struct {
                     try findInScope(env, p, ln, .{});
                 if (link_obj) |l| {
                     if (self.linkLoops(l)) return;
-                    self.link_obj = l;
-                    if (self.pass_name) |pn| {
+                    v.link_obj = l;
+                    if (v.pass_name) |pn| {
                         const pnl = try std.ascii.allocLowerString(self.al(), pn);
-                        self.pass_name = pnl;
+                        v.pass_name = pnl;
                         if (l.kind.isSubroutine()) {
-                            var it = std.mem.splitScalar(u8, l.args_snip, ',');
+                            var it = std.mem.splitScalar(u8, l.procData().args_snip, ',');
                             var i: usize = 0;
                             while (it.next()) |arg| : (i += 1) {
                                 if (std.ascii.eqlIgnoreCase(arg, pnl)) {
-                                    self.drop_arg = i;
+                                    v.drop_arg = i;
                                     break;
                                 }
                             }
@@ -1108,28 +1343,30 @@ pub const Obj = struct {
                 }
             },
             .interface => {
-                self.mems.clearRetainingCapacity();
+                const mems = &self.ifaceData().mems;
+                mems.clearRetainingCapacity();
                 const p = self.parent orelse return;
-                for (self.members.items) |member| {
-                    if (try findInScope(env, p, member, .{})) |m| try self.mems.append(self.al(), m);
+                for (self.scopeData().members.items) |member| {
+                    if (try findInScope(env, p, member, .{})) |m| try mems.append(self.al(), m);
                 }
             },
             .subroutine => try self.resolveArgLink(),
             .function => {
                 try self.resolveArgLink();
-                const rn = self.result_name orelse self.name;
-                for (self.children.items) |child| {
+                const proc = self.procData();
+                const rn = proc.result_name orelse self.name;
+                for (self.childList()) |child| {
                     if (std.ascii.eqlIgnoreCase(child.name, rn)) {
-                        self.result_obj = child;
-                        self.result_name = child.name;
-                        self.result_type = try child.getDesc(self.al());
+                        proc.result_obj = child;
+                        proc.result_name = child.name;
+                        proc.result_type = try child.getDesc(self.al());
                     }
                 }
             },
             .submodule => try self.resolveSubmoduleLink(env),
             .associate => {
-                for (self.links.items) |*assoc| {
-                    assoc.var_.link_obj = null;
+                for (self.assocData().links.items) |*assoc| {
+                    assoc.var_.varData().link_obj = null;
                     assoc.link_name = try R().PAREN_CONTENT.sub(self.al(), "", assoc.link_name);
                     const var_stack = try helpers.getVarStack(env.tmp, assoc.link_name);
                     var var_obj: ?*Obj = null;
@@ -1140,7 +1377,7 @@ pub const Obj = struct {
                         var_obj = try findInScope(env, self, assoc.link_name, .{});
                     }
                     if (var_obj) |v| if (!assoc.var_.linkLoops(v)) {
-                        assoc.var_.link_obj = v;
+                        assoc.var_.varData().link_obj = v;
                     };
                 }
             },
@@ -1149,40 +1386,41 @@ pub const Obj = struct {
     }
 
     fn resolveArgLink(self: *Obj) !void {
-        if (self.args.len == 0 or self.in_children.items.len > 0) return;
+        const proc = self.procData();
+        if (proc.args.len == 0 or self.scopeData().in_children.items.len > 0) return;
         const a = self.al();
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
         const t = arena.allocator();
-        const arg_list = try str.split(t, self.args, ",");
-        const arg_list_lower = try str.split(t, try std.ascii.allocLowerString(t, self.args), ",");
-        self.arg_objs.clearRetainingCapacity();
-        try self.arg_objs.appendNTimes(a, null, arg_list.len);
-        self.missing_args.clearRetainingCapacity();
-        for (self.children.items) |child| {
+        const arg_list = try str.split(t, proc.args, ",");
+        const arg_list_lower = try str.split(t, try std.ascii.allocLowerString(t, proc.args), ",");
+        proc.arg_objs.clearRetainingCapacity();
+        try proc.arg_objs.appendNTimes(a, null, arg_list.len);
+        proc.missing_args.clearRetainingCapacity();
+        for (self.childList()) |child| {
             var ind: ?usize = null;
             for (arg_list_lower, 0..) |arg, i| {
                 if (std.ascii.eqlIgnoreCase(arg, child.name)) {
                     ind = i;
                     break;
                 } else if (std.ascii.startsWithIgnoreCase(child.name, "#gen_int")) {
-                    for (child.children.items) |sub_child| {
+                    for (child.childList()) |sub_child| {
                         if (std.ascii.eqlIgnoreCase(arg, sub_child.name)) {
-                            self.arg_objs.items[i] = sub_child;
+                            proc.arg_objs.items[i] = sub_child;
                             break;
                         }
                     }
                 }
             }
             if (ind) |i| {
-                self.arg_objs.items[i] = child;
+                proc.arg_objs.items[i] = child;
                 if (child.isOptional()) arg_list[i] = try std.fmt.allocPrint(t, "{s}={s}", .{ arg_list[i], arg_list[i] });
             } else if (child.hasKeyword(KW.intent)) {
-                try self.missing_args.append(a, child);
+                try proc.missing_args.append(a, child);
             }
         }
         const snip = try std.mem.join(t, ",", arg_list);
-        if (!std.mem.eql(u8, snip, self.args_snip)) self.args_snip = try a.dupe(u8, snip);
+        if (!std.mem.eql(u8, snip, proc.args_snip)) proc.args_snip = try a.dupe(u8, snip);
     }
 
     /// `Subroutine.copy_interface`; returns lowercased child names
@@ -1190,39 +1428,43 @@ pub const Obj = struct {
         // `src` is usually in another file's AST, which is freed when that
         // file is re-parsed: own copies of its strings
         const a = self.al();
-        self.linked_from_interface = true;
-        self.args = try a.dupe(u8, src.args);
-        self.args_snip = try a.dupe(u8, src.args_snip);
+        const proc = self.procData();
+        const from = src.procData();
+        const in_children = &self.scopeData().in_children;
+        proc.linked_from_interface = true;
+        proc.args = try a.dupe(u8, from.args);
+        proc.args_snip = try a.dupe(u8, from.args_snip);
         // Python shares the list object; copy the contents
-        self.arg_objs.clearRetainingCapacity();
-        try self.arg_objs.appendSlice(self.al(), src.arg_objs.items);
-        self.in_children.clearRetainingCapacity();
-        for (src.arg_objs.items) |child_opt| {
+        proc.arg_objs.clearRetainingCapacity();
+        try proc.arg_objs.appendSlice(a, from.arg_objs.items);
+        in_children.clearRetainingCapacity();
+        for (from.arg_objs.items) |child_opt| {
             const child = child_opt orelse continue;
-            if (!self.hasChildNamed(child.name)) try self.in_children.append(self.al(), child);
+            if (!self.hasChildNamed(child.name)) try in_children.append(a, child);
         }
         if (self.kind == .function) {
-            self.result_name = if (src.result_name) |n| try a.dupe(u8, n) else null;
-            self.result_type = if (src.result_type) |t| try a.dupe(u8, t) else null;
-            self.result_obj = src.result_obj;
-            if (src.result_obj) |ro| {
-                if (!self.hasChildNamed(ro.name)) try self.in_children.append(self.al(), ro);
+            proc.result_name = if (from.result_name) |n| try a.dupe(u8, n) else null;
+            proc.result_type = if (from.result_type) |t| try a.dupe(u8, t) else null;
+            proc.result_obj = from.result_obj;
+            if (from.result_obj) |ro| {
+                if (!self.hasChildNamed(ro.name)) try in_children.append(a, ro);
             }
         }
     }
 
     /// Drop data imported by `copyInterface` (it may reference other ASTs)
     pub fn resetInterfaceCopy(self: *Obj) void {
-        self.in_children.clearRetainingCapacity();
-        self.arg_objs.clearRetainingCapacity();
-        if (self.result_obj) |ro| if (ro.file_ast != self.file_ast) {
-            self.result_obj = null;
+        self.scopeData().in_children.clearRetainingCapacity();
+        const proc = self.procData();
+        proc.arg_objs.clearRetainingCapacity();
+        if (proc.result_obj) |ro| if (ro.file_ast != self.file_ast) {
+            proc.result_obj = null;
         };
-        self.linked_from_interface = false;
+        proc.linked_from_interface = false;
     }
 
     fn hasChildNamed(self: *const Obj, name: []const u8) bool {
-        for (self.children.items) |c| if (std.ascii.eqlIgnoreCase(c.name, name)) return true;
+        for (self.childList()) |c| if (std.ascii.eqlIgnoreCase(c.name, name)) return true;
         return false;
     }
 
@@ -1237,9 +1479,9 @@ pub const Obj = struct {
             try visited.append(env.tmp, cur);
             const anc = cur.findSubmoduleParent(env) orelse break;
             for (visited.items) |v| if (v == anc) break :outer;
-            for (anc.children.items) |child| {
+            for (anc.childList()) |child| {
                 if (child.getType(false) != C.TypeId.interface) continue;
-                for (child.children.items) |iface| {
+                for (child.childList()) |iface| {
                     const it = iface.getType(false);
                     if ((it == C.TypeId.subroutine or it == C.TypeId.function or it == C.TypeId.base) and iface.isModScope()) {
                         try interfaces.append(env.tmp, iface);
@@ -1249,23 +1491,24 @@ pub const Obj = struct {
             cur = anc;
         }
         for (interfaces.items) |iface| {
-            for (self.children.items) |child| {
+            for (self.childList()) |child| {
                 if (!std.ascii.eqlIgnoreCase(child.name, iface.name)) continue;
                 if (child.getType(false) == C.TypeId.base) {
                     // Convert the plain scope into a subroutine/function in place
                     if (iface.kind == .subroutine) {
-                        child.kind = .subroutine;
+                        child.becomeProcedure(.subroutine);
                     } else if (iface.kind == .function) {
-                        child.kind = .function;
-                        child.result_name = child.name;
+                        child.becomeProcedure(.function);
+                        child.procData().result_name = child.name;
                         child.keyword_info = .{};
                     } else continue;
-                    child.args = "";
-                    child.args_snip = "";
-                    child.mod_scope = false;
+                    const proc = child.procData();
+                    proc.args = "";
+                    proc.args_snip = "";
+                    proc.mod_scope = false;
                 }
                 if (child.getType(false) == iface.getType(false)) {
-                    iface.link_obj = child;
+                    iface.procData().link_obj = child;
                     try iface.resolveLink(env);
                     try child.copyInterface(iface);
                     break;
@@ -1276,31 +1519,31 @@ pub const Obj = struct {
 
     pub fn getTypeObj(self: *Obj, env: Env) !?*Obj {
         if (!self.kind.isVariable()) return null;
-        if (self.link_obj) |l| return l.getTypeObj(env);
-        if (self.type_obj == null) if (self.parent) |p| {
+        if (self.linkObj()) |l| return l.getTypeObj(env);
+        if (self.varData().type_obj == null) if (self.parent) |p| {
             const desc = try self.getDescNoLink(env.tmp);
             if (helpers.getParenSubstring(desc)) |tn| {
                 var search_scope: ?*Obj = p;
                 if (p.getType(false) == C.TypeId.class) search_scope = p.parent;
                 if (search_scope) |ss| {
                     const type_name = try std.ascii.allocLowerString(env.tmp, str.strip(tn));
-                    if (try findInScope(env, ss, type_name, .{})) |t| self.type_obj = t;
+                    if (try findInScope(env, ss, type_name, .{})) |t| self.varData().type_obj = t;
                 }
             }
         };
-        return self.type_obj;
+        return self.varData().type_obj;
     }
 
     pub fn getOverridden(self: *const Obj, a: Allocator, field_name: []const u8) ![]*Obj {
         var out: std.ArrayList(*Obj) = .empty;
         if (self.kind != .type) return out.items;
-        for (self.children.items) |child| {
+        for (self.childList()) |child| {
             if (std.ascii.eqlIgnoreCase(child.name, field_name)) {
                 try out.append(a, child);
                 break;
             }
         }
-        if (self.inherit_var) |iv| try out.appendSlice(a, try iv.getOverridden(a, field_name));
+        if (self.typeDataConst().inherit_var) |iv| try out.appendSlice(a, try iv.getOverridden(a, field_name));
         return out.items;
     }
 
@@ -1311,8 +1554,8 @@ pub const Obj = struct {
         var errors: std.ArrayList(Diagnostic) = .empty;
         switch (self.kind) {
             .type => {
-                for (self.in_children.items) |in_child| {
-                    if (!self.abstract and in_child.hasKeyword(KW.deferred)) {
+                for (self.scopeDataConst().in_children.items) |in_child| {
+                    if (!self.typeDataConst().abstract and in_child.hasKeyword(KW.deferred)) {
                         var d = Diagnostic.init(self.eline -| 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
                         d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
                         try errors.append(a, d);
@@ -1320,7 +1563,7 @@ pub const Obj = struct {
                 }
             },
             .subroutine, .function => {
-                for (self.missing_args.items) |m| {
+                for (self.procDataConst().missing_args.items) |m| {
                     try errors.append(a, Diagnostic.init(
                         m.sline -| 1,
                         try std.fmt.allocPrint(a, "Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
@@ -1330,8 +1573,8 @@ pub const Obj = struct {
                 }
                 const implicit_flag = self.getImplicit();
                 if (implicit_flag == null or implicit_flag.?) return errors.items;
-                const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.args, " ", ""), ",");
-                for (self.arg_objs.items, 0..) |arg_obj, i| {
+                const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.argList(), " ", ""), ",");
+                for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                     if (arg_obj == null) {
                         const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
                         try errors.append(a, Diagnostic.init(
@@ -1392,7 +1635,7 @@ pub const Obj = struct {
         var errors: std.ArrayList(Diagnostic) = .empty;
         var known_types = KnownTypes.empty;
 
-        for (self.children.items) |child| {
+        for (self.childList()) |child| {
             if (child.getType(false) == C.TypeId.interface) continue;
             if (fqsn_dict.get(child.fqsn)) |v| {
                 if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
@@ -1404,11 +1647,11 @@ pub const Obj = struct {
         var contains_line: ?usize = null;
         const st = self.getType(false);
         if (st == C.TypeId.module or st == C.TypeId.submodule or st == C.TypeId.subroutine or st == C.TypeId.function) {
-            contains_line = self.contains_start orelse self.eline;
+            contains_line = self.scopeData().contains_start orelse self.eline;
         }
         const is_interface = self.parent != null and self.parent.?.getType(false) == C.TypeId.interface and !self.isModScope();
 
-        for (self.children.items) |child| {
+        for (self.childList()) |child| {
             if (std.mem.startsWith(u8, child.name, "#")) continue;
             const line_number = child.sline -| 1;
             if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
@@ -1442,7 +1685,7 @@ pub const Obj = struct {
         var errors: std.ArrayList(Diagnostic) = .empty;
         // lines are 1-based, so 0 is before every USE statement
         var last_use_line: usize = 0;
-        for (self.use.items) |u| {
+        for (self.scopeDataConst().use.items) |u| {
             last_use_line = @max(last_use_line, u.line_number);
             if (u.is_import) {
                 if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
@@ -1459,7 +1702,7 @@ pub const Obj = struct {
                 ));
             }
         }
-        if (self.implicit_line) |il| if (last_use_line >= il) {
+        if (self.scopeDataConst().implicit_line) |il| if (last_use_line >= il) {
             try errors.append(a, Diagnostic.init(il -| 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
         };
         return errors.items;
@@ -1480,9 +1723,9 @@ pub const Obj = struct {
     fn addSubroutine(self: *const Obj, a: Allocator, interface_string: []const u8, no_contains: bool) !struct { path: ?[]const u8, edits: []Edit } {
         var edits: std.ArrayList(Edit) = .empty;
         const line_number = self.eline -| 1;
-        if (self.contains_start == null and !no_contains) {
+        if (self.scopeDataConst().contains_start == null and !no_contains) {
             var first_sub_line = line_number;
-            for (self.children.items) |child| {
+            for (self.childList()) |child| {
                 const ct = child.getType(false);
                 if (ct == C.TypeId.subroutine or ct == C.TypeId.function) first_sub_line = @min(first_sub_line, child.sline -| 1);
             }
@@ -1498,12 +1741,12 @@ pub const Obj = struct {
         var edits: std.ArrayList(Edit) = .empty;
         const line_number = self.eline -| 1;
         if (line_number < sline or line_number > eline) return actions.items;
-        if (self.contains_start == null) {
+        if (self.scopeDataConst().contains_start == null) {
             try edits.append(a, .{ .sline = line_number, .schar = 0, .eline = line_number, .echar = 0, .new_text = "CONTAINS\n" });
         }
         var diagnostics: std.ArrayList(Diagnostic) = .empty;
         var has_edits = false;
-        for (self.in_children.items) |in_child| {
+        for (self.scopeDataConst().in_children.items) |in_child| {
             if (!in_child.hasKeyword(KW.deferred)) continue;
             const in_parent_name = if (in_child.parent) |p| p.name else "None";
             const iface = (try in_child.getInterface(a, in_child.name, null, .{
@@ -1728,7 +1971,7 @@ pub const Ast = struct {
         }
         try self.current_scope.?.addChild(new_var);
         try self.variable_list.append(a, new_var);
-        if (new_var.is_external) try self.external_objs.append(a, new_var);
+        if (new_var.varData().is_external) try self.external_objs.append(a, new_var);
         if (new_var.requireLink()) try self.linkable_objs.append(a, new_var);
         self.last_obj = new_var;
         if (self.pending_doc) |d| {
@@ -1739,7 +1982,7 @@ pub const Ast = struct {
 
     pub fn addIntMember(self: *Ast, key: []const u8) !void {
         const cs = self.current_scope.?;
-        try cs.members.append(self.allocator(), try self.allocator().dupe(u8, key));
+        try cs.scopeData().members.append(self.allocator(), try self.allocator().dupe(u8, key));
     }
 
     pub fn addPrivate(self: *Ast, name: []const u8) !void {
@@ -1752,7 +1995,7 @@ pub const Ast = struct {
 
     pub fn addUse(self: *Ast, use_mod: *UseStmt) !void {
         if (self.current_scope == null) try self.createNoneScope();
-        try self.current_scope.?.use.append(self.allocator(), use_mod);
+        try self.current_scope.?.scopeData().use.append(self.allocator(), use_mod);
     }
 
     pub fn addInclude(self: *Ast, path: []const u8, line_number: usize) !void {
@@ -1790,7 +2033,7 @@ pub const Ast = struct {
         for (self.scope_list.items) |scope| {
             if (!(scope.sline <= ln and ln <= scope.eline)) continue;
             if (scope.parent) |p| if (p.kind == .interface) {
-                for (scope.use.items) |u| {
+                for (scope.scopeData().use.items) |u| {
                     if (!u.is_import) continue;
                     if (u.import_type == .none) {
                         const single = try a.alloc(*Obj, 1);
@@ -1825,10 +2068,10 @@ pub const Ast = struct {
     }
 
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
-        for (parent.children.items) |child| {
+        for (parent.childList()) |child| {
             if (std.mem.eql(u8, child.name, name)) return child;
             if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
-                for (child.children.items) |ic| if (std.mem.eql(u8, ic.name, name)) return ic;
+                for (child.childList()) |ic| if (std.mem.eql(u8, ic.name, name)) return ic;
             }
         }
         return null;
@@ -1908,14 +2151,14 @@ pub const Ast = struct {
             // Remove old objects
             if (parent_scope) |ps| {
                 for (inc.scope_objs.items) |obj| {
-                    for (ps.children.items, 0..) |c, i| if (c == obj) {
-                        _ = ps.children.orderedRemove(i);
+                    for (ps.childList(), 0..) |c, i| if (c == obj) {
+                        _ = ps.scopeData().children.orderedRemove(i);
                         break;
                     };
                 }
             }
             inc.scope_objs.clearRetainingCapacity();
-            for (include_ast.inc_scope.?.children.items) |child| {
+            for (include_ast.inc_scope.?.childList()) |child| {
                 try inc.scope_objs.append(self.allocator(), child);
                 if (parent_scope) |ps| {
                     try ps.addChild(child);
@@ -1979,7 +2222,7 @@ pub fn getUseTree(
     try new_path.appendSlice(a, curr_path);
     try new_path.append(a, scope.fqsn);
 
-    for (scope.use.items) |use_stmnt| {
+    for (scope.scopeData().use.items) |use_stmnt| {
         if (!use_stmnt.is_import and !env.tree.contains(use_stmnt.mod_name)) continue;
         if (use_stmnt.is_import and use_stmnt.import_type == .none) continue;
         var merged_use_list: StrSet = undefined;
@@ -2069,7 +2312,7 @@ fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public
 }
 
 fn checkImportScope(scope: *const Obj, name_lower: []const u8) ?ImportType {
-    for (scope.use.items) |u| {
+    for (scope.scopeDataConst().use.items) |u| {
         if (!u.is_import) continue;
         switch (u.import_type) {
             .only => if (u.only_list.contains(name_lower)) return .only,

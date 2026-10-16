@@ -731,9 +731,9 @@ fn findExternalAttr(file_ast: *Ast, name: []const u8, new_var: *Obj) !bool {
     var counter: usize = 0;
     for (file_ast.external_objs.items) |v| {
         if (!std.mem.eql(u8, v.name, name) or v.parent != file_ast.current_scope) continue;
-        if (!std.ascii.eqlIgnoreCase(v.desc, "EXTERNAL")) continue;
+        if (!std.ascii.eqlIgnoreCase(v.varData().desc, "EXTERNAL")) continue;
         if (counter == 0) {
-            v.desc = new_var.desc;
+            v.varData().desc = new_var.varData().desc;
             try v.setExternalAttr();
         }
         counter += 1;
@@ -1508,7 +1508,7 @@ const Parser = struct {
                             const col: usize = @intCast(@max(r.end, 0));
                             if (helpers.parameterValue(str.from(line, col))) |value| {
                                 const words = try str.splitWhitespace(a, value);
-                                new_var.param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
+                                new_var.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
                             }
                         }
                         if (try findExternal(ast, desc, name, new_var)) continue;
@@ -1612,9 +1612,9 @@ const Parser = struct {
                         for (try helpers.splitArgs(a, subscripts)) |sub| {
                             if (std.mem.indexOfScalar(u8, sub, ':') != null) rank += 1;
                         }
-                        v.slice_rank = rank;
+                        v.varData().slice_rank = rank;
                     }
-                    try o.links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
+                    try o.assocData().links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
                 p.dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
@@ -1638,7 +1638,7 @@ const Parser = struct {
             .typ => |info| {
                 const mk = try helpers.mapKeywords(a, info.keywords, p.opts.sort_keywords);
                 const o = try Obj.newScope(ast, .type, line_no, info.name, mk.ids);
-                if (info.parent) |par| o.inherit = try pa.dupe(u8, par);
+                if (info.parent) |par| o.scopeData().inherit = try pa.dupe(u8, par);
                 try ast.addScope(o, &R().END_TYPED, true, true);
                 p.dbg("{s} !!! TYPE - Ln:{d}", .{ line, line_no });
             },
@@ -1767,14 +1767,14 @@ const Parser = struct {
         for (try helpers.splitArgs(a, m.group(1) orelse "")) |item| {
             const eq = std.mem.indexOfScalar(u8, item, '=') orelse continue;
             const name = str.strip(item[0..eq]);
-            for (cs.children.items) |child| {
+            for (cs.childList()) |child| {
                 if (child.kind != .variable or !std.ascii.eqlIgnoreCase(child.name, name)) continue;
-                if (!child.is_const) {
-                    child.is_const = true;
+                if (!child.varData().is_const) {
+                    child.varData().is_const = true;
                     try child.keywords.append(pa, C.KW.parameter);
                 }
                 const words = try str.splitWhitespace(a, str.strip(item[eq + 1 ..]));
-                child.param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
+                child.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
             }
         }
         p.dbg("{s} !!! PARAMETER statement - Ln:{d}", .{ str.strip(line), p.cur_line });
@@ -1903,8 +1903,8 @@ fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_de
     var binding_name: ?[]const u8 = null;
     var bound_var: ?[]const u8 = null;
     if (parent.isTypeBinding()) {
-        binding_name = parent.binding_name;
-        bound_var = parent.bound_var;
+        binding_name = parent.selectData().binding_name;
+        bound_var = parent.selectData().bound_var;
     }
     if (binding_name != null and case_type != 4) bound_var = null;
     if (binding_name) |bn| {
