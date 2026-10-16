@@ -48,16 +48,18 @@ that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
 from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 (VSCodium and other VS Code derivatives), and the universal one to the
-Marketplace for the platforms without their own. No stored token is needed:
-for the Marketplace the release job signs in with the workflow's OIDC token
-as a Microsoft Entra managed identity that is a member of the publisher (the
-`AZURE_*` repository variables; the "Marketplace identity" workflow shows the
-ID to add). For Open VSX it starts the "Publish to Open VSX" workflow
-(`.github/workflows/open-vsx.yml`), whose OIDC token Open VSX trusts for the
-`cesiumlang` namespace (trusted publishing); the `OVSX_PAT` repository
-secret is used only if that is refused, with a warning. That workflow can
-also be run by hand for any released version. Versions already published
-are skipped, so a failed publishing run can be re-run.
+Marketplace for the platforms without their own. Each registry has its own
+workflow, which the release job starts and which takes the packages from the
+release: "Publish to the Marketplace" (`.github/workflows/marketplace.yml`)
+signs in with the workflow's OIDC token as a Microsoft Entra managed identity
+that is a member of the publisher (the `AZURE_*` repository variables; the
+"Marketplace identity" workflow shows the ID to add), and "Publish to Open
+VSX" (`.github/workflows/open-vsx.yml`) is the workflow whose OIDC token
+Open VSX trusts for the `cesiumlang` namespace (trusted publishing; the
+`OVSX_PAT` repository secret is used only if that is refused, with a
+warning). No stored token is needed. Either workflow can be run by hand, on
+`main`, for any released version; versions already published are skipped,
+so a failed run can simply be run again.
 
 To work on it (Node.js 20 or later):
 
