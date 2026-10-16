@@ -475,6 +475,7 @@ test "hansec #168 references to a separate module procedure include its implemen
         break :blk h.unmet("the call is not a reference", .{});
     };
     try h.checkIn(.hansec, 168, .fixed, outcome);
+}
 
 const rename_fixture = [_]h.File{.{
     .name = "t.f90",

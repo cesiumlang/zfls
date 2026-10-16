@@ -1264,20 +1264,6 @@ pub const Server = struct {
         return json.from(a, locationOf(try paths.pathToUri(a, obj_file.path), obj_file, res.line, schar, res.line, echar));
     }
 
-    /// The include directories as absolute paths (relative ones are relative
-    /// to the workspace root)
-    fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
-        var dirs: std.ArrayList([]const u8) = .empty;
-        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
-        return dirs.items;
-    }
-
-    /// The file that the `#include` directive (or, with `statement`, the
-    /// INCLUDE statement) under the cursor names, searched in the directory
-    /// of the including file and in the include directories (upstream #498,
-    /// #301)
-    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?[]const u8 {
-
     /// The module entity that the name at `col` stands for when it is one of
     /// the two names of a rename on a USE statement, `use m, local => original`
     /// (hansec #137): the original name is not visible under that name in the
@@ -1306,10 +1292,19 @@ pub const Server = struct {
         return objects.findInScope(e, mod, original, .{});
     }
 
-    /// The file that the `#include` directive under the cursor names, searched
-    /// in the directory of the including file and in the include directories
-    /// (upstream #498)
-    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
+    /// The include directories as absolute paths (relative ones are relative
+    /// to the workspace root)
+    fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
+        var dirs: std.ArrayList([]const u8) = .empty;
+        for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+        return dirs.items;
+    }
+
+    /// The file that the `#include` directive (or, with `statement`, the
+    /// INCLUDE statement) under the cursor names, searched in the directory
+    /// of the including file and in the include directories (upstream #498,
+    /// #301)
+    fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?[]const u8 {
         const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
         const text = file.getLine(params.position.line, false) orelse return null;
         const re = if (statement) &R().INCLUDE else &R().INCLUDE_DIRECTIVE;
