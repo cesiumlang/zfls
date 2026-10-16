@@ -244,7 +244,7 @@ test "#495 hover and definition inside a file that is #included into a module" {
     }, .{});
     defer w.deinit();
     const def = try w.definition("file.f90", w.pos("file.f90", "global_variable", 0, 2));
-    try h.check(495, .known_failure, blk: {
+    try h.check(495, .fixed, blk: {
         const l = def orelse break :blk h.unmet("global_variable is not found from the included file", .{});
         break :blk h.expect(std.mem.endsWith(u8, l.uri, "hello.F90"), "definition is in {s}", .{l.uri});
     });

@@ -1602,6 +1602,10 @@ pub const Ast = struct {
     external_objs: std.ArrayList(*Obj) = .empty,
     none_scope: ?*Obj = null,
     inc_scope: ?*Obj = null,
+    /// The scope of the including file that this file is included into, so
+    /// that names are looked up there after the file's own scopes (cleared
+    /// when the workspace is relinked)
+    included_in: ?*Obj = null,
     current_scope: ?*Obj = null,
     end_scope_regex: ?*const regex.Regex = null,
     enc_scope_name: ?[]const u8 = null,
@@ -1835,7 +1839,8 @@ pub const Ast = struct {
         const path = self.path orelse return;
         const file_dir = std.fs.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
-            const joined = try std.fs.path.join(tmp, &.{ file_dir, inc.path });
+            // `#include` directives are resolved to absolute paths by the preprocessor
+            const joined = if (std.fs.path.isAbsolute(inc.path)) inc.path else try std.fs.path.join(tmp, &.{ file_dir, inc.path });
             const file_path = try parser.normPath(tmp, joined);
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
             const parent_scope = self.getInnerScope(inc.line_number);
@@ -1843,6 +1848,7 @@ pub const Ast = struct {
             const include_ast = include_file.ast orelse continue;
             inc.file = include_file;
             inc.inc_obj = null;
+            include_ast.included_in = parent_scope;
             if (include_ast.none_scope == null) continue;
             if (include_ast.inc_scope == null) include_ast.inc_scope = include_ast.none_scope;
             // Remove old objects
@@ -2071,6 +2077,10 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     for (try scope.getAncestors(a)) |anc| {
         if (try findInScope(env, anc, var_name, .{})) |v| return v;
     }
+    // A file included into a scope sees that scope
+    if (scope.parent == null) if (scope.file_ast.included_in) |host| {
+        if (host.file_ast != scope.file_ast) return findInScope(env, host, var_name, .{});
+    };
     return null;
 }
 

@@ -29,12 +29,22 @@ pub const Defs = std.array_hash_map.String(Def);
 /// A range of lines (1-based, inclusive) that a conditional excludes
 pub const Skip = struct { start: usize, end: usize };
 
+/// An `#include` directive of the file itself (not of an included file) that
+/// names a file that exists
+pub const Include = struct {
+    /// 1-based line of the directive
+    line: usize,
+    /// Absolute path of the included file
+    path: []const u8,
+};
+
 pub const Output = struct {
     lines: [][]const u8,
     /// 1-based line ranges excluded by conditionals
     skips: []Skip,
     /// 1-based line numbers of #define/#undef statements
     defines: []usize,
+    includes: []Include,
     defs: Defs,
 };
 
@@ -587,6 +597,7 @@ fn preprocessInner(
 ) !Output {
     var pp_skips: std.ArrayList(Skip) = .empty;
     var pp_defines: std.ArrayList(usize) = .empty;
+    var pp_includes: std.ArrayList(Include) = .empty;
     var pp_stack: std.ArrayList(StackEntry) = .empty;
     var pp_stack_group: std.ArrayList(struct { usize, bool }) = .empty;
     var defs_tmp: Defs = if (pp_defs) |d| try cloneDefs(a, d) else .empty;
@@ -742,6 +753,7 @@ fn preprocessInner(
                 }
             }
             if (include_path) |ip| {
+                if (depth == 0) try pp_includes.append(a, .{ .line = i + 1, .path = ip });
                 // guard against include cycles
                 if (depth >= 32) {} else if (Io.Dir.cwd().readFileAlloc(io, ip, a, .limited(1 << 28))) |data| {
                     const text = try std.mem.replaceOwned(u8, a, data, "\t", " ");
@@ -797,6 +809,7 @@ fn preprocessInner(
         .lines = output.items,
         .skips = pp_skips.items,
         .defines = pp_defines.items,
+        .includes = pp_includes.items,
         .defs = defs_tmp,
     };
 }
