@@ -249,6 +249,11 @@ jobs:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
+      # editors/vscode/schemas/fortls.schema.json is generated from
+      # src/settings.zig
+      - name: Configuration file schema is up to date
+        run: python3 tools/gen_config_schema.py --check
+
       - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}

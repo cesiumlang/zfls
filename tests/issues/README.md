@@ -48,6 +48,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
+| [#301](https://github.com/fortran-lang/fortls/issues/301) | `INCLUDE` statement searched in `include_dirs`, go to definition on it | workspace | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
 | [#237](https://github.com/fortran-lang/fortls/issues/237) | `!>` above an expression documents a later procedure | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/fortran-lang/fortls/issues/203) | `PARAMETER` statement | hover | fixed (patched) | fails, same cause |
@@ -96,4 +97,6 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#202](https://github.com/hansec/fortran-language-server/issues/202) | `!` comment inside a continued fixed-form declaration hides the names after it | parsing | fixed (patched) | fails, same cause |
 | [#155](https://github.com/hansec/fortran-language-server/issues/155) | `!` comment inside a continued fixed-form `IF` loses its `THEN` | parsing | fixed (patched) | fails, same cause |
 | [#200](https://github.com/hansec/fortran-language-server/issues/200) | "masks variable" warning for a variable of a dummy procedure's interface body | diagnostics | fixed (patched) | fails, same cause |
+| [#168](https://github.com/hansec/fortran-language-server/issues/168) | references to a separate module procedure miss its implementation in a submodule | hover | fixed (patched) | fails, same cause |
+| [#137](https://github.com/hansec/fortran-language-server/issues/137) | the original name on a USE rename line resolves to a local variable of that name | hover | fixed (patched) | fails, same cause |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
