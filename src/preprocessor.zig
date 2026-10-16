@@ -29,12 +29,22 @@ pub const Defs = std.array_hash_map.String(Def);
 /// A range of lines (1-based, inclusive) that a conditional excludes
 pub const Skip = struct { start: usize, end: usize };
 
+/// An `#include` directive of the file itself (not of an included file) that
+/// names a file that exists
+pub const Include = struct {
+    /// 1-based line of the directive
+    line: usize,
+    /// Absolute path of the included file
+    path: []const u8,
+};
+
 pub const Output = struct {
     lines: [][]const u8,
     /// 1-based line ranges excluded by conditionals
     skips: []Skip,
     /// 1-based line numbers of #define/#undef statements
     defines: []usize,
+    includes: []Include,
     defs: Defs,
 };
 
@@ -207,24 +217,37 @@ const PyEval = struct {
         return e.parseComparison();
     }
 
-    const cmp_ops = [_][]const u8{ "==", "!=", "<=", ">=", "<", ">" };
+    const CmpOp = enum { eq, ne, le, ge, lt, gt };
+
+    /// Comparison operators by their text; two-character ones come first
+    const cmp_ops = [_]struct { []const u8, CmpOp }{
+        .{ "==", .eq },
+        .{ "!=", .ne },
+        .{ "<=", .le },
+        .{ ">=", .ge },
+        .{ "<", .lt },
+        .{ ">", .gt },
+    };
 
     fn parseComparison(e: *PyEval) Err!Value {
         var left = try e.parseBitOr();
         var result: ?bool = null;
         while (true) {
             e.skipWs();
-            var op: ?[]const u8 = null;
-            for (cmp_ops) |o| {
-                if (std.mem.startsWith(u8, e.src[e.pos..], o)) {
+            var op: ?CmpOp = null;
+            var op_len: usize = 0;
+            for (cmp_ops) |entry| {
+                const text, const kind = entry;
+                if (std.mem.startsWith(u8, e.src[e.pos..], text)) {
                     // don't confuse '<<' / '>>' with comparisons
-                    if ((std.mem.eql(u8, o, "<") or std.mem.eql(u8, o, ">")) and e.pos + 1 < e.src.len and e.src[e.pos + 1] == o[0]) break;
-                    op = o;
+                    if ((kind == .lt or kind == .gt) and e.pos + 1 < e.src.len and e.src[e.pos + 1] == text[0]) break;
+                    op = kind;
+                    op_len = text.len;
                     break;
                 }
             }
             const o = op orelse break;
-            e.pos += o.len;
+            e.pos += op_len;
             const right = try e.parseBitOr();
             const r = try compare(o, left, right);
             result = (result orelse true) and r;
@@ -234,8 +257,8 @@ const PyEval = struct {
         return left;
     }
 
-    fn compare(op: []const u8, l: Value, r: Value) Err!bool {
-        if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) {
+    fn compare(op: CmpOp, l: Value, r: Value) Err!bool {
+        if (op == .eq or op == .ne) {
             var eq: bool = undefined;
             if (l.isNumeric() and r.isNumeric()) {
                 eq = l.asFloat() == r.asFloat();
@@ -245,7 +268,7 @@ const PyEval = struct {
             } else if (l == .none and r == .none) {
                 eq = true;
             } else eq = false;
-            return if (op[0] == '=') eq else !eq;
+            return if (op == .eq) eq else !eq;
         }
         var ord: std.math.Order = undefined;
         if (l.isNumeric() and r.isNumeric()) {
@@ -257,10 +280,12 @@ const PyEval = struct {
         } else if (l == .string and r == .string) {
             ord = std.mem.order(u8, l.string, r.string);
         } else return error.Type;
-        if (std.mem.eql(u8, op, "<")) return ord == .lt;
-        if (std.mem.eql(u8, op, ">")) return ord == .gt;
-        if (std.mem.eql(u8, op, "<=")) return ord != .gt;
-        return ord != .lt;
+        return switch (op) {
+            .lt => ord == .lt,
+            .gt => ord == .gt,
+            .le => ord != .gt,
+            else => ord != .lt,
+        };
     }
 
     fn intBinop(l: Value, r: Value) Err![2]i128 {
@@ -519,6 +544,18 @@ fn appendMultilineMacro(a: Allocator, d: Def, line: []const u8) !Def {
 
 /// An open conditional. `start` is the first line of its excluded part, null
 /// while the branch is included; `end` the last one, null until known.
+/// The conditional directives that `PP_REGEX` matches
+const Directive = enum { if_, ifdef, ifndef, else_, elif, endif };
+
+const directives = std.StaticStringMap(Directive).initComptime(.{
+    .{ "if ", .if_ },
+    .{ "ifdef", .ifdef },
+    .{ "ifndef", .ifndef },
+    .{ "else", .else_ },
+    .{ "elif", .elif },
+    .{ "endif", .endif },
+});
+
 const StackEntry = struct { start: ?usize = null, end: ?usize = null };
 
 fn skipOf(e: StackEntry) Skip {
@@ -560,6 +597,7 @@ fn preprocessInner(
 ) !Output {
     var pp_skips: std.ArrayList(Skip) = .empty;
     var pp_defines: std.ArrayList(usize) = .empty;
+    var pp_includes: std.ArrayList(Include) = .empty;
     var pp_stack: std.ArrayList(StackEntry) = .empty;
     var pp_stack_group: std.ArrayList(struct { usize, bool }) = .empty;
     var defs_tmp: Defs = if (pp_defs) |d| try cloneDefs(a, d) else .empty;
@@ -586,16 +624,17 @@ fn preprocessInner(
         // Handle conditional statements
         if (R().PP_REGEX.match(line)) |m| {
             try output.append(a, line);
-            const kw = try std.ascii.allocLowerString(a, m.group(1).?);
+            var kw_buf: [8]u8 = undefined;
+            const kw = directives.get(std.ascii.lowerString(&kw_buf, m.group(1).?)).?;
             var if_start = false;
             var is_path = false;
-            if (std.mem.eql(u8, kw, "if ")) {
+            if (kw == .if_) {
                 is_path = evalPpIf(a, line[m.end(1)..], &defs_tmp);
                 if_start = true;
-            } else if (std.mem.eql(u8, kw, "ifdef")) {
+            } else if (kw == .ifdef) {
                 if_start = true;
                 is_path = defs_tmp.contains(str.strip(line[m.end(0)..]));
-            } else if (std.mem.eql(u8, kw, "ifndef")) {
+            } else if (kw == .ifndef) {
                 if_start = true;
                 is_path = !defs_tmp.contains(str.strip(line[m.end(0)..]));
             }
@@ -613,7 +652,7 @@ fn preprocessInner(
             const depth_now = pp_stack.items.len;
             const top = &pp_stack.items[pp_stack.items.len - 1];
             var cond: enum { none, included, excluded_start, excluded } = .none;
-            if (std.mem.eql(u8, kw, "elif")) {
+            if (kw == .elif) {
                 if (pp_stack_group.items.len == 0 or pp_stack_group.items[pp_stack_group.items.len - 1][0] != depth_now) {
                     try pp_stack_group.append(a, .{ depth_now, top.start == null });
                 }
@@ -629,7 +668,7 @@ fn preprocessInner(
                     try pp_stack.append(a, .{});
                     cond = .included;
                 } else cond = .excluded_start;
-            } else if (std.mem.eql(u8, kw, "else")) {
+            } else if (kw == .else_) {
                 if (top.start == null) {
                     top.start = i + 1;
                     cond = .excluded_start;
@@ -645,7 +684,7 @@ fn preprocessInner(
                     try pp_stack.append(a, .{});
                     cond = .included;
                 }
-            } else if (std.mem.eql(u8, kw, "endif")) {
+            } else if (kw == .endif) {
                 if (pp_stack_group.items.len > 0 and pp_stack_group.items[pp_stack_group.items.len - 1][0] == depth_now) {
                     _ = pp_stack_group.pop();
                 }
@@ -714,6 +753,7 @@ fn preprocessInner(
                 }
             }
             if (include_path) |ip| {
+                if (depth == 0) try pp_includes.append(a, .{ .line = i + 1, .path = ip });
                 // guard against include cycles
                 if (depth >= 32) {} else if (Io.Dir.cwd().readFileAlloc(io, ip, a, .limited(1 << 28))) |data| {
                     const text = try std.mem.replaceOwned(u8, a, data, "\t", " ");
@@ -769,6 +809,7 @@ fn preprocessInner(
         .lines = output.items,
         .skips = pp_skips.items,
         .defines = pp_defines.items,
+        .includes = pp_includes.items,
         .defs = defs_tmp,
     };
 }

@@ -69,6 +69,19 @@ pub const Regex = struct {
     names: []const Name,
     ignore_case: bool,
     nloop_regs: u16,
+    /// Bytes a match can start with; null when it can be empty (or the
+    /// pattern is too complex to tell)
+    prefilter: ?Prefilter,
+
+    /// A cheap test that rejects most inputs before the VM starts
+    const Prefilter = struct {
+        /// Bytes that can start a match
+        first: Class,
+        /// The pattern starts with `[ ]*` and no other way to match starts
+        /// with a space: skip the spaces, then test `after_spaces`
+        skip_spaces: bool,
+        after_spaces: Class,
+    };
 
     pub const Name = struct { name: []const u8, index: u16 };
 
@@ -100,6 +113,7 @@ pub const Regex = struct {
         c.progs.items[0] = try main.toOwnedSlice(a);
 
         if (p.ngroups > max_groups) return error.InvalidPattern;
+        const prefilter = computePrefilter(root, p.classes.items, p.ignore_case);
         return .{
             .arena = arena,
             .progs = c.progs.items,
@@ -108,7 +122,100 @@ pub const Regex = struct {
             .names = p.names.items,
             .ignore_case = p.ignore_case,
             .nloop_regs = c.nloop,
+            .prefilter = prefilter,
         };
+    }
+
+    /// The set of bytes a match of `node` can start with, added to `out`.
+    /// Returns whether `node` can match without consuming input, or null when
+    /// that cannot be told (back references). Zero-width assertions only
+    /// constrain a match, so ignoring them keeps the set a superset.
+    fn firstBytes(node: *const Node, classes: []const Class, ignore_case: bool, out: *Class) ?bool {
+        switch (node.*) {
+            .empty, .assert, .look => return true,
+            .char => |c| {
+                out.set(c);
+                if (ignore_case) out.set(std.ascii.toUpper(c));
+                return false;
+            },
+            .any_nonl => {
+                var all = Class.full;
+                all.unset('\n');
+                out.setUnion(all);
+                return false;
+            },
+            .class => |ci| {
+                out.setUnion(classes[ci]);
+                return false;
+            },
+            .backref => return null,
+            .group => |g| return firstBytes(g.child, classes, ignore_case, out),
+            .concat => |items| {
+                for (items) |item| {
+                    if (!(firstBytes(item, classes, ignore_case, out) orelse return null)) return false;
+                }
+                return true;
+            },
+            .alt => |branches| {
+                var nullable = false;
+                for (branches) |br| {
+                    if (firstBytes(br, classes, ignore_case, out) orelse return null) nullable = true;
+                }
+                return nullable;
+            },
+            .repeat => |r| {
+                const child_nullable = firstBytes(r.child, classes, ignore_case, out) orelse return null;
+                return child_nullable or r.min == 0;
+            },
+        }
+    }
+
+    /// Whether `node` is `[ ]*` (greedy, any number of spaces)
+    fn isSpaces(node: *const Node, classes: []const Class) bool {
+        const r = switch (node.*) {
+            .repeat => |r| r,
+            else => return false,
+        };
+        if (r.min != 0 or r.max != null or !r.greedy) return false;
+        return switch (r.child.*) {
+            .char => |c| c == ' ',
+            .class => |ci| classes[ci].count() == 1 and classes[ci].isSet(' '),
+            else => false,
+        };
+    }
+
+    fn computePrefilter(root: *const Node, classes: []const Class, ignore_case: bool) ?Prefilter {
+        var first = Class.empty;
+        const nullable = firstBytes(root, classes, ignore_case, &first) orelse return null;
+        if (nullable) return null;
+        var pf: Prefilter = .{ .first = first, .skip_spaces = false, .after_spaces = first };
+        switch (root.*) {
+            .concat => |items| if (items.len > 1 and isSpaces(items[0], classes)) {
+                var rest = Class.empty;
+                var rest_nullable = false;
+                for (items[1..]) |item| {
+                    const n = firstBytes(item, classes, ignore_case, &rest) orelse return pf;
+                    if (!n) break;
+                } else rest_nullable = true;
+                if (!rest_nullable and !rest.isSet(' ')) {
+                    pf.skip_spaces = true;
+                    pf.after_spaces = rest;
+                }
+            },
+            else => {},
+        }
+        return pf;
+    }
+
+    /// Whether the prefilter rules out a match starting at `pos`
+    fn rejects(self: *const Regex, input: []const u8, pos: usize) bool {
+        const pf = self.prefilter orelse return false;
+        var p = pos;
+        if (pf.skip_spaces) {
+            while (p < input.len and input[p] == ' ') p += 1;
+            return p >= input.len or !pf.after_spaces.isSet(input[p]);
+        }
+        return p >= input.len or !pf.first.isSet(input[p]);
     }
 
     pub fn deinit(self: *Regex) void {
@@ -122,6 +229,12 @@ pub const Regex = struct {
 
     /// Anchored match at `pos` (Python `pattern.match(s, pos)`)
     pub fn matchAt(self: *const Regex, input: []const u8, pos: usize) ?Match {
+        if (self.rejects(input, pos)) return null;
+        return self.matchAtUnfiltered(input, pos);
+    }
+
+    /// `matchAt` without the prefilter, for comparing against it in tests
+    pub fn matchAtUnfiltered(self: *const Regex, input: []const u8, pos: usize) ?Match {
         var m: Match = .{ .input = input, .ngroups = self.ngroups };
         if (self.run(0, input, pos, &m.slots, null, false)) return m;
         return null;
@@ -143,6 +256,11 @@ pub const Regex = struct {
     pub fn searchAt(self: *const Regex, input: []const u8, pos: usize) ?Match {
         var i = pos;
         while (i <= input.len) : (i += 1) {
+            // only positions where a match can start
+            if (self.prefilter) |pf| {
+                while (i < input.len and !pf.first.isSet(input[i])) i += 1;
+                if (i >= input.len) return null;
+            }
             if (self.matchAt(input, i)) |m| return m;
         }
         return null;

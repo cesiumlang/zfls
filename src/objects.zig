@@ -70,6 +70,9 @@ pub const Kind = enum {
     }
 };
 
+/// Declared visibility of an object, `default` when no PUBLIC or PRIVATE applies
+pub const Vis = enum { private, default, public };
+
 pub const ImportType = enum(i8) { default = -1, none = 0, all = 1, only = 2 };
 
 /// USE or IMPORT statement
@@ -184,8 +187,8 @@ pub const Obj = struct {
     fqsn: []const u8 = "",
     sline: usize = 0,
     eline: usize = 0,
-    vis: i8 = 0,
-    def_vis: i8 = 0,
+    vis: Vis = .default,
+    def_vis: Vis = .default,
     doc_str: ?[]const u8 = null,
     parent: ?*Obj = null,
     implicit_vars: ?bool = null,
@@ -299,8 +302,8 @@ pub const Obj = struct {
         switch (kind) {
             .type => {
                 o.abstract = o.hasKeyword(KW.abstract);
-                if (o.hasKeyword(KW.public)) o.vis = 1;
-                if (o.hasKeyword(KW.private)) o.vis = -1;
+                if (o.hasKeyword(KW.public)) o.vis = .public;
+                if (o.hasKeyword(KW.private)) o.vis = .private;
             },
             .interface => {},
             else => {},
@@ -402,8 +405,8 @@ pub const Obj = struct {
         try o.keywords.appendSlice(a, keywords);
         o.callable = R().CLASS_VAR.match(try o.getDescNoLink(a)) != null;
         if (opts.link_obj) |l| o.link_name = try std.ascii.allocLowerString(a, l);
-        if (o.hasKeyword(KW.public)) o.vis = 1;
-        if (o.hasKeyword(KW.private)) o.vis = -1;
+        if (o.hasKeyword(KW.public)) o.vis = .public;
+        if (o.hasKeyword(KW.private)) o.vis = .private;
         if (o.hasKeyword(KW.parameter)) o.is_const = true;
         if (o.hasKeyword(KW.external) or std.ascii.eqlIgnoreCase(o.desc, "external")) o.is_external = true;
         return o;
@@ -518,7 +521,7 @@ pub const Obj = struct {
                 if (!public_only) return a.dupe(*Obj, self.children.items);
                 var out: std.ArrayList(*Obj) = .empty;
                 for (self.children.items) |child| {
-                    if (child.vis < 0 or (self.def_vis < 0 and child.vis <= 0)) continue;
+                    if (child.vis == .private or (self.def_vis == .private and child.vis != .public)) continue;
                     try out.append(a, child);
                 }
                 return out.items;
@@ -1602,6 +1605,10 @@ pub const Ast = struct {
     external_objs: std.ArrayList(*Obj) = .empty,
     none_scope: ?*Obj = null,
     inc_scope: ?*Obj = null,
+    /// The scope of the including file that this file is included into, so
+    /// that names are looked up there after the file's own scopes (cleared
+    /// when the workspace is relinked)
+    included_in: ?*Obj = null,
     current_scope: ?*Obj = null,
     end_scope_regex: ?*const regex.Regex = null,
     enc_scope_name: ?[]const u8 = null,
@@ -1818,10 +1825,10 @@ pub const Ast = struct {
             };
         }
         for (self.private_list.items) |name| {
-            if (self.getObject(name)) |o| o.vis = -1;
+            if (self.getObject(name)) |o| o.vis = .private;
         }
         for (self.public_list.items) |name| {
-            if (self.getObject(name)) |o| o.vis = 1;
+            if (self.getObject(name)) |o| o.vis = .public;
         }
     }
 
@@ -1835,7 +1842,8 @@ pub const Ast = struct {
         const path = self.path orelse return;
         const file_dir = std.fs.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
-            const joined = try std.fs.path.join(tmp, &.{ file_dir, inc.path });
+            // `#include` directives are resolved to absolute paths by the preprocessor
+            const joined = if (std.fs.path.isAbsolute(inc.path)) inc.path else try std.fs.path.join(tmp, &.{ file_dir, inc.path });
             const file_path = try parser.normPath(tmp, joined);
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
             const parent_scope = self.getInnerScope(inc.line_number);
@@ -1843,6 +1851,7 @@ pub const Ast = struct {
             const include_ast = include_file.ast orelse continue;
             inc.file = include_file;
             inc.inc_obj = null;
+            include_ast.included_in = parent_scope;
             if (include_ast.none_scope == null) continue;
             if (include_ast.inc_scope == null) include_ast.inc_scope = include_ast.none_scope;
             // Remove old objects
@@ -1996,7 +2005,7 @@ fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public
         if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
             if (try checkScope(env, child, name_lower, filter_public, null)) |v| return v;
         }
-        const is_private = child.vis < 0 or (local_scope.def_vis < 0 and child.vis <= 0);
+        const is_private = child.vis == .private or (local_scope.def_vis == .private and child.vis != .public);
         if (filter_public and is_private) continue;
         if (std.ascii.eqlIgnoreCase(child.name, name_lower)) {
             if (local_scope.kind == .function and std.ascii.eqlIgnoreCase(local_scope.name, child.name)) {
@@ -2071,6 +2080,10 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     for (try scope.getAncestors(a)) |anc| {
         if (try findInScope(env, anc, var_name, .{})) |v| return v;
     }
+    // A file included into a scope sees that scope
+    if (scope.parent == null) if (scope.file_ast.included_in) |host| {
+        if (host.file_ast != scope.file_ast) return findInScope(env, host, var_name, .{});
+    };
     return null;
 }
 

@@ -215,3 +215,51 @@ test "src file exts regex" {
     defer re2.deinit();
     try std.testing.expect(re2.search("test.inc") == null);
 }
+
+test "the prefilter never rejects a line that matches" {
+    init();
+    const words = [_][]const u8{
+        "subroutine", "end", "module", "program", "integer", "real", "type", "class", "use", "only",
+        "interface", "if", "do", "call", "function", "contains", "implicit", "none", "parameter", "block",
+        "foo", "x", "(", ")", ",", "::", "=", "=>", "!", "!>", "&", "#", "'", "\"", "1", "10", "*", "%", ":",
+    };
+    var prng = std.Random.DefaultPrng.init(0xf17e);
+    const rng = prng.random();
+    var buf: [200]u8 = undefined;
+    for (0..3000) |_| {
+        var len: usize = 0;
+        const lead = rng.uintAtMost(usize, 8);
+        @memset(buf[0..lead], ' ');
+        len = lead;
+        const n_words = rng.uintAtMost(usize, 7);
+        for (0..n_words) |_| {
+            const w = words[rng.uintLessThan(usize, words.len)];
+            const sp: usize = rng.uintAtMost(usize, 2);
+            if (len + w.len + sp > buf.len) break;
+            @memset(buf[len .. len + sp], ' ');
+            len += sp;
+            for (w, 0..) |c, i| buf[len + i] = if (rng.boolean()) std.ascii.toUpper(c) else c;
+            len += w.len;
+        }
+        const line = buf[0..len];
+        inline for (defs) |d| {
+            const re = &@field(storage, d[0]);
+            const want = re.matchAtUnfiltered(line, 0);
+            const got = re.match(line);
+            try std.testing.expectEqual(want != null, got != null);
+            if (want) |w| try std.testing.expectEqual(w.start(0), got.?.start(0));
+            // search: the first position where the unfiltered pattern matches
+            var first: ?usize = null;
+            var i: usize = 0;
+            while (i <= line.len) : (i += 1) {
+                if (re.matchAtUnfiltered(line, i) != null) {
+                    first = i;
+                    break;
+                }
+            }
+            const found = re.search(line);
+            try std.testing.expectEqual(first != null, found != null);
+            if (first) |f| try std.testing.expectEqual(f, found.?.start(0));
+        }
+    }
+}

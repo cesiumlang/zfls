@@ -92,6 +92,7 @@ the resulting object tree, and `--debug_hover --debug_filepath file.f90
 | --- | --- |
 | `zig build test` | Zig unit tests, and the tests of upstream fortls issues |
 | `zig build test-issues` | only the tests of the open issues of upstream fortls (see `tests/issues/README.md`) |
+| `zig build test-fuzz` | mutated programs thrown at an in-process server (crashes, leaks); `--fuzz` runs the fuzzer |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
@@ -184,6 +185,9 @@ zfls deliberately differs from fortls in a few places:
   unresolved; fortls hits a recursion error on them.
 - Go to definition on a preprocessor `#include "file"` opens the file (searched
   next to the including file and in `include_dirs`); fortls has no answer.
+- A file that another file `#include`s into a scope sees the names of that scope
+  (as for `INCLUDE` statements, but also for files that hold whole procedures);
+  fortls reports them as unknown in the included file.
 - Hover shows the whole value of a parameter. fortls cuts it at the first
   parenthesis or bracket, so `selected_real_kind(6)` shows as
   `selected_real_kind`.
