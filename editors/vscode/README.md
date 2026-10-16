@@ -11,6 +11,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives
 - snippets for program units and constructs (see [Snippets](#snippets))
+- breakpoints in Fortran files, for debuggers such as C/C++ (cppdbg,
+  cppvsdbg) and CodeLLDB
+- a Fortran file icon, in file icon themes that use the language's icon
 
 The extension includes the `zfls` executable for Windows, Linux and macOS
 (x64 and ARM64). Nothing else needs to be installed.

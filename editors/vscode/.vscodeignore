@@ -1,4 +1,4 @@
-# Only dist/, bin/, syntaxes/, snippets/, schemas/, the language
+# Only dist/, bin/, syntaxes/, snippets/, icons/, schemas/, the language
 # configuration, the README and the licenses go into the VSIX
 src/**
 node_modules/**
