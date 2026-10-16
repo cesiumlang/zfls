@@ -432,3 +432,22 @@ test "a separate module procedure interface still sees its module (control for h
     };
     try h.expect(masks, "no masking warning in a module procedure interface", .{});
 }
+
+test "hansec #229 DO and ASSOCIATE opened and closed on single lines with ;" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  integer :: i
+        \\  real :: arr(3)
+        \\  do i=1,size(arr); associate(point => arr(i))
+        \\    point = 1.0
+        \\  end associate; end do
+        \\end program p
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 229, .fixed, w.expectNoDiagnostics("t.f90"));
+}

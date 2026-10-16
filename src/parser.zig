@@ -91,7 +91,8 @@ pub const FunSig = struct {
 pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8 };
 pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
 pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const []const u8, vis_flag: objects.Vis };
-pub const SmodInfo = struct { name: []const u8, parent: []const u8 };
+/// `SUBMODULE (ancestor[:parent]) name`
+pub const SmodInfo = struct { name: []const u8, ancestor: []const u8, parent: []const u8 };
 pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
 pub const VisInfo = struct { private: bool, obj_names: []const []const u8 };
 pub const UseInfo = struct {
@@ -443,21 +444,25 @@ fn readModDef(a: Allocator, line_in: []const u8) E!?DefResult {
     return .{ .mod = name };
 }
 
+/// `SUBMODULE (ancestor[:parent]) name`: the name follows the parentheses,
+/// not the parent submodule inside them
 fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().SUBMOD.match(line) orelse return null;
+    var ancestor_name: []const u8 = "";
     var parent_name: []const u8 = "";
     var name: []const u8 = "";
-    var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
-    if (R().WORD.match(trailing)) |pm| {
+    const trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    const close = std.mem.indexOfScalar(u8, trailing, ')') orelse trailing.len;
+    const parents = trailing[0..close];
+    const colon = std.mem.indexOfScalar(u8, parents, ':') orelse parents.len;
+    if (R().WORD.search(parents[0..colon])) |am| ancestor_name = try std.ascii.allocLowerString(a, am.str());
+    if (colon < parents.len) if (R().WORD.search(parents[colon + 1 ..])) |pm| {
         parent_name = try std.ascii.allocLowerString(a, pm.str());
-        if (trailing.len > pm.end(0) + 1) {
-            trailing = str.strip(trailing[pm.end(0) + 1 ..]);
-        } else {
-            trailing = "";
-        }
-    }
-    if (R().WORD.search(trailing)) |nm| name = try std.ascii.allocLowerString(a, nm.str());
-    return .{ .smod = .{ .name = name, .parent = parent_name } };
+    };
+    if (close < trailing.len) if (R().WORD.search(trailing[close + 1 ..])) |nm| {
+        name = try std.ascii.allocLowerString(a, nm.str());
+    };
+    return .{ .smod = .{ .name = name, .ancestor = ancestor_name, .parent = parent_name } };
 }
 
 fn readProgDef(a: Allocator, line: []const u8) E!?DefResult {
@@ -482,7 +487,18 @@ pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     const use_mod = m.group(2).?;
     var only: std.ArrayList([]const u8) = .empty;
     var renames: std.ArrayList([2][]const u8) = .empty;
-    if (m.group(3) != null and m.group(3).?.len > 0) {
+    if (m.group(3) == null or m.group(3).?.len == 0) {
+        // without ONLY every public name comes, some renamed: `use m, a => b`
+        var it = std.mem.splitScalar(u8, trailing, ',');
+        while (it.next()) |item| {
+            const parts = try str.split(a, item, "=>");
+            if (parts.len != 2) continue;
+            const local = str.strip(parts[0]);
+            const original = str.strip(parts[1]);
+            if (local.len == 0 or original.len == 0) continue;
+            try renames.append(a, .{ local, original });
+        }
+    } else {
         var it = std.mem.splitScalar(u8, trailing, ',');
         while (it.next()) |only_stmt| {
             const parts = try str.split(a, only_stmt, "=>");
@@ -1489,7 +1505,7 @@ const Parser = struct {
                 p.dbg("{s} !!! MODULE - Ln:{d}", .{ line, line_no });
             },
             .smod => |info| {
-                const o = try Obj.newSubmodule(ast, line_no, info.name, info.parent);
+                const o = try Obj.newSubmodule(ast, line_no, info.name, info.ancestor, info.parent);
                 try ast.addScope(o, &R().END_SMOD, true, false);
                 p.dbg("{s} !!! SUBMODULE - Ln:{d}", .{ line, line_no });
             },

@@ -132,6 +132,11 @@ pub const StrMap = struct {
     keys: std.ArrayList([]const u8) = .empty,
     values: std.ArrayList([]const u8) = .empty,
 
+    pub fn hasValue(self: *const StrMap, v: []const u8) bool {
+        for (self.values.items) |value| if (std.mem.eql(u8, value, v)) return true;
+        return false;
+    }
+
     pub fn get(self: *const StrMap, k: []const u8) ?[]const u8 {
         for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) return self.values.items[i];
         return null;
@@ -216,7 +221,11 @@ pub const Obj = struct {
     external: bool = false,
 
     // Submodule
+    /// the ancestor module
     ancestor_name: []const u8 = "",
+    /// the parent submodule, if any: `SUBMODULE (ancestor:parent) name`
+    parent_smod_name: []const u8 = "",
+    /// the parent submodule, or else the ancestor module
     ancestor_obj: ?*Obj = null,
 
     // Subroutine / Function
@@ -318,9 +327,10 @@ pub const Obj = struct {
         return o;
     }
 
-    pub fn newSubmodule(file_ast: *Ast, line_number: usize, name: []const u8, ancestor_name: []const u8) !*Obj {
+    pub fn newSubmodule(file_ast: *Ast, line_number: usize, name: []const u8, ancestor_name: []const u8, parent_smod_name: []const u8) !*Obj {
         const o = try newScope(file_ast, .submodule, line_number, name, &.{});
         o.ancestor_name = try o.al().dupe(u8, ancestor_name);
+        o.parent_smod_name = try o.al().dupe(u8, parent_smod_name);
         return o;
     }
 
@@ -529,13 +539,31 @@ pub const Obj = struct {
         }
     }
 
+    /// The parent submodules and the ancestor module of a submodule, nearest
+    /// first
     pub fn getAncestors(self: *const Obj, a: Allocator) ![]*Obj {
         if (self.kind != .submodule) return &.{};
-        const anc = self.ancestor_obj orelse return &.{};
         var out: std.ArrayList(*Obj) = .empty;
-        try out.append(a, anc);
-        try out.appendSlice(a, try anc.getAncestors(a));
+        var cur = self;
+        while (cur.kind == .submodule) {
+            const anc = cur.ancestor_obj orelse break;
+            // submodules that name each other while code is being edited
+            for (out.items) |o| if (o == anc) return out.items;
+            if (anc == self) break;
+            try out.append(a, anc);
+            cur = anc;
+        }
         return out.items;
+    }
+
+    /// The scope a submodule extends: its parent submodule, if that is a
+    /// submodule of the same module, or else its ancestor module
+    fn findSubmoduleParent(self: *const Obj, env: Env) ?*Obj {
+        if (self.parent_smod_name.len > 0) if (env.global(self.file_ast, self.parent_smod_name)) |p| {
+            if (p != self and p.kind == .submodule and std.mem.eql(u8, p.ancestor_name, self.ancestor_name)) return p;
+        };
+        if (self.ancestor_name.len == 0) return null;
+        return env.global(self.file_ast, self.ancestor_name);
     }
 
     pub fn setParent(self: *Obj, parent_obj: ?*Obj) void {
@@ -1018,11 +1046,7 @@ pub const Obj = struct {
                     self.in_children.clearRetainingCapacity();
                 }
             },
-            .submodule => {
-                self.ancestor_obj = null;
-                if (self.ancestor_name.len == 0) return;
-                self.ancestor_obj = env.global(self.file_ast, self.ancestor_name);
-            },
+            .submodule => self.ancestor_obj = self.findSubmoduleParent(env),
             else => {},
         }
     }
@@ -1203,17 +1227,26 @@ pub const Obj = struct {
     }
 
     fn resolveSubmoduleLink(self: *Obj, env: Env) !void {
-        const anc = self.ancestor_obj orelse return;
-        // Collect ancestor interface prototypes
+        // Collect the interface prototypes of the ancestor module and of the
+        // parent submodules (looked up here, as their own links may not be
+        // resolved yet)
         var interfaces: std.ArrayList(*Obj) = .empty;
-        for (anc.children.items) |child| {
-            if (child.getType(false) != C.TypeId.interface) continue;
-            for (child.children.items) |iface| {
-                const it = iface.getType(false);
-                if ((it == C.TypeId.subroutine or it == C.TypeId.function or it == C.TypeId.base) and iface.isModScope()) {
-                    try interfaces.append(env.tmp, iface);
+        var visited: std.ArrayList(*const Obj) = .empty;
+        var cur: *const Obj = self;
+        outer: while (cur.kind == .submodule) {
+            try visited.append(env.tmp, cur);
+            const anc = cur.findSubmoduleParent(env) orelse break;
+            for (visited.items) |v| if (v == anc) break :outer;
+            for (anc.children.items) |child| {
+                if (child.getType(false) != C.TypeId.interface) continue;
+                for (child.children.items) |iface| {
+                    const it = iface.getType(false);
+                    if ((it == C.TypeId.subroutine or it == C.TypeId.function or it == C.TypeId.base) and iface.isModScope()) {
+                        try interfaces.append(env.tmp, iface);
+                    }
                 }
             }
+            cur = anc;
         }
         for (interfaces.items) |iface| {
             for (self.children.items) |child| {
@@ -2081,7 +2114,10 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         const use_scope = env.global(scope.file_ast, use_mod) orelse continue;
         if (std.mem.eql(u8, use_mod, name_lower)) return use_scope;
         if (use_info.only_list.len() > 0 and !use_info.only_list.contains(name_lower)) continue;
-        const mod_name = use_info.rename_map.get(name_lower) orelse name_lower;
+        const renamed = use_info.rename_map.get(name_lower);
+        // a renamed entity is not accessible under its original name
+        if (renamed == null and use_info.rename_map.hasValue(name_lower)) continue;
+        const mod_name = renamed orelse name_lower;
         if (try checkScope(env, use_scope, mod_name, true, null)) |v| return v;
     }
     // Only search local and imported names for interfaces

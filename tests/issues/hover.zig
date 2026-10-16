@@ -476,3 +476,138 @@ test "hansec #168 references to a separate module procedure include its implemen
     };
     try h.checkIn(.hansec, 168, .fixed, outcome);
 }
+
+const rename_fixture = [_]h.File{.{
+    .name = "t.f90",
+    .text =
+    \\module m
+    \\contains
+    \\  function func_1(x)
+    \\    integer :: x, func_1
+    \\    func_1 = x
+    \\  end function func_1
+    \\end module m
+    \\program p
+    \\  use m, func_1_ref => func_1
+    \\  logical :: func_1
+    \\  print *, func_1_ref(3), func_1
+    \\end program p
+    \\
+    ,
+}};
+
+test "hansec #137 the original name on a USE rename line is the module's entity" {
+    const w = try h.Workspace.init(&rename_fixture, .{});
+    defer w.deinit();
+    const def = try w.definition("t.f90", w.pos("t.f90", "=> func_1", 0, 4));
+    try h.checkIn(.hansec, 137, .fixed, blk: {
+        const l = def orelse break :blk h.unmet("no definition for the original name", .{});
+        break :blk h.expect(l.line == 2, "definition at line {d}, expected the function at line 3", .{l.line + 1});
+    });
+}
+
+test "a rename without ONLY makes the local name the module's entity, and hides the original name" {
+    const w = try h.Workspace.init(&rename_fixture, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "func_1_ref(3)", 0, 1), "FUNCTION");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "func_1_ref =>", 0, 1), "FUNCTION");
+    // the local variable of the same name as the original is not the function
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "(3), func_1", 0, 6), "LOGICAL");
+}
+
+test "#534 fixed-form documentation comments do not keep the indentation of the code" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f",
+        .text =
+        \\      SUBROUTINE MYFUNC(PARAM1)
+        \\      !> THIS IS AN EXAMPLE FUNCTION TO DEMONSTRATE
+        \\      !! THE BROKEN PARSING OF
+        \\      !! DOCSTRINGS FOR FIXED FORMAT CODE
+        \\
+        \\      REAL, INTENT(IN) :: PARAM1
+        \\      !> THE SAME PROBLEM OCCURS
+        \\      !! FOR DOCSTRINGS FOR PARAMETERS
+        \\
+        \\      END SUBROUTINE MYFUNC
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // `!>` documents the next object, PARAM1; its continuation lines are
+        // not indented by the six columns of fixed form (a Markdown code block)
+        const param = (try w.hover("t.f", w.pos("t.f", "PARAM1", 1, 1))) orelse break :blk h.unmet("no hover on PARAM1", .{});
+        const docs = param[(std.mem.indexOf(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
+        if (std.mem.indexOf(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
+        break :blk h.expect(std.mem.indexOf(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
+    };
+    try h.check(534, .fixed, outcome);
+}
+
+test "#481 an #include path with slashes is found in the include directories" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text =
+        \\{"source_dirs": ["./**"], "include_dirs": ["include"]}
+        \\
+        },
+        .{ .name = "src/main.F90", .text =
+        \\program p
+        \\#include "petsc/finclude/petscvec.h"
+        \\#ifdef PETSC_HAVE_VEC
+        \\  integer :: from_vec
+        \\#endif
+        \\  from_vec = 1
+        \\end program p
+        \\
+        },
+        .{ .name = "include/petsc/finclude/petscvec.h", .text =
+        \\#define PETSC_HAVE_VEC
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // the macro of the header is defined
+        w.expectHoverContains("src/main.F90", w.pos("src/main.F90", "from_vec = 1", 0, 1), "INTEGER :: from_vec") catch |e| break :blk e;
+        const def = (try w.definition("src/main.F90", w.pos("src/main.F90", "finclude", 0, 1))) orelse
+            break :blk h.unmet("no definition for the include", .{});
+        break :blk h.expect(std.mem.endsWith(u8, def.uri, "petsc/finclude/petscvec.h"), "definition is {s}", .{def.uri});
+    };
+    try h.check(481, .fixed, outcome);
+}
+
+test "hansec #178 signature help skips array constructors and nested calls" {
+    const w = try h.Workspace.init(&.{.{
+        .name = "t.f90",
+        .text =
+        \\module m
+        \\contains
+        \\  subroutine mysub(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b(:), c, d, e
+        \\  end subroutine mysub
+        \\  integer function myfun(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b, c, d, e
+        \\    myfun = a
+        \\  end function myfun
+        \\  subroutine caller(a, b, c, d, e)
+        \\    integer, intent(in) :: a, b, c, d, e
+        \\    integer :: x
+        \\    call mysub(a, [1, 2, 3], c, d, e)
+        \\    call mysub(a, (/1, 2, 3/), c, d, e)
+        \\    x = myfun(a, myfun(a, b, c, d, e), c, d, e)
+        \\  end subroutine caller
+        \\end module m
+        \\
+        ,
+    }}, .{});
+    defer w.deinit();
+    const outcome: anyerror!void = blk: {
+        // just after the third argument, `c`
+        for ([_][]const u8{ "[1, 2, 3], c", "(/1, 2, 3/), c", "d, e), c" }) |needle| {
+            const sig = (try w.signature("t.f90", w.pos("t.f90", needle, 0, needle.len))) orelse
+                break :blk h.unmet("no signature help after '{s}'", .{needle});
+            if (sig.active != 2) break :blk h.unmet("after '{s}': active parameter {d}, expected 2", .{ needle, sig.active });
+        }
+    };
+    try h.checkIn(.hansec, 178, .fixed, outcome);
+}
