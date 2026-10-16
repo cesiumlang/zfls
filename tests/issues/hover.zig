@@ -635,3 +635,38 @@ test "hansec #229 an ASSOCIATE opened on the line of its DO: names inside are fo
         break :blk h.expect(def.line == 4, "definition of point at line {d}", .{def.line + 1});
     });
 }
+
+test "hansec #203 preprocessor directives inside a continued declaration" {
+    const files = [_]h.File{.{
+        .name = "t.F90",
+        .text =
+        \\program p
+        \\  implicit none
+        \\  REAL &
+        \\#ifdef X
+        \\  , POINTER &
+        \\#else
+        \\  , ALLOCATABLE &
+        \\#endif
+        \\  :: v(:)
+        \\  print *, v
+        \\end program p
+        \\
+        ,
+    }};
+    const Case = struct { defs: []const @import("zfls").settings.PpDef, want: []const u8, not: []const u8 };
+    const outcome: anyerror!void = blk: {
+        for ([_]Case{
+            .{ .defs = &.{}, .want = "ALLOCATABLE", .not = "POINTER" },
+            .{ .defs = &.{.{ .name = "X", .value = "" }}, .want = "POINTER", .not = "ALLOCATABLE" },
+        }) |c| {
+            const w = try h.Workspace.init(&files, .{ .pp_defs = c.defs });
+            defer w.deinit();
+            const text = (try w.hover("t.F90", w.pos("t.F90", "print *, v", 0, 9))) orelse
+                break :blk h.unmet("no hover on v (X defined: {})", .{c.defs.len > 0});
+            if (std.mem.indexOf(u8, text, c.want) == null or std.mem.indexOf(u8, text, c.not) != null)
+                break :blk h.unmet("hover of v (X defined: {}): {s}", .{ c.defs.len > 0, text });
+        }
+    };
+    try h.checkIn(.hansec, 203, .fixed, outcome);
+}

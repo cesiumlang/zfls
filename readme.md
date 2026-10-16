@@ -236,6 +236,9 @@ zfls deliberately differs from fortls in a few places:
 - Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
   the last is the innermost, so the names it declares are found; fortls uses
   the first.
+- The lines of an inactive preprocessor branch inside a continued statement
+  (`REAL &` / `#ifdef X` / `, POINTER &` / `#endif`) are left out of it; fortls
+  joins them, so the declaration gets the attributes of every branch.
 
 ## Licenses
 
