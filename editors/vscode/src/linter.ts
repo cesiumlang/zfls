@@ -36,8 +36,8 @@ const LANGUAGES = new Set(["FortranFreeForm", "FortranFixedForm"]);
  * compiled without being open */
 const FIXED_FORM = new Set([".f", ".f77", ".for"]);
 /** Every Fortran extension of package.json, both cases */
-const FORTRAN_GLOB =
-  "**/*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+const FORTRAN_GLOB = `**/${FORTRAN_FILES}`;
 /** Debounce of runs on open and save */
 const SAVE_DELAY_MS = 250;
 const TIMEOUT_MS = 60_000;

@@ -9,7 +9,7 @@ import {
   LanguageClientOptions,
   ServerOptions,
 } from "vscode-languageclient/node";
-import { Linter } from "./linter";
+import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
 import { registerRunCommands } from "./runFile";
 
@@ -22,6 +22,13 @@ const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
  * URI), and one per directory of a Fortran file outside every folder (keyed
  * by the directory's URI), as in VS Code's multi-root language server sample */
 const clients = new Map<string, Promise<LanguageClient | undefined>>();
+/** The file watchers of each client, disposed when it stops */
+const watchers = new Map<string, vscode.Disposable[]>();
+/** The files whose change restarts the server that reads them */
+const SERVER_CONFIG_FILES = "{.fortlsrc,.fortls.json,.fortls,fpm.toml,compile_commands.json,build/compile_commands.json}";
+/** Restarts after configuration files change, waiting for them to settle */
+const CONFIG_RESTART_DELAY_MS = 1000;
+let restartTimer: NodeJS.Timeout | undefined;
 let output: vscode.LogOutputChannel | undefined;
 let context: vscode.ExtensionContext;
 
@@ -65,6 +72,7 @@ export async function deactivate(): Promise<void> {
 async function stopClient(key: string): Promise<void> {
   const client = clients.get(key);
   clients.delete(key);
+  disposeWatchers(key);
   await (await client)?.stop();
 }
 
@@ -131,7 +139,15 @@ async function ensureClient(doc: vscode.TextDocument): Promise<void> {
   clients.set(key, client);
   if (!(await client)) {
     clients.delete(key);
+    disposeWatchers(key);
   }
+}
+
+function disposeWatchers(key: string): void {
+  for (const w of watchers.get(key) ?? []) {
+    w.dispose();
+  }
+  watchers.delete(key);
 }
 
 async function startClient(
@@ -161,12 +177,30 @@ async function startClient(
   // a folder's server takes the files under it; a directory's server only
   // the files directly in it
   const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
+  // the server follows Fortran files changed outside the editor, and is
+  // restarted when a file it reads its configuration from changes
+  const sourceWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(root, folder ? `**/${FORTRAN_FILES}` : FORTRAN_FILES),
+  );
+  const configWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, SERVER_CONFIG_FILES));
+  const restartSoon = (): void => {
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => {
+      output?.info("A configuration file changed: restarting zfls");
+      void restartAll();
+    }, CONFIG_RESTART_DELAY_MS);
+  };
+  configWatcher.onDidCreate(restartSoon);
+  configWatcher.onDidChange(restartSoon);
+  configWatcher.onDidDelete(restartSoon);
+  watchers.set(root.toString(), [sourceWatcher, configWatcher]);
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       ...LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
       ...(untitled ? LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
     ],
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
+    synchronize: { fileEvents: sourceWatcher },
     outputChannel: output,
   };
   const name = folder ? `zfls (${folder.name})` : `zfls (${root.fsPath})`;

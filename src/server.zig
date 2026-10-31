@@ -75,6 +75,12 @@ pub const Server = struct {
     sync_type: i32 = 1,
     /// The client takes `DocumentSymbol` trees, not fortls's flat list
     hierarchical_symbols: bool = false,
+    /// The paths of the documents open in the editor, whose text is the
+    /// editor's (keys owned by `gpa`)
+    open_docs: std.StringHashMapUnmanaged(void) = .empty,
+    /// Every directory under the root is a source directory (no
+    /// `source_dirs` option), so new ones are too
+    whole_root: bool = false,
     post_messages: std.ArrayList(PostMessage) = .empty,
     src_ext_regex: regex.Regex,
     intr: intrinsics.Intrinsics,
@@ -119,6 +125,9 @@ pub const Server = struct {
         self.obj_tree.deinit(self.gpa);
         for (self.retired.items) |ast| ast.destroy();
         self.retired.deinit(self.gpa);
+        var open_it = self.open_docs.keyIterator();
+        while (open_it.next()) |k| self.gpa.free(k.*);
+        self.open_docs.deinit(self.gpa);
         self.post_messages.deinit(self.gpa);
         self.intr.deinit();
         self.pp_defs_arena.deinit();
@@ -244,6 +253,7 @@ pub const Server = struct {
         did_change,
         code_action,
         workspace_symbol,
+        watched_files,
         /// accepted and ignored
         ignored,
         exit,
@@ -269,7 +279,7 @@ pub const Server = struct {
         .{ "textDocument/codeAction", .code_action },
         .{ "workspace/symbol", .workspace_symbol },
         .{ "initialized", .ignored },
-        .{ "workspace/didChangeWatchedFiles", .ignored },
+        .{ "workspace/didChangeWatchedFiles", .watched_files },
         .{ "workspace/didChangeConfiguration", .ignored },
         .{ "$/cancelRequest", .ignored },
         .{ "$/setTrace", .ignored },
@@ -296,6 +306,7 @@ pub const Server = struct {
             .did_change => self.serveOnChange(a, try json.decode(lsp.DidChangeParams, a, params)),
             .code_action => self.serveCodeActions(a, try json.decode(lsp.CodeActionParams, a, params)),
             .workspace_symbol => self.serveWorkspaceSymbol(a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
+            .watched_files => self.serveWatchedFiles(a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
             .ignored => .null,
             .exit => blk: {
                 self.serveExit();
@@ -576,6 +587,7 @@ pub const Server = struct {
             try dirs.add(sa, try sa.dupe(u8, try paths.realpath(self.io, a, w.dir)));
         }
         self.s.source_dirs = dirs;
+        self.whole_root = true;
     }
 
     fn getSourceFiles(self: *Server, a: Allocator) ![][]const u8 {
@@ -1958,6 +1970,12 @@ pub const Server = struct {
     pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
         const uri = params.textDocument.uri;
         const filepath = try self.pathFromUri(a, uri);
+        if (did_open and !self.open_docs.contains(filepath)) {
+            const key = try self.gpa.dupe(u8, filepath);
+            errdefer self.gpa.free(key);
+            try self.open_docs.put(self.gpa, key, {});
+        }
+        if (did_close) if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
         if (paths.isVirtualUri(filepath)) return self.serveVirtualDocument(a, uri, filepath, params.textDocument.text, did_open, did_close);
         if (did_close and !paths.isFile(self.io, filepath)) {
             if (self.workspace.get(filepath)) |f| if (f.ast) |ast| self.removeFromTree(ast);
@@ -1970,6 +1988,47 @@ pub const Server = struct {
         if (changed) try self.fullRelink(a);
         if (!self.s.disable_diagnostics) self.sendDiagnostics(a, uri);
         return .null;
+    }
+
+    /// Files created, changed or deleted outside the editor (a checkout, a
+    /// generator): the workspace follows them. Documents open in the editor
+    /// are left alone, their text being the editor's.
+    fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatchedFilesParams) !Value {
+        var changed = false;
+        for (params.changes) |ev| {
+            const path = try self.pathFromUri(a, ev.uri);
+            if (self.open_docs.contains(path) or paths.isVirtualUri(path)) continue;
+            if (ev.type == 3) {
+                const f = self.workspace.get(path) orelse continue;
+                if (f.ast == null) continue;
+                try self.retireFileAst(f);
+                f.ast = null;
+                // so that the same text, restored, is parsed again
+                f.hash = null;
+                changed = true;
+                continue;
+            }
+            if (!self.isSourceFile(path)) continue;
+            const updated = self.updateWorkspaceFile(path, true, false, false) catch |e| {
+                self.log.err("{s} : {s}", .{ parser.describeFileError(e), path });
+                continue;
+            };
+            changed = changed or updated;
+        }
+        if (changed) try self.fullRelink(a);
+        return .null;
+    }
+
+    /// Whether `path` is a file the workspace indexes: a Fortran file of a
+    /// source directory (any directory under the root, without
+    /// `source_dirs`) that no exclusion covers
+    fn isSourceFile(self: *const Server, path: []const u8) bool {
+        const base = std.fs.path.basename(path);
+        if (self.src_ext_regex.search(base) == null) return false;
+        for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
+        for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
+        if (self.s.source_dirs.contains(paths.dirname(path))) return true;
+        return self.whole_root and std.mem.startsWith(u8, path, self.root_path);
     }
 
     /// `didOpen`, `didSave` and `didClose` of a document that is not a file

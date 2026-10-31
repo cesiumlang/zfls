@@ -154,3 +154,63 @@ test "an untitled document is served from the text the client sends" {
     try std.testing.expect(std.mem.indexOf(u8, json.str(json.path(hov, &.{ "contents", "value" })) orelse "", "REAL") != null);
     _ = try w.server.dispatchPublic(a, "textDocument/didClose", try json.from(a, .{ .textDocument = .{ .uri = uri } }));
 }
+
+fn watched(w: *h.Workspace, name: []const u8, kind: i64) !void {
+    const zfls = @import("zfls");
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "workspace/didChangeWatchedFiles", try zfls.json.from(a, .{
+        .changes = &[_]struct { uri: []const u8, type: i64 }{.{ .uri = try w.uri(name), .type = kind }},
+    }));
+}
+
+fn hasSymbol(w: *h.Workspace, name: []const u8) !bool {
+    for (try w.workspaceSymbols(name)) |s| if (std.mem.eql(u8, s, name)) return true;
+    return false;
+}
+
+test "files changed, created and deleted outside the editor are followed" {
+    const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
+    \\module lib
+    \\  integer :: old_name
+    \\end module lib
+    \\
+    }}, .{});
+    defer w.deinit();
+    const io = std.testing.io;
+    try std.testing.expect(try hasSymbol(w, "old_name"));
+    // changed on disk (a checkout)
+    try w.tmp.dir.writeFile(io, .{ .sub_path = "lib.f90", .data = "module lib\n  integer :: new_name\nend module lib\n" });
+    try watched(w, "lib.f90", 2);
+    try std.testing.expect(try hasSymbol(w, "new_name"));
+    try std.testing.expect(!try hasSymbol(w, "old_name"));
+    // created, in a directory that did not exist at start-up
+    try w.tmp.dir.createDirPath(io, "gen");
+    try w.tmp.dir.writeFile(io, .{ .sub_path = "gen/made.f90", .data = "module made\nend module made\n" });
+    try watched(w, "gen/made.f90", 1);
+    try std.testing.expect(try hasSymbol(w, "made"));
+    // deleted
+    try w.tmp.dir.deleteFile(io, "gen/made.f90");
+    try watched(w, "gen/made.f90", 3);
+    try std.testing.expect(!try hasSymbol(w, "made"));
+    // restored as it was
+    try w.tmp.dir.writeFile(io, .{ .sub_path = "gen/made.f90", .data = "module made\nend module made\n" });
+    try watched(w, "gen/made.f90", 1);
+    try std.testing.expect(try hasSymbol(w, "made"));
+}
+
+test "a document open in the editor keeps the editor's text when its file changes" {
+    const zfls = @import("zfls");
+    const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
+    \\module lib
+    \\  integer :: edited_name
+    \\end module lib
+    \\
+    }}, .{});
+    defer w.deinit();
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "textDocument/didOpen", try zfls.json.from(a, .{ .textDocument = .{ .uri = try w.uri("lib.f90") } }));
+    try w.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "lib.f90", .data = "module lib\n  integer :: disk_name\nend module lib\n" });
+    try watched(w, "lib.f90", 2);
+    try std.testing.expect(try hasSymbol(w, "edited_name"));
+    try std.testing.expect(!try hasSymbol(w, "disk_name"));
+}

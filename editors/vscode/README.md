@@ -16,6 +16,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   inactive
 - untitled (new, unsaved) Fortran files too, served by the first folder's
   server
+- Fortran files changed outside VS Code (a checkout, generated code) are
+  indexed again; the server restarts when `.fortlsrc`, `.fortls.json`,
+  `.fortls`, `fpm.toml` or `compile_commands.json` changes
 - diagnostics, and a compiler's errors and warnings (see
   [Compiler diagnostics](#compiler-diagnostics))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
