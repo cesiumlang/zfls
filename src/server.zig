@@ -1444,7 +1444,7 @@ pub const Server = struct {
     fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         if (try self.constructAt(a, params)) |c| {
             const d = c.target.def orelse return .null;
-            return json.from(a, locationOf(params.textDocument.uri, c.file, d.line, d.start, d.line, d.end));
+            return json.from(a, locationOf(try paths.pathToUri(a, c.file.path), c.file, d.line, d.start, d.line, d.end));
         }
         const start: lsp.Position = .{ .line = 0, .character = 0 };
         if (try self.includeDirectiveTarget(a, params, false)) |target| {
@@ -1903,7 +1903,7 @@ pub const Server = struct {
     }
 
     fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-        if (try self.constructAt(a, params)) |c| return json.from(a, try constructLocations(a, params.textDocument.uri, c.file, c.target.spans));
+        if (try self.constructAt(a, params)) |c| return json.from(a, try constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
         const rs = self.referenceScope(d.obj) orelse return .null;
@@ -1965,7 +1965,7 @@ pub const Server = struct {
         const edits = try a.alloc(lsp.TextEdit, t.spans.len);
         for (t.spans, edits) |s, *e| e.* = .{ .range = rangeOf(file, s.line, s.start, s.line, s.end), .newText = new };
         const files = try a.alloc(lsp.Changes.File, 1);
-        files[0] = .{ .uri = params.textDocument.uri, .edits = edits };
+        files[0] = .{ .uri = try paths.pathToUri(a, file.path), .edits = edits };
         return json.from(a, lsp.WorkspaceEdit{ .changes = .{ .files = files } });
     }
 
