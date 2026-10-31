@@ -262,6 +262,11 @@ zfls deliberately differs from fortls in a few places:
 - Workspace symbol search also finds the names the query matches fuzzily
   (`tar` finds `this_amazing_routine`), after those that contain it
   (hansec #195); fortls finds only the latter.
+- A request that the client cancels (`$/cancelRequest`) while it waits
+  behind others is answered with `RequestCancelled` instead of being worked
+  on; fortls ignores cancellations.
+- With the `workDoneToken` of the initialize request, indexing reports its
+  progress (`$/progress`, files parsed); fortls reports none.
 - `textDocument/selectionRange`, `textDocument/documentLink` and
   `textDocument/prepareRename` (for clients that announce `prepareSupport`)
   are answered; fortls has none of them.

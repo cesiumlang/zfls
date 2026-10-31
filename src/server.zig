@@ -182,6 +182,16 @@ pub const Server = struct {
         if (self.log.enabled(.debug)) self.log.debug("SEND {s}", .{try json.pretty(a, body)});
     }
 
+    fn sendProgress(self: *Server, a: Allocator, token: Value, value: lsp.WorkDoneProgress) void {
+        const params = json.from(a, .{ .token = token, .value = value }) catch return;
+        self.sendNotification(a, "$/progress", params) catch |e| self.logSendFailure(e);
+    }
+
+    /// Answer request `id`, cancelled before it was handled
+    pub fn cancelled(self: *Server, a: Allocator, id: Value) void {
+        self.writeError(a, id, -32800, "request cancelled", null) catch |e| self.logSendFailure(e);
+    }
+
     pub fn sendNotification(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
         try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .method = method, .params = params }));
     }
@@ -438,7 +448,7 @@ pub const Server = struct {
         try self.loadIntrinsics();
         try self.addSourceDirs(a);
 
-        try self.workspaceInit(a);
+        try self.workspaceInit(a, params.workDoneToken);
         self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("version.zig").reported});
 
         if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
@@ -690,11 +700,14 @@ pub const Server = struct {
         return max;
     }
 
-    fn workspaceInit(self: *Server, a: Allocator) !void {
+    /// Parse the workspace's files; with the `workDoneToken` of the
+    /// initialize request, report the progress (FL #417, MF #757)
+    fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
         const files = try self.getSourceFiles(a);
         const results = try a.alloc(InitResult, files.len);
         @memset(results, .none);
         var job: InitJob = .{ .server = self, .files = files, .results = results };
+        if (progress) |token| self.sendProgress(a, token, .{ .kind = "begin", .title = "Indexing", .message = try std.fmt.allocPrint(a, "{d} files", .{files.len}), .percentage = 0 });
         const nthreads: usize = @intCast(std.math.clamp(self.s.nthreads, 1, 64));
         var threads: std.ArrayList(std.Thread) = .empty;
         var t: usize = 1;
@@ -702,8 +715,21 @@ pub const Server = struct {
             const th = std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, initWorker, .{&job}) catch break;
             try threads.append(a, th);
         }
-        initWorker(&job);
+        // this thread parses too, and is the one that reports
+        var reported: usize = 0;
+        while (true) {
+            const i = job.next.fetchAdd(1, .monotonic);
+            if (i >= files.len) break;
+            job.results[i] = self.fileInit(files[i]);
+            const token = progress orelse continue;
+            const pct = (i + 1) * 100 / files.len;
+            if (pct >= reported + 5) {
+                reported = pct;
+                self.sendProgress(a, token, .{ .kind = "report", .message = try std.fmt.allocPrint(a, "{d}/{d} files", .{ i + 1, files.len }), .percentage = @intCast(pct) });
+            }
+        }
         for (threads.items) |th| th.join();
+        defer if (progress) |token| self.sendProgress(a, token, .{ .kind = "end" });
 
         for (files, results) |path, res| {
             switch (res) {
