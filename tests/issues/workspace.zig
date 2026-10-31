@@ -72,9 +72,9 @@ test "#558 an unreadable directory under a source_dirs glob is skipped" {
 
 test "#536 a broken symlink under the workspace is skipped" {
     const w = try h.Workspace.init(&.{.{ .name = "sub/bar.f90", .text =
-    \\module bar_mod
-    \\end module bar_mod
-    \\
+        \\module bar_mod
+        \\end module bar_mod
+        \\
     }}, .{
         .links = &.{.{ .name = "dangling.f90", .target = "does_not_exist.f90" }},
     });
@@ -119,10 +119,10 @@ test "an untitled document is served from the text the client sends" {
     const zfls = @import("zfls");
     const json = zfls.json;
     const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
-    \\module lib
-    \\  integer :: shared = 1
-    \\end module lib
-    \\
+        \\module lib
+        \\  integer :: shared = 1
+        \\end module lib
+        \\
     }}, .{});
     defer w.deinit();
     const a = w.arena.allocator();
@@ -170,10 +170,10 @@ fn hasSymbol(w: *h.Workspace, name: []const u8) !bool {
 
 test "files changed, created and deleted outside the editor are followed" {
     const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
-    \\module lib
-    \\  integer :: old_name
-    \\end module lib
-    \\
+        \\module lib
+        \\  integer :: old_name
+        \\end module lib
+        \\
     }}, .{});
     defer w.deinit();
     const io = std.testing.io;
@@ -201,10 +201,10 @@ test "files changed, created and deleted outside the editor are followed" {
 test "a document open in the editor keeps the editor's text when its file changes" {
     const zfls = @import("zfls");
     const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
-    \\module lib
-    \\  integer :: edited_name
-    \\end module lib
-    \\
+        \\module lib
+        \\  integer :: edited_name
+        \\end module lib
+        \\
     }}, .{});
     defer w.deinit();
     const a = w.arena.allocator();

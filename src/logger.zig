@@ -26,9 +26,9 @@ pub fn deinit(self: *Logger) void {
 }
 
 pub fn enabled(self: *const Logger, level: Level) bool {
-    const lv = @intFromEnum(level);
-    if (lv >= @intFromEnum(self.stderr_level)) return true;
-    if (self.file != null and lv >= @intFromEnum(self.file_level)) return true;
+    const lv = @backingInt(level);
+    if (lv >= @backingInt(self.stderr_level)) return true;
+    if (self.file != null and lv >= @backingInt(self.file_level)) return true;
     return false;
 }
 
@@ -58,11 +58,11 @@ fn write(self: *Logger, level: Level, comptime fmt: []const u8, args: anytype) v
     const msg = w.buffered();
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
-    if (@intFromEnum(level) >= @intFromEnum(self.stderr_level)) {
+    if (@backingInt(level) >= @backingInt(self.stderr_level)) {
         Io.File.stderr().writeStreamingAll(self.io, msg) catch {};
     }
     if (self.file) |f| {
-        if (@intFromEnum(level) >= @intFromEnum(self.file_level)) f.writeStreamingAll(self.io, msg) catch {};
+        if (@backingInt(level) >= @backingInt(self.file_level)) f.writeStreamingAll(self.io, msg) catch {};
     }
 }
 

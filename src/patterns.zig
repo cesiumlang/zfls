@@ -212,9 +212,10 @@ test "src file exts regex" {
 test "the prefilter never rejects a line that matches" {
     init();
     const words = [_][]const u8{
-        "subroutine", "end", "module", "program", "integer", "real", "type", "class", "use", "only",
-        "interface", "if", "do", "call", "function", "contains", "implicit", "none", "parameter", "block",
-        "foo", "x", "(", ")", ",", "::", "=", "=>", "!", "!>", "&", "#", "'", "\"", "1", "10", "*", "%", ":",
+        "subroutine", "end", "module", "program", "integer",  "real",     "type",     "class", "use",       "only",
+        "interface",  "if",  "do",     "call",    "function", "contains", "implicit", "none",  "parameter", "block",
+        "foo",        "x",   "(",      ")",       ",",        "::",       "=",        "=>",    "!",         "!>",
+        "&",          "#",   "'",      "\"",      "1",        "10",       "*",        "%",     ":",
     };
     var prng = std.Random.DefaultPrng.init(0xf17e);
     const rng = prng.random();

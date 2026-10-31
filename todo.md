@@ -95,7 +95,7 @@ projects zfls replaces:
 
 - [x] Outline tree (breadcrumbs, sticky scroll) and folding ranges. MF #135,
   MF #647, HS #166, FL #413
-- [x] Semantic highlighting; inactive `#if` code greyed out. FL #56, FL #496,
+- [x] Semantic highlighting; inactive `#if` code grayed out. FL #56, FL #496,
   MF #245, MF #401, HS #78, FL #309
 - [x] Diagnostic codes, per-code severity, `! zfls: disable` comments, an
   allowlist of external modules. FL #438, MF #981, MF #1306, HS #150

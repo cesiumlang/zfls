@@ -340,3 +340,9 @@ Codee
 codimensions
 lfortran
 ekibun
+
+vscode-fortran-support
+FortranBreaker
+Namelist
+pFUnit
+fpm
