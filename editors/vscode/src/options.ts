@@ -1,8 +1,8 @@
 // The zfls command line from the zfls.* settings of a workspace folder.
 
-import * as os from "node:os";
-import * as path from "node:path";
 import * as vscode from "vscode";
+import { expandVariables } from "./tools";
+import { folderVariables } from "./variables";
 
 /** A setting and the zfls option it becomes */
 type Option =
@@ -38,26 +38,10 @@ export const OPTIONS: readonly Option[] = [
   { setting: "ppDefs", flag: "--pp_defs", kind: "json" },
 ];
 
-/** `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
- * `${env:NAME}` and a leading `~` in a path setting */
-export function resolvePath(value: string, folder: vscode.WorkspaceFolder | undefined): string {
-  let v = value.replace(/\$\{(workspaceFolder(?::([^}]+))?|userHome|env:([^}]+))\}/g, (all, what: string, name?: string, env?: string) => {
-    if (env !== undefined) {
-      return process.env[env] ?? "";
-    }
-    if (what === "userHome") {
-      return os.homedir();
-    }
-    if (name !== undefined) {
-      const named = vscode.workspace.workspaceFolders?.find((f) => f.name === name);
-      return named ? named.uri.fsPath : all;
-    }
-    return folder ? folder.uri.fsPath : all;
-  });
-  if (v === "~" || v.startsWith("~/") || v.startsWith("~\\")) {
-    v = path.join(os.homedir(), v.slice(1));
-  }
-  return v;
+/** A path setting of `folder` with its variables expanded; the server
+ * takes a relative one as relative to its root */
+function resolvePath(value: string, folder: vscode.WorkspaceFolder | undefined): string {
+  return expandVariables(value, folderVariables(folder));
 }
 
 /** The zfls arguments for `folder` (or for files outside any folder): the

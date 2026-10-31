@@ -20,16 +20,10 @@ import {
   dedupe,
   isCompilerId,
 } from "./lint/compilers";
-import {
-  Folder,
-  VariableContext,
-  expandDirectoryGlob,
-  findExecutable,
-  resolvePath,
-  resolveVariables,
-  samePath,
-} from "./lint/paths";
+import { expandDirectoryGlob, resolvePath, samePath } from "./lint/paths";
 import { findIncludes, scanModules } from "./lint/sources";
+import { VariableContext, expandVariables, findExecutable } from "./tools";
+import { documentVariables } from "./variables";
 
 const LANGUAGES = new Set(["FortranFreeForm", "FortranFixedForm"]);
 /** The extensions of package.json's FortranFixedForm language, for files
@@ -367,8 +361,9 @@ export class Linter implements vscode.Disposable {
       return undefined;
     }
     const spec = COMPILERS[settings.compiler];
-    const vars = this.variables(uri);
-    const base = vars.folder?.path ?? path.dirname(uri.fsPath);
+    const vars = documentVariables(uri);
+    // relative paths: the file's own workspace folder, else its directory
+    const base = vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath ?? path.dirname(uri.fsPath);
     const exe = this.executable(settings, spec, vars, base);
     if (!exe) {
       void this.notifyMissing(settings.compilerPath || spec.executables[0], "compilerPath");
@@ -390,25 +385,10 @@ export class Linter implements vscode.Disposable {
     return path.join((this.context.storageUri ?? this.context.globalStorageUri).fsPath, "lint");
   }
 
-  private variables(uri: vscode.Uri): VariableContext {
-    const toFolder = (f: vscode.WorkspaceFolder): Folder => ({ name: f.name, path: f.uri.fsPath });
-    const own = vscode.workspace.getWorkspaceFolder(uri);
-    return {
-      folders: (vscode.workspace.workspaceFolders ?? []).map(toFolder),
-      folder: own ? toFolder(own) : undefined,
-      file: uri.fsPath,
-      env: process.env,
-    };
-  }
-
   private executable(settings: Settings, spec: CompilerSpec, vars: VariableContext, base: string): string | undefined {
-    if (settings.compilerPath) {
-      const p = resolveVariables(settings.compilerPath.trim(), vars);
-      const hasDir = p.includes("/") || p.includes("\\");
-      return findExecutable(hasDir ? path.resolve(base, p) : p);
-    }
+    const configured = expandVariables(settings.compilerPath.trim(), vars);
     for (const name of spec.executables) {
-      const found = findExecutable(name);
+      const found = findExecutable(name, configured, base);
       if (found) {
         return found;
       }
@@ -484,8 +464,7 @@ export class Linter implements vscode.Disposable {
    * then shown in the file) */
   private async fypp(source: Source, fixed: boolean, job: Job, signal: AbortSignal): Promise<string | undefined> {
     const fy = job.settings.fypp;
-    const p = resolveVariables(fy.path.trim() || "fypp", job.vars);
-    const exe = findExecutable(p.includes("/") || p.includes("\\") ? path.resolve(job.base, p) : p);
+    const exe = findExecutable("fypp", expandVariables(fy.path.trim(), job.vars), job.base);
     if (!exe) {
       void this.notifyMissing(fy.path || "fypp", "fypp.path");
       return undefined;
@@ -499,7 +478,7 @@ export class Linter implements vscode.Disposable {
       ...(fixed ? ["--fixed-format"] : []),
       ...this.globs(fy.includes, job.vars, job.base).map((d) => `-I${d}`),
       ...Object.entries(fy.definitions).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
-      ...fy.extraArgs.map((a) => resolveVariables(a, job.vars)),
+      ...fy.extraArgs.map((a) => expandVariables(a, job.vars)),
       // forward slashes: the path goes into the line markers, where a
       // backslash would be an escape
       source.path.replace(/\\/g, "/"),
@@ -527,7 +506,7 @@ export class Linter implements vscode.Disposable {
   private async compile(source: Source, fixed: boolean, job: Job, signal: AbortSignal): Promise<RunResult | undefined> {
     const { spec, flags, settings } = job;
     const extra = settings.extraArgs.length > 0
-      ? settings.extraArgs.map((a) => resolveVariables(a, job.vars))
+      ? settings.extraArgs.map((a) => expandVariables(a, job.vars))
       : spec.defaultArgs(flags);
     const args = [
       ...spec.syntaxOnly(flags),
