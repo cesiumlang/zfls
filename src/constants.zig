@@ -24,6 +24,7 @@ pub const Kw = enum(u8) {
     recursive,
     abstract,
     external,
+    codimension,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {

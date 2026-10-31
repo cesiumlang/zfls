@@ -270,7 +270,12 @@ pub const Parser = struct {
                     if (dim.extra) |d| try var_keywords.append(a, d);
                     if (chr.extra) |c| desc = try std.mem.concat(a, u8, &.{ desc, c });
                     // the codimensions of a coarray, x[:], are not part of its name (upstream #172)
-                    if (std.mem.indexOfScalar(u8, name, '[')) |bracket| name = name[0..bracket];
+                    if (std.mem.indexOfScalar(u8, name, '[')) |bracket| {
+                        if (std.mem.lastIndexOfScalar(u8, name, ']')) |close| if (close > bracket) {
+                            try var_keywords.append(a, try std.fmt.allocPrint(a, "CODIMENSION{s}", .{name[bracket .. close + 1]}));
+                        };
+                        name = name[0..bracket];
+                    }
                     name = str.strip(name);
                     const mk = try helpers.mapKeywords(a, var_keywords.items, p.opts.sort_keywords);
                     var new_var: *Obj = undefined;
