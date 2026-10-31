@@ -234,6 +234,25 @@ pub fn keywordArgItems(self: *Server, a: Allocator, file: *FortranFile, ast: *As
     }
 }
 
+/// The parent components of a type that extends others (`x%feature_base`
+/// for a type extending `feature_base`, hansec #121): the names of its
+/// ancestor types
+fn parentComponentItems(a: Allocator, type_scope: *Obj, prefix: []const u8, items: *std.ArrayList(lsp.CompletionItem)) !void {
+    if (type_scope.kind != .type) return;
+    var cur = type_scope.typeDataConst().inherit_var;
+    var depth: usize = 0;
+    while (cur) |p| : (depth += 1) {
+        if (depth > 32 or p.kind != .type) break;
+        if (std.ascii.startsWithIgnoreCase(p.name, prefix)) try items.append(a, .{
+            .label = p.name,
+            .kind = 5,
+            .detail = try std.fmt.allocPrint(a, "TYPE({s})", .{p.name}),
+            .labelDetails = .{ .description = "parent" },
+        });
+        cur = p.typeDataConst().inherit_var;
+    }
+}
+
 pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const uri = params.textDocument.uri;
     const file = (try self.fileFromUri(a, uri)) orelse return .null;
@@ -264,6 +283,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         const one = try a.alloc(*Obj, 1);
         one[0] = type_scope;
         scope_list = one;
+        try parentComponentItems(a, type_scope, var_prefix, &item_list);
     } else {
         scope_list = try ast.getScopes(a, ac_line + 1);
     }

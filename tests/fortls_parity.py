@@ -108,6 +108,9 @@ def zfls_only_item(x) -> bool:
     one that adds a USE statement."""
     if not isinstance(x, dict):
         return False
+    # the parent components of an extended type (hansec #121)
+    if "labelDetails" in x:
+        return True
     if "additionalTextEdits" in x:
         return True
     return str(x.get("label", "")).endswith("=") and "filterText" in x

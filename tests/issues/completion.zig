@@ -186,3 +186,44 @@ test "an intrinsic module's names are offered with their USE statement, after th
     try std.testing.expectEqualStrings("  use iso_fortran_env, only: output_unit\n", o.added.?);
     try std.testing.expectEqual(@as(i64, 2), o.added_line);
 }
+
+const features = [_]h.File{.{ .name = "test.f90", .text =
+    \\module mod
+    \\implicit none
+    \\private
+    \\type :: feature_base
+    \\end type feature_base
+    \\type, extends(feature_base) :: feature_ext
+    \\end type feature_ext
+    \\type, extends(feature_ext) :: feature_all
+    \\end type feature_all
+    \\contains
+    \\   subroutine xxx(x)
+    \\      class(feature_all) :: x
+    \\      x%feat
+    \\   end subroutine xxx
+    \\end module mod
+    \\
+}};
+
+test "hansec #121 completion of a component offers the parent components of an extended type" {
+    const w = try h.Workspace.init(&features, .{});
+    defer w.deinit();
+    const items = try w.completion("test.f90", w.pos("test.f90", "x%feat", 0, 6));
+    const outcome: anyerror!void = if (has(items, "feature_base") and has(items, "feature_ext") and !has(items, "feature_all")) {} else h.unmet("x%feat: {any}", .{items});
+    try h.checkIn(.hansec, 121, .fixed, outcome);
+}
+
+test "type hierarchy: the type a type extends, and the types that extend it" {
+    const w = try h.Workspace.init(&features, .{});
+    defer w.deinit();
+    const item = (try w.prepareTypeHierarchy("test.f90", w.pos("test.f90", "feature_ext\n", 0, 1))) orelse return error.TestUnexpectedResult;
+    const supers = try w.typeHierarchy(item, true);
+    try std.testing.expect(supers.len == 1 and std.mem.eql(u8, supers[0], "feature_base"));
+    const subs = try w.typeHierarchy(item, false);
+    try std.testing.expect(subs.len == 1 and std.mem.eql(u8, subs[0], "feature_all"));
+    // from a variable, its type
+    const from_var = (try w.prepareTypeHierarchy("test.f90", w.pos("test.f90", "x%feat", 0, 0))) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 0), (try w.typeHierarchy(from_var, false)).len);
+    try std.testing.expectEqualStrings("feature_ext", (try w.typeHierarchy(from_var, true))[0]);
+}

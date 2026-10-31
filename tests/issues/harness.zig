@@ -487,6 +487,21 @@ pub const Workspace = struct {
         return if (items.len > 0) items[0] else null;
     }
 
+    /// The type hierarchy item at a position (its JSON), or null
+    pub fn prepareTypeHierarchy(w: *Workspace, name: []const u8, p: Pos) !?Value {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/prepareTypeHierarchy", try w.posParams(name, p));
+        const items = json.items(v);
+        return if (items.len > 0) items[0] else null;
+    }
+
+    /// The names of the supertypes (`super`) or subtypes of a type item
+    pub fn typeHierarchy(w: *Workspace, item: Value, super: bool) ![]const []const u8 {
+        const v = try w.request(if (super) "typeHierarchy/supertypes" else "typeHierarchy/subtypes", .{ .item = item });
+        var out: std.ArrayList([]const u8) = .empty;
+        for (json.items(v)) |t| try out.append(w.a(), json.str(json.get(t, "name")) orelse "");
+        return out.items;
+    }
+
     /// The name of a call hierarchy item
     pub fn itemName(item: Value) []const u8 {
         return json.str(json.get(item, "name")) orelse "";

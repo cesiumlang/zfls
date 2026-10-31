@@ -1,7 +1,9 @@
 //! Call hierarchy (`textDocument/prepareCallHierarchy`,
 //! `callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls`): the
 //! procedures that call a procedure, found among its references, and those
-//! its body calls.
+//! its body calls. Type hierarchy (`textDocument/prepareTypeHierarchy`,
+//! `typeHierarchy/supertypes`, `typeHierarchy/subtypes`): the type a type
+//! extends, and the types that extend it.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -30,8 +32,9 @@ fn isProcedure(o: *const Obj) bool {
     };
 }
 
-/// The item of a procedure or program, or null for one without a file
-fn itemOf(self: *Server, a: Allocator, o: *const Obj) !?lsp.CallHierarchyItem {
+/// The item of a procedure, program or type, or null for one without a
+/// file
+pub fn itemOf(self: *Server, a: Allocator, o: *const Obj) !?lsp.CallHierarchyItem {
     const path = o.file_ast.path orelse return null;
     if (o.sline == 0) return null;
     const file = self.fileForPath(path);
@@ -48,7 +51,11 @@ fn itemOf(self: *Server, a: Allocator, o: *const Obj) !?lsp.CallHierarchyItem {
     const end_len = if (file) |f| (if (f.getLine(end_line, false)) |t| t.len else 0) else 0;
     return .{
         .name = o.name,
-        .kind = if (o.kind == .program) 2 else 12,
+        .kind = switch (o.kind) {
+            .program => 2,
+            .type => 5,
+            else => 12,
+        },
         .detail = if (o.parent) |p| (if (p.name.len > 0 and p.name[0] != '#') p.name else null) else null,
         .uri = try paths.pathToUri(a, path),
         .range = Server.rangeOf(file, line, 0, end_line, end_len),
@@ -189,6 +196,49 @@ pub fn serveOutgoing(self: *Server, a: Allocator, params: lsp.CallHierarchyCalls
     for (groups.items) |g| {
         const item = (try itemOf(self, a, g.obj)) orelse continue;
         try out.append(a, .{ .to = item, .fromRanges = g.ranges.items });
+    }
+    return json.from(a, out.items);
+}
+
+// --------------------------------------------------------------------------
+// Type hierarchy (the items have the same fields as those of calls)
+
+pub fn servePrepareTypes(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
+    var t = d.obj;
+    // a variable: its type
+    if (t.kind == .variable) t = (try t.getTypeObj(self.env(a))) orelse return .null;
+    if (t.kind != .type) return .null;
+    const item = (try itemOf(self, a, t)) orelse return .null;
+    return json.from(a, &[_]lsp.CallHierarchyItem{item});
+}
+
+/// The type an item stands for: the one defined on its line
+fn typeOf(self: *Server, a: Allocator, item: lsp.CallHierarchyItem) !?*Obj {
+    const file = (try self.fileFromUri(a, item.uri)) orelse return null;
+    const ast = file.ast orelse return null;
+    const line = item.selectionRange.start.line;
+    for (ast.scope_list.items) |sc| if (sc.kind == .type and sc.sline == line + 1 and sc.nameLowerEql(item.name)) return sc;
+    return null;
+}
+
+pub fn serveSupertypes(self: *Server, a: Allocator, params: lsp.CallHierarchyCallsParams) !Value {
+    const t = (try typeOf(self, a, params.item)) orelse return .null;
+    const parent = t.typeDataConst().inherit_var orelse return json.from(a, &[_]lsp.CallHierarchyItem{});
+    if (parent.kind != .type) return json.from(a, &[_]lsp.CallHierarchyItem{});
+    const item = (try itemOf(self, a, parent)) orelse return json.from(a, &[_]lsp.CallHierarchyItem{});
+    return json.from(a, &[_]lsp.CallHierarchyItem{item});
+}
+
+pub fn serveSubtypes(self: *Server, a: Allocator, params: lsp.CallHierarchyCallsParams) !Value {
+    const t = (try typeOf(self, a, params.item)) orelse return .null;
+    var out: std.ArrayList(lsp.CallHierarchyItem) = .empty;
+    for (self.workspace.values()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.scope_list.items) |sc| {
+            if (sc.kind != .type or sc.typeDataConst().inherit_var != t) continue;
+            if (try itemOf(self, a, sc)) |item| try out.append(a, item);
+        }
     }
     return json.from(a, out.items);
 }

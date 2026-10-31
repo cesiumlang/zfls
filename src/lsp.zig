@@ -94,6 +94,7 @@ pub const CompletionItem = struct {
     documentation: ?MarkupContent = null,
     sortText: ?[]const u8 = null,
     filterText: ?[]const u8 = null,
+    labelDetails: ?struct { detail: ?[]const u8 = null, description: ?[]const u8 = null } = null,
     additionalTextEdits: ?[]const TextEdit = null,
 };
 
@@ -165,6 +166,7 @@ pub const ServerCapabilities = struct {
     documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
     inlayHintProvider: bool = true,
     callHierarchyProvider: bool = true,
+    typeHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
