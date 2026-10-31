@@ -330,7 +330,31 @@ fn implicitHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value
         const msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ t, u.name });
         return json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, msg, "Implicitly typed (not declared)") } });
     }
-    return .null;
+    return keywordHover(self, a, file, line, col);
+}
+
+/// Hover on a statement or attribute keyword: its documentation (fortls
+/// #547)
+fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, col: usize) !Value {
+    const text = file.getLine(line, false) orelse return .null;
+    if (helpers.isComment(file.fixed, text)) return .null;
+    const code = try helpers.stripStrings(a, text, true);
+    const c = @min(col, code.len);
+    if (std.mem.indexOfScalar(u8, code[0..c], '!') != null) return .null;
+    var s = c;
+    while (s > 0 and (std.ascii.isAlphanumeric(code[s - 1]) or code[s - 1] == '_')) s -= 1;
+    var e = c;
+    while (e < code.len and (std.ascii.isAlphanumeric(code[e]) or code[e] == '_')) e += 1;
+    if (e == s or !semantic.isKeyword(code[s..e])) return .null;
+    var arg: ?[]const u8 = null;
+    var k = e;
+    while (k < code.len and code[k] == ' ') k += 1;
+    if (k < code.len and code[k] == '(') if (std.mem.indexOfScalarPos(u8, code, k, ')')) |close| {
+        arg = code[k + 1 .. close];
+    };
+    const kw = (try self.intr.keywordDoc(a, code[s..e], arg)) orelse return .null;
+    const docs = try std.fmt.allocPrint(a, "{s}\n\nFortran keyword", .{kw.doc});
+    return json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, kw.name, docs) } });
 }
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {

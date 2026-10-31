@@ -49,6 +49,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#438](https://github.com/fortran-lang/fortls/issues/438) | diagnostics have codes; `diagnostic_severity` turns a code off or changes its severity | diagnostics | fixed (feature) | no codes, only `disable_diagnostics` |
 | [#171](https://github.com/fortran-lang/fortls/issues/171) | DEC `STRUCTURE`, `RECORD`, `UNION` and `MAP`, with `.` between components | parsing | fixed (feature) | not parsed |
 | [#496](https://github.com/fortran-lang/fortls/issues/496) | user-defined functions highlighted where they are called (semantic tokens) | highlighting | fixed (feature) | no semantic tokens |
+| [#547](https://github.com/fortran-lang/fortls/issues/547) | hover on a statement or attribute keyword (`ALLOCATE`, `INTENT`) shows its documentation | hover | fixed (feature) | no hover |
 | [#501](https://github.com/fortran-lang/fortls/issues/501) | `prefer_implementation`: hover shows the documentation of a separate module procedure's body in a submodule | hover | fixed (feature) | the interface only |
 | [#502](https://github.com/fortran-lang/fortls/issues/502) | `prefer_implementation`: go to definition goes to the body in the submodule | hover | fixed (feature) | the interface only |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | fixed (patched) | fails, same cause |
@@ -92,7 +93,7 @@ Notes:
 - [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
   test suite on Python 3.14; it does not apply to zfls.
 - The feature requests and discussions have no behavior to test yet:
-  #563, #547, #423, #417, #348, #309,
+  #563, #423, #417, #348, #309,
   #209, #171, #126, #125, #96, #85, #56 and #28.
 
 ## Issues of hansec/fortran-language-server

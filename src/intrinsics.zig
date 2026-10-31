@@ -30,6 +30,29 @@ fn markdownDoc(name: []const u8) ?[]const u8 {
 }
 
 pub const Intrinsics = struct {
+    /// The documentation of a statement or attribute keyword, and its name as
+    /// documented (`ALLOCATE`, `INTENT`)
+    /// `arg`: what the parentheses after the word hold (`in` of
+    /// `intent(in)`), which tells the variants apart
+    pub fn keywordDoc(self: *const Intrinsics, a: std.mem.Allocator, word: []const u8, arg: ?[]const u8) !?struct { name: []const u8, doc: []const u8 } {
+        _ = self;
+        const tables = .{ &statements.int_stmnts, &statements.var_def, &keywords.var_def, &keywords.arg, &keywords.type_mem, &keywords.vis, &keywords.param };
+        if (arg) |x| {
+            const full = try std.fmt.allocPrint(a, "{s}({s})", .{ word, std.mem.trim(u8, x, " ") });
+            inline for (tables) |t| for (t) |k| {
+                const doc = k.doc orelse continue;
+                if (std.ascii.eqlIgnoreCase(k.name, full)) return .{ .name = k.name, .doc = doc };
+            };
+        }
+        inline for (tables) |t| for (t) |k| {
+            const doc = k.doc orelse continue;
+            // `DIMENSION(:)`, `INTENT(IN)`: the word before the parenthesis
+            const base = if (std.mem.indexOfScalar(u8, k.name, '(')) |p| k.name[0..p] else k.name;
+            if (std.ascii.eqlIgnoreCase(base, word)) return .{ .name = base, .doc = doc };
+        };
+        return null;
+    }
+
     ast: *Ast,
     stmt_var_def: []*Obj,
     stmt_int_stmnts: []*Obj,

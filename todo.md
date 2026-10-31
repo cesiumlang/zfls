@@ -81,9 +81,10 @@ projects zfls replaces:
 - [x] More quick fixes: add `implicit none`, `.eq.` to `==`, `real*8` to a
   kind, keyword case (upper, lower, title). HS #226, MF #234
 - [ ] Interface and submodule stubs; hover in the keyword case. FL #28
-- [ ] Richer hover: statements and keywords (FL #547), case preference
-  (FL #28), code blocks in documentation (FL #209), OpenMP/OpenACC
-  directives, literals (FL #125)
+- [~] Richer hover:
+  - [x] Statements and keywords. FL #547
+  - [ ] Case preference (FL #28), code blocks in documentation (FL #209),
+    OpenMP/OpenACC directives, literals (FL #125)
 - [ ] Stubs for MPI (`mpi`, `mpi_f08`), `omp_lib` and `openacc`
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
