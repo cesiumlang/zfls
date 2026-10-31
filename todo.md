@@ -72,8 +72,7 @@ projects zfls replaces:
   - [x] Dummy argument names of positional arguments; `associate` types
   - [ ] Implicit types, parameter values
 - [x] Call hierarchy
-- [ ] Type hierarchy (`extends`, overrides); parent components in completion.
-  HS #121
+- [x] Type hierarchy (`extends`); parent components in completion. HS #121
 - [ ] Module dependency graph: cycles and compile order
 - [ ] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; later type, kind and rank

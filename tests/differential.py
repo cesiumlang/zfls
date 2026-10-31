@@ -253,6 +253,9 @@ def zfls_only_item(item) -> bool:
     statement (hansec #62)."""
     if not isinstance(item, dict):
         return False
+    # the parent components of an extended type (hansec #121)
+    if "labelDetails" in item:
+        return True
     if "additionalTextEdits" in item:
         return True
     return str(item.get("label", "")).endswith("=") and "filterText" in item

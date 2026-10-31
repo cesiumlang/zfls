@@ -117,6 +117,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#201](https://github.com/hansec/fortran-language-server/issues/201) | hover on a name that is not declared shows the type its IMPLICIT rules (or the default ones) give it | hover | fixed (feature) | no hover |
 | [#135](https://github.com/hansec/fortran-language-server/issues/135) | go to definition on a call of a generic interface goes to the procedure the arguments fit | hover | fixed (feature) | goes to the interface |
 | [#62](https://github.com/hansec/fortran-language-server/issues/62) | completion of names from modules not used yet adds the `use` statement; a quick fix for a type not found | completion | fixed (feature) | names in scope only |
+| [#121](https://github.com/hansec/fortran-language-server/issues/121) | completion of a component offers the parent components of an extended type | completion | fixed (feature) | not offered |
 | [#133](https://github.com/hansec/fortran-language-server/issues/133) | completion of keyword arguments (`name=`) inside a call | completion | fixed (feature) | names in scope only |
 | [#195](https://github.com/hansec/fortran-language-server/issues/195) | fuzzy workspace symbol search (`tar` finds `this_amazing_routine`) | navigation | fixed (feature) | names containing the query only |
 | [#45](https://github.com/hansec/fortran-language-server/issues/45) | `.` between a derived-type variable and its component (`inst.member`) | parsing | fixed (feature) | not resolved |

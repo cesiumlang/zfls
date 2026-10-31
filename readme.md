@@ -28,6 +28,8 @@ command line options and configuration files.
   `use module, only: name` statement, and a quick fix adding it for a type
   that is not found
 - Call hierarchy: the procedures that call a procedure, and those it calls
+- Type hierarchy: the type a derived type extends, and the types that
+  extend it; completion offers the parent components of an extended type
 - Inlay hints: the dummy argument each positional argument of a call goes
   to (`call move(p, dx: 1.0)`), and the type of each `ASSOCIATE` name
 - Selection ranges (expand the selection from a name to its parentheses,
@@ -313,6 +315,10 @@ zfls deliberately differs from fortls in a few places:
   on; fortls ignores cancellations.
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
+- The type hierarchy is answered (`textDocument/prepareTypeHierarchy`,
+  `typeHierarchy/supertypes` and `subtypes`), and completion of a component
+  offers the parent components of an extended type (`x%feature_base`,
+  hansec #121); fortls has neither.
 - The call hierarchy is answered (`textDocument/prepareCallHierarchy`,
   `callHierarchy/incomingCalls` and `outgoingCalls`): callers are the
   procedures around the references in call position (after CALL or before
