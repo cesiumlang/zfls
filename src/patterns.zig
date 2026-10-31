@@ -58,13 +58,19 @@ const defs = [_]Def{
     .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*(\\w*)", true },
     .{ "END_INT", "INTERFACE", true },
     .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK[ ]*DATA|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
-        "|TYPE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
+        "|TYPE|STRUCTURE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
         "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?!\\W)|$)", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
     .{ "EXTENDS", "EXTENDS[ ]*\\((\\w*)\\)", true },
     .{ "GENERIC_PRO", "[ ]*(GENERIC)[, ]*(PRIVATE|PUBLIC)?[ ]*::[ ]*[a-z]", true },
     .{ "GEN_ASSIGN", "(ASSIGNMENT|OPERATOR)\\(", true },
     .{ "END_TYPED", "TYPE", true },
+    // DEC structures (fortls #171): `STRUCTURE /name/ [fields]`, `RECORD
+    // /name/ vars`, and the UNION and MAP blocks inside a structure
+    .{ "STRUCTURE_DEF", "[ ]*STRUCTURE[ ]*(?:/[ ]*(\\w+)[ ]*/)?[ ]*([\\w, ]*)$", true },
+    .{ "END_STRUCTURED", "STRUCTURE", true },
+    .{ "RECORD_STMT", "[ ]*RECORD[ ]*/[ ]*(\\w+)[ ]*/[ ]*(.*)$", true },
+    .{ "DEC_UNION_MAP", "[ ]*(END[ ]*)?(UNION|MAP)[ ]*$", true },
     .{ "ENUM_DEF", "[ ]*ENUM[, ]+", true },
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++

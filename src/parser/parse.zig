@@ -186,6 +186,12 @@ pub const Parser = struct {
                 line_stripped = line;
                 line_no_comment = line;
             }
+            // UNION and MAP in a DEC structure only overlay its fields: `END
+            // MAP` ends no scope
+            if (ast.current_scope) |cs| if (cs.kind == .type and R().DEC_UNION_MAP.match(line_no_comment) != null) {
+                ast.pending_doc = null;
+                continue;
+            };
             // Test for scope end
             if (ast.end_scope_regex != null) {
                 const m = R().END_WORD.match(line_no_comment);
@@ -197,6 +203,10 @@ pub const Parser = struct {
                     ast.pending_doc = null;
                     continue;
                 }
+            }
+            if (try p.parseDecStructure(a, line_no_comment, line_no, &counters, &block_id_stack)) {
+                ast.pending_doc = null;
+                continue;
             }
             // A `!>` comment documents what follows it, not a statement that
             // cannot have documentation: it must not wait for a later
@@ -528,6 +538,40 @@ pub const Parser = struct {
 
     /// `PARAMETER (name = value, ...)`: makes variables already declared in
     /// the current scope constants, with their values (upstream #203)
+    /// DEC structures (fortls #171, hansec #230): STRUCTURE defines a
+    /// derived type (a nested one with a name list also declares those
+    /// fields of the structure around it), RECORD declares variables of one
+    /// as TYPE(name) does, and UNION and MAP only overlay the fields of the
+    /// structure around them
+    fn parseDecStructure(p: *Parser, a: Allocator, line: []const u8, ln: usize, counters: *Counters, block_id_stack: *std.ArrayList([]const u8)) !bool {
+        const ast = p.file_ast;
+        const in_type = if (ast.current_scope) |cs| cs.kind == .type else false;
+        if (R().RECORD_STMT.match(line)) |m| {
+            const decl = try std.fmt.allocPrint(a, "TYPE({s}) :: {s}", .{ m.group(1).?, m.group(2) orelse "" });
+            if (try getFortranDefinition(a, decl)) |def| try p.handleDef(a, def, decl, ln, counters, block_id_stack);
+            p.dbg("{s} !!! RECORD - Ln:{d}", .{ line, ln });
+            return true;
+        }
+        const m = R().STRUCTURE_DEF.match(line) orelse return false;
+        // `structure fields` without a name only nests in a structure
+        if (m.group(1) == null and !in_type) return false;
+        var name = m.group(1) orelse "";
+        if (name.len == 0) {
+            counters.block += 1;
+            name = try std.fmt.allocPrint(a, "#STRUCT{d}", .{counters.block});
+        }
+        const fields = str.strip(m.group(2) orelse "");
+        if (fields.len > 0) {
+            const decl = try std.fmt.allocPrint(a, "TYPE({s}) :: {s}", .{ name, fields });
+            if (try getFortranDefinition(a, decl)) |def| try p.handleDef(a, def, decl, ln, counters, block_id_stack);
+        }
+        const o = try Obj.newScope(ast, .type, ln, name, &.{});
+        o.typeData().dec_structure = true;
+        try ast.addScope(o, &R().END_STRUCTURED, true, true);
+        p.dbg("{s} !!! STRUCTURE - Ln:{d}", .{ line, ln });
+        return true;
+    }
+
     fn parseParameterStmt(p: *Parser, a: Allocator, line: []const u8) !bool {
         const m = R().PARAMETER_STMT.match(line) orelse return false;
         const ast = p.file_ast;

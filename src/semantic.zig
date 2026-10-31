@@ -221,7 +221,9 @@ const Tokenizer = struct {
             scanned = w.end;
             const prev_word = prev;
             prev = w.str;
-            const before = prevChar(code, w.start);
+            // a component after a dot (`rec.field`, DEC) is one after `%`
+            const component_dot = w.start > 0 and code[w.start - 1] == '.' and helpers.isComponentDot(code, w.start - 1);
+            const before: u8 = if (component_dot) '%' else prevChar(code, w.start);
             const after = nextChar(code, w.end);
             const follows = keyword;
             keyword = null;
@@ -354,6 +356,8 @@ const statement_keywords = [_][]const u8{
               "blockdata",
     "doubleprecision", "doublecomplex", "selectcase",  "selecttype",      "selectrank",
     "errorstop",       "syncall",       "syncimages",  "syncmemory",      "endfile",
+    // DEC structures
+    "structure",       "record",        "union",       "map",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -369,7 +373,8 @@ const spec_keywords = [_][]const u8{
     "optional",    "parameter",   "pointer",      "private",         "procedure",     "program",
     "protected",   "public",      "pure",         "real",            "recursive",     "save",
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
-    "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex",
+    "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
+    "record",      "union",       "map",
 };
 
 fn isSpecKeyword(word: []const u8) bool {

@@ -262,6 +262,8 @@ pub const Procedure = struct {
 
 /// A derived type
 pub const TypeDef = struct {
+    /// a DEC STRUCTURE, which may nest in another
+    dec_structure: bool = false,
     inherit_var: ?*Obj = null,
     inherit_tmp: ?[]const u8 = null,
     inherit_version: i64 = -1,
@@ -757,6 +759,7 @@ pub const Obj = struct {
             .type => {
                 const p = self.parent orelse return false;
                 const pt = p.getType(false);
+                if (pt == C.TypeId.class and self.typeDataConst().dec_structure) return true;
                 return pt != C.TypeId.class and !pt.isInnerScope();
             },
             .subroutine, .function => {
