@@ -158,7 +158,8 @@
           "argument-not-declared",
           "not-imported",
           "object-not-found",
-          "undeclared-name"
+          "undeclared-name",
+          "unused-name"
         ]
       },
       "additionalProperties": {

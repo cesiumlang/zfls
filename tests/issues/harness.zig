@@ -576,9 +576,12 @@ pub const Workspace = struct {
     // ---- expectations -------------------------------------------------
 
     /// No diagnostics at all in `name`
+    /// No diagnostic in `name`, besides the faded hints about names a
+    /// fixture declares and does not use (`unused-name`)
     pub fn expectNoDiagnostics(w: *Workspace, name: []const u8) !void {
-        const ds = try w.diagnostics(name);
-        if (ds.len > 0) return unmet("{s}: expected no diagnostics, got {d}: line {d}: {s}", .{ name, ds.len, ds[0].line + 1, ds[0].message });
+        var ds: std.ArrayList(Diagnostic) = .empty;
+        for (try w.diagnostics(name)) |d| if (!std.mem.eql(u8, d.code, "unused-name")) try ds.append(w.a(), d);
+        if (ds.items.len > 0) return unmet("{s}: expected no diagnostics, got {d}: line {d}: {s}", .{ name, ds.items.len, ds.items[0].line + 1, ds.items[0].message });
     }
 
     /// No diagnostic in `name` whose message contains `fragment`

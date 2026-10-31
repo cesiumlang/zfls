@@ -153,8 +153,11 @@ test "#568 USE ONLY still limits what is visible (control)" {
         },
     }, .{});
     defer w.deinit();
-    const ds = try w.diagnostics("user.f90");
-    try h.expect(ds.len == 1 and ds[0].line == 5, "expected only b_t (line 6) to be unknown, got {d} diagnostics", .{ds.len});
+    var ds: std.ArrayList(h.Diagnostic) = .empty;
+    defer ds.deinit(std.testing.allocator);
+    // the variables are not used: those hints are not what this is about
+    for (try w.diagnostics("user.f90")) |d| if (!std.mem.eql(u8, d.code, "unused-name")) try ds.append(std.testing.allocator, d);
+    try h.expect(ds.items.len == 1 and ds.items[0].line == 5, "expected only b_t (line 6) to be unknown, got {d} diagnostics", .{ds.items.len});
 }
 
 test "#519 IMPORT in an abstract interface, in each of its forms" {
@@ -648,4 +651,71 @@ test "hansec #129 names that are not declared under IMPLICIT NONE" {
     const w = try h.Workspace.init(&undeclared, .{});
     defer w.deinit();
     try h.checkIn(.hansec, 129, .fixed, expectUndeclared(w));
+}
+
+const unused_names = [_]h.File{
+    .{ .name = "consts.f90", .text =
+    \\module consts
+    \\  implicit none
+    \\  integer, parameter :: sp = kind(1.0), dp = kind(1.d0)
+    \\  integer :: shared_count
+    \\end module consts
+    \\
+    },
+    .{ .name = "u.F90", .text =
+    \\module work
+    \\  implicit none
+    \\  integer :: module_level
+    \\contains
+    \\  real function area(r) result(res)
+    \\    use consts, only: sp, dp
+    \\    real(dp), intent(in) :: r
+    \\    real :: scratch
+    \\    integer :: used_inside, only_in_ifdef
+    \\    integer :: n = 2, m
+    \\    m = n * 2
+    \\    used_inside = 1
+    \\#ifdef DEBUG
+    \\    only_in_ifdef = 1
+    \\#endif
+    \\    res = r * r * helper()
+    \\  contains
+    \\    real function helper()
+    \\      helper = real(used_inside)
+    \\    end function helper
+    \\  end function area
+    \\end module work
+    \\
+    },
+};
+
+fn expectUnused(w: *h.Workspace) !void {
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(std.testing.allocator);
+    for (try w.diagnostics("u.F90")) |d| {
+        if (!std.mem.eql(u8, d.code, "unused-name")) continue;
+        try h.expect(d.severity == 4, "severity {d}", .{d.severity});
+        try names.append(std.testing.allocator, d.message);
+    }
+    // sp (USE ONLY) and scratch only: not the argument, the result, a name
+    // a contained procedure uses, one in an inactive #ifdef branch, n used
+    // in m's declaration, or the module's names
+    try h.expect(names.items.len == 2, "unused: {any}", .{names.items});
+    try h.expect(std.mem.indexOf(u8, names.items[0], "\"scratch\"") != null or std.mem.indexOf(u8, names.items[1], "\"scratch\"") != null, "{any}", .{names.items});
+    try h.expect(std.mem.indexOf(u8, names.items[0], "\"sp\"") != null or std.mem.indexOf(u8, names.items[1], "\"sp\"") != null, "{any}", .{names.items});
+    // the quick fix removes a declaration of that name only
+    const line = w.pos("u.F90", "real :: scratch", 0, 0).line;
+    for (try w.codeActions("u.F90", line)) |act| {
+        if (std.mem.eql(u8, act.title, "Remove unused scratch")) {
+            try h.expect(act.line == line and act.new_text.len == 0, "removes line {d}", .{act.line});
+            return;
+        }
+    }
+    return h.unmet("no quick fix removing scratch", .{});
+}
+
+test "unused local variables and USE ONLY names are shown faded, with a quick fix" {
+    const w = try h.Workspace.init(&unused_names, .{});
+    defer w.deinit();
+    try expectUnused(w);
 }

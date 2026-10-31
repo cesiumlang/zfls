@@ -293,7 +293,7 @@ def main() -> int:
                     # names not declared under IMPLICIT NONE (hansec #129)
                     # are diagnosed by zfls only
                     if "diagnostics" in params:
-                        params["diagnostics"] = [d for d in params["diagnostics"] if d.get("code") != "undeclared-name"]
+                        params["diagnostics"] = [d for d in params["diagnostics"] if d.get("code") not in ("undeclared-name", "unused-name")]
                     for d in params.get("diagnostics", []):
                         d.pop("code", None)
                         d.pop("source", None)
