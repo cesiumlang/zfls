@@ -296,9 +296,16 @@ pub fn getTypeObj(self: *Obj, env: Env) !?*Obj {
         const desc = try self.getDescNoLink(env.tmp);
         if (helpers.getParenSubstring(desc)) |tn| {
             var search_scope: ?*Obj = p;
-            if (p.getType(false) == C.TypeId.class) search_scope = p.parent;
+            const type_name = try std.ascii.allocLowerString(env.tmp, str.strip(tn));
+            if (p.getType(false) == C.TypeId.class) {
+                search_scope = p.parent;
+                // a structure nested in a DEC structure is its child
+                for (p.childList()) |c| if (c.kind == .type and c.nameLowerEql(type_name)) {
+                    self.varData().type_obj = c;
+                    return c;
+                };
+            }
             if (search_scope) |ss| {
-                const type_name = try std.ascii.allocLowerString(env.tmp, str.strip(tn));
                 if (try findInScope(env, ss, type_name, .{})) |t| self.varData().type_obj = t;
             }
         }

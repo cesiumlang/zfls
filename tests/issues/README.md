@@ -47,6 +47,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#424](https://github.com/fortran-lang/fortls/issues/424) | construct names: go to definition, references, rename | constructs | fixed (feature) | no answer |
 | [#512](https://github.com/fortran-lang/fortls/issues/512) | include directories and definitions from `compile_commands.json` | project | fixed (feature) | not read |
 | [#438](https://github.com/fortran-lang/fortls/issues/438) | diagnostics have codes; `diagnostic_severity` turns a code off or changes its severity | diagnostics | fixed (feature) | no codes, only `disable_diagnostics` |
+| [#171](https://github.com/fortran-lang/fortls/issues/171) | DEC `STRUCTURE`, `RECORD`, `UNION` and `MAP`, with `.` between components | parsing | fixed (feature) | not parsed |
 | [#496](https://github.com/fortran-lang/fortls/issues/496) | user-defined functions highlighted where they are called (semantic tokens) | highlighting | fixed (feature) | no semantic tokens |
 | [#501](https://github.com/fortran-lang/fortls/issues/501) | `prefer_implementation`: hover shows the documentation of a separate module procedure's body in a submodule | hover | fixed (feature) | the interface only |
 | [#502](https://github.com/fortran-lang/fortls/issues/502) | `prefer_implementation`: go to definition goes to the body in the submodule | hover | fixed (feature) | the interface only |
@@ -118,6 +119,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#62](https://github.com/hansec/fortran-language-server/issues/62) | completion of names from modules not used yet adds the `use` statement; a quick fix for a type not found | completion | fixed (feature) | names in scope only |
 | [#133](https://github.com/hansec/fortran-language-server/issues/133) | completion of keyword arguments (`name=`) inside a call | completion | fixed (feature) | names in scope only |
 | [#195](https://github.com/hansec/fortran-language-server/issues/195) | fuzzy workspace symbol search (`tar` finds `this_amazing_routine`) | navigation | fixed (feature) | names containing the query only |
+| [#45](https://github.com/hansec/fortran-language-server/issues/45) | `.` between a derived-type variable and its component (`inst.member`) | parsing | fixed (feature) | not resolved |
 | [#157](https://github.com/hansec/fortran-language-server/issues/157) | completion of construct names after `exit` and `cycle` | constructs | fixed (feature) | no completion |
 | [#166](https://github.com/hansec/fortran-language-server/issues/166) | folding by program units, constructs and their branches, preprocessor conditionals and comment blocks | outline | fixed (feature) | no folding ranges |
 
@@ -133,4 +135,5 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | [#401](https://github.com/fortran-lang/vscode-fortran-support/issues/401) | variables and functions named like keywords (`if`, `module`, `format`) highlighted as keywords | highlighting | fixed (feature) | no semantic tokens |
 | [#245](https://github.com/fortran-lang/vscode-fortran-support/issues/245) | type-bound procedures not highlighted at their calls | highlighting | fixed (feature) | no semantic tokens |
 | [#471](https://github.com/fortran-lang/vscode-fortran-support/issues/471) | `fpm.toml`: its include directory and preprocessor macros | project | fixed (feature) | not read |
+| [#571](https://github.com/fortran-lang/vscode-fortran-support/issues/571) | a file of DEC structures has no diagnostics | parsing | fixed (feature) | diagnostics |
 | [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |

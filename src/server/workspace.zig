@@ -58,7 +58,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
-        .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{"%"} },
+        .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
         .textDocumentSync = self.sync_type,
         .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
         .codeActionProvider = if (self.s.enable_code_actions) true else null,

@@ -37,6 +37,8 @@ command line options and configuration files.
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
   documentation comments
+- DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and
+  `.` between a variable and its component (`rec.field`)
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
 - Documentation for intrinsic procedures, statements, keywords and the
@@ -265,6 +267,12 @@ zfls deliberately differs from fortls in a few places:
   fortls only checks the types named in declarations. It is left out where
   a USE statement names a module that is not in the workspace or an
   INCLUDE file is not found, as the name could come from those.
+- DEC structures are read (fortls #171): `STRUCTURE /name/` is a derived
+  type, `RECORD /name/ a, b` declares variables of it, the fields of
+  `UNION`/`MAP` blocks are fields of the structure, and a nested structure
+  declares the fields its name list gives. `.` separates a component when it
+  follows a name or `)` and does not start an operator (`a.and.b`), as in
+  `rec.field` or `arr(i).field` (hansec #45). fortls reads none of these.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the scopes around it, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has

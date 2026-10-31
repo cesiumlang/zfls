@@ -439,10 +439,75 @@ pub fn getParenLevel(a: Allocator, line: []const u8) !ParenLevel {
 }
 
 /// Get user-defined type field sequence terminating the given line
-pub fn getVarStack(a: Allocator, line: []const u8) ![][]const u8 {
+/// Intrinsic operators and logical literals written between dots
+const dot_operators = [_][]const u8{ "eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "eqv", "neqv", "true", "false", "xor" };
+
+/// Whether the `.` at `i` of `text` separates a component (`rec.field`, the
+/// DEC extension of hansec #45): it follows a name (not a number) or a `)`
+/// and comes before a name that is not an intrinsic operator (`a.and.b`),
+/// or ends the text (a line up to the position of a request)
+pub fn isComponentDot(text: []const u8, i: usize) bool {
+    if (i == 0 or i >= text.len or text[i] != '.') return false;
+    if (i + 1 < text.len and !std.ascii.isAlphabetic(text[i + 1])) return false;
+    const prev = text[i - 1];
+    if (prev != ')') {
+        if (!(std.ascii.isAlphanumeric(prev) or prev == '_')) return false;
+        var s = i;
+        while (s > 0 and (std.ascii.isAlphanumeric(text[s - 1]) or text[s - 1] == '_')) s -= 1;
+        // a number: `1.e5`, `2.d0`
+        if (!(std.ascii.isAlphabetic(text[s]) or text[s] == '_')) return false;
+    }
+    var e = i + 1;
+    while (e < text.len and (std.ascii.isAlphanumeric(text[e]) or text[e] == '_')) e += 1;
+    if (e < text.len and text[e] == '.') {
+        for (dot_operators) |op| if (std.ascii.eqlIgnoreCase(text[i + 1 .. e], op)) return false;
+    }
+    return true;
+}
+
+/// `text` with the dots that separate components written `%`
+pub fn dotComponents(a: Allocator, text: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, text, '.') == null) return text;
+    var out: ?[]u8 = null;
+    // not in strings (`include "inc.f90"`)
+    var quote: u8 = 0;
+    for (text, 0..) |c, i| {
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' or c == '"') {
+            quote = c;
+            continue;
+        }
+        if (c != '.' or !isComponentDot(text, i)) continue;
+        if (out == null) out = try a.dupe(u8, text);
+        out.?[i] = '%';
+    }
+    return out orelse text;
+}
+
+test "component dots" {
+    try std.testing.expect(isComponentDot("rec.field", 3));
+    try std.testing.expect(isComponentDot("a(1).b", 4));
+    try std.testing.expect(!isComponentDot("a.and.b", 1));
+    try std.testing.expect(!isComponentDot("x .eq. y", 2));
+    try std.testing.expect(!isComponentDot("1.e5", 1));
+    try std.testing.expect(isComponentDot("x2.d0", 2));
+    try std.testing.expect(isComponentDot("a.b.c", 1) and isComponentDot("a.b.c", 3));
+    try std.testing.expect(isComponentDot("rec.", 3));
+    try std.testing.expect(!isComponentDot("x = 1.", 5));
+    const a = std.testing.allocator;
+    const s = try dotComponents(a, "include 'a.f90' rec.f");
+    defer if (s.ptr != "include 'a.f90' rec.f".ptr) a.free(s);
+    try std.testing.expectEqualStrings("include 'a.f90' rec%f", s);
+}
+
+pub fn getVarStack(a: Allocator, line_in: []const u8) ![][]const u8 {
     const empty = try a.alloc([]const u8, 1);
     empty[0] = "";
-    if (line.len == 0) return empty;
+    if (line_in.len == 0) return empty;
+    const line = try dotComponents(a, line_in);
     const pl = try getParenLevel(a, line);
     if (pl.str.len == 0) return empty;
     var i_last: usize = 0;
