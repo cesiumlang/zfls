@@ -55,8 +55,11 @@ projects zfls replaces:
   - [x] CUDA Fortran: `attributes(global|device)` procedures, `<<<...>>>`
     kernel launches, `.cuf` files, the CUDA modules (`cudafor`, ...) as
     external modules
-- [ ] fypp: tolerate or preprocess fypp directives when parsing; syntax
-  highlighting. MF #215, MF #617, MF #715, MF #615
+- [x] fypp: its inline expressions, eval lines and macro calls are no
+  Fortran names (no warnings, no tokens), and the extension highlights
+  them, its directives and comments. MF #617, MF #715. Linting through fypp
+  (any compiler: fypp writes a file with line markers) came with 0.3.
+  MF #215, MF #615
 - [ ] Fixed form: configurable code column limit (72/80/132), paste and
   indentation behavior. MF #87, MF #199, MF #254, MF #168, MF #177
 

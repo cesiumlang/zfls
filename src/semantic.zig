@@ -170,8 +170,13 @@ const Tokenizer = struct {
         if (helpers.isComment(t.file.fixed, raw)) return;
         const trimmed = std.mem.trimStart(u8, raw, " \t");
         if (trimmed.len > 0 and trimmed[0] == '#') return;
+        // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
+        if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
         var code = try helpers.stripStrings(t.a, raw, true);
         if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        // fypp's inline expressions (`eg_${name}$_t`) are no Fortran: blank
+        // them, and leave the pieces of a name around them alone
+        code = try blankFyppInline(t.a, code);
         const scope = t.ast.getInnerScope(ln + 1);
         var it = helpers.words(code);
         // a statement starts the line unless the line continues one
@@ -285,7 +290,8 @@ const Tokenizer = struct {
                 // a name that ASSOCIATE or SELECT TYPE defines (`this =>
                 // self`), or a piece of a token split over two lines
                 const defines = depth > 0 and startsWithOp(code, w.end, "=>") and in_list;
-                const split = split_line or w.end < code.len and code[w.end] == '&';
+                const split = split_line or w.end < code.len and (code[w.end] == '&' or code[w.end] == '$') or
+                    w.start > 0 and code[w.start - 1] == '$';
                 // the kind of a character literal, `ck_'text'`
                 const kind_prefix = w.str[w.str.len - 1] == '_' and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"');
                 if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, in_end);
@@ -443,6 +449,20 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
     for (pairs) |p| if (std.ascii.eqlIgnoreCase(first, p[0]) and std.ascii.eqlIgnoreCase(word, p[1])) return true;
     if (std.ascii.eqlIgnoreCase(first, "end")) return isStatementKeyword(word) or std.ascii.eqlIgnoreCase(word, "team");
     return false;
+}
+
+/// `code` with each fypp inline expression `${...}$` written as `$` and
+/// spaces (same length), so that its words are not read as names
+fn blankFyppInline(a: Allocator, code: []const u8) ![]const u8 {
+    const first = std.mem.indexOf(u8, code, "${") orelse return code;
+    const out = try a.dupe(u8, code);
+    var i = first;
+    while (std.mem.indexOfPos(u8, out, i, "${")) |s| {
+        const e = std.mem.indexOfPos(u8, out, s + 2, "}$") orelse break;
+        @memset(out[s + 1 .. e + 1], ' ');
+        i = e + 2;
+    }
+    return out;
 }
 
 /// Whether the text after a name at `end` assigns to it: `x = `, `x(i) =`,

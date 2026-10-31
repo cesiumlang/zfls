@@ -133,6 +133,13 @@
         ]
       },
       {
+        "scopeName": "source.fypp.injection",
+        "path": "./syntaxes/fypp.injection.json",
+        "injectTo": [
+          "source.fortran.free"
+        ]
+      },
+      {
         "scopeName": "source.openacc",
         "path": "./syntaxes/openacc_lang.json",
         "injectTo": [

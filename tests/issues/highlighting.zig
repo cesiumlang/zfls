@@ -142,3 +142,38 @@ test "lines a preprocessor conditional leaves out are comment tokens" {
     // the directives themselves stay active
     try std.testing.expect(tokenType(toks, 2, "#ifdef UNDEFINED", 0) == null);
 }
+
+const fypp_file = [_]h.File{.{ .name = "m.F90", .text =
+    \\#:set data_names = [ 'eg1', 'eg2' ]
+    \\module min_eg
+    \\  implicit none
+    \\#:for dname in data_names
+    \\  type :: eg_${dname}$_t
+    \\    integer :: k
+    \\  end type eg_${dname}$_t
+    \\#:endfor
+    \\contains
+    \\  subroutine show(n)
+    \\    integer :: n
+    \\    n = ${len(data_names)}$
+    \\    @:ASSERT(n > 0)
+    \\    $:dname
+    \\  end subroutine show
+    \\end module min_eg
+    \\
+}};
+
+fn expectFypp(w: *h.Workspace) !void {
+    // fypp's names are no Fortran names: no warnings about them
+    for (try w.diagnostics("m.F90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "{s}", .{d.message});
+    // and no tokens inside `${...}$`, on `$:` and `@:` lines
+    for (try w.semanticTokens("m.F90")) |t| {
+        try h.expect(!std.mem.eql(u8, t.text, "dname") and !std.mem.eql(u8, t.text, "data_names") and !std.mem.eql(u8, t.text, "ASSERT"), "token {s} on line {d}", .{ t.text, t.line });
+    }
+}
+
+test "Modern Fortran #617 fypp's inline expressions, eval lines and macro calls are no Fortran" {
+    const w = try h.Workspace.init(&fypp_file, .{});
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 617, .fixed, expectFypp(w));
+}

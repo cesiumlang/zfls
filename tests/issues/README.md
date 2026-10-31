@@ -136,4 +136,5 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | [#245](https://github.com/fortran-lang/vscode-fortran-support/issues/245) | type-bound procedures not highlighted at their calls | highlighting | fixed (feature) | no semantic tokens |
 | [#471](https://github.com/fortran-lang/vscode-fortran-support/issues/471) | `fpm.toml`: its include directory and preprocessor macros | project | fixed (feature) | not read |
 | [#571](https://github.com/fortran-lang/vscode-fortran-support/issues/571) | a file of DEC structures has no diagnostics | parsing | fixed (feature) | diagnostics |
+| [#617](https://github.com/fortran-lang/vscode-fortran-support/issues/617) | fypp: inline `${...}$`, `$:` and `@:` are no Fortran names (no warnings, no tokens); the extension highlights them | highlighting | fixed (feature) | read as Fortran |
 | [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |

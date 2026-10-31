@@ -270,6 +270,9 @@ zfls deliberately differs from fortls in a few places:
   fortls only checks the types named in declarations. It is left out where
   a USE statement names a module that is not in the workspace or an
   INCLUDE file is not found, as the name could come from those.
+- fypp: the words of inline expressions (`${...}$`), eval lines (`$:`) and
+  macro calls (`@:`) are no Fortran names, and a file with fypp directives
+  gets no `undeclared-name` warnings, as fypp's loops and macros make names.
 - CUDA Fortran: a procedure with `attributes(...)` is a procedure,
   signature help reads past a kernel's `<<<grid, block>>>`, `.cuf` and `.CUF`
   files are Fortran sources, and the modules of NVIDIA's compiler (`cudafor`,
