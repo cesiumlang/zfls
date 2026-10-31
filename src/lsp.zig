@@ -60,6 +60,22 @@ pub const SymbolInformation = struct {
     containerName: ?[]const u8 = null,
 };
 
+/// A symbol of a document's outline, with those it contains
+pub const DocumentSymbol = struct {
+    name: []const u8,
+    detail: ?[]const u8 = null,
+    kind: i64,
+    range: Range,
+    selectionRange: Range,
+    children: []const DocumentSymbol = &.{},
+};
+
+pub const FoldingRange = struct {
+    startLine: usize,
+    endLine: usize,
+    kind: ?[]const u8 = null,
+};
+
 /// `insertTextFormat` of a snippet
 pub const snippet_format: i64 = 2;
 
@@ -115,6 +131,7 @@ pub const ServerCapabilities = struct {
     completionProvider: CompletionOptions,
     definitionProvider: bool = true,
     documentSymbolProvider: bool = true,
+    foldingRangeProvider: bool = true,
     documentHighlightProvider: bool = true,
     referencesProvider: bool = true,
     hoverProvider: bool = true,
@@ -142,7 +159,7 @@ pub const ResponseError = struct {
 
 pub const TextDocumentIdentifier = struct { uri: []const u8 };
 
-/// `didOpen`, `didSave`, `didClose` and `documentSymbol`
+/// `didOpen`, `didSave`, `didClose`, `documentSymbol` and `foldingRange`
 pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 
 /// `completion`, `hover`, `signatureHelp`, `definition`, `references`,
@@ -178,4 +195,14 @@ pub const DidChangeParams = struct {
 pub const InitializeParams = struct {
     rootUri: ?[]const u8 = null,
     rootPath: ?[]const u8 = null,
+    capabilities: ClientCapabilities = .{},
+};
+
+/// What the client supports, of what zfls looks at
+pub const ClientCapabilities = struct {
+    textDocument: struct {
+        documentSymbol: struct {
+            hierarchicalDocumentSymbolSupport: bool = false,
+        } = .{},
+    } = .{},
 };

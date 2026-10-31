@@ -6,7 +6,10 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 
 - completion, hover, signature help
 - go to definition and implementation, find references, rename
-- document and workspace symbols
+- document and workspace symbols, with an outline tree for breadcrumbs and
+  sticky scroll
+- folding of program units, constructs (each `IF`, `SELECT` and `WHERE`
+  branch on its own), preprocessor conditionals and comment blocks
 - diagnostics, and a compiler's errors and warnings (see
   [Compiler diagnostics](#compiler-diagnostics))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
