@@ -477,6 +477,97 @@ test "hansec #168 references to a separate module procedure include its implemen
     try h.checkIn(.hansec, 168, .fixed, outcome);
 }
 
+const separate_procedures = [_]h.File{
+    .{ .name = "shapes.f90", .text =
+    \\module shapes
+    \\  implicit none
+    \\  interface
+    \\    module function area(r) result(a)
+    \\      !! Area (interface)
+    \\      real, intent(in) :: r
+    \\      real :: a
+    \\    end function area
+    \\    module subroutine report(x)
+    \\      !! Report (interface)
+    \\      integer, intent(in) :: x
+    \\    end subroutine report
+    \\    module subroutine reset()
+    \\      !! Reset (interface)
+    \\    end subroutine reset
+    \\  end interface
+    \\end module shapes
+    \\
+    },
+    .{ .name = "shapes_impl.f90", .text =
+    \\submodule (shapes) shapes_impl
+    \\contains
+    \\  module function area(r) result(a)
+    \\    !! Area of a circle, computed in the submodule
+    \\    real, intent(in) :: r
+    \\    real :: a
+    \\    a = 3.14159 * r * r
+    \\  end function area
+    \\  module procedure report
+    \\    !! Prints x, from the submodule
+    \\    print *, x
+    \\  end procedure report
+    \\  module subroutine reset()
+    \\  end subroutine reset
+    \\end submodule shapes_impl
+    \\
+    },
+    .{ .name = "main.f90", .text =
+    \\program main
+    \\  use shapes
+    \\  print *, area(1.0)
+    \\  call report(1)
+    \\  call reset()
+    \\end program main
+    \\
+    },
+};
+
+test "separate module procedures: hover and definition stay on the interface by default (fortls)" {
+    const w = try h.Workspace.init(&separate_procedures, .{});
+    defer w.deinit();
+    const d = (try w.definition("main.f90", w.pos("main.f90", "area(1.0)", 0, 1))).?;
+    try std.testing.expect(std.mem.endsWith(u8, d.uri, "/shapes.f90"));
+    try w.expectHoverContains("main.f90", w.pos("main.f90", "area(1.0)", 0, 1), "Area (interface)");
+}
+
+fn expectImplementation(w: *h.Workspace, docs: bool) !void {
+    for ([_][]const u8{ "area", "report", "reset" }) |name| {
+        const call = w.pos("main.f90", name, 0, 1);
+        const d = (try w.definition("main.f90", call)) orelse return h.unmet("no definition of {s}", .{name});
+        const body = w.pos("shapes_impl.f90", name, 0, 0);
+        try h.expect(std.mem.endsWith(u8, d.uri, "/shapes_impl.f90") and d.line == body.line, "definition of {s}: {s}:{d}", .{ name, d.uri, d.line });
+        if (!docs) continue;
+        const hv = (try w.hover("main.f90", call)) orelse return h.unmet("no hover on {s}", .{name});
+        const want: []const u8 = if (std.mem.eql(u8, name, "area"))
+            "computed in the submodule"
+        else if (std.mem.eql(u8, name, "report"))
+            "Prints x, from the submodule"
+        else
+            "Reset (interface)"; // the body has no documentation
+        try h.expect(std.mem.indexOf(u8, hv, want) != null, "hover on {s} lacks {s}: {s}", .{ name, want, hv });
+    }
+    // the signature of a MODULE PROCEDURE body comes from its interface
+    const hv = (try w.hover("main.f90", w.pos("main.f90", "report", 0, 1))).?;
+    try h.expect(std.mem.indexOf(u8, hv, "report(x)") != null, "hover on report: {s}", .{hv});
+}
+
+test "#501 prefer_implementation: hover shows the documentation of the body in the submodule" {
+    const w = try h.Workspace.init(&separate_procedures, .{ .settings = .{ .prefer_implementation = true } });
+    defer w.deinit();
+    try h.check(501, .fixed, expectImplementation(w, true));
+}
+
+test "#502 prefer_implementation: go to definition goes to the body in the submodule" {
+    const w = try h.Workspace.init(&separate_procedures, .{ .settings = .{ .prefer_implementation = true } });
+    defer w.deinit();
+    try h.check(502, .fixed, expectImplementation(w, false));
+}
+
 const rename_fixture = [_]h.File{.{
     .name = "t.f90",
     .text =

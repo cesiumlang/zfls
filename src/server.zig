@@ -1452,8 +1452,9 @@ pub const Server = struct {
             return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
         }
         if (try self.definitionAt(a, params, false)) |d| {
-            if (try self.genericSpecific(a, d.file, d.line, d.col, d.obj)) |s| if (s.file_ast.file != null) return self.createRefLink(a, s);
-            if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
+            if (try self.genericSpecific(a, d.file, d.line, d.col, d.obj)) |s| if (s.file_ast.file != null) return self.createRefLink(a, self.preferredBody(s));
+            const target = self.preferredBody(d.obj);
+            if (target.file_ast.file != null) return self.createRefLink(a, target);
             return .null;
         }
         // an INCLUDE statement is its own definition when its file is in the
@@ -1492,10 +1493,29 @@ pub const Server = struct {
         return if (cand.kind == .function) cand else null;
     }
 
+    /// With `prefer_implementation`, the implementation of a procedure that
+    /// `obj` declares in an interface (a separate module procedure's body in
+    /// a submodule, upstream #501 #502), else `obj`
+    fn preferredBody(self: *Server, obj: *Obj) *Obj {
+        if (!self.s.prefer_implementation) return obj;
+        if (obj.kind != .subroutine and obj.kind != .function) return obj;
+        const parent = obj.parent orelse return obj;
+        if (parent.getType(false) != C.TypeId.interface) return obj;
+        const impl = obj.linkObj() orelse return obj;
+        if (impl.file_ast.file == null or (impl.kind != .subroutine and impl.kind != .function)) return obj;
+        return impl;
+    }
+
     fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const d = (try self.definitionAt(a, params, true)) orelse return .null;
         const ast = d.file.ast.?;
-        const var_obj = (try self.externalTarget(a, ast, d.obj)) orelse (try self.calledFunction(a, ast, d)) orelse d.obj;
+        var var_obj = (try self.externalTarget(a, ast, d.obj)) orelse (try self.calledFunction(a, ast, d)) orelse d.obj;
+        // the implementation's documentation, or the interface's when it has none
+        const body = self.preferredBody(var_obj);
+        if (body != var_obj) {
+            const bh = try body.getHover(a, true, null);
+            if (bh.docs != null and bh.docs.?.len > 0) var_obj = body;
+        }
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         var hover_array: std.ArrayList([]const u8) = .empty;
         const vt = var_obj.getType(false);

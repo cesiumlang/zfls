@@ -48,6 +48,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
 | `zfls.hoverSignature` | `true` | Procedure signatures in hover |
+| `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
 | `zfls.autocompleteNameOnly` | `false` | Complete procedure names without their arguments |
 | `zfls.autocompleteNoSnippets` | `false` | No placeholders in completions |
