@@ -900,3 +900,24 @@ test "#547 hover on a statement or attribute keyword shows its documentation" {
     defer w.deinit();
     try h.check(547, .fixed, expectKeywordHover(w));
 }
+
+test "MPI stubs: hover, signature help and completion of mpi and mpi_f08" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text =
+        \\program m
+        \\  use mpi_f08
+        \\  implicit none
+        \\  integer :: rank, ierr
+        \\  call MPI_Init(ierr)
+        \\  call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
+        \\  call MPI_Finalize()
+        \\end program m
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "MPI_COMM_WORLD", 0, 1), "TYPE(MPI_Comm)");
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "MPI_Comm_rank", 0, 1), "SUBROUTINE mpi_comm_rank(comm, rank, ierror)");
+    const sig = (try w.signature("m.f90", w.pos("m.f90", "rank, ierr)", 0, 0))) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(i64, 1), sig.active);
+    // no module-not-found, and no warnings about MPI names
+    try w.expectNoDiagnostics("m.f90");
+}

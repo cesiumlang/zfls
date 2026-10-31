@@ -85,7 +85,7 @@ projects zfls replaces:
   - [x] Statements and keywords. FL #547
   - [ ] Case preference (FL #28), code blocks in documentation (FL #209),
     OpenMP/OpenACC directives, literals (FL #125)
-- [ ] Stubs for MPI (`mpi`, `mpi_f08`), `omp_lib` and `openacc`
+- [x] Stubs for MPI (`mpi`, `mpi_f08`); `omp_lib` and `openacc` were there
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
 - [ ] Linters: fortitude (MF #1165), Codee

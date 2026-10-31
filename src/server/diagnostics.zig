@@ -485,8 +485,9 @@ pub fn severityOf(self: *const Server, code: C.DiagCode) ?i32 {
     return null;
 }
 
-/// The modules of NVIDIA's CUDA Fortran, which come with its compiler
-const cuda_modules = [_][]const u8{ "cudafor", "cublas", "cublas_v2", "cufft", "curand", "cusparse", "cusolverdn", "cutensorex", "nvtx", "cooperative_groups", "wmma" };
+/// Modules zfls knows partly or not at all: those of NVIDIA's CUDA Fortran,
+/// which come with its compiler, and MPI's, of which it has stubs
+const vendor_modules = [_][]const u8{ "cudafor", "cublas", "cublas_v2", "cufft", "curand", "cusparse", "cusolverdn", "cutensorex", "nvtx", "cooperative_groups", "wmma", "mpi", "mpi_f08" };
 
 /// Whether `external_modules` names module `name`, or it is a CUDA Fortran
 /// module
@@ -494,7 +495,7 @@ pub fn isExternalModule(self: *const Server, name: []const u8) bool {
     var buf: [256]u8 = undefined;
     if (name.len > buf.len) return false;
     const lower = std.ascii.lowerString(&buf, name);
-    for (cuda_modules) |m| if (std.mem.eql(u8, m, lower)) return true;
+    for (vendor_modules) |m| if (std.mem.eql(u8, m, lower)) return true;
     for (self.s.external_modules.slice()) |pat| {
         var pbuf: [256]u8 = undefined;
         if (pat.len > pbuf.len) continue;

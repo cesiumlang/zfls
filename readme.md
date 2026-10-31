@@ -53,7 +53,8 @@ command line options and configuration files.
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
 - Documentation for intrinsic procedures, statements, keywords and the
-  intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...)
+  intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
+  MPI modules `mpi` and `mpi_f08`
 
 ## Building
 
@@ -296,6 +297,11 @@ zfls deliberately differs from fortls in a few places:
 - fypp: the words of inline expressions (`${...}$`), eval lines (`$:`) and
   macro calls (`@:`) are no Fortran names, and a file with fypp directives
   gets no `undeclared-name` warnings, as fypp's loops and macros make names.
+- `use mpi` and `use mpi_f08` find stubs of the MPI modules (the
+  procedures and constants used most, with their arguments): hover,
+  signature help and completion work for them, and the names the stubs
+  leave out are not reported as undeclared. fortls reports the modules as
+  not found.
 - CUDA Fortran: a procedure with `attributes(...)` is a procedure,
   signature help reads past a kernel's `<<<grid, block>>>`, `.cuf` and `.CUF`
   files are Fortran sources, and the modules of NVIDIA's compiler (`cudafor`,
