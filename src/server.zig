@@ -1654,6 +1654,17 @@ pub const Server = struct {
         for (obj.memList()) |member| {
             const sig = try member.getSignature(a, null);
             if (sig.label == null or args.len > sig.params.len) continue;
+            // the call gives every argument that is not OPTIONAL (else it may
+            // be another procedure of that name, such as an intrinsic)
+            if (member.procDataOpt()) |proc| {
+                var required: usize = 0;
+                for (proc.arg_objs.items) |arg| {
+                    if (arg) |o| {
+                        if (!o.hasKeyword(C.KW.optional)) required += 1;
+                    } else required += 1;
+                }
+                if (args.len < required) continue;
+            }
             const keywords_ok = for (args) |arg| {
                 const eq = std.mem.indexOfScalar(u8, arg, '=') orelse continue;
                 if (std.mem.indexOf(u8, arg, "==") != null or str.strip(arg[0..eq]).len == 0) continue;

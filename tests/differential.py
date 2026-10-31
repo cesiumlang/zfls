@@ -385,6 +385,33 @@ def notifications(res: dict, method: str) -> list:
 CONSTRUCT_KEYWORDS = r"(do|if|select|block|associate|where|forall|critical|change)\b"
 
 
+INTERFACE_LINE = re.compile(r"\s*interface\s+(\w+)", re.I)
+PROCEDURE_LINE = re.compile(r".*\b(?:subroutine|function)\s+(\w+)", re.I)
+
+
+def generic_specific_definition(lines: list, ref, got) -> bool:
+    """Whether fortls's definition is a generic interface of the file and
+    zfls's a procedure that the interface lists: on a call of a generic
+    interface zfls goes to the procedure the arguments fit (hansec #135)."""
+    if not (isinstance(ref, dict) and isinstance(got, dict)) or ref.get("uri") != got.get("uri"):
+        return False
+    a = ref.get("range", {}).get("start", {}).get("line", -1)
+    b = got.get("range", {}).get("start", {}).get("line", -1)
+    if not (0 <= a < len(lines) and 0 <= b < len(lines)):
+        return False
+    iface = INTERFACE_LINE.match(lines[a])
+    proc = PROCEDURE_LINE.match(lines[b])
+    if not (iface and proc):
+        return False
+    name = proc.group(1).lower()
+    for line in lines[a + 1:]:
+        if re.match(r"\s*end\s*interface", line, re.I):
+            return False
+        if name in re.findall(r"\w+", line.lower()):
+            return True
+    return False
+
+
 def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     """Whether (line, char) is on a statement label or on a construct name
     that the file defines (`name: do`); zfls answers definition, references
@@ -579,6 +606,12 @@ def main() -> int:
                 and on_construct_name_or_label(src_lines, pos.get("line", -1), pos.get("character", 0))
             ):
                 # construct names and statement labels (fortls #424)
+                continue
+            if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
+                # signature help on a generic interface: a signature per
+                # procedure (fortls #6); fortls has none
+                continue
+            if kind == "definition" and generic_specific_definition(src_lines, a, b):
                 continue
             if kind == "references" and use_rename_extras(src_lines, a, b):
                 # references also find the original name on USE rename lines
