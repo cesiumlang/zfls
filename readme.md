@@ -51,9 +51,11 @@ as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 Marketplace for the platforms without their own. Each registry has its own
 workflow, which the release job starts and which takes the packages from the
 release: "Publish to the Marketplace" (`.github/workflows/marketplace.yml`)
-signs in with the workflow's OIDC token as a Microsoft Entra managed identity
-that is a member of the publisher (the `AZURE_*` repository variables; the
-"Marketplace identity" workflow shows the ID to add), and "Publish to Open
+uses Marketplace Trusted Publishing (`vsce publish --oidc`: the publisher's
+Trusted Publishing policy names this repository and that workflow file), and
+falls back, with a warning, to a Microsoft Entra managed identity that is a
+member of the publisher (the `AZURE_*` repository variables; the
+"Marketplace identity" workflow shows the ID to add); and "Publish to Open
 VSX" (`.github/workflows/open-vsx.yml`) is the workflow whose OIDC token
 Open VSX trusts for the `cesiumlang` namespace (trusted publishing; the
 `OVSX_PAT` repository secret is used only if that is refused, with a
