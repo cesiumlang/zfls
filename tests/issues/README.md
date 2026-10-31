@@ -43,6 +43,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#478](https://github.com/fortran-lang/fortls/issues/478) | Markdown list in a parameter's docs indents the next parameter (fixture rebuilt from the screenshot) | hover | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | fixed (patched) | fails, same cause |
+| [#424](https://github.com/fortran-lang/fortls/issues/424) | construct names: go to definition, references, rename | constructs | fixed (feature) | no answer |
 | [#512](https://github.com/fortran-lang/fortls/issues/512) | include directories and definitions from `compile_commands.json` | project | fixed (feature) | not read |
 | [#438](https://github.com/fortran-lang/fortls/issues/438) | diagnostics have codes; `diagnostic_severity` turns a code off or changes its severity | diagnostics | fixed (feature) | no codes, only `disable_diagnostics` |
 | [#496](https://github.com/fortran-lang/fortls/issues/496) | user-defined functions highlighted where they are called (semantic tokens) | highlighting | fixed (feature) | no semantic tokens |
@@ -87,7 +88,7 @@ Notes:
 - [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
   test suite on Python 3.14; it does not apply to zfls.
 - The feature requests and discussions have no behavior to test yet:
-  #563, #547, #502, #501, #424, #423, #417, #348, #309,
+  #563, #547, #502, #501, #423, #417, #348, #309,
   #209, #171, #126, #125, #96, #85, #56, #28 and #6.
 
 ## Issues of hansec/fortran-language-server
@@ -108,6 +109,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/hansec/fortran-language-server/issues/203) | preprocessor conditional inside a continued declaration: the inactive branch adds its attributes | hover | fixed (patched) | fails, same cause |
+| [#157](https://github.com/hansec/fortran-language-server/issues/157) | completion of construct names after `exit` and `cycle` | constructs | fixed (feature) | no completion |
 | [#166](https://github.com/hansec/fortran-language-server/issues/166) | folding by program units, constructs and their branches, preprocessor conditionals and comment blocks | outline | fixed (feature) | no folding ranges |
 
 ## Issues of fortran-lang/vscode-fortran-support

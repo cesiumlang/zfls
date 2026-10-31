@@ -3,6 +3,7 @@
 //! README.md for the status of each.
 
 test {
+    _ = @import("constructs.zig");
     _ = @import("diagnostics.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
