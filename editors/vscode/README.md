@@ -10,6 +10,10 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   sticky scroll
 - folding of program units, constructs (each `IF`, `SELECT` and `WHERE`
   branch on its own), preprocessor conditionals and comment blocks
+- semantic highlighting: names colored by what they stand for (procedures,
+  types, dummy arguments, components, variables named like keywords), and
+  the branches of preprocessor conditionals that are left out shown as
+  inactive
 - diagnostics, and a compiler's errors and warnings (see
   [Compiler diagnostics](#compiler-diagnostics))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and

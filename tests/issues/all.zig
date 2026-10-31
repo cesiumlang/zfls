@@ -4,6 +4,7 @@
 
 test {
     _ = @import("diagnostics.zig");
+    _ = @import("highlighting.zig");
     _ = @import("hover.zig");
     _ = @import("outline.zig");
     _ = @import("rename.zig");

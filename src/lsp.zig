@@ -70,6 +70,8 @@ pub const DocumentSymbol = struct {
     children: []const DocumentSymbol = &.{},
 };
 
+pub const SemanticTokens = struct { data: []const u32 };
+
 pub const FoldingRange = struct {
     startLine: usize,
     endLine: usize,
@@ -127,6 +129,16 @@ pub const CompletionOptions = struct {
 
 pub const SignatureHelpOptions = struct { triggerCharacters: []const []const u8 };
 
+pub const SemanticTokensLegend = struct {
+    tokenTypes: []const []const u8,
+    tokenModifiers: []const []const u8,
+};
+
+pub const SemanticTokensOptions = struct {
+    legend: SemanticTokensLegend,
+    full: bool = true,
+};
+
 pub const ServerCapabilities = struct {
     completionProvider: CompletionOptions,
     definitionProvider: bool = true,
@@ -141,6 +153,7 @@ pub const ServerCapabilities = struct {
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
+    semanticTokensProvider: ?SemanticTokensOptions = null,
 };
 
 pub const InitializeResult = struct { capabilities: ServerCapabilities };
@@ -159,7 +172,8 @@ pub const ResponseError = struct {
 
 pub const TextDocumentIdentifier = struct { uri: []const u8 };
 
-/// `didOpen`, `didSave`, `didClose`, `documentSymbol` and `foldingRange`
+/// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange` and
+/// `semanticTokens/full`
 pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 
 /// `completion`, `hover`, `signatureHelp`, `definition`, `references`,
