@@ -247,13 +247,15 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
     return out
 
 
-def is_keyword_argument_item(item) -> bool:
-    """A zfls completion item `name=` for a keyword argument (hansec #133)."""
-    return (
-        isinstance(item, dict)
-        and str(item.get("label", "")).endswith("=")
-        and "filterText" in item
-    )
+def zfls_only_item(item) -> bool:
+    """A zfls completion item of its own: `name=` for a keyword argument
+    (hansec #133), or a name of a module not used yet that adds the USE
+    statement (hansec #62)."""
+    if not isinstance(item, dict):
+        return False
+    if "additionalTextEdits" in item:
+        return True
+    return str(item.get("label", "")).endswith("=") and "filterText" in item
 
 
 def normalize(v):
@@ -584,8 +586,9 @@ def main() -> int:
                     a, b = sorted(a, key=ref_key), sorted(b, key=ref_key)
             if kind == "completion" and isinstance(b, list):
                 # zfls offers the keyword arguments of the call the position
-                # is in (hansec #133); fortls does not
-                b = [x for x in b if not is_keyword_argument_item(x)]
+                # is in (hansec #133) and names of modules not used yet
+                # (hansec #62); fortls does not
+                b = [x for x in b if not zfls_only_item(x)]
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway

@@ -92,6 +92,7 @@ pub const CompletionItem = struct {
     documentation: ?MarkupContent = null,
     sortText: ?[]const u8 = null,
     filterText: ?[]const u8 = null,
+    additionalTextEdits: ?[]const TextEdit = null,
 };
 
 pub const Hover = struct { contents: MarkupContent };

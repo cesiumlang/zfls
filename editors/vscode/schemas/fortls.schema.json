@@ -76,6 +76,11 @@
       "type": "boolean",
       "default": false
     },
+    "autocomplete_no_auto_use": {
+      "description": "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)",
+      "type": "boolean",
+      "default": false
+    },
     "autocomplete_no_snippets": {
       "description": "Do not use snippets with place holders in autocomplete results",
       "type": "boolean",

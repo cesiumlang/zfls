@@ -20,10 +20,10 @@ projects zfls replaces:
   HS #168
 - [x] Keyword-argument completion: inside a call, offer `name=` for each
   dummy argument with its type and intent. HS #133
-- [~] Auto-`use` completion: complete public names from modules the scope
+- [x] Auto-`use` completion: complete public names from modules the scope
   does not use yet, adding the `use` statement; an "add use" quick fix for
   undefined names. HS #62
-- [ ] Smaller LSP features:
+- [~] Smaller LSP features:
   - [ ] `textDocument/prepareRename` (reject intrinsics and keywords before
     the user types a new name)
   - [ ] `textDocument/selectionRange` (expand selection by expression,

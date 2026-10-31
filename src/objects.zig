@@ -1625,6 +1625,7 @@ pub const Obj = struct {
                 return Diagnostic.init(.not_imported, self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
             }
             var d = Diagnostic.init(.object_not_found, self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
+            d.subject = desc_obj_name;
             d.addRelated(ti.obj.file_ast.path, ti.obj.sline -| 1, "Possible object");
             return d;
         };

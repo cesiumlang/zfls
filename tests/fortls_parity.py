@@ -75,6 +75,16 @@ KNOWN_DEVIATIONS = {
 }
 
 
+def zfls_only_item(x) -> bool:
+    """A completion item fortls never gives: `name=` (a keyword argument) or
+    one that adds a USE statement."""
+    if not isinstance(x, dict):
+        return False
+    if "additionalTextEdits" in x:
+        return True
+    return str(x.get("label", "")).endswith("=") and "filterText" in x
+
+
 def install_stubs():
     """Minimal stand-ins for pytest, json5 and packaging."""
     pytest = types.ModuleType("pytest")
@@ -238,12 +248,10 @@ def main() -> int:
             if "result" in result:
                 r = result["result"]
                 # zfls offers the keyword arguments of the call a completion
-                # is in (hansec #133); fortls's expected lists do not have them
+                # is in (hansec #133) and names of modules not used yet
+                # (hansec #62); fortls's expected lists do not have them
                 if isinstance(r, list):
-                    r = [
-                        x for x in r
-                        if not (isinstance(x, dict) and str(x.get("label", "")).endswith("=") and "filterText" in x)
-                    ]
+                    r = [x for x in r if not zfls_only_item(x)]
                 parsed.append(r)
             elif "params" in result:
                 params = result["params"]

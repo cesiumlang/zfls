@@ -22,6 +22,7 @@ const Logger = @import("logger.zig");
 const outline = @import("outline.zig");
 const constructs = @import("constructs.zig");
 const arguments = @import("arguments.zig");
+const autouse = @import("autouse.zig");
 const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
@@ -1148,6 +1149,7 @@ pub const Server = struct {
         const var_stack = try helpers.getVarStack(a, line_prefix);
         const is_member = var_stack.len > 1;
         var var_prefix = str.strip(var_stack[var_stack.len - 1]);
+        const typed_prefix = var_prefix;
 
         var item_list: std.ArrayList(lsp.CompletionItem) = .empty;
         var name_only = self.s.autocomplete_name_only;
@@ -1288,7 +1290,44 @@ pub const Server = struct {
             }
             try item_list.append(a, try self.buildComp(a, cand, name_only, name_replace, false, false));
         }
+        if (!self.s.autocomplete_no_auto_use and !is_member and typed_prefix.len >= 2) switch (lc.ctx) {
+            .default, .call, .type_only, .first => try self.autoUseItems(a, file, ast, ac_line, typed_prefix, type_mask, req_callable, &item_list),
+            else => {},
+        };
         return json.from(a, item_list.items);
+    }
+
+    /// The modules a USE statement can bring names in from: those of the
+    /// workspace and the intrinsic ones
+    fn usableModules(self: *Server, a: Allocator) ![]const *Obj {
+        var out: std.ArrayList(*Obj) = .empty;
+        for (self.obj_tree.values()) |e| if (e.obj.kind == .module) try out.append(a, e.obj);
+        try out.appendSlice(a, self.intr.mods);
+        return out.items;
+    }
+
+    /// The public names starting with `prefix` of modules the program unit
+    /// at 0-based `line` does not see, each completing with the USE
+    /// statement that brings it in (hansec #62), sorted after the others
+    fn autoUseItems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, line: usize, prefix: []const u8, type_mask: TypeMask, req_callable: bool, items: *std.ArrayList(lsp.CompletionItem)) !void {
+        const unit = autouse.unitOf(try ast.getScopes(a, line + 1)) orelse return;
+        var seen: std.StringHashMapUnmanaged(void) = .empty;
+        for (items.items) |it| try seen.put(a, try std.ascii.allocLowerString(a, it.label), {});
+        const at = try autouse.insertionPoint(a, file, unit);
+        const range = rangeOf(file, at.line, 0, at.line, 0);
+        for (try autouse.exports(a, try self.usableModules(a), .{ .prefix = prefix }, 50)) |e| {
+            if (autouse.isWithin(unit, e.module)) continue;
+            if (seen.contains(try std.ascii.allocLowerString(a, e.obj.name))) continue;
+            if (type_mask.contains(e.obj.getType(false))) continue;
+            if (req_callable and !e.obj.isCallable()) continue;
+            var item = try self.buildComp(a, e.obj, self.s.autocomplete_name_only, null, false, false);
+            item.detail = try std.fmt.allocPrint(a, "{s} (use {s})", .{ item.detail, e.module.name });
+            item.sortText = try std.mem.concat(a, u8, &.{ "~", e.obj.name });
+            const edits = try a.alloc(lsp.TextEdit, 1);
+            edits[0] = .{ .range = range, .newText = try autouse.statement(a, at.indent, e.module.name, e.obj.name) };
+            item.additionalTextEdits = edits;
+            try items.append(a, item);
+        }
     }
 
     // ----------------------------------------------------------------------
@@ -2047,10 +2086,11 @@ pub const Server = struct {
         const ast = file.ast orelse return .null;
         const sline = params.range.start.line;
         const eline = params.range.end.line;
-        const curr_scope = ast.getInnerScope(sline) orelse return .null;
-        const actions = (try curr_scope.getActions(a, sline, eline)) orelse return .null;
-        const out = try a.alloc(lsp.CodeAction, actions.len);
-        for (actions, out) |act, *av| {
+        var out: std.ArrayList(lsp.CodeAction) = .empty;
+        try self.addUseActions(a, file, ast, sline, eline, &out);
+        const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
+        const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
+        for (actions) |act| {
             const edit_file = self.fileForPath(act.uri_path);
             const edits = try a.alloc(lsp.TextEdit, act.edits.len);
             for (act.edits, edits) |e, *ev| {
@@ -2060,9 +2100,39 @@ pub const Server = struct {
             files[0] = .{ .uri = try paths.pathToUri(a, act.uri_path), .edits = edits };
             const diags = try a.alloc(lsp.Diagnostic, act.diagnostics.len);
             for (act.diagnostics, diags) |dg, *dv| dv.* = try self.diagnosticOf(a, file, try dg.build(a, file));
-            av.* = .{ .title = act.title, .kind = act.kind, .edit = .{ .changes = .{ .files = files } }, .diagnostics = diags };
+            try out.append(a, .{ .title = act.title, .kind = act.kind, .edit = .{ .changes = .{ .files = files } }, .diagnostics = diags });
         }
-        return json.from(a, out);
+        return json.from(a, out.items);
+    }
+
+    /// For each name on 0-based lines `sline`..`eline` that is not found in
+    /// scope but is public in a module: a quick fix adding the USE statement
+    /// that brings it in (hansec #62)
+    fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+        const diags = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
+        const uri = try paths.pathToUri(a, file.path);
+        for (diags) |d| {
+            if (d.code != .object_not_found or d.sln < sline or d.sln > eline) continue;
+            const name = d.subject orelse continue;
+            const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
+            const at = try autouse.insertionPoint(a, file, unit);
+            for (try autouse.exports(a, try self.usableModules(a), .{ .exact = name }, 10)) |e| {
+                if (autouse.isWithin(unit, e.module)) continue;
+                const text = try autouse.statement(a, at.indent, e.module.name, e.obj.name);
+                const edits = try a.alloc(lsp.TextEdit, 1);
+                edits[0] = .{ .range = rangeOf(file, at.line, 0, at.line, 0), .newText = text };
+                const files = try a.alloc(lsp.Changes.File, 1);
+                files[0] = .{ .uri = uri, .edits = edits };
+                const dv = try a.alloc(lsp.Diagnostic, 1);
+                dv[0] = try self.diagnosticOf(a, file, d);
+                try out.append(a, .{
+                    .title = try std.fmt.allocPrint(a, "Add use {s}, only: {s}", .{ e.module.name, e.obj.name }),
+                    .kind = "quickfix",
+                    .edit = .{ .changes = .{ .files = files } },
+                    .diagnostics = dv,
+                });
+            }
+        }
     }
 
     // ----------------------------------------------------------------------

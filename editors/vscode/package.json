@@ -217,6 +217,12 @@
           "scope": "resource",
           "markdownDescription": "Do not use snippets with placeholders in completions (`--autocomplete_no_snippets`)."
         },
+        "zfls.autocompleteNoAutoUse": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Do not offer the public names of modules that are not used yet; by default completing one adds its `use module, only: name` statement (`--autocomplete_no_auto_use`)."
+        },
         "zfls.sortKeywords": {
           "type": "boolean",
           "default": false,
