@@ -335,3 +335,8 @@ Zig
 zthree
 
 hansec
+CUDA
+Codee
+codimensions
+lfortran
+ekibun
