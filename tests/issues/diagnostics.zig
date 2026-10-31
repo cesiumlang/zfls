@@ -719,3 +719,36 @@ test "unused local variables and USE ONLY names are shown faded, with a quick fi
     defer w.deinit();
     try expectUnused(w);
 }
+
+fn indexIn(names: []const []const u8, name: []const u8) usize {
+    for (names, 0..) |n, i| if (std.mem.eql(u8, n, name)) return i;
+    return std.math.maxInt(usize);
+}
+
+test "the module graph: compile order, and circular USE" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "kinds.f90", .text = "module kinds\n  integer, parameter :: dp = kind(1.d0)\nend module kinds\n" },
+        .{ .name = "geom.f90", .text = "module geom\n  use kinds, only: dp\n  real(dp) :: origin\nend module geom\n" },
+        .{ .name = "geom_impl.f90", .text = "submodule (geom) geom_impl\nend submodule geom_impl\n" },
+        .{ .name = "app.f90", .text = "module app\ncontains\n  subroutine run()\n    use geom, only: origin\n    print *, origin\n  end subroutine run\nend module app\n" },
+        .{ .name = "ping.f90", .text = "module ping\n  use pong\nend module ping\n" },
+        .{ .name = "pong.f90", .text = "module pong\ncontains\n  subroutine back()\n    use ping\n  end subroutine back\nend module pong\n" },
+    }, .{});
+    defer w.deinit();
+    const co = try w.compileOrder();
+    // each module after those it uses (the USE inside a procedure counts),
+    // a submodule after its module
+    try std.testing.expect(indexIn(co.order, "kinds") < indexIn(co.order, "geom"));
+    try std.testing.expect(indexIn(co.order, "geom") < indexIn(co.order, "geom_impl"));
+    try std.testing.expect(indexIn(co.order, "geom") < indexIn(co.order, "app"));
+    try std.testing.expectEqual(@as(usize, 1), co.cycles);
+    // each USE of the cycle is an error
+    for ([_][]const u8{ "ping.f90", "pong.f90" }) |f| {
+        var found = false;
+        for (try w.diagnostics(f)) |d| if (std.mem.eql(u8, d.code, "circular-use")) {
+            found = true;
+        };
+        try std.testing.expect(found);
+    }
+    for (try w.diagnostics("geom.f90")) |d| try std.testing.expect(!std.mem.eql(u8, d.code, "circular-use"));
+}

@@ -273,7 +273,7 @@ def normalize(v):
     if isinstance(v, list):
         # names not declared under IMPLICIT NONE (hansec #129): zfls only
         # and unused names: zfls only
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name"))]
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
