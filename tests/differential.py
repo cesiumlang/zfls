@@ -628,7 +628,7 @@ def main() -> int:
             ):
                 # construct names and statement labels (fortls #424)
                 continue
-            if kind == "hover" and a is None and "Implicitly typed (not declared)" in json.dumps(b):
+            if kind == "hover" and a is None and ("Implicitly typed (not declared)" in json.dumps(b) or "Fortran keyword" in json.dumps(b)):
                 # the implicit type of a name that is not declared (hansec
                 # #201); fortls has no hover there
                 continue

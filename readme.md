@@ -307,6 +307,8 @@ zfls deliberately differs from fortls in a few places:
   declares the fields its name list gives. `.` separates a component when it
   follows a name or `)` and does not start an operator (`a.and.b`), as in
   `rec.field` or `arr(i).field` (hansec #45). fortls reads none of these.
+- Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
+  ...) shows its documentation (fortls #547); fortls has no hover there.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the scopes around it, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has

@@ -872,3 +872,31 @@ test "hansec #201 hover shows the type implicit typing gives a name that is not 
     defer w.deinit();
     try h.checkIn(.hansec, 201, .fixed, expectImplicitTypes(w));
 }
+
+fn expectKeywordHover(w: *h.Workspace) !void {
+    try w.expectHoverContains("k.f90", w.pos("k.f90", "allocate(x", 0, 2), "Dynamically creates storage");
+    try w.expectHoverContains("k.f90", w.pos("k.f90", "intent(in)", 0, 2), "INTENT(IN)");
+    try w.expectHoverContains("k.f90", w.pos("k.f90", "call s", 0, 1), "Transfers control to a subroutine");
+    // a variable spelled like a keyword is the variable
+    try w.expectHoverContains("k.f90", w.pos("k.f90", "len = 2", 0, 0), "INTEGER :: len");
+}
+
+test "#547 hover on a statement or attribute keyword shows its documentation" {
+    const w = try h.Workspace.init(&.{.{ .name = "k.f90", .text =
+        \\program k
+        \\  implicit none
+        \\  real, allocatable :: x(:)
+        \\  integer :: len
+        \\  allocate(x(10))
+        \\  len = 2
+        \\  call s(x)
+        \\contains
+        \\  subroutine s(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine s
+        \\end program k
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.check(547, .fixed, expectKeywordHover(w));
+}
