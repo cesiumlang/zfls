@@ -481,7 +481,8 @@ pub const Server = struct {
     /// project's compile_commands.json and fpm.toml to the options' own
     fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
         const sa = self.arena.allocator();
-        if (try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands)) |p| {
+        const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
+        if (db) |p| {
             if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
                 if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                     try self.addProjectSettings(found);

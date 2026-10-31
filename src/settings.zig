@@ -79,6 +79,9 @@ pub const Settings = struct {
     /// The compilation database to read include directories and definitions
     /// from: null to look for one, empty for none
     compile_commands: ?[]const u8 = null,
+    /// read no compilation database (the name of fortls's option, its
+    /// upstream PR #504)
+    disable_compile_commands: bool = false,
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
@@ -167,7 +170,8 @@ const opts = [_]Opt{
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
-    .{ .long = "compile_commands", .kind = .string, .metavar = "PATH", .help = "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root or root/build)", .group = "Preprocessor options" },
+    .{ .long = "compile_commands", .kind = .string, .metavar = "PATH", .help = "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root, root/build or root/builddir)", .group = "Preprocessor options" },
+    .{ .long = "disable_compile_commands", .kind = .flag, .help = "Do not read a compile_commands.json", .group = "Preprocessor options" },
     .{ .long = "pp_defs", .kind = .json, .metavar = "JSON", .help = "A dictionary with additional preprocessor definitions. Preprocessor definitions are normally included via INCLUDE_DIRS", .group = "Preprocessor options" },
 
     .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
@@ -462,6 +466,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "pp_defs")) |v| try applyPpDefs(a, s, v);
     if (json.get(cfg, "include_dirs")) |v| s.include_dirs = try jsonList(a, v);
     if (json.get(cfg, "compile_commands")) |v| s.compile_commands = json.str(v);
+    s.disable_compile_commands = jsonBool(json.get(cfg, "disable_compile_commands"), s.disable_compile_commands);
     // Debug options
     if (jsonBool(json.get(cfg, "debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
 }
