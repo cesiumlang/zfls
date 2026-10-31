@@ -382,6 +382,30 @@ def notifications(res: dict, method: str) -> list:
     return [n["params"] for n in res["notifications"] if n["method"] == method]
 
 
+CONSTRUCT_KEYWORDS = r"(do|if|select|block|associate|where|forall|critical|change)\b"
+
+
+def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on a statement label or on a construct name
+    that the file defines (`name: do`); zfls answers definition, references
+    and rename there (fortls #424), fortls has no answer."""
+    if not 0 <= line < len(lines):
+        return False
+    text = lines[line]
+    for m in re.finditer(r"[A-Za-z_]\w*|\d+", text):
+        if m.start() <= char <= m.end():
+            token = m.group(0)
+            break
+    else:
+        return False
+    if token.isdigit():
+        return True
+    name = re.compile(
+        r"^\s*(\d+\s+)?" + re.escape(token) + r"\s*:(?!:)\s*" + CONSTRUCT_KEYWORDS, re.I
+    )
+    return any(name.match(l) for l in lines)
+
+
 def own_file_definition(ref, got, own: str) -> bool:
     """Whether zfls found the definition in the requesting file (path
     suffix `own`) where fortls found one in another file."""
@@ -548,6 +572,13 @@ def main() -> int:
             ):
                 # the original name of a USE rename is the module's entity
                 # (hansec #137); fortls has no answer there
+                continue
+            if (
+                kind in ("definition", "references", "rename")
+                and a is None
+                and on_construct_name_or_label(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # construct names and statement labels (fortls #424)
                 continue
             if kind == "references" and use_rename_extras(src_lines, a, b):
                 # references also find the original name on USE rename lines
