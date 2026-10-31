@@ -155,7 +155,8 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `import-outside-interface`, `module-not-found`, `use-after-implicit`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
 `argument-not-declared`, `not-imported`, `object-not-found`,
-`undeclared-name`, `unused-name` and `circular-use`.
+`undeclared-name`, `unused-name`, `circular-use`, `argument-mismatch` and
+`intent-in-assigned`.
 
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
@@ -315,6 +316,13 @@ zfls deliberately differs from fortls in a few places:
   on; fortls ignores cancellations.
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
+- Calls of workspace procedures are checked (`argument-mismatch`): too
+  many arguments, a keyword the procedure does not have, an argument given
+  twice, a required (not OPTIONAL) argument missing. Generic interfaces,
+  intrinsics, procedure pointers, alternate returns and procedures whose
+  argument list has preprocessor lines are not checked. Assigning to an
+  INTENT(IN) dummy argument (not a pointer) is an `intent-in-assigned`
+  error. fortls checks neither.
 - The modules and submodules of the workspace form a dependency graph: a
   USE that closes a cycle of modules using each other is a `circular-use`
   error, and the `zfls/compileOrder` request (the VS Code command "zfls: Show
