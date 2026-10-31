@@ -9,6 +9,7 @@ const patterns = @import("../patterns.zig");
 const regex = @import("../regex.zig");
 const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
+const implicit = @import("../implicit.zig");
 const pp = @import("../preprocessor.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -554,6 +555,15 @@ pub const Parser = struct {
         const ast = p.file_ast;
         if (ast.current_scope) |cs| {
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
+            // the types of the letters, for names that are not declared
+            var spec = line[m.start(1)..];
+            if (std.mem.indexOfScalar(u8, spec, '!')) |c| spec = spec[0..c];
+            const pa = ast.allocator();
+            const rules = try implicit.parseRules(pa, spec);
+            if (rules.len > 0 and cs.data == .scope) {
+                const sd = cs.scopeData();
+                sd.implicit_rules = try std.mem.concat(pa, implicit.Rule, &.{ sd.implicit_rules, rules });
+            }
         } else {
             try ast.addError(.statement_without_scope, "IMPLICIT statement without enclosing scope", C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
         }

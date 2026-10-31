@@ -818,3 +818,57 @@ test "hansec #135 go to definition on a call of a generic interface goes to the 
     defer w.deinit();
     try h.checkIn(.hansec, 135, .fixed, expectSpecificDefinition(w));
 }
+
+fn expectImplicitTypes(w: *h.Workspace) !void {
+    // the IMPLICIT statement of the module, through host association
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "z = c*t", 0, 6), "REAL(c_double) :: t");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "beta*r", 0, 0), "REAL(c_double) :: beta");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "n2 = 1", 0, 0), "INTEGER(c_int) :: n2");
+    // declared names keep their declaration
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "z = c*t", 0, 0), "COMPLEX(c_double_complex)");
+    // the default rules in a unit without IMPLICIT statements
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "k = x", 0, 0), "INTEGER :: k");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "k = x", 0, 4), "REAL :: x");
+    // nothing under IMPLICIT NONE, nor on keywords
+    try h.expect((try w.hover("n.f90", w.pos("n.f90", "q = 1", 0, 0))) == null, "a name under IMPLICIT NONE has a type", .{});
+    try h.expect((try w.hover("d.f90", w.pos("d.f90", "then", 0, 1))) == null, "THEN has a type", .{});
+    try h.expect((try w.hover("d.f90", w.pos("d.f90", "call ext", 0, 6))) == null, "a subroutine called has a type", .{});
+}
+
+test "hansec #201 hover shows the type implicit typing gives a name that is not declared" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "t.f90", .text =
+        \\module oumods
+        \\  use, intrinsic :: iso_c_binding
+        \\  implicit integer(c_int) (i-k), integer(c_int) (m,n), &
+        \\       & real(c_double) (a-h), real(c_double) (l), real(c_double) (o-z)
+        \\contains
+        \\  subroutine zI12(t,c,alpha,beta,r)
+        \\    complex(c_double_complex) c,r,    x,y,z
+        \\     z = c*t
+        \\     r = beta*r+alpha*((t*y - x)/c)
+        \\     n2 = 1
+        \\  end subroutine
+        \\end module
+        \\
+        },
+        .{ .name = "d.f90", .text =
+        \\program d
+        \\  if (.true.) then
+        \\    k = x
+        \\    call ext(k)
+        \\  end if
+        \\end program d
+        \\
+        },
+        .{ .name = "n.f90", .text =
+        \\program n
+        \\  implicit none
+        \\  q = 1
+        \\end program n
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 201, .fixed, expectImplicitTypes(w));
+}

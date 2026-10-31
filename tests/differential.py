@@ -623,6 +623,10 @@ def main() -> int:
             ):
                 # construct names and statement labels (fortls #424)
                 continue
+            if kind == "hover" and a is None and "Implicitly typed (not declared)" in json.dumps(b):
+                # the implicit type of a name that is not declared (hansec
+                # #201); fortls has no hover there
+                continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
                 # procedure (fortls #6); fortls has none

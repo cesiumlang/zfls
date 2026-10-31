@@ -112,6 +112,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/hansec/fortran-language-server/issues/203) | preprocessor conditional inside a continued declaration: the inactive branch adds its attributes | hover | fixed (patched) | fails, same cause |
+| [#201](https://github.com/hansec/fortran-language-server/issues/201) | hover on a name that is not declared shows the type its IMPLICIT rules (or the default ones) give it | hover | fixed (feature) | no hover |
 | [#135](https://github.com/hansec/fortran-language-server/issues/135) | go to definition on a call of a generic interface goes to the procedure the arguments fit | hover | fixed (feature) | goes to the interface |
 | [#62](https://github.com/hansec/fortran-language-server/issues/62) | completion of names from modules not used yet adds the `use` statement; a quick fix for a type not found | completion | fixed (feature) | names in scope only |
 | [#133](https://github.com/hansec/fortran-language-server/issues/133) | completion of keyword arguments (`name=`) inside a call | completion | fixed (feature) | names in scope only |

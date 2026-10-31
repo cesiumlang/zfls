@@ -275,6 +275,10 @@ def main() -> int:
         for result in results:
             if "result" in result:
                 r = result["result"]
+                # zfls shows the implicit type of a name that is not
+                # declared (hansec #201); fortls has no hover there
+                if isinstance(r, dict) and "Implicitly typed (not declared)" in str(r.get("contents", "")):
+                    r = None
                 # zfls offers the keyword arguments of the call a completion
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls's expected lists do not have them

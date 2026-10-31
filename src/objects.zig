@@ -16,6 +16,7 @@ const parser = @import("parser.zig");
 const FortranFile = parser.FortranFile;
 
 const KeywordInfo = helpers.KeywordInfo;
+const implicit = @import("implicit.zig");
 
 fn R() *const patterns.Patterns {
     return patterns.get();
@@ -226,6 +227,8 @@ pub const Scope = struct {
     inherit: ?[]const u8 = null,
     contains_start: ?usize = null,
     implicit_line: ?usize = null,
+    /// the letter ranges of its IMPLICIT statements and their types
+    implicit_rules: []const implicit.Rule = &.{},
     /// Inherited children: of a type from its parent type, of a procedure
     /// from the submodule prototype it implements
     in_children: std.ArrayList(*Obj) = .empty,
