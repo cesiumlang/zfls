@@ -16,6 +16,8 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
 const selection = @import("../selection.zig");
+const semantic = @import("../semantic.zig");
+const implicit = @import("../implicit.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -314,8 +316,25 @@ pub fn preferredBody(self: *Server, obj: *Obj) *Obj {
     return impl;
 }
 
+/// Hover on a name that is not declared: the type implicit typing gives it
+/// (hansec #201), unless IMPLICIT NONE applies
+fn implicitHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+    const ast = file.ast orelse return .null;
+    const line = params.position.line;
+    const col = Server.toByteCol(file, line, params.position.character);
+    const st = selection.statementLines(file, line);
+    for (try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, st.first, st.last)) |u| {
+        if (u.line != line or col < u.start or col > u.end) continue;
+        const t = implicit.typeOf(u.scope, u.name) orelse return .null;
+        const msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ t, u.name });
+        return json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, msg, "Implicitly typed (not declared)") } });
+    }
+    return .null;
+}
+
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-    const d = (try definitionAt(self, a, params, true)) orelse return .null;
+    const d = (try definitionAt(self, a, params, true)) orelse return implicitHover(self, a, params);
     const ast = d.file.ast.?;
     var var_obj = (try externalTarget(self, a, ast, d.obj)) orelse (try calledFunction(self, a, ast, d)) orelse d.obj;
     // the implementation's documentation, or the interface's when it has none

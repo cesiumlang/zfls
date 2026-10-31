@@ -61,7 +61,8 @@ test "a compile_commands option of \"\" reads no compilation database" {
         },
     }, .{});
     defer w.deinit();
-    try std.testing.expect((try w.hover("a.F90", w.pos("a.F90", "x = 1", 0, 0))) == null);
+    // x is not declared: only its implicit type
+    try w.expectHoverContains("a.F90", w.pos("a.F90", "x = 1", 0, 0), "Implicitly typed");
 }
 
 fn expectFpm(w: *h.Workspace) !void {

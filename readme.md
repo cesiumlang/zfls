@@ -259,6 +259,10 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- Hover on a name that is not declared shows the type that the IMPLICIT
+  statements of its scope and the scopes around it, or the default rules
+  (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has
+  no hover there. Under IMPLICIT NONE there is none.
 - Workspace symbol search also finds the names the query matches fuzzily
   (`tar` finds `this_amazing_routine`), after those that contain it
   (hansec #195); fortls finds only the latter.

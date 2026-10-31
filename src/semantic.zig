@@ -74,6 +74,30 @@ const Tokenizer = struct {
     tokens: std.ArrayList(Token) = .empty,
     /// the last code line ended with `&` (free form)
     continued: bool = false,
+    /// When set, the names that stand for nothing found are collected here
+    /// (see `noteUnknown`)
+    unknown: ?*std.ArrayList(Unknown) = null,
+    /// the intrinsic procedures, which `lookup` leaves out
+    intrinsics: []const *Obj = &.{},
+    /// the statement being read declares or defines (its unknown names are
+    /// attributes, kinds, letters, ...); carried over continuation lines
+    spec_stmt: bool = false,
+
+    /// Collect a name that stands for nothing found, unless it is a word
+    /// that is no name: in a specification or END statement, after CALL
+    /// (an external subroutine) or EXIT/CYCLE (a construct), a keyword
+    /// inside a statement (`then`, `while`, `concurrent`, ...), an
+    /// intrinsic procedure, a component
+    fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool) !void {
+        const list = t.unknown orelse return;
+        if (t.spec_stmt or in_end or before == '%') return;
+        if (prev) |p| for ([_][]const u8{ "call", "exit", "cycle" }) |k| {
+            if (std.ascii.eqlIgnoreCase(p, k)) return;
+        };
+        for (inner_keywords) |k| if (std.ascii.eqlIgnoreCase(w.str, k)) return;
+        for (t.intrinsics) |f| if (std.ascii.eqlIgnoreCase(f.name, w.str)) return;
+        try list.append(t.a, .{ .line = ln, .start = w.start, .end = w.end, .name = w.str, .scope = scope });
+    }
 
     fn add(t: *Tokenizer, line: usize, text: []const u8, start: usize, end: usize, kind: Kind) !void {
         const s = str.byteToUtf16(text, start);
@@ -164,6 +188,8 @@ const Tokenizer = struct {
         var keyword: ?[]const u8 = null;
         // an END statement names the unit it ends
         var in_end = false;
+        // the word before, on this line
+        var prev: ?[]const u8 = null;
         while (it.next()) |w| {
             for (code[scanned..w.start]) |c| switch (c) {
                 '(' => depth += 1,
@@ -172,10 +198,13 @@ const Tokenizer = struct {
                     stmt_start = true;
                     depth = 0;
                     in_end = false;
+                    prev = null;
                 },
                 else => {},
             };
             scanned = w.end;
+            const prev_word = prev;
+            prev = w.str;
             const before = prevChar(code, w.start);
             const after = nextChar(code, w.end);
             const follows = keyword;
@@ -190,8 +219,10 @@ const Tokenizer = struct {
                 if (isStatementKeyword(w.str) and !isAssignment(code, w.end)) {
                     keyword = w.str;
                     in_end = std.ascii.eqlIgnoreCase(w.str, "end");
+                    t.spec_stmt = isSpecKeyword(w.str);
                     continue;
                 }
+                t.spec_stmt = false;
             } else if (follows) |k| {
                 if (isSecondKeyword(k, w.str)) continue;
             }
@@ -223,7 +254,10 @@ const Tokenizer = struct {
             if (obj) |o| if (o.kind == .variable) if (o.parent) |p| {
                 if (p.kind == .function and p.sline == ln + 1 and o.nameLowerEql(p.name)) obj = p;
             };
-            const o = obj orelse continue;
+            const o = obj orelse {
+                try t.noteUnknown(scope, ln, w, before, prev_word, in_end);
+                continue;
+            };
             // elsewhere in a function, its name is its result
             if (o.kind == .function and o == scope and o.sline != ln + 1 and !in_end) {
                 try t.add(ln, raw, w.start, w.end, .{ .type = .variable });
@@ -286,6 +320,54 @@ const statement_keywords = [_][]const u8{
     "target",    "type",        "unlock",      "use",             "value",
     "volatile",  "wait",        "where",       "write",
 };
+
+/// The statement keywords that start a specification or a definition, whose
+/// other words need not be names of the scope (attributes, kinds, the
+/// letters of IMPLICIT, names being defined)
+const spec_keywords = [_][]const u8{
+    "abstract",    "allocatable", "asynchronous", "bind",     "character",  "class",
+    "codimension", "common",      "complex",      "contains", "contiguous", "data",
+    "dimension",   "double",      "elemental",    "entry",    "enum",       "enumerator",
+    "equivalence", "external",    "final",        "format",   "function",   "generic",
+    "implicit",    "import",      "impure",       "include",  "integer",    "intent",
+    "interface",   "intrinsic",   "logical",      "module",   "namelist",   "non_overridable",
+    "optional",    "parameter",   "pointer",      "private",  "procedure",  "program",
+    "protected",   "public",      "pure",         "real",     "recursive",  "save",
+    "sequence",    "submodule",   "subroutine",   "target",   "type",       "use",
+    "value",       "volatile",
+};
+
+fn isSpecKeyword(word: []const u8) bool {
+    for (spec_keywords) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
+    return false;
+}
+
+/// Keywords that appear inside executable statements, never names there
+const inner_keywords = [_][]const u8{
+    "then",    "while",  "concurrent", "to",         "default", "is",      "none",
+    "only",    "result", "local",      "local_init", "shared",  "reduce",  "all",
+    "images",  "memory", "team",       "integer",    "real",    "logical", "character",
+    "complex", "double", "precision",  "type",       "class",
+};
+
+/// A name in the code that stands for nothing found
+pub const Unknown = struct { line: usize, start: usize, end: usize, name: []const u8, scope: ?*Obj };
+
+/// The names on 0-based lines `first`..`last` (a statement, or the file)
+/// that stand for nothing the scope, its USE statements or the workspace
+/// define, and are no keyword, intrinsic procedure or component
+pub fn unknownNames(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, intrinsics: []const *Obj, first: usize, last: usize) ![]const Unknown {
+    var list: std.ArrayList(Unknown) = .empty;
+    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .unknown = &list, .intrinsics = intrinsics };
+    const n = file.nLines();
+    if (n == 0) return list.items;
+    const inactive = try a.alloc(bool, n);
+    @memset(inactive, false);
+    try t.inactiveLines(inactive);
+    var ln = first;
+    while (ln <= @min(last, n - 1)) : (ln += 1) if (!inactive[ln]) try t.tokenizeLine(ln);
+    return list.items;
+}
 
 fn isStatementKeyword(word: []const u8) bool {
     for (statement_keywords) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
