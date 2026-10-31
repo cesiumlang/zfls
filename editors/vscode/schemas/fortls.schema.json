@@ -160,7 +160,9 @@
           "object-not-found",
           "undeclared-name",
           "unused-name",
-          "circular-use"
+          "circular-use",
+          "argument-mismatch",
+          "intent-in-assigned"
         ]
       },
       "additionalProperties": {

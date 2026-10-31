@@ -18,6 +18,7 @@ const implicit = @import("../implicit.zig");
 const selection = @import("../selection.zig");
 const unused = @import("../unused.zig");
 const modgraph = @import("../modgraph.zig");
+const argcheck = @import("../argcheck.zig");
 
 const Ast = objects.Ast;
 const Obj = objects.Obj;
@@ -103,6 +104,22 @@ fn reexportedRenames(self: *Server, a: Allocator) !std.StringHashMapUnmanaged(vo
         }
     }
     return out;
+}
+
+/// The calls of workspace procedures whose arguments do not fit them, and
+/// assignments to INTENT(IN) arguments
+pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
+    var out: std.ArrayList(objects.BuiltDiag) = .empty;
+    for (try argcheck.check(a, self.env(a), file, ast)) |p| try out.append(a, .{
+        .sln = p.line,
+        .sch = p.start,
+        .eln = p.line,
+        .ech = p.end,
+        .message = p.message,
+        .severity = C.Severity.err,
+        .code = if (p.kind == .arguments) .argument_mismatch else .intent_in_assigned,
+    });
+    return out.items;
 }
 
 /// The modules and submodules of the workspace
@@ -350,7 +367,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {

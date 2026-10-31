@@ -752,3 +752,71 @@ test "the module graph: compile order, and circular USE" {
     }
     for (try w.diagnostics("geom.f90")) |d| try std.testing.expect(!std.mem.eql(u8, d.code, "circular-use"));
 }
+
+test "argument checks: count, keywords, missing arguments, INTENT(IN) assignments" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text =
+        \\module ops
+        \\  implicit none
+        \\  type :: box
+        \\    real :: v
+        \\  contains
+        \\    procedure :: scale
+        \\  end type box
+        \\contains
+        \\  subroutine move(p, dx, dy)
+        \\    real, intent(inout) :: p
+        \\    real, intent(in) :: dx
+        \\    real, intent(in), optional :: dy
+        \\    dx = 1.0
+        \\    p = p + dx
+        \\  end subroutine move
+        \\  subroutine scale(self, f)
+        \\    class(box), intent(inout) :: self
+        \\    real, intent(in) :: f
+        \\    self%v = self%v * f
+        \\  end subroutine scale
+        \\  real function half(x)
+        \\    real, intent(in) :: x
+        \\    half = x / 2
+        \\  end function half
+        \\end module ops
+        \\program main
+        \\  use ops
+        \\  implicit none
+        \\  real :: q
+        \\  type(box) :: b
+        \\  call move(q, 1.0)
+        \\  call move(q, 1.0, 2.0)
+        \\  call move(q, 1.0, 2.0, 3.0)
+        \\  call move(q, dz=1.0)
+        \\  call move(q)
+        \\  call move(q, 1.0, &
+        \\            dy=2.0)
+        \\  call b%scale(2.0)
+        \\  call b%scale()
+        \\  q = half(q) + half(x=q)
+        \\  q = half(q, q)
+        \\end program main
+        \\
+    }}, .{});
+    defer w.deinit();
+    var msgs: std.ArrayList([]const u8) = .empty;
+    defer msgs.deinit(std.testing.allocator);
+    for (try w.diagnostics("a.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "argument-mismatch") or std.mem.eql(u8, d.code, "intent-in-assigned")) try msgs.append(std.testing.allocator, d.message);
+    }
+    const want = [_][]const u8{
+        "Assignment to INTENT(IN) argument dx",
+        "Too many arguments for move: 3 expected",
+        "move has no argument dz",
+        "Missing argument dx of move",
+        "Missing argument dx of move",
+        "Missing argument f of scale",
+        "Too many arguments for half: 1 expected",
+    };
+    if (msgs.items.len != want.len) {
+        std.debug.print("got: {any}\n", .{msgs.items});
+        return error.TestExpectedEqual;
+    }
+    for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
+}

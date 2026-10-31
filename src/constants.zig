@@ -98,6 +98,8 @@ pub const DiagCode = enum {
     undeclared_name,
     unused_name,
     circular_use,
+    argument_mismatch,
+    intent_in_assigned,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

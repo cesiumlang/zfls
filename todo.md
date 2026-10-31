@@ -75,8 +75,9 @@ projects zfls replaces:
 - [x] Type hierarchy (`extends`); parent components in completion. HS #121
 - [x] Module dependency graph: cycles (`circular-use`) and compile order
   (`zfls/compileOrder`, "zfls: Show Module Compile Order")
-- [ ] Argument checking: count, unknown keywords, missing required arguments,
-  assigning an `intent(in)` argument; later type, kind and rank
+- [x] Argument checking: count, unknown keywords, missing required arguments,
+  assigning an `intent(in)` argument
+- [ ] Argument checking of types, kinds and ranks
 - [ ] More quick fixes: add `implicit none`, interface and submodule stubs,
   `.eq.` to `==`, `real*8` to a kind, keyword case. HS #226, MF #234, FL #28
 - [ ] Richer hover: statements and keywords (FL #547), case preference
