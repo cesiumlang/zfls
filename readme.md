@@ -10,8 +10,11 @@ command line options and configuration files.
 - Completion, hover, signature help, go to definition and implementation,
   references, document highlights, rename, document and workspace symbols
 - Beyond fortls: an outline tree of document symbols (for clients that take
-  one: breadcrumbs, sticky scroll), and folding of program units, constructs
-  and their branches, preprocessor conditionals and comment blocks
+  one: breadcrumbs, sticky scroll); folding of program units, constructs
+  and their branches, preprocessor conditionals and comment blocks; semantic
+  highlighting of modules, types, procedures, dummy arguments, components
+  and variables by what they are (a variable named `if` is a variable), with
+  the lines that preprocessor conditionals leave out shown inactive
 - Diagnostics: declarations, scopes, `CONTAINS`, `IMPLICIT`, `USE`/`IMPORT`
   checks, line length limits
 - Code action implementing deferred type-bound procedures

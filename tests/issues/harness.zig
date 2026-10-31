@@ -104,6 +104,9 @@ pub const Edit = struct { uri: []const u8, line: i64, start: i64, end: i64, new_
 
 pub const File = struct { name: []const u8, text: []const u8 };
 
+/// A semantic token: 0-based line, its text and its type (`variable`, ...)
+pub const Token = struct { line: i64, text: []const u8, type: []const u8 };
+
 /// A folding range: 0-based first and last lines
 pub const Fold = struct { start: i64, end: i64 };
 
@@ -391,6 +394,37 @@ pub const Workspace = struct {
             .start = json.int(json.get(f, "startLine")) orelse -1,
             .end = json.int(json.get(f, "endLine")) orelse -1,
         });
+        return out.items;
+    }
+
+    /// The semantic tokens of a file, decoded
+    pub fn semanticTokens(w: *Workspace, name: []const u8) ![]const Token {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/semanticTokens/full", try w.docParams(name));
+        const data = json.items(json.get(v, "data"));
+        var lines = std.mem.splitScalar(u8, w.text(name), '\n');
+        var line_texts: std.ArrayList([]const u8) = .empty;
+        while (lines.next()) |l| try line_texts.append(w.a(), l);
+        var out: std.ArrayList(Token) = .empty;
+        var line: i64 = 0;
+        var col: i64 = 0;
+        var i: usize = 0;
+        while (i + 5 <= data.len) : (i += 5) {
+            const dl = json.int(data[i]) orelse 0;
+            const dc = json.int(data[i + 1]) orelse 0;
+            const n: usize = @intCast(json.int(data[i + 2]) orelse 0);
+            const t: usize = @intCast(json.int(data[i + 3]) orelse 0);
+            if (dl != 0) {
+                line += dl;
+                col = dc;
+            } else col += dc;
+            const lt = if (line < line_texts.items.len) line_texts.items[@intCast(line)] else "";
+            const s: usize = @min(lt.len, @as(usize, @intCast(col)));
+            try out.append(w.a(), .{
+                .line = line,
+                .text = lt[s..@min(lt.len, s + n)],
+                .type = if (t < zfls.semantic.legend.tokenTypes.len) zfls.semantic.legend.tokenTypes[t] else "?",
+            });
+        }
         return out.items;
     }
 

@@ -171,6 +171,7 @@ fn exercise(rng: std.Random, text: []const u8, name: []const u8) !void {
     try tolerate(w.diagnostics(name));
     try tolerate(w.documentSymbols(name));
     try tolerate(w.foldingRanges(name));
+    try tolerate(w.semanticTokens(name));
     try tolerate(w.workspaceSymbols("a"));
     var n_lines: usize = 1;
     for (text) |c| n_lines += @intFromBool(c == '\n');

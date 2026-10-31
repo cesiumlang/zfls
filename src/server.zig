@@ -20,6 +20,7 @@ const settings_mod = @import("settings.zig");
 const glob = @import("glob.zig");
 const Logger = @import("logger.zig");
 const outline = @import("outline.zig");
+const semantic = @import("semantic.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -226,6 +227,7 @@ pub const Server = struct {
         initialize,
         document_symbol,
         folding_range,
+        semantic_tokens,
         completion,
         signature_help,
         definition,
@@ -249,6 +251,7 @@ pub const Server = struct {
         .{ "initialize", .initialize },
         .{ "textDocument/documentSymbol", .document_symbol },
         .{ "textDocument/foldingRange", .folding_range },
+        .{ "textDocument/semanticTokens/full", .semantic_tokens },
         .{ "textDocument/completion", .completion },
         .{ "textDocument/signatureHelp", .signature_help },
         .{ "textDocument/definition", .definition },
@@ -277,6 +280,7 @@ pub const Server = struct {
             .initialize => self.serveInitialize(a, try json.decode(lsp.InitializeParams, a, params)),
             .document_symbol => self.serveDocumentSymbols(a, try json.decode(lsp.TextDocumentParams, a, params)),
             .folding_range => self.serveFoldingRanges(a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .semantic_tokens => self.serveSemanticTokens(a, try json.decode(lsp.TextDocumentParams, a, params)),
             .completion => self.serveAutocomplete(a, try json.decode(lsp.PositionParams, a, params)),
             .signature_help => self.serveSignature(a, try json.decode(lsp.PositionParams, a, params)),
             .definition => self.serveDefinition(a, try json.decode(lsp.PositionParams, a, params)),
@@ -404,6 +408,7 @@ pub const Server = struct {
             .textDocumentSync = self.sync_type,
             .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
             .codeActionProvider = if (self.s.enable_code_actions) true else null,
+            .semanticTokensProvider = .{ .legend = semantic.legend },
         } });
     }
 
@@ -836,6 +841,12 @@ pub const Server = struct {
             }
         }
         return json.from(a, out.items);
+    }
+
+    fn serveSemanticTokens(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+        const ast = file.ast orelse return .null;
+        return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokens(a, self.env(a), file, ast) });
     }
 
     fn serveFoldingRanges(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
