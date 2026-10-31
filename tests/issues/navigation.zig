@@ -95,3 +95,69 @@ test "hansec #195 workspace symbols: names containing the query first, then fuzz
     };
     try h.checkIn(.hansec, 195, .fixed, outcome);
 }
+
+test "inlay hints: dummy argument names of positional arguments, ASSOCIATE types" {
+    const w = try h.Workspace.init(&.{.{ .name = "h.f90", .text =
+        \\module geom
+        \\  implicit none
+        \\  type :: pt
+        \\    real(8) :: x
+        \\  contains
+        \\    procedure :: shift
+        \\  end type pt
+        \\contains
+        \\  subroutine move(p, dx, dy)
+        \\    type(pt), intent(inout) :: p
+        \\    real(8), intent(in) :: dx, dy
+        \\  end subroutine move
+        \\  subroutine shift(self, by)
+        \\    class(pt), intent(inout) :: self
+        \\    real(8), intent(in) :: by
+        \\  end subroutine shift
+        \\  real(8) function norm(p)
+        \\    type(pt), intent(in) :: p
+        \\    norm = abs(p%x)
+        \\  end function norm
+        \\end module geom
+        \\program main
+        \\  use geom
+        \\  type(pt) :: p
+        \\  real(8) :: d
+        \\  call move(p, 1.0d0, dy=2.0d0)
+        \\  call p%shift(0.5d0)
+        \\  d = norm(p) + sqrt(2.0d0)
+        \\  associate (xx => p%x)
+        \\    d = xx
+        \\  end associate
+        \\end program main
+        \\
+    }}, .{});
+    defer w.deinit();
+    const hs = try w.inlayHints("h.f90");
+    const Want = struct { needle: []const u8, plus: usize, label: []const u8 };
+    const wants = [_]Want{
+        // the argument named like its dummy argument has no hint
+        .{ .needle = "1.0d0, dy", .plus = 0, .label = "dx:" },
+        // the passed object of a type-bound procedure is not counted
+        .{ .needle = "0.5d0)", .plus = 0, .label = "by:" },
+        .{ .needle = "xx => p%x", .plus = 2, .label = ": REAL(8)" },
+    };
+    for (wants) |want| {
+        const at = w.pos("h.f90", want.needle, 0, want.plus);
+        const found = for (hs) |hint| {
+            if (hint.line == at.line and hint.col == at.col and std.mem.eql(u8, hint.label, want.label)) break true;
+        } else false;
+        if (!found) {
+            std.debug.print("hints: {any}\n", .{hs});
+            return error.TestExpectedEqual;
+        }
+    }
+    // no hint for p (named like its dummy), after a keyword argument, for an
+    // intrinsic (sqrt) or for norm(p)
+    for (hs) |hint| {
+        try std.testing.expect(!std.mem.eql(u8, hint.label, "p:"));
+        try std.testing.expect(!std.mem.eql(u8, hint.label, "dy:"));
+        try std.testing.expect(!std.mem.eql(u8, hint.label, "x:"));
+    }
+    try std.testing.expectEqual(@as(usize, 3), hs.len);
+}

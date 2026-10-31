@@ -480,6 +480,23 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// An inlay hint: its 0-based line and column, and label
+    pub const Hint = struct { line: i64, col: i64, label: []const u8 };
+
+    pub fn inlayHints(w: *Workspace, name: []const u8) ![]const Hint {
+        const v = try w.request("textDocument/inlayHint", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 10000, .character = 0 } },
+        });
+        var out: std.ArrayList(Hint) = .empty;
+        for (json.items(v)) |item| try out.append(w.a(), .{
+            .line = json.int(json.path(item, &.{ "position", "line" })) orelse -1,
+            .col = json.int(json.path(item, &.{ "position", "character" })) orelse -1,
+            .label = json.str(json.get(item, "label")) orelse "",
+        });
+        return out.items;
+    }
+
     /// The active signature's label (the first one's when none is active),
     /// the active parameter, and how many signatures there are
     pub const Signature = struct { label: []const u8, active: i64, count: usize = 1 };

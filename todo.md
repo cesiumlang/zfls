@@ -68,8 +68,9 @@ projects zfls replaces:
 - [ ] Pull diagnostics (`textDocument/diagnostic`) with workspace
   diagnostics: problems in files that are not open
 - [x] Unused local variables and `use` names (faded, with a quick fix)
-- [ ] Inlay hints: argument names, `associate` types, implicit types,
-  parameter values
+- [~] Inlay hints:
+  - [x] Dummy argument names of positional arguments; `associate` types
+  - [ ] Implicit types, parameter values
 - [ ] Call hierarchy
 - [ ] Type hierarchy (`extends`, overrides); parent components in completion.
   HS #121

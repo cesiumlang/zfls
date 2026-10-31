@@ -163,6 +163,7 @@ pub const ServerCapabilities = struct {
     selectionRangeProvider: bool = true,
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
     documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
+    inlayHintProvider: bool = true,
     workspaceSymbolProvider: bool = true,
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
@@ -268,6 +269,20 @@ pub const SelectionRange = struct { range: Range, parent: ?*const SelectionRange
 pub const DocumentLink = struct { range: Range, target: []const u8 };
 
 pub const PrepareRenameResult = struct { range: Range, placeholder: []const u8 };
+
+pub const InlayHintParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
+};
+
+/// `kind`: 1 type, 2 parameter
+pub const InlayHint = struct {
+    position: Position,
+    label: []const u8,
+    kind: i64,
+    paddingLeft: ?bool = null,
+    paddingRight: ?bool = null,
+};
 
 pub const OnTypeFormattingParams = struct {
     textDocument: TextDocumentIdentifier,
