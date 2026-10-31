@@ -224,3 +224,20 @@ test "call hierarchy: callers among the references, callees in the body" {
     const main_out = try w.calls(main_item, false);
     try std.testing.expectEqual(@as(usize, 2), (findCall(main_out, "step") orelse return error.TestUnexpectedResult).sites);
 }
+
+test "inlay hints: the implicit type of a name that is not declared, once" {
+    const w = try h.Workspace.init(&.{.{ .name = "i.f90", .text =
+        \\program i
+        \\  k = 1
+        \\  k = k + 1
+        \\  x = 2.0
+        \\end program i
+        \\
+    }}, .{});
+    defer w.deinit();
+    const hs = try w.inlayHints("i.f90");
+    try std.testing.expectEqual(@as(usize, 2), hs.len);
+    try std.testing.expectEqualStrings(": INTEGER", hs[0].label);
+    try std.testing.expectEqual(w.pos("i.f90", "k = 1", 0, 1).col, hs[0].col);
+    try std.testing.expectEqualStrings(": REAL", hs[1].label);
+}

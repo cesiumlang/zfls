@@ -70,7 +70,8 @@ projects zfls replaces:
 - [x] Unused local variables and `use` names (faded, with a quick fix)
 - [~] Inlay hints:
   - [x] Dummy argument names of positional arguments; `associate` types
-  - [ ] Implicit types, parameter values
+  - [x] Implicit types (at the first use of a name that is not declared)
+  - [ ] Parameter values
 - [x] Call hierarchy
 - [x] Type hierarchy (`extends`); parent components in completion. HS #121
 - [x] Module dependency graph: cycles (`circular-use`) and compile order
