@@ -37,8 +37,9 @@ projects zfls replaces:
 - [x] Benchmark find-references across a large multi-file workspace:
   json-fortran (61 files, 12k-line `json_value_module.F90`, ReleaseSafe),
   references median 1.5 ms, p95 12 ms; initialization 58 ms; 55 MiB
-- [ ] Split the largest source files (`server.zig`, `objects.zig`,
-  `parser.zig`, `regex.zig`) into smaller modules
+- [~] Split the largest source files into smaller modules: `server.zig`
+  (done: request handlers in `src/server/`), `objects.zig`, `parser.zig`,
+  `regex.zig`
 
 ## Next
 
