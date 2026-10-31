@@ -19,6 +19,9 @@ command line options and configuration files.
   checks, line length limits; each with a code that settings and comments
   can turn off (see [Diagnostics](#diagnostics))
 - Code action implementing deferred type-bound procedures
+- Include directories and preprocessor definitions from the project's
+  `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
+  [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
   documentation comments
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
@@ -103,6 +106,21 @@ The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
 --debug_line 10 --debug_char 5` runs a single hover request.
+
+### Build files
+
+zfls adds to the `include_dirs` and `pp_defs` options what the project's
+build files say:
+
+- `compile_commands.json`, in the root or in `build/` (or the file, or
+  directory, that the `compile_commands` option names; `""` for none): the
+  `-I`, `-isystem` and `-D` flags (`/I` and `/D` too) of its Fortran entries.
+  Definitions apply to every file, the first value of a name winning.
+- `fpm.toml` in the root: the `include-dir` of `[library]` (`include` by
+  default, when it exists) and the `macros` of `[preprocess.cpp]`.
+
+A definition from the options or the configuration file is kept over one
+from a build file.
 
 ### Diagnostics
 
@@ -215,6 +233,8 @@ zfls deliberately differs from fortls in a few places:
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
 - Line length diagnostics are not duplicated when a file is checked again.
+- `compile_commands.json` and `fpm.toml` add include directories and
+  preprocessor definitions (see [Build files](#build-files)).
 - Diagnostics have a `code` and the `source` `zfls`, and can be configured
   and suppressed by code (see [Diagnostics](#diagnostics)).
 - There is no automatic update from PyPI; `--disable_autoupdate` is accepted

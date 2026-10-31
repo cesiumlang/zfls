@@ -20,6 +20,7 @@ const settings_mod = @import("settings.zig");
 const glob = @import("glob.zig");
 const Logger = @import("logger.zig");
 const outline = @import("outline.zig");
+const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
 
@@ -402,6 +403,7 @@ pub const Server = struct {
         try self.s.source_dirs.add(sa, self.root_path);
 
         try self.loadConfigFile(a);
+        try self.loadProjectFiles(a);
         try self.checkDiagnosticSeverity(a);
         try self.resolveGlobsInPaths(a);
         try self.configLogger();
@@ -461,6 +463,44 @@ pub const Server = struct {
             }
         }
         try self.syncPpDefsFromSettings();
+    }
+
+    /// Adds the include directories and preprocessor definitions of the
+    /// project's compile_commands.json and fpm.toml to the options' own
+    fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
+        const sa = self.arena.allocator();
+        if (try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands)) |p| {
+            if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
+                if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
+                    try self.addProjectSettings(found);
+                    self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
+                } else |e| switch (e) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => self.postMessage(a, try std.fmt.allocPrint(a, "Could not read \"{s}\": not a compilation database", .{p}), C.Severity.warn),
+                }
+            } else |_| if (self.s.compile_commands != null) {
+                self.postMessage(a, try std.fmt.allocPrint(a, "Compilation database \"{s}\" not found", .{p}), C.Severity.warn);
+            }
+        }
+        const fpm = try paths.join(a, &.{ self.root_path, "fpm.toml" });
+        if (Io.Dir.cwd().readFileAlloc(self.io, fpm, a, .limited(1 << 24))) |text| {
+            try self.addProjectSettings(try project.readFpm(self.io, sa, self.root_path, text));
+        } else |_| {}
+    }
+
+    fn addProjectSettings(self: *Server, found: project.Found) Allocator.Error!void {
+        const sa = self.arena.allocator();
+        for (found.include_dirs.items) |d| try self.s.include_dirs.add(sa, d);
+        var added = false;
+        for (found.defs.items) |d| {
+            const known = for (self.s.pp_defs.items) |x| {
+                if (std.mem.eql(u8, x.name, d.name)) break true;
+            } else false;
+            if (known) continue;
+            try self.s.pp_defs.append(sa, .{ .name = d.name, .value = d.value });
+            added = true;
+        }
+        if (added) try self.syncPpDefsFromSettings();
     }
 
     fn resolveGlobsInPaths(self: *Server, a: Allocator) !void {

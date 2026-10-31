@@ -321,6 +321,12 @@
           "scope": "resource",
           "markdownDescription": "Folders searched for `#include` and `INCLUDE` files (`--include_dirs`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
         },
+        "zfls.compileCommands": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "The `compile_commands.json` (or the folder that holds it) whose Fortran entries add include folders (`-I`) and preprocessor definitions (`-D`), e.g. `${workspaceFolder}/build-debug` (`--compile_commands`). Empty: one in the workspace folder or its `build` folder, if any. An `fpm.toml` in the workspace folder adds its include folder and preprocessor macros too."
+        },
         "zfls.excludePaths": {
           "type": "array",
           "items": {

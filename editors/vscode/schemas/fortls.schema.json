@@ -214,6 +214,13 @@
       "uniqueItems": true,
       "default": []
     },
+    "compile_commands": {
+      "description": "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root or root/build)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "debug_log": {
       "description": "Generate debug log in project root folder",
       "type": "boolean",

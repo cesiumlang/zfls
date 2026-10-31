@@ -43,6 +43,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#478](https://github.com/fortran-lang/fortls/issues/478) | Markdown list in a parameter's docs indents the next parameter (fixture rebuilt from the screenshot) | hover | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | fixed (patched) | fails, same cause |
+| [#512](https://github.com/fortran-lang/fortls/issues/512) | include directories and definitions from `compile_commands.json` | project | fixed (feature) | not read |
 | [#438](https://github.com/fortran-lang/fortls/issues/438) | diagnostics have codes; `diagnostic_severity` turns a code off or changes its severity | diagnostics | fixed (feature) | no codes, only `disable_diagnostics` |
 | [#496](https://github.com/fortran-lang/fortls/issues/496) | user-defined functions highlighted where they are called (semantic tokens) | highlighting | fixed (feature) | no semantic tokens |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | fixed (patched) | fails, same cause |
@@ -86,7 +87,7 @@ Notes:
 - [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
   test suite on Python 3.14; it does not apply to zfls.
 - The feature requests and discussions have no behavior to test yet:
-  #563, #547, #512, #502, #501, #424, #423, #417, #348, #309,
+  #563, #547, #502, #501, #424, #423, #417, #348, #309,
   #209, #171, #126, #125, #96, #85, #56, #28 and #6.
 
 ## Issues of hansec/fortran-language-server
@@ -120,4 +121,5 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | [#1306](https://github.com/fortran-lang/vscode-fortran-support/issues/1306) | `external_modules` stops `use mpi` (and other library modules) being reported as not found | diagnostics | fixed (feature) | always reported |
 | [#401](https://github.com/fortran-lang/vscode-fortran-support/issues/401) | variables and functions named like keywords (`if`, `module`, `format`) highlighted as keywords | highlighting | fixed (feature) | no semantic tokens |
 | [#245](https://github.com/fortran-lang/vscode-fortran-support/issues/245) | type-bound procedures not highlighted at their calls | highlighting | fixed (feature) | no semantic tokens |
+| [#471](https://github.com/fortran-lang/vscode-fortran-support/issues/471) | `fpm.toml`: its include directory and preprocessor macros | project | fixed (feature) | not read |
 | [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |
