@@ -445,6 +445,7 @@ pub const Server = struct {
             .relatedInformation = related,
             .code = d.code.name(),
             .source = "zfls",
+            .tags = if (d.code == .unused_name) &.{1} else null,
         };
     }
 

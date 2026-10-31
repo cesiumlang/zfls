@@ -16,6 +16,7 @@ const suppress = @import("../suppress.zig");
 const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const selection = @import("../selection.zig");
+const unused = @import("../unused.zig");
 
 const Ast = objects.Ast;
 const Obj = objects.Obj;
@@ -34,6 +35,7 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     var out: std.ArrayList(lsp.CodeAction) = .empty;
     try addUseActions(self, a, file, ast, sline, eline, &out);
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
+    try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     for (actions) |act| {
@@ -100,6 +102,49 @@ fn reexportedRenames(self: *Server, a: Allocator) !std.StringHashMapUnmanaged(vo
         }
     }
     return out;
+}
+
+/// The local variables and USE ONLY names that their scope never uses,
+/// shown faded (`unused-name`, a hint)
+pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
+    var out: std.ArrayList(objects.BuiltDiag) = .empty;
+    for (try unused.find(a, file, ast)) |u| {
+        const what: []const u8 = if (u.kind == .variable) "Variable" else "Name";
+        try out.append(a, .{
+            .sln = u.line,
+            .sch = u.start,
+            .eln = u.line,
+            .ech = u.end,
+            .message = try std.fmt.allocPrint(a, "{s} \"{s}\" is not used", .{ what, u.name }),
+            .severity = C.Severity.hint,
+            .code = .unused_name,
+            .subject = u.name,
+        });
+    }
+    return out.items;
+}
+
+/// For each unused name on 0-based lines `sline`..`eline` whose statement
+/// declares nothing else: a quick fix removing that statement
+pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+    const uri = try paths.pathToUri(a, file.path);
+    const diags = try unusedNames(a, file, ast);
+    for (try unused.find(a, file, ast), diags) |u, d| {
+        if (u.line < sline or u.line > eline) continue;
+        const r = u.removable orelse continue;
+        const edits = try a.alloc(lsp.TextEdit, 1);
+        edits[0] = .{ .range = Server.rangeOf(file, r.first, 0, r.last + 1, 0), .newText = "" };
+        const files = try a.alloc(lsp.Changes.File, 1);
+        files[0] = .{ .uri = uri, .edits = edits };
+        const dv = try a.alloc(lsp.Diagnostic, 1);
+        dv[0] = try self.diagnosticOf(a, file, d);
+        try out.append(a, .{
+            .title = try std.fmt.allocPrint(a, "Remove unused {s}", .{u.name}),
+            .kind = "quickfix",
+            .edit = .{ .changes = .{ .files = files } },
+            .diagnostics = dv,
+        });
+    }
 }
 
 /// Whether `file` has fypp directives (`#:for`, `#:set`, ...) or inline
@@ -226,7 +271,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast) });
     const hidden = try suppress.of(a, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {

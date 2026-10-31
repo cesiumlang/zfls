@@ -34,6 +34,8 @@ pub const Diagnostic = struct {
     relatedInformation: ?[]const DiagnosticRelatedInformation = null,
     code: ?[]const u8 = null,
     source: ?[]const u8 = null,
+    /// 1: unnecessary (shown faded), 2: deprecated
+    tags: ?[]const i64 = null,
 };
 
 /// The edits of each file, as the object `{uri: [TextEdit]}` of
