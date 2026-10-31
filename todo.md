@@ -14,10 +14,11 @@ projects zfls replaces:
 
 ## Now
 
-- [~] Submodule procedures: hover and go to definition prefer the
-  implementation in the submodule (its documentation and location) over the
-  interface in the parent module. FL #501, FL #502, HS #168
-- [ ] Keyword-argument completion: inside a call, offer `name=` for each
+- [x] Submodule procedures: with `prefer_implementation`, hover and go to
+  definition use the implementation in the submodule (its documentation and
+  location) instead of the interface in the parent module. FL #501, FL #502,
+  HS #168
+- [~] Keyword-argument completion: inside a call, offer `name=` for each
   dummy argument with its type and intent. HS #133
 - [ ] Auto-`use` completion: complete public names from modules the scope
   does not use yet, adding the `use` statement; an "add use" quick fix for

@@ -18,6 +18,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "signatureHelp", flag: "--use_signature_help", kind: "flag" },
   { setting: "codeActions", flag: "--enable_code_actions", kind: "flag" },
   { setting: "hoverSignature", flag: "--hover_signature", kind: "flag" },
+  { setting: "preferImplementation", flag: "--prefer_implementation", kind: "flag" },
   { setting: "lowercaseIntrinsics", flag: "--lowercase_intrinsics", kind: "flag" },
   { setting: "autocompleteNameOnly", flag: "--autocomplete_name_only", kind: "flag" },
   { setting: "autocompleteNoSnippets", flag: "--autocomplete_no_snippets", kind: "flag" },

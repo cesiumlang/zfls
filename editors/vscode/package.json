@@ -193,6 +193,12 @@
           "scope": "resource",
           "markdownDescription": "Show the signature of procedures in hover (`--hover_signature`)."
         },
+        "zfls.preferImplementation": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Hover and go to definition use the implementation of a procedure declared in an interface, such as a separate module procedure's body in a submodule, instead of the interface (`--prefer_implementation`). Go to Implementation reaches the body either way."
+        },
         "zfls.lowercaseIntrinsics": {
           "type": "boolean",
           "default": true,
