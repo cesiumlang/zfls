@@ -236,7 +236,15 @@ def main() -> int:
         parsed = []
         for result in results:
             if "result" in result:
-                parsed.append(result["result"])
+                r = result["result"]
+                # zfls offers the keyword arguments of the call a completion
+                # is in (hansec #133); fortls's expected lists do not have them
+                if isinstance(r, list):
+                    r = [
+                        x for x in r
+                        if not (isinstance(x, dict) and str(x.get("label", "")).endswith("=") and "filterText" in x)
+                    ]
+                parsed.append(r)
             elif "params" in result:
                 params = result["params"]
                 # zfls adds a code and source to each diagnostic (fortls

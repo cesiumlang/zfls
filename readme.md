@@ -21,6 +21,9 @@ command line options and configuration files.
 - Construct names (`outer: do` ... `exit outer`) and statement labels
   (`go to 10`, `read (5, 100)`): go to definition, references, rename, and
   completion after `exit` and `cycle`
+- Completion of keyword arguments inside a call (`call move(p, dx=`): the
+  dummy arguments of the procedure, of each procedure of a generic
+  interface, of an intrinsic, or the components of a structure constructor
 - Code action implementing deferred type-bound procedures
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
@@ -241,6 +244,9 @@ zfls deliberately differs from fortls in a few places:
   each of its procedures, the one the arguments so far fit active (fortls
   #6), and go to definition goes to that procedure (hansec #135); fortls
   shows no signature and goes to the interface.
+- Inside a call, completion also offers `name=` for each argument the call
+  can name and has not named yet (hansec #133), first in the list; fortls
+  offers only the names in scope.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.

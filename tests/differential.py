@@ -247,6 +247,15 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
     return out
 
 
+def is_keyword_argument_item(item) -> bool:
+    """A zfls completion item `name=` for a keyword argument (hansec #133)."""
+    return (
+        isinstance(item, dict)
+        and str(item.get("label", "")).endswith("=")
+        and "filterText" in item
+    )
+
+
 def normalize(v):
     """Drop details that legitimately differ between the servers."""
     if isinstance(v, dict):
@@ -573,6 +582,10 @@ def main() -> int:
                 # cross-file order follows workspace iteration order
                 if isinstance(a, list) and isinstance(b, list):
                     a, b = sorted(a, key=ref_key), sorted(b, key=ref_key)
+            if kind == "completion" and isinstance(b, list):
+                # zfls offers the keyword arguments of the call the position
+                # is in (hansec #133); fortls does not
+                b = [x for x in b if not is_keyword_argument_item(x)]
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway

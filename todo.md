@@ -18,9 +18,9 @@ projects zfls replaces:
   definition use the implementation in the submodule (its documentation and
   location) instead of the interface in the parent module. FL #501, FL #502,
   HS #168
-- [~] Keyword-argument completion: inside a call, offer `name=` for each
+- [x] Keyword-argument completion: inside a call, offer `name=` for each
   dummy argument with its type and intent. HS #133
-- [ ] Auto-`use` completion: complete public names from modules the scope
+- [~] Auto-`use` completion: complete public names from modules the scope
   does not use yet, adding the `use` statement; an "add use" quick fix for
   undefined names. HS #62
 - [ ] Smaller LSP features:
