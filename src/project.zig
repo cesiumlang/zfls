@@ -32,7 +32,8 @@ pub const Found = struct {
 };
 
 /// The `compile_commands.json` to read: `setting` when set (a file, or the
-/// directory holding one; empty: none), else one in `root` or `root/build`
+/// directory holding one; empty: none), else one in `root`, `root/build` or
+/// `root/builddir` (Meson's)
 pub fn findCompileCommands(io: Io, a: Allocator, root: []const u8, setting: ?[]const u8) !?[]const u8 {
     if (setting) |s| {
         if (s.len == 0) return null;
@@ -40,7 +41,7 @@ pub fn findCompileCommands(io: Io, a: Allocator, root: []const u8, setting: ?[]c
         if (paths.isDir(io, p)) return try paths.join(a, &.{ p, "compile_commands.json" });
         return p;
     }
-    for ([_][]const u8{ ".", "build" }) |sub| {
+    for ([_][]const u8{ ".", "build", "builddir" }) |sub| {
         const p = try paths.join(a, &.{ root, sub, "compile_commands.json" });
         if (paths.isFile(io, p)) return p;
     }

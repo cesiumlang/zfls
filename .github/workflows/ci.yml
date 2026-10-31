@@ -42,7 +42,7 @@ env:
   ZIG_VERSION: 0.17.0
   # The fortls commit the parity, differential and stress tests run against
   FORTLS_REPO: fortran-lang/fortls
-  FORTLS_REF: 0392beb64fb93c1e8d35fe5aebfa3e160117651c
+  FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
 

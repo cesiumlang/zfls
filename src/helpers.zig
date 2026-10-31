@@ -342,12 +342,18 @@ pub fn findWordInLineIgnoreCase(line: []const u8, word: []const u8) Range {
 /// Find matching closing parenthesis from an already open parenthesis scope
 pub fn findParenMatch(s: []const u8) isize {
     var paren_count: isize = 1;
-    var sq = false;
-    var dq = false;
+    // the quote of the string literal the character is in: a quote of the
+    // other kind inside it is text (upstream #569)
+    var quote: ?u8 = null;
     for (s, 0..) |c, i| {
-        if (c == '\'') sq = !sq;
-        if (c == '"') dq = !dq;
-        if (sq or dq) continue;
+        if (quote) |q| {
+            if (c == q) quote = null;
+            continue;
+        }
+        if (c == '\'' or c == '"') {
+            quote = c;
+            continue;
+        }
         if (c == '(') paren_count += 1 else if (c == ')') paren_count -= 1;
         if (paren_count == 0) return @intCast(i);
     }
@@ -558,6 +564,8 @@ test "helper functions" {
     try testing.expectEqual(@as(isize, -1), findParenMatch("a, (b, (c, d)"));
     try testing.expectEqual(@as(isize, 29), findParenMatch("nt(sin(0.5))+8+len(\"ab((c\")-3) :: y"));
     try testing.expectEqual(@as(isize, 29), findParenMatch("nt(sin(0.5))+8+len('ab))c')-3) :: y"));
+    try testing.expectEqual(@as(isize, 12), findParenMatch("len(\"don't\")) :: msg"));
+    try testing.expectEqual(@as(isize, 14), findParenMatch("len('say \"hi')) :: msg"));
 
     const l1 = (try separateDefList(a, "var1, var2, var3")).?;
     try testing.expectEqual(@as(usize, 3), l1.len);

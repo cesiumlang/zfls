@@ -215,11 +215,16 @@
       "default": []
     },
     "compile_commands": {
-      "description": "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root or root/build)",
+      "description": "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root, root/build or root/builddir)",
       "type": [
         "string",
         "null"
       ]
+    },
+    "disable_compile_commands": {
+      "description": "Do not read a compile_commands.json",
+      "type": "boolean",
+      "default": false
     },
     "debug_log": {
       "description": "Generate debug log in project root folder",

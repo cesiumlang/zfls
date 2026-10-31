@@ -115,8 +115,9 @@ the resulting object tree, and `--debug_hover --debug_filepath file.f90
 zfls adds to the `include_dirs` and `pp_defs` options what the project's
 build files say:
 
-- `compile_commands.json`, in the root or in `build/` (or the file, or
-  directory, that the `compile_commands` option names; `""` for none): the
+- `compile_commands.json`, in the root, `build/` or `builddir/` (or the
+  file, or directory, that the `compile_commands` option names; `""` or
+  `disable_compile_commands` for none, as in fortls's pending PR #504): the
   `-I`, `-isystem` and `-D` flags (`/I` and `/D` too) of its Fortran entries.
   Definitions apply to every file, the first value of a name winning.
 - `fpm.toml` in the root: the `include-dir` of `[library]` (`include` by
