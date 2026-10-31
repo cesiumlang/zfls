@@ -114,3 +114,43 @@ test "#301 an INCLUDE statement is searched in the include directories" {
     };
     try h.check(301, .fixed, outcome);
 }
+
+test "an untitled document is served from the text the client sends" {
+    const zfls = @import("zfls");
+    const json = zfls.json;
+    const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
+    \\module lib
+    \\  integer :: shared = 1
+    \\end module lib
+    \\
+    }}, .{});
+    defer w.deinit();
+    const a = w.arena.allocator();
+    const uri = "untitled:Untitled-1";
+    _ = try w.server.dispatchPublic(a, "textDocument/didOpen", try json.from(a, .{ .textDocument = .{
+        .uri = uri,
+        .languageId = "FortranFreeForm",
+        .version = 1,
+        .text = "program p\n  use lib\n  integer :: mine\n  print *, shared, mine\nend program p\n",
+    } }));
+    const at = struct {
+        fn params(al: std.mem.Allocator, line: usize, character: usize) !json.Value {
+            return json.from(al, .{ .textDocument = .{ .uri = uri }, .position = .{ .line = line, .character = character } });
+        }
+    };
+    // a name from a workspace file: its file's URI
+    const def = try w.server.dispatchPublic(a, "textDocument/definition", try at.params(a, 3, 12));
+    try std.testing.expect(std.mem.endsWith(u8, json.str(json.get(def, "uri")) orelse "", "lib.f90"));
+    // a name of the document itself: the document's URI
+    const own = try w.server.dispatchPublic(a, "textDocument/definition", try at.params(a, 3, 20));
+    try std.testing.expectEqualStrings(uri, json.str(json.get(own, "uri")) orelse "");
+    try std.testing.expectEqual(@as(?i64, 2), json.int(json.path(own, &.{ "range", "start", "line" })));
+    // its changes are applied
+    _ = try w.server.dispatchPublic(a, "textDocument/didChange", try json.from(a, .{
+        .textDocument = .{ .uri = uri, .version = 2 },
+        .contentChanges = &[_]struct { text: []const u8 }{.{ .text = "program p\n  use lib\n  real :: mine\n  print *, shared, mine\nend program p\n" }},
+    }));
+    const hov = try w.server.dispatchPublic(a, "textDocument/hover", try at.params(a, 3, 20));
+    try std.testing.expect(std.mem.indexOf(u8, json.str(json.path(hov, &.{ "contents", "value" })) orelse "", "REAL") != null);
+    _ = try w.server.dispatchPublic(a, "textDocument/didClose", try json.from(a, .{ .textDocument = .{ .uri = uri } }));
+}

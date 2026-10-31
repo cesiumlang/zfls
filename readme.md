@@ -233,6 +233,9 @@ zfls deliberately differs from fortls in a few places:
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
 - Line length diagnostics are not duplicated when a file is checked again.
+- A document that is not a file (an untitled one, `untitled:Untitled-1`) is
+  served from the text the client sends with `didOpen` and its changes;
+  fortls reads every document from disk.
 - `compile_commands.json` and `fpm.toml` add include directories and
   preprocessor definitions (see [Build files](#build-files)).
 - Diagnostics have a `code` and the `source` `zfls`, and can be configured
