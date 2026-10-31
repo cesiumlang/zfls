@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const objects = @import("objects.zig");
 const Obj = objects.Obj;
 const FortranFile = @import("parser.zig").FortranFile;
+const selection = @import("selection.zig");
 
 /// A public name of a module
 pub const Export = struct { obj: *Obj, module: *Obj };
@@ -80,7 +81,7 @@ pub fn insertionPoint(a: Allocator, file: *const FortranFile, unit: *const Obj) 
             last_use = l;
         }
     }
-    const end = statementEnd(file, after);
+    const end = selection.statementLines(file, after).last;
     const indent = if (last_use) |l|
         leading(file.getLine(l, false) orelse "")
     else
@@ -92,25 +93,6 @@ fn leading(line: []const u8) []const u8 {
     var n: usize = 0;
     while (n < line.len and (line[n] == ' ' or line[n] == '\t')) n += 1;
     return line[0..n];
-}
-
-/// The last line of the statement that starts on 0-based line `start`
-fn statementEnd(file: *const FortranFile, start: usize) usize {
-    var l = start;
-    while (l + 1 < file.nLines()) {
-        if (file.fixed) {
-            // a fixed-form continuation line has a character in column 6
-            const next = file.getLine(l + 1, false) orelse break;
-            const comment = next.len > 0 and (next[0] == 'c' or next[0] == 'C' or next[0] == '*' or next[0] == '!');
-            if (comment or next.len < 6 or next[5] == ' ' or next[5] == '0') break;
-        } else {
-            const text = file.getLine(l, false) orelse break;
-            const code = if (std.mem.indexOfScalar(u8, text, '!')) |c| text[0..c] else text;
-            if (!std.mem.endsWith(u8, std.mem.trimEnd(u8, code, " \t\r"), "&")) break;
-        }
-        l += 1;
-    }
-    return l;
 }
 
 /// The USE statement that brings `name` in from module `module`

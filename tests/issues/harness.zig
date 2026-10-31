@@ -395,6 +395,59 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// What prepareRename answers: the range of the name (one line) and the
+    /// placeholder
+    pub const Prepared = struct { line: i64, start: i64, end: i64, placeholder: []const u8 };
+
+    pub fn prepareRename(w: *Workspace, name: []const u8, p: Pos) !?Prepared {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/prepareRename", try w.posParams(name, p));
+        if (v == .null) return null;
+        return .{
+            .line = json.int(json.path(v, &.{ "range", "start", "line" })) orelse -1,
+            .start = json.int(json.path(v, &.{ "range", "start", "character" })) orelse -1,
+            .end = json.int(json.path(v, &.{ "range", "end", "character" })) orelse -1,
+            .placeholder = json.str(json.get(v, "placeholder")) orelse "",
+        };
+    }
+
+    /// A selection range: its start and end lines and columns
+    pub const Sel = struct { sl: i64, sc: i64, el: i64, ec: i64 };
+
+    /// The selection ranges at a position, innermost first
+    pub fn selectionRanges(w: *Workspace, name: []const u8, p: Pos) ![]const Sel {
+        const v = try w.request("textDocument/selectionRange", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .positions = &[_]struct { line: i64, character: i64 }{.{ .line = p.line, .character = p.col }},
+        });
+        var out: std.ArrayList(Sel) = .empty;
+        var node: ?Value = if (json.items(v).len > 0) json.items(v)[0] else null;
+        while (node) |n| {
+            try out.append(w.a(), .{
+                .sl = json.int(json.path(n, &.{ "range", "start", "line" })) orelse -1,
+                .sc = json.int(json.path(n, &.{ "range", "start", "character" })) orelse -1,
+                .el = json.int(json.path(n, &.{ "range", "end", "line" })) orelse -1,
+                .ec = json.int(json.path(n, &.{ "range", "end", "character" })) orelse -1,
+            });
+            node = json.get(n, "parent");
+        }
+        return out.items;
+    }
+
+    /// A document link: the line and columns of its text, and its target
+    pub const DocLink = struct { line: i64, start: i64, end: i64, target: []const u8 };
+
+    pub fn documentLinks(w: *Workspace, name: []const u8) ![]const DocLink {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/documentLink", try w.docParams(name));
+        var out: std.ArrayList(DocLink) = .empty;
+        for (json.items(v)) |l| try out.append(w.a(), .{
+            .line = json.int(json.path(l, &.{ "range", "start", "line" })) orelse -1,
+            .start = json.int(json.path(l, &.{ "range", "start", "character" })) orelse -1,
+            .end = json.int(json.path(l, &.{ "range", "end", "character" })) orelse -1,
+            .target = json.str(json.get(l, "target")) orelse "",
+        });
+        return out.items;
+    }
+
     /// The active signature's label (the first one's when none is active),
     /// the active parameter, and how many signatures there are
     pub const Signature = struct { label: []const u8, active: i64, count: usize = 1 };
