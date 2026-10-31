@@ -160,6 +160,6 @@ fn continues(file: *const FortranFile, l: usize) bool {
 
 test "codeEnd and matching" {
     try std.testing.expectEqual(@as(usize, 9), codeEnd("x = 'a!b'! c"));
-    try std.testing.expectEqual(@as(?usize, 9), matching("f(a, (b))", 1));
+    try std.testing.expectEqual(@as(?usize, 8), matching("f(a, (b))", 1));
     try std.testing.expectEqual(@as(?usize, 7), matching("f(')', )", 1));
 }
