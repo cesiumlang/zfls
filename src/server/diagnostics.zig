@@ -13,8 +13,12 @@ const parser = @import("../parser.zig");
 const glob = @import("../glob.zig");
 const autouse = @import("../autouse.zig");
 const suppress = @import("../suppress.zig");
+const semantic = @import("../semantic.zig");
+const implicit = @import("../implicit.zig");
+const selection = @import("../selection.zig");
 
 const Ast = objects.Ast;
+const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
 
@@ -29,6 +33,7 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     const eline = params.range.end.line;
     var out: std.ArrayList(lsp.CodeAction) = .empty;
     try addUseActions(self, a, file, ast, sline, eline, &out);
+    try addDeclareActions(self, a, file, ast, sline, eline, &out);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     for (actions) |act| {
@@ -44,6 +49,134 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
         try out.append(a, .{ .title = act.title, .kind = act.kind, .edit = .{ .changes = .{ .files = files } }, .diagnostics = diags });
     }
     return json.from(a, out.items);
+}
+
+/// The names of `file` that stand for nothing found where IMPLICIT NONE
+/// applies (hansec #129). Only in scopes whose USE statements (and those of
+/// the scopes around them) all name modules zfls knows, and in files whose
+/// INCLUDE files are all found, since a name could come from those.
+pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
+    var out: std.ArrayList(objects.BuiltDiag) = .empty;
+    if (file.nLines() == 0) return out.items;
+    for (ast.include_statements.items) |inc| if (inc.file == null) return out.items;
+    const names = try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, 0, file.nLines() - 1);
+    if (names.len == 0) return out.items;
+    // whether the modules each scope uses are all known
+    var known: std.AutoHashMapUnmanaged(*Obj, bool) = .empty;
+    const renamed = try reexportedRenames(self, a);
+    for (names) |u| {
+        const scope = u.scope orelse continue;
+        if (implicit.typeOf(scope, u.name) != null) continue;
+        if (renamed.contains(try std.ascii.allocLowerString(a, u.name))) continue;
+        const gop = try known.getOrPut(a, scope);
+        if (!gop.found_existing) gop.value_ptr.* = try usesKnownModules(self, a, ast, scope);
+        if (!gop.value_ptr.*) continue;
+        try out.append(a, .{
+            .sln = u.line,
+            .sch = u.start,
+            .eln = u.line,
+            .ech = u.end,
+            .message = try std.fmt.allocPrint(a, "Name \"{s}\" is not declared (IMPLICIT NONE)", .{u.name}),
+            .severity = C.Severity.warn,
+            .code = .undeclared_name,
+            .subject = u.name,
+        });
+    }
+    return out.items;
+}
+
+/// The local names of the renames in the USE statements of the workspace's
+/// modules (`use kinds, only: json_ck => ck`): a module that uses another
+/// with a rename makes the local name public, which name lookup does not
+/// follow yet, so such names are not reported as undeclared
+fn reexportedRenames(self: *Server, a: Allocator) !std.StringHashMapUnmanaged(void) {
+    var out: std.StringHashMapUnmanaged(void) = .empty;
+    for (self.obj_tree.values()) |e| {
+        if (e.obj.kind != .module or e.obj.data != .scope) continue;
+        for (e.obj.scopeDataConst().use.items) |u| {
+            for (u.rename_map.keys.items) |k| try out.put(a, k, {});
+        }
+    }
+    return out;
+}
+
+/// Whether every module that `scope`, the scopes around it and the
+/// ancestors of a submodule among them use is in the workspace or
+/// intrinsic, and not an external module; and the module of a submodule
+/// and the interface of a separate module procedure among them are found
+/// (they declare its names and arguments)
+fn usesKnownModules(self: *Server, a: Allocator, ast: *Ast, scope: *Obj) !bool {
+    var scopes: std.ArrayList(*Obj) = .empty;
+    var cur: ?*Obj = scope;
+    var depth: usize = 0;
+    while (cur) |s| : (cur = s.parent) {
+        depth += 1;
+        if (depth > 64) break;
+        try scopes.append(a, s);
+        try scopes.appendSlice(a, try s.getAncestors(a));
+    }
+    for (scopes.items) |s| {
+        if (s.data != .scope) continue;
+        if (s.kind == .submodule and s.submodDataConst().ancestor_obj == null) return false;
+        if (s.isModScope() and s.linkObj() == null) return false;
+        for (s.scopeDataConst().use.items) |u| {
+            if (u.is_import) continue;
+            if (isExternalModule(self, u.mod_name)) return false;
+            if (self.env(a).global(ast, u.mod_name) == null) return false;
+        }
+    }
+    return true;
+}
+
+/// For each name on 0-based lines `sline`..`eline` that is not declared
+/// under IMPLICIT NONE: a quick fix declaring it, with the type the default
+/// rules would give it, after the last declaration of its program unit
+pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+    const uri = try paths.pathToUri(a, file.path);
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    for (try undeclaredNames(self, a, file, ast)) |d| {
+        if (d.sln < sline or d.sln > eline) continue;
+        const name = d.subject orelse continue;
+        const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
+        const key = try std.fmt.allocPrint(a, "{x}:{s}", .{ @intFromPtr(unit), try std.ascii.allocLowerString(a, name) });
+        if ((try seen.getOrPut(a, key)).found_existing) continue;
+        const at = try declarationPoint(a, file, unit);
+        const letter = std.ascii.toLower(name[0]);
+        const type_name: []const u8 = if (letter >= 'i' and letter <= 'n') "integer" else "real";
+        const edits = try a.alloc(lsp.TextEdit, 1);
+        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try std.fmt.allocPrint(a, "{s}{s} :: {s}\n", .{ at.indent, type_name, name }) };
+        const files = try a.alloc(lsp.Changes.File, 1);
+        files[0] = .{ .uri = uri, .edits = edits };
+        const dv = try a.alloc(lsp.Diagnostic, 1);
+        dv[0] = try self.diagnosticOf(a, file, d);
+        try out.append(a, .{
+            .title = try std.fmt.allocPrint(a, "Declare {s} as {s}", .{ name, type_name }),
+            .kind = "quickfix",
+            .edit = .{ .changes = .{ .files = files } },
+            .diagnostics = dv,
+        });
+    }
+}
+
+/// Where a new declaration of `unit` goes: after the last declaration of
+/// its own variables or its IMPLICIT statement, else where a USE statement
+/// would go; with the indentation of the line before
+fn declarationPoint(a: Allocator, file: *const FortranFile, unit: *const Obj) !autouse.Insertion {
+    var last: ?usize = null;
+    const sd = unit.scopeDataConst();
+    for (unit.childList()) |c| {
+        if (c.kind != .variable or c.sline <= unit.sline) continue;
+        if (sd.contains_start) |cs| if (c.sline >= cs) continue;
+        if (last == null or c.sline - 1 > last.?) last = c.sline - 1;
+    }
+    if (sd.implicit_line) |il| if (il > 0 and (last == null or il - 1 > last.?)) {
+        last = il - 1;
+    };
+    const l = last orelse return autouse.insertionPoint(a, file, unit);
+    const text = file.getLine(l, false) orelse "";
+    var n: usize = 0;
+    while (n < text.len and (text[n] == ' ' or text[n] == '\t')) n += 1;
+    return .{ .line = selection.statementLines(file, l).last + 1, .indent = text[0..n] };
 }
 
 /// For each name on 0-based lines `sline`..`eline` that is not found in
@@ -78,7 +211,8 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
-    const diags = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
+    var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {

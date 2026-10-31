@@ -144,7 +144,8 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `procedure-before-contains`, `declared-twice`, `masks-parent`,
 `import-outside-interface`, `module-not-found`, `use-after-implicit`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
-`argument-not-declared`, `not-imported` and `object-not-found`.
+`argument-not-declared`, `not-imported`, `object-not-found` and
+`undeclared-name`.
 
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
@@ -259,6 +260,11 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- Under IMPLICIT NONE, a name that is not declared gets an
+  `undeclared-name` warning with a quick fix declaring it (hansec #129);
+  fortls only checks the types named in declarations. It is left out where
+  a USE statement names a module that is not in the workspace or an
+  INCLUDE file is not found, as the name could come from those.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the scopes around it, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has

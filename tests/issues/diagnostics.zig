@@ -561,3 +561,91 @@ test "Modern Fortran #1306 external_modules names the modules of libraries such 
     defer w.deinit();
     try h.checkIn(.modern_fortran, 1306, .fixed, expectNoMissingModule(w));
 }
+
+const undeclared = [_]h.File{
+    .{ .name = "consts.f90", .text =
+    \\module consts
+    \\  implicit none
+    \\  integer, parameter :: dp = kind(1.d0)
+    \\  type :: pt
+    \\    real(dp) :: x
+    \\  end type pt
+    \\end module consts
+    \\
+    },
+    .{ .name = "p.f90", .text =
+    \\program p
+    \\  use consts
+    \\  implicit none
+    \\  integer :: i, n
+    \\  real(dp) :: total
+    \\  type(pt) :: a
+    \\  n = 3
+    \\  total = 0.0_dp
+    \\  outer: do i = 1, n
+    \\    if (i > 2) exit outer
+    \\    if (i == 1) print *, sqrt(real(i, kind=dp))
+    \\    total = total + a%x + 1.d0
+    \\    call external_sub(i)
+    \\    kount = kount + 1
+    \\  end do outer
+    \\  do while (n > 0)
+    \\    n = n - 1
+    \\  end do
+    \\  open(newunit=n, &
+    \\       file='x.txt', status='old')
+    \\  associate (y => total)
+    \\    print *, y
+    \\  end associate
+    \\  print *, undefined_value
+    \\end program p
+    \\
+    },
+    .{ .name = "q.f90", .text =
+    \\program q
+    \\  use mpi
+    \\  implicit none
+    \\  call mpi_init(ierr)
+    \\end program q
+    \\
+    },
+    .{ .name = "r.f90", .text =
+    \\program r
+    \\  k = 1
+    \\end program r
+    \\
+    },
+};
+
+fn expectUndeclared(w: *h.Workspace) !void {
+    var found: std.ArrayList([]const u8) = .empty;
+    for (try w.diagnostics("p.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "undeclared-name")) try found.append(std.testing.allocator, d.message);
+    }
+    defer found.deinit(std.testing.allocator);
+    // kount and undefined_value only: not keywords, intrinsics, keyword
+    // arguments (also on a continuation line), components, construct names,
+    // a subroutine called, kinds or exponents of literals, associate names
+    try h.expect(found.items.len == 3, "undeclared: {any}", .{found.items});
+    try h.expect(std.mem.indexOf(u8, found.items[0], "\"kount\"") != null, "{s}", .{found.items[0]});
+    try h.expect(std.mem.indexOf(u8, found.items[2], "\"undefined_value\"") != null, "{s}", .{found.items[2]});
+    // not where a module is unknown, nor without IMPLICIT NONE
+    for (try w.diagnostics("q.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "q.f90: {s}", .{d.message});
+    for (try w.diagnostics("r.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "r.f90: {s}", .{d.message});
+    // the quick fix declares it after the last declaration
+    const line = w.pos("p.f90", "kount = kount", 0, 0).line;
+    const decl = w.pos("p.f90", "type(pt) :: a", 0, 0).line;
+    for (try w.codeActions("p.f90", line)) |act| {
+        if (std.mem.eql(u8, act.title, "Declare kount as integer")) {
+            try h.expect(std.mem.eql(u8, act.new_text, "  integer :: kount\n") and act.line == decl + 1, "declares with {s} before line {d}", .{ act.new_text, act.line });
+            return;
+        }
+    }
+    return h.unmet("no quick fix declaring kount", .{});
+}
+
+test "hansec #129 names that are not declared under IMPLICIT NONE" {
+    const w = try h.Workspace.init(&undeclared, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 129, .fixed, expectUndeclared(w));
+}

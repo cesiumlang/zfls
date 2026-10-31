@@ -268,7 +268,8 @@ def normalize(v):
             if k != "traceback" and not (diagnostic and k in ("code", "source"))
         }
     if isinstance(v, list):
-        return [normalize(x) for x in v]
+        # names not declared under IMPLICIT NONE (hansec #129): zfls only
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") == "undeclared-name")]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)

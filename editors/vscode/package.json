@@ -261,7 +261,8 @@
               "intent-not-in-arguments",
               "argument-not-declared",
               "not-imported",
-              "object-not-found"
+              "object-not-found",
+              "undeclared-name"
             ]
           },
           "additionalProperties": {
