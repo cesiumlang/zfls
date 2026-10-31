@@ -76,6 +76,9 @@ pub const Settings = struct {
     pp_suffixes: ?StrList = null,
     include_dirs: StrList = .{},
     pp_defs: std.ArrayList(PpDef) = .empty,
+    /// The compilation database to read include directories and definitions
+    /// from: null to look for one, empty for none
+    compile_commands: ?[]const u8 = null,
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
@@ -164,6 +167,7 @@ const opts = [_]Opt{
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
+    .{ .long = "compile_commands", .kind = .string, .metavar = "PATH", .help = "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root or root/build)", .group = "Preprocessor options" },
     .{ .long = "pp_defs", .kind = .json, .metavar = "JSON", .help = "A dictionary with additional preprocessor definitions. Preprocessor definitions are normally included via INCLUDE_DIRS", .group = "Preprocessor options" },
 
     .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
@@ -457,6 +461,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "pp_suffixes")) |v| s.pp_suffixes = if (v == .null) null else try jsonList(a, v);
     if (json.get(cfg, "pp_defs")) |v| try applyPpDefs(a, s, v);
     if (json.get(cfg, "include_dirs")) |v| s.include_dirs = try jsonList(a, v);
+    if (json.get(cfg, "compile_commands")) |v| s.compile_commands = json.str(v);
     // Debug options
     if (jsonBool(json.get(cfg, "debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
 }

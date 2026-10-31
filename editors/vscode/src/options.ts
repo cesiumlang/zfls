@@ -32,6 +32,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "sourceDirs", flag: "--source_dirs", kind: "list", path: true },
   { setting: "includeDirs", flag: "--include_dirs", kind: "list", path: true },
   { setting: "excludePaths", flag: "--excl_paths", kind: "list", path: true },
+  { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
   { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
   { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list" },
