@@ -20,7 +20,8 @@ import {
   upsertByKey,
   workspaceRelative,
 } from "./run";
-import { VariableContext, expandVariables, findExecutable } from "./tools";
+import { expandVariables, findExecutable } from "./tools";
+import { documentVariables } from "./variables";
 
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 
@@ -153,7 +154,7 @@ async function fortranDocument(uri: vscode.Uri | undefined): Promise<vscode.Text
 
 function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocument): Plan | undefined {
   const config = vscode.workspace.getConfiguration("zfls.run", document.uri);
-  const ctx = variableContext(document);
+  const ctx = documentVariables(document.uri);
   const source = document.uri.fsPath;
   const compilerName = config.get<string>("compiler", "gfortran").trim() || "gfortran";
   const configuredPath = expandVariables(config.get<string>("compilerPath", "").trim(), ctx);
@@ -348,18 +349,4 @@ function replaceAll(arg: string, paths: string[], rel: (p: string) => string): s
     }
   }
   return arg;
-}
-
-function variableContext(document: vscode.TextDocument): VariableContext {
-  const folders: Record<string, string> = {};
-  for (const f of vscode.workspace.workspaceFolders ?? []) {
-    folders[f.name] = f.uri.fsPath;
-  }
-  const folder =
-    vscode.workspace.getWorkspaceFolder(document.uri) ?? vscode.workspace.workspaceFolders?.[0];
-  return {
-    workspaceFolder: folder?.uri.fsPath,
-    workspaceFolders: folders,
-    file: document.uri.scheme === "file" ? document.uri.fsPath : undefined,
-  };
 }

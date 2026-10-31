@@ -15,7 +15,8 @@ import {
   textDiff,
   unsupportedReason,
 } from "./format";
-import { VariableContext, expandVariables, findExecutable, runProcess } from "./tools";
+import { expandVariables, findExecutable, runProcess } from "./tools";
+import { documentVariables } from "./variables";
 
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 const TIMEOUT_MS = 30_000;
@@ -119,7 +120,7 @@ class FortranFormatter
       return [];
     }
 
-    const ctx = variableContext(document);
+    const ctx = documentVariables(document.uri);
     const configured = expandVariables(config.get<string>("path", "").trim(), ctx);
     const exe = findExecutable(formatter, configured, ctx.workspaceFolder);
     if (!exe) {
@@ -210,18 +211,4 @@ class FortranFormatter
 function lastLine(text: string): string {
   const lines = text.trim().split(/\r?\n/);
   return lines[lines.length - 1];
-}
-
-function variableContext(document: vscode.TextDocument): VariableContext {
-  const folders: Record<string, string> = {};
-  for (const f of vscode.workspace.workspaceFolders ?? []) {
-    folders[f.name] = f.uri.fsPath;
-  }
-  const folder =
-    vscode.workspace.getWorkspaceFolder(document.uri) ?? vscode.workspace.workspaceFolders?.[0];
-  return {
-    workspaceFolder: folder?.uri.fsPath,
-    workspaceFolders: folders,
-    file: document.uri.scheme === "file" ? document.uri.fsPath : undefined,
-  };
 }

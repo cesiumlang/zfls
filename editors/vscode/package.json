@@ -485,7 +485,7 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "Path to the compiler executable. Empty: `zfls.linter.compiler` looked up on the `PATH`. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved; a relative path is relative to the workspace folder."
+          "markdownDescription": "The compiler executable, or the directory that holds it. Empty: `zfls.linter.compiler` looked up on the `PATH`. Variables `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and a leading `~` are resolved; a relative path is relative to the workspace folder."
         },
         "zfls.linter.extraArgs": {
           "type": "array",
