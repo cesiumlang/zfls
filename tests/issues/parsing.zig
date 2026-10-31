@@ -461,3 +461,56 @@ test "hansec #45 `.` between a derived-type variable and its component" {
     defer w.deinit();
     try h.checkIn(.hansec, 45, .fixed, expectDotted(w));
 }
+
+const cuda = [_]h.File{
+    .{ .name = "kern.cuf", .text =
+    \\module kern
+    \\  use cudafor
+    \\  implicit none
+    \\contains
+    \\  attributes(global) subroutine saxpy(n, a, x, y)
+    \\    integer, value :: n
+    \\    real, value :: a
+    \\    real, device :: x(n), y(n)
+    \\    integer :: i
+    \\    i = blockDim%x * (blockIdx%x - 1) + threadIdx%x
+    \\    if (i <= n) y(i) = a * x(i) + y(i)
+    \\  end subroutine saxpy
+    \\  attributes(device) real function twice(v)
+    \\    real, value :: v
+    \\    twice = 2 * v
+    \\  end function twice
+    \\end module kern
+    \\
+    },
+    .{ .name = "main.cuf", .text =
+    \\program main
+    \\  use kern
+    \\  implicit none
+    \\  real, device, allocatable :: xd(:), yd(:)
+    \\  allocate(xd(10), yd(10))
+    \\  call saxpy<<<1, 10>>>(10, 2.0, xd, yd)
+    \\end program main
+    \\
+    },
+};
+
+fn expectCuda(w: *h.Workspace) !void {
+    // kernels and device procedures are procedures of the module, in .cuf
+    // files
+    const d = (try w.definition("main.cuf", w.pos("main.cuf", "saxpy<<<", 0, 1))) orelse return h.unmet("no definition of saxpy", .{});
+    try h.expect(std.mem.endsWith(u8, d.uri, "kern.cuf") and d.line == w.pos("kern.cuf", "subroutine saxpy", 0, 0).line, "saxpy goes to {s}:{d}", .{ d.uri, d.line });
+    try w.expectHoverContains("kern.cuf", w.pos("kern.cuf", "twice = 2", 0, 0), "twice");
+    // signature help past the launch configuration
+    const sig = (try w.signature("main.cuf", w.pos("main.cuf", "2.0, xd", 0, 5))) orelse return h.unmet("no signature help in the kernel launch", .{});
+    try h.expect(std.mem.indexOf(u8, sig.label, "saxpy") != null and sig.active == 2, "signature {s}, parameter {d}", .{ sig.label, sig.active });
+    // cudafor is known, ATTRIBUTES is no name
+    try w.expectNoDiagnostics("kern.cuf");
+    try w.expectNoDiagnostics("main.cuf");
+}
+
+test "CUDA Fortran: kernels, the launch syntax and .cuf files" {
+    const w = try h.Workspace.init(&cuda, .{});
+    defer w.deinit();
+    try expectCuda(w);
+}

@@ -165,7 +165,8 @@ pub fn init() void {
 /// Port of `create_src_file_exts_regex`: build a regex matching the default
 /// Fortran file extensions plus `input_exts` (already escaped regex snippets).
 pub fn createSrcFileExtsRegex(a: std.mem.Allocator, input_exts: []const []const u8) !Regex {
-    const default = "\\.[fF](77|90|95|03|05|08|18|[oO][rR]|[pP]{2})?";
+    // and CUDA Fortran's .cuf
+    const default = "\\.([fF](77|90|95|03|05|08|18|[oO][rR]|[pP]{2})?|[cC][uU][fF])";
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(a);
     try buf.appendSlice(a, "((");
@@ -207,6 +208,7 @@ test "src file exts regex" {
     try std.testing.expect(re.search("test.fypp") != null);
     try std.testing.expect(re.search("test.inc") != null);
     try std.testing.expect(re.search("test.F90") != null);
+    try std.testing.expect(re.search("kernels.cuf") != null);
     try std.testing.expect(re.search("test.c") == null);
 
     const bad = [_][]const u8{"*.inc"};

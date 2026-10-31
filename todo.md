@@ -49,10 +49,12 @@ projects zfls replaces:
     rules (or the default ones) give it. HS #201
   - [x] A diagnostic for names that are not declared under IMPLICIT NONE,
     and a "declare" quick fix. HS #129
-- [~] Vendor extensions:
+- [x] Vendor extensions:
   - [x] DEC `STRUCTURE`/`RECORD`/`UNION`/`MAP`. FL #171, HS #230, MF #571
   - [x] `.` as the component separator (`rec.field`). HS #45
-  - [ ] CUDA Fortran
+  - [x] CUDA Fortran: `attributes(global|device)` procedures, `<<<...>>>`
+    kernel launches, `.cuf` files, the CUDA modules (`cudafor`, ...) as
+    external modules
 - [ ] fypp: tolerate or preprocess fypp directives when parsing; syntax
   highlighting. MF #215, MF #617, MF #715, MF #615
 - [ ] Fixed form: configurable code column limit (72/80/132), paste and
