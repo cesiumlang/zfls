@@ -27,6 +27,10 @@ command line options and configuration files.
 - Completion of the public names of modules not used yet, adding the
   `use module, only: name` statement, and a quick fix adding it for a type
   that is not found
+- Selection ranges (expand the selection from a name to its parentheses,
+  statement, constructs, procedure, module and file), links on the files of
+  `#include` and `INCLUDE`, and a rename check that refuses intrinsics and
+  keywords before a new name is typed
 - Code action implementing deferred type-bound procedures
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
@@ -255,6 +259,9 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- `textDocument/selectionRange`, `textDocument/documentLink` and
+  `textDocument/prepareRename` (for clients that announce `prepareSupport`)
+  are answered; fortls has none of them.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.

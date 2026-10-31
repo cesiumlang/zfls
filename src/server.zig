@@ -23,6 +23,7 @@ const outline = @import("outline.zig");
 const constructs = @import("constructs.zig");
 const arguments = @import("arguments.zig");
 const autouse = @import("autouse.zig");
+const selection = @import("selection.zig");
 const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
@@ -78,6 +79,8 @@ pub const Server = struct {
     sync_type: i32 = 1,
     /// The client takes `DocumentSymbol` trees, not fortls's flat list
     hierarchical_symbols: bool = false,
+    /// the client asks whether a position can be renamed first
+    prepare_rename: bool = false,
     /// The paths of the documents open in the editor, whose text is the
     /// editor's (keys owned by `gpa`)
     open_docs: std.StringHashMapUnmanaged(void) = .empty,
@@ -250,6 +253,9 @@ pub const Server = struct {
         hover,
         implementation,
         rename,
+        prepare_rename,
+        selection_range,
+        document_link,
         did_open,
         did_save,
         did_close,
@@ -275,6 +281,9 @@ pub const Server = struct {
         .{ "textDocument/hover", .hover },
         .{ "textDocument/implementation", .implementation },
         .{ "textDocument/rename", .rename },
+        .{ "textDocument/prepareRename", .prepare_rename },
+        .{ "textDocument/selectionRange", .selection_range },
+        .{ "textDocument/documentLink", .document_link },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -303,6 +312,9 @@ pub const Server = struct {
             .hover => self.serveHover(a, try json.decode(lsp.PositionParams, a, params)),
             .implementation => self.serveImplementation(a, try json.decode(lsp.PositionParams, a, params)),
             .rename => self.serveRename(a, try json.decode(lsp.RenameParams, a, params)),
+            .prepare_rename => self.servePrepareRename(a, try json.decode(lsp.PositionParams, a, params)),
+            .selection_range => self.serveSelectionRanges(a, try json.decode(lsp.SelectionRangeParams, a, params)),
+            .document_link => self.serveDocumentLinks(a, try json.decode(lsp.TextDocumentParams, a, params)),
             .did_open => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
             .did_save => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => self.serveOnSave(a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
@@ -414,6 +426,7 @@ pub const Server = struct {
         };
         self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
         self.hierarchical_symbols = params.capabilities.textDocument.documentSymbol.hierarchicalDocumentSymbolSupport;
+        self.prepare_rename = params.capabilities.textDocument.rename.prepareSupport;
         try self.s.source_dirs.add(sa, self.root_path);
 
         try self.loadConfigFile(a);
@@ -434,6 +447,7 @@ pub const Server = struct {
             .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
             .codeActionProvider = if (self.s.enable_code_actions) true else null,
             .semanticTokensProvider = .{ .legend = semantic.legend },
+            .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
         } });
     }
 
@@ -1484,7 +1498,12 @@ pub const Server = struct {
         const m = re.match(text) orelse return null;
         const col = toByteCol(file, params.position.line, params.position.character);
         if (col < m.start(1) or col > m.end(1)) return null;
-        const name = m.group(1).?;
+        return self.resolveInclude(a, file, m.group(1).?);
+    }
+
+    /// The file an `#include` or `INCLUDE` of `name` in `file` reads: next
+    /// to the file, else in the include directories
+    fn resolveInclude(self: *Server, a: Allocator, file: *const FortranFile, name: []const u8) !?[]const u8 {
         var dirs: std.ArrayList([]const u8) = .empty;
         try dirs.append(a, paths.dirname(file.path));
         try dirs.appendSlice(a, try self.includeDirs(a));
@@ -1493,6 +1512,43 @@ pub const Server = struct {
             if (paths.isFile(self.io, candidate)) return candidate;
         }
         return null;
+    }
+
+    /// Links on the file names of `#include` directives and `INCLUDE`
+    /// statements whose files are found
+    fn serveDocumentLinks(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+        var out: std.ArrayList(lsp.DocumentLink) = .empty;
+        for (0..file.nLines()) |i| {
+            const text = file.getLine(i, false) orelse continue;
+            const m = R().INCLUDE_DIRECTIVE.match(text) orelse R().INCLUDE.match(text) orelse continue;
+            const target = (try self.resolveInclude(a, file, m.group(1).?)) orelse continue;
+            try out.append(a, .{ .range = rangeOf(file, i, m.start(1), i, m.end(1)), .target = try paths.pathToUri(a, target) });
+        }
+        return json.from(a, out.items);
+    }
+
+    /// The selection ranges around each position: name, parentheses,
+    /// statement, constructs and program units, file
+    fn serveSelectionRanges(self: *Server, a: Allocator, params: lsp.SelectionRangeParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+        const ast = file.ast orelse return .null;
+        const out = try a.alloc(lsp.SelectionRange, params.positions.len);
+        for (params.positions, out) |p, *o| {
+            const col = toByteCol(file, p.line, p.character);
+            const spans = try selection.around(a, file, ast, p.line, col);
+            var parent: ?*const lsp.SelectionRange = null;
+            var i = spans.len;
+            while (i > 0) {
+                i -= 1;
+                const s = spans[i];
+                const node = try a.create(lsp.SelectionRange);
+                node.* = .{ .range = rangeOf(file, s.sline, s.scol, s.eline, s.ecol), .parent = parent };
+                parent = node;
+            }
+            o.* = if (parent) |n| n.* else .{ .range = rangeOf(file, p.line, col, p.line, col) };
+        }
+        return json.from(a, out);
     }
 
     /// The construct name or statement label at a position, with its file
@@ -2023,6 +2079,26 @@ pub const Server = struct {
             for (fr.refs.items) |r| try out.append(a, locationOf(uri, fr.file, r.line, r.start, r.line, r.end));
         }
         return json.from(a, out.items);
+    }
+
+    /// The name a rename at a position would change, or null where nothing
+    /// can be renamed (an intrinsic, a keyword, a name without definition)
+    fn servePrepareRename(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+        const line = params.position.line;
+        const text = file.getLine(line, false) orelse return .null;
+        const col = @min(toByteCol(file, line, params.position.character), text.len);
+        var s = col;
+        while (s > 0 and (std.ascii.isAlphanumeric(text[s - 1]) or text[s - 1] == '_')) s -= 1;
+        var e = col;
+        while (e < text.len and (std.ascii.isAlphanumeric(text[e]) or text[e] == '_')) e += 1;
+        if (e == s) return .null;
+        const ok = if (try self.constructAt(a, params)) |_| true else if (try self.definitionAt(a, params, false)) |d|
+            d.obj.kind != .intrinsic and d.obj.file_ast.file != null
+        else
+            false;
+        if (!ok) return .null;
+        return json.from(a, lsp.PrepareRenameResult{ .range = rangeOf(file, line, s, line, e), .placeholder = text[s..e] });
     }
 
     fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value {

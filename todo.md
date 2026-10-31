@@ -24,11 +24,11 @@ projects zfls replaces:
   does not use yet, adding the `use` statement; an "add use" quick fix for
   undefined names. HS #62
 - [~] Smaller LSP features:
-  - [ ] `textDocument/prepareRename` (reject intrinsics and keywords before
+  - [x] `textDocument/prepareRename` (reject intrinsics and keywords before
     the user types a new name)
-  - [ ] `textDocument/selectionRange` (expand selection by expression,
+  - [x] `textDocument/selectionRange` (expand selection by expression,
     statement, block, scope)
-  - [ ] `textDocument/documentLink` (`include` and `#include` files)
+  - [x] `textDocument/documentLink` (`include` and `#include` files)
   - [ ] `completionItem/resolve` (documentation on demand)
   - [ ] Fuzzy workspace symbol search. HS #195
   - [ ] `$/cancelRequest`

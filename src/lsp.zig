@@ -156,7 +156,10 @@ pub const ServerCapabilities = struct {
     referencesProvider: bool = true,
     hoverProvider: bool = true,
     implementationProvider: bool = true,
-    renameProvider: bool = true,
+    /// `true`, or `{"prepareProvider": true}` for clients with prepareSupport
+    renameProvider: json.Value = .{ .bool = true },
+    selectionRangeProvider: bool = true,
+    documentLinkProvider: struct { resolveProvider: bool = false } = .{},
     workspaceSymbolProvider: bool = true,
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
@@ -236,5 +239,19 @@ pub const ClientCapabilities = struct {
         documentSymbol: struct {
             hierarchicalDocumentSymbolSupport: bool = false,
         } = .{},
+        rename: struct {
+            prepareSupport: bool = false,
+        } = .{},
     } = .{},
 };
+
+pub const SelectionRangeParams = struct {
+    textDocument: TextDocumentIdentifier,
+    positions: []const Position,
+};
+
+pub const SelectionRange = struct { range: Range, parent: ?*const SelectionRange = null };
+
+pub const DocumentLink = struct { range: Range, target: []const u8 };
+
+pub const PrepareRenameResult = struct { range: Range, placeholder: []const u8 };
