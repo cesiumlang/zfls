@@ -52,6 +52,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
 | `zfls.autocompleteNameOnly` | `false` | Complete procedure names without their arguments |
 | `zfls.autocompleteNoSnippets` | `false` | No placeholders in completions |
+| `zfls.autocompleteNoAutoUse` | `false` | Do not offer names of modules not used yet (completing one adds its `use` statement) |
 | `zfls.sortKeywords` | `false` | Sort variable keywords in hover |
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |

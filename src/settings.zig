@@ -55,6 +55,9 @@ pub const Settings = struct {
     excl_paths: StrList = .{},
     // Autocomplete options
     autocomplete_no_prefix: bool = false,
+    /// Do not offer names of modules that are not used yet (with the USE
+    /// statement that brings them in)
+    autocomplete_no_auto_use: bool = false,
     autocomplete_no_snippets: bool = false,
     autocomplete_name_only: bool = false,
     lowercase_intrinsics: bool = false,
@@ -157,6 +160,7 @@ const opts = [_]Opt{
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
 
     .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
+    .{ .long = "autocomplete_no_auto_use", .kind = .flag, .help = "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)", .group = "Autocomplete options" },
     .{ .long = "autocomplete_no_snippets", .kind = .flag, .help = "Do not use snippets with place holders in autocomplete results", .group = "Autocomplete options" },
     .{ .long = "autocomplete_name_only", .kind = .flag, .help = "Complete only the name of procedures and not the parameters", .group = "Autocomplete options" },
     .{ .long = "lowercase_intrinsics", .kind = .flag, .help = "Use lowercase for intrinsics and keywords in autocomplete requests", .group = "Autocomplete options" },
@@ -447,6 +451,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.disable_autoupdate = jsonBool(json.get(cfg, "disable_autoupdate"), s.disable_autoupdate);
     // Autocomplete options
     s.autocomplete_no_prefix = jsonBool(json.get(cfg, "autocomplete_no_prefix"), s.autocomplete_no_prefix);
+    s.autocomplete_no_auto_use = jsonBool(json.get(cfg, "autocomplete_no_auto_use"), s.autocomplete_no_auto_use);
     s.autocomplete_no_snippets = jsonBool(json.get(cfg, "autocomplete_no_snippets"), s.autocomplete_no_snippets);
     s.autocomplete_name_only = jsonBool(json.get(cfg, "autocomplete_name_only"), s.autocomplete_name_only);
     s.lowercase_intrinsics = jsonBool(json.get(cfg, "lowercase_intrinsics"), s.lowercase_intrinsics);

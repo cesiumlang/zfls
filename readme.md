@@ -24,6 +24,9 @@ command line options and configuration files.
 - Completion of keyword arguments inside a call (`call move(p, dx=`): the
   dummy arguments of the procedure, of each procedure of a generic
   interface, of an intrinsic, or the components of a structure constructor
+- Completion of the public names of modules not used yet, adding the
+  `use module, only: name` statement, and a quick fix adding it for a type
+  that is not found
 - Code action implementing deferred type-bound procedures
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
@@ -247,6 +250,11 @@ zfls deliberately differs from fortls in a few places:
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.
+- Completion also offers the public names of the workspace's and the
+  intrinsic modules that the program unit does not use, after the others;
+  choosing one adds `use module, only: name` after the unit's last USE
+  statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
+  that is not found has a quick fix adding that statement.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.

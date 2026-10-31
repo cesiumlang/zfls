@@ -22,6 +22,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "lowercaseIntrinsics", flag: "--lowercase_intrinsics", kind: "flag" },
   { setting: "autocompleteNameOnly", flag: "--autocomplete_name_only", kind: "flag" },
   { setting: "autocompleteNoSnippets", flag: "--autocomplete_no_snippets", kind: "flag" },
+  { setting: "autocompleteNoAutoUse", flag: "--autocomplete_no_auto_use", kind: "flag" },
   { setting: "sortKeywords", flag: "--sort_keywords", kind: "flag" },
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },

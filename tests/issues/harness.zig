@@ -354,6 +354,47 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// A completion item and the text its additional edits insert (the
+    /// first one's), with the 0-based line it goes before
+    pub const Item = struct { label: []const u8, detail: []const u8, added: ?[]const u8 = null, added_line: i64 = -1 };
+
+    pub fn completionItems(w: *Workspace, name: []const u8, p: Pos) ![]const Item {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/completion", try w.posParams(name, p));
+        var out: std.ArrayList(Item) = .empty;
+        for (json.items(v)) |item| {
+            var it: Item = .{ .label = json.str(json.get(item, "label")) orelse "", .detail = json.str(json.get(item, "detail")) orelse "" };
+            const edits = json.items(json.get(item, "additionalTextEdits") orelse .null);
+            if (edits.len > 0) {
+                it.added = json.str(json.get(edits[0], "newText"));
+                it.added_line = json.int(json.path(edits[0], &.{ "range", "start", "line" })) orelse -1;
+            }
+            try out.append(w.a(), it);
+        }
+        return out.items;
+    }
+
+    /// A code action: its title, the text of its first edit and the 0-based
+    /// line that edit starts on
+    pub const Action = struct { title: []const u8, new_text: []const u8, line: i64 };
+
+    pub fn codeActions(w: *Workspace, name: []const u8, line: i64) ![]const Action {
+        const v = try w.request("textDocument/codeAction", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = line, .character = 0 }, .end = .{ .line = line, .character = 0 } },
+        });
+        var out: std.ArrayList(Action) = .empty;
+        for (json.items(v)) |act| {
+            const files = json.get(json.path(act, &.{ "edit", "changes" }) orelse .null, try w.uri(name)) orelse .null;
+            const edits = json.items(files);
+            try out.append(w.a(), .{
+                .title = json.str(json.get(act, "title")) orelse "",
+                .new_text = if (edits.len > 0) json.str(json.get(edits[0], "newText")) orelse "" else "",
+                .line = if (edits.len > 0) json.int(json.path(edits[0], &.{ "range", "start", "line" })) orelse -1 else -1,
+            });
+        }
+        return out.items;
+    }
+
     /// The active signature's label (the first one's when none is active),
     /// the active parameter, and how many signatures there are
     pub const Signature = struct { label: []const u8, active: i64, count: usize = 1 };
