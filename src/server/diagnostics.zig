@@ -12,13 +12,16 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const glob = @import("../glob.zig");
 const autouse = @import("../autouse.zig");
-const suppress = @import("../suppress.zig");
 const semantic = @import("../semantic.zig");
+const suppress = @import("../suppress.zig");
 const implicit = @import("../implicit.zig");
 const selection = @import("../selection.zig");
 const unused = @import("../unused.zig");
 const modgraph = @import("../modgraph.zig");
 const argcheck = @import("../argcheck.zig");
+const rewrite = @import("../rewrite.zig");
+const helpers = @import("../helpers.zig");
+const str = @import("../str.zig");
 
 const Ast = objects.Ast;
 const Obj = objects.Obj;
@@ -38,6 +41,8 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     try addUseActions(self, a, file, ast, sline, eline, &out);
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
     try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);
+    try addRewriteActions(self, a, file, ast, sline, eline, &out);
+    if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     for (actions) |act| {
@@ -104,6 +109,96 @@ fn reexportedRenames(self: *Server, a: Allocator) !std.StringHashMapUnmanaged(vo
         }
     }
     return out;
+}
+
+/// Whether the client asks for actions of `kind` (all, when it names none)
+fn wants(only: ?[]const []const u8, kind: []const u8) bool {
+    const kinds = only orelse return false;
+    for (kinds) |k| if (std.mem.startsWith(u8, k, kind) or std.mem.startsWith(u8, kind, k)) return true;
+    return false;
+}
+
+fn action(a: Allocator, uri: []const u8, title: []const u8, kind: []const u8, edits: []const lsp.TextEdit) !lsp.CodeAction {
+    const files = try a.alloc(lsp.Changes.File, 1);
+    files[0] = .{ .uri = uri, .edits = edits };
+    return .{ .title = title, .kind = kind, .edit = .{ .changes = .{ .files = files } }, .diagnostics = &.{} };
+}
+
+/// IMPLICIT NONE for a program unit without IMPLICIT statement (on its
+/// first line); modern relational operators and kind parameters for the
+/// lines of the range
+pub fn addRewriteActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+    _ = self;
+    const uri = try paths.pathToUri(a, file.path);
+    for (ast.scope_list.items) |sc| {
+        switch (sc.kind) {
+            .program, .module, .subroutine, .function => {},
+            else => continue,
+        }
+        if (sc.sline == 0 or sc.sline - 1 < sline or sc.sline - 1 > eline) continue;
+        if (sc.parent) |p| if (p.kind == .interface) continue;
+        if (sc.getImplicit() != null) continue;
+        const at = try autouse.insertionPoint(a, file, sc);
+        const edits = try a.alloc(lsp.TextEdit, 1);
+        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try std.fmt.allocPrint(a, "{s}implicit none\n", .{at.indent}) };
+        try out.append(a, try action(a, uri, try std.fmt.allocPrint(a, "Add IMPLICIT NONE to {s}", .{sc.name}), "quickfix", edits));
+    }
+    var op_edits: std.ArrayList(lsp.TextEdit) = .empty;
+    var kind_edits: std.ArrayList(lsp.TextEdit) = .empty;
+    var ln = sline;
+    while (ln <= eline and ln < file.nLines()) : (ln += 1) {
+        const text = file.getLine(ln, false) orelse continue;
+        if (helpers.isComment(file.fixed, text)) continue;
+        const whole = Server.rangeOf(file, ln, 0, ln, text.len);
+        if (try rewrite.modernOperators(a, text)) |new| try op_edits.append(a, .{ .range = whole, .newText = new });
+        if (try rewrite.kindParameters(a, text)) |new| try kind_edits.append(a, .{ .range = whole, .newText = new });
+    }
+    if (op_edits.items.len > 0) try out.append(a, try action(a, uri, "Write .eq. ... .ge. as == ... >=", "refactor.rewrite", op_edits.items));
+    if (kind_edits.items.len > 0) try out.append(a, try action(a, uri, "Write the kinds given with * as kind parameters", "refactor.rewrite", kind_edits.items));
+}
+
+/// The keywords of the file in upper, lower or title case (hansec #226,
+/// Modern Fortran #234): Source Actions; a name spelled like a keyword
+/// keeps its case
+pub fn addKeywordCaseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, out: *std.ArrayList(lsp.CodeAction)) !void {
+    const uri = try paths.pathToUri(a, file.path);
+    const names = try semantic.namePositions(a, self.env(a), file, ast);
+    const Case = rewrite.Case;
+    const cases = [_]struct { case: Case, title: []const u8, kind: []const u8 }{
+        .{ .case = .upper, .title = "Keywords in upper case", .kind = "source.keywordCase.upper" },
+        .{ .case = .lower, .title = "Keywords in lower case", .kind = "source.keywordCase.lower" },
+        .{ .case = .title, .title = "Keywords in title case", .kind = "source.keywordCase.title" },
+    };
+    for (cases) |cs| {
+        var edits: std.ArrayList(lsp.TextEdit) = .empty;
+        for (0..file.nLines()) |ln| {
+            const raw = file.getLine(ln, false) orelse continue;
+            if (helpers.isComment(file.fixed, raw)) continue;
+            const t = std.mem.trimStart(u8, raw, " \t");
+            if (t.len > 0 and t[0] == '#') continue;
+            var code = try helpers.stripStrings(a, raw, true);
+            if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+            var it = helpers.words(code);
+            while (it.next()) |w| {
+                // `.and.`, `.true.`: their words are keywords too
+                const dotted = w.start > 0 and code[w.start - 1] == '.' and w.end < code.len and code[w.end] == '.';
+                if (!dotted and !semantic.isKeyword(w.str)) continue;
+                if (dotted and !isDotWord(w.str)) continue;
+                if (names.contains(.{ ln, str.byteToUtf16(raw, w.start) })) continue;
+                const new = try rewrite.inCase(a, w.str, cs.case);
+                if (std.mem.eql(u8, new, w.str)) continue;
+                try edits.append(a, .{ .range = Server.rangeOf(file, ln, w.start, ln, w.end), .newText = new });
+            }
+        }
+        if (edits.items.len > 0) try out.append(a, try action(a, uri, cs.title, cs.kind, edits.items));
+    }
+}
+
+fn isDotWord(w: []const u8) bool {
+    for ([_][]const u8{ "and", "or", "not", "eqv", "neqv", "true", "false", "eq", "ne", "lt", "le", "gt", "ge" }) |k| {
+        if (std.ascii.eqlIgnoreCase(w, k)) return true;
+    }
+    return false;
 }
 
 /// The calls of workspace procedures whose arguments do not fit them, and

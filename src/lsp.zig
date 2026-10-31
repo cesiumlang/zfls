@@ -215,6 +215,11 @@ pub const RenameParams = struct {
 pub const CodeActionParams = struct {
     textDocument: TextDocumentIdentifier,
     range: Range,
+    context: struct {
+        /// the kinds of actions asked for (`source` from the Source Action
+        /// menu); all when null
+        only: ?[]const []const u8 = null,
+    } = .{},
 };
 
 pub const WorkspaceSymbolParams = struct { query: []const u8 };

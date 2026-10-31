@@ -388,12 +388,19 @@ pub const Workspace = struct {
 
     /// A code action: its title, the text of its first edit and the 0-based
     /// line that edit starts on
-    pub const Action = struct { title: []const u8, new_text: []const u8, line: i64 };
+    pub const Action = struct { title: []const u8, new_text: []const u8, line: i64, edits: usize = 0 };
 
     pub fn codeActions(w: *Workspace, name: []const u8, line: i64) ![]const Action {
+        return w.codeActionsOf(name, line, line, null);
+    }
+
+    /// The code actions on 0-based lines `first`..`last`, of the kinds
+    /// `only` names (all, when null), and the number of edits of each
+    pub fn codeActionsOf(w: *Workspace, name: []const u8, first: i64, last: i64, only: ?[]const []const u8) ![]const Action {
         const v = try w.request("textDocument/codeAction", .{
             .textDocument = .{ .uri = try w.uri(name) },
-            .range = .{ .start = .{ .line = line, .character = 0 }, .end = .{ .line = line, .character = 0 } },
+            .range = .{ .start = .{ .line = first, .character = 0 }, .end = .{ .line = last, .character = 0 } },
+            .context = .{ .only = only },
         });
         var out: std.ArrayList(Action) = .empty;
         for (json.items(v)) |act| {
@@ -403,6 +410,7 @@ pub const Workspace = struct {
                 .title = json.str(json.get(act, "title")) orelse "",
                 .new_text = if (edits.len > 0) json.str(json.get(edits[0], "newText")) orelse "" else "",
                 .line = if (edits.len > 0) json.int(json.path(edits[0], &.{ "range", "start", "line" })) orelse -1 else -1,
+                .edits = edits.len,
             });
         }
         return out.items;
