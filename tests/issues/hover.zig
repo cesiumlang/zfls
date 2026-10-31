@@ -670,3 +670,60 @@ test "hansec #203 preprocessor directives inside a continued declaration" {
     };
     try h.checkIn(.hansec, 203, .fixed, outcome);
 }
+
+const integrate =
+    \\MODULE myMOD
+    \\  IMPLICIT NONE
+    \\  PRIVATE
+    \\  PUBLIC :: integrate
+    \\  INTERFACE integrate
+    \\    MODULE PROCEDURE int_2D
+    \\    MODULE PROCEDURE int_3D
+    \\  END INTERFACE integrate
+    \\CONTAINS
+    \\  SUBROUTINE int_2D(x, y)
+    \\    REAL, INTENT(IN) :: x, y
+    \\  END SUBROUTINE int_2D
+    \\  SUBROUTINE int_3D(x, y, z)
+    \\    REAL, INTENT(IN) :: x, y, z
+    \\  END SUBROUTINE int_3D
+    \\END MODULE myMOD
+    \\PROGRAM main
+    \\  USE myMOD
+    \\  CALL integrate(1.0, 2.0)
+    \\  CALL integrate(1.0, 2.0, 3.0)
+    \\  CALL integrate(1.0, 2.0, z=3.0)
+    \\END PROGRAM main
+    \\
+;
+
+fn expectGenericSignatures(w: *h.Workspace) !void {
+    // after the first argument both procedures take the call: the smaller
+    const one = (try w.signature("m.f90", w.pos("m.f90", "integrate(1.0, 2.0)\n", 0, 10))) orelse return h.unmet("no signature help", .{});
+    try h.expect(one.count == 2, "{d} signatures, not 2", .{one.count});
+    try h.expect(std.mem.startsWith(u8, one.label, "int_2D"), "active signature {s}, not int_2D", .{one.label});
+    // a third argument: only int_3D
+    const three = (try w.signature("m.f90", w.pos("m.f90", "integrate(1.0, 2.0, 3.0)", 0, 20))) orelse return h.unmet("no signature help", .{});
+    try h.expect(std.mem.startsWith(u8, three.label, "int_3D") and three.active == 2, "active {s} parameter {d}, not int_3D 2", .{ three.label, three.active });
+}
+
+test "#6 signature help shows each procedure of a generic interface, the one the arguments fit active" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = integrate }}, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    try h.check(6, .fixed, expectGenericSignatures(w));
+}
+
+fn expectSpecificDefinition(w: *h.Workspace) !void {
+    const two = (try w.definition("m.f90", w.pos("m.f90", "integrate(1.0, 2.0)\n", 0, 2))) orelse return h.unmet("no definition", .{});
+    try h.expect(two.line == 9, "the 2-argument call goes to line {d}, not 10 (int_2D)", .{two.line + 1});
+    const three = (try w.definition("m.f90", w.pos("m.f90", "integrate(1.0, 2.0, 3.0)", 0, 2))) orelse return h.unmet("no definition", .{});
+    try h.expect(three.line == 12, "the 3-argument call goes to line {d}, not 13 (int_3D)", .{three.line + 1});
+    const kw = (try w.definition("m.f90", w.pos("m.f90", "integrate(1.0, 2.0, z=3.0)", 0, 2))) orelse return h.unmet("no definition", .{});
+    try h.expect(kw.line == 12, "the call with z= goes to line {d}, not 13 (int_3D)", .{kw.line + 1});
+}
+
+test "hansec #135 go to definition on a call of a generic interface goes to the procedure the arguments fit" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = integrate }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 135, .fixed, expectSpecificDefinition(w));
+}

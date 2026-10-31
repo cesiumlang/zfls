@@ -1451,6 +1451,7 @@ pub const Server = struct {
             return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
         }
         if (try self.definitionAt(a, params, false)) |d| {
+            if (try self.genericSpecific(a, d.file, d.line, d.col, d.obj)) |s| if (s.file_ast.file != null) return self.createRefLink(a, s);
             if (d.obj.file_ast.file != null) return self.createRefLink(a, d.obj);
             return .null;
         }
@@ -1594,8 +1595,95 @@ pub const Server = struct {
             };
         }
         const vo = var_obj orelse return .null;
+        // a generic interface: the signature of each of its procedures, the
+        // first that takes the arguments so far active (fortls #6)
+        if (vo.kind == .interface and vo.memList().len > 0) {
+            var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
+            var active: ?i64 = null;
+            var active_size: usize = std.math.maxInt(usize);
+            for (vo.memList()) |member| {
+                const s = (try self.signatureOf(a, member, arg_strings)) orelse continue;
+                var info = s.info;
+                info.activeParameter = s.param;
+                if (s.fits and s.size < active_size) {
+                    active = @intCast(sigs.items.len);
+                    active_size = s.size;
+                }
+                try sigs.append(a, info);
+            }
+            if (sigs.items.len == 0) return .null;
+            const chosen: usize = @intCast(active orelse 0);
+            return json.from(a, lsp.SignatureHelp{
+                .signatures = sigs.items,
+                .activeParameter = sigs.items[chosen].activeParameter.?,
+                .activeSignature = @intCast(chosen),
+            });
+        }
+        const s = (try self.signatureOf(a, vo, arg_strings)) orelse return .null;
+        return json.from(a, lsp.SignatureHelp{ .signatures = &.{s.info}, .activeParameter = s.param });
+    }
+
+    /// For a call of generic interface `obj` at byte column `col` of 0-based
+    /// line `line`, `name(args)`: the procedure of the interface that takes
+    /// those arguments (their number and keywords), the one with the fewest
+    /// parameters if several do; null when it is no such call
+    fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, obj: *Obj) !?*Obj {
+        _ = self;
+        if (obj.kind != .interface or obj.memList().len == 0) return null;
+        const text = file.getLine(line, false) orelse return null;
+        var end = @min(col, text.len);
+        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
+        const rest = str.lstrip(text[end..]);
+        if (rest.len == 0 or rest[0] != '(') return null;
+        var depth: usize = 0;
+        var close = rest.len;
+        for (rest, 0..) |ch, i| {
+            if (ch == '(') depth += 1;
+            if (ch == ')') {
+                depth -= 1;
+                if (depth == 0) {
+                    close = i;
+                    break;
+                }
+            }
+        }
+        const inside = str.strip(rest[1..close]);
+        const args: []const []const u8 = if (inside.len == 0) &.{} else try helpers.splitArgs(a, inside);
+        var best: ?*Obj = null;
+        var best_size: usize = std.math.maxInt(usize);
+        for (obj.memList()) |member| {
+            const sig = try member.getSignature(a, null);
+            if (sig.label == null or args.len > sig.params.len) continue;
+            // the call gives every argument that is not OPTIONAL (else it may
+            // be another procedure of that name, such as an intrinsic)
+            if (member.procDataOpt()) |proc| {
+                var required: usize = 0;
+                for (proc.arg_objs.items) |arg| {
+                    if (arg) |o| {
+                        if (!o.hasKeyword(C.KW.optional)) required += 1;
+                    } else required += 1;
+                }
+                if (args.len < required) continue;
+            }
+            const keywords_ok = for (args) |arg| {
+                const eq = std.mem.indexOfScalar(u8, arg, '=') orelse continue;
+                if (std.mem.indexOf(u8, arg, "==") != null or str.strip(arg[0..eq]).len == 0) continue;
+                if (checkOptional(arg, sig.params) == null) break false;
+            } else true;
+            if (keywords_ok and sig.params.len < best_size) {
+                best = member;
+                best_size = sig.params.len;
+            }
+        }
+        return best;
+    }
+
+    /// The signature of procedure `vo` for a call whose arguments so far are
+    /// `arg_strings`: the parameter they reach, whether the procedure takes
+    /// them (their number and keywords), and its number of parameters
+    fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize } {
         const sig = try vo.getSignature(a, null);
-        const label = sig.label orelse return .null;
+        const label = sig.label orelse return null;
         const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
         const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
         for (sig.params, parameters) |p, *pv| {
@@ -1611,9 +1699,16 @@ pub const Server = struct {
                 if (opt_num) |o| param_num = o + 1;
             }
         } else param_num = opt_num.?;
-        var signature: lsp.SignatureInformation = .{ .label = label, .parameters = parameters };
-        if (sig.doc) |doc| signature.documentation = .{ .value = try pyFormatLangid(a, doc, self.s.hover_language) };
-        return json.from(a, lsp.SignatureHelp{ .signatures = &.{signature}, .activeParameter = param_num });
+        var info: lsp.SignatureInformation = .{ .label = label, .parameters = parameters };
+        if (sig.doc) |doc| info.documentation = .{ .value = try pyFormatLangid(a, doc, self.s.hover_language) };
+        // it takes as many arguments, and has the keywords given
+        var fits = arg_strings.len <= sig.params.len;
+        for (arg_strings) |arg| {
+            const eq = std.mem.indexOfScalar(u8, arg, '=') orelse continue;
+            if (std.mem.indexOf(u8, arg, "==") != null) continue;
+            if (checkOptional(arg, sig.params) == null and str.strip(arg[0..eq]).len > 0) fits = false;
+        }
+        return .{ .info = info, .param = param_num, .fits = fits, .size = sig.params.len };
     }
 
     fn checkOptional(arg: []const u8, params: []const Obj.ArgSig) ?i64 {
