@@ -231,6 +231,16 @@ pub const InitializeParams = struct {
     rootUri: ?[]const u8 = null,
     rootPath: ?[]const u8 = null,
     capabilities: ClientCapabilities = .{},
+    /// to report the progress of indexing with
+    workDoneToken: ?json.Value = null,
+};
+
+/// The `value` of a `$/progress` notification
+pub const WorkDoneProgress = struct {
+    kind: []const u8,
+    title: ?[]const u8 = null,
+    message: ?[]const u8 = null,
+    percentage: ?i64 = null,
 };
 
 /// What the client supports, of what zfls looks at

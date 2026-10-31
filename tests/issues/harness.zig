@@ -128,6 +128,8 @@ pub const Options = struct {
     diagnostic_severity: []const zfls.settings.DiagLevel = &.{},
     /// the client takes a tree of document symbols (as VS Code does)
     hierarchical_symbols: bool = false,
+    /// the `workDoneToken` of the initialize request
+    progress_token: ?i64 = null,
 };
 
 // --------------------------------------------------------------------------
@@ -141,6 +143,14 @@ pub const Workspace = struct {
     root: []const u8,
     files: []const File,
     unreadable: []const []const u8,
+    /// the notifications the server sent (JSON texts)
+    sent: std.ArrayList([]const u8) = .empty,
+
+    fn collect(ctx: ?*anyopaque, body: []const u8) void {
+        const w: *Workspace = @ptrCast(@alignCast(ctx.?));
+        const aa = w.arena.allocator();
+        w.sent.append(aa, aa.dupe(u8, body) catch return) catch return;
+    }
 
     /// Write `files` (names may contain subdirectories) to a temporary
     /// directory and start a server on it, as `initialize` would.
@@ -157,6 +167,7 @@ pub const Workspace = struct {
         const aa = w.arena.allocator();
         w.files = files;
         w.unreadable = &.{};
+        w.sent = .empty;
         for (files) |f| {
             if (std.fs.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
@@ -183,11 +194,13 @@ pub const Workspace = struct {
         for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
+        w.server.sink = .{ .ctx = w, .sendFn = collect };
         _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
             .rootPath = w.root,
             .capabilities = .{ .textDocument = .{ .documentSymbol = .{
                 .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols,
             } } },
+            .workDoneToken = opts.progress_token,
         }));
         return w;
     }

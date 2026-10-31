@@ -214,3 +214,34 @@ test "a document open in the editor keeps the editor's text when its file change
     try std.testing.expect(try hasSymbol(w, "edited_name"));
     try std.testing.expect(!try hasSymbol(w, "disk_name"));
 }
+
+test "indexing reports its progress with the initialize request's workDoneToken (fortls #417, Modern Fortran #757)" {
+    var many: [30]h.File = undefined;
+    var names: [30][16]u8 = undefined;
+    for (&many, &names, 0..) |*f, *n, i| {
+        f.* = .{ .name = try std.fmt.bufPrint(n, "m{d}.f90", .{i}), .text = "module m\nend module m\n" };
+    }
+    const w = try h.Workspace.init(&many, .{ .progress_token = 7, .settings = .{ .nthreads = 1 } });
+    defer w.deinit();
+    var kinds: std.ArrayList([]const u8) = .empty;
+    defer kinds.deinit(std.testing.allocator);
+    for (w.sent.items) |msg| {
+        if (std.mem.indexOf(u8, msg, "\"$/progress\"") == null) continue;
+        try std.testing.expect(std.mem.indexOf(u8, msg, "\"token\":7") != null);
+        for ([_][]const u8{ "begin", "report", "end" }) |k| {
+            const needle = try std.fmt.allocPrint(std.testing.allocator, "\"kind\":\"{s}\"", .{k});
+            defer std.testing.allocator.free(needle);
+            if (std.mem.indexOf(u8, msg, needle) != null) try kinds.append(std.testing.allocator, k);
+        }
+    }
+    try std.testing.expect(kinds.items.len >= 3);
+    try std.testing.expectEqualStrings("begin", kinds.items[0]);
+    try std.testing.expectEqualStrings("report", kinds.items[1]);
+    try std.testing.expectEqualStrings("end", kinds.items[kinds.items.len - 1]);
+}
+
+test "no progress without a workDoneToken" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text = "module a\nend module a\n" }}, .{});
+    defer w.deinit();
+    for (w.sent.items) |msg| try std.testing.expect(std.mem.indexOf(u8, msg, "$/progress") == null);
+}

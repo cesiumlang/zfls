@@ -31,9 +31,8 @@ projects zfls replaces:
   - [x] `textDocument/documentLink` (`include` and `#include` files)
   - [ ] `completionItem/resolve` (documentation on demand)
   - [x] Fuzzy workspace symbol search. HS #195
-  - [ ] `$/cancelRequest`
-  - [ ] Indexing progress (`workDoneProgress`). FL #417, MF #757
-  - [ ] Pull diagnostics (`textDocument/diagnostic`)
+  - [x] `$/cancelRequest`
+  - [x] Indexing progress (`workDoneProgress`). FL #417, MF #757
 - [ ] Benchmark find-references across a large multi-file workspace
 - [ ] Split the largest source files (`server.zig`, `objects.zig`,
   `parser.zig`, `regex.zig`) into smaller modules
@@ -51,6 +50,8 @@ projects zfls replaces:
 
 ## Later
 
+- [ ] Pull diagnostics (`textDocument/diagnostic`) with workspace
+  diagnostics: problems in files that are not open
 - [ ] Unused variables, arguments and `use` names (faded, with a quick fix)
 - [ ] Inlay hints: argument names, `associate` types, implicit types,
   parameter values
