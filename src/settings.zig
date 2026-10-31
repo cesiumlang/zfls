@@ -33,6 +33,10 @@ pub const StrList = struct {
 
 pub const PpDef = struct { name: []const u8, value: []const u8 };
 
+/// The severity given to the diagnostics of a code: `off`, `error`,
+/// `warning`, `information` or `hint`
+pub const DiagLevel = struct { code: []const u8, level: []const u8 };
+
 pub const Settings = struct {
     // General options
     config: []const u8 = ".fortlsrc",
@@ -63,6 +67,10 @@ pub const Settings = struct {
     max_line_length: i64 = -1,
     max_comment_line_length: i64 = -1,
     disable_diagnostics: bool = false,
+    /// Severities by diagnostic code (`off` to hide a code)
+    diagnostic_severity: std.ArrayList(DiagLevel) = .empty,
+    /// Glob patterns of modules USE may name that are not in the project
+    external_modules: StrList = .{},
     // Preprocessor options
     /// null: use the default rule (uppercase extensions are preprocessed)
     pp_suffixes: ?StrList = null,
@@ -151,6 +159,8 @@ const opts = [_]Opt{
     .{ .long = "max_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum line length (default: -1)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "max_comment_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum comment line length (default: -1)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "disable_diagnostics", .kind = .flag, .help = "Disable diagnostics", .group = "Diagnostic options (error swigles)" },
+    .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
+    .{ .long = "external_modules", .kind = .list, .metavar = "[MODULES ...]", .help = "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic", .group = "Diagnostic options (error swigles)" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
@@ -300,7 +310,8 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     const v = json5.parse(a, val) catch {
                         return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
                     };
-                    try applyPpDefs(a, &s, v);
+                    if (std.mem.eql(u8, o.long, "pp_defs")) try applyPpDefs(a, &s, v);
+                    if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
                     continue;
                 }
                 var handled = false;
@@ -332,6 +343,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                 if (std.mem.eql(u8, o.long, "excl_paths")) s.excl_paths = list;
                 if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
                 if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
+                if (std.mem.eql(u8, o.long, "external_modules")) s.external_modules = list;
             },
         }
     }
@@ -349,6 +361,15 @@ pub fn applyPpDefs(a: Allocator, s: *Settings, v: json.Value) !void {
             try s.setPpDef(a, try jsonScalarString(a, item), "");
         },
         else => {},
+    }
+}
+
+/// Store a JSON `diagnostic_severity` value, `{"code": "level"}`
+pub fn applyDiagnosticSeverity(a: Allocator, s: *Settings, v: json.Value) !void {
+    s.diagnostic_severity = .empty;
+    if (v != .object) return;
+    for (v.object.keys(), v.object.values()) |k, x| {
+        try s.diagnostic_severity.append(a, .{ .code = k, .level = try jsonScalarString(a, x) });
     }
 }
 
@@ -424,6 +445,8 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
     s.disable_diagnostics = jsonBool(json.get(cfg, "disable_diagnostics"), s.disable_diagnostics);
+    if (json.get(cfg, "diagnostic_severity")) |v| try applyDiagnosticSeverity(a, s, v);
+    if (json.get(cfg, "external_modules")) |v| s.external_modules = try jsonList(a, v);
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
     // Code Actions options

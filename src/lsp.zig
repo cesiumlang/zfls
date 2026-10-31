@@ -32,6 +32,8 @@ pub const Diagnostic = struct {
     message: []const u8,
     severity: i64,
     relatedInformation: ?[]const DiagnosticRelatedInformation = null,
+    code: ?[]const u8 = null,
+    source: ?[]const u8 = null,
 };
 
 /// The edits of each file, as the object `{uri: [TextEdit]}` of

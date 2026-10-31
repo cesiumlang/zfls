@@ -16,7 +16,8 @@ command line options and configuration files.
   and variables by what they are (a variable named `if` is a variable), with
   the lines that preprocessor conditionals leave out shown inactive
 - Diagnostics: declarations, scopes, `CONTAINS`, `IMPLICIT`, `USE`/`IMPORT`
-  checks, line length limits
+  checks, line length limits; each with a code that settings and comments
+  can turn off (see [Diagnostics](#diagnostics))
 - Code action implementing deferred type-bound procedures
 - Fixed and free source form, line continuations, Doxygen and FORD style
   documentation comments
@@ -102,6 +103,29 @@ The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
 --debug_line 10 --debug_char 5` runs a single hover request.
+
+### Diagnostics
+
+Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
+panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
+`multiple-contains`, `unexpected-end`, `invalid-parent`,
+`procedure-before-contains`, `declared-twice`, `masks-parent`,
+`import-outside-interface`, `module-not-found`, `use-after-implicit`,
+`deferred-not-implemented`, `intent-not-in-arguments`,
+`argument-not-declared`, `not-imported` and `object-not-found`.
+
+- `diagnostic_severity` (option or configuration file) sets the severity of
+  a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
+  the severities are `off`, `error`, `warning`, `information` and `hint`.
+- `external_modules` names modules from outside the project (glob patterns,
+  case-insensitive) that `USE` statements may name without a
+  `module-not-found` diagnostic, e.g. `["mpi", "petsc*"]`.
+- In the code, a comment `! zfls: disable=masks-parent, declared-twice`
+  hides those codes on its line (`! zfls: disable` hides every code),
+  `! zfls: disable-next-line=...` on the next line and
+  `! zfls: disable-file=...` in the whole file.
+
+These are zfls's own options: fortls does not have them.
 
 ## Testing
 
@@ -191,6 +215,8 @@ zfls deliberately differs from fortls in a few places:
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
 - Line length diagnostics are not duplicated when a file is checked again.
+- Diagnostics have a `code` and the `source` `zfls`, and can be configured
+  and suppressed by code (see [Diagnostics](#diagnostics)).
 - There is no automatic update from PyPI; `--disable_autoupdate` is accepted
   and ignored.
 - The intrinsic documentation in `src/data/intrinsics` is formatted to pass

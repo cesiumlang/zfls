@@ -1556,7 +1556,7 @@ pub const Obj = struct {
             .type => {
                 for (self.scopeDataConst().in_children.items) |in_child| {
                     if (!self.typeDataConst().abstract and in_child.hasKeyword(KW.deferred)) {
-                        var d = Diagnostic.init(self.eline -| 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+                        var d = Diagnostic.init(.deferred_not_implemented, self.eline -| 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
                         d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
                         try errors.append(a, d);
                     }
@@ -1565,6 +1565,7 @@ pub const Obj = struct {
             .subroutine, .function => {
                 for (self.procDataConst().missing_args.items) |m| {
                     try errors.append(a, Diagnostic.init(
+                        .intent_not_in_arguments,
                         m.sline -| 1,
                         try std.fmt.allocPrint(a, "Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
                         1,
@@ -1578,6 +1579,7 @@ pub const Obj = struct {
                     if (arg_obj == null) {
                         const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
                         try errors.append(a, Diagnostic.init(
+                            .argument_not_declared,
                             self.sline -| 1,
                             try std.fmt.allocPrint(a, "No matching declaration found for argument \"{s}\"", .{arg_name}),
                             1,
@@ -1620,9 +1622,9 @@ pub const Obj = struct {
         const info = known_types.get(desc_obj_name).?;
         if (info) |ti| if (ti.kind == 1) {
             if (interface) {
-                return Diagnostic.init(self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
+                return Diagnostic.init(.not_imported, self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
             }
-            var d = Diagnostic.init(self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
+            var d = Diagnostic.init(.object_not_found, self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
             d.addRelated(ti.obj.file_ast.path, ti.obj.sline -| 1, "Possible object");
             return d;
         };
@@ -1657,11 +1659,11 @@ pub const Obj = struct {
             if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
             const ct = child.getType(true);
             if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function)) {
-                try errors.append(a, Diagnostic.init(line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
+                try errors.append(a, Diagnostic.init(.procedure_before_contains, line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
             }
             if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
             if (fqsn_dict.get(child.fqsn)) |first| if (line_number > first) {
-                var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
+                var d = Diagnostic.init(.declared_twice, line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
                 d.addRelated(self.file_ast.path, first, "First declaration");
                 try errors.append(a, d);
                 continue;
@@ -1671,7 +1673,7 @@ pub const Obj = struct {
             if (self.parent != null and !is_interface and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
                 if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                     if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
-                    var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
+                    var d = Diagnostic.init(.masks_parent, line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
                     d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                     try errors.append(a, d);
                 }
@@ -1689,21 +1691,24 @@ pub const Obj = struct {
             last_use_line = @max(last_use_line, u.line_number);
             if (u.is_import) {
                 if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
-                    try errors.append(a, Diagnostic.init(u.line_number -| 1, "IMPORT statement outside of interface", 1, null));
+                    try errors.append(a, Diagnostic.init(.import_outside_interface, u.line_number -| 1, "IMPORT statement outside of interface", 1, null));
                 }
                 continue;
             }
             if (!env.tree.contains(u.mod_name)) {
-                try errors.append(a, Diagnostic.init(
+                var d = Diagnostic.init(
+                    .module_not_found,
                     u.line_number -| 1,
                     try std.fmt.allocPrint(a, "Module \"{s}\" not found in project", .{u.mod_name}),
                     3,
                     u.mod_name,
-                ));
+                );
+                d.subject = u.mod_name;
+                try errors.append(a, d);
             }
         }
         if (self.scopeDataConst().implicit_line) |il| if (last_use_line >= il) {
-            try errors.append(a, Diagnostic.init(il -| 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
+            try errors.append(a, Diagnostic.init(.use_after_implicit, il -| 1, "USE statements after IMPLICIT statement", 1, "IMPLICIT"));
         };
         return errors.items;
     }
@@ -1764,7 +1769,7 @@ pub const Obj = struct {
                 .new_text = try std.fmt.allocPrint(a, "  PROCEDURE :: {s} => {s}\n", .{ in_child.name, in_child.name }),
             });
             try edits.appendSlice(a, res.edits);
-            var d = Diagnostic.init(line_number, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+            var d = Diagnostic.init(.deferred_not_implemented, line_number, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
             d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
             try diagnostics.append(a, d);
             has_edits = true;
@@ -1789,16 +1794,20 @@ fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 /// A diagnostic pending conversion into an LSP diagnostic
 pub const Diagnostic = struct {
+    code: C.DiagCode,
     sline: usize,
     message: []const u8,
     severity: i32 = 1,
     find_word: ?[]const u8 = null,
     related: ?Related = null,
+    /// What the diagnostic is about, when settings may single it out (the
+    /// module of `module-not-found`)
+    subject: ?[]const u8 = null,
 
     pub const Related = struct { path: ?[]const u8, line: usize, message: []const u8 };
 
-    pub fn init(sline: usize, message: []const u8, severity: i32, find_word: ?[]const u8) Diagnostic {
-        return .{ .sline = sline, .message = message, .severity = severity, .find_word = find_word };
+    pub fn init(code: C.DiagCode, sline: usize, message: []const u8, severity: i32, find_word: ?[]const u8) Diagnostic {
+        return .{ .code = code, .sline = sline, .message = message, .severity = severity, .find_word = find_word };
     }
 
     pub fn addRelated(self: *Diagnostic, path: ?[]const u8, line: usize, message: []const u8) void {
@@ -1825,6 +1834,8 @@ pub const Diagnostic = struct {
             .message = self.message,
             .severity = self.severity,
             .related = self.related,
+            .code = self.code,
+            .subject = self.subject,
         };
     }
 };
@@ -1841,6 +1852,8 @@ pub const BuiltDiag = struct {
     related: ?Diagnostic.Related = null,
     /// Columns are code point counts rather than byte offsets
     cols_are_codepoints: bool = false,
+    code: C.DiagCode,
+    subject: ?[]const u8 = null,
 };
 
 /// An END statement that does not match the scope that is open
@@ -2015,8 +2028,9 @@ pub const Ast = struct {
         }
     }
 
-    pub fn addError(self: *Ast, msg: []const u8, sev: i32, ln: usize, sch: usize, ech: ?usize) !void {
+    pub fn addError(self: *Ast, code: C.DiagCode, msg: []const u8, sev: i32, ln: usize, sch: usize, ech: ?usize) !void {
         try self.parse_errors.append(self.allocator(), .{
+            .code = code,
             .sln = ln -| 1,
             .sch = sch,
             .eln = ln -| 1,
@@ -2180,11 +2194,12 @@ pub const Ast = struct {
                 try std.fmt.allocPrint(a, "Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
-            try errors.append(a, Diagnostic.init(e.scope_line -| 1, message, 1, null));
+            try errors.append(a, Diagnostic.init(.unexpected_end, e.scope_line -| 1, message, 1, null));
         }
         for (tmp_list.items) |scope| {
             if (!scope.checkValidParent()) {
                 try errors.append(a, Diagnostic.init(
+                    .invalid_parent,
                     scope.sline -| 1,
                     try std.fmt.allocPrint(a, "Invalid parent for \"{s}\" declaration", .{try scope.getDesc(a)}),
                     1,

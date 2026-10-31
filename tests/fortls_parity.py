@@ -238,7 +238,14 @@ def main() -> int:
             if "result" in result:
                 parsed.append(result["result"])
             elif "params" in result:
-                parsed.append(result["params"])
+                params = result["params"]
+                # zfls adds a code and source to each diagnostic (fortls
+                # #438); fortls's expected diagnostics have neither
+                if isinstance(params, dict):
+                    for d in params.get("diagnostics", []):
+                        d.pop("code", None)
+                        d.pop("source", None)
+                parsed.append(params)
             else:
                 raise RuntimeError(f"unexpected message: {result}")
         return pid.poll(), parsed

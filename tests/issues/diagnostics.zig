@@ -451,3 +451,113 @@ test "hansec #229 DO and ASSOCIATE opened and closed on single lines with ;" {
     defer w.deinit();
     try h.checkIn(.hansec, 229, .fixed, w.expectNoDiagnostics("t.f90"));
 }
+
+const masking =
+    \\module m
+    \\  integer :: n
+    \\contains
+    \\  subroutine s()
+    \\    integer :: n
+    \\    integer :: k
+    \\    integer :: k
+    \\  end subroutine s
+    \\end module m
+    \\
+;
+
+fn hasCode(diags: []const h.Diagnostic, code: []const u8) bool {
+    for (diags) |d| if (std.mem.eql(u8, d.code, code)) return true;
+    return false;
+}
+
+fn severityOf(diags: []const h.Diagnostic, code: []const u8) i64 {
+    for (diags) |d| if (std.mem.eql(u8, d.code, code)) return d.severity;
+    return 0;
+}
+
+fn expectSeverities(w: *h.Workspace) !void {
+    const diags = try w.diagnostics("m.f90");
+    try h.expect(!hasCode(diags, "masks-parent"), "masks-parent is reported though it is off", .{});
+    try h.expect(severityOf(diags, "declared-twice") == 2, "declared-twice has severity {d}, not 2 (warning)", .{severityOf(diags, "declared-twice")});
+}
+
+test "#438 diagnostics have codes, which diagnostic_severity can turn off or change" {
+    {
+        // the codes, by default
+        const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = masking }}, .{});
+        defer w.deinit();
+        const diags = try w.diagnostics("m.f90");
+        try std.testing.expect(hasCode(diags, "masks-parent"));
+        try std.testing.expectEqual(@as(i64, 1), severityOf(diags, "declared-twice"));
+    }
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = masking }}, .{ .diagnostic_severity = &.{
+        .{ .code = "masks-parent", .level = "off" },
+        .{ .code = "declared-twice", .level = "warning" },
+    } });
+    defer w.deinit();
+    try h.check(438, .fixed, expectSeverities(w));
+}
+
+fn expectSuppressed(w: *h.Workspace) !void {
+    const diags = try w.diagnostics("m.f90");
+    try h.expect(!hasCode(diags, "masks-parent"), "the comment does not hide masks-parent", .{});
+    try h.expect(hasCode(diags, "declared-twice"), "the comment hides more than masks-parent", .{});
+}
+
+test "Modern Fortran #981 a comment hides a masks-parent warning" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text =
+        \\module m
+        \\  integer :: n
+        \\contains
+        \\  subroutine s()
+        \\    integer :: n ! zfls: disable=masks-parent
+        \\    integer :: k
+        \\    integer :: k
+        \\  end subroutine s
+        \\end module m
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 981, .fixed, expectSuppressed(w));
+}
+
+test "disable-next-line and disable-file comments" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text =
+        \\! zfls: disable-file=declared-twice
+        \\module m
+        \\  integer :: n
+        \\contains
+        \\  subroutine s()
+        \\    ! zfls: disable-next-line
+        \\    integer :: n
+        \\    integer :: k
+        \\    integer :: k
+        \\  end subroutine s
+        \\end module m
+        \\
+    }}, .{});
+    defer w.deinit();
+    const diags = try w.diagnostics("m.f90");
+    try std.testing.expect(!hasCode(diags, "masks-parent"));
+    try std.testing.expect(!hasCode(diags, "declared-twice"));
+}
+
+fn expectNoMissingModule(w: *h.Workspace) !void {
+    const diags = try w.diagnostics("p.f90");
+    for (diags) |d| try h.expect(!std.mem.eql(u8, d.code, "module-not-found") or std.mem.indexOf(u8, d.message, "mine") != null, "{s}", .{d.message});
+    try h.expect(hasCode(diags, "module-not-found"), "a module of the project that is missing is not reported", .{});
+}
+
+test "Modern Fortran #1306 external_modules names the modules of libraries such as MPI" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text =
+        \\program p
+        \\  use mpi
+        \\  use petsc_sys
+        \\  use mine
+        \\  implicit none
+        \\end program p
+        \\
+    }}, .{ .external_modules = &.{ "MPI", "petsc*" } });
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 1306, .fixed, expectNoMissingModule(w));
+}

@@ -121,6 +121,50 @@
       "type": "boolean",
       "default": false
     },
+    "diagnostic_severity": {
+      "description": "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint",
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "line-too-long",
+          "comment-too-long",
+          "statement-without-scope",
+          "multiple-contains",
+          "unexpected-end",
+          "invalid-parent",
+          "procedure-before-contains",
+          "declared-twice",
+          "masks-parent",
+          "import-outside-interface",
+          "module-not-found",
+          "use-after-implicit",
+          "deferred-not-implemented",
+          "intent-not-in-arguments",
+          "argument-not-declared",
+          "not-imported",
+          "object-not-found"
+        ]
+      },
+      "additionalProperties": {
+        "enum": [
+          "off",
+          "error",
+          "warning",
+          "information",
+          "hint"
+        ]
+      },
+      "default": {}
+    },
+    "external_modules": {
+      "description": "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
     "symbol_skip_mem": {
       "description": "Do not include type members in document symbol results",
       "type": "boolean",
