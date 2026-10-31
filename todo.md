@@ -44,10 +44,10 @@ projects zfls replaces:
 
 ## Next
 
-- [~] Implicit typing:
+- [x] Implicit typing:
   - [x] Hover on a name that is not declared shows the type its IMPLICIT
     rules (or the default ones) give it. HS #201
-  - [ ] A diagnostic for names that are not declared under IMPLICIT NONE,
+  - [x] A diagnostic for names that are not declared under IMPLICIT NONE,
     and a "declare" quick fix. HS #129
 - [ ] Vendor extensions: DEC `STRUCTURE`/`RECORD`/`UNION`/`MAP`, `.` as the
   component separator, CUDA Fortran. FL #171, HS #230, HS #45, MF #571

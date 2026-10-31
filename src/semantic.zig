@@ -82,6 +82,9 @@ const Tokenizer = struct {
     /// the statement being read declares or defines (its unknown names are
     /// attributes, kinds, letters, ...); carried over continuation lines
     spec_stmt: bool = false,
+    /// the depth of parentheses at the end of the last line, for the line
+    /// that continues it
+    depth: usize = 0,
 
     /// Collect a name that stands for nothing found, unless it is a word
     /// that is no name: in a specification or END statement, after CALL
@@ -181,8 +184,15 @@ const Tokenizer = struct {
             t.continued = std.mem.endsWith(u8, std.mem.trimEnd(u8, code, " \t"), "&");
             if (std.mem.startsWith(u8, trimmed, "&")) stmt_start = false;
         }
-        var depth: usize = 0;
+        var depth: usize = if (stmt_start) 0 else t.depth;
+        defer t.depth = depth;
         var scanned: usize = it.pos;
+        // a lexical token split over two lines (`inte&` / `&ger`): its
+        // pieces are no names
+        const split_line = !t.file.fixed and trimmed.len > 1 and trimmed[0] == '&' and trimmed[1] != ' ' and trimmed[1] != '\t';
+        // IF, WHERE and FORALL with a condition: a statement follows the
+        // condition (`if (x) print *, y`)
+        var cond_stmt = false;
         // the keyword a statement started with, for the one after it
         // (`else if`, `end do`, `select case`)
         var keyword: ?[]const u8 = null;
@@ -193,7 +203,13 @@ const Tokenizer = struct {
         while (it.next()) |w| {
             for (code[scanned..w.start]) |c| switch (c) {
                 '(' => depth += 1,
-                ')' => depth -|= 1,
+                ')' => {
+                    depth -|= 1;
+                    if (depth == 0 and cond_stmt) {
+                        cond_stmt = false;
+                        stmt_start = true;
+                    }
+                },
                 ';' => {
                     stmt_start = true;
                     depth = 0;
@@ -218,17 +234,25 @@ const Tokenizer = struct {
                 }
                 if (isStatementKeyword(w.str) and !isAssignment(code, w.end)) {
                     keyword = w.str;
-                    in_end = std.ascii.eqlIgnoreCase(w.str, "end");
+                    in_end = isEndKeyword(w.str);
                     t.spec_stmt = isSpecKeyword(w.str);
+                    cond_stmt = isConditionKeyword(w.str);
                     continue;
                 }
                 t.spec_stmt = false;
             } else if (follows) |k| {
-                if (isSecondKeyword(k, w.str)) continue;
+                if (isSecondKeyword(k, w.str)) {
+                    // `else if (x) then`
+                    if (std.ascii.eqlIgnoreCase(w.str, "if")) cond_stmt = true;
+                    continue;
+                }
             }
             // `.and.`, `.true.`, user operators
             if (before == '.' and after == '.') continue;
-            if (w.start > 0 and (std.ascii.isDigit(code[w.start - 1]) or code[w.start - 1] == '\'' or code[w.start - 1] == '"')) {
+            // after the digits of a literal, or after its decimal point
+            // (`0._dp`, `1.d0`)
+            const after_point = w.start > 1 and code[w.start - 1] == '.' and std.ascii.isDigit(code[w.start - 2]);
+            if (after_point or w.start > 0 and (std.ascii.isDigit(code[w.start - 1]) or code[w.start - 1] == '\'' or code[w.start - 1] == '"')) {
                 // the kind of a literal: `1.0_dp`, `'text'_ck`; not the
                 // exponent of `1.0d0`
                 if (w.str[0] != '_' or w.str.len < 2) continue;
@@ -238,9 +262,10 @@ const Tokenizer = struct {
                 continue;
             }
             // a keyword argument, `f(x, kind=dp)`: a dummy argument of what
-            // is called, not a name of this scope
-            if (depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and
-                (before == '(' or before == ',')) continue;
+            // is called, not a name of this scope (also first on a line
+            // that continues the call)
+            const in_list = before == '(' or before == ',' or before == '&' or before == 0;
+            if (depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and in_list) continue;
             if (t.file.pp_defs.contains(w.str)) {
                 try t.add(ln, raw, w.start, w.end, .{ .type = .macro });
                 continue;
@@ -255,7 +280,13 @@ const Tokenizer = struct {
                 if (p.kind == .function and p.sline == ln + 1 and o.nameLowerEql(p.name)) obj = p;
             };
             const o = obj orelse {
-                try t.noteUnknown(scope, ln, w, before, prev_word, in_end);
+                // a name that ASSOCIATE or SELECT TYPE defines (`this =>
+                // self`), or a piece of a token split over two lines
+                const defines = depth > 0 and startsWithOp(code, w.end, "=>") and in_list;
+                const split = split_line or w.end < code.len and code[w.end] == '&';
+                // the kind of a character literal, `ck_'text'`
+                const kind_prefix = w.str[w.str.len - 1] == '_' and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"');
+                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, in_end);
                 continue;
             };
             // elsewhere in a function, its name is its result
@@ -299,42 +330,46 @@ const Tokenizer = struct {
 /// The words that start a statement (when it does not assign to a variable
 /// of that name)
 const statement_keywords = [_][]const u8{
-    "abstract",  "allocatable", "allocate",    "associate",       "asynchronous",
-    "backspace", "bind",        "block",       "call",            "case",
-    "character", "class",       "close",       "codimension",     "common",
-    "complex",   "contains",    "contiguous",  "continue",        "critical",
-    "cycle",     "data",        "deallocate",  "default",         "dimension",
-    "do",        "double",      "elemental",   "else",            "elseif",
-    "elsewhere", "end",         "enddo",       "endif",           "entry",
-    "enum",      "enumerator",  "equivalence", "error",           "exit",
-    "external",  "final",       "flush",       "forall",          "format",
-    "function",  "generic",     "go",          "goto",            "if",
-    "implicit",  "import",      "impure",      "include",         "inquire",
-    "integer",   "intent",      "interface",   "intrinsic",       "lock",
-    "logical",   "module",      "namelist",    "non_overridable", "nullify",
-    "open",      "optional",    "parameter",   "pause",           "pointer",
-    "print",     "private",     "procedure",   "program",         "protected",
-    "public",    "pure",        "rank",        "read",            "real",
-    "recursive", "return",      "rewind",      "save",            "select",
-    "sequence",  "stop",        "submodule",   "subroutine",      "sync",
-    "target",    "type",        "unlock",      "use",             "value",
-    "volatile",  "wait",        "where",       "write",
+    "abstract",        "allocatable",   "allocate",    "associate",       "asynchronous",
+    "backspace",       "bind",          "block",       "call",            "case",
+    "character",       "class",         "close",       "codimension",     "common",
+    "complex",         "contains",      "contiguous",  "continue",        "critical",
+    "cycle",           "data",          "deallocate",  "default",         "dimension",
+    "do",              "double",        "elemental",   "else",            "elseif",
+    "elsewhere",       "end",           "enddo",       "endif",           "entry",
+    "enum",            "enumerator",    "equivalence", "error",           "exit",
+    "external",        "final",         "flush",       "forall",          "format",
+    "function",        "generic",       "go",          "goto",            "if",
+    "implicit",        "import",        "impure",      "include",         "inquire",
+    "integer",         "intent",        "interface",   "intrinsic",       "lock",
+    "logical",         "module",        "namelist",    "non_overridable", "nullify",
+    "open",            "optional",      "parameter",   "pause",           "pointer",
+    "print",           "private",       "procedure",   "program",         "protected",
+    "public",          "pure",          "rank",        "read",            "real",
+    "recursive",       "return",        "rewind",      "save",            "select",
+    "sequence",        "stop",          "submodule",   "subroutine",      "sync",
+    "target",          "type",          "unlock",      "use",             "value",
+    "volatile",        "wait",          "where",       "write",
+    // written as one word
+              "blockdata",
+    "doubleprecision", "doublecomplex", "selectcase",  "selecttype",      "selectrank",
+    "errorstop",       "syncall",       "syncimages",  "syncmemory",      "endfile",
 };
 
 /// The statement keywords that start a specification or a definition, whose
 /// other words need not be names of the scope (attributes, kinds, the
 /// letters of IMPLICIT, names being defined)
 const spec_keywords = [_][]const u8{
-    "abstract",    "allocatable", "asynchronous", "bind",     "character",  "class",
-    "codimension", "common",      "complex",      "contains", "contiguous", "data",
-    "dimension",   "double",      "elemental",    "entry",    "enum",       "enumerator",
-    "equivalence", "external",    "final",        "format",   "function",   "generic",
-    "implicit",    "import",      "impure",       "include",  "integer",    "intent",
-    "interface",   "intrinsic",   "logical",      "module",   "namelist",   "non_overridable",
-    "optional",    "parameter",   "pointer",      "private",  "procedure",  "program",
-    "protected",   "public",      "pure",         "real",     "recursive",  "save",
-    "sequence",    "submodule",   "subroutine",   "target",   "type",       "use",
-    "value",       "volatile",
+    "abstract",    "allocatable", "asynchronous", "bind",            "character",     "class",
+    "codimension", "common",      "complex",      "contains",        "contiguous",    "data",
+    "dimension",   "double",      "elemental",    "entry",           "enum",          "enumerator",
+    "equivalence", "external",    "final",        "format",          "function",      "generic",
+    "implicit",    "import",      "impure",       "include",         "integer",       "intent",
+    "interface",   "intrinsic",   "logical",      "module",          "namelist",      "non_overridable",
+    "optional",    "parameter",   "pointer",      "private",         "procedure",     "program",
+    "protected",   "public",      "pure",         "real",            "recursive",     "save",
+    "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
+    "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex",
 };
 
 fn isSpecKeyword(word: []const u8) bool {
@@ -371,6 +406,18 @@ pub fn unknownNames(a: Allocator, env: objects.Env, file: *const FortranFile, as
 
 fn isStatementKeyword(word: []const u8) bool {
     for (statement_keywords) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
+    // END joined to what it ends: `endenum`, `endmodule`, `endselect`
+    return word.len > 3 and std.ascii.startsWithIgnoreCase(word, "end") and isStatementKeyword(word[3..]);
+}
+
+/// Whether `word` starts an END statement (`end`, `endmodule`, ...)
+fn isEndKeyword(word: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(word, "end") or (word.len > 3 and std.ascii.startsWithIgnoreCase(word, "end") and isStatementKeyword(word[3..]));
+}
+
+/// The statements whose condition may be followed by another statement
+fn isConditionKeyword(word: []const u8) bool {
+    for ([_][]const u8{ "if", "where", "forall" }) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
     return false;
 }
 
