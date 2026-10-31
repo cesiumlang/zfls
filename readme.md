@@ -259,6 +259,9 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- Workspace symbol search also finds the names the query matches fuzzily
+  (`tar` finds `this_amazing_routine`), after those that contain it
+  (hansec #195); fortls finds only the latter.
 - `textDocument/selectionRange`, `textDocument/documentLink` and
   `textDocument/prepareRename` (for clients that announce `prepareSupport`)
   are answered; fortls has none of them.

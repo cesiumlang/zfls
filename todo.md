@@ -30,7 +30,7 @@ projects zfls replaces:
     statement, block, scope)
   - [x] `textDocument/documentLink` (`include` and `#include` files)
   - [ ] `completionItem/resolve` (documentation on demand)
-  - [ ] Fuzzy workspace symbol search. HS #195
+  - [x] Fuzzy workspace symbol search. HS #195
   - [ ] `$/cancelRequest`
   - [ ] Indexing progress (`workDoneProgress`). FL #417, MF #757
   - [ ] Pull diagnostics (`textDocument/diagnostic`)
