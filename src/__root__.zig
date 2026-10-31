@@ -31,6 +31,7 @@ pub const selection = @import("selection.zig");
 pub const fuzzy = @import("fuzzy.zig");
 pub const implicit = @import("implicit.zig");
 pub const unused = @import("unused.zig");
+pub const modgraph = @import("modgraph.zig");
 pub const outline = @import("outline.zig");
 pub const project = @import("project.zig");
 pub const semantic = @import("semantic.zig");

@@ -159,7 +159,8 @@
           "not-imported",
           "object-not-found",
           "undeclared-name",
-          "unused-name"
+          "unused-name",
+          "circular-use"
         ]
       },
       "additionalProperties": {

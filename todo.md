@@ -73,7 +73,8 @@ projects zfls replaces:
   - [ ] Implicit types, parameter values
 - [x] Call hierarchy
 - [x] Type hierarchy (`extends`); parent components in completion. HS #121
-- [ ] Module dependency graph: cycles and compile order
+- [x] Module dependency graph: cycles (`circular-use`) and compile order
+  (`zfls/compileOrder`, "zfls: Show Module Compile Order")
 - [ ] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; later type, kind and rank
 - [ ] More quick fixes: add `implicit none`, interface and submodule stubs,

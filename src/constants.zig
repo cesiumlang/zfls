@@ -97,6 +97,7 @@ pub const DiagCode = enum {
     object_not_found,
     undeclared_name,
     unused_name,
+    circular_use,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

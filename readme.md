@@ -155,7 +155,7 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `import-outside-interface`, `module-not-found`, `use-after-implicit`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
 `argument-not-declared`, `not-imported`, `object-not-found`,
-`undeclared-name` and `unused-name`.
+`undeclared-name`, `unused-name` and `circular-use`.
 
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
@@ -315,6 +315,11 @@ zfls deliberately differs from fortls in a few places:
   on; fortls ignores cancellations.
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
+- The modules and submodules of the workspace form a dependency graph: a
+  USE that closes a cycle of modules using each other is a `circular-use`
+  error, and the `zfls/compileOrder` request (the VS Code command "zfls: Show
+  Module Compile Order") lists them in an order to compile them, each after
+  those it uses, with the cycles. fortls has neither.
 - The type hierarchy is answered (`textDocument/prepareTypeHierarchy`,
   `typeHierarchy/supertypes` and `subtypes`), and completion of a component
   offers the parent components of an extended type (`x%feature_base`,

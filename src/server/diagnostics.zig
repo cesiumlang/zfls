@@ -17,6 +17,7 @@ const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const selection = @import("../selection.zig");
 const unused = @import("../unused.zig");
+const modgraph = @import("../modgraph.zig");
 
 const Ast = objects.Ast;
 const Obj = objects.Obj;
@@ -102,6 +103,84 @@ fn reexportedRenames(self: *Server, a: Allocator) !std.StringHashMapUnmanaged(vo
         }
     }
     return out;
+}
+
+/// The modules and submodules of the workspace
+pub fn workspaceUnits(self: *Server, a: Allocator) ![]const *Obj {
+    var out: std.ArrayList(*Obj) = .empty;
+    for (self.workspace.values()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.scope_list.items) |sc| if (sc.kind == .module or sc.kind == .submodule) try out.append(a, sc);
+    }
+    return out.items;
+}
+
+/// `zfls/compileOrder`: the workspace's modules and submodules in an order
+/// to compile them (each after those it uses), with the files that define
+/// them, and the groups of modules that use each other
+pub fn serveCompileOrder(self: *Server, a: Allocator) !Value {
+    const g = try modgraph.build(a, try workspaceUnits(self, a));
+    const Unit = struct { name: []const u8, kind: []const u8, uri: []const u8 };
+    var order: std.ArrayList(Unit) = .empty;
+    var cycles: std.ArrayList([]const []const u8) = .empty;
+    for (g.components) |members| {
+        for (members) |i| {
+            const u = g.units[i];
+            try order.append(a, .{
+                .name = u.name,
+                .kind = if (u.kind == .submodule) "submodule" else "module",
+                .uri = try paths.pathToUri(a, u.file_ast.path orelse ""),
+            });
+        }
+        if (members.len > 1 or g.inCycle(members[0])) {
+            const names = try a.alloc([]const u8, members.len);
+            for (members, names) |i, *n| n.* = g.units[i].name;
+            try cycles.append(a, names);
+        }
+    }
+    return json.from(a, .{ .order = order.items, .cycles = cycles.items });
+}
+
+/// The USE statements of `file` that close a cycle of modules using each
+/// other, which compilers reject (`circular-use`)
+pub fn circularUses(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
+    var out: std.ArrayList(objects.BuiltDiag) = .empty;
+    var mine = false;
+    for (ast.scope_list.items) |sc| if (sc.kind == .module or sc.kind == .submodule) {
+        mine = true;
+    };
+    if (!mine) return out.items;
+    const g = try modgraph.build(a, try workspaceUnits(self, a));
+    for (g.units, 0..) |u, i| {
+        if (u.file_ast != ast or !g.inCycle(i)) continue;
+        var names: std.ArrayList(u8) = .empty;
+        for (g.components[g.comp[i]]) |j| {
+            if (names.items.len > 0) try names.appendSlice(a, ", ");
+            try names.appendSlice(a, g.units[j].name);
+        }
+        var uses: std.ArrayList(modgraph.Use) = .empty;
+        try modgraph.usedModules(a, u, &uses);
+        for (uses.items) |m| {
+            const j = for (g.units, 0..) |v, k| {
+                if (v.kind == .module and v.nameLowerEql(m.name)) break k;
+            } else continue;
+            if (g.comp[j] != g.comp[i] or m.line == 0) continue;
+            const line = m.line - 1;
+            const text = file.getLine(line, false) orelse continue;
+            const col = std.ascii.findIgnoreCase(text, m.name) orelse 0;
+            try out.append(a, .{
+                .sln = line,
+                .sch = col,
+                .eln = line,
+                .ech = col + m.name.len,
+                .message = try std.fmt.allocPrint(a, "Circular USE: modules {s} use each other", .{names.items}),
+                .severity = C.Severity.err,
+                .code = .circular_use,
+                .subject = m.name,
+            });
+        }
+    }
+    return out.items;
 }
 
 /// The local variables and USE ONLY names that their scope never uses,
@@ -271,7 +350,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {

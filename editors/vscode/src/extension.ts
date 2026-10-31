@@ -43,6 +43,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     linter,
     vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
+    vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
         void restartAll();
@@ -111,22 +112,29 @@ function untitledRoot(): vscode.Uri {
 }
 
 /** Starts the server for a Fortran file, unless it has one */
+/** The folder and root directory of the server that serves `doc` */
+function serverRoot(doc: vscode.TextDocument): { folder?: vscode.WorkspaceFolder; root: vscode.Uri } | undefined {
+  if (doc.uri.scheme === "file") {
+    const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    const folder = inFolder ? outermost(inFolder) : undefined;
+    return { folder, root: folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath)) };
+  }
+  if (doc.uri.scheme === "untitled") {
+    const folder = untitledFolder();
+    return { folder, root: folder ? folder.uri : untitledRoot() };
+  }
+  return undefined;
+}
+
 async function ensureClient(doc: vscode.TextDocument): Promise<void> {
   if (!LANGUAGES.includes(doc.languageId)) {
     return;
   }
-  let folder: vscode.WorkspaceFolder | undefined;
-  let root: vscode.Uri;
-  if (doc.uri.scheme === "file") {
-    const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
-    folder = inFolder ? outermost(inFolder) : undefined;
-    root = folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
-  } else if (doc.uri.scheme === "untitled") {
-    folder = untitledFolder();
-    root = folder ? folder.uri : untitledRoot();
-  } else {
+  const where = serverRoot(doc);
+  if (!where) {
     return;
   }
+  const { folder, root } = where;
   const key = root.toString();
   if (clients.has(key)) {
     return;
@@ -141,6 +149,42 @@ async function ensureClient(doc: vscode.TextDocument): Promise<void> {
     clients.delete(key);
     disposeWatchers(key);
   }
+}
+
+interface CompileOrder {
+  order: { name: string; kind: string; uri: string }[];
+  cycles: string[][];
+}
+
+/** Opens the module compile order of the active document's server (each
+ * module after those it uses), and the modules that use each other */
+async function showCompileOrder(): Promise<void> {
+  const doc = vscode.window.activeTextEditor?.document;
+  let client: LanguageClient | undefined;
+  if (doc && LANGUAGES.includes(doc.languageId)) {
+    await ensureClient(doc);
+    const where = serverRoot(doc);
+    client = where ? await clients.get(where.root.toString()) : undefined;
+  }
+  client ??= await [...clients.values()][0];
+  if (!client) {
+    void vscode.window.showInformationMessage("zfls: open a Fortran file first.");
+    return;
+  }
+  const res = await client.sendRequest<CompileOrder>("zfls/compileOrder", {});
+  const lines = ["# Module compile order", ""];
+  res.order.forEach((u, i) => {
+    const file = vscode.workspace.asRelativePath(vscode.Uri.parse(u.uri));
+    lines.push(`${i + 1}. \`${u.name}\` (${u.kind}) in ${file}`);
+  });
+  if (res.cycles.length > 0) {
+    lines.push("", "## Modules that use each other", "");
+    for (const c of res.cycles) {
+      lines.push(`- ${c.map((n) => `\`${n}\``).join(", ")}`);
+    }
+  }
+  const md = await vscode.workspace.openTextDocument({ language: "markdown", content: lines.join("\n") + "\n" });
+  await vscode.window.showTextDocument(md, { preview: true });
 }
 
 function disposeWatchers(key: string): void {

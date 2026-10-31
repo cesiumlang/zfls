@@ -502,6 +502,14 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// `zfls/compileOrder`: the module names in order, and the cycles
+    pub fn compileOrder(w: *Workspace) !struct { order: []const []const u8, cycles: usize } {
+        const v = try w.request("zfls/compileOrder", .{});
+        var order: std.ArrayList([]const u8) = .empty;
+        for (json.items(json.get(v, "order"))) |u| try order.append(w.a(), json.str(json.get(u, "name")) orelse "");
+        return .{ .order = order.items, .cycles = json.items(json.get(v, "cycles")).len };
+    }
+
     /// The name of a call hierarchy item
     pub fn itemName(item: Value) []const u8 {
         return json.str(json.get(item, "name")) orelse "";
