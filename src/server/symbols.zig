@@ -113,11 +113,27 @@ pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumen
 pub fn serveSemanticTokens(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;
-    return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokens(a, self.env(a), file, ast) });
+    return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokens(a, self.env(a), file, ast, self.fixedLimit()) });
 }
 
 pub fn serveFoldingRanges(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;
     return json.from(a, try outline.foldingRanges(a, file, ast));
+}
+
+/// Typing `#` first on a line moves it to the first column: preprocessor
+/// directives start there, whatever the indentation of the code (Modern
+/// Fortran #177)
+pub fn serveOnTypeFormatting(self: *Server, a: Allocator, params: lsp.OnTypeFormattingParams) !Value {
+    if (!std.mem.eql(u8, params.ch, "#")) return .null;
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+    const line = params.position.line;
+    const text = file.getLine(line, false) orelse return .null;
+    var n: usize = 0;
+    while (n < text.len and (text[n] == ' ' or text[n] == '\t')) n += 1;
+    if (n == 0 or n >= text.len or text[n] != '#') return .null;
+    const edits = try a.alloc(lsp.TextEdit, 1);
+    edits[0] = .{ .range = Server.rangeOf(file, line, 0, line, n), .newText = "" };
+    return json.from(a, edits);
 }

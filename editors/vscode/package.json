@@ -325,6 +325,12 @@
           "scope": "resource",
           "markdownDescription": "Warn about comment lines longer than this (`--max_comment_line_length`; -1: off)."
         },
+        "zfls.fixedFormLineLength": {
+          "type": "integer",
+          "default": 72,
+          "scope": "resource",
+          "markdownDescription": "Columns of code in a fixed-form line, as gfortran's `-ffixed-line-length-n` (72, 80 or 132): the rest is highlighted as a comment and is not read for names; `-1` for no limit (`--fixed_line_length`). Shown through semantic highlighting."
+        },
         "zfls.configFile": {
           "type": "string",
           "default": "",
@@ -741,7 +747,17 @@
           }
         }
       }
-    ]
+    ],
+    "configurationDefaults": {
+      "[FortranFixedForm]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.autoIndentOnPaste": false,
+        "editor.formatOnType": true
+      },
+      "[FortranFreeForm]": {
+        "editor.formatOnType": true
+      }
+    }
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --minify --sourcemap",

@@ -85,6 +85,8 @@ const Tokenizer = struct {
     /// the depth of parentheses at the end of the last line, for the line
     /// that continues it
     depth: usize = 0,
+    /// the columns of code in a fixed-form line; the rest is a comment
+    fixed_limit: ?usize = null,
 
     /// Collect a name that stands for nothing found, unless it is a word
     /// that is no name: in a specification or END statement, after CALL
@@ -173,6 +175,11 @@ const Tokenizer = struct {
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
         if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
         var code = try helpers.stripStrings(t.a, raw, true);
+        // the columns past the code of a fixed-form line are a comment
+        if (t.fixed_limit) |n| if (t.file.fixed and raw.len > n) {
+            code = code[0..@min(n, code.len)];
+            if (t.unknown == null) try t.add(ln, raw, n, raw.len, .{ .type = .comment });
+        };
         if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
         // fypp's inline expressions (`eg_${name}$_t`) are no Fortran: blank
         // them, and leave the pieces of a name around them alone
@@ -404,9 +411,9 @@ pub const Unknown = struct { line: usize, start: usize, end: usize, name: []cons
 /// The names on 0-based lines `first`..`last` (a statement, or the file)
 /// that stand for nothing the scope, its USE statements or the workspace
 /// define, and are no keyword, intrinsic procedure or component
-pub fn unknownNames(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, intrinsics: []const *Obj, first: usize, last: usize) ![]const Unknown {
+pub fn unknownNames(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, intrinsics: []const *Obj, first: usize, last: usize, fixed_limit: ?usize) ![]const Unknown {
     var list: std.ArrayList(Unknown) = .empty;
-    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .unknown = &list, .intrinsics = intrinsics };
+    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .unknown = &list, .intrinsics = intrinsics, .fixed_limit = fixed_limit };
     const n = file.nLines();
     if (n == 0) return list.items;
     const inactive = try a.alloc(bool, n);
@@ -512,8 +519,8 @@ fn nextChar(code: []const u8, i: usize) u8 {
 /// The semantic tokens of a file, encoded as LSP sends them: per token the
 /// line and start relative to the previous token, its length, type and
 /// modifiers
-pub fn tokens(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) ![]const u32 {
-    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast };
+pub fn tokens(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, fixed_limit: ?usize) ![]const u32 {
+    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .fixed_limit = fixed_limit };
     const n = file.nLines();
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);

@@ -461,6 +461,25 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// The edits of `textDocument/onTypeFormatting` after typing `ch`:
+    /// their start and end columns on the line, and new text
+    pub const TypeEdit = struct { start: i64, end: i64, new_text: []const u8 };
+
+    pub fn onTypeFormatting(w: *Workspace, name: []const u8, p: Pos, ch: []const u8) ![]const TypeEdit {
+        const v = try w.request("textDocument/onTypeFormatting", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .position = .{ .line = p.line, .character = p.col },
+            .ch = ch,
+        });
+        var out: std.ArrayList(TypeEdit) = .empty;
+        for (json.items(v)) |e| try out.append(w.a(), .{
+            .start = json.int(json.path(e, &.{ "range", "start", "character" })) orelse -1,
+            .end = json.int(json.path(e, &.{ "range", "end", "character" })) orelse -1,
+            .new_text = json.str(json.get(e, "newText")) orelse "",
+        });
+        return out.items;
+    }
+
     /// The active signature's label (the first one's when none is active),
     /// the active parameter, and how many signatures there are
     pub const Signature = struct { label: []const u8, active: i64, count: usize = 1 };

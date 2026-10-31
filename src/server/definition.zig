@@ -324,7 +324,7 @@ fn implicitHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value
     const line = params.position.line;
     const col = Server.toByteCol(file, line, params.position.character);
     const st = selection.statementLines(file, line);
-    for (try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, st.first, st.last)) |u| {
+    for (try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, st.first, st.last, self.fixedLimit())) |u| {
         if (u.line != line or col < u.start or col > u.end) continue;
         const t = implicit.typeOf(u.scope, u.name) orelse return .null;
         const msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ t, u.name });

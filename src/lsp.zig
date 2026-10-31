@@ -160,6 +160,7 @@ pub const ServerCapabilities = struct {
     renameProvider: json.Value = .{ .bool = true },
     selectionRangeProvider: bool = true,
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
+    documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
     workspaceSymbolProvider: bool = true,
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
@@ -265,3 +266,9 @@ pub const SelectionRange = struct { range: Range, parent: ?*const SelectionRange
 pub const DocumentLink = struct { range: Range, target: []const u8 };
 
 pub const PrepareRenameResult = struct { range: Range, placeholder: []const u8 };
+
+pub const OnTypeFormattingParams = struct {
+    textDocument: TextDocumentIdentifier,
+    position: Position,
+    ch: []const u8,
+};

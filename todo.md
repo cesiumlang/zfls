@@ -60,7 +60,7 @@ projects zfls replaces:
   them, its directives and comments. MF #617, MF #715. Linting through fypp
   (any compiler: fypp writes a file with line markers) came with 0.3.
   MF #215, MF #615
-- [ ] Fixed form: configurable code column limit (72/80/132), paste and
+- [x] Fixed form: configurable code column limit (72/80/132), paste and
   indentation behavior. MF #87, MF #199, MF #254, MF #168, MF #177
 
 ## Later

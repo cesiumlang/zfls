@@ -8,9 +8,6 @@
       "patterns": [
         {
           "include": "#line-header"
-        },
-        {
-          "include": "#line-end-comment"
         }
       ]
     }
@@ -59,11 +56,6 @@
           "end": "\\n"
         }
       ]
-    },
-    "line-end-comment": {
-      "name": "comment.line-end.fortran",
-      "begin": "(?<=^.{72})(?!\\n)",
-      "end": "(?=\\n)"
     },
     "line-header": {
       "match": "^(?!\\s*[!#])(?:([ \\d]{5} )|( {5}.)|(\\t)|(.{1,5}))",
