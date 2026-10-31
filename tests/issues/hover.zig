@@ -921,3 +921,19 @@ test "MPI stubs: hover, signature help and completion of mpi and mpi_f08" {
     // no module-not-found, and no warnings about MPI names
     try w.expectNoDiagnostics("m.f90");
 }
+
+test "coarrays: hover shows the codimension, from the name or the attribute" {
+    const w = try h.Workspace.init(&.{.{ .name = "c.f90", .text =
+        \\program c
+        \\  implicit none
+        \\  real :: x[*]
+        \\  real, codimension[2,*] :: y(10)
+        \\  x = 1.0
+        \\  y(1)[1,1] = x[2]
+        \\end program c
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("c.f90", w.pos("c.f90", "x = 1.0", 0, 0), "REAL, CODIMENSION[*] :: x");
+    try w.expectHoverContains("c.f90", w.pos("c.f90", "y(1)[1,1]", 0, 0), "REAL, CODIMENSION[2,*], DIMENSION(10) :: y");
+}

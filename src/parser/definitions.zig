@@ -109,7 +109,19 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
     while (keyword_match) |m| {
         var tmp_str: []const u8 = lstripChars(m.str(), ", ");
         test_str = test_str[m.end(0)..];
-        if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension")) {
+        if (std.ascii.startsWithIgnoreCase(tmp_str, "codimension")) {
+            // the cobounds, up to the matching `]`
+            var depth: usize = 1;
+            const close = for (test_str, 0..) |ch, i| {
+                if (ch == '[') depth += 1;
+                if (ch == ']') {
+                    depth -= 1;
+                    if (depth == 0) break i;
+                }
+            } else break;
+            tmp_str = try std.mem.concat(a, u8, &.{ tmp_str, test_str[0 .. close + 1] });
+            test_str = test_str[close + 1 ..];
+        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension")) {
             const mc = helpers.findParenMatch(test_str);
             if (mc < 0) break;
             const mcu: usize = @intCast(mc);

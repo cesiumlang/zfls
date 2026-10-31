@@ -562,11 +562,14 @@ pub const KeywordInfo = struct {
     intent: ?[]const u8 = null,
     dimension: ?[]const u8 = null,
     pass: ?[]const u8 = null,
+    /// the cobounds of a coarray, `*` of `[*]`
+    codimension: ?[]const u8 = null,
 
     pub fn get(self: KeywordInfo, key: []const u8) ?[]const u8 {
         if (std.mem.eql(u8, key, "intent")) return self.intent;
         if (std.mem.eql(u8, key, "dimension")) return self.dimension;
         if (std.mem.eql(u8, key, "pass")) return self.pass;
+        if (std.mem.eql(u8, key, "codimension")) return self.codimension;
         return null;
     }
 
@@ -575,6 +578,7 @@ pub const KeywordInfo = struct {
             .intent = try str.dupeOpt(a, self.intent),
             .dimension = try str.dupeOpt(a, self.dimension),
             .pass = try str.dupeOpt(a, self.pass),
+            .codimension = try str.dupeOpt(a, self.codimension),
         };
     }
 };
@@ -586,10 +590,13 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
     var ids: std.ArrayList(constants.Kw) = .empty;
     var info: KeywordInfo = .{};
     for (keywords) |kw| {
-        const prefix_raw = str.strip(str.beforeFirst(kw, "("));
+        const prefix_raw = str.strip(str.beforeFirst(str.beforeFirst(kw, "("), "["));
         const prefix = try std.ascii.allocLowerString(a, prefix_raw);
         const id = constants.Kw.fromName(prefix) orelse continue;
         try ids.append(a, id);
+        if (id == .codimension) if (std.mem.indexOfScalar(u8, kw, '[')) |o| if (std.mem.lastIndexOfScalar(u8, kw, ']')) |c| {
+            if (c > o) info.codimension = kw[o + 1 .. c];
+        };
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
             if (getParenSubstring(kw)) |sub| {
                 if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
@@ -608,7 +615,10 @@ pub fn getKeywords(a: Allocator, ids: []const constants.Kw, info: KeywordInfo) !
         const rep = @tagName(id);
         const up = try std.ascii.allocUpperString(a, rep);
         if (info.get(rep)) |addl| {
-            try out.append(a, try std.fmt.allocPrint(a, "{s}({s})", .{ up, addl }));
+            // cobounds go in brackets
+            const fmt_open: []const u8 = if (id == .codimension) "[" else "(";
+            const fmt_close: []const u8 = if (id == .codimension) "]" else ")";
+            try out.append(a, try std.fmt.allocPrint(a, "{s}{s}{s}{s}", .{ up, fmt_open, addl, fmt_close }));
         } else {
             try out.append(a, up);
         }
