@@ -35,6 +35,7 @@ const definition = @import("server/definition.zig");
 const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
 const diagnostics = @import("server/diagnostics.zig");
+const hints = @import("server/hints.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -275,6 +276,7 @@ pub const Server = struct {
         selection_range,
         document_link,
         on_type_formatting,
+        inlay_hint,
         did_open,
         did_save,
         did_close,
@@ -304,6 +306,7 @@ pub const Server = struct {
         .{ "textDocument/selectionRange", .selection_range },
         .{ "textDocument/documentLink", .document_link },
         .{ "textDocument/onTypeFormatting", .on_type_formatting },
+        .{ "textDocument/inlayHint", .inlay_hint },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -336,6 +339,7 @@ pub const Server = struct {
             .selection_range => definition.serveSelectionRanges(self, a, try json.decode(lsp.SelectionRangeParams, a, params)),
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
+            .inlay_hint => hints.serveInlayHints(self, a, try json.decode(lsp.InlayHintParams, a, params)),
             .did_open => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
@@ -396,7 +400,7 @@ pub const Server = struct {
     }
 
     /// Byte offset on a file line -> LSP character offset
-    fn toLspCol(file: ?*const FortranFile, line: usize, col: usize) usize {
+    pub fn toLspCol(file: ?*const FortranFile, line: usize, col: usize) usize {
         if (col == 0) return 0;
         const f = file orelse return col;
         const text = f.getLine(line, false) orelse return col;
