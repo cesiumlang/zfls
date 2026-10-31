@@ -24,7 +24,7 @@
       "default": []
     },
     "incl_suffixes": {
-      "description": "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP (lower & upper casing))",
+      "description": "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP, .CUF (lower & upper casing))",
       "type": "array",
       "items": {
         "type": "string"

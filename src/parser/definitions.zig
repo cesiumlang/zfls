@@ -601,7 +601,24 @@ pub fn canStart(entry: DefTestEntry, word: []const u8) bool {
 /// Only the tests whose pattern can begin with the line's first word run,
 /// in order; a line without a usable first word runs all of them. Debug builds
 /// also run all of them and check that the result is the same.
+/// A procedure statement after the CUDA Fortran prefix
+/// `attributes(global|device|host|grid_global)`: the rest of the line
+pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
+    const t = std.mem.trimStart(u8, line, " \t");
+    if (!std.ascii.startsWithIgnoreCase(t, "attributes")) return null;
+    var rest = std.mem.trimStart(u8, t["attributes".len..], " \t");
+    if (rest.len == 0 or rest[0] != '(') return null;
+    const close = std.mem.indexOfScalar(u8, rest, ')') orelse return null;
+    for (rest[1..close]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == ',' or c == ' ')) return null;
+    rest = std.mem.trimStart(u8, rest[close + 1 ..], " \t");
+    if (rest.len == 0 or !std.ascii.isAlphabetic(rest[0])) return null;
+    return rest;
+}
+
 pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
+    // CUDA Fortran kernels and device procedures (`attributes(global)
+    // subroutine k(...)`) are procedures
+    if (afterCudaAttributes(line)) |rest| return getFortranDefinition(a, rest);
     var buf: [32]u8 = undefined;
     const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
     const found = try runDefTests(a, line, word);

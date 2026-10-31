@@ -405,3 +405,8 @@ unshifted
 
 gdb
 oneAPI
+cudafor
+cublas
+cufft
+curand
+cusparse

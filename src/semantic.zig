@@ -358,6 +358,8 @@ const statement_keywords = [_][]const u8{
     "errorstop",       "syncall",       "syncimages",  "syncmemory",      "endfile",
     // DEC structures
     "structure",       "record",        "union",       "map",
+    // CUDA Fortran
+                "attributes",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -374,7 +376,7 @@ const spec_keywords = [_][]const u8{
     "protected",   "public",      "pure",         "real",            "recursive",     "save",
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
-    "record",      "union",       "map",
+    "record",      "union",       "map",          "attributes",
 };
 
 fn isSpecKeyword(word: []const u8) bool {

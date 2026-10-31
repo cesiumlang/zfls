@@ -74,7 +74,11 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
     if (pl.sections[0].start <= 1) return null;
     const arg_string = str.slice(line_prefix, pl.sections[0].start, pl.sections[pl.sections.len - 1].end);
     const pl2 = try helpers.getParenLevel(a, str.slice(line_prefix, 0, pl.sections[0].start - 1));
-    const sub_name_raw = str.strip(pl2.str);
+    var sub_name_raw = str.strip(pl2.str);
+    // a CUDA Fortran kernel launch, `call k<<<grid, block>>>(args)`
+    if (std.mem.endsWith(u8, sub_name_raw, ">>>")) {
+        if (std.mem.indexOf(u8, sub_name_raw, "<<<")) |i| sub_name_raw = str.strip(sub_name_raw[0..i]);
+    }
     const arg_strings = try helpers.splitArgs(a, arg_string);
     const sub_end = pl2.sections[pl2.sections.len - 1].start;
 

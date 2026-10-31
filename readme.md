@@ -39,6 +39,9 @@ command line options and configuration files.
   documentation comments
 - DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and
   `.` between a variable and its component (`rec.field`)
+- CUDA Fortran: `attributes(global)` and `attributes(device)` procedures,
+  signature help in a kernel launch (`call k<<<grid, block>>>(...)`), `.cuf`
+  files
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
 - Documentation for intrinsic procedures, statements, keywords and the
@@ -267,6 +270,11 @@ zfls deliberately differs from fortls in a few places:
   fortls only checks the types named in declarations. It is left out where
   a USE statement names a module that is not in the workspace or an
   INCLUDE file is not found, as the name could come from those.
+- CUDA Fortran: a procedure with `attributes(...)` is a procedure,
+  signature help reads past a kernel's `<<<grid, block>>>`, `.cuf` and `.CUF`
+  files are Fortran sources, and the modules of NVIDIA's compiler (`cudafor`,
+  `cublas`, `cufft`, `curand`, `cusparse`, ...) are external modules, never
+  "not found". fortls reads none of these.
 - DEC structures are read (fortls #171): `STRUCTURE /name/` is a derived
   type, `RECORD /name/ a, b` declares variables of it, the fields of
   `UNION`/`MAP` blocks are fields of the structure, and a nested structure
