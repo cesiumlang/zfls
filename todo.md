@@ -23,17 +23,20 @@ projects zfls replaces:
 - [x] Auto-`use` completion: complete public names from modules the scope
   does not use yet, adding the `use` statement; an "add use" quick fix for
   undefined names. HS #62
-- [~] Smaller LSP features:
+- [x] Smaller LSP features:
   - [x] `textDocument/prepareRename` (reject intrinsics and keywords before
     the user types a new name)
   - [x] `textDocument/selectionRange` (expand selection by expression,
     statement, block, scope)
   - [x] `textDocument/documentLink` (`include` and `#include` files)
-  - [ ] `completionItem/resolve` (documentation on demand)
+  - [x] `completionItem/resolve` (documentation on demand): not needed,
+    completion with documentation takes 0.3 ms (median, json-fortran)
   - [x] Fuzzy workspace symbol search. HS #195
   - [x] `$/cancelRequest`
   - [x] Indexing progress (`workDoneProgress`). FL #417, MF #757
-- [ ] Benchmark find-references across a large multi-file workspace
+- [x] Benchmark find-references across a large multi-file workspace:
+  json-fortran (61 files, 12k-line `json_value_module.F90`, ReleaseSafe),
+  references median 1.5 ms, p95 12 ms; initialization 58 ms; 55 MiB
 - [ ] Split the largest source files (`server.zig`, `objects.zig`,
   `parser.zig`, `regex.zig`) into smaller modules
 
