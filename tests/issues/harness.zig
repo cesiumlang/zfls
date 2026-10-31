@@ -354,16 +354,20 @@ pub const Workspace = struct {
         return out.items;
     }
 
-    pub const Signature = struct { label: []const u8, active: i64 };
+    /// The active signature's label (the first one's when none is active),
+    /// the active parameter, and how many signatures there are
+    pub const Signature = struct { label: []const u8, active: i64, count: usize = 1 };
 
     pub fn signature(w: *Workspace, name: []const u8, p: Pos) !?Signature {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/signatureHelp", try w.posParams(name, p));
         if (v == .null) return null;
         const sigs = json.items(json.get(v, "signatures"));
         if (sigs.len == 0) return null;
+        const which: usize = @intCast(@min(json.int(json.get(v, "activeSignature")) orelse 0, @as(i64, @intCast(sigs.len - 1))));
         return .{
-            .label = json.str(json.get(sigs[0], "label")) orelse "",
+            .label = json.str(json.get(sigs[which], "label")) orelse "",
             .active = json.int(json.get(v, "activeParameter")) orelse -1,
+            .count = sigs.len,
         };
     }
 

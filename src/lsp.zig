@@ -103,11 +103,14 @@ pub const SignatureInformation = struct {
     label: []const u8,
     parameters: []const ParameterInformation,
     documentation: ?MarkupContent = null,
+    /// of this signature, when there are several (a generic interface)
+    activeParameter: ?i64 = null,
 };
 
 pub const SignatureHelp = struct {
     signatures: []const SignatureInformation,
     activeParameter: i64,
+    activeSignature: ?i64 = null,
 };
 
 pub const CodeAction = struct {

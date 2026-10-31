@@ -236,6 +236,10 @@ zfls deliberately differs from fortls in a few places:
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
 - Line length diagnostics are not duplicated when a file is checked again.
+- On a call of a generic interface, signature help shows the signature of
+  each of its procedures, the one the arguments so far fit active (fortls
+  #6), and go to definition goes to that procedure (hansec #135); fortls
+  shows no signature and goes to the interface.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.
