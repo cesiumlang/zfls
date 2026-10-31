@@ -162,11 +162,15 @@ fn tolerate(r: anytype) !void {
 }
 
 fn exercise(rng: std.Random, text: []const u8, name: []const u8) !void {
-    const w = try h.Workspace.init(&.{.{ .name = name, .text = "" }}, .{ .settings = .{ .incremental_sync = true } });
+    const w = try h.Workspace.init(&.{.{ .name = name, .text = "" }}, .{
+        .settings = .{ .incremental_sync = true },
+        .hierarchical_symbols = rng.boolean(),
+    });
     defer w.deinit();
     try tolerate(w.replaceText(name, text));
     try tolerate(w.diagnostics(name));
     try tolerate(w.documentSymbols(name));
+    try tolerate(w.foldingRanges(name));
     try tolerate(w.workspaceSymbols("a"));
     var n_lines: usize = 1;
     for (text) |c| n_lines += @intFromBool(c == '\n');

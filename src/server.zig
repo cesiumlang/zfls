@@ -19,6 +19,7 @@ const intrinsics = @import("intrinsics.zig");
 const settings_mod = @import("settings.zig");
 const glob = @import("glob.zig");
 const Logger = @import("logger.zig");
+const outline = @import("outline.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -69,6 +70,8 @@ pub const Server = struct {
     obj_tree: objects.ObjTree = .empty,
     link_version: i64 = 0,
     sync_type: i32 = 1,
+    /// The client takes `DocumentSymbol` trees, not fortls's flat list
+    hierarchical_symbols: bool = false,
     post_messages: std.ArrayList(PostMessage) = .empty,
     src_ext_regex: regex.Regex,
     intr: intrinsics.Intrinsics,
@@ -222,6 +225,7 @@ pub const Server = struct {
     const Method = enum {
         initialize,
         document_symbol,
+        folding_range,
         completion,
         signature_help,
         definition,
@@ -244,6 +248,7 @@ pub const Server = struct {
     const methods = std.StaticStringMap(Method).initComptime(.{
         .{ "initialize", .initialize },
         .{ "textDocument/documentSymbol", .document_symbol },
+        .{ "textDocument/foldingRange", .folding_range },
         .{ "textDocument/completion", .completion },
         .{ "textDocument/signatureHelp", .signature_help },
         .{ "textDocument/definition", .definition },
@@ -271,6 +276,7 @@ pub const Server = struct {
         return switch (methods.get(method) orelse return error.MethodNotFound) {
             .initialize => self.serveInitialize(a, try json.decode(lsp.InitializeParams, a, params)),
             .document_symbol => self.serveDocumentSymbols(a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .folding_range => self.serveFoldingRanges(a, try json.decode(lsp.TextDocumentParams, a, params)),
             .completion => self.serveAutocomplete(a, try json.decode(lsp.PositionParams, a, params)),
             .signature_help => self.serveSignature(a, try json.decode(lsp.PositionParams, a, params)),
             .definition => self.serveDefinition(a, try json.decode(lsp.PositionParams, a, params)),
@@ -380,6 +386,7 @@ pub const Server = struct {
             root_in = s;
         };
         self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
+        self.hierarchical_symbols = params.capabilities.textDocument.documentSymbol.hierarchicalDocumentSymbolSupport;
         try self.s.source_dirs.add(sa, self.root_path);
 
         try self.loadConfigFile(a);
@@ -809,6 +816,7 @@ pub const Server = struct {
         const uri = params.textDocument.uri;
         const file = (try self.fileFromUri(a, uri)) orelse return .{ .array = .init(a) };
         const ast = file.ast orelse return .{ .array = .init(a) };
+        if (self.hierarchical_symbols) return json.from(a, try outline.documentSymbols(a, file, ast, self.s.symbol_skip_mem));
         var out: std.ArrayList(lsp.SymbolInformation) = .empty;
         for (try ast.getScopes(a, null)) |scope| {
             if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
@@ -817,29 +825,23 @@ pub const Server = struct {
             if (tree.len > 2) {
                 if (std.mem.startsWith(u8, tree[1], "#gen_int")) scope_type = 11 else continue;
             } else {
-                scope_type = mapDocSymbolType(scope.getType(false), false);
+                scope_type = outline.flatKind(scope.getType(false), false);
             }
             const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
             try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
             if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
                 for (scope.childList()) |child| {
-                    try out.append(a, symbolOf(child.name, mapDocSymbolType(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
+                    try out.append(a, symbolOf(child.name, outline.flatKind(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
                 }
             }
         }
         return json.from(a, out.items);
     }
 
-    fn mapDocSymbolType(t: C.TypeId, in_class: bool) i64 {
-        return switch (t) {
-            .module, .submodule => 2,
-            .subroutine, .function => if (in_class) 6 else 12,
-            .class => 5,
-            .interface => 11,
-            .variable => 13,
-            .method => 6,
-            else => 1,
-        };
+    fn serveFoldingRanges(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+        const ast = file.ast orelse return .null;
+        return json.from(a, try outline.foldingRanges(a, file, ast));
     }
 
     // ----------------------------------------------------------------------

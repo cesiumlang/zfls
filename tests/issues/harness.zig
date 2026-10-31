@@ -53,6 +53,9 @@ pub const Repo = enum {
     fortls,
     /// hansec/fortran-language-server, which fortls was forked from
     hansec,
+    /// fortran-lang/vscode-fortran-support (Modern Fortran), the VS Code
+    /// extension that runs fortls
+    modern_fortran,
 };
 
 /// Evaluate the outcome `result` of a test's expectations for fortls issue
@@ -101,6 +104,9 @@ pub const Edit = struct { uri: []const u8, line: i64, start: i64, end: i64, new_
 
 pub const File = struct { name: []const u8, text: []const u8 };
 
+/// A folding range: 0-based first and last lines
+pub const Fold = struct { start: i64, end: i64 };
+
 pub const Link = struct { name: []const u8, target: []const u8 };
 
 pub const Options = struct {
@@ -113,6 +119,8 @@ pub const Options = struct {
     unreadable: []const []const u8 = &.{},
     /// `--pp_defs`
     pp_defs: []const zfls.settings.PpDef = &.{},
+    /// the client takes a tree of document symbols (as VS Code does)
+    hierarchical_symbols: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -150,7 +158,7 @@ pub const Workspace = struct {
         for (opts.unreadable) |d| {
             if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
             try w.tmp.dir.createDirPath(io, d);
-            w.tmp.dir.setFilePermissions(io, d, @enumFromInt(0), .{}) catch return error.SkipZigTest;
+            w.tmp.dir.setFilePermissions(io, d, @fromBackingInt(@intCast(0)), .{}) catch return error.SkipZigTest;
             // root reads it anyway
             if (w.tmp.dir.openDir(io, d, .{ .iterate = true })) |opened| {
                 opened.close(io);
@@ -166,7 +174,12 @@ pub const Workspace = struct {
         for (opts.pp_defs) |d| try settings.pp_defs.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
-        _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{ .rootPath = w.root }));
+        _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
+            .rootPath = w.root,
+            .capabilities = .{ .textDocument = .{ .documentSymbol = .{
+                .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols,
+            } } },
+        }));
         return w;
     }
 
@@ -349,6 +362,35 @@ pub const Workspace = struct {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/documentSymbol", try w.docParams(name));
         var out: std.ArrayList([]const u8) = .empty;
         for (json.items(v)) |s| try out.append(w.a(), json.str(json.get(s, "name")) orelse "");
+        return out.items;
+    }
+
+    /// The document symbols of a client with `hierarchical_symbols`, as
+    /// paths from the outermost (`mod/proc/var`), parents before children
+    pub fn symbolPaths(w: *Workspace, name: []const u8) ![]const []const u8 {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/documentSymbol", try w.docParams(name));
+        var out: std.ArrayList([]const u8) = .empty;
+        try w.appendSymbolPaths(v, "", &out);
+        return out.items;
+    }
+
+    fn appendSymbolPaths(w: *Workspace, v: Value, prefix: []const u8, out: *std.ArrayList([]const u8)) !void {
+        for (json.items(v)) |s| {
+            const sym = json.str(json.get(s, "name")) orelse "";
+            const p = if (prefix.len == 0) sym else try std.fmt.allocPrint(w.a(), "{s}/{s}", .{ prefix, sym });
+            try out.append(w.a(), p);
+            if (json.get(s, "children")) |c| try w.appendSymbolPaths(c, p, out);
+        }
+    }
+
+    /// The folding ranges of a file, as 0-based `start-end` line pairs
+    pub fn foldingRanges(w: *Workspace, name: []const u8) ![]const Fold {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/foldingRange", try w.docParams(name));
+        var out: std.ArrayList(Fold) = .empty;
+        for (json.items(v)) |f| try out.append(w.a(), .{
+            .start = json.int(json.get(f, "startLine")) orelse -1,
+            .end = json.int(json.get(f, "endLine")) orelse -1,
+        });
         return out.items;
     }
 
