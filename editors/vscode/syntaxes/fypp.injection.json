@@ -1,0 +1,167 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "source.fypp.injection",
+  "injectionSelector": "L:source.fortran.free -comment",
+  "patterns": [
+    {
+      "include": "#fypp-comment"
+    },
+    {
+      "include": "#fypp-directive"
+    },
+    {
+      "include": "#fypp-eval-line"
+    },
+    {
+      "include": "#fypp-macro-call"
+    },
+    {
+      "include": "#fypp-inline-eval"
+    },
+    {
+      "include": "#fypp-inline-directive"
+    },
+    {
+      "include": "#fypp-inline-macro"
+    }
+  ],
+  "repository": {
+    "fypp-comment": {
+      "name": "comment.line.fypp",
+      "match": "^\\s*#!.*$"
+    },
+    "fypp-directive": {
+      "name": "meta.preprocessor.fypp",
+      "begin": "^\\s*(#:)\\s*(set|del|for|endfor|if|elif|else|endif|def|enddef|call|endcall|block|endblock|contains|include|mute|endmute|global|stop|assert)\\b",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.directive.fypp"
+        },
+        "2": {
+          "name": "keyword.control.directive.fypp"
+        }
+      },
+      "end": "(?<!&)$",
+      "patterns": [
+        {
+          "include": "#fypp-python"
+        }
+      ]
+    },
+    "fypp-eval-line": {
+      "name": "meta.embedded.line.fypp",
+      "begin": "^\\s*(\\$:)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.directive.fypp"
+        }
+      },
+      "end": "(?<!&)$",
+      "patterns": [
+        {
+          "include": "#fypp-python"
+        }
+      ]
+    },
+    "fypp-macro-call": {
+      "name": "meta.function-call.fypp",
+      "match": "^\\s*(@:)\\s*([A-Za-z_]\\w*)",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.directive.fypp"
+        },
+        "2": {
+          "name": "entity.name.function.macro.fypp"
+        }
+      }
+    },
+    "fypp-inline-eval": {
+      "name": "meta.embedded.inline.fypp",
+      "begin": "\\$\\{",
+      "end": "\\}\\$",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.fypp"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.fypp"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#fypp-python"
+        }
+      ]
+    },
+    "fypp-inline-directive": {
+      "name": "meta.embedded.inline.fypp",
+      "begin": "#\\{",
+      "end": "\\}#",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.fypp"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.fypp"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\b(set|del|for|endfor|if|elif|else|endif|call|endcall|block|endblock|contains|include|mute|endmute|global|stop|assert)\\b",
+          "name": "keyword.control.directive.fypp"
+        },
+        {
+          "include": "#fypp-python"
+        }
+      ]
+    },
+    "fypp-python": {
+      "patterns": [
+        {
+          "match": "\\b(in|not|and|or|is|if|else|for|lambda|None|True|False)\\b",
+          "name": "keyword.operator.fypp"
+        },
+        {
+          "match": "'[^']*'|\"[^\"]*\"",
+          "name": "string.quoted.fypp"
+        },
+        {
+          "match": "\\b\\d+(\\.\\d*)?\\b",
+          "name": "constant.numeric.fypp"
+        },
+        {
+          "match": "\\b[A-Za-z_]\\w*(?=\\s*\\()",
+          "name": "entity.name.function.fypp"
+        },
+        {
+          "match": "\\b[A-Za-z_]\\w*\\b",
+          "name": "variable.other.fypp"
+        }
+      ]
+    },
+    "fypp-inline-macro": {
+      "name": "meta.function-call.fypp",
+      "begin": "@\\{",
+      "end": "\\}@",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.fypp"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.fypp"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#fypp-python"
+        }
+      ]
+    }
+  }
+}

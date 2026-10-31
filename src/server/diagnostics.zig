@@ -59,6 +59,8 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
     if (file.nLines() == 0) return out.items;
     for (ast.include_statements.items) |inc| if (inc.file == null) return out.items;
+    // fypp's loops, macros and variables make names zfls cannot see
+    if (usesFypp(file)) return out.items;
     const names = try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, 0, file.nLines() - 1);
     if (names.len == 0) return out.items;
     // whether the modules each scope uses are all known
@@ -98,6 +100,18 @@ fn reexportedRenames(self: *Server, a: Allocator) !std.StringHashMapUnmanaged(vo
         }
     }
     return out;
+}
+
+/// Whether `file` has fypp directives (`#:for`, `#:set`, ...) or inline
+/// expressions (`${...}$`)
+fn usesFypp(file: *const FortranFile) bool {
+    for (0..file.nLines()) |i| {
+        const text = file.getLine(i, false) orelse continue;
+        const t = std.mem.trimStart(u8, text, " \t");
+        if (std.mem.startsWith(u8, t, "#:") or std.mem.startsWith(u8, t, "$:") or std.mem.startsWith(u8, t, "@:")) return true;
+        if (std.mem.indexOf(u8, text, "${") != null) return true;
+    }
+    return false;
 }
 
 /// Whether every module that `scope`, the scopes around it and the
