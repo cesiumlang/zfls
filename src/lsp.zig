@@ -203,6 +203,11 @@ pub const CodeActionParams = struct {
 
 pub const WorkspaceSymbolParams = struct { query: []const u8 };
 
+/// `type`: 1 created, 2 changed, 3 deleted
+pub const FileEvent = struct { uri: []const u8, type: i64 };
+
+pub const DidChangeWatchedFilesParams = struct { changes: []const FileEvent };
+
 pub const ContentChange = struct {
     range: ?Range = null,
     text: []const u8,
