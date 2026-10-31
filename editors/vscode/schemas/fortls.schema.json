@@ -126,6 +126,11 @@
       "type": "integer",
       "default": -1
     },
+    "fixed_line_length": {
+      "description": "Columns of code in a fixed-form line, as gfortran's -ffixed-line-length-n (72, 80, 132): the rest is highlighted as a comment and is not read for names (default: -1, no limit)",
+      "type": "integer",
+      "default": -1
+    },
     "disable_diagnostics": {
       "description": "Disable diagnostics",
       "type": "boolean",

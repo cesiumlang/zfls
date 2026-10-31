@@ -61,7 +61,7 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
     for (ast.include_statements.items) |inc| if (inc.file == null) return out.items;
     // fypp's loops, macros and variables make names zfls cannot see
     if (usesFypp(file)) return out.items;
-    const names = try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, 0, file.nLines() - 1);
+    const names = try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, 0, file.nLines() - 1, self.fixedLimit());
     if (names.len == 0) return out.items;
     // whether the modules each scope uses are all known
     var known: std.AutoHashMapUnmanaged(*Obj, bool) = .empty;

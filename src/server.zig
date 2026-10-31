@@ -274,6 +274,7 @@ pub const Server = struct {
         prepare_rename,
         selection_range,
         document_link,
+        on_type_formatting,
         did_open,
         did_save,
         did_close,
@@ -302,6 +303,7 @@ pub const Server = struct {
         .{ "textDocument/prepareRename", .prepare_rename },
         .{ "textDocument/selectionRange", .selection_range },
         .{ "textDocument/documentLink", .document_link },
+        .{ "textDocument/onTypeFormatting", .on_type_formatting },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -333,6 +335,7 @@ pub const Server = struct {
             .prepare_rename => references.servePrepareRename(self, a, try json.decode(lsp.PositionParams, a, params)),
             .selection_range => definition.serveSelectionRanges(self, a, try json.decode(lsp.SelectionRangeParams, a, params)),
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
             .did_open => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
@@ -357,6 +360,11 @@ pub const Server = struct {
 
     fn serveExit(self: *Server) void {
         self.running = false;
+    }
+
+    /// `fixed_line_length` when it limits fixed-form lines
+    pub fn fixedLimit(self: *const Server) ?usize {
+        return if (self.s.fixed_line_length > 0) @intCast(self.s.fixed_line_length) else null;
     }
 
     // Requests other files make directly (the handlers are in server/)

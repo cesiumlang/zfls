@@ -62,6 +62,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.nthreads` | zfls's (4) | Threads used for indexing |
 | `zfls.maxLineLength` | `-1` (off) | Warn about longer code lines |
 | `zfls.maxCommentLineLength` | `-1` (off) | Warn about longer comment lines |
+| `zfls.fixedFormLineLength` | `72` | Columns of code in a fixed-form line (80 or 132 for longer cards); the rest is shown as a comment |
 | `zfls.configFile` | empty | Configuration file instead of `.fortlsrc` / `.fortls.json` / `.fortls` |
 | `zfls.sourceDirs` | the workspace folder | Folders with source files (globs allowed) |
 | `zfls.includeDirs` | none | Folders searched for `#include` and `INCLUDE` files |

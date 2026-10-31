@@ -270,6 +270,14 @@ zfls deliberately differs from fortls in a few places:
   fortls only checks the types named in declarations. It is left out where
   a USE statement names a module that is not in the workspace or an
   INCLUDE file is not found, as the name could come from those.
+- `fixed_line_length` (as gfortran's `-ffixed-line-length-n`: 72, 80, 132)
+  makes the columns past it of a fixed-form line a comment: a `comment`
+  semantic token, and no names there. The VS Code extension passes 72 by
+  default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
+  code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- Typing `#` first on an indented line moves it to the first column
+  (`textDocument/onTypeFormatting`, Modern Fortran #177); fortls has no
+  on-type formatting.
 - fypp: the words of inline expressions (`${...}$`), eval lines (`$:`) and
   macro calls (`@:`) are no Fortran names, and a file with fypp directives
   gets no `undeclared-name` warnings, as fypp's loops and macros make names.

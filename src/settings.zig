@@ -73,6 +73,9 @@ pub const Settings = struct {
     // Diagnostic options
     max_line_length: i64 = -1,
     max_comment_line_length: i64 = -1,
+    /// The columns of code in a fixed-form line (gfortran's
+    /// -ffixed-line-length-n); the rest is a comment. -1: no limit
+    fixed_line_length: i64 = -1,
     disable_diagnostics: bool = false,
     /// Severities by diagnostic code (`off` to hide a code)
     diagnostic_severity: std.ArrayList(DiagLevel) = .empty,
@@ -173,6 +176,7 @@ const opts = [_]Opt{
 
     .{ .long = "max_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum line length (default: -1)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "max_comment_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum comment line length (default: -1)", .group = "Diagnostic options (error swigles)" },
+    .{ .long = "fixed_line_length", .kind = .int, .metavar = "INTEGER", .help = "Columns of code in a fixed-form line, as gfortran's -ffixed-line-length-n (72, 80, 132): the rest is highlighted as a comment and is not read for names (default: -1, no limit)", .group = "Sources file parsing options" },
     .{ .long = "disable_diagnostics", .kind = .flag, .help = "Disable diagnostics", .group = "Diagnostic options (error swigles)" },
     .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
     .{ .long = "external_modules", .kind = .list, .metavar = "[MODULES ...]", .help = "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic", .group = "Diagnostic options (error swigles)" },
@@ -463,6 +467,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Diagnostic options
     s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
+    s.fixed_line_length = jsonInt(json.get(cfg, "fixed_line_length"), s.fixed_line_length);
     s.disable_diagnostics = jsonBool(json.get(cfg, "disable_diagnostics"), s.disable_diagnostics);
     if (json.get(cfg, "diagnostic_severity")) |v| try applyDiagnosticSeverity(a, s, v);
     if (json.get(cfg, "external_modules")) |v| s.external_modules = try jsonList(a, v);

@@ -30,6 +30,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "nthreads", flag: "--nthreads", kind: "int" },
   { setting: "maxLineLength", flag: "--max_line_length", kind: "int" },
   { setting: "maxCommentLineLength", flag: "--max_comment_line_length", kind: "int" },
+  { setting: "fixedFormLineLength", flag: "--fixed_line_length", kind: "int" },
   { setting: "configFile", flag: "--config", kind: "string", path: true },
   { setting: "sourceDirs", flag: "--source_dirs", kind: "list", path: true },
   { setting: "includeDirs", flag: "--include_dirs", kind: "list", path: true },

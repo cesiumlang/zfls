@@ -177,3 +177,52 @@ test "Modern Fortran #617 fypp's inline expressions, eval lines and macro calls 
     defer w.deinit();
     try h.checkIn(.modern_fortran, 617, .fixed, expectFypp(w));
 }
+
+// a code line of 80 columns: card sequence numbers in columns 73 to 80
+const card_line = "      CALL SHOW(TOTAL)                                                  SEQ00010";
+
+fn expectFixedColumns(w: *h.Workspace, limit: usize) !void {
+    const line = w.pos("c.f", "CALL SHOW", 0, 0).line;
+    var comment = false;
+    for (try w.semanticTokens("c.f")) |t| {
+        if (t.line != line) continue;
+        if (std.mem.eql(u8, t.type, "comment")) {
+            try h.expect(std.mem.startsWith(u8, t.text, card_line[limit..]), "the comment is {s}", .{t.text});
+            comment = true;
+        }
+        try h.expect(!std.mem.eql(u8, t.text, "SEQ00010") or std.mem.eql(u8, t.type, "comment"), "SEQ00010 is a {s} token", .{t.type});
+    }
+    try h.expect(comment, "no comment token past column {d}", .{limit});
+}
+
+const card_files = [_]h.File{.{ .name = "c.f", .text = "      PROGRAM C\n      REAL TOTAL\n" ++ card_line ++ "\n      END\n" }};
+
+test "Modern Fortran #87 fixed_line_length: the columns past it are a comment" {
+    const w = try h.Workspace.init(&card_files, .{ .settings = .{ .fixed_line_length = 72 } });
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 87, .fixed, expectFixedColumns(w, 72));
+}
+
+test "fixed_line_length 132 keeps the columns up to 132 as code" {
+    const w = try h.Workspace.init(&card_files, .{ .settings = .{ .fixed_line_length = 132 } });
+    defer w.deinit();
+    for (try w.semanticTokens("c.f")) |t| try std.testing.expect(!std.mem.eql(u8, t.type, "comment"));
+}
+
+test "Modern Fortran #177 typing # first on an indented line moves it to the first column" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.F90", .text =
+        \\program p
+        \\  integer :: v
+        \\    #define TEMP 2
+        \\  v = TEMP
+        \\end program p
+        \\
+    }}, .{});
+    defer w.deinit();
+    const at = w.pos("p.F90", "#define", 0, 1);
+    const edits = try w.onTypeFormatting("p.F90", at, "#");
+    const outcome: anyerror!void = if (edits.len == 1 and edits[0].start == 0 and edits[0].end == 4 and edits[0].new_text.len == 0) {} else h.unmet("edits: {any}", .{edits});
+    try h.checkIn(.modern_fortran, 177, .fixed, outcome);
+    // not on a line where # is not first
+    try std.testing.expectEqual(@as(usize, 0), (try w.onTypeFormatting("p.F90", w.pos("p.F90", "v = TEMP", 0, 1), "#")).len);
+}
