@@ -96,7 +96,7 @@ fn record(repo: Repo, issue: u32, status: Status, why: []const u8) void {
 
 pub const Pos = struct { line: i64, col: i64 };
 
-pub const Diagnostic = struct { line: i64, severity: i64, message: []const u8 };
+pub const Diagnostic = struct { line: i64, severity: i64, message: []const u8, code: []const u8 = "" };
 
 pub const Location = struct { uri: []const u8, line: i64, col: i64 };
 
@@ -122,6 +122,10 @@ pub const Options = struct {
     unreadable: []const []const u8 = &.{},
     /// `--pp_defs`
     pp_defs: []const zfls.settings.PpDef = &.{},
+    /// `--external_modules`
+    external_modules: []const []const u8 = &.{},
+    /// `--diagnostic_severity`
+    diagnostic_severity: []const zfls.settings.DiagLevel = &.{},
     /// the client takes a tree of document symbols (as VS Code does)
     hierarchical_symbols: bool = false,
 };
@@ -175,6 +179,8 @@ pub const Workspace = struct {
         w.log.stderr_level = .off;
         var settings = opts.settings;
         for (opts.pp_defs) |d| try settings.pp_defs.append(aa, d);
+        for (opts.external_modules) |m| try settings.external_modules.add(aa, m);
+        for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
         _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
@@ -280,6 +286,7 @@ pub const Workspace = struct {
                 .line = json.int(json.path(d, &.{ "range", "start", "line" })) orelse -1,
                 .severity = json.int(json.get(d, "severity")) orelse 0,
                 .message = json.str(json.get(d, "message")) orelse "",
+                .code = json.str(json.get(d, "code")) orelse "",
             });
         }
         return out.items;

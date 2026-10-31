@@ -36,6 +36,8 @@ export const OPTIONS: readonly Option[] = [
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
   { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list" },
   { setting: "ppDefs", flag: "--pp_defs", kind: "json" },
+  { setting: "diagnosticSeverity", flag: "--diagnostic_severity", kind: "json" },
+  { setting: "externalModules", flag: "--external_modules", kind: "list" },
 ];
 
 /** A path setting of `folder` with its variables expanded; the server

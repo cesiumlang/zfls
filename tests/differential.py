@@ -250,7 +250,12 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
 def normalize(v):
     """Drop details that legitimately differ between the servers."""
     if isinstance(v, dict):
-        return {k: normalize(x) for k, x in v.items() if k != "traceback"}
+        # zfls gives each diagnostic a code and source (fortls has neither)
+        diagnostic = {"range", "message", "severity"} <= v.keys()
+        return {
+            k: normalize(x) for k, x in v.items()
+            if k != "traceback" and not (diagnostic and k in ("code", "source"))
+        }
     if isinstance(v, list):
         return [normalize(x) for x in v]
     if isinstance(v, str):

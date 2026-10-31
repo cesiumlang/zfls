@@ -21,6 +21,7 @@ const glob = @import("glob.zig");
 const Logger = @import("logger.zig");
 const outline = @import("outline.zig");
 const semantic = @import("semantic.zig");
+const suppress = @import("suppress.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -374,7 +375,14 @@ pub const Server = struct {
             info[0] = .{ .location = locationOf(uri, self.fileForPath(rel.path), rel.line, 0, null, null), .message = rel.message };
             related = info;
         }
-        return .{ .range = range, .message = d.message, .severity = d.severity, .relatedInformation = related };
+        return .{
+            .range = range,
+            .message = d.message,
+            .severity = d.severity,
+            .relatedInformation = related,
+            .code = d.code.name(),
+            .source = "zfls",
+        };
     }
 
     // ----------------------------------------------------------------------
@@ -394,6 +402,7 @@ pub const Server = struct {
         try self.s.source_dirs.add(sa, self.root_path);
 
         try self.loadConfigFile(a);
+        try self.checkDiagnosticSeverity(a);
         try self.resolveGlobsInPaths(a);
         try self.configLogger();
         try self.loadIntrinsics();
@@ -1780,9 +1789,60 @@ pub const Server = struct {
     fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
         const file = (try self.fileFromUri(a, uri)) orelse return null;
         const diags = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-        const out = try a.alloc(lsp.Diagnostic, diags.len);
-        for (diags, out) |d, *o| o.* = try self.diagnosticOf(a, file, d);
-        return out;
+        const hidden = try suppress.of(a, file);
+        var out: std.ArrayList(lsp.Diagnostic) = .empty;
+        for (diags) |d| {
+            if (hidden.hides(d.code, d.sln)) continue;
+            if (d.code == .module_not_found) if (d.subject) |m| if (self.isExternalModule(m)) continue;
+            var dd = d;
+            dd.severity = self.severityOf(d.code) orelse d.severity;
+            if (dd.severity == 0) continue;
+            try out.append(a, try self.diagnosticOf(a, file, dd));
+        }
+        return out.items;
+    }
+
+    /// LSP severities by the names `diagnostic_severity` uses; `off` is 0
+    const severity_names = std.StaticStringMap(i32).initComptime(.{
+        .{ "off", 0 },
+        .{ "error", C.Severity.err },
+        .{ "warning", C.Severity.warn },
+        .{ "information", C.Severity.info },
+        .{ "hint", C.Severity.hint },
+    });
+
+    /// The severity `diagnostic_severity` gives the diagnostics of `code`
+    /// (0: hidden), if it names it
+    fn severityOf(self: *const Server, code: C.DiagCode) ?i32 {
+        for (self.s.diagnostic_severity.items) |l| if (std.mem.eql(u8, l.code, code.name())) {
+            return severity_names.get(l.level);
+        };
+        return null;
+    }
+
+    /// Whether `external_modules` names module `name`
+    fn isExternalModule(self: *const Server, name: []const u8) bool {
+        var buf: [256]u8 = undefined;
+        if (name.len > buf.len) return false;
+        const lower = std.ascii.lowerString(&buf, name);
+        for (self.s.external_modules.slice()) |pat| {
+            var pbuf: [256]u8 = undefined;
+            if (pat.len > pbuf.len) continue;
+            if (glob.fnmatch(std.ascii.lowerString(&pbuf, pat), lower)) return true;
+        }
+        return false;
+    }
+
+    /// Warns about the codes and severities of `diagnostic_severity` that
+    /// zfls does not know
+    fn checkDiagnosticSeverity(self: *Server, a: Allocator) !void {
+        for (self.s.diagnostic_severity.items) |l| {
+            if (C.DiagCode.fromName(l.code) == null) {
+                self.postMessage(a, try std.fmt.allocPrint(a, "diagnostic_severity: unknown diagnostic code \"{s}\"", .{l.code}), C.Severity.warn);
+            } else if (severity_names.get(l.level) == null) {
+                self.postMessage(a, try std.fmt.allocPrint(a, "diagnostic_severity: \"{s}\" for \"{s}\" is not off, error, warning, information or hint", .{ l.level, l.code }), C.Severity.warn);
+            }
+        }
     }
 
     /// The diagnostics of a file as a JSON array (used by the debug CLI)

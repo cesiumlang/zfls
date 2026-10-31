@@ -223,6 +223,52 @@
           "scope": "resource",
           "markdownDescription": "Turn off zfls's diagnostics (`--disable_diagnostics`)."
         },
+        "zfls.diagnosticSeverity": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "line-too-long",
+              "comment-too-long",
+              "statement-without-scope",
+              "multiple-contains",
+              "unexpected-end",
+              "invalid-parent",
+              "procedure-before-contains",
+              "declared-twice",
+              "masks-parent",
+              "import-outside-interface",
+              "module-not-found",
+              "use-after-implicit",
+              "deferred-not-implemented",
+              "intent-not-in-arguments",
+              "argument-not-declared",
+              "not-imported",
+              "object-not-found"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "off",
+              "error",
+              "warning",
+              "information",
+              "hint"
+            ]
+          },
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Severity of zfls's diagnostics by code, `off` to hide them (`--diagnostic_severity`), e.g. `{\"masks-parent\": \"off\"}`. The code of a diagnostic shows in the Problems panel. In the code, a comment `! zfls: disable=masks-parent` hides a code on its line (`! zfls: disable` every code), `! zfls: disable-next-line=...` on the next line, and `! zfls: disable-file=...` in the file."
+        },
+        "zfls.externalModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Modules that are not in the project, such as those of MPI or PETSc, that `USE` statements may name without a \"not found\" diagnostic (`--external_modules`); glob patterns, case-insensitive, e.g. `[\"mpi\", \"petsc*\"]`."
+        },
         "zfls.notifyInit": {
           "type": "boolean",
           "default": false,

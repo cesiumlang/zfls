@@ -26,6 +26,7 @@ pub const jsonrpc = @import("jsonrpc.zig");
 pub const logger = @import("logger.zig");
 pub const outline = @import("outline.zig");
 pub const semantic = @import("semantic.zig");
+pub const suppress = @import("suppress.zig");
 pub const server = @import("server.zig");
 pub const version_info = @import("version.zig");
 pub const debug = @import("debug.zig");

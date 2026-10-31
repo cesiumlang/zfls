@@ -1245,14 +1245,14 @@ pub const FortranFile = struct {
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
                     const code_len = str.codepointLen(code);
                     if (0 < max_code and max_code < code_len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_code, .eln = ln, .ech = code_len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                        try out.append(a, .{ .sln = ln, .sch = max_code, .eln = ln, .ech = code_len, .message = msg_line, .severity = C.Severity.warn, .cols_are_codepoints = true, .code = .line_too_long });
                     }
                     if (has_comment != null and 0 < max_comment and max_comment < len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_comment, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                        try out.append(a, .{ .sln = ln, .sch = max_comment, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true, .code = .comment_too_long });
                     }
                 } else {
                     if (0 < max_comment and max_comment < len) {
-                        try out.append(a, .{ .sln = ln, .sch = max_comment, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true });
+                        try out.append(a, .{ .sln = ln, .sch = max_comment, .eln = ln, .ech = len, .message = msg_comment, .severity = C.Severity.warn, .cols_are_codepoints = true, .code = .comment_too_long });
                     }
                 }
             }
@@ -1708,7 +1708,7 @@ const Parser = struct {
                         for (info.obj_names) |w| try ast.addPublic(w);
                     }
                 } else {
-                    try ast.addError("Visibility statement without enclosing scope", C.Severity.err, line_no, 0, null);
+                    try ast.addError(.statement_without_scope, "Visibility statement without enclosing scope", C.Severity.err, line_no, 0, null);
                 }
                 p.dbg("{s} !!! VISIBILITY - Ln:{d}", .{ line, line_no });
             },
@@ -1787,7 +1787,7 @@ const Parser = struct {
         if (ast.current_scope) |cs| {
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
         } else {
-            try ast.addError("IMPLICIT statement without enclosing scope", C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
+            try ast.addError(.statement_without_scope, "IMPLICIT statement without enclosing scope", C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
         }
         p.dbg("{s} !!! IMPLICIT - Ln:{d}", .{ line, ln });
         return true;
@@ -1797,14 +1797,16 @@ const Parser = struct {
         const m = R().CONTAINS.match(line) orelse return false;
         const ast = p.file_ast;
         var msg: ?[]const u8 = null;
+        var code: C.DiagCode = .statement_without_scope;
         if (ast.current_scope) |cs| {
             cs.markContains(ln) catch {
                 msg = "Multiple CONTAINS statements in scope";
+                code = .multiple_contains;
             };
         } else {
             msg = "CONTAINS statement without enclosing scope";
         }
-        if (msg) |mm| try ast.addError(mm, C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
+        if (msg) |mm| try ast.addError(code, mm, C.Severity.err, ln, @intCast(m.start(1)), @intCast(m.end(1)));
         p.dbg("{s} !!! CONTAINS - Ln:{d}", .{ line, ln });
         return true;
     }
