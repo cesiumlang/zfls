@@ -262,7 +262,8 @@ const Tokenizer = struct {
                 }
             }
             // `.and.`, `.true.`, user operators
-            if (before == '.' and after == '.') continue;
+            // (written against the dots: `.and. len.ge.2` has the name len)
+            if (w.start > 0 and code[w.start - 1] == '.' and w.end < code.len and code[w.end] == '.' and !component_dot) continue;
             // after the digits of a literal, or after its decimal point
             // (`0._dp`, `1.d0`)
             const after_point = w.start > 1 and code[w.start - 1] == '.' and std.ascii.isDigit(code[w.start - 2]);
@@ -404,6 +405,37 @@ const inner_keywords = [_][]const u8{
     "images",  "memory", "team",       "integer",    "real",    "logical", "character",
     "complex", "double", "precision",  "type",       "class",
 };
+
+/// Words that are keywords wherever they are written (when no name of that
+/// spelling is declared): attributes, intents, construct words
+const other_keywords = [_][]const u8{
+    "in",          "out",          "inout",         "kind",      "len",     "nopass",    "pass",       "deferred",
+    "extends",     "operator",     "assignment",    "exit",      "cycle",   "go",        "goto",       "elsewhere",
+    "endif",       "enddo",        "elseif",        "endselect", "endtype", "endmodule", "endprogram", "endsubroutine",
+    "endfunction", "endinterface", "non_recursive", "simple",    "unit",    "fmt",       "iostat",     "iomsg",
+    "file",        "status",       "action",        "position",  "access",  "form",      "advance",    "stat",
+    "errmsg",      "source",       "mold",          "while",
+};
+
+/// Whether `word` is a Fortran keyword
+pub fn isKeyword(word: []const u8) bool {
+    return isStatementKeyword(word) or isSpecKeyword(word) or isEndKeyword(word) or
+        for (inner_keywords) |k| {
+            if (std.ascii.eqlIgnoreCase(word, k)) break true;
+        } else for (other_keywords) |k| {
+            if (std.ascii.eqlIgnoreCase(word, k)) break true;
+        } else false;
+}
+
+/// The positions of the names of a file, as semantic tokens (0-based line,
+/// UTF-16 start): the words there are names, not keywords
+pub fn namePositions(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) !std.AutoHashMapUnmanaged([2]usize, void) {
+    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast };
+    for (0..file.nLines()) |ln| try t.tokenizeLine(ln);
+    var out: std.AutoHashMapUnmanaged([2]usize, void) = .empty;
+    for (t.tokens.items) |tok| if (tok.type != .comment) try out.put(a, .{ tok.line, tok.start }, {});
+    return out;
+}
 
 /// A name in the code that stands for nothing found
 pub const Unknown = struct { line: usize, start: usize, end: usize, name: []const u8, scope: ?*Obj };

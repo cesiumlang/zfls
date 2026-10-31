@@ -36,7 +36,10 @@ command line options and configuration files.
   statement, constructs, procedure, module and file), links on the files of
   `#include` and `INCLUDE`, and a rename check that refuses intrinsics and
   keywords before a new name is typed
-- Code action implementing deferred type-bound procedures
+- Code actions: implementing deferred type-bound procedures, adding
+  `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
+  `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
+  title case
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
@@ -316,6 +319,13 @@ zfls deliberately differs from fortls in a few places:
   on; fortls ignores cancellations.
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
+- More code actions: "Add IMPLICIT NONE" on the first line of a program
+  unit without IMPLICIT statement, the relational operators `.eq.` ...
+  `.ge.` as `==` ... `>=` and the kinds written with `*` (`real*8`,
+  `character*10`) as kind parameters on the selected lines, and Source
+  Actions putting the keywords of a file in upper, lower or title case
+  (hansec #226, Modern Fortran #234), names spelled like keywords excepted.
+  fortls only implements deferred procedures.
 - Calls of workspace procedures are checked (`argument-mismatch`): too
   many arguments, a keyword the procedure does not have, an argument given
   twice, a required (not OPTIONAL) argument missing. Generic interfaces,

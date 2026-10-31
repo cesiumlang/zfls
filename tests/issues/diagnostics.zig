@@ -820,3 +820,37 @@ test "argument checks: count, keywords, missing arguments, INTENT(IN) assignment
     }
     for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
 }
+
+fn actionNamed(acts: []const h.Workspace.Action, title: []const u8) ?h.Workspace.Action {
+    for (acts) |act| if (std.mem.eql(u8, act.title, title)) return act;
+    return null;
+}
+
+test "quick fixes: IMPLICIT NONE, modern operators, kind parameters, keyword case" {
+    const w = try h.Workspace.init(&.{.{ .name = "q.f90", .text =
+        \\program q
+        \\  real*8 :: x
+        \\  real :: len
+        \\  len = 3
+        \\  if (x.eq.1.0d0 .and. len.ge.2) print *, 'x.eq.1'
+        \\end program q
+        \\
+    }}, .{});
+    defer w.deinit();
+    // IMPLICIT NONE after the first line of the program
+    const implicit = actionNamed(try w.codeActions("q.f90", 0), "Add IMPLICIT NONE to q") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("  implicit none\n", implicit.new_text);
+    try std.testing.expectEqual(@as(i64, 1), implicit.line);
+    const kinds = actionNamed(try w.codeActions("q.f90", 1), "Write the kinds given with * as kind parameters") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("  real(8) :: x", kinds.new_text);
+    const ops = actionNamed(try w.codeActions("q.f90", 4), "Write .eq. ... .ge. as == ... >=") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("  if (x == 1.0d0 .and. len >= 2) print *, 'x.eq.1'", ops.new_text);
+    // keyword case: a Source Action, not offered otherwise
+    try std.testing.expect(actionNamed(try w.codeActions("q.f90", 4), "Keywords in upper case") == null);
+    const src = try w.codeActionsOf("q.f90", 0, 0, &.{"source"});
+    const upper = actionNamed(src, "Keywords in upper case") orelse return error.TestUnexpectedResult;
+    // program, real, real, if, eq, and, ge, print, end, program; not the
+    // variable len
+    try std.testing.expectEqual(@as(usize, 10), upper.edits);
+    try std.testing.expectEqualStrings("PROGRAM", upper.new_text);
+}
