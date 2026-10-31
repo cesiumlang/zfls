@@ -24,6 +24,8 @@ pub fn getUseTree(
     rename_map: ?*const StrMap,
     curr_path: []const []const u8,
 ) Allocator.Error!void {
+    // what code being edited declares as a type may be no scope
+    if (scope.data != .scope) return;
     const a = env.tmp;
     const empty_set: StrSet = .{};
     const empty_map: StrMap = .{};
@@ -227,6 +229,8 @@ pub fn climbTypeTree(env: Env, var_stack: []const []const u8, curr_scope: ?*Obj)
     var n: usize = 0;
     while (n < 30) : (n += 1) {
         const type_obj = (try var_obj.getTypeObj(env)) orelse return null;
+        // a variable named like the type, while code is being edited
+        if (type_obj.data != .scope) return null;
         i_var += 1;
         if (i_var == var_stack.len - 1) return type_obj;
         const name = try std.ascii.allocLowerString(env.tmp, str.strip(var_stack[i_var]));
