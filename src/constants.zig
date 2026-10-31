@@ -31,7 +31,7 @@ pub const Kw = enum(u8) {
     }
 
     pub fn lessThan(_: void, x: Kw, y: Kw) bool {
-        return @intFromEnum(x) < @intFromEnum(y);
+        return @backingInt(x) < @backingInt(y);
     }
 };
 
@@ -58,7 +58,7 @@ pub const TypeId = enum(i32) {
 
     /// Scopes that sit inside other scopes (BLOCK, SELECT, DO, ...)
     pub fn isInnerScope(self: TypeId) bool {
-        return @intFromEnum(self) >= @intFromEnum(TypeId.block);
+        return @backingInt(self) >= @backingInt(TypeId.block);
     }
 };
 
@@ -98,11 +98,11 @@ pub const DiagCode = enum {
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {
-        return names[@intFromEnum(self)];
+        return names[@backingInt(self)];
     }
 
     pub fn fromName(s: []const u8) ?DiagCode {
-        for (names, 0..) |n, i| if (std.mem.eql(u8, n, s)) return @enumFromInt(i);
+        for (names, 0..) |n, i| if (std.mem.eql(u8, n, s)) return @fromBackingInt(@intCast(i));
         return null;
     }
 

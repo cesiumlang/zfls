@@ -1037,7 +1037,7 @@ pub const Server = struct {
             .subroutine => 3,
             .class => 7,
             .variable => 6,
-            else => @intFromEnum(t),
+            else => @backingInt(t),
         };
     }
 

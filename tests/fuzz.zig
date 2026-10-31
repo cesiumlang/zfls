@@ -96,16 +96,16 @@ const seeds = [_][]const u8{
 
 /// Fragments that make the mutated text look like Fortran
 const vocabulary = [_][]const u8{
-    "module ",         "end module ",       "program ",       "end program ",    "subroutine ",   "end subroutine ",
-    "function ",       "end function ",     "type ",          "end type ",       "contains\n",    "interface\n",
-    "end interface\n", "use ",              "only: ",         "implicit none\n", "integer ",      "real(8) ",
-    "character(len=*) ", "class(",          "procedure ",     "::",              "=>",            "(",
-    ")",               ",",                 "\n",             "&\n",             "!> doc\n",      "! comment\n",
-    "#if ",            "#endif\n",          "#define X 1\n", "#include \"a\"\n", "associate (a => b)\n", "end associate\n",
-    "block\n",         "end block\n",       "select type (",  "end select\n",    "do 10 i=1,2\n", "10 continue\n",
-    "x",               "foo",               "%",              "'",               "\"",            "[1, 2]",
-    "result(r)",       "intent(in) ",       "dimension(:) ",  "pointer ",        "abstract ",     "enum\n",
-    "end enum\n",      "where (x > 0)\n",   "end where\n",    "\t",              "\r\n",          "\xc3\xa9",
+    "module ",           "end module ",     "program ",      "end program ",     "subroutine ",          "end subroutine ",
+    "function ",         "end function ",   "type ",         "end type ",        "contains\n",           "interface\n",
+    "end interface\n",   "use ",            "only: ",        "implicit none\n",  "integer ",             "real(8) ",
+    "character(len=*) ", "class(",          "procedure ",    "::",               "=>",                   "(",
+    ")",                 ",",               "\n",            "&\n",              "!> doc\n",             "! comment\n",
+    "#if ",              "#endif\n",        "#define X 1\n", "#include \"a\"\n", "associate (a => b)\n", "end associate\n",
+    "block\n",           "end block\n",     "select type (", "end select\n",     "do 10 i=1,2\n",        "10 continue\n",
+    "x",                 "foo",             "%",             "'",                "\"",                   "[1, 2]",
+    "result(r)",         "intent(in) ",     "dimension(:) ", "pointer ",         "abstract ",            "enum\n",
+    "end enum\n",        "where (x > 0)\n", "end where\n",   "\t",               "\r\n",                 "\xc3\xa9",
 };
 
 fn mutate(rng: std.Random, a: std.mem.Allocator, text: []const u8) ![]const u8 {

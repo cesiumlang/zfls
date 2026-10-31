@@ -59,16 +59,16 @@ test "hansec #157 construct names are completed after EXIT and CYCLE" {
 
 test "statement labels: definition and references" {
     const w = try h.Workspace.init(&.{.{ .name = "old.f", .text =
-    \\      SUBROUTINE OLD(N)
-    \\      INTEGER N, I
-    \\      DO 10 I = 1, N
-    \\        IF (I .GT. 5) GO TO 20
-    \\        WRITE (6, 100) I
-    \\   10 CONTINUE
-    \\   20 RETURN
-    \\  100 FORMAT (I5)
-    \\      END
-    \\
+        \\      SUBROUTINE OLD(N)
+        \\      INTEGER N, I
+        \\      DO 10 I = 1, N
+        \\        IF (I .GT. 5) GO TO 20
+        \\        WRITE (6, 100) I
+        \\   10 CONTINUE
+        \\   20 RETURN
+        \\  100 FORMAT (I5)
+        \\      END
+        \\
     }}, .{});
     defer w.deinit();
     const def = (try w.definition("old.f", w.pos("old.f", "GO TO 20", 0, 6))) orelse return error.NoDefinition;

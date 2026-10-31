@@ -258,6 +258,9 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Source is formatted (zig fmt)
+        run: zig fmt --check build.zig build.zig.zon src tests
+
       # Downloads (lazy ones too) are retried: a dropped connection to a
       # package host should not fail the run
       - name: Fetch dependencies
