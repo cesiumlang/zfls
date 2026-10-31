@@ -21,6 +21,7 @@ const glob = @import("glob.zig");
 const Logger = @import("logger.zig");
 const outline = @import("outline.zig");
 const constructs = @import("constructs.zig");
+const arguments = @import("arguments.zig");
 const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
@@ -1108,6 +1109,33 @@ pub const Server = struct {
         return items.items;
     }
 
+    /// Inside the argument list of a call, while an argument is a bare
+    /// name: `name=` for each argument the call can name and has not named
+    /// yet (hansec #133), sorted first
+    fn keywordArgItems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, line: usize, col: usize, items: *std.ArrayList(lsp.CompletionItem)) !void {
+        const call = (try self.callAt(a, file, ast, line, col)) orelse return;
+        if (call.args.len == 0) return;
+        const typed = str.strip(call.args[call.args.len - 1]);
+        for (typed) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_')) return;
+        const keywords = try arguments.keywordsOf(a, call.obj);
+        next: for (keywords) |k| {
+            for (call.args[0 .. call.args.len - 1]) |arg| {
+                if (arguments.keywordOfArg(arg)) |given| if (std.ascii.eqlIgnoreCase(given, k.name)) continue :next;
+            }
+            if (!std.ascii.startsWithIgnoreCase(k.name, typed)) continue;
+            const name = if (k.intrinsic and self.s.lowercase_intrinsics) try std.ascii.allocLowerString(a, k.name) else k.name;
+            const label = try std.mem.concat(a, u8, &.{ name, "=" });
+            const detail = k.detail orelse if (k.optional) "OPTIONAL" else "";
+            try items.append(a, .{
+                .label = label,
+                .kind = 6,
+                .detail = detail,
+                .sortText = try std.mem.concat(a, u8, &.{ "0", name }),
+                .filterText = name,
+            });
+        }
+    }
+
     fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const uri = params.textDocument.uri;
         const file = (try self.fileFromUri(a, uri)) orelse return .null;
@@ -1236,6 +1264,7 @@ pub const Server = struct {
             },
             else => {},
         }
+        if (lc.ctx == .default and !is_member) try self.keywordArgItems(a, file, ast, ac_line, ac_char, &item_list);
         const cands = try self.getCandidates(a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
         for (cands.objs, cands.renames) |cand, rename| {
             const ctype = cand.getType(false);
@@ -1575,13 +1604,48 @@ pub const Server = struct {
         const ast = file.ast orelse return .null;
         const sig_line = params.position.line;
         const sig_char = toByteCol(file, sig_line, params.position.character);
+        const call = (try self.callAt(a, file, ast, sig_line, sig_char)) orelse return .null;
+        const vo = call.obj;
+        const arg_strings = call.args;
+        // a generic interface: the signature of each of its procedures, the
+        // first that takes the arguments so far active (fortls #6)
+        if (vo.kind == .interface and vo.memList().len > 0) {
+            var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
+            var active: ?i64 = null;
+            var active_size: usize = std.math.maxInt(usize);
+            for (vo.memList()) |member| {
+                const s = (try self.signatureOf(a, member, arg_strings)) orelse continue;
+                var info = s.info;
+                info.activeParameter = s.param;
+                if (s.fits and s.size < active_size) {
+                    active = @intCast(sigs.items.len);
+                    active_size = s.size;
+                }
+                try sigs.append(a, info);
+            }
+            if (sigs.items.len == 0) return .null;
+            const chosen: usize = @intCast(active orelse 0);
+            return json.from(a, lsp.SignatureHelp{
+                .signatures = sigs.items,
+                .activeParameter = sigs.items[chosen].activeParameter.?,
+                .activeSignature = @intCast(chosen),
+            });
+        }
+        const s = (try self.signatureOf(a, vo, arg_strings)) orelse return .null;
+        return json.from(a, lsp.SignatureHelp{ .signatures = &.{s.info}, .activeParameter = s.param });
+    }
+
+    /// The call whose argument list holds byte column `col` of 0-based line
+    /// `line`: what it calls, and its arguments up to that column (the last
+    /// is the one being written)
+    fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_line: usize, sig_char: usize) !?struct { obj: *Obj, args: []const []const u8 } {
         const cl = try file.getCodeLine(a, sig_line, false, true, false, true);
-        const curr_line = cl.curr orelse return .null;
-        const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, sig_char, true)) orelse return .null;
-        if (R().SCOPE_DEF.match(curr_line) != null or R().END.match(curr_line) != null) return .null;
+        const curr_line = cl.curr orelse return null;
+        const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, sig_char, true)) orelse return null;
+        if (R().SCOPE_DEF.match(curr_line) != null or R().END.match(curr_line) != null) return null;
         // get_sub_name
         const pl = try helpers.getParenLevel(a, line_prefix);
-        if (pl.sections[0].start <= 1) return .null;
+        if (pl.sections[0].start <= 1) return null;
         const arg_string = str.slice(line_prefix, pl.sections[0].start, pl.sections[pl.sections.len - 1].end);
         const pl2 = try helpers.getParenLevel(a, str.slice(line_prefix, 0, pl.sections[0].start - 1));
         const sub_name_raw = str.strip(pl2.str);
@@ -1615,33 +1679,7 @@ pub const Server = struct {
                 break;
             };
         }
-        const vo = var_obj orelse return .null;
-        // a generic interface: the signature of each of its procedures, the
-        // first that takes the arguments so far active (fortls #6)
-        if (vo.kind == .interface and vo.memList().len > 0) {
-            var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
-            var active: ?i64 = null;
-            var active_size: usize = std.math.maxInt(usize);
-            for (vo.memList()) |member| {
-                const s = (try self.signatureOf(a, member, arg_strings)) orelse continue;
-                var info = s.info;
-                info.activeParameter = s.param;
-                if (s.fits and s.size < active_size) {
-                    active = @intCast(sigs.items.len);
-                    active_size = s.size;
-                }
-                try sigs.append(a, info);
-            }
-            if (sigs.items.len == 0) return .null;
-            const chosen: usize = @intCast(active orelse 0);
-            return json.from(a, lsp.SignatureHelp{
-                .signatures = sigs.items,
-                .activeParameter = sigs.items[chosen].activeParameter.?,
-                .activeSignature = @intCast(chosen),
-            });
-        }
-        const s = (try self.signatureOf(a, vo, arg_strings)) orelse return .null;
-        return json.from(a, lsp.SignatureHelp{ .signatures = &.{s.info}, .activeParameter = s.param });
+        return .{ .obj = var_obj orelse return null, .args = arg_strings };
     }
 
     /// For a call of generic interface `obj` at byte column `col` of 0-based

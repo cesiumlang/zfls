@@ -113,6 +113,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/hansec/fortran-language-server/issues/203) | preprocessor conditional inside a continued declaration: the inactive branch adds its attributes | hover | fixed (patched) | fails, same cause |
 | [#135](https://github.com/hansec/fortran-language-server/issues/135) | go to definition on a call of a generic interface goes to the procedure the arguments fit | hover | fixed (feature) | goes to the interface |
+| [#133](https://github.com/hansec/fortran-language-server/issues/133) | completion of keyword arguments (`name=`) inside a call | completion | fixed (feature) | names in scope only |
 | [#157](https://github.com/hansec/fortran-language-server/issues/157) | completion of construct names after `exit` and `cycle` | constructs | fixed (feature) | no completion |
 | [#166](https://github.com/hansec/fortran-language-server/issues/166) | folding by program units, constructs and their branches, preprocessor conditionals and comment blocks | outline | fixed (feature) | no folding ranges |
 

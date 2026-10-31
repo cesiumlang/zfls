@@ -25,6 +25,7 @@ pub const glob = @import("glob.zig");
 pub const jsonrpc = @import("jsonrpc.zig");
 pub const logger = @import("logger.zig");
 pub const constructs = @import("constructs.zig");
+pub const arguments = @import("arguments.zig");
 pub const outline = @import("outline.zig");
 pub const project = @import("project.zig");
 pub const semantic = @import("semantic.zig");

@@ -90,6 +90,8 @@ pub const CompletionItem = struct {
     kind: i64,
     detail: []const u8,
     documentation: ?MarkupContent = null,
+    sortText: ?[]const u8 = null,
+    filterText: ?[]const u8 = null,
 };
 
 pub const Hover = struct { contents: MarkupContent };
