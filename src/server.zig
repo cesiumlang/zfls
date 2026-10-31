@@ -20,6 +20,7 @@ const settings_mod = @import("settings.zig");
 const glob = @import("glob.zig");
 const Logger = @import("logger.zig");
 const outline = @import("outline.zig");
+const constructs = @import("constructs.zig");
 const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
@@ -1078,12 +1079,41 @@ pub const Server = struct {
         };
     }
 
+    /// After `exit` or `cycle`, the names of the constructs that are open
+    /// (DO constructs for CYCLE), innermost first (hansec #157)
+    fn constructNameCompletion(self: *Server, a: Allocator, file: *const FortranFile, ast: *Ast, line: usize, col: usize) !?[]const lsp.CompletionItem {
+        _ = self;
+        const text = file.getLine(line, false) orelse return null;
+        const prefix = text[0..@min(col, text.len)];
+        // the start of a name, after `exit ` or `cycle `
+        var n = prefix.len;
+        while (n > 0 and (std.ascii.isAlphanumeric(prefix[n - 1]) or prefix[n - 1] == '_')) n -= 1;
+        const typed = prefix[n..];
+        const before = std.mem.trimEnd(u8, prefix[0..n], " \t");
+        if (before.len == n) return null;
+        var k = before.len;
+        while (k > 0 and std.ascii.isAlphabetic(before[k - 1])) k -= 1;
+        const keyword = before[k..];
+        const loops_only = std.ascii.eqlIgnoreCase(keyword, "cycle");
+        if (!loops_only and !std.ascii.eqlIgnoreCase(keyword, "exit")) return null;
+        // which starts the statement, or follows the condition of an IF
+        const lead = std.mem.trimEnd(u8, before[0..k], " \t");
+        if (!(std.mem.trim(u8, lead, " \t0123456789").len == 0 or std.mem.endsWith(u8, lead, ")"))) return null;
+        var items: std.ArrayList(lsp.CompletionItem) = .empty;
+        for (try constructs.enclosingNames(a, file, ast, line, loops_only)) |cname| {
+            if (!std.ascii.startsWithIgnoreCase(cname, typed)) continue;
+            try items.append(a, .{ .label = cname, .kind = 14, .detail = if (loops_only) "DO construct" else "construct" });
+        }
+        return items.items;
+    }
+
     fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const uri = params.textDocument.uri;
         const file = (try self.fileFromUri(a, uri)) orelse return .null;
         const ast = file.ast orelse return .null;
         const ac_line = params.position.line;
         const ac_char = toByteCol(file, ac_line, params.position.character);
+        if (try self.constructNameCompletion(a, file, ast, ac_line, ac_char)) |items| return json.from(a, items);
         const cl = try file.getCodeLine(a, ac_line, false, true, false, true);
         const line_prefix = (try helpers.getLinePrefix(a, cl.pre, cl.curr, ac_char, true)) orelse return .null;
         const var_stack = try helpers.getVarStack(a, line_prefix);
@@ -1396,7 +1426,26 @@ pub const Server = struct {
         return null;
     }
 
+    /// The construct name or statement label at a position, with its file
+    fn constructAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?struct { file: *FortranFile, target: constructs.Target } {
+        const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
+        const ast = file.ast orelse return null;
+        const col = toByteCol(file, params.position.line, params.position.character);
+        const t = (try constructs.at(a, file, ast, params.position.line, col)) orelse return null;
+        return .{ .file = file, .target = t };
+    }
+
+    fn constructLocations(a: Allocator, uri: []const u8, file: *const FortranFile, spans: []const constructs.Span) ![]const lsp.Location {
+        const out = try a.alloc(lsp.Location, spans.len);
+        for (spans, out) |s, *o| o.* = locationOf(uri, file, s.line, s.start, s.line, s.end);
+        return out;
+    }
+
     fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+        if (try self.constructAt(a, params)) |c| {
+            const d = c.target.def orelse return .null;
+            return json.from(a, locationOf(params.textDocument.uri, c.file, d.line, d.start, d.line, d.end));
+        }
         const start: lsp.Position = .{ .line = 0, .character = 0 };
         if (try self.includeDirectiveTarget(a, params, false)) |target| {
             return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
@@ -1770,6 +1819,7 @@ pub const Server = struct {
     }
 
     fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+        if (try self.constructAt(a, params)) |c| return json.from(a, try constructLocations(a, params.textDocument.uri, c.file, c.target.spans));
         const d = (try self.definitionAt(a, params, false)) orelse return .null;
         if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
         const rs = self.referenceScope(d.obj) orelse return .null;
@@ -1783,6 +1833,9 @@ pub const Server = struct {
     }
 
     fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value {
+        if (try self.constructAt(a, .{ .textDocument = params.textDocument, .position = params.position })) |c| {
+            return self.renameConstruct(a, params, c.file, c.target);
+        }
         const d = (try self.definitionAt(a, .{ .textDocument = params.textDocument, .position = params.position }, false)) orelse return .null;
         if (d.obj.kind == .intrinsic) {
             self.postMessage(a, "Rename failed: Cannot rename intrinsics", C.Severity.warn);
@@ -1806,6 +1859,29 @@ pub const Server = struct {
             }
             f.* = .{ .uri = try paths.pathToUri(a, fr.path), .edits = edits };
         }
+        return json.from(a, lsp.WorkspaceEdit{ .changes = .{ .files = files } });
+    }
+
+    /// Renames a construct name (to a Fortran name) or a statement label (to
+    /// one of up to five digits) everywhere in its program unit
+    fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, file: *const FortranFile, t: constructs.Target) !Value {
+        const new = params.newName;
+        const valid = switch (t.kind) {
+            .construct => new.len > 0 and std.ascii.isAlphabetic(new[0]) and
+                for (new) |ch| {
+                    if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) break false;
+                } else true,
+            .label => new.len > 0 and new.len <= 5 and std.mem.indexOfNone(u8, new, "0123456789") == null and
+                (std.fmt.parseInt(u32, new, 10) catch 0) > 0,
+        };
+        if (!valid) {
+            self.postMessage(a, try std.fmt.allocPrint(a, "Rename failed: \"{s}\" is not a valid {s}", .{ new, if (t.kind == .construct) "construct name" else "statement label" }), C.Severity.warn);
+            return .null;
+        }
+        const edits = try a.alloc(lsp.TextEdit, t.spans.len);
+        for (t.spans, edits) |s, *e| e.* = .{ .range = rangeOf(file, s.line, s.start, s.line, s.end), .newText = new };
+        const files = try a.alloc(lsp.Changes.File, 1);
+        files[0] = .{ .uri = params.textDocument.uri, .edits = edits };
         return json.from(a, lsp.WorkspaceEdit{ .changes = .{ .files = files } });
     }
 

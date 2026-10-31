@@ -18,6 +18,9 @@ command line options and configuration files.
 - Diagnostics: declarations, scopes, `CONTAINS`, `IMPLICIT`, `USE`/`IMPORT`
   checks, line length limits; each with a code that settings and comments
   can turn off (see [Diagnostics](#diagnostics))
+- Construct names (`outer: do` ... `exit outer`) and statement labels
+  (`go to 10`, `read (5, 100)`): go to definition, references, rename, and
+  completion after `exit` and `cycle`
 - Code action implementing deferred type-bound procedures
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
@@ -233,6 +236,9 @@ zfls deliberately differs from fortls in a few places:
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
 - Line length diagnostics are not duplicated when a file is checked again.
+- Construct names and statement labels have definitions, references and
+  renames (fortls #424), and `exit`/`cycle` complete the names of the open
+  constructs (hansec #157); fortls has no answer on them.
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
