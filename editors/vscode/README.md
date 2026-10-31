@@ -133,7 +133,7 @@ When a Fortran file is opened or saved, zfls has a compiler check it
 (without generating code) and shows the compiler's errors and warnings in
 the file and in the Problems panel, labelled with the compiler's name.
 They are cleared when the file is closed or compiler diagnostics are
-turned off. By default the compiler is gfortran; if it is not installed,
+turned off. By default, the compiler is gfortran; if it is not installed,
 zfls says so once and checks nothing.
 
 | Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
@@ -236,13 +236,13 @@ settings apply to the next formatting, without a restart. In
 `${fileDirname}` and a leading `~` are expanded.
 
 **Format Selection** formats the whole lines the selection touches. The
-formatter sees only those lines, not the code around them: findent starts
+formatter sees only those lines, not the surrounding code: findent starts
 at the indentation of the first selected line (`-Ia`), and fprettify keeps
 it too, but select whole constructs (a complete `do` loop, `if` block or
 procedure) for the indentation inside them to come out right.
 
 When the formatter is missing, fails, or prints nothing, the document is
-left as it is and the error is shown once, with details in the `zfls`
+left as it is, and the error is shown once, with details in the `zfls`
 output channel (**zfls: Show Output**).
 
 ## Running and debugging
