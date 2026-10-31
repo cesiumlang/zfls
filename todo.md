@@ -71,7 +71,7 @@ projects zfls replaces:
 - [~] Inlay hints:
   - [x] Dummy argument names of positional arguments; `associate` types
   - [ ] Implicit types, parameter values
-- [ ] Call hierarchy
+- [x] Call hierarchy
 - [ ] Type hierarchy (`extends`, overrides); parent components in completion.
   HS #121
 - [ ] Module dependency graph: cycles and compile order

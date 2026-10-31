@@ -27,6 +27,7 @@ command line options and configuration files.
 - Completion of the public names of modules not used yet, adding the
   `use module, only: name` statement, and a quick fix adding it for a type
   that is not found
+- Call hierarchy: the procedures that call a procedure, and those it calls
 - Inlay hints: the dummy argument each positional argument of a call goes
   to (`call move(p, dx: 1.0)`), and the type of each `ASSOCIATE` name
 - Selection ranges (expand the selection from a name to its parentheses,
@@ -312,6 +313,12 @@ zfls deliberately differs from fortls in a few places:
   on; fortls ignores cancellations.
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
+- The call hierarchy is answered (`textDocument/prepareCallHierarchy`,
+  `callHierarchy/incomingCalls` and `outgoingCalls`): callers are the
+  procedures around the references in call position (after CALL or before
+  `(`), callees the procedures that the body's names in call position
+  resolve to (the specific of a generic call, the implementation of a
+  separate module procedure); fortls has none.
 - `textDocument/inlayHint` is answered: the names of the dummy arguments
   that positional arguments of calls to workspace procedures go to (not
   when the argument is that name already, not for intrinsics, not past the

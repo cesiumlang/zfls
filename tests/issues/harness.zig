@@ -480,6 +480,34 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// The call hierarchy item at a position (its JSON), or null
+    pub fn prepareCallHierarchy(w: *Workspace, name: []const u8, p: Pos) !?Value {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/prepareCallHierarchy", try w.posParams(name, p));
+        const items = json.items(v);
+        return if (items.len > 0) items[0] else null;
+    }
+
+    /// The name of a call hierarchy item
+    pub fn itemName(item: Value) []const u8 {
+        return json.str(json.get(item, "name")) orelse "";
+    }
+
+    /// A call of the hierarchy: the other procedure, and how many call
+    /// sites
+    pub const Call = struct { name: []const u8, sites: usize };
+
+    /// `callHierarchy/incomingCalls` (`incoming`) or `outgoingCalls`
+    pub fn calls(w: *Workspace, item: Value, incoming: bool) ![]const Call {
+        const method = if (incoming) "callHierarchy/incomingCalls" else "callHierarchy/outgoingCalls";
+        const v = try w.request(method, .{ .item = item });
+        var out: std.ArrayList(Call) = .empty;
+        for (json.items(v)) |c| {
+            const other = json.get(c, if (incoming) "from" else "to") orelse continue;
+            try out.append(w.a(), .{ .name = json.str(json.get(other, "name")) orelse "", .sites = json.items(json.get(c, "fromRanges")).len });
+        }
+        return out.items;
+    }
+
     /// An inlay hint: its 0-based line and column, and label
     pub const Hint = struct { line: i64, col: i64, label: []const u8 };
 

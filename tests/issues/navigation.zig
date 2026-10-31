@@ -161,3 +161,66 @@ test "inlay hints: dummy argument names of positional arguments, ASSOCIATE types
     }
     try std.testing.expectEqual(@as(usize, 3), hs.len);
 }
+
+fn findCall(cs: []const h.Workspace.Call, name: []const u8) ?h.Workspace.Call {
+    for (cs) |c| if (std.ascii.eqlIgnoreCase(c.name, name)) return c;
+    return null;
+}
+
+test "call hierarchy: callers among the references, callees in the body" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "lib.f90", .text =
+        \\module lib
+        \\  implicit none
+        \\contains
+        \\  subroutine step(x)
+        \\    real, intent(inout) :: x
+        \\    x = twice(x)
+        \\    call log_it(x)
+        \\  end subroutine step
+        \\  real function twice(v)
+        \\    real, intent(in) :: v
+        \\    twice = 2 * v
+        \\  end function twice
+        \\  subroutine log_it(v)
+        \\    real, intent(in) :: v
+        \\    print *, v
+        \\  end subroutine log_it
+        \\end module lib
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main
+        \\  use lib, only: step, twice
+        \\  real :: y
+        \\  y = 1.0
+        \\  call step(y)
+        \\  call step(y)
+        \\  y = twice(y)
+        \\contains
+        \\  subroutine inner()
+        \\    call step(y)
+        \\  end subroutine inner
+        \\end program main
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const item = (try w.prepareCallHierarchy("lib.f90", w.pos("lib.f90", "subroutine step", 0, 12))) orelse return error.TestUnexpectedResult;
+    // step is called twice by main and once by inner (not by the USE line)
+    const in = try w.calls(item, true);
+    try std.testing.expectEqual(@as(usize, 2), (findCall(in, "main") orelse return error.TestUnexpectedResult).sites);
+    try std.testing.expectEqual(@as(usize, 1), (findCall(in, "inner") orelse return error.TestUnexpectedResult).sites);
+    try std.testing.expectEqual(@as(usize, 2), in.len);
+    // step calls twice and log_it
+    const out = try w.calls(item, false);
+    try std.testing.expect(findCall(out, "twice") != null and findCall(out, "log_it") != null);
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    // from a call site
+    const at_call = (try w.prepareCallHierarchy("main.f90", w.pos("main.f90", "twice(y)", 0, 1))) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("twice", h.Workspace.itemName(at_call));
+    // main calls step and twice, not what inner calls
+    const main_item = (try w.prepareCallHierarchy("main.f90", w.pos("main.f90", "program main", 0, 9))) orelse return error.TestUnexpectedResult;
+    const main_out = try w.calls(main_item, false);
+    try std.testing.expectEqual(@as(usize, 2), (findCall(main_out, "step") orelse return error.TestUnexpectedResult).sites);
+}

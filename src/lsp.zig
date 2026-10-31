@@ -164,6 +164,7 @@ pub const ServerCapabilities = struct {
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
     documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
     inlayHintProvider: bool = true,
+    callHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
@@ -269,6 +270,22 @@ pub const SelectionRange = struct { range: Range, parent: ?*const SelectionRange
 pub const DocumentLink = struct { range: Range, target: []const u8 };
 
 pub const PrepareRenameResult = struct { range: Range, placeholder: []const u8 };
+
+/// `kind`: an LSP SymbolKind (12 function, 2 module)
+pub const CallHierarchyItem = struct {
+    name: []const u8,
+    kind: i64,
+    detail: ?[]const u8 = null,
+    uri: []const u8,
+    range: Range,
+    selectionRange: Range,
+};
+
+pub const CallHierarchyCallsParams = struct { item: CallHierarchyItem };
+
+pub const CallHierarchyIncomingCall = struct { from: CallHierarchyItem, fromRanges: []const Range };
+
+pub const CallHierarchyOutgoingCall = struct { to: CallHierarchyItem, fromRanges: []const Range };
 
 pub const InlayHintParams = struct {
     textDocument: TextDocumentIdentifier,

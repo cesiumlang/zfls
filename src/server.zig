@@ -36,6 +36,7 @@ const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
 const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
+const calls = @import("server/calls.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -277,6 +278,9 @@ pub const Server = struct {
         document_link,
         on_type_formatting,
         inlay_hint,
+        prepare_call_hierarchy,
+        incoming_calls,
+        outgoing_calls,
         did_open,
         did_save,
         did_close,
@@ -307,6 +311,9 @@ pub const Server = struct {
         .{ "textDocument/documentLink", .document_link },
         .{ "textDocument/onTypeFormatting", .on_type_formatting },
         .{ "textDocument/inlayHint", .inlay_hint },
+        .{ "textDocument/prepareCallHierarchy", .prepare_call_hierarchy },
+        .{ "callHierarchy/incomingCalls", .incoming_calls },
+        .{ "callHierarchy/outgoingCalls", .outgoing_calls },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -340,6 +347,9 @@ pub const Server = struct {
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
             .inlay_hint => hints.serveInlayHints(self, a, try json.decode(lsp.InlayHintParams, a, params)),
+            .prepare_call_hierarchy => calls.servePrepare(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .incoming_calls => calls.serveIncoming(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
+            .outgoing_calls => calls.serveOutgoing(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .did_open => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
