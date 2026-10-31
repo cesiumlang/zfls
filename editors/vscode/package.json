@@ -27,6 +27,12 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [],
+  "capabilities": {
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "zfls reads the project's Fortran files from disk."
+    }
+  },
   "contributes": {
     "languages": [
       {

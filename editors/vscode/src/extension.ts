@@ -88,27 +88,57 @@ function outermost(folder: vscode.WorkspaceFolder): vscode.WorkspaceFolder {
   return best;
 }
 
+/** The workspace folder whose server takes untitled files: the first */
+function untitledFolder(): vscode.WorkspaceFolder | undefined {
+  const first = vscode.workspace.workspaceFolders?.[0];
+  return first ? outermost(first) : undefined;
+}
+
+/** The root of the server of untitled files when no folder is open: an
+ * empty directory, so that it indexes nothing */
+function untitledRoot(): vscode.Uri {
+  const root = vscode.Uri.joinPath(context.globalStorageUri, "untitled");
+  fs.mkdirSync(root.fsPath, { recursive: true });
+  return root;
+}
+
 /** Starts the server for a Fortran file, unless it has one */
 async function ensureClient(doc: vscode.TextDocument): Promise<void> {
-  if (!LANGUAGES.includes(doc.languageId) || doc.uri.scheme !== "file") {
+  if (!LANGUAGES.includes(doc.languageId)) {
     return;
   }
-  const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  const folder = inFolder ? outermost(inFolder) : undefined;
-  const root = folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
+  let folder: vscode.WorkspaceFolder | undefined;
+  let root: vscode.Uri;
+  if (doc.uri.scheme === "file") {
+    const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    folder = inFolder ? outermost(inFolder) : undefined;
+    root = folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
+  } else if (doc.uri.scheme === "untitled") {
+    folder = untitledFolder();
+    root = folder ? folder.uri : untitledRoot();
+  } else {
+    return;
+  }
   const key = root.toString();
   if (clients.has(key)) {
     return;
   }
+  // untitled files go to the server of the first workspace folder, or to
+  // one of their own
+  const untitled = folder ? folder.uri.toString() === untitledFolder()?.uri.toString() : doc.uri.scheme === "untitled";
   // the start in progress is recorded, so that files opened meanwhile share it
-  const client = startClient(root, folder);
+  const client = startClient(root, folder, untitled);
   clients.set(key, client);
   if (!(await client)) {
     clients.delete(key);
   }
 }
 
-async function startClient(root: vscode.Uri, folder: vscode.WorkspaceFolder | undefined): Promise<LanguageClient | undefined> {
+async function startClient(
+  root: vscode.Uri,
+  folder: vscode.WorkspaceFolder | undefined,
+  untitled: boolean,
+): Promise<LanguageClient | undefined> {
   const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
   const command = findServer(context, config.get<string>("path", ""));
   if (!command) {
@@ -132,7 +162,10 @@ async function startClient(root: vscode.Uri, folder: vscode.WorkspaceFolder | un
   // the files directly in it
   const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
   const clientOptions: LanguageClientOptions = {
-    documentSelector: LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
+    documentSelector: [
+      ...LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
+      ...(untitled ? LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
+    ],
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
     outputChannel: output,
   };

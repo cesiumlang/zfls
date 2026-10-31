@@ -109,8 +109,20 @@ pub fn unquote(a: Allocator, s: []const u8) ![]u8 {
     return out.toOwnedSlice(a);
 }
 
-/// Convert file uri to path (`fortls.jsonrpc.path_from_uri`)
+/// Whether `s` is a URI of a document that is not a file (`untitled:...`),
+/// which zfls uses as the document's path. A scheme has two or more
+/// characters, so a Windows path (`C:...`) is not one.
+pub fn isVirtualUri(s: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, s, ':') orelse return false;
+    if (colon < 2 or !std.ascii.isAlphabetic(s[0])) return false;
+    for (s[0..colon]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '+' or c == '-' or c == '.')) return false;
+    return !std.mem.startsWith(u8, s, "file:");
+}
+
+/// Convert file uri to path (`fortls.jsonrpc.path_from_uri`); the URI of a
+/// document that is not a file is its own path
 pub fn pathFromUri(io: Io, a: Allocator, uri: []const u8) ![]u8 {
+    if (isVirtualUri(uri)) return a.dupe(u8, uri);
     if (!std.mem.startsWith(u8, uri, "file://")) return abspath(a, uri);
     const rest = if (is_windows)
         (if (std.mem.startsWith(u8, uri, "file:///")) uri["file:///".len..] else uri["file://".len..])
@@ -120,13 +132,24 @@ pub fn pathFromUri(io: Io, a: Allocator, uri: []const u8) ![]u8 {
     return realpath(io, a, p);
 }
 
-/// Convert path to file uri (`fortls.jsonrpc.path_to_uri`)
+/// Convert path to file uri (`fortls.jsonrpc.path_to_uri`); the path of a
+/// document that is not a file is its URI
 pub fn pathToUri(a: Allocator, path: []const u8) ![]u8 {
+    if (isVirtualUri(path)) return a.dupe(u8, path);
     if (is_windows) {
         const fwd = try std.mem.replaceOwned(u8, a, path, "\\", "/");
         return std.mem.concat(a, u8, &.{ "file:///", try quote(a, fwd) });
     }
     return std.mem.concat(a, u8, &.{ "file://", try quote(a, path) });
+}
+
+test "documents that are not files" {
+    try std.testing.expect(isVirtualUri("untitled:Untitled-1"));
+    try std.testing.expect(isVirtualUri("vscode-notebook-cell:/a#b"));
+    try std.testing.expect(!isVirtualUri("C:\\a\\b.f90"));
+    try std.testing.expect(!isVirtualUri("/a/b.f90"));
+    try std.testing.expect(!isVirtualUri("file:///a/b.f90"));
+    try std.testing.expect(!isVirtualUri("relative/b.f90"));
 }
 
 test "uri round trip" {

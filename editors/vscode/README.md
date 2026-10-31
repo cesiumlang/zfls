@@ -14,6 +14,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   types, dummy arguments, components, variables named like keywords), and
   the branches of preprocessor conditionals that are left out shown as
   inactive
+- untitled (new, unsaved) Fortran files too, served by the first folder's
+  server
 - diagnostics, and a compiler's errors and warnings (see
   [Compiler diagnostics](#compiler-diagnostics))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and

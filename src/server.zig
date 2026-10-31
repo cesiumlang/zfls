@@ -1958,6 +1958,7 @@ pub const Server = struct {
     pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
         const uri = params.textDocument.uri;
         const filepath = try self.pathFromUri(a, uri);
+        if (paths.isVirtualUri(filepath)) return self.serveVirtualDocument(a, uri, filepath, params.textDocument.text, did_open, did_close);
         if (did_close and !paths.isFile(self.io, filepath)) {
             if (self.workspace.get(filepath)) |f| if (f.ast) |ast| self.removeFromTree(ast);
             return .null;
@@ -1967,6 +1968,32 @@ pub const Server = struct {
             return .null;
         };
         if (changed) try self.fullRelink(a);
+        if (!self.s.disable_diagnostics) self.sendDiagnostics(a, uri);
+        return .null;
+    }
+
+    /// `didOpen`, `didSave` and `didClose` of a document that is not a file
+    /// (an untitled one): its text comes with `didOpen` and its changes,
+    /// and it leaves the workspace when it is closed
+    fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, did_open: bool, did_close: bool) !Value {
+        if (did_close) {
+            if (self.workspace.get(path)) |f| if (f.ast) |ast| self.removeFromTree(ast);
+            return .null;
+        }
+        if (did_open) {
+            const file = self.workspace.get(path) orelse blk: {
+                const nf = try FortranFile.create(self.gpa, path, self.ppSuffixes());
+                errdefer nf.destroy();
+                try self.workspace.put(self.gpa, nf.path, nf);
+                break :blk nf;
+            };
+            _ = try file.setText(text orelse "");
+            const changed = self.updateWorkspaceFile(path, false, true, false) catch |e| {
+                self.postMessage(a, try std.fmt.allocPrint(a, "Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
+                return .null;
+            };
+            if (changed) try self.fullRelink(a);
+        }
         if (!self.s.disable_diagnostics) self.sendDiagnostics(a, uri);
         return .null;
     }

@@ -172,7 +172,12 @@ pub const ResponseError = struct {
 // --------------------------------------------------------------------------
 // Request parameters
 
-pub const TextDocumentIdentifier = struct { uri: []const u8 };
+pub const TextDocumentIdentifier = struct {
+    uri: []const u8,
+    /// `didOpen`: the document's text (zfls reads files from disk, as fortls
+    /// does; it uses this for documents that are not files)
+    text: ?[]const u8 = null,
+};
 
 /// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange` and
 /// `semanticTokens/full`
