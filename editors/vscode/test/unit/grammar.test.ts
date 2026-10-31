@@ -42,6 +42,6 @@ test("the fypp patterns match fypp's syntax", () => {
   assert.match("    @:ASSERT(n > 0)", begin("fypp-macro-call"));
   assert.match("type :: eg_${dname}$_t", begin("fypp-inline-eval"));
   assert.match("x = 1 #{if DEBUG}# + 1 #{endif}#", begin("fypp-inline-directive"));
-  assert.match("y = @{mymacro(1)}@", begin("fypp-inline-macro"));
+  assert.match("y = @{square(1)}@", begin("fypp-inline-macro"));
   assert.match("#! a fypp comment", begin("fypp-comment"));
 });
