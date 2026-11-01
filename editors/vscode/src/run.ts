@@ -252,3 +252,65 @@ export function workspaceRelative(file: string, folder: string | undefined): str
   }
   return `\${workspaceFolder}/${rel.split(path.sep).join("/")}`;
 }
+
+// The `fortran` debug type
+
+/** What a `fortran` launch configuration takes, beyond `name` */
+export const FORTRAN_LAUNCH_KEYS = [
+  "type",
+  "request",
+  "name",
+  "program",
+  "fpmTarget",
+  "fpmTargetKind",
+  "args",
+  "cwd",
+  "env",
+  "debugger",
+  "compiler",
+  "stopAtEntry",
+  "preLaunchTask",
+] as const;
+
+/** How a `fortran` configuration was resolved */
+export interface FortranResolution {
+  type: DebugType;
+  program: string;
+  cwd: string;
+  /** The compiler's runtime libraries on the PATH (Windows) */
+  runtimeEnv: Record<string, string>;
+  platform: NodeJS.Platform;
+  gdbPath?: string;
+}
+
+/**
+ * The launch configuration of the chosen debugger for a `fortran` one: its
+ * program, arguments, directory and environment (its own after the
+ * compiler's runtime PATH), `stopAtEntry`, and every key it has that the
+ * `fortran` type does not know (`MIMode`, `setupCommands`, ...), as they
+ * are, for the debugger.
+ */
+export function fortranLaunch(config: Record<string, unknown>, r: FortranResolution): Record<string, unknown> {
+  const env = { ...r.runtimeEnv, ...((config.env as Record<string, string> | undefined) ?? {}) };
+  const out = launchConfiguration({
+    name: String(config.name ?? "Fortran"),
+    type: r.type,
+    program: r.program,
+    args: Array.isArray(config.args) ? config.args.map(String) : [],
+    cwd: r.cwd,
+    env,
+    platform: r.platform,
+    gdbPath: r.gdbPath,
+    preLaunchTask: typeof config.preLaunchTask === "string" ? config.preLaunchTask : undefined,
+  });
+  // CodeLLDB's name for it; CDT GDB has none
+  if (config.stopAtEntry === true && r.type !== "gdb") {
+    out[r.type === "lldb" ? "stopOnEntry" : "stopAtEntry"] = true;
+  }
+  for (const [k, v] of Object.entries(config)) {
+    if (!(FORTRAN_LAUNCH_KEYS as readonly string[]).includes(k)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}

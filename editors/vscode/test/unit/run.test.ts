@@ -9,6 +9,7 @@ import {
   chooseDebugger,
   compilerKind,
   compilerName,
+  fortranLaunch,
   launchConfiguration,
   outputDirFor,
   programPath,
@@ -163,4 +164,36 @@ test("paths in the workspace folder use ${workspaceFolder}", () => {
   const outside = path.resolve("/elsewhere/a.f90");
   assert.equal(workspaceRelative(outside, ws), outside);
   assert.equal(workspaceRelative(outside, undefined), outside);
+});
+
+test("a fortran configuration becomes the chosen debugger's", () => {
+  const config = {
+    type: "fortran",
+    request: "launch",
+    name: "Debug solver",
+    program: "/w/solver",
+    args: ["-n", "3"],
+    env: { OMP_NUM_THREADS: "2" },
+    stopAtEntry: true,
+    debugger: "auto",
+    // the debugger's own keys pass through
+    setupCommands: [{ text: "set print pretty on" }],
+  };
+  const r = { type: "cppdbg" as const, program: "/w/solver", cwd: "/w", runtimeEnv: {}, platform: "linux" as const, gdbPath: "/usr/bin/gdb" };
+  const cpp = fortranLaunch(config, r);
+  assert.equal(cpp.type, "cppdbg");
+  assert.equal(cpp.request, "launch");
+  assert.equal(cpp.program, "/w/solver");
+  assert.deepEqual(cpp.args, ["-n", "3"]);
+  assert.equal(cpp.stopAtEntry, true);
+  assert.equal(cpp.miDebuggerPath, "/usr/bin/gdb");
+  assert.deepEqual(cpp.environment, [{ name: "OMP_NUM_THREADS", value: "2" }]);
+  assert.deepEqual(cpp.setupCommands, [{ text: "set print pretty on" }]);
+  assert.equal(cpp.debugger, undefined);
+  const lldb = fortranLaunch(config, { ...r, type: "lldb" });
+  assert.equal(lldb.stopOnEntry, true);
+  assert.equal(lldb.stopAtEntry, undefined);
+  // the compiler's runtime PATH first, the configuration's own over it
+  const win = fortranLaunch({ ...config, env: { Path: "C:\mine" } }, { ...r, type: "cppvsdbg", platform: "win32", runtimeEnv: { Path: "C:\gcc\bin;C:\Windows" } });
+  assert.deepEqual(win.environment, [{ name: "Path", value: "C:\mine" }]);
 });

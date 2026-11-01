@@ -26,10 +26,10 @@ projects zfls replaces:
   C/C++): from a `bind(C)` procedure to its C declaration, and from a C call
   to the Fortran procedure, without parsing C in zfls. A plain search of
   the headers only as a fallback. HS #115
-- [ ] Debugging: first a host for the debuggers there are (the launch
-  configurations, conditional breakpoints set before launch, FB #7); then
-  Fortran values and arrays in the variables view (FB #10); in the end a
-  Fortran debug adapter of zfls's own
+- [ ] Debugging, what is left: Fortran values in the variables view (module
+  variables, which the C debuggers do not list; arrays of assumed shape and
+  derived types; FB #10), then a Fortran debug adapter of zfls's own behind
+  the `fortran` debug type
 - [ ] Codee: documented, best-effort support like fortitude's, not tested
   until a license is available
 - [ ] Hooks for translations (`package.nls.json`, MF #616) and walkthroughs
@@ -59,6 +59,10 @@ Editor features:
   types, implicit types, values of named constants
 - [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
   (`zfls.fixedFormCommentCharacter`). MF #535
+- [x] The `fortran` debug type: launch configurations of a program or an
+  fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
+  GDB); F5 debugs the current file; a configuration per fpm target.
+  Conditional breakpoints set before launch work (FB #7)
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165

@@ -27,8 +27,11 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "workspaceContains:fpm.toml",
-    "onTaskType:fpm"
+    "onDebugDynamicConfigurations:fortran",
+    "onDebugInitialConfigurations",
+    "onDebugResolve:fortran",
+    "onTaskType:fpm",
+    "workspaceContains:fpm.toml"
   ],
   "capabilities": {
     "virtualWorkspaces": {
@@ -1060,6 +1063,115 @@
           "code": 4,
           "message": 5
         }
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "fortran",
+        "label": "Fortran (zfls)",
+        "languages": [
+          "FortranFreeForm",
+          "FortranFixedForm"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The program to debug (not needed with fpmTarget). A relative path is relative to the workspace folder."
+              },
+              "fpmTarget": {
+                "type": "string",
+                "description": "An fpm target to build with fpm and debug, from the fpm.toml of cwd or of the workspace folder."
+              },
+              "fpmTargetKind": {
+                "type": "string",
+                "enum": [
+                  "executable",
+                  "example",
+                  "test"
+                ],
+                "default": "executable",
+                "description": "What fpmTarget is."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "The program's command-line arguments."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The working directory; by default the program's directory, or the fpm project's."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "default": {},
+                "description": "More environment variables for the program."
+              },
+              "debugger": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "cppdbg",
+                  "cppvsdbg",
+                  "lldb",
+                  "gdb"
+                ],
+                "default": "auto",
+                "description": "The debugger extension to run it with; auto: as zfls.run.debugger."
+              },
+              "compiler": {
+                "type": "string",
+                "description": "The compiler that built the program (gfortran, ifx, flang, ...; default zfls.run.compiler, or for fpm targets zfls.fpm.compiler): on Windows it decides the debugger (MSVC ABI) and whose runtime libraries go on the PATH."
+              },
+              "stopAtEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Stop at the start of the program."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "fortran",
+            "request": "launch",
+            "name": "Debug Fortran program",
+            "program": "${workspaceFolder}/a.out",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Fortran: program",
+            "description": "Debug a Fortran program with the debugger installed",
+            "body": {
+              "type": "fortran",
+              "request": "launch",
+              "name": "Debug ${1:program}",
+              "program": "^\"\\${workspaceFolder}/${1:a.out}\"",
+              "args": []
+            }
+          },
+          {
+            "label": "Fortran: fpm target",
+            "description": "Build an fpm target with fpm, then debug it",
+            "body": {
+              "type": "fortran",
+              "request": "launch",
+              "name": "Debug ${1:target}",
+              "fpmTarget": "${1:target}",
+              "fpmTargetKind": "executable"
+            }
+          }
+        ]
       }
     ]
   },
