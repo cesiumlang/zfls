@@ -14,9 +14,8 @@ projects zfls replaces:
 
 ## Next
 
-- [ ] fpm, fully: tasks (`build`, `run`, `test`, `install`), the targets of
-  `fpm.toml` in the run and debug commands, `fpm test` in the test explorer,
-  then test-drive's tests one by one. pFUnit after that
+- [ ] fpm, what is left: pFUnit's tests in the Testing view; debug
+  configurations in launch.json for fpm targets
 - [ ] Compiler diagnostics from the server, for every editor (Neovim, Emacs,
   Helix as well as VS Code): the compilers the extension's linter knows,
   run by zfls. The extension's own linter is then optional. FL #85, HS #205
@@ -66,6 +65,10 @@ Editor features:
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
+- [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
+  problem matchers, running and debugging their targets, Run and Debug
+  Fortran File on a target's program, and the Testing view (each test
+  target, and test-drive's suites and tests with their results)
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195
