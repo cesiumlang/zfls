@@ -180,7 +180,7 @@ const opts = [_]Opt{
     .{ .long = "disable_autoupdate", .kind = .flag, .help = "Accepted for compatibility with fortls and ignored: zfls does not update itself." },
     .{ .long = "preserve_keyword_order", .kind = .flag, .help = "DEPRECATED, this is now the default. To sort use sort_keywords" },
     .{ .long = "debug_log", .kind = .flag, .help = "Generate debug log in project root folder" },
-    .{ .long = "disable_index_cache", .kind = .flag, .help = "Do not keep the texts of the workspace's files in one file of zfls's cache, from which a start reads those that have not changed instead of reading each file" },
+    .{ .long = "disable_index_cache", .kind = .flag, .help = "Do not keep the workspace's files, and what zfls parsed from them, in one file of zfls's cache, from which a start reads those that have not changed instead of reading and parsing each file" },
     .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
