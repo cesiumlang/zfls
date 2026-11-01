@@ -317,35 +317,27 @@ export async function runTarget(project: FpmProject, target: Target): Promise<vo
   await vscode.tasks.executeTask(task);
 }
 
+/** The compiler that fpm builds with: zfls.fpm.compiler, else FPM_FC,
+ * else gfortran; its executable when it is found */
+export function fpmCompiler(project: FpmProject): { name: string; exe: string | undefined } {
+  const name = buildOptions(project).compiler ?? process.env.FPM_FC ?? "gfortran";
+  return { name, exe: findExecutable(name) };
+}
+
 /**
- * Builds a target with fpm, then debugs its program with the debugger of
- * zfls.run.debugger, in the project's directory (where `fpm run` runs it).
- * `extraArgs` go to the program after zfls.run.programArgs. True when the
- * debug session started.
+ * Builds a target with fpm, in a terminal where its errors are seen, and
+ * gives its program (from `--runner echo`), or undefined after saying why.
  */
-export async function debugTarget(
+export async function buildTarget(
   project: FpmProject,
   target: Target,
   log: vscode.LogOutputChannel,
-  extraArgs: string[] = [],
-): Promise<boolean> {
+): Promise<string | undefined> {
   const fpm = fpmExecutable(project);
   if (!fpm) {
-    return false;
+    return undefined;
   }
-  const opts = buildOptions(project);
-  const compilerName = opts.compiler ?? process.env.FPM_FC ?? "gfortran";
-  const compiler = findExecutable(compilerName);
-  const kind = compilerKind(compiler ?? compilerName, process.platform);
-  const scope = vscode.Uri.file(project.root);
-  const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
-  const debugType = await chooseInstalledDebugger(preference, kind.msvc);
-  if (!debugType) {
-    return false;
-  }
-  // the build in a terminal, where its errors are seen; it ends by printing
-  // the program's path
-  const echo = runArgs(target, opts, [], "echo");
+  const echo = runArgs(target, buildOptions(project), [], "echo");
   log.info(`[fpm] ${fpm} ${echo.join(" ")} (in ${project.root})`);
   const build = new vscode.Task(
     { type: "fpm", command: "build", target: target.name } as FpmTaskDefinition,
@@ -362,7 +354,7 @@ export async function debugTarget(
         ? `zfls: building ${target.name} with fpm failed (exit code ${built}); see the terminal.`
         : "zfls: could not run fpm's build task.",
     );
-    return false;
+    return undefined;
   }
   const result = await runProcess(fpm, echo, { cwd: project.root, timeout: 300_000 });
   const programs = parseRunnerEcho(result.stdout);
@@ -371,17 +363,48 @@ export async function debugTarget(
       `zfls: fpm did not give the program of ${target.name}` + (programs.length ? ` (it gave ${programs.length})` : "") + ".",
     );
     log.error(`[fpm] ${result.stdout}${result.stderr}`);
+    return undefined;
+  }
+  return path.resolve(project.root, programs[0]);
+}
+
+/**
+ * Builds a target with fpm, then debugs its program with the debugger of
+ * zfls.run.debugger, in the project's directory (where `fpm run` runs it).
+ * `extraArgs` go to the program after zfls.run.programArgs. True when the
+ * debug session started.
+ */
+export async function debugTarget(
+  project: FpmProject,
+  target: Target,
+  log: vscode.LogOutputChannel,
+  extraArgs: string[] = [],
+): Promise<boolean> {
+  if (!fpmExecutable(project)) {
+    return false;
+  }
+  const compiler = fpmCompiler(project);
+  const kind = compilerKind(compiler.exe ?? compiler.name, process.platform);
+  const scope = vscode.Uri.file(project.root);
+  const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
+  // choose the debugger first: no point building for a debugger that is not there
+  const debugType = await chooseInstalledDebugger(preference, kind.msvc);
+  if (!debugType) {
+    return false;
+  }
+  const program = await buildTarget(project, target, log);
+  if (!program) {
     return false;
   }
   const config = launchConfiguration({
     name: `Debug ${target.name}`,
     type: debugType,
-    program: path.resolve(project.root, programs[0]),
+    program,
     args: [...programArgs(project), ...extraArgs],
     cwd: project.root,
-    env: compiler ? runtimeEnv(compiler, process.platform, process.env) : {},
+    env: compiler.exe ? runtimeEnv(compiler.exe, process.platform, process.env) : {},
     platform: process.platform,
-    gdbPath: gdbFor(scope, compiler),
+    gdbPath: gdbFor(scope, compiler.exe),
   }) as vscode.DebugConfiguration;
   log.info(`[fpm] debugging with ${JSON.stringify(config)}`);
   const started = await vscode.debug.startDebugging(project.folder, config);

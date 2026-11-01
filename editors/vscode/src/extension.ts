@@ -21,6 +21,7 @@ import { registerRunCommands } from "./runFile";
 import { BindC, C_LANGUAGES, identifierAt, isCFile, uniqueByPlace } from "./interop";
 import { registerFpm } from "./fpmCommands";
 import { registerFpmTests } from "./fpmTests";
+import { registerDebugType } from "./debugType";
 
 import { affectsServer, serverArguments } from "./options";
 
@@ -51,6 +52,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerRunCommands(context, output);
   registerFpm(context, output);
   registerFpmTests(context, output);
+  registerDebugType(context, output);
   context.subscriptions.push(
     output,
     linter,

@@ -366,6 +366,40 @@ If none is installed, **Debug Fortran File** says which to install. With
 Intel's compilers on Windows, start VS Code from a oneAPI command prompt (or
 after `setvars.bat`), so that the compiler finds the linker and libraries.
 
+### The `fortran` debug type
+
+A launch configuration of type `fortran` is resolved, when it starts, into
+one of the debugger extensions above, chosen as for Debug Fortran File:
+
+```json
+{
+  "type": "fortran",
+  "request": "launch",
+  "name": "Debug solver",
+  "program": "${workspaceFolder}/build/solver",
+  "args": ["input.nml"]
+}
+```
+
+`program` is the program; or `fpmTarget` (with `fpmTargetKind`
+`executable`, `example` or `test`) names an fpm target, which fpm builds
+first. `args`, `cwd`, `env` and `stopAtEntry` are as their names say;
+`debugger` picks the debugger (`auto` by default, as `zfls.run.debugger`),
+and `compiler` says which compiler built the program (by default
+`zfls.run.compiler`, or for an fpm target `zfls.fpm.compiler`), which
+decides the debugger on Windows (`ifx` and LLVM Flang programs need the
+Visual Studio one) and puts its runtime libraries on the `PATH`. Any other
+key goes to the debugger as it is (`setupCommands`, `MIMode`, ...). The
+configuration stays the same whichever debugger runs it.
+
+F5 without a `launch.json` debugs the file in the editor, as Debug Fortran
+File does, and the Run and Debug view lists a configuration for each
+executable, example and test of the workspace's fpm projects.
+
+Breakpoints in Fortran files may have conditions in Fortran (`i .eq. 5`,
+`x > 1.0`), set before the program starts or while it runs: gdb reads them
+in the language of the breakpoint's line.
+
 **zfls: Add Build Task and Debug Configuration for Fortran File** writes
 the same build as a task in `.vscode/tasks.json` and a debug configuration
 that builds first in `.vscode/launch.json`, replacing those of the same
