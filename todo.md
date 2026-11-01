@@ -14,22 +14,20 @@ projects zfls replaces:
 
 ## Next
 
-- [ ] fpm, fully: tasks (`build`, `run`, `test`, `install`), the targets of
-  `fpm.toml` in the run and debug commands, `fpm test` in the test explorer,
-  then test-drive's tests one by one. pFUnit after that
-- [ ] Index cache: each file's symbols on disk, keyed by its contents and
-  zfls's version and settings, so that a workspace of thousands of files
-  starts without parsing them again. Summaries for unopened files and a
-  smarter index later. FL #563, HS #39
-- [ ] Fortran and C, what is left: references across the languages; zfls
-  asking clangd itself (for editors without a C server attached to C
-  files); C→Fortran in VS Code before a Fortran file is opened
-- [ ] Debugging: first a host for the debuggers there are (the launch
-  configurations, conditional breakpoints set before launch, FB #7); then
-  Fortran values and arrays in the variables view (FB #10); in the end a
-  Fortran debug adapter of zfls's own
-- [ ] Hooks for translations (`package.nls.json`, MF #616) and walkthroughs
-  (MF #472), with English only and no walkthrough yet
+- [ ] fpm: pFUnit's tests in the Testing view
+- [ ] A smarter index: the parsed symbols cached too (they take half a
+  second to build for 3,870 files), summaries for unopened files to save
+  memory (400 MiB for OpenBLAS). FL #563, HS #39
+- [ ] Fortran and C: references across the languages; zfls asking clangd
+  itself (for editors without a C server attached to C files); C to Fortran
+  in VS Code before a Fortran file is opened
+- [ ] Debugging: Fortran values in the variables view (module variables,
+  which the C debuggers do not list; arrays of assumed shape and derived
+  types; FB #10), then a Fortran debug adapter of zfls's own behind the
+  `fortran` debug type
+- [ ] Translations of the messages the extension shows while it runs
+  (`vscode.l10n`), and translations and walkthroughs as they are asked for
+  (MF #616, MF #472)
 
 ## Watching upstream
 
@@ -60,6 +58,16 @@ Editor features:
   `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
+- [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
+  problem matchers, running and debugging their targets, Run and Debug
+  Fortran File on a target's program, and the Testing view (each test
+  target, and test-drive's suites and tests with their results)
+- [x] The `fortran` debug type: launch configurations of a program or an
+  fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
+  GDB); F5 debugs the current file; a configuration per fpm target.
+  Conditional breakpoints set before launch work (FB #7)
+- [x] Hooks for translations (every string of `package.json` in
+  `package.nls.json`, `tools/package_nls.py`) and walkthroughs; English only
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
@@ -139,6 +147,9 @@ Server:
 
 - [x] `$/cancelRequest`; indexing progress (`workDoneProgress`). FL #417,
   MF #757
+- [x] Index cache: the texts of a large workspace's files in one file of
+  zfls's cache, so that a cold start reads one file instead of thousands
+  (`disable_index_cache`). HS #39
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
