@@ -1,7 +1,8 @@
 //! Inlay hints (`textDocument/inlayHint`): the names of the dummy arguments
 //! that the positional arguments of a call to a workspace procedure go to,
-//! the types of ASSOCIATE names, and the implicit type of a name that is
-//! not declared, where it is first written in the range.
+//! the types of ASSOCIATE names, the implicit type of a name that is not
+//! declared where it is first written in the range, and the values of named
+//! constants where they are used.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -37,6 +38,21 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
     for (ast.scope_list.items) |sc| {
         if (sc.kind != .associate or sc.sline == 0 or sc.sline - 1 < first or sc.sline - 1 > last) continue;
         try associateHints(a, file, sc, &out);
+    }
+    // the values of named constants, once per line and name
+    var shown: std.StringHashMapUnmanaged(void) = .empty;
+    for (try semantic.constantUses(a, self.env(a), file, ast, first, last)) |c| {
+        const value = str.strip(c.obj.varDataConst().param_val orelse continue);
+        if (value.len == 0 or std.ascii.eqlIgnoreCase(value, c.obj.name)) continue;
+        const key = try std.fmt.allocPrint(a, "{d}:{x}", .{ c.line, @intFromPtr(c.obj) });
+        if ((try shown.getOrPut(a, key)).found_existing) continue;
+        const short = if (value.len > 24) try std.fmt.allocPrint(a, "{s}...", .{value[0..21]}) else value;
+        try out.append(a, .{
+            .position = .{ .line = c.line, .character = Server.toLspCol(file, c.line, c.end) },
+            .label = try std.fmt.allocPrint(a, "= {s}", .{short}),
+            .kind = 1,
+            .paddingLeft = true,
+        });
     }
     // implicit types (hansec #201): once per scope and name
     var seen: std.StringHashMapUnmanaged(void) = .empty;

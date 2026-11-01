@@ -14,7 +14,6 @@ projects zfls replaces:
 
 ## Later
 
-- [ ] Inlay hints of parameter values
 - [ ] Argument checking of types, kinds and ranks
 - [ ] Interface and submodule stubs (code actions)
 - [ ] Richer hover: case preference (FL #28), code blocks in documentation
@@ -56,7 +55,7 @@ Editor features:
   `prepareRename`
 - [x] Call hierarchy; type hierarchy (`extends`)
 - [x] Inlay hints: dummy argument names of positional arguments, `associate`
-  types, implicit types
+  types, implicit types, values of named constants
 - [x] Fuzzy workspace symbol search. HS #195
 - [x] Untitled files
 
