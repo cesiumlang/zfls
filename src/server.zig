@@ -40,6 +40,7 @@ const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const bindc = @import("server/bindc.zig");
 const cache = @import("server/cache.zig");
+const clangd = @import("server/clangd.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -126,6 +127,8 @@ pub const Server = struct {
     /// The declarations of the workspace's C names in its C files, found
     /// when go to definition first needed them
     c_index: ?*bindc.CIndex = null,
+    /// clangd, started after initialization with `bind_c_clangd`
+    clangd: ?*clangd.Clangd = null,
     /// The index cache, during initialization
     index: ?*cache.Snapshot = null,
     /// The thread writing the index cache after initialization
@@ -159,6 +162,7 @@ pub const Server = struct {
     pub fn destroy(self: *Server) void {
         compile.stop(self);
         compile.deinitStore(self);
+        clangd.stop(self);
         bindc.deinitIndex(self);
         var c_it = self.c_docs.iterator();
         while (c_it.next()) |e| {

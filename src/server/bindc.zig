@@ -22,6 +22,7 @@ const parser = @import("../parser.zig");
 const glob = @import("../glob.zig");
 const definition = @import("definition.zig");
 const references = @import("references.zig");
+const clangd = @import("clangd.zig");
 
 const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
@@ -209,17 +210,29 @@ pub fn deinitIndex(self: *Server) void {
     }
 }
 
-/// The declarations of `cname` in the workspace's C files
+/// The declarations of `cname` in the workspace's C files, and clangd's
+/// (`bind_c_clangd`: those of headers outside the source directories, of
+/// names a macro makes)
 pub fn cDeclarations(self: *Server, a: Allocator, cname: []const u8) ![]const lsp.Location {
     const ix = (try cIndex(self, a, cname)) orelse return &.{};
-    return if (ix.found.get(cname)) |l| l.items else &.{};
+    const found = if (ix.found.get(cname)) |l| l.items else &.{};
+    return withClangd(self, a, cname, .declarations, found);
 }
 
-/// The places of `cname` in the workspace's C files: its declarations and
-/// calls
+/// The places of `cname` in the workspace's C files, its declarations and
+/// calls, and clangd's
 pub fn cUses(self: *Server, a: Allocator, cname: []const u8) ![]const lsp.Location {
     const ix = (try cIndex(self, a, cname)) orelse return &.{};
-    return if (ix.uses.get(cname)) |l| l.items else &.{};
+    const found = if (ix.uses.get(cname)) |l| l.items else &.{};
+    return withClangd(self, a, cname, .uses, found);
+}
+
+/// `found`, and clangd's places before them: without a
+/// `compile_commands.json` clangd knows only the files it has opened, and
+/// until its index is built it knows less than the search
+fn withClangd(self: *Server, a: Allocator, cname: []const u8, want: clangd.Want, found: []const lsp.Location) ![]const lsp.Location {
+    const theirs = (try clangd.places(self, a, cname, want)) orelse return found;
+    return unique(a, try std.mem.concat(a, lsp.Location, &.{ theirs, found }));
 }
 
 /// The C search, done again when it is old or `cname` is not in it; null
@@ -250,7 +263,7 @@ fn cIndex(self: *Server, a: Allocator, cname: []const u8) !?*CIndex {
 }
 
 /// The C files of the source directories
-fn cFiles(self: *Server, a: Allocator) ![]const []const u8 {
+pub fn cFiles(self: *Server, a: Allocator) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     for (self.s.source_dirs.slice()) |dir| {
         const entries = glob.listEntries(self.io, a, dir) catch continue;

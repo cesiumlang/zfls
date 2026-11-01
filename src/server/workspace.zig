@@ -33,6 +33,7 @@ const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
+const clangd = @import("clangd.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -58,6 +59,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try addSourceDirs(self, a);
 
     try workspaceInit(self, a, params.workDoneToken);
+    clangd.start(self, a);
     self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
