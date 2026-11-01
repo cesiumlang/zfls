@@ -166,7 +166,7 @@ const Checker = struct {
 
     fn callArgs(c: *Checker, j: Joined, s: usize, text: []const u8, w: helpers.Word, open: usize, close: usize, proc: *Obj, drop: ?usize, scope: ?*Obj, line_no: usize) !void {
         const pd = proc.procDataConst();
-        const names = try objects_split(c.a, proc.argList());
+        const names = try splitArgs(c.a, proc.argList());
         // the dummy arguments the call can give, in order
         var dummies: std.ArrayList(struct { name: []const u8, optional: bool, obj: ?*Obj }) = .empty;
         for (names, 0..) |n, i| {
@@ -845,7 +845,7 @@ test "literal categories" {
     try std.testing.expect(literalCategory("3d") == null);
 }
 
-fn objects_split(a: Allocator, s: []const u8) ![]const []const u8 {
+fn splitArgs(a: Allocator, s: []const u8) ![]const []const u8 {
     if (std.mem.trim(u8, s, " ").len == 0) return &.{};
     var out: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, s, ',');
