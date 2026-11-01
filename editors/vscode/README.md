@@ -32,10 +32,11 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))
 - Fortran and C: go to definition of a `BIND(C)` procedure gives its C
-  declarations too (from clangd or Microsoft's C/C++, when one is
-  installed, and from zfls's own search of the workspace's C files), and go
-  to definition on a name in a C or C++ file gives the Fortran procedures
-  that bind it
+  declarations too, and find references its C calls (from clangd or
+  Microsoft's C/C++, when one is installed, and from zfls's own search of
+  the workspace's C files); on a name in a C or C++ file, go to definition
+  gives the Fortran procedures that bind it and find references their
+  Fortran calls, even before a Fortran file is opened
 - breakpoints in Fortran files, for debuggers such as C/C++ (cppdbg,
   cppvsdbg) and CodeLLDB
 - run and debug the current file with one click (see

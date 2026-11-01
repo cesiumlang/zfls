@@ -68,6 +68,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       C_LANGUAGES.map((language) => ({ language })),
       { provideDefinition: fortranOfC },
     ),
+    vscode.languages.registerReferenceProvider(
+      C_LANGUAGES.map((language) => ({ language })),
+      { provideReferences: fortranReferencesOfC },
+    ),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
         void restartAll();
@@ -96,16 +100,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   void checkModernFortran();
 }
 
-/** zfls's definitions of a position, and, when it is a BIND(C) procedure
- * (`zfls/bindC`), the declarations of its C name that the C language
- * server gives (VS Code's workspace symbols), each place once */
-async function withCDeclarations(
+/** The C declarations of the BIND(C) procedure at a position
+ * (`zfls/bindC`), as the C language server gives them (VS Code's workspace
+ * symbols); none when it is not one */
+async function cDeclarationsAt(
   client: LanguageClient,
   document: vscode.TextDocument,
   position: vscode.Position,
   token: vscode.CancellationToken,
-  result: vscode.Definition | vscode.LocationLink[] | null | undefined,
-): Promise<vscode.Definition | vscode.LocationLink[] | null | undefined> {
+): Promise<vscode.Location[]> {
   let bind: BindC | null;
   try {
     bind = await client.sendRequest<BindC | null>(
@@ -114,10 +117,10 @@ async function withCDeclarations(
       token,
     );
   } catch {
-    return result;
+    return [];
   }
   if (!bind || token.isCancellationRequested) {
-    return result;
+    return [];
   }
   const symbols =
     (await vscode.commands.executeCommand<vscode.SymbolInformation[] | undefined>(
@@ -125,9 +128,22 @@ async function withCDeclarations(
       bind.cName,
     )) ?? [];
   const cName = bind.cName;
-  const found = symbols
+  return symbols
     .filter((s) => s.name === cName && s.location?.uri && isCFile(s.location.uri.fsPath))
     .map((s) => s.location);
+}
+
+/** zfls's definitions of a position, and, when it is a BIND(C) procedure,
+ * the declarations of its C name that the C language server gives, each
+ * place once */
+async function withCDeclarations(
+  client: LanguageClient,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+  result: vscode.Definition | vscode.LocationLink[] | null | undefined,
+): Promise<vscode.Definition | vscode.LocationLink[] | null | undefined> {
+  const found = await cDeclarationsAt(client, document, position, token);
   if (found.length === 0) {
     return result;
   }
@@ -137,25 +153,86 @@ async function withCDeclarations(
   return uniqueByPlace([...own, ...found], (l) => ({ uri: l.uri.toString(), line: l.range.start.line }));
 }
 
-/** Go to definition in a C or C++ file: the Fortran procedures that a
- * name is the C name of (`zfls/bindCTargets`), from every zfls running */
-async function fortranOfC(
+/** zfls's references of a position, and, when it is a BIND(C) procedure,
+ * the references of its C declarations that the C language server gives
+ * (zfls's own search of the C files gives those it finds), each place once */
+async function withCReferences(
+  client: LanguageClient,
   document: vscode.TextDocument,
   position: vscode.Position,
   token: vscode.CancellationToken,
-): Promise<vscode.Location[] | undefined> {
-  const name = identifierAt(document.lineAt(position.line).text, position.character);
-  if (!name) {
-    return undefined;
+  result: vscode.Location[] | null | undefined,
+): Promise<vscode.Location[] | null | undefined> {
+  const declarations = await cDeclarationsAt(client, document, position, token);
+  if (declarations.length === 0 || token.isCancellationRequested) {
+    return result;
   }
-  const out: vscode.Location[] = [];
+  const found: vscode.Location[] = [];
+  for (const d of declarations) {
+    found.push(
+      ...((await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        "vscode.executeReferenceProvider",
+        d.uri,
+        d.range.start,
+      )) ?? []),
+    );
+  }
+  return uniqueByPlace([...(result ?? []), ...found], (l) => ({
+    uri: l.uri.toString(),
+    line: l.range.start.line,
+    character: l.range.start.character,
+  }));
+}
+
+/** The zfls servers to ask about a C file: those running, else one started
+ * for its folder when the folder has Fortran files (a C file opened before
+ * any Fortran one) */
+async function clientsForC(document: vscode.TextDocument): Promise<LanguageClient[]> {
+  if (clients.size === 0) {
+    const where = serverRoot(document);
+    const folder = where?.folder;
+    if (where && folder && !clients.has(where.root.toString())) {
+      const fortran = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(folder, `**/${FORTRAN_FILES}`),
+        "**/{build,node_modules,.git}/**",
+        1,
+      );
+      if (fortran.length && !clients.has(where.root.toString())) {
+        const key = where.root.toString();
+        const client = startClient(where.root, folder, folder.uri.toString() === untitledFolder()?.uri.toString());
+        clients.set(key, client);
+        if (!(await client)) {
+          clients.delete(key);
+          disposeWatchers(key);
+        }
+      }
+    }
+  }
+  const out: LanguageClient[] = [];
   for (const pending of clients.values()) {
     const client = await pending;
-    if (!client?.isRunning() || token.isCancellationRequested) {
-      continue;
+    if (client?.isRunning()) {
+      out.push(client);
+    }
+  }
+  return out;
+}
+
+/** The locations a request of zfls's own gives for a C name, from every
+ * zfls running */
+async function fromEveryServer(
+  document: vscode.TextDocument,
+  method: string,
+  name: string,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[]> {
+  const out: vscode.Location[] = [];
+  for (const client of await clientsForC(document)) {
+    if (token.isCancellationRequested) {
+      break;
     }
     try {
-      const locations = await client.sendRequest<ProtocolLocation[] | null>("zfls/bindCTargets", { name }, token);
+      const locations = await client.sendRequest<ProtocolLocation[] | null>(method, { name }, token);
       for (const l of locations ?? []) {
         const location = client.protocol2CodeConverter.asLocation(l);
         if (location) {
@@ -166,6 +243,38 @@ async function fortranOfC(
       // an older zfls, or one stopping
     }
   }
+  return out;
+}
+
+/** Go to definition in a C or C++ file: the Fortran procedures that a
+ * name is the C name of (`zfls/bindCTargets`) */
+async function fortranOfC(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[] | undefined> {
+  const name = identifierAt(document.lineAt(position.line).text, position.character);
+  if (!name) {
+    return undefined;
+  }
+  const out = await fromEveryServer(document, "zfls/bindCTargets", name, token);
+  return out.length ? out : undefined;
+}
+
+/** Find references in a C or C++ file: the Fortran references of the
+ * procedures that a name is the C name of (`zfls/bindCReferences`); the C
+ * language server gives the C ones */
+async function fortranReferencesOfC(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  _context: vscode.ReferenceContext,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[] | undefined> {
+  const name = identifierAt(document.lineAt(position.line).text, position.character);
+  if (!name) {
+    return undefined;
+  }
+  const out = await fromEveryServer(document, "zfls/bindCReferences", name, token);
   return out.length ? out : undefined;
 }
 
@@ -444,6 +553,11 @@ async function startClient(
       provideDefinition: async (document, position, token, next) => {
         const result = await next(document, position, token);
         return withCDeclarations(client, document, position, token, result);
+      },
+      // and its references from the C language server
+      provideReferences: async (document, position, options, token, next) => {
+        const result = await next(document, position, options, token);
+        return withCReferences(client, document, position, token, result);
       },
     },
   };

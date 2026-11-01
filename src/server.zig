@@ -328,6 +328,7 @@ pub const Server = struct {
         compile_order,
         bind_c,
         bind_c_targets,
+        bind_c_references,
         initialized,
         did_open,
         did_save,
@@ -368,6 +369,7 @@ pub const Server = struct {
         .{ "zfls/compileOrder", .compile_order },
         .{ "zfls/bindC", .bind_c },
         .{ "zfls/bindCTargets", .bind_c_targets },
+        .{ "zfls/bindCReferences", .bind_c_references },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -392,7 +394,8 @@ pub const Server = struct {
             .completion => completion.serveAutocomplete(self, a, try json.decode(lsp.PositionParams, a, params)),
             .signature_help => signature.serveSignature(self, a, try json.decode(lsp.PositionParams, a, params)),
             .definition => definition.serveDefinition(self, a, try json.decode(lsp.PositionParams, a, params)),
-            .references, .document_highlight => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .references => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), true),
+            .document_highlight => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), false),
             .hover => definition.serveHover(self, a, try json.decode(lsp.PositionParams, a, params)),
             .implementation => definition.serveImplementation(self, a, try json.decode(lsp.PositionParams, a, params)),
             .rename => references.serveRename(self, a, try json.decode(lsp.RenameParams, a, params)),
@@ -410,6 +413,7 @@ pub const Server = struct {
             .compile_order => diagnostics.serveCompileOrder(self, a),
             .bind_c => bindc.serveBindC(self, a, try json.decode(lsp.PositionParams, a, params)),
             .bind_c_targets => bindc.serveBindCTargets(self, a, params),
+            .bind_c_references => bindc.serveBindCReferences(self, a, params),
             .initialized => blk: {
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
                 break :blk .null;
