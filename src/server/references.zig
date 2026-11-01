@@ -19,6 +19,7 @@ const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
 
+const operators = @import("operators.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
@@ -206,6 +207,7 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
 }
 
 pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
     if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;

@@ -24,7 +24,7 @@ projects zfls replaces:
 - [ ] Walkthroughs (MF #472); translations (MF #616)
 - [ ] Test explorer (pFUnit, test-drive, `fpm test`); fpm tasks
 - [ ] Navigation between C headers and `bind(C)` procedures. HS #115
-- [ ] References to user-defined operators and assignment. HS #95
+- [ ] References to defined assignment (`assignment(=)`)
 - [ ] Fixed form: toggle `C` comments (MF #535); custom comment patterns
   (MF #197)
 - [ ] Optional exact diagnostics from a compiler (lfortran, gfortran). FL #85,
@@ -71,6 +71,8 @@ Navigation and hover:
 - [x] Hover on statements and keywords (FL #547), and on the words of
   OpenMP and OpenACC directives
 - [x] Coarrays: codimensions in hover (`x[*]`, `codimension[2,*]`)
+- [x] User-defined operators (`.ord.`): definition, hover, references.
+  HS #95
 
 Completion:
 
