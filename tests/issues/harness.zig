@@ -343,11 +343,11 @@ pub const Workspace = struct {
         return w.posParams(name, p);
     }
 
-    /// `textDocument/didOpen` of a workspace file with its text
-    pub fn open(w: *Workspace, name: []const u8) !void {
+    /// `textDocument/didOpen` of a workspace file with its text and language
+    pub fn open(w: *Workspace, name: []const u8, language: []const u8) !void {
         _ = try w.server.dispatchPublic(w.a(), "textDocument/didOpen", try json.from(w.a(), .{ .textDocument = .{
             .uri = try w.uri(name),
-            .languageId = "",
+            .languageId = language,
             .version = 1,
             .text = w.text(name),
         } }));

@@ -529,7 +529,9 @@ pub fn toChange(c: lsp.ContentChange) parser.Change {
 pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
     const uri = params.textDocument.uri;
     const filepath = try self.pathFromUri(a, uri);
-    if (bindc.isCFile(filepath)) return cDocument(self, filepath, params.textDocument.text, did_close);
+    // a C document: opened as one (a `.h` may be Fortran's), and then known
+    const c_doc = if (did_open) bindc.isCLanguage(params.textDocument.languageId) else self.c_docs.contains(filepath);
+    if (c_doc) return cDocument(self, filepath, params.textDocument.text, did_close);
     if (did_open and !self.open_docs.contains(filepath)) {
         const key = try self.gpa.dupe(u8, filepath);
         errdefer self.gpa.free(key);
@@ -591,10 +593,9 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
     var changed = false;
     for (params.changes) |ev| {
         const path = try self.pathFromUri(a, ev.uri);
-        if (bindc.isCFile(path)) {
-            bindc.deinitIndex(self);
-            continue;
-        }
+        // the C search again; a `.h` may be a Fortran include too, which
+        // the rest follows
+        if (bindc.isCFile(path)) bindc.deinitIndex(self);
         if (self.open_docs.contains(path) or paths.isVirtualUri(path)) continue;
         if (ev.type == 3) {
             const f = self.workspace.get(path) orelse continue;

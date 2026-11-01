@@ -32,7 +32,15 @@ const index_ttl_s = 60;
 /// Files of these extensions are C's (and C++'s, and CUDA's)
 const c_extensions = [_][]const u8{ ".h", ".hh", ".hpp", ".hxx", ".c", ".cc", ".cpp", ".cxx", ".cu", ".cuh" };
 
-/// Whether `path` is a C (or C++) file
+/// Whether a document's language (of `didOpen`) is C's, C++'s or CUDA's
+pub fn isCLanguage(language: ?[]const u8) bool {
+    const l = language orelse return false;
+    for ([_][]const u8{ "c", "cpp", "cuda", "cuda-cpp", "objective-c", "objective-cpp" }) |x| if (std.mem.eql(u8, l, x)) return true;
+    return false;
+}
+
+/// Whether `path` is a C (or C++) file, for the C search; a document's
+/// language decides whether it is one (`isCLanguage`)
 pub fn isCFile(path: []const u8) bool {
     const ext = std.fs.path.extension(path);
     for (c_extensions) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;

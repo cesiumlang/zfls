@@ -328,7 +328,7 @@ test "hansec #115: from a BIND(C) procedure to its C declaration, and back" {
     try std.testing.expectEqual(@as(i64, 9), h.json.int(h.json.path(h.json.items(t)[0], &.{ "range", "start", "line" })).?);
     // a C document opened in zfls: definition of the Fortran procedure it
     // calls, and nothing parsed or diagnosed
-    try w.open("cfuncs.c");
+    try w.open("cfuncs.c", "c");
     const from_c = try w.definitions("cfuncs.c", w.pos("cfuncs.c", "solve_f", 0, 2));
     try std.testing.expectEqual(@as(usize, 1), from_c.len);
     try std.testing.expect(std.mem.endsWith(u8, from_c[0].uri, "iface.f90"));
