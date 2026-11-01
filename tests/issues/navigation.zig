@@ -241,3 +241,26 @@ test "inlay hints: the implicit type of a name that is not declared, once" {
     try std.testing.expectEqual(w.pos("i.f90", "k = 1", 0, 1).col, hs[0].col);
     try std.testing.expectEqualStrings(": REAL", hs[1].label);
 }
+
+test "inlay hints: the values of named constants where they are used" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text =
+        \\program p
+        \\  implicit none
+        \\  integer, parameter :: n = 5
+        \\  real, parameter :: pi = 3.14159265358979323846264338
+        \\  real :: x(n)
+        \\  x = pi * n + n
+        \\end program p
+        \\
+    }}, .{});
+    defer w.deinit();
+    const hs = try w.inlayHints("p.f90");
+    var labels: std.ArrayList([]const u8) = .empty;
+    defer labels.deinit(std.testing.allocator);
+    for (hs) |hint| try labels.append(std.testing.allocator, hint.label);
+    // x(n) on line 5; pi and n once each on line 6; none on the declarations
+    try std.testing.expectEqual(@as(usize, 3), hs.len);
+    try std.testing.expectEqualStrings("= 5", hs[0].label);
+    try std.testing.expectEqualStrings("= 3.1415926535897932384...", hs[1].label);
+    try std.testing.expectEqual(w.pos("p.f90", "pi * n", 0, 2).col, hs[1].col);
+}

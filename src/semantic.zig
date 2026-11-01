@@ -87,6 +87,9 @@ const Tokenizer = struct {
     depth: usize = 0,
     /// the columns of code in a fixed-form line; the rest is a comment
     fixed_limit: ?usize = null,
+    /// When set, the uses of named constants are collected here (not
+    /// their declarations)
+    constants: ?*std.ArrayList(ConstantUse) = null,
 
     /// Collect a name that stands for nothing found, unless it is a word
     /// that is no name: in a specification or END statement, after CALL
@@ -311,6 +314,9 @@ const Tokenizer = struct {
                 continue;
             }
             if (t.kindOf(o, ln + 1)) |k| try t.add(ln, raw, w.start, w.end, k);
+            if (t.constants) |list| if (o.kind == .variable and o.isParameter() and !(o.file_ast == t.ast and o.sline == ln + 1)) {
+                try list.append(t.a, .{ .line = ln, .end = w.end, .obj = o });
+            };
         }
     }
 
@@ -435,6 +441,21 @@ pub fn namePositions(a: Allocator, env: objects.Env, file: *const FortranFile, a
     var out: std.AutoHashMapUnmanaged([2]usize, void) = .empty;
     for (t.tokens.items) |tok| if (tok.type != .comment) try out.put(a, .{ tok.line, tok.start }, {});
     return out;
+}
+
+/// A use of a named constant: its line and the end of its name (a byte
+/// column)
+pub const ConstantUse = struct { line: usize, end: usize, obj: *Obj };
+
+/// The uses of named constants on 0-based lines `first`..`last`
+pub fn constantUses(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, first: usize, last: usize) ![]const ConstantUse {
+    var list: std.ArrayList(ConstantUse) = .empty;
+    var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .constants = &list };
+    const n = file.nLines();
+    if (n == 0) return list.items;
+    var ln = first;
+    while (ln <= @min(last, n - 1)) : (ln += 1) try t.tokenizeLine(ln);
+    return list.items;
 }
 
 /// A name in the code that stands for nothing found

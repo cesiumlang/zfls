@@ -31,7 +31,9 @@ command line options and configuration files.
 - Type hierarchy: the type a derived type extends, and the types that
   extend it; completion offers the parent components of an extended type
 - Inlay hints: the dummy argument each positional argument of a call goes
-  to (`call move(p, dx: 1.0)`), and the type of each `ASSOCIATE` name
+  to (`call move(p, dx: 1.0)`), the type of each `ASSOCIATE` name, the
+  implicit type of a name that is not declared, and the value of a named
+  constant where it is used
 - Selection ranges (expand the selection from a name to its parentheses,
   statement, constructs, procedure, module and file), links on the files of
   `#include` and `INCLUDE`, and a rename check that refuses intrinsics and
