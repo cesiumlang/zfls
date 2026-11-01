@@ -40,3 +40,13 @@ export function markerGrammar(markers: readonly string[]): Record<string, unknow
 export function markerGrammarText(markers: readonly string[]): string {
   return JSON.stringify(markerGrammar(markers), null, 2) + "\n";
 }
+
+/** Whether `text` (the grammar file, whatever its line ends) is the
+ * grammar of `markers` */
+export function isMarkerGrammar(text: string, markers: readonly string[]): boolean {
+  try {
+    return JSON.stringify(JSON.parse(text)) === JSON.stringify(markerGrammar(markers));
+  } catch {
+    return false;
+  }
+}

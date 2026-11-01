@@ -14,7 +14,7 @@ import { registerFormatting } from "./formatting";
 import { Fortitude } from "./fortitude";
 import { toggleComments } from "./comments";
 import { namelistGroups } from "./namelist";
-import { INJECTION_FILE, markerGrammarText } from "./commentMarkers";
+import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
 
 import { affectsServer, serverArguments } from "./options";
@@ -89,7 +89,8 @@ async function updateMarkerGrammar(changed: boolean): Promise<void> {
   const file = path.join(context.extensionPath, "syntaxes", INJECTION_FILE);
   const text = markerGrammarText(markers);
   try {
-    if (fs.readFileSync(file, "utf8") === text) {
+    // a checkout or package may have CRLF line ends: the same grammar
+    if (isMarkerGrammar(fs.readFileSync(file, "utf8"), markers)) {
       return;
     }
     fs.writeFileSync(file, text, "utf8");

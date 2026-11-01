@@ -5,12 +5,23 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { INJECTION_FILE, INJECTION_SCOPE, escapeRegExp, markerGrammar, markerGrammarText } from "../../src/commentMarkers";
+import {
+  INJECTION_FILE,
+  INJECTION_SCOPE,
+  escapeRegExp,
+  isMarkerGrammar,
+  markerGrammar,
+  markerGrammarText,
+} from "../../src/commentMarkers";
 
 const root = path.join(__dirname, "..", "..");
 
 test("the grammar shipped is the one for no markers, registered for both forms", () => {
-  assert.equal(fs.readFileSync(path.join(root, "syntaxes", INJECTION_FILE), "utf8"), markerGrammarText([]));
+  // CRLF in a Windows checkout
+  assert.ok(isMarkerGrammar(fs.readFileSync(path.join(root, "syntaxes", INJECTION_FILE), "utf8"), []));
+  assert.ok(isMarkerGrammar(markerGrammarText([]).replace(/\n/g, "\r\n"), []));
+  assert.ok(!isMarkerGrammar(markerGrammarText([";*"]), []));
+  assert.ok(!isMarkerGrammar("not json", []));
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const entry = pkg.contributes.grammars.find((g: { scopeName: string }) => g.scopeName === INJECTION_SCOPE);
   assert.ok(entry, "not in package.json");
