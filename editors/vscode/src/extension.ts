@@ -61,6 +61,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     fortitude,
     codee,
     vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitude.fixAll(uri)),
+    vscode.commands.registerCommand("zfls.gettingStarted", () =>
+      vscode.commands.executeCommand("workbench.action.openWalkthrough", `${context.extension.id}#gettingStarted`, false),
+    ),
     vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),

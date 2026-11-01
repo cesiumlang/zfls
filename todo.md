@@ -14,21 +14,20 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-Nothing left: 0.4.0 is ready for its release.
-
-## After 0.4.0
-
-- [ ] Debugging: Fortran values in the variables view (module variables,
-  which the C debuggers do not list; arrays of assumed shape and derived
-  types; FB #10), then a Fortran debug adapter of zfls's own behind the
-  `fortran` debug type
-- [ ] zfls asking clangd itself for C declarations (for editors without a C
-  server attached to C files)
-- [ ] Translations and walkthroughs, as they are asked for (MF #616,
-  MF #472)
 - [ ] The parsed symbols kept in the index cache too, so that a start does
   not parse unchanged files again (half a second of the second it takes to
   start on OpenBLAS's 3,936 files). FL #563, HS #39
+- [ ] zfls asking clangd itself for C declarations (for editors without a C
+  server attached to C files)
+- [ ] Debugging, a first step: Fortran module variables, which the C
+  debuggers do not list, in a view of their own while debugging. FB #10
+
+## After 0.4.0
+
+- [ ] Debugging: the other Fortran values in the variables view (arrays of
+  assumed shape and derived types; FB #10), then a Fortran debug adapter of
+  zfls's own behind the `fortran` debug type
+- [ ] Translations, as they are asked for (MF #616)
 
 ## Watching upstream
 
@@ -74,6 +73,10 @@ Editor features:
   `package.nls.json`, `tools/package_nls.py`; the messages shown while the
   extension runs through `vscode.l10n`, in `l10n/bundle.l10n.json`,
   `tools/l10n_bundle.py`) and walkthroughs; English only
+- [x] A Getting Started walkthrough (**zfls: Get Started**, and Help >
+  Welcome): opening a project, configuring it, compiler diagnostics,
+  running and debugging, fpm and pFUnit tests, formatting, the output.
+  MF #472
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,

@@ -504,6 +504,8 @@ Most snippets are adapted from those of Modern Fortran.
 
 ## Commands
 
+- **zfls: Get Started**: a walkthrough of the extension, also under
+  **Help > Welcome** (Modern Fortran #472)
 - **zfls: Restart Language Server**
 - **zfls: Show Output**
 - **zfls: Show Module Compile Order**

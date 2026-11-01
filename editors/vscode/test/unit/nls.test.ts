@@ -51,3 +51,19 @@ test("translations of the runtime messages have only the keys of the bundle, wit
     }
   }
 });
+
+test("each walkthrough step has its page, and its buttons run commands that exist", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const ours = new Set<string>(pkg.contributes.commands.map((c: { command: string }) => c.command));
+  const walkthroughs = pkg.contributes.walkthroughs as {
+    steps: { id: string; description: string; media: { markdown: string } }[];
+  }[];
+  assert.ok(walkthroughs.length > 0);
+  for (const step of walkthroughs.flatMap((w) => w.steps)) {
+    assert.ok(fs.existsSync(path.join(root, step.media.markdown)), `${step.id}: ${step.media.markdown} is missing`);
+    const text = nls[/^%(.+)%$/.exec(step.description)![1]];
+    const buttons = [...text.matchAll(/\]\(command:([\w.]+)/g)].map((m) => m[1]);
+    assert.ok(buttons.length > 0, `${step.id} has no button`);
+    for (const c of buttons) assert.ok(!c.startsWith("zfls.") || ours.has(c), `${step.id}: no command ${c}`);
+  }
+});

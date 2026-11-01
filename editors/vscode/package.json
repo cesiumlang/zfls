@@ -892,6 +892,11 @@
     },
     "commands": [
       {
+        "command": "zfls.gettingStarted",
+        "title": "%command.zfls.gettingStarted.title%",
+        "category": "%command.category%"
+      },
+      {
         "command": "zfls.restart",
         "title": "%command.zfls.restart.title%",
         "category": "%command.category%"
@@ -1244,7 +1249,75 @@
         ]
       }
     ],
-    "walkthroughs": []
+    "walkthroughs": [
+      {
+        "id": "gettingStarted",
+        "title": "%walkthrough.gettingStarted.title%",
+        "description": "%walkthrough.gettingStarted.description%",
+        "steps": [
+          {
+            "id": "open",
+            "title": "%walkthrough.gettingStarted.open.title%",
+            "description": "%walkthrough.gettingStarted.open.description%",
+            "media": {
+              "markdown": "media/walkthroughs/open.md"
+            },
+            "completionEvents": [
+              "onCommand:workbench.action.files.openFolder",
+              "onContext:workspaceFolderCount > 0"
+            ]
+          },
+          {
+            "id": "project",
+            "title": "%walkthrough.gettingStarted.project.title%",
+            "description": "%walkthrough.gettingStarted.project.description%",
+            "media": {
+              "markdown": "media/walkthroughs/project.md"
+            }
+          },
+          {
+            "id": "diagnostics",
+            "title": "%walkthrough.gettingStarted.diagnostics.title%",
+            "description": "%walkthrough.gettingStarted.diagnostics.description%",
+            "media": {
+              "markdown": "media/walkthroughs/diagnostics.md"
+            }
+          },
+          {
+            "id": "run",
+            "title": "%walkthrough.gettingStarted.run.title%",
+            "description": "%walkthrough.gettingStarted.run.description%",
+            "media": {
+              "markdown": "media/walkthroughs/run.md"
+            }
+          },
+          {
+            "id": "tests",
+            "title": "%walkthrough.gettingStarted.tests.title%",
+            "description": "%walkthrough.gettingStarted.tests.description%",
+            "media": {
+              "markdown": "media/walkthroughs/tests.md"
+            }
+          },
+          {
+            "id": "format",
+            "title": "%walkthrough.gettingStarted.format.title%",
+            "description": "%walkthrough.gettingStarted.format.description%",
+            "media": {
+              "markdown": "media/walkthroughs/format.md"
+            }
+          },
+          {
+            "id": "help",
+            "title": "%walkthrough.gettingStarted.help.title%",
+            "description": "%walkthrough.gettingStarted.help.description%",
+            "media": {
+              "markdown": "media/walkthroughs/help.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --minify --sourcemap",
