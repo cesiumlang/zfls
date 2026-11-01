@@ -90,7 +90,9 @@ export class Codee implements vscode.Disposable {
       if (!this.reported.has(key)) {
         this.reported.add(key);
         void vscode.window.showWarningMessage(
-          `zfls: codee was not found ${configured ? `in ${configured} (zfls.codee.path)` : "on the PATH"}.`,
+          configured
+            ? vscode.l10n.t("zfls: codee was not found in {0} (zfls.codee.path).", configured)
+            : vscode.l10n.t("zfls: codee was not found on the PATH."),
         );
       }
       return;

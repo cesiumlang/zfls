@@ -136,9 +136,15 @@ export function fpmExecutable(project: FpmProject, quiet = false): string | unde
   if (!fpm && !quiet) {
     void vscode.window
       .showErrorMessage(
-        `zfls: fpm was not found ${configured ? `at ${configured} (zfls.fpm.path)` : "on the PATH"}. ` +
-          "Install it (https://fpm.fortran-lang.org/install), or set zfls.fpm.path.",
-        "Open Settings",
+        configured
+          ? vscode.l10n.t(
+              "zfls: fpm was not found at {0} (zfls.fpm.path). Install it (https://fpm.fortran-lang.org/install), or set zfls.fpm.path.",
+              configured,
+            )
+          : vscode.l10n.t(
+              "zfls: fpm was not found on the PATH. Install it (https://fpm.fortran-lang.org/install), or set zfls.fpm.path.",
+            ),
+        vscode.l10n.t("Open Settings"),
       )
       .then((choice) => {
         if (choice) {
@@ -238,7 +244,7 @@ async function runOrDebugTarget(log: vscode.LogOutputChannel, debug: boolean): P
   }
   const kinds: TargetKind[] = debug ? ["executable", "example", "test"] : ["executable", "example"];
   const targets = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Window, title: "zfls: listing fpm targets" },
+    { location: vscode.ProgressLocation.Window, title: vscode.l10n.t("zfls: listing fpm targets") },
     async () => {
       const all: Target[] = [];
       for (const kind of kinds) {
@@ -250,7 +256,11 @@ async function runOrDebugTarget(log: vscode.LogOutputChannel, debug: boolean): P
     },
   );
   if (!targets.length) {
-    void vscode.window.showErrorMessage(`zfls: fpm lists no ${debug ? "executables, examples or tests" : "executables or examples"} in ${project.root}.`);
+    void vscode.window.showErrorMessage(
+      debug
+        ? vscode.l10n.t("zfls: fpm lists no executables, examples or tests in {0}.", project.root)
+        : vscode.l10n.t("zfls: fpm lists no executables or examples in {0}.", project.root),
+    );
     return;
   }
   const editor = vscode.window.activeTextEditor?.document;
@@ -260,7 +270,7 @@ async function runOrDebugTarget(log: vscode.LogOutputChannel, debug: boolean): P
   const picked =
     items.length === 1
       ? items[0]
-      : await vscode.window.showQuickPick(items, { placeHolder: debug ? "Target to debug" : "Target to run" });
+      : await vscode.window.showQuickPick(items, { placeHolder: debug ? vscode.l10n.t("Target to debug") : vscode.l10n.t("Target to run") });
   if (!picked) {
     return;
   }
@@ -280,13 +290,13 @@ async function pickProject(): Promise<FpmProject | undefined> {
   const projects = await findProjects();
   if (projects.length <= 1) {
     if (!projects.length) {
-      void vscode.window.showErrorMessage("zfls: there is no fpm.toml in the workspace.");
+      void vscode.window.showErrorMessage(vscode.l10n.t("zfls: there is no fpm.toml in the workspace."));
     }
     return projects[0];
   }
   const picked = await vscode.window.showQuickPick(
     projects.map((p) => ({ label: p.manifest.name ?? path.basename(p.root), description: p.root, project: p })),
-    { placeHolder: "fpm project" },
+    { placeHolder: vscode.l10n.t("fpm project") },
   );
   return picked?.project;
 }
@@ -351,8 +361,8 @@ export async function buildTarget(
   if (built !== 0) {
     void vscode.window.showErrorMessage(
       typeof built === "number"
-        ? `zfls: building ${target.name} with fpm failed (exit code ${built}); see the terminal.`
-        : "zfls: could not run fpm's build task.",
+        ? vscode.l10n.t("zfls: building {0} with fpm failed (exit code {1}); see the terminal.", target.name, built)
+        : vscode.l10n.t("zfls: could not run fpm's build task."),
     );
     return undefined;
   }
@@ -360,7 +370,9 @@ export async function buildTarget(
   const programs = parseRunnerEcho(result.stdout);
   if (programs.length !== 1) {
     void vscode.window.showErrorMessage(
-      `zfls: fpm did not give the program of ${target.name}` + (programs.length ? ` (it gave ${programs.length})` : "") + ".",
+      programs.length
+        ? vscode.l10n.t("zfls: fpm did not give the program of {0} (it gave {1}).", target.name, programs.length)
+        : vscode.l10n.t("zfls: fpm did not give the program of {0}.", target.name),
     );
     log.error(`[fpm] ${result.stdout}${result.stderr}`);
     return undefined;
@@ -409,7 +421,7 @@ export async function debugTarget(
   log.info(`[fpm] debugging with ${JSON.stringify(config)}`);
   const started = await vscode.debug.startDebugging(project.folder, config);
   if (!started) {
-    void vscode.window.showErrorMessage(`zfls: the ${debugType} debugger did not start; see the Debug Console.`);
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls: the {0} debugger did not start; see the Debug Console.", debugType));
   }
   return started;
 }

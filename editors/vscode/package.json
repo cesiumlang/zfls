@@ -26,6 +26,7 @@
     "vscode": "^1.102.0"
   },
   "main": "./dist/extension.js",
+  "l10n": "./l10n",
   "activationEvents": [
     "onDebugDynamicConfigurations:fortran",
     "onDebugInitialConfigurations",

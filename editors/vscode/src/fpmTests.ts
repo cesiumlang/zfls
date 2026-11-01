@@ -309,7 +309,7 @@ class FpmTests implements vscode.Disposable {
     const d = this.data.get(target)!;
     const fpm = fpmExecutable(d.project);
     if (!fpm) {
-      run.errored(target, new vscode.TestMessage("fpm was not found: set zfls.fpm.path."));
+      run.errored(target, new vscode.TestMessage(vscode.l10n.t("fpm was not found: set zfls.fpm.path.")));
       return;
     }
     // the items whose results this run gives
@@ -338,7 +338,7 @@ class FpmTests implements vscode.Disposable {
       return;
     }
     if (result.error) {
-      run.errored(target, new vscode.TestMessage(`fpm did not run: ${result.error.message}`));
+      run.errored(target, new vscode.TestMessage(vscode.l10n.t("fpm did not run: {0}", result.error.message)));
       return;
     }
     const results = parseTestDrive(output);
@@ -357,7 +357,9 @@ class FpmTests implements vscode.Disposable {
         }
       } else {
         suiteFailed.add(r.suite ?? "");
-        const message = r.status === "unexpected-pass" ? "passed, but was expected to fail" : (r.message ?? "failed");
+        const message = r.status === "unexpected-pass"
+            ? vscode.l10n.t("passed, but was expected to fail")
+            : (r.message ?? vscode.l10n.t("failed"));
         run.failed(item, this.messageAt(item, message));
       }
     }
@@ -366,7 +368,7 @@ class FpmTests implements vscode.Disposable {
       const id = this.data.get(i);
       if (i !== target && id?.suite && !id.test && results.some((r) => r.suite === id.suite)) {
         if (suiteFailed.has(id.suite)) {
-          run.failed(i, new vscode.TestMessage("some of its tests failed"));
+          run.failed(i, new vscode.TestMessage(vscode.l10n.t("some of its tests failed")));
         } else {
           run.passed(i);
         }
@@ -380,14 +382,14 @@ class FpmTests implements vscode.Disposable {
       // no results: the build failed, or the program is not a test-drive one
       run.failed(target, new vscode.TestMessage(lastLines(output, 30)), duration);
     } else {
-      run.failed(target, new vscode.TestMessage(`exit code ${result.code}`), duration);
+      run.failed(target, new vscode.TestMessage(vscode.l10n.t("exit code {0}", String(result.code))), duration);
     }
     // what the output gave no result for
     for (const i of items) {
       if (result.code === 0) {
         run.skipped(i);
       } else {
-        run.errored(i, new vscode.TestMessage("no result: see the output"));
+        run.errored(i, new vscode.TestMessage(vscode.l10n.t("no result: see the output")));
       }
     }
   }
@@ -439,7 +441,7 @@ class FpmTests implements vscode.Disposable {
           await ended.promise;
         } else {
           ended.dispose();
-          run.errored(target, new vscode.TestMessage("the debugger did not start"));
+          run.errored(target, new vscode.TestMessage(vscode.l10n.t("the debugger did not start")));
         }
       }
     } finally {

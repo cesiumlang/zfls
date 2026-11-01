@@ -258,6 +258,9 @@ jobs:
       - name: Extension strings are in package.nls.json
         run: python3 tools/package_nls.py --check
 
+      - name: Extension messages are in l10n/bundle.l10n.json
+        run: python3 tools/l10n_bundle.py --check
+
       - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}

@@ -129,9 +129,17 @@ export class Fortitude implements vscode.CodeActionProvider, vscode.Disposable {
       const key = `missing:${configured}`;
       if (!this.reported.has(key)) {
         this.reported.add(key);
-        const where = configured ? `in ${configured} (zfls.fortitude.path)` : "on the PATH";
         void vscode.window.showWarningMessage(
-          `zfls: fortitude was not found ${where}. Install it with \`${INSTALL_HINT}\`, or set zfls.fortitude.path to it.`,
+          configured
+            ? vscode.l10n.t(
+                "zfls: fortitude was not found in {0} (zfls.fortitude.path). Install it with `{1}`, or set zfls.fortitude.path to it.",
+                configured,
+                INSTALL_HINT,
+              )
+            : vscode.l10n.t(
+                "zfls: fortitude was not found on the PATH. Install it with `{0}`, or set zfls.fortitude.path to it.",
+                INSTALL_HINT,
+              ),
         );
       }
     }
@@ -202,7 +210,9 @@ export class Fortitude implements vscode.CodeActionProvider, vscode.Disposable {
         }
         const unsafe = p.fix.applicability !== "safe";
         const action = new vscode.CodeAction(
-          `${p.fix.message} (fortitude ${p.code}${unsafe ? ", unsafe" : ""})`,
+          unsafe
+            ? vscode.l10n.t("{0} (fortitude {1}, unsafe)", p.fix.message, p.code)
+            : vscode.l10n.t("{0} (fortitude {1})", p.fix.message, p.code),
           vscode.CodeActionKind.QuickFix,
         );
         action.diagnostics = [d];
@@ -215,7 +225,7 @@ export class Fortitude implements vscode.CodeActionProvider, vscode.Disposable {
       }
     }
     if (settingsFor(doc.uri).enabled && wants(FIX_ALL) && problems.some((p) => p.fix?.applicability === "safe")) {
-      const action = new vscode.CodeAction("Fix all safe fortitude problems", FIX_ALL);
+      const action = new vscode.CodeAction(vscode.l10n.t("Fix all safe fortitude problems"), FIX_ALL);
       action.command = { title: action.title, command: "zfls.fortitude.fixAll", arguments: [doc.uri] };
       actions.push(action);
     }
