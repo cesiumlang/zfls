@@ -680,6 +680,40 @@
           "scope": "resource",
           "markdownDescription": "Before checking a file, compile the workspace files that define the modules it uses (and the modules those use), if their `.mod` files are missing or older than the files, so that `use` statements find them. Saving a module file checks the open files that use it again."
         },
+        "zfls.fortitude.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Lint Fortran files with [fortitude](https://fortitude.readthedocs.io) when they are opened and saved, with its fixes as quick fixes and **zfls: Fix All Safe fortitude Problems** (also `source.fixAll.fortitude` in `#editor.codeActionsOnSave#`). It must be installed separately: `pip install fortitude-lint`. Its rules are set in `fpm.toml` or `fortitude.toml`."
+        },
+        "zfls.fortitude.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The fortitude executable, or the directory that holds it. Empty: `fortitude` on the `PATH`. Variables are resolved as in `#zfls.linter.compilerPath#`."
+        },
+        "zfls.fortitude.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Extra arguments for `fortitude check`, one per item, for example `[\"--select\", \"C,S\"]` or `[\"--preview\"]`."
+        },
+        "zfls.fortitude.lintOnType": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Also lint a file while it is edited, `#zfls.fortitude.lintOnTypeDelay#` milliseconds after the last change."
+        },
+        "zfls.fortitude.lintOnTypeDelay": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 50,
+          "scope": "resource",
+          "markdownDescription": "Milliseconds without changes before `#zfls.fortitude.lintOnType#` lints a file."
+        },
         "zfls.linter.fypp.enabled": {
           "type": "boolean",
           "default": false,
@@ -768,6 +802,11 @@
         "command": "zfls.toggleFixedFormComment",
         "title": "Toggle Fixed-Form Line Comment",
         "category": "zfls"
+      },
+      {
+        "command": "zfls.fortitude.fixAll",
+        "title": "Fix All Safe fortitude Problems",
+        "category": "zfls"
       }
     ],
     "keybindings": [
@@ -807,6 +846,10 @@
         {
           "command": "zfls.toggleFixedFormComment",
           "when": "editorLangId == FortranFixedForm"
+        },
+        {
+          "command": "zfls.fortitude.fixAll",
+          "when": "editorLangId =~ /^Fortran(Free|Fixed)Form$/ && config.zfls.fortitude.enabled"
         }
       ]
     },

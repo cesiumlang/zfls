@@ -19,8 +19,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - Fortran files changed outside VS Code (a checkout, generated code) are
   indexed again; the server restarts when `.fortlsrc`, `.fortls.json`,
   `.fortls`, `fpm.toml` or `compile_commands.json` changes
-- diagnostics, and a compiler's errors and warnings (see
-  [Compiler diagnostics](#compiler-diagnostics))
+- diagnostics, a compiler's errors and warnings (see
+  [Compiler diagnostics](#compiler-diagnostics)), and fortitude's problems
+  with its fixes (see [Linting with fortitude](#linting-with-fortitude))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives, and Fortran code in documentation comments (a block
   from `` !> ```fortran `` to `` !> ``` ``)
@@ -209,6 +210,27 @@ How it behaves:
 The command lines and the compiler output are logged in the `zfls` output
 channel at the Debug log level (**Developer: Set Log Level...**).
 
+## Linting with fortitude
+
+With `zfls.fortitude.enabled`, [fortitude](https://fortitude.readthedocs.io)
+checks a Fortran file when it is opened and saved (also while it is edited,
+with `zfls.fortitude.lintOnType`), and its problems show as warnings
+labelled `fortitude`, each code linking to its rule's documentation. Its
+fixes are quick fixes (the unsafe ones say so), and **zfls: Fix All Safe
+fortitude Problems** applies every safe fix; for fixes on save, add
+`"source.fixAll.fortitude": "explicit"` to `editor.codeActionsOnSave`.
+fortitude reads the unsaved text, and its rules from `fpm.toml` or
+`fortitude.toml` above the file. Install it with `pip install
+fortitude-lint`.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `zfls.fortitude.enabled` | `false` | Lint with fortitude |
+| `zfls.fortitude.path` | `fortitude` on the `PATH` | The fortitude executable, or its directory |
+| `zfls.fortitude.args` | `[]` | Extra arguments for `fortitude check` (`--select`, `--preview`, ...) |
+| `zfls.fortitude.lintOnType` | `false` | Also lint while the file is edited |
+| `zfls.fortitude.lintOnTypeDelay` | `500` | Milliseconds without changes before linting |
+
 ## Formatting
 
 **Format Document**, **Format Selection** and format on save
@@ -337,3 +359,4 @@ Most snippets are adapted from those of Modern Fortran.
 - **zfls: Add Build Task and Debug Configuration for Fortran File**
 - **zfls: Lint Current File with Compiler**
 - **zfls: Clear Compiler Diagnostics**
+- **zfls: Fix All Safe fortitude Problems**
