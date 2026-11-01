@@ -42,11 +42,13 @@ BTEST
 buildutils
 byterecl
 cafrun
+callees
 case-expr
 case-stmt
 CCYY
 CCYYMMDD
 cfunptr
+clangd
 cmdmsg
 cmdstat
 CMPLX
@@ -62,6 +64,7 @@ coindexed
 COMDAT
 compl
 completionItem
+conda
 conda-forge
 CONJG
 corank
@@ -73,6 +76,7 @@ cppdbg
 cppvsdbg
 cptr
 CSHIFT
+ctest
 cublas
 CUDA
 cudafor
@@ -85,6 +89,7 @@ DBLE
 dcba
 deallocated
 deallocating
+dependences
 deque
 deviceptr
 displayx
@@ -187,6 +192,7 @@ ifndef
 ifort
 IFSRC
 ilets
+imag
 indx
 infty
 inout
@@ -220,6 +226,7 @@ isxdigit
 ith
 ivals
 Jklmno
+json
 json-fortran
 JSONC
 jth
@@ -270,9 +277,11 @@ mtune
 mult
 MVBITS
 myarray
+mycos
 mymask
 myprg
 myprod
+mysin
 mytype
 n-th
 namelist
@@ -280,6 +289,7 @@ Namelist
 NAMELIST
 nartrof
 neqv
+newtypes
 ngroups
 nichi
 Nikiteas
@@ -300,6 +310,7 @@ OpenACC
 OpenMP
 openvsx
 ovsx
+PARAMETERs
 pFUnit
 phasor
 Plotly
@@ -371,6 +382,7 @@ tanpi
 tasker
 TATTR
 testit
+TOFROM
 toupper
 TRAILZ
 TrueType
@@ -414,16 +426,8 @@ Zig
 Zigify
 zthree
 
-Zigify
-newtypes
-json
-callees
-ReleaseSafe
-TOFROM
-dependences
-
-PARAMETERs
-clangd
-mycos
-mysin
-imag
+CTest
+filetypes
+OpenBLAS
+ifx
+nagfor

@@ -182,14 +182,19 @@ clangd or Microsoft's C/C++.
 A workspace of 200 files or more has its files' texts kept in one file of
 zfls's cache directory (`index/` in `%LOCALAPPDATA%\zfls` on Windows,
 `~/Library/Caches/zfls` on macOS, `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls`
-elsewhere), each with its size and modification time. A start reads a file
-whose size and time have not changed from there, instead of opening it:
-reading one file instead of thousands is what makes the first start after a
-reboot slow, on Windows above all, where an antivirus scans each file
-opened. zfls parses the texts as it parses the files, so what it knows of
-the workspace is the same. The cache is written again, on a thread of its
-own, when files were added, changed or removed; those of other workspaces
-are deleted after 60 days without use. `disable_index_cache` turns it off.
+elsewhere), each with its size and modification time, and with the symbols
+zfls parsed from it. A start reads a file whose size and time have not
+changed from there, instead of opening it: reading one file instead of
+thousands is what makes the first start after a reboot slow, on Windows
+above all, where an antivirus scans each file opened. It takes the file's
+symbols from there too, instead of parsing it, when all that parsing reads
+is what it was: the text, and for a preprocessed file the preprocessor's
+output, which changes with the macros, the include directories and the
+headers (the preprocessor runs at each start). On OpenBLAS (3,936 files) a
+start takes 0.3 s instead of 0.65 s. The cache is written again, on a
+thread of its own, when files were added, changed or removed, or parsed
+again; those of other workspaces are deleted after 60 days without use.
+`disable_index_cache` turns it off.
 
 ### Comment markers
 

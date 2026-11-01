@@ -661,6 +661,56 @@ pub const FortranFile = struct {
 
     /// Parse the file contents and build a new AST (the caller owns it)
     pub fn parse(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !*Ast {
+        return self.parsePrepared(try self.prepare(io, defs, include_dirs, opts), opts);
+    }
+
+    /// The preprocessor's output for parsing (null when the file is not
+    /// preprocessed), which `self` keeps too
+    pub fn prepare(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !?pp.Output {
+        if (self.preproc) {
+            Trace.print(opts.trace, "=== PreProc Pass ===\n", .{});
+            const out = try self.preprocess(io, defs, include_dirs, opts.trace);
+            Trace.print(opts.trace, "\n=== Parsing Pass ===\n", .{});
+            return out;
+        }
+        Trace.print(opts.trace, "=== No PreProc ===\n", .{});
+        self.pp_lines = null;
+        self.pp_skips = &.{};
+        return null;
+    }
+
+    /// A hash of all that parsing reads, `prepared` and `opts` included,
+    /// with `salt`: two parses of the same key build the same AST (the
+    /// index cache keeps ASTs under it)
+    pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
+        var h = std.hash.Wyhash.init(salt);
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords) };
+        h.update(&flags);
+        for (self.comment_markers) |m| {
+            h.update(m);
+            h.update("\x00");
+        }
+        const lines = if (prepared) |out| out.lines else self.lines.items;
+        h.update(std.mem.asBytes(&lines.len));
+        for (lines) |l| {
+            h.update(std.mem.asBytes(&l.len));
+            h.update(l);
+        }
+        if (prepared) |out| {
+            h.update(std.mem.sliceAsBytes(out.skips));
+            h.update(std.mem.asBytes(&out.defines.len));
+            h.update(std.mem.sliceAsBytes(out.defines));
+            for (out.includes) |inc| {
+                h.update(std.mem.asBytes(&inc.line));
+                h.update(inc.path);
+                h.update("\x00");
+            }
+        }
+        return h.final();
+    }
+
+    /// Parse the file with the preprocessor's output of `prepare`
+    pub fn parsePrepared(self: *FortranFile, prepared: ?pp.Output, opts: Options) !*Ast {
         var p: Parser = .{
             .opts = opts,
             .file = self,
@@ -669,18 +719,11 @@ pub const FortranFile = struct {
         };
         defer p.scratch.deinit();
         errdefer p.file_ast.destroy();
-        if (self.preproc) {
-            p.dbg("=== PreProc Pass ===\n", .{});
-            const out = try self.preprocess(io, defs, include_dirs, opts.trace);
+        if (prepared) |out| {
             p.pp_skips = out.skips;
             p.pp_defines = out.defines;
             // an `#include` links the file like an INCLUDE statement would
             for (out.includes) |inc| try p.file_ast.addInclude(inc.path, inc.line);
-            p.dbg("\n=== Parsing Pass ===\n", .{});
-        } else {
-            p.dbg("=== No PreProc ===\n", .{});
-            self.pp_lines = null;
-            self.pp_skips = &.{};
         }
         try p.run();
         return p.file_ast;

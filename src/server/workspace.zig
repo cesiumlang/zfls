@@ -276,7 +276,10 @@ pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFi
     errdefer f.destroy();
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
-    const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), parseOptions(self)) catch return error.ParseFailed;
+    const opts = parseOptions(self);
+    const prepared = f.prepare(self.io, &self.pp_defs, self.s.include_dirs.slice(), opts) catch return error.ParseFailed;
+    // or its AST from the index cache
+    const ast = cache.parseFile(self, f, prepared, opts) catch return error.ParseFailed;
     // Emulate Python's recursion limit (deeply nested scopes)
     if (maxScopeDepth(ast) > self.s.recursion_limit) {
         ast.destroy();

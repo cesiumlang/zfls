@@ -14,9 +14,6 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-- [ ] The parsed symbols kept in the index cache too, so that a start does
-  not parse unchanged files again (half a second of the second it takes to
-  start on OpenBLAS's 3,936 files). FL #563, HS #39
 - [ ] zfls asking clangd itself for C declarations (for editors without a C
   server attached to C files)
 - [ ] Debugging, a first step: Fortran module variables, which the C
@@ -160,7 +157,9 @@ Server:
   MF #757
 - [x] Index cache: the texts of a large workspace's files in one file of
   zfls's cache, so that a cold start reads one file instead of thousands
-  (`disable_index_cache`). HS #39
+  (`disable_index_cache`), and the symbols parsed from them, so that a
+  start parses only the files that changed: OpenBLAS (3,936 files) starts
+  in 0.3 s instead of 0.65 s. FL #563, HS #39
 - [x] Less memory: 302 MiB after indexing OpenBLAS (3,936 files, 52 MiB of
   sources; 366 MiB before), each symbol 256 bytes instead of 544
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,

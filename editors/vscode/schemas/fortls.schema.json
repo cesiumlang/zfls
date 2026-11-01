@@ -81,7 +81,7 @@
       "default": false
     },
     "disable_index_cache": {
-      "description": "Do not keep the texts of the workspace's files in one file of zfls's cache, from which a start reads those that have not changed instead of reading each file",
+      "description": "Do not keep the workspace's files, and what zfls parsed from them, in one file of zfls's cache, from which a start reads those that have not changed instead of reading and parsing each file",
       "type": "boolean",
       "default": false
     },

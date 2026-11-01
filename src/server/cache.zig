@@ -1,23 +1,32 @@
 //! The index cache: the texts of the workspace's files in one file of
-//! zfls's cache directory, each with its size and modification time. At
-//! initialization a file whose size and time are those of its entry is
-//! read from there, not from its own file: reading one file instead of
-//! thousands (each scanned by an antivirus on Windows) is what makes a cold
-//! start of a large workspace slow. zfls parses the texts as it parses the
-//! files', so what it knows of them is the same. After initialization the
-//! cache is written again when a file was not in it, or has gone.
+//! zfls's cache directory, each with its size and modification time, and
+//! the AST zfls parsed from it. At initialization a file whose size and time
+//! are those of its entry is read from there, not from its own file:
+//! reading one file instead of thousands (each scanned by an antivirus on
+//! Windows) is what makes a cold start of a large workspace slow. Its AST is
+//! taken from there too when what parsing reads (the text, the
+//! preprocessor's output, the options: `FortranFile.parseKey`) is what it
+//! was, so that a start parses only the files that changed. After
+//! initialization the cache is written again when a file or an AST was not
+//! in it, or a file has gone.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const paths = @import("../paths.zig");
+const parser = @import("../parser.zig");
+const pp = @import("../preprocessor.zig");
+const objects = @import("../objects.zig");
+const serial = @import("../objects/serial.zig");
+const FortranFile = parser.FortranFile;
+const Ast = objects.Ast;
 
 const srv = @import("../server.zig");
 const Server = srv.Server;
 
 /// The start of a cache file: the format, which a new one changes
-const magic = "ZFLSIDX1";
+const magic = "ZFLSIDX2";
 /// A smaller workspace starts fast enough without a cache
 const min_files = 200;
 /// The caches of other workspaces not written for this long are deleted
@@ -27,26 +36,40 @@ const Entry = struct {
     size: u64,
     mtime: i96,
     text: []const u8,
+    /// `FortranFile.parseKey` of `ast`; `ast` is empty when there is none
+    key: u64 = 0,
+    ast: []const u8 = "",
 };
 
-/// The cache read at initialization, and the files read from disk instead
+/// What the next cache has for a file: its entry, with what is owned by
+/// `gpa` rather than by the snapshot's `data`
+const Next = struct {
+    entry: Entry,
+    own_path: bool = false,
+    own_text: bool = false,
+    own_ast: bool = false,
+};
+
+/// The cache read at initialization, and what the next one will have
 pub const Snapshot = struct {
     /// The cache file's bytes (owned by `gpa`), which the entries point into
     data: []u8 = &.{},
     entries: std.StringHashMapUnmanaged(Entry) = .empty,
-    /// The paths of the entries used, and the files read from disk (texts
-    /// owned by `gpa`), under `mutex`
+    /// The files read during initialization, under `mutex`
     mutex: Io.Mutex = .init,
-    used: std.StringHashMapUnmanaged(void) = .empty,
-    fresh: std.ArrayList(struct { path: []const u8, entry: Entry }) = .empty,
+    next: std.StringHashMapUnmanaged(Next) = .empty,
+    /// Whether a text or an AST of `next` is not in `data`
+    changed: bool = false,
 
     fn deinit(s: *Snapshot, gpa: Allocator) void {
-        for (s.fresh.items) |f| {
-            gpa.free(f.path);
-            gpa.free(f.entry.text);
+        var it = s.next.iterator();
+        while (it.next()) |kv| {
+            const n = kv.value_ptr.*;
+            if (n.own_path) gpa.free(kv.key_ptr.*);
+            if (n.own_text) gpa.free(n.entry.text);
+            if (n.own_ast) gpa.free(n.entry.ast);
         }
-        s.fresh.deinit(gpa);
-        s.used.deinit(gpa);
+        s.next.deinit(gpa);
         s.entries.deinit(gpa);
         gpa.free(s.data);
     }
@@ -92,7 +115,7 @@ const Reader = struct {
 };
 
 /// The entries of `snap.data`: `magic`, a count, then for each file its
-/// path, size, time and text, little-endian
+/// path, size, time, text, AST key and AST, little-endian
 fn parse(gpa: Allocator, snap: *Snapshot) !void {
     var r: Reader = .{ .data = snap.data };
     if (!std.mem.eql(u8, try r.bytes(magic.len), magic)) return error.Format;
@@ -103,7 +126,9 @@ fn parse(gpa: Allocator, snap: *Snapshot) !void {
         const size = try r.int(u64);
         const mtime = try r.int(i128);
         const text = try r.bytes(try r.int(u64));
-        snap.entries.putAssumeCapacity(path, .{ .size = size, .mtime = @truncate(mtime), .text = text });
+        const key = try r.int(u64);
+        const ast = try r.bytes(try r.int(u64));
+        snap.entries.putAssumeCapacity(path, .{ .size = size, .mtime = @truncate(mtime), .text = text, .key = key, .ast = ast });
     }
 }
 
@@ -116,10 +141,13 @@ pub fn read(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]
     if (snap.entries.getEntry(path)) |kv| {
         const e = kv.value_ptr.*;
         if (e.size == st.size and e.mtime == st.mtime.nanoseconds) {
+            const text = try self.gpa.dupe(u8, e.text);
+            errdefer self.gpa.free(text);
             snap.mutex.lockUncancelable(self.io);
             defer snap.mutex.unlock(self.io);
-            try snap.used.put(self.gpa, kv.key_ptr.*, {});
-            return self.gpa.dupe(u8, e.text);
+            const gop = try snap.next.getOrPut(self.gpa, kv.key_ptr.*);
+            if (!gop.found_existing) gop.value_ptr.* = .{ .entry = e };
+            return text;
         }
     }
     const text = try readFile(self, path);
@@ -132,7 +160,15 @@ pub fn read(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]
     errdefer self.gpa.free(key);
     snap.mutex.lockUncancelable(self.io);
     defer snap.mutex.unlock(self.io);
-    try snap.fresh.append(self.gpa, .{ .path = key, .entry = .{ .size = st.size, .mtime = st.mtime.nanoseconds, .text = keep } });
+    const gop = try snap.next.getOrPut(self.gpa, key);
+    // a path listed twice (overlapping source directories) is read twice
+    if (gop.found_existing) {
+        self.gpa.free(key);
+        self.gpa.free(keep);
+        return text;
+    }
+    gop.value_ptr.* = .{ .entry = .{ .size = st.size, .mtime = st.mtime.nanoseconds, .text = keep }, .own_path = true, .own_text = true };
+    snap.changed = true;
     return text;
 }
 
@@ -143,14 +179,51 @@ fn readFile(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]
     };
 }
 
-/// After initialization: writes the cache again when a file was read from
-/// disk or an entry was not used (its file has gone or changed), on a
+/// The AST of `f` (read by `read`) with the preprocessor's output
+/// `prepared`: the cache's when its key is the same, else parsed, and then
+/// kept for the cache (on any initialization thread)
+pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: parser.Options) !*Ast {
+    const snap = self.index orelse return f.parsePrepared(prepared, opts);
+    // a trace is of parsing
+    if (opts.trace != null) return f.parsePrepared(prepared, opts);
+    const key = f.parseKey(prepared, opts, serial.schema);
+    if (snap.entries.get(f.path)) |e| if (e.key == key and e.ast.len > 0) {
+        const ast = try Ast.create(self.gpa, f);
+        if (serial.load(self.gpa, ast, e.ast)) {
+            return ast;
+        } else |err| {
+            ast.destroy();
+            self.log.info("index cache: the AST of {s} is not readable ({s}); parsing it", .{ f.path, @errorName(err) });
+        }
+    };
+    const ast = try f.parsePrepared(prepared, opts);
+    const bytes = serial.save(self.gpa, ast) catch |err| switch (err) {
+        error.OutOfMemory => return ast,
+        // not kept: parsed every time
+        error.Foreign => return ast,
+    };
+    snap.mutex.lockUncancelable(self.io);
+    defer snap.mutex.unlock(self.io);
+    const n = snap.next.getPtr(f.path) orelse {
+        self.gpa.free(bytes);
+        return ast;
+    };
+    if (n.own_ast) self.gpa.free(n.entry.ast);
+    n.entry.key = key;
+    n.entry.ast = bytes;
+    n.own_ast = true;
+    snap.changed = true;
+    return ast;
+}
+
+/// After initialization: writes the cache again when a text or an AST was
+/// not in it, or an entry was not used (its file has gone or changed), on a
 /// thread of its own, which frees the snapshot (the server waits for it
 /// when it stops)
 pub fn end(self: *Server) void {
     const snap = self.index orelse return;
     self.index = null;
-    if (snap.fresh.items.len == 0 and snap.used.count() == snap.entries.count()) return free(self, snap);
+    if (!snap.changed and snap.next.count() == snap.entries.count()) return free(self, snap);
     // one writer at a time
     wait(self);
     self.index_writer = std.Thread.spawn(.{}, writeAndFree, .{ self, snap }) catch {
@@ -182,7 +255,7 @@ fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
     Io.Dir.cwd().createDirPath(self.io, paths.dirname(file)) catch {};
     // a new file, then renamed over the old one: a reader never sees half
     const tmp = try std.fmt.allocPrint(a, "{s}.{d}.tmp", .{ file, std.Thread.getCurrentId() });
-    const count = snap.used.count() + snap.fresh.items.len;
+    const count = snap.next.count();
     {
         const f = try Io.Dir.cwd().createFile(self.io, tmp, .{});
         defer f.close(self.io);
@@ -190,9 +263,8 @@ fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
         var w: Writer = .{ .file = f, .io = self.io, .buf = &buf };
         try w.bytes(magic);
         try w.int(u32, @intCast(count));
-        var it = snap.used.keyIterator();
-        while (it.next()) |k| try w.entry(k.*, snap.entries.get(k.*).?);
-        for (snap.fresh.items) |e| try w.entry(e.path, e.entry);
+        var it = snap.next.iterator();
+        while (it.next()) |kv| try w.entry(kv.key_ptr.*, kv.value_ptr.entry);
         try w.flush();
     }
     Io.Dir.cwd().rename(tmp, Io.Dir.cwd(), file, self.io) catch |e| {
@@ -259,6 +331,9 @@ const Writer = struct {
         try w.int(i128, e.mtime);
         try w.int(u64, e.text.len);
         try w.bytes(e.text);
+        try w.int(u64, e.key);
+        try w.int(u64, e.ast.len);
+        try w.bytes(e.ast);
     }
 };
 
@@ -271,7 +346,7 @@ test "a cache's entries read back" {
     var w: Writer = .{ .list = &out, .a = a };
     try w.bytes(magic);
     try w.int(u32, 2);
-    try w.entry("/w/a.f90", .{ .size = 5, .mtime = -7, .text = "x = 1" });
+    try w.entry("/w/a.f90", .{ .size = 5, .mtime = -7, .text = "x = 1", .key = 42, .ast = "abc" });
     try w.entry("/w/b.f90", .{ .size = 0, .mtime = 1 << 70, .text = "" });
     var snap: Snapshot = .{ .data = try gpa.dupe(u8, out.items) };
     defer snap.deinit(gpa);
@@ -280,7 +355,10 @@ test "a cache's entries read back" {
     const e = snap.entries.get("/w/a.f90").?;
     try std.testing.expectEqualStrings("x = 1", e.text);
     try std.testing.expectEqual(@as(i96, -7), e.mtime);
+    try std.testing.expectEqual(@as(u64, 42), e.key);
+    try std.testing.expectEqualStrings("abc", e.ast);
     try std.testing.expectEqual(@as(i96, 1 << 70), snap.entries.get("/w/b.f90").?.mtime);
+    try std.testing.expectEqualStrings("", snap.entries.get("/w/b.f90").?.ast);
     // a truncated file is no cache
     var bad: Snapshot = .{ .data = try gpa.dupe(u8, out.items[0 .. out.items.len - 3]) };
     defer bad.deinit(gpa);
