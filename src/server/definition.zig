@@ -18,6 +18,7 @@ const constructs = @import("../constructs.zig");
 const selection = @import("../selection.zig");
 const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
+const directives = @import("../data/directives.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -333,10 +334,35 @@ fn implicitHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value
     return keywordHover(self, a, file, line, col);
 }
 
+/// Hover on a word of an OpenMP (`!$omp`) or OpenACC (`!$acc`) directive
+/// (also `c$omp`, `*$omp` in fixed form): its documentation
+fn directiveHover(self: *Server, a: Allocator, text: []const u8, col: usize) !?Value {
+    const t = std.mem.trimStart(u8, text, " \t");
+    if (t.len < 5 or !(t[0] == '!' or t[0] == 'c' or t[0] == 'C' or t[0] == '*') or t[1] != '$') return null;
+    const omp = std.ascii.eqlIgnoreCase(t[2..5], "omp");
+    if (!omp and !std.ascii.eqlIgnoreCase(t[2..5], "acc")) return null;
+    const start = text.len - t.len + 5;
+    const c = @min(col, text.len);
+    if (c < start) return null;
+    var s = c;
+    while (s > start and (std.ascii.isAlphanumeric(text[s - 1]) or text[s - 1] == '_')) s -= 1;
+    var e = c;
+    while (e < text.len and (std.ascii.isAlphanumeric(text[e]) or text[e] == '_')) e += 1;
+    if (e == s) return null;
+    const table: []const directives.Directive = if (omp) &directives.omp else &directives.acc;
+    for (table) |d| if (std.ascii.eqlIgnoreCase(d.name, text[s..e])) {
+        const title = try std.fmt.allocPrint(a, "{s} {s}", .{ if (omp) "!$OMP" else "!$ACC", try std.ascii.allocUpperString(a, d.name) });
+        const docs = try std.fmt.allocPrint(a, "{s}\n\n{s} directive", .{ d.doc, if (omp) "OpenMP" else "OpenACC" });
+        return try json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, title, docs) } });
+    };
+    return null;
+}
+
 /// Hover on a statement or attribute keyword: its documentation (fortls
 /// #547)
 fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, col: usize) !Value {
     const text = file.getLine(line, false) orelse return .null;
+    if (try directiveHover(self, a, text, col)) |v| return v;
     if (helpers.isComment(file.fixed, text)) return .null;
     const code = try helpers.stripStrings(a, text, true);
     const c = @min(col, code.len);

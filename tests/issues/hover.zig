@@ -937,3 +937,26 @@ test "coarrays: hover shows the codimension, from the name or the attribute" {
     try w.expectHoverContains("c.f90", w.pos("c.f90", "x = 1.0", 0, 0), "REAL, CODIMENSION[*] :: x");
     try w.expectHoverContains("c.f90", w.pos("c.f90", "y(1)[1,1]", 0, 0), "REAL, CODIMENSION[2,*], DIMENSION(10) :: y");
 }
+
+test "hover on the words of OpenMP and OpenACC directives" {
+    const w = try h.Workspace.init(&.{.{ .name = "d.f90", .text =
+        \\program d
+        \\  integer :: i, s
+        \\  s = 0
+        \\  !$omp parallel do private(i) reduction(+:s)
+        \\  do i = 1, 10
+        \\    s = s + i
+        \\  end do
+        \\  !$omp end parallel do
+        \\  !$acc data copyin(s)
+        \\  !$acc end data
+        \\end program d
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "parallel do private", 0, 2), "Creates a team of threads");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "reduction(+", 0, 2), "!$OMP REDUCTION");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "copyin(s)", 0, 2), "Copies the variables to the accelerator");
+    // not on the sentinel, nor on a variable of a clause
+    try std.testing.expect((try w.hover("d.f90", w.pos("d.f90", "!$omp parallel", 0, 1))) == null);
+}
