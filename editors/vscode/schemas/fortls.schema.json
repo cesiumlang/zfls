@@ -71,6 +71,11 @@
       "type": "boolean",
       "default": false
     },
+    "disable_index_cache": {
+      "description": "Do not keep the texts of the workspace's files in one file of zfls's cache, from which a start reads those that have not changed instead of reading each file",
+      "type": "boolean",
+      "default": false
+    },
     "autocomplete_no_prefix": {
       "description": "Do not filter autocomplete results by variable prefix",
       "type": "boolean",

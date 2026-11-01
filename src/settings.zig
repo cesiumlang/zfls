@@ -48,6 +48,8 @@ pub const Settings = struct {
     disable_autoupdate: bool = false,
     preserve_keyword_order: bool = false,
     debug_log: bool = false,
+    /// Do not keep the texts of the workspace's files in zfls's cache
+    disable_index_cache: bool = false,
     // File parsing options
     source_dirs: StrList = .{},
     incl_suffixes: StrList = .{},
@@ -173,6 +175,7 @@ const opts = [_]Opt{
     .{ .long = "disable_autoupdate", .kind = .flag, .help = "Accepted for compatibility with fortls and ignored: zfls does not update itself." },
     .{ .long = "preserve_keyword_order", .kind = .flag, .help = "DEPRECATED, this is now the default. To sort use sort_keywords" },
     .{ .long = "debug_log", .kind = .flag, .help = "Generate debug log in project root folder" },
+    .{ .long = "disable_index_cache", .kind = .flag, .help = "Do not keep the texts of the workspace's files in one file of zfls's cache, from which a start reads those that have not changed instead of reading each file" },
     .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
@@ -485,6 +488,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.recursion_limit = jsonInt(json.get(cfg, "recursion_limit"), s.recursion_limit);
     s.sort_keywords = jsonBool(json.get(cfg, "sort_keywords"), s.sort_keywords);
     s.disable_autoupdate = jsonBool(json.get(cfg, "disable_autoupdate"), s.disable_autoupdate);
+    s.disable_index_cache = jsonBool(json.get(cfg, "disable_index_cache"), s.disable_index_cache);
     // Autocomplete options
     s.autocomplete_no_prefix = jsonBool(json.get(cfg, "autocomplete_no_prefix"), s.autocomplete_no_prefix);
     s.autocomplete_no_auto_use = jsonBool(json.get(cfg, "autocomplete_no_auto_use"), s.autocomplete_no_auto_use);

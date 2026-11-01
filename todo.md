@@ -19,10 +19,9 @@ projects zfls replaces:
   then test-drive's tests one by one. pFUnit after that
 - [ ] Custom comment markers (`;*` comments of a preprocessed dialect), in the
   parser and the grammar, from a setting. MF #197
-- [ ] Index cache: each file's symbols on disk, keyed by its contents and
-  zfls's version and settings, so that a workspace of thousands of files
-  starts without parsing them again. Summaries for unopened files and a
-  smarter index later. FL #563, HS #39
+- [ ] A smarter index: the parsed symbols cached too (they take half a
+  second to build for 3,870 files), summaries for unopened files to save
+  memory (400 MiB for OpenBLAS). FL #563, HS #39
 - [ ] C interoperability through a C language server (clangd, or Microsoft's
   C/C++): from a `bind(C)` procedure to its C declaration, and from a C call
   to the Fortran procedure, without parsing C in zfls. A plain search of
@@ -136,6 +135,9 @@ Server:
 
 - [x] `$/cancelRequest`; indexing progress (`workDoneProgress`). FL #417,
   MF #757
+- [x] Index cache: the texts of a large workspace's files in one file of
+  zfls's cache, so that a cold start reads one file instead of thousands
+  (`disable_index_cache`). HS #39
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)

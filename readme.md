@@ -152,6 +152,20 @@ build files say:
 A definition from the options or the configuration file is kept over one
 from a build file.
 
+### Index cache
+
+A workspace of 200 files or more has its files' texts kept in one file of
+zfls's cache directory (`index/` in `%LOCALAPPDATA%\zfls` on Windows,
+`~/Library/Caches/zfls` on macOS, `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls`
+elsewhere), each with its size and modification time. A start reads a file
+whose size and time have not changed from there, instead of opening it:
+reading one file instead of thousands is what makes the first start after a
+reboot slow, on Windows above all, where an antivirus scans each file
+opened. zfls parses the texts as it parses the files, so what it knows of
+the workspace is the same. The cache is written again, on a thread of its
+own, when files were added, changed or removed; those of other workspaces
+are deleted after 60 days without use. `disable_index_cache` turns it off.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
