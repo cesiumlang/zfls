@@ -20,6 +20,7 @@ const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const directives = @import("../data/directives.zig");
 const operators = @import("operators.zig");
+const literals = @import("../literals.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -328,6 +329,23 @@ pub fn preferredBody(self: *Server, obj: *Obj) *Obj {
 
 /// Hover on a name that is not declared: the type implicit typing gives it
 /// (hansec #201), unless IMPLICIT NONE applies
+/// Hover on a literal constant: its type (fortls #125); fortls shows only
+/// REAL, INTEGER, LOGICAL or CHARACTER(LEN=n), without kinds
+fn literalHover(self: *Server, a: Allocator, params: lsp.PositionParams) !?Value {
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
+    const line = params.position.line;
+    const text = file.getLine(line, false) orelse return null;
+    if (helpers.isComment(file.fixed, text)) return null;
+    const lit = (try literals.at(a, text, Server.toByteCol(file, line, params.position.character))) orelse return null;
+    const docs = if (lit.value) |v|
+        try std.fmt.allocPrint(a, "Literal constant (BOZ), value {d}", .{v})
+    else if (std.mem.eql(u8, lit.type, "BOZ"))
+        "Literal constant (BOZ)"
+    else
+        "Literal constant";
+    return try json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, lit.type, docs) } });
+}
+
 fn implicitHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;
@@ -394,7 +412,11 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
-    const d = (try definitionAt(self, a, params, true)) orelse return implicitHover(self, a, params);
+    const d = (try definitionAt(self, a, params, true)) orelse {
+        if (try literalHover(self, a, params)) |v| return v;
+        return implicitHover(self, a, params);
+    };
+    if (std.mem.startsWith(u8, d.obj.descOf(), C.FORTRAN_LITERAL)) if (try literalHover(self, a, params)) |v| return v;
     const ast = d.file.ast.?;
     var var_obj = (try externalTarget(self, a, ast, d.obj)) orelse (try calledFunction(self, a, ast, d)) orelse d.obj;
     // the implementation's documentation, or the interface's when it has none

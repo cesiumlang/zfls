@@ -328,6 +328,11 @@ zfls deliberately differs from fortls in a few places:
   ...) shows its documentation (fortls #547), and so does hover on a word of
   an OpenMP or OpenACC directive (`!$omp parallel do`, `reduction`,
   `!$acc data`); fortls has no hover there.
+- Hover on a literal constant shows its type with its kind: `3.0_dp` is
+  `REAL(dp)`, `7_8` `INTEGER(8)`, `1d0` `DOUBLE PRECISION`, `.false._1`
+  `LOGICAL(1)`, `dp_'x'` `CHARACTER(LEN=1, KIND=dp)`, and `z'ff'` a BOZ
+  constant of value 255 (fortls #125). fortls shows the type without its
+  kind, and nothing on `1d0`, `7_8` or BOZ constants.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the surrounding scopes, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has

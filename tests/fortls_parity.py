@@ -282,6 +282,10 @@ def main() -> int:
                 # declared (hansec #201); fortls has no hover there
                 if isinstance(r, dict) and any(m in str(r.get("contents", "")) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                     r = None
+                # zfls marks the type of a literal (fortls #125), which
+                # fortls shows bare
+                if isinstance(r, dict) and isinstance(r.get("contents"), dict) and "\n-----\nLiteral constant" in r["contents"].get("value", ""):
+                    r = {**r, "contents": {**r["contents"], "value": r["contents"]["value"].split("\n-----\nLiteral constant")[0]}}
                 # zfls offers the keyword arguments of the call a completion
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls's expected lists do not have them

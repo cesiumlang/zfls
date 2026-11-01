@@ -428,6 +428,7 @@ def generic_specific_definition(lines: list, ref, got) -> bool:
     return False
 
 
+LITERAL_HOVER = re.compile(r"```\w*\n(REAL|INTEGER|LOGICAL|CHARACTER\(LEN=\d+\))\n```")
 INTRINSIC_DOT_OPS = {"eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "eqv", "neqv", "true", "false"}
 
 
@@ -645,6 +646,10 @@ def main() -> int:
             if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                 # the implicit type of a name that is not declared (hansec
                 # #201); fortls has no hover there
+                continue
+            if kind == "hover" and "Literal constant" in json.dumps(b) and (a is None or LITERAL_HOVER.fullmatch(a.get("contents", {}).get("value", ""))):
+                # the type of a literal, with its kind (fortls #125); fortls
+                # shows none, or the type without its kind
                 continue
             if (
                 kind in ("hover", "definition", "references")
