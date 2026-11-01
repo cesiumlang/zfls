@@ -87,6 +87,23 @@
         }
       },
       {
+        "id": "FortranNamelist",
+        "aliases": [
+          "Fortran Namelist",
+          "namelist"
+        ],
+        "extensions": [
+          ".nml",
+          ".NML",
+          ".namelist"
+        ],
+        "configuration": "./language-configuration-namelist.json",
+        "icon": {
+          "light": "./icons/fortran.svg",
+          "dark": "./icons/fortran.svg"
+        }
+      },
+      {
         "id": "jsonc",
         "filenames": [
           ".fortlsrc",
@@ -157,6 +174,11 @@
         "injectTo": [
           "source.fortran.fixed"
         ]
+      },
+      {
+        "language": "FortranNamelist",
+        "scopeName": "source.fortran.namelist",
+        "path": "./syntaxes/fortran_namelist.tmLanguage.json"
       }
     ],
     "snippets": [
