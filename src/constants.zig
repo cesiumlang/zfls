@@ -100,6 +100,7 @@ pub const DiagCode = enum {
     unused_name,
     circular_use,
     argument_mismatch,
+    argument_kind,
     intent_in_assigned,
 
     /// The name of the code, `masks-parent`

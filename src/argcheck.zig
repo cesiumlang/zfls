@@ -1,7 +1,7 @@
 //! Argument checking: the calls of workspace procedures whose arguments do
 //! not fit the procedure (too many, a keyword it does not have, one given
-//! twice, a required one missing), and assignments to INTENT(IN) dummy
-//! arguments. Each statement is read whole, its continuation lines joined.
+//! twice, a required one missing, a type, rank or kind that differs), and
+//! assignments to INTENT(IN) dummy arguments. Each statement is read whole, its continuation lines joined.
 //! Generic interfaces, intrinsics, procedure pointers and procedures with
 //! alternate returns are not checked.
 
@@ -15,7 +15,7 @@ const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
 const KW = @import("constants.zig").KW;
 
-pub const Kind = enum { arguments, intent_in };
+pub const Kind = enum { arguments, kinds, intent_in };
 
 pub const Problem = struct { line: usize, start: usize, end: usize, message: []const u8, kind: Kind };
 
@@ -250,6 +250,19 @@ const Checker = struct {
             try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(want), @tagName(have) });
             return;
         }
+        // the kinds, when both are known
+        if (want == have and want != .unknown and want != .character and want != .derived) {
+            const want_kind = try c.kindOfVar(dummy);
+            const have_kind = if (is_literal)
+                try c.literalKind(actual, scope, line_no)
+            else
+                try c.kindOfVar((try c.lookup(scope, actual, line_no)).?);
+            if (want_kind != null and have_kind != null and want_kind.? != have_kind.?) {
+                const t = typeName(want);
+                try c.report(j, s + w.start, s + w.end, .kinds, "Argument {s} of {s}: {s}({d}) expected, {s}({d}) given", .{ dummy.name, proc.name, t, want_kind.?, t, have_kind.? });
+                return;
+            }
+        }
         if (elemental) return;
         const dims = dummy.keyword_info.dimension;
         const dummy_array = dummy.hasKeyword(KW.dimension) or dims != null;
@@ -260,6 +273,91 @@ const Checker = struct {
         } else if (is_literal and dummy_array and have != .character) {
             try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an array expected, a scalar given", .{ dummy.name, proc.name });
         }
+    }
+
+    /// The kind of a variable's type, as gfortran numbers kinds (4 for a
+    /// default REAL, 8 for DOUBLE PRECISION), or null when it cannot be told
+    fn kindOfVar(c: *Checker, v: *Obj) !?i64 {
+        if (v.kind != .variable) return null;
+        const desc = std.mem.trim(u8, v.descOf(), " ");
+        if (std.ascii.startsWithIgnoreCase(desc, "double")) return 8;
+        const spec = std.mem.trim(u8, v.varDataConst().vkind orelse "", " ");
+        if (spec.len == 0) return 4;
+        if (spec[0] == '*') {
+            const n = std.fmt.parseInt(i64, std.mem.trim(u8, spec[1..], " "), 10) catch return null;
+            // COMPLEX*16 is two REAL(8)
+            return if (category(desc) == .complex) @divTrunc(n, 2) else n;
+        }
+        if (spec[0] != '(' or spec[spec.len - 1] != ')') return null;
+        var inner = std.mem.trim(u8, spec[1 .. spec.len - 1], " ");
+        if (std.mem.indexOfScalar(u8, inner, '=')) |eq| {
+            if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, inner[0..eq], " "), "kind")) return null;
+            inner = std.mem.trim(u8, inner[eq + 1 ..], " ");
+        }
+        return c.kindValue(inner, v.parent, v.sline, 0);
+    }
+
+    /// The kind of a literal argument (`1.0` 4, `1d0` 8, `1.0_dp` that of
+    /// `dp`)
+    fn literalKind(c: *Checker, lit: []const u8, scope: ?*Obj, line_no: usize) !?i64 {
+        if (lit[0] == '.') if (std.ascii.startsWithIgnoreCase(lit, ".true.") or std.ascii.startsWithIgnoreCase(lit, ".false.")) return 4;
+        if (std.mem.lastIndexOfScalar(u8, lit, '_')) |u| return c.kindValue(lit[u + 1 ..], scope, line_no, 0);
+        for (lit) |ch| switch (ch) {
+            'd', 'D' => return 8,
+            'q', 'Q' => return 16,
+            else => {},
+        };
+        return 4;
+    }
+
+    /// The value of a kind expression: a number, a named constant (of
+    /// ISO_FORTRAN_ENV, ISO_C_BINDING, or a PARAMETER), `kind(...)`,
+    /// `selected_real_kind(p, r)`, `selected_int_kind(r)`
+    fn kindValue(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?i64 {
+        if (depth > 8) return null;
+        const expr = std.mem.trim(u8, expr_in, " ");
+        if (expr.len == 0) return null;
+        if (std.fmt.parseInt(i64, expr, 10)) |n| return n else |_| {}
+        if (isName(expr)) {
+            const v = (try c.lookup(scope, expr, line_no)) orelse return null;
+            if (v.kind != .variable) return null;
+            if (v.parent) |m| if (std.ascii.eqlIgnoreCase(m.name, "iso_fortran_env") or std.ascii.eqlIgnoreCase(m.name, "iso_c_binding")) {
+                for (intrinsic_kinds) |k| if (std.ascii.eqlIgnoreCase(k[0], v.name)) return k[1];
+                return null;
+            };
+            if (!v.varDataConst().is_const) return null;
+            return c.kindValue(v.varDataConst().param_val orelse return null, v.parent, v.sline, depth + 1);
+        }
+        // a call of an inquiry function
+        const open = std.mem.indexOfScalar(u8, expr, '(') orelse return null;
+        if (expr[expr.len - 1] != ')' or matching(expr, open) != expr.len - 1) return null;
+        const fun = std.mem.trim(u8, expr[0..open], " ");
+        const args = expr[open + 1 .. expr.len - 1];
+        if (std.ascii.eqlIgnoreCase(fun, "kind")) {
+            const arg = std.mem.trim(u8, args, " ");
+            if (literalCategory(arg)) |cat| return if (cat == .character) null else c.literalKind(arg, scope, line_no);
+            if (!isName(arg)) return null;
+            return c.kindOfVar((try c.lookup(scope, arg, line_no)) orelse return null);
+        }
+        const real = std.ascii.eqlIgnoreCase(fun, "selected_real_kind");
+        if (!real and !std.ascii.eqlIgnoreCase(fun, "selected_int_kind")) return null;
+        // the precision and range, by position or keyword
+        var p: ?i64 = null;
+        var r: ?i64 = null;
+        var it = std.mem.splitScalar(u8, args, ',');
+        var pos: usize = 0;
+        while (it.next()) |part| : (pos += 1) {
+            var arg = std.mem.trim(u8, part, " ");
+            var which: u8 = if (pos == 0) 'p' else 'r';
+            if (keywordOf(arg)) |kw| {
+                which = std.ascii.toLower(kw[0]);
+                arg = std.mem.trim(u8, arg[std.mem.indexOfScalar(u8, arg, '=').? + 1 ..], " ");
+            }
+            const n = (try c.kindValue(arg, scope, line_no, depth + 1)) orelse return null;
+            if (which == 'p') p = n else if (which == 'r') r = n else return null;
+        }
+        if (!real) return selectedIntKind(p orelse return null);
+        return selectedRealKind(p, r);
     }
 
     /// `x = ...` (also `x(i) = `, `x%c = `) for an INTENT(IN) dummy argument
@@ -389,6 +487,51 @@ fn literalCategory(arg: []const u8) ?Category {
         return null;
     }
     return if (real) .real else .integer;
+}
+
+/// The kinds of the named constants of ISO_FORTRAN_ENV and ISO_C_BINDING
+/// that are the same on every platform gfortran targets
+const intrinsic_kinds = [_]struct { []const u8, i64 }{
+    .{ "int8", 1 },      .{ "int16", 2 },           .{ "int32", 4 },            .{ "int64", 8 },
+    .{ "real32", 4 },    .{ "real64", 8 },          .{ "real128", 16 },         .{ "c_signed_char", 1 },
+    .{ "c_short", 2 },   .{ "c_int", 4 },           .{ "c_long_long", 8 },      .{ "c_int8_t", 1 },
+    .{ "c_int16_t", 2 }, .{ "c_int32_t", 4 },       .{ "c_int64_t", 8 },        .{ "c_float", 4 },
+    .{ "c_double", 8 },  .{ "c_float_complex", 4 }, .{ "c_double_complex", 8 }, .{ "c_bool", 1 },
+};
+
+/// gfortran's SELECTED_INT_KIND
+fn selectedIntKind(r: i64) ?i64 {
+    for ([_][2]i64{ .{ 2, 1 }, .{ 4, 2 }, .{ 9, 4 }, .{ 18, 8 }, .{ 38, 16 } }) |k| if (r <= k[0]) return k[1];
+    return null;
+}
+
+/// gfortran's SELECTED_REAL_KIND on x86-64: the smallest kind with the
+/// precision and range (REAL(10) is x87 extended precision)
+fn selectedRealKind(p: ?i64, r: ?i64) ?i64 {
+    if (p == null and r == null) return null;
+    for ([_][3]i64{ .{ 6, 37, 4 }, .{ 15, 307, 8 }, .{ 18, 4931, 10 }, .{ 33, 4931, 16 } }) |k| {
+        if ((p orelse 0) <= k[0] and (r orelse 0) <= k[1]) return k[2];
+    }
+    return null;
+}
+
+fn typeName(cat: Category) []const u8 {
+    return switch (cat) {
+        .integer => "INTEGER",
+        .real => "REAL",
+        .complex => "COMPLEX",
+        .logical => "LOGICAL",
+        else => "",
+    };
+}
+
+test "selected kinds" {
+    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(15, 307));
+    try std.testing.expectEqual(@as(?i64, 4), selectedRealKind(6, null));
+    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(null, 100));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(30, null));
+    try std.testing.expectEqual(@as(?i64, 8), selectedIntKind(18));
+    try std.testing.expectEqual(@as(?i64, 4), selectedIntKind(9));
 }
 
 fn isName(s: []const u8) bool {

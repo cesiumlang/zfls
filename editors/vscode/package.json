@@ -316,6 +316,7 @@
               "unused-name",
               "circular-use",
               "argument-mismatch",
+              "argument-kind",
               "intent-in-assigned"
             ]
           },
