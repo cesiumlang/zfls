@@ -363,9 +363,13 @@ zfls deliberately differs from fortls in a few places:
 - Calls of workspace procedures are checked (`argument-mismatch`): too
   many arguments, a keyword the procedure does not have, an argument given
   twice, a required (not OPTIONAL) argument missing, and the kind of type
-  (integer, real, complex, logical, character, derived) of an argument that
-  is a variable or a literal, a whole array for a scalar, a literal for an
-  array (not for elemental or assumed-rank). Generic interfaces,
+  (integer, real, complex, logical, character, derived) of an argument, an
+  array for a scalar, a scalar that is no variable or element for an array
+  (not for elemental or assumed-rank). An argument is typed when it is a
+  literal, a variable or a part of one (`a(i)` a scalar, `a(:)` or `a(v)`
+  with an array `v` an array, `p%c`, a substring), or an expression of
+  these with intrinsic operators; one with a function, an intrinsic, a
+  user-defined operator or a derived type in an expression is not checked. Generic interfaces,
   intrinsics, procedure pointers, alternate returns and procedures whose
   argument list has preprocessor lines are not checked. When the type is
   right but its kind differs (`1.0` for a `REAL(dp)` argument), that is an

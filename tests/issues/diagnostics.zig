@@ -1027,3 +1027,85 @@ test "argument checks: kinds of variables and literals" {
     }
     for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
 }
+
+test "argument checks: types and ranks of expressions" {
+    const w = try h.Workspace.init(&.{.{ .name = "e.f90", .text =
+        \\module procs
+        \\  implicit none
+        \\  type :: pt
+        \\    integer :: n
+        \\    real :: r4
+        \\  end type pt
+        \\  type, extends(pt) :: pt2
+        \\  end type pt2
+        \\contains
+        \\  subroutine sr(x)
+        \\    real, intent(in) :: x
+        \\  end subroutine sr
+        \\  subroutine sd(x)
+        \\    double precision, intent(in) :: x
+        \\  end subroutine sd
+        \\  subroutine sa(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine sa
+        \\  subroutine sc(c)
+        \\    character(len=*), intent(in) :: c
+        \\  end subroutine sc
+        \\  real function f(x)
+        \\    real, intent(in) :: x
+        \\    f = x
+        \\  end function f
+        \\end module procs
+        \\program main
+        \\  use procs
+        \\  implicit none
+        \\  integer :: i, idx(2)
+        \\  real :: r, a(3)
+        \\  character(len=4) :: s
+        \\  type(pt2) :: q
+        \\  call sr(i + 1)
+        \\  call sr(r * 2 + i)
+        \\  call sr(r > 0.0 .and. i == 1)
+        \\  call sa(r + 1.0)
+        \\  call sa(a(1))
+        \\  call sr(a(:))
+        \\  call sr(a + 1.0)
+        \\  call sr(q%n)
+        \\  call sc('a' // s)
+        \\  call sr('a' // s)
+        \\  call sr(f(r))
+        \\  call sr(a(idx))
+        \\  call sr(sqrt(r))
+        \\  call sr((1.0, 2.0))
+        \\  call sa([1.0, 2.0])
+        \\  call sd(q%r4)
+        \\  call sr(-r)
+        \\  call sr(a(i + 1))
+        \\  call sc(s(1:2))
+        \\end program main
+        \\
+    }}, .{});
+    defer w.deinit();
+    var msgs: std.ArrayList([]const u8) = .empty;
+    defer msgs.deinit(std.testing.allocator);
+    for (try w.diagnostics("e.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "argument-mismatch") or std.mem.eql(u8, d.code, "argument-kind")) try msgs.append(std.testing.allocator, d.message);
+    }
+    const want = [_][]const u8{
+        "Argument x of sr: real expected, integer given",
+        "Argument x of sr: real expected, logical given",
+        "Argument v of sa: an array expected, a scalar given",
+        "Argument x of sr: a scalar expected, an array given",
+        "Argument x of sr: a scalar expected, an array given",
+        "Argument x of sr: real expected, integer given",
+        "Argument x of sr: real expected, character given",
+        "Argument x of sr: a scalar expected, an array given",
+        "Argument x of sr: real expected, complex given",
+        "Argument x of sd: REAL(8) expected, REAL(4) given",
+    };
+    if (msgs.items.len != want.len) {
+        std.debug.print("got: {any}\n", .{msgs.items});
+        return error.TestExpectedEqual;
+    }
+    for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
+}
