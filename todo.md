@@ -15,8 +15,6 @@ projects zfls replaces:
 ## Later
 
 - [ ] Argument checking of kinds, and of the types and ranks of expressions
-- [ ] Code blocks in documentation comments: Fortran highlighting in the
-  editor. FL #209
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
 - [ ] Linters: fortitude (MF #1165), Codee
@@ -56,6 +54,7 @@ Editor features:
   types, implicit types, values of named constants
 - [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
   (`zfls.fixedFormCommentCharacter`). MF #535
+- [x] Fortran code blocks in documentation comments highlighted. FL #209
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195

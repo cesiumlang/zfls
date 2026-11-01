@@ -1,5 +1,6 @@
-// Plain Node.js tests of the fypp grammar injection: its patterns compile
-// and match fypp's syntax (`npm run unit`). The grammar engine is
+// Plain Node.js tests of the grammar injections (fypp, code blocks in
+// documentation comments): their patterns compile and match their syntax
+// (`npm run unit`). The grammar engine is
 // Oniguruma; these patterns use only syntax JavaScript reads the same way.
 
 import * as assert from "node:assert/strict";
@@ -44,4 +45,30 @@ test("the fypp patterns match fypp's syntax", () => {
   assert.match("x = 1 #{if DEBUG}# + 1 #{endif}#", begin("fypp-inline-directive"));
   assert.match("y = @{square(1)}@", begin("fypp-inline-macro"));
   assert.match("#! a fypp comment", begin("fypp-comment"));
+});
+
+const docCode = JSON.parse(fs.readFileSync(path.join(root, "syntaxes", "fortran_doc-code.injection.json"), "utf8"));
+
+test("the doc-comment code block injection is registered for free-form Fortran", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const entry = pkg.contributes.grammars.find((g: { scopeName: string }) => g.scopeName === docCode.scopeName);
+  assert.ok(entry, "not in package.json");
+  assert.deepEqual(entry.injectTo, ["source.fortran.free"]);
+  for (const re of regexes(docCode)) assert.doesNotThrow(() => new RegExp(re), re);
+});
+
+test("a Fortran code block in documentation comments", () => {
+  const block = docCode.repository["doc-code-block"];
+  const begin = new RegExp(block.begin);
+  const inside = new RegExp(block.while);
+  assert.match("  !> ```fortran", begin);
+  assert.match("!! ~~~ Fortran90", begin);
+  assert.match("  !< ```f90", begin);
+  // not a closing fence, which would open a block again
+  assert.doesNotMatch("  !> ```", begin);
+  assert.doesNotMatch("  ! ```fortran", begin);
+  assert.match("  !>   y = sq(2.0)", inside);
+  // the closing fence and a line that is no documentation end it
+  assert.doesNotMatch("  !> ```", inside);
+  assert.doesNotMatch("  y = 1", inside);
 });
