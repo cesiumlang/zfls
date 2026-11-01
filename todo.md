@@ -15,7 +15,6 @@ projects zfls replaces:
 ## Later
 
 - [ ] Argument checking of kinds, and of the types and ranks of expressions
-- [ ] Interface and submodule stubs (code actions)
 - [ ] Richer hover: case preference (FL #28), code blocks in documentation
   (FL #209), OpenMP/OpenACC directives, literals (FL #125)
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
@@ -94,6 +93,8 @@ Diagnostics and code actions:
   (`zfls/compileOrder`, "zfls: Show Module Compile Order")
 - [x] Quick fixes: add `implicit none` and `use` statements, `.eq.` to `==`,
   `real*8` to a kind, keyword case (upper, lower, title). HS #226, MF #234
+- [x] Stubs: an interface block for an external procedure, the `module
+  procedure` of a separate module procedure in a submodule
 
 Projects and languages:
 

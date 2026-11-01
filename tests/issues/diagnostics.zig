@@ -916,3 +916,54 @@ test "argument checks: the type and rank of variables and literals" {
     }
     for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
 }
+
+test "stub actions: an interface block for an external procedure, submodule stubs" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "ext.f90", .text =
+        \\subroutine ext(a)
+        \\  real, intent(in) :: a
+        \\end subroutine ext
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main
+        \\  implicit none
+        \\  real :: r
+        \\  call ext(r)
+        \\end program main
+        \\
+        },
+        .{ .name = "m.f90", .text =
+        \\module m
+        \\  interface
+        \\    module subroutine foo(x)
+        \\      real, intent(in) :: x
+        \\    end subroutine foo
+        \\  end interface
+        \\end module m
+        \\
+        },
+        .{ .name = "n.f90", .text =
+        \\module n
+        \\  interface
+        \\    module subroutine bar()
+        \\    end subroutine bar
+        \\  end interface
+        \\end module n
+        \\
+        },
+        .{ .name = "n_sub.f90", .text =
+        \\submodule (n) n_sub
+        \\contains
+        \\end submodule n_sub
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const iface = actionNamed(try w.codeActions("main.f90", 3), "Add an interface block for ext") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.startsWith(u8, iface.new_text, "  interface\n    SUBROUTINE ext(a)\n      REAL, INTENT(IN) :: a\n    END SUBROUTINE ext\n  end interface\n"));
+    try std.testing.expectEqual(@as(i64, 3), iface.line);
+    const new_sub = actionNamed(try w.codeActions("m.f90", 2), "Implement foo in a new submodule") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, new_sub.new_text, "submodule (m) m_impl\ncontains\n  module procedure foo\n") != null);
+    try std.testing.expect(actionNamed(try w.codeActions("n.f90", 2), "Implement bar in submodule n_sub") != null);
+}
