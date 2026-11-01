@@ -1,9 +1,9 @@
 //! Argument checking: the calls of workspace procedures whose arguments do
 //! not fit the procedure (too many, a keyword it does not have, one given
 //! twice, a required one missing, a type, rank or kind that differs), and
-//! assignments to INTENT(IN) dummy arguments. Each statement is read whole, its continuation lines joined.
-//! Generic interfaces, intrinsics, procedure pointers and procedures with
-//! alternate returns are not checked.
+//! assignments to INTENT(IN) dummy arguments. Each statement is read whole,
+//! its continuation lines joined. Generic interfaces, intrinsics, procedure
+//! pointers and procedures with alternate returns are not checked.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -166,7 +166,7 @@ const Checker = struct {
 
     fn callArgs(c: *Checker, j: Joined, s: usize, text: []const u8, w: helpers.Word, open: usize, close: usize, proc: *Obj, drop: ?usize, scope: ?*Obj, line_no: usize) !void {
         const pd = proc.procDataConst();
-        const names = try objects_split(c.a, proc.argList());
+        const names = try splitArgs(c.a, proc.argList());
         // the dummy arguments the call can give, in order
         var dummies: std.ArrayList(struct { name: []const u8, optional: bool, obj: ?*Obj }) = .empty;
         for (names, 0..) |n, i| {
@@ -227,25 +227,17 @@ const Checker = struct {
         }
     }
 
-    /// The type and rank of an argument that is a variable or a literal,
-    /// against its dummy argument: the kind of type (integer, real,
-    /// complex, logical, character, derived), and a whole array for a
-    /// scalar or a literal for an array (not for an elemental procedure)
+    /// The type and rank of an argument, against its dummy argument: the
+    /// kind of type (integer, real, complex, logical, character, derived),
+    /// its kind, and an array for a scalar or a scalar expression for an
+    /// array (not for an elemental procedure)
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, scope: ?*Obj, line_no: usize) !void {
         if (dummy.kind != .variable or actual.len == 0) return;
         const want = category(dummy.descOf());
-        var have: Category = .unknown;
-        var have_array = false;
-        var is_literal = false;
-        if (literalCategory(actual)) |lc| {
-            have = lc;
-            is_literal = true;
-        } else if (isName(actual)) {
-            const v = (try c.lookup(scope, actual, line_no)) orelse return;
-            if (v.kind != .variable or v.linkObj() != null) return;
-            have = category(v.descOf());
-            have_array = v.hasKeyword(KW.dimension) or v.keyword_info.dimension != null;
-        } else return;
+        const typed = (try c.exprType(actual, scope, line_no, 0)) orelse return;
+        const have = typed.cat;
+        const have_array = typed.array;
+        const is_literal = typed.literal;
         if (want != .unknown and have != .unknown and want != have) {
             try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(want), @tagName(have) });
             return;
@@ -255,8 +247,10 @@ const Checker = struct {
             const want_kind = try c.kindOfVar(dummy);
             const have_kind = if (is_literal)
                 try c.literalKind(actual, scope, line_no)
+            else if (typed.obj) |v|
+                try c.kindOfVar(v)
             else
-                try c.kindOfVar((try c.lookup(scope, actual, line_no)).?);
+                null;
             if (want_kind != null and have_kind != null and want_kind.? != have_kind.?) {
                 const t = typeName(want);
                 try c.report(j, s + w.start, s + w.end, .kinds, "Argument {s} of {s}: {s}({d}) expected, {s}({d}) given", .{ dummy.name, proc.name, t, want_kind.?, t, have_kind.? });
@@ -270,9 +264,188 @@ const Checker = struct {
         if (dims) |d| if (std.mem.eql(u8, std.mem.trim(u8, d, " "), "..")) return;
         if (have_array and !dummy_array) {
             try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: a scalar expected, an array given", .{ dummy.name, proc.name });
-        } else if (is_literal and dummy_array and have != .character) {
+        } else if (!have_array and !typed.designator and dummy_array and have != .character) {
+            // an element (`x(1)`) may start an array (sequence association);
+            // another scalar may not
             try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an array expected, a scalar given", .{ dummy.name, proc.name });
         }
+    }
+
+    /// The type of an argument: a literal, a variable or a part of one
+    /// (`a(i)%b(:)`), or an expression of these with intrinsic operators;
+    /// null when it cannot be told (a function, a user-defined operator, a
+    /// derived type in an expression)
+    fn exprType(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
+        if (depth > 16) return null;
+        const e = std.mem.trim(u8, expr_in, " ");
+        if (e.len == 0) return null;
+        if (literalCategory(e)) |lc| return .{ .cat = lc, .literal = true };
+        if (std.ascii.isAlphabetic(e[0])) if (try c.designator(e, scope, line_no, depth)) |t| return t;
+        // a whole expression in parentheses, or a complex literal
+        if (e[0] == '(' and matching(e, 0) == e.len - 1) {
+            const inner = e[1 .. e.len - 1];
+            if (topLevel(inner, ',')) |comma| {
+                const re = (try c.exprType(inner[0..comma], scope, line_no, depth + 1)) orelse return null;
+                const im = (try c.exprType(inner[comma + 1 ..], scope, line_no, depth + 1)) orelse return null;
+                if (re.literal and im.literal and numeric(re.cat) and numeric(im.cat)) return .{ .cat = .complex };
+                return null;
+            }
+            const t = (try c.exprType(inner, scope, line_no, depth + 1)) orelse return null;
+            return .{ .cat = t.cat, .array = t.array };
+        }
+        // an array constructor: the type of its first element
+        if ((e[0] == '[' and e[e.len - 1] == ']') or (e.len >= 4 and std.mem.startsWith(u8, e, "(/") and std.mem.endsWith(u8, e, "/)"))) {
+            const inner = if (e[0] == '[') e[1 .. e.len - 1] else e[2 .. e.len - 2];
+            // a type spec (`[real :: ...]`) or an implied DO
+            if (std.mem.indexOf(u8, inner, "::") != null or std.mem.indexOfScalar(u8, inner, '=') != null) return null;
+            const first = inner[0 .. topLevel(inner, ',') orelse inner.len];
+            const t = (try c.exprType(first, scope, line_no, depth + 1)) orelse return null;
+            return .{ .cat = t.cat, .array = true };
+        }
+        // operands and the operators between them
+        var cat: Category = .unknown;
+        var array = false;
+        var relational = false;
+        var logical_op = false;
+        var concat = false;
+        var operands: usize = 0;
+        var i: usize = 0;
+        var want_operand = true;
+        while (true) {
+            while (i < e.len and e[i] == ' ') i += 1;
+            if (i >= e.len) break;
+            if (want_operand) {
+                if (e[i] == '+' or e[i] == '-') {
+                    i += 1;
+                    continue;
+                }
+                if (std.ascii.startsWithIgnoreCase(e[i..], ".not.")) {
+                    logical_op = true;
+                    i += 5;
+                    continue;
+                }
+                const end = operandEnd(e, i) orelse return null;
+                const t = (try c.exprType(e[i..end], scope, line_no, depth + 1)) orelse return null;
+                operands += 1;
+                array = array or t.array;
+                cat = if (operands == 1) t.cat else promote(cat, t.cat);
+                i = end;
+                want_operand = false;
+                continue;
+            }
+            // an operator
+            const rest = e[i..];
+            if (rest[0] == '.') {
+                const close = std.mem.indexOfScalarPos(u8, e, i + 1, '.') orelse return null;
+                const word = e[i + 1 .. close];
+                if (oneOf(word, &.{ "eq", "ne", "lt", "le", "gt", "ge" })) {
+                    relational = true;
+                } else if (oneOf(word, &.{ "and", "or", "eqv", "neqv" })) {
+                    logical_op = true;
+                } else return null;
+                i = close + 1;
+            } else if (std.mem.startsWith(u8, rest, "//")) {
+                concat = true;
+                i += 2;
+            } else if (std.mem.startsWith(u8, rest, "**")) {
+                i += 2;
+            } else if (std.mem.startsWith(u8, rest, "==") or std.mem.startsWith(u8, rest, "/=") or std.mem.startsWith(u8, rest, "<=") or std.mem.startsWith(u8, rest, ">=")) {
+                relational = true;
+                i += 2;
+            } else if (rest[0] == '<' or rest[0] == '>') {
+                relational = true;
+                i += 1;
+            } else if (std.mem.indexOfScalar(u8, "+-*/", rest[0]) != null) {
+                i += 1;
+            } else return null;
+            want_operand = true;
+        }
+        if (want_operand or operands < 2) return null;
+        if (cat == .unknown) return null;
+        if (relational or logical_op) return .{ .cat = .logical, .array = array };
+        if (concat) return if (cat == .character) .{ .cat = .character, .array = array } else null;
+        if (!numeric(cat)) return null;
+        return .{ .cat = cat, .array = array };
+    }
+
+    /// The type of a variable or a part of one: `x`, `a(i)` (a scalar),
+    /// `a(:)` or `a(v)` with an array `v` (an array), `p%c`, `s(1:3)` (a
+    /// substring); null when it is no variable (a function, an intrinsic)
+    fn designator(c: *Checker, e: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
+        var v: ?*Obj = null;
+        var array = false;
+        var i: usize = 0;
+        while (true) {
+            const ns = i;
+            while (i < e.len and (std.ascii.isAlphanumeric(e[i]) or e[i] == '_')) i += 1;
+            if (i == ns or !std.ascii.isAlphabetic(e[ns])) return null;
+            const name = e[ns..i];
+            const obj = if (v) |parent|
+                (try c.component(parent, name)) orelse return null
+            else
+                (try c.lookup(scope, name, line_no)) orelse return null;
+            if (obj.kind != .variable or obj.linkObj() != null) return null;
+            const is_array = obj.hasKeyword(KW.dimension) or obj.keyword_info.dimension != null;
+            while (i < e.len and e[i] == ' ') i += 1;
+            var subscripted = false;
+            // subscripts, then a substring
+            var groups: usize = 0;
+            while (i < e.len and e[i] == '(') : (groups += 1) {
+                const close = matching(e, i) orelse return null;
+                if (groups == 0 and is_array) {
+                    subscripted = true;
+                    if (try c.isSection(e[i + 1 .. close], scope, line_no, depth)) |sec| {
+                        if (sec) array = true;
+                    } else return null;
+                } else if (category(obj.descOf()) != .character) return null;
+                i = close + 1;
+                while (i < e.len and e[i] == ' ') i += 1;
+            }
+            if (is_array and !subscripted) array = true;
+            v = obj;
+            if (i < e.len and e[i] == '%') {
+                i += 1;
+                while (i < e.len and e[i] == ' ') i += 1;
+                continue;
+            }
+            break;
+        }
+        if (i != e.len) return null;
+        const obj = v.?;
+        return .{ .cat = category(obj.descOf()), .array = array, .designator = true, .obj = obj };
+    }
+
+    /// A component of a variable of derived type, in its type or a type
+    /// that type extends
+    fn component(c: *Checker, v: *Obj, name: []const u8) !?*Obj {
+        var t = (try v.getTypeObj(c.env)) orelse return null;
+        const lower = try std.ascii.allocLowerString(c.a, name);
+        var n: usize = 0;
+        while (n < 20) : (n += 1) {
+            if (t.kind != .type) return null;
+            if (try objects.findInScope(c.env, t, lower, .{ .local_only = true })) |comp| return comp;
+            t = t.typeDataConst().inherit_var orelse return null;
+        }
+        return null;
+    }
+
+    /// Whether subscripts select a section (a `:`, or an array as a
+    /// subscript); null when a subscript's type cannot be told
+    fn isSection(c: *Checker, subs: []const u8, scope: ?*Obj, line_no: usize, depth: usize) !?bool {
+        var section = false;
+        var start: usize = 0;
+        while (start <= subs.len) {
+            const end = if (topLevel(subs[start..], ',')) |k| start + k else subs.len;
+            const sub = std.mem.trim(u8, subs[start..end], " ");
+            if (topLevel(sub, ':') != null) {
+                section = true;
+            } else if (sub.len > 0) {
+                const t = (try c.exprType(sub, scope, line_no, depth + 1)) orelse return null;
+                if (t.array) section = true;
+            }
+            start = end + 1;
+        }
+        return section;
     }
 
     /// The kind of a variable's type, as gfortran numbers kinds (4 for a
@@ -429,6 +602,123 @@ fn headerHasDirective(proc: *const Obj) bool {
 
 const Category = enum { unknown, integer, real, complex, logical, character, derived };
 
+/// The type of an argument
+const Typed = struct {
+    cat: Category,
+    array: bool = false,
+    literal: bool = false,
+    /// a variable or a part of one (an element may start an array)
+    designator: bool = false,
+    /// the variable or component it ends in
+    obj: ?*Obj = null,
+};
+
+fn numeric(cat: Category) bool {
+    return cat == .integer or cat == .real or cat == .complex;
+}
+
+/// The type of an expression of operands of types `x` and `y`
+fn promote(x: Category, y: Category) Category {
+    if (x == y) return x;
+    if (numeric(x) and numeric(y)) return if (x == .complex or y == .complex) .complex else .real;
+    return .unknown;
+}
+
+fn oneOf(word: []const u8, words: []const []const u8) bool {
+    for (words) |w| if (std.ascii.eqlIgnoreCase(word, w)) return true;
+    return false;
+}
+
+/// The first `ch` of `s` outside parentheses and brackets
+fn topLevel(s: []const u8, ch: u8) ?usize {
+    var depth: usize = 0;
+    for (s, 0..) |x, i| switch (x) {
+        '(', '[' => depth += 1,
+        ')', ']' => depth -|= 1,
+        else => if (x == ch and depth == 0) return i,
+    };
+    return null;
+}
+
+/// The end of the operand that starts at `i` of `e`: a literal, a string,
+/// a name with its subscripts and components, or a parenthesized
+/// expression or array constructor
+fn operandEnd(e: []const u8, start: usize) ?usize {
+    var i = start;
+    const c0 = e[i];
+    if (c0 == '\'' or c0 == '"') {
+        const close = std.mem.indexOfScalarPos(u8, e, i + 1, c0) orelse return null;
+        return close + 1;
+    }
+    if (c0 == '(') return (matching(e, i) orelse return null) + 1;
+    if (c0 == '[') {
+        var depth: usize = 0;
+        while (i < e.len) : (i += 1) switch (e[i]) {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if (depth == 0) return i + 1;
+            },
+            else => {},
+        };
+        return null;
+    }
+    if (c0 == '.') {
+        // a logical literal
+        for ([_][]const u8{ ".true.", ".false." }) |lit| if (std.ascii.startsWithIgnoreCase(e[i..], lit)) {
+            i += lit.len;
+            if (i < e.len and e[i] == '_') {
+                i += 1;
+                while (i < e.len and (std.ascii.isAlphanumeric(e[i]) or e[i] == '_')) i += 1;
+            }
+            return i;
+        };
+        if (!(i + 1 < e.len and std.ascii.isDigit(e[i + 1]))) return null;
+    }
+    if (std.ascii.isDigit(c0) or c0 == '.') {
+        while (i < e.len and std.ascii.isDigit(e[i])) i += 1;
+        if (i < e.len and e[i] == '.') {
+            // not the dot of an operator (`1.eq.2`)
+            var k = i + 1;
+            while (k < e.len and std.ascii.isAlphabetic(e[k])) k += 1;
+            if (!(k > i + 1 and k < e.len and e[k] == '.')) {
+                i += 1;
+                while (i < e.len and std.ascii.isDigit(e[i])) i += 1;
+            }
+        }
+        if (i + 1 < e.len and std.mem.indexOfScalar(u8, "eEdDqQ", e[i]) != null) {
+            var k = i + 1;
+            if (e[k] == '+' or e[k] == '-') k += 1;
+            if (k < e.len and std.ascii.isDigit(e[k])) {
+                i = k;
+                while (i < e.len and std.ascii.isDigit(e[i])) i += 1;
+            }
+        }
+        if (i < e.len and e[i] == '_') {
+            i += 1;
+            while (i < e.len and (std.ascii.isAlphanumeric(e[i]) or e[i] == '_')) i += 1;
+        }
+        return i;
+    }
+    if (!std.ascii.isAlphabetic(c0)) return null;
+    while (true) {
+        while (i < e.len and (std.ascii.isAlphanumeric(e[i]) or e[i] == '_')) i += 1;
+        var k = i;
+        while (k < e.len and e[k] == ' ') k += 1;
+        while (k < e.len and e[k] == '(') {
+            k = (matching(e, k) orelse return null) + 1;
+            i = k;
+            while (k < e.len and e[k] == ' ') k += 1;
+        }
+        if (k < e.len and e[k] == '%') {
+            i = k + 1;
+            while (i < e.len and e[i] == ' ') i += 1;
+            continue;
+        }
+        return i;
+    }
+}
+
 /// The kind of type a declared type is (`REAL(8)`, `DOUBLE PRECISION`,
 /// `TYPE(pt)`); unknown for `TYPE(*)`, `CLASS(*)`, procedures and others
 fn category(desc_in: []const u8) Category {
@@ -555,7 +845,7 @@ test "literal categories" {
     try std.testing.expect(literalCategory("3d") == null);
 }
 
-fn objects_split(a: Allocator, s: []const u8) ![]const []const u8 {
+fn splitArgs(a: Allocator, s: []const u8) ![]const []const u8 {
     if (std.mem.trim(u8, s, " ").len == 0) return &.{};
     var out: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, s, ',');
