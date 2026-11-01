@@ -1,4 +1,7 @@
 {
+  "CTest has no test {0} in {1}: configure the project, or set zfls.pfunit.buildDirectory.": "CTest has no test {0} in {1}: configure the project, or set zfls.pfunit.buildDirectory.",
+  "Debug": "Debug",
+  "Debug {0}": "Debug {0}",
   "Disable Modern Fortran...": "Disable Modern Fortran...",
   "Don't ask again": "Don't ask again",
   "Fix all safe fortitude problems": "Fix all safe fortitude problems",
@@ -6,9 +9,11 @@
   "Modern Fortran's fortls is turned off; reload the window to stop it.": "Modern Fortran's fortls is turned off; reload the window to stop it.",
   "Module compile order": "Module compile order",
   "Modules that use each other": "Modules that use each other",
+  "No add_pfunit_ctest of a CMakeLists.txt names this file: zfls runs the pFUnit test programs that CMake builds.": "No add_pfunit_ctest of a CMakeLists.txt names this file: zfls runs the pFUnit test programs that CMake builds.",
   "Open Settings": "Open Settings",
   "Open launch.json": "Open launch.json",
   "Reload Window": "Reload Window",
+  "Run": "Run",
   "Select \"Disable\" on the Modern Fortran page, then reload the window.": "Select \"Disable\" on the Modern Fortran page, then reload the window.",
   "Show Extension": "Show Extension",
   "Show Output": "Show Output",
@@ -17,6 +22,9 @@
   "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two language servers, two linters and two sets of grammars compete for Fortran files, so disable Modern Fortran.": "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two language servers, two linters and two sets of grammars compete for Fortran files, so disable Modern Fortran.",
   "Turn Off": "Turn Off",
   "`{0}` ({1}) in {2}": "`{0}` ({1}) in {2}",
+  "building {0} failed (exit code {1}); see the terminal.": "building {0} failed (exit code {1}); see the terminal.",
+  "could not run the build task of {0}.": "could not run the build task of {0}.",
+  "ctest was not found: put CMake on the PATH, or set cmake.cmakePath.": "ctest was not found: put CMake on the PATH, or set cmake.cmakePath.",
   "exit code {0}": "exit code {0}",
   "failed": "failed",
   "fpm did not run: {0}": "fpm did not run: {0}",
@@ -26,6 +34,7 @@
   "passed, but was expected to fail": "passed, but was expected to fail",
   "some of its tests failed": "some of its tests failed",
   "the debugger did not start": "the debugger did not start",
+  "the test program did not run: {0}": "the test program did not run: {0}",
   "zfls failed to start: {0}": "zfls failed to start: {0}",
   "zfls: a fortran launch configuration needs a program or an fpmTarget.": "zfls: a fortran launch configuration needs a program or an fpmTarget.",
   "zfls: added the build task \"{0}\" to tasks.json and the configuration \"Debug {1}\" to launch.json.": "zfls: added the build task \"{0}\" to tasks.json and the configuration \"Debug {1}\" to launch.json.",
@@ -70,5 +79,6 @@
   "zfls: {0} was not found on the PATH. Install it with `{1}`, or set zfls.formatting.path to it.": "zfls: {0} was not found on the PATH. Install it with `{1}`, or set zfls.formatting.path to it.",
   "zfls: {0} was not found, so Fortran files are not checked with a compiler. Set zfls.linter.{1}, choose another zfls.linter.compiler, or turn compiler diagnostics off.": "zfls: {0} was not found, so Fortran files are not checked with a compiler. Set zfls.linter.{1}, choose another zfls.linter.compiler, or turn compiler diagnostics off.",
   "{0} (fortitude {1})": "{0} (fortitude {1})",
-  "{0} (fortitude {1}, unsafe)": "{0} (fortitude {1}, unsafe)"
+  "{0} (fortitude {1}, unsafe)": "{0} (fortitude {1}, unsafe)",
+  "{0} is not a CMake build directory: configure the project, or set zfls.pfunit.buildDirectory.": "{0} is not a CMake build directory: configure the project, or set zfls.pfunit.buildDirectory."
 }

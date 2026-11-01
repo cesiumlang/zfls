@@ -43,6 +43,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   [Running and debugging](#running-and-debugging))
 - fpm projects: tasks, running and debugging their targets, and their tests
   in the Testing view (see [fpm projects](#fpm-projects))
+- pFUnit's tests in the Testing view, for CMake projects (see
+  [pFUnit tests](#pfunit-tests))
 - a Fortran file icon, in file icon themes that use the language's icon
 
 The extension includes the `zfls` executable for Windows, Linux and macOS
@@ -450,6 +452,34 @@ release from its site); `zfls.fpm.path` says where when it is not on the
 
 zfls itself reads `fpm.toml` too: the include directories and macros of a
 project come from it (see the server's documentation).
+
+## pFUnit tests
+
+In a CMake project that builds its [pFUnit](https://github.com/Goddard-Fortran-Ecosystem/pFUnit)
+tests with `add_pfunit_ctest`, the Testing view lists each test program,
+with the suite of each of its `.pf` files (`@suite(name=...)`, else the
+module's name with `_suite`) and their `@test` procedures, with gutter
+buttons on them.
+
+- **Running** builds the program (`cmake --build DIR --target NAME`, with
+  the compiler's problems in the Problems view), takes its command from
+  CTest (`ctest --show-only=json-v1`), runs it with its results in an XML
+  file (`-x -o FILE`), and reports each test, a failed assertion at its line
+  of the `.pf` file. Running one test passes `-f SUITE.TEST` (not for
+  parameterized tests); otherwise the whole program runs.
+- **Debugging** builds the program and runs it under the `fortran` debug
+  type (see [The `fortran` debug type](#the-fortran-debug-type)), with
+  `-f` for one test.
+- The project has to be configured first (by CMake Tools, or `cmake -S . -B
+  build`). A `.pf` file that no `add_pfunit_ctest` names is listed too, and
+  says so when run.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `zfls.pfunit.testExplorer` | `true` | pFUnit's tests in the Testing view |
+| `zfls.pfunit.buildDirectory` | empty | The CMake build directory; empty: CMake Tools' `cmake.buildDirectory` (when it has no variables but `${workspaceFolder}`), else `build` |
+| `zfls.pfunit.build` | `true` | Build a test program before running its tests |
+| `zfls.pfunit.args` | `[]` | More arguments of the test programs |
 
 ## Snippets
 
