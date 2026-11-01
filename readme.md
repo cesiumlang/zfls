@@ -281,6 +281,10 @@ zfls deliberately differs from fortls in a few places:
   as used when it appears anywhere else in the scope, contained procedures
   and inactive preprocessor branches included; dummy arguments, function
   results and module names are not reported. fortls has no such check.
+- `workspace_diagnostics` publishes the diagnostics of every workspace file
+  after initialization, and again when a saved or changed file changes
+  them, so that editors list the problems of files that are not open; a
+  deleted file's are cleared. fortls only checks open files.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
   fortls only checks the types named in declarations. It is left out where

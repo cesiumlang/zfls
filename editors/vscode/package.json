@@ -250,6 +250,12 @@
           "scope": "resource",
           "markdownDescription": "Turn off zfls's diagnostics (`--disable_diagnostics`)."
         },
+        "zfls.workspaceDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Show the problems of every Fortran file of the workspace in the Problems panel, not only of the open ones (`--workspace_diagnostics`)."
+        },
         "zfls.diagnosticSeverity": {
           "type": "object",
           "propertyNames": {

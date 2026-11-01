@@ -245,3 +245,31 @@ test "no progress without a workDoneToken" {
     defer w.deinit();
     for (w.sent.items) |msg| try std.testing.expect(std.mem.indexOf(u8, msg, "$/progress") == null);
 }
+
+fn publishedFor(w: *h.Workspace, file: []const u8) bool {
+    for (w.sent.items) |msg| {
+        if (std.mem.indexOf(u8, msg, "publishDiagnostics") == null) continue;
+        if (std.mem.indexOf(u8, msg, file) != null) return true;
+    }
+    return false;
+}
+
+const two_files = [_]h.File{
+    .{ .name = "good.f90", .text = "module good\n  implicit none\nend module good\n" },
+    .{ .name = "bad.f90", .text = "module bad\n  implicit none\ncontains\n  subroutine s()\n    x = 1\n  end subroutine s\nend module bad\n" },
+};
+
+test "workspace_diagnostics publishes the diagnostics of files that are not open" {
+    const w = try h.Workspace.init(&two_files, .{ .settings = .{ .workspace_diagnostics = true } });
+    defer w.deinit();
+    _ = try w.server.dispatchPublic(w.arena.allocator(), "initialized", .{ .object = .empty });
+    try std.testing.expect(publishedFor(w, "bad.f90"));
+    try std.testing.expect(publishedFor(w, "good.f90"));
+}
+
+test "without workspace_diagnostics, nothing is published at start" {
+    const w = try h.Workspace.init(&two_files, .{});
+    defer w.deinit();
+    _ = try w.server.dispatchPublic(w.arena.allocator(), "initialized", .{ .object = .empty });
+    try std.testing.expect(!publishedFor(w, "bad.f90"));
+}

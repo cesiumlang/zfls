@@ -136,6 +136,11 @@
       "type": "boolean",
       "default": false
     },
+    "workspace_diagnostics": {
+      "description": "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)",
+      "type": "boolean",
+      "default": false
+    },
     "diagnostic_severity": {
       "description": "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint",
       "type": "object",
