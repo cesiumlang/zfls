@@ -12,21 +12,32 @@ projects zfls replaces:
 
 `[ ]` to do, `[~]` in progress, `[x]` done (merged into `dev`).
 
-## Later
+## Next
 
-- [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
-  cache (HS #39)
-- [ ] Linters: Codee (commercial)
-- [ ] Walkthroughs (MF #472); translations (MF #616)
-- [ ] Test explorer (pFUnit, test-drive, `fpm test`); fpm tasks
-- [ ] Navigation between C headers and `bind(C)` procedures. HS #115
-- [ ] Custom comment markers (`;*` comments of a preprocessed dialect): the
-  parser and grammar would take them from a setting. MF #197
-- [ ] Optional exact diagnostics from a compiler (lfortran, gfortran). FL #85,
-  HS #205
-- [ ] Debugging with the generated launch configurations: conditional
-  breakpoints set before launch (FB #7); Fortran variable and array values
-  in the variables view (FB #10)
+- [ ] fpm, fully: tasks (`build`, `run`, `test`, `install`), the targets of
+  `fpm.toml` in the run and debug commands, `fpm test` in the test explorer,
+  then test-drive's tests one by one. pFUnit after that
+- [ ] Compiler diagnostics from the server, for every editor (Neovim, Emacs,
+  Helix as well as VS Code): the compilers the extension's linter knows,
+  run by zfls. The extension's own linter is then optional. FL #85, HS #205
+- [ ] Custom comment markers (`;*` comments of a preprocessed dialect), in the
+  parser and the grammar, from a setting. MF #197
+- [ ] Index cache: each file's symbols on disk, keyed by its contents and
+  zfls's version and settings, so that a workspace of thousands of files
+  starts without parsing them again. Summaries for unopened files and a
+  smarter index later. FL #563, HS #39
+- [ ] C interoperability through a C language server (clangd, or Microsoft's
+  C/C++): from a `bind(C)` procedure to its C declaration, and from a C call
+  to the Fortran procedure, without parsing C in zfls. A plain search of
+  the headers only as a fallback. HS #115
+- [ ] Debugging: first a host for the debuggers there are (the launch
+  configurations, conditional breakpoints set before launch, FB #7); then
+  Fortran values and arrays in the variables view (FB #10); in the end a
+  Fortran debug adapter of zfls's own
+- [ ] Codee: documented, best-effort support like fortitude's, not tested
+  until a license is available
+- [ ] Hooks for translations (`package.nls.json`, MF #616) and walkthroughs
+  (MF #472), with English only and no walkthrough yet
 
 ## Watching upstream
 
