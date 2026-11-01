@@ -186,6 +186,14 @@
         ]
       },
       {
+        "scopeName": "source.fortran.comment-markers.injection",
+        "path": "./syntaxes/fortran_comment-markers.injection.json",
+        "injectTo": [
+          "source.fortran.free",
+          "source.fortran.fixed"
+        ]
+      },
+      {
         "language": "FortranNamelist",
         "scopeName": "source.fortran.namelist",
         "path": "./syntaxes/fortran_namelist.tmLanguage.json"
@@ -430,6 +438,15 @@
           "default": [],
           "scope": "resource",
           "markdownDescription": "Folders not to index (`--excl_paths`). `${workspaceFolder}`, `${env:NAME}` and `~` are expanded."
+        },
+        "zfls.commentMarkers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "markdownDescription": "Further markers that start a comment as `!` does, outside strings, such as `;*` of a dialect that a preprocessor turns into Fortran (`--comment_markers`). zfls reads what follows as a comment, and the editor highlights it as one after a window reload (the extension writes its grammar from this setting)."
         },
         "zfls.includeSuffixes": {
           "type": "array",
