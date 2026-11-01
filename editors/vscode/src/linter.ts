@@ -48,6 +48,8 @@ interface FyppSettings {
 }
 
 interface Settings {
+  /** `extension`: this linter; `server`: zfls runs the compiler */
+  runner: string;
   compiler: string;
   compilerPath: string;
   extraArgs: string[];
@@ -91,6 +93,7 @@ interface RunResult {
 function readSettings(uri?: vscode.Uri): Settings {
   const c = vscode.workspace.getConfiguration("zfls.linter", uri);
   return {
+    runner: c.get<string>("runner", "extension"),
     compiler: c.get<string>("compiler", "gfortran"),
     compilerPath: c.get<string>("compilerPath", ""),
     extraArgs: c.get<string[]>("extraArgs", []),
@@ -214,8 +217,14 @@ export class Linter implements vscode.Disposable {
     if (!isCompilerId(settings.compiler)) {
       return false;
     }
+    const fypp = path.extname(doc.fileName).toLowerCase() === ".fypp";
+    // zfls checks the files itself, except fypp's, which it cannot
+    // preprocess
+    if (settings.runner === "server") {
+      return fypp && settings.fypp.enabled;
+    }
     // without fypp the compiler cannot read fypp's directives
-    return settings.fypp.enabled || path.extname(doc.fileName).toLowerCase() !== ".fypp";
+    return settings.fypp.enabled || !fypp;
   }
 
   /** Lints `doc` after `delay` ms, unless asked again before then */
@@ -305,6 +314,11 @@ export class Linter implements vscode.Disposable {
     if (!isCompilerId(readSettings(doc.uri).compiler)) {
       void vscode.window.showInformationMessage(
         "zfls: compiler diagnostics are off; choose a compiler in zfls.linter.compiler.");
+      return;
+    }
+    if (!this.wanted(doc)) {
+      void vscode.window.showInformationMessage(
+        "zfls: the language server checks this file when it is saved (zfls.linter.runner is server).");
       return;
     }
     await this.enqueue(doc);

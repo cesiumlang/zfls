@@ -16,9 +16,6 @@ projects zfls replaces:
 
 - [ ] fpm, what is left: pFUnit's tests in the Testing view; debug
   configurations in launch.json for fpm targets
-- [ ] Compiler diagnostics from the server, for every editor (Neovim, Emacs,
-  Helix as well as VS Code): the compilers the extension's linter knows,
-  run by zfls. The extension's own linter is then optional. FL #85, HS #205
 - [ ] Custom comment markers (`;*` comments of a preprocessed dialect), in the
   parser and the grammar, from a setting. MF #197
 - [ ] Index cache: each file's symbols on disk, keyed by its contents and
@@ -108,6 +105,10 @@ Diagnostics and code actions:
 - [x] Unused local variables and `use` names (faded, with a quick fix)
 - [x] Workspace diagnostics: problems in files that are not open
   (`workspace_diagnostics`)
+- [x] Compiler diagnostics from the server, for every editor
+  (`compiler_diagnostics`: gfortran, ifx, ifort, flang, nvfortran, nagfor,
+  lfortran), after compiling the modules a file uses; in VS Code with
+  `zfls.linter.runner` set to `server`. FL #85, HS #205
 - [x] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; the type, rank and kind of variables
   and literals (`argument-kind`), the type and rank of expressions

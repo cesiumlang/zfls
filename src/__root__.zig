@@ -32,6 +32,7 @@ pub const fuzzy = @import("fuzzy.zig");
 pub const implicit = @import("implicit.zig");
 pub const unused = @import("unused.zig");
 pub const modgraph = @import("modgraph.zig");
+pub const compilers = @import("compilers.zig");
 pub const argcheck = @import("argcheck.zig");
 pub const literals = @import("literals.zig");
 pub const rewrite = @import("rewrite.zig");

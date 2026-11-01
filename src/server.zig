@@ -37,6 +37,7 @@ const references = @import("server/references.zig");
 const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
+const compile = @import("server/compile.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -106,6 +107,16 @@ pub const Server = struct {
     pp_defs_arena: std.heap.ArenaAllocator,
     running: bool = true,
     sink: Sink = .{},
+    /// Serializes the messages of the compiler's thread with the others
+    send_lock: Io.Mutex = .init,
+    /// The last diagnostics published of each URI, zfls's and the
+    /// compiler's (`compiler_diagnostics`), as JSON arrays; keys and values
+    /// owned by `gpa`, under `diag_lock`
+    diag_lock: Io.Mutex = .init,
+    own_diags: std.StringHashMapUnmanaged([]u8) = .empty,
+    compiler_diags: std.StringHashMapUnmanaged([]u8) = .empty,
+    /// The thread that runs the compiler, once it has a job
+    compiler: ?*compile.Worker = null,
     next_id: i64 = 1,
     log: *Logger,
 
@@ -133,6 +144,8 @@ pub const Server = struct {
     }
 
     pub fn destroy(self: *Server) void {
+        compile.stop(self);
+        compile.deinitStore(self);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();
             f.destroy();
@@ -187,8 +200,15 @@ pub const Server = struct {
 
     fn sendJson(self: *Server, a: Allocator, body: Value) !void {
         const text = try json.stringify(a, body);
-        self.sink.send(text);
+        self.sendRaw(text);
         if (self.log.enabled(.debug)) self.log.debug("SEND {s}", .{try json.pretty(a, body)});
+    }
+
+    /// Sends a message, whichever thread it comes from
+    pub fn sendRaw(self: *Server, text: []const u8) void {
+        self.send_lock.lockUncancelable(self.io);
+        defer self.send_lock.unlock(self.io);
+        self.sink.send(text);
     }
 
     pub fn sendProgress(self: *Server, a: Allocator, token: Value, value: lsp.WorkDoneProgress) void {

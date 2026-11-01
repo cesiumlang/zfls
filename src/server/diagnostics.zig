@@ -32,6 +32,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const completion = @import("completion.zig");
+const compile = @import("compile.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
@@ -627,6 +628,11 @@ pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
         return;
     };
     if (res) |diags| {
+        // with the compiler's diagnostics of the file, when there are any
+        if (compile.compilerOf(self) != null) {
+            compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
+            return;
+        }
         self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
     }
 }

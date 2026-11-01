@@ -102,6 +102,12 @@ SPECIAL = {
         "propertyNames": {"enum": diagnostic_codes()},
         "additionalProperties": {"enum": ["off", "error", "warning", "information", "hint"]},
     },
+    "compiler_diagnostics": lambda: {
+        "type": "string",
+        "enum": ["gfortran", "ifx", "ifort", "flang", "nvfortran", "nagfor", "lfortran", "none", None],
+    },
+    # a list keeps repeated arguments; a string is split at spaces
+    "compiler_args": lambda: {"type": ["array", "string"], "items": {"type": "string"}},
 }
 
 
@@ -127,7 +133,8 @@ def schema() -> dict:
         prop.update(SPECIAL[key]() if key in SPECIAL else json.loads(json.dumps(KIND_TYPES[kind])))
         default = defaults[key]
         if default is None:
-            prop["type"] = [prop["type"], "null"]
+            types = prop["type"] if isinstance(prop["type"], list) else [prop["type"]]
+            prop["type"] = [*types, "null"]
         else:
             prop["default"] = default
         properties[key] = prop

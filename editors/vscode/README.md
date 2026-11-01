@@ -163,6 +163,7 @@ Whether a file is free or fixed form follows its language in VS Code
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `zfls.linter.runner` | `extension` | Who runs the compiler: this extension, or `server`, the zfls language server (see below) |
 | `zfls.linter.compiler` | `gfortran` | The compiler, or `Disabled` |
 | `zfls.linter.compilerPath` | empty | The compiler executable, when it is not the one on the `PATH` |
 | `zfls.linter.extraArgs` | `[]` | Further options, such as `-std=f2018`; when set, they replace the default warning options |
@@ -211,6 +212,20 @@ How it behaves:
 
 The command lines and the compiler output are logged in the `zfls` output
 channel at the Debug log level (**Developer: Set Log Level...**).
+
+### Compiler diagnostics from the language server
+
+With `zfls.linter.runner` set to `server`, zfls itself runs the compiler
+(its `compiler_diagnostics` option, which editors other than VS Code use
+too), with `zfls.linter.compiler`, `compilerPath`, `extraArgs` and
+`modOutput`. It checks a file when it is opened and saved, after compiling
+the workspace modules the file uses whose `.mod` files are missing or out
+of date, in an order it takes from its own index of the project. Its include
+directories are zfls's (`zfls.includeDirs`, and those of
+`compile_commands.json` and `fpm.toml`), and its preprocessor definitions
+zfls's too. The extension's lint while typing, glob patterns and fypp are
+not there: `.fypp` files are still checked by the extension when
+`zfls.linter.fypp.enabled` is on.
 
 ## Linting with fortitude
 
