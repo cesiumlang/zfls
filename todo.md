@@ -17,9 +17,6 @@ projects zfls replaces:
 - [ ] fpm, fully: tasks (`build`, `run`, `test`, `install`), the targets of
   `fpm.toml` in the run and debug commands, `fpm test` in the test explorer,
   then test-drive's tests one by one. pFUnit after that
-- [ ] Compiler diagnostics from the server, for every editor (Neovim, Emacs,
-  Helix as well as VS Code): the compilers the extension's linter knows,
-  run by zfls. The extension's own linter is then optional. FL #85, HS #205
 - [ ] Index cache: each file's symbols on disk, keyed by its contents and
   zfls's version and settings, so that a workspace of thousands of files
   starts without parsing them again. Summaries for unopened files and a
@@ -105,6 +102,10 @@ Diagnostics and code actions:
 - [x] Unused local variables and `use` names (faded, with a quick fix)
 - [x] Workspace diagnostics: problems in files that are not open
   (`workspace_diagnostics`)
+- [x] Compiler diagnostics from the server, for every editor
+  (`compiler_diagnostics`: gfortran, ifx, ifort, flang, nvfortran, nagfor,
+  lfortran), after compiling the modules a file uses; in VS Code with
+  `zfls.linter.runner` set to `server`. FL #85, HS #205
 - [x] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; the type, rank and kind of variables
   and literals (`argument-kind`), the type and rank of expressions

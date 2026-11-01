@@ -95,7 +95,34 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
         break;
     }
   }
+  args.push(...linterArguments(folder));
   args.push(...config.get<string[]>("arguments", []));
+  return args;
+}
+
+/** With zfls.linter.runner set to `server`, the zfls options of the
+ * compiler that checks files: `zfls.linter.compiler`, its path, its
+ * arguments and its module directory. Its include directories are zfls's
+ * (`zfls.includeDirs`). */
+export function linterArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
+  const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
+  const compiler = config.get<string>("compiler", "gfortran");
+  if (config.get<string>("runner", "extension") !== "server" || compiler === "Disabled") {
+    return [];
+  }
+  const args = ["--compiler_diagnostics", compiler];
+  const exe = config.get<string>("compilerPath", "").trim();
+  if (exe) {
+    args.push("--compiler_path", resolvePath(exe, folder));
+  }
+  const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
+  if (extra.length) {
+    args.push(`--compiler_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+  }
+  const modDir = config.get<string>("modOutput", "").trim();
+  if (modDir) {
+    args.push("--compiler_mod_dir", resolvePath(modDir, folder));
+  }
   return args;
 }
 
@@ -104,6 +131,9 @@ export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
   return (
     e.affectsConfiguration("zfls.path") ||
     e.affectsConfiguration("zfls.arguments") ||
+    e.affectsConfiguration("zfls.linter.runner") ||
+    (["compiler", "compilerPath", "extraArgs", "modOutput"].some((s) => e.affectsConfiguration(`zfls.linter.${s}`)) &&
+      vscode.workspace.getConfiguration("zfls.linter").get<string>("runner", "extension") === "server") ||
     OPTIONS.some((o) => e.affectsConfiguration(`zfls.${o.setting}`))
   );
 }

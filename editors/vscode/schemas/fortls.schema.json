@@ -205,6 +205,49 @@
       "uniqueItems": true,
       "default": []
     },
+    "compiler_diagnostics": {
+      "description": "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "gfortran",
+        "ifx",
+        "ifort",
+        "flang",
+        "nvfortran",
+        "nagfor",
+        "lfortran",
+        "none",
+        null
+      ]
+    },
+    "compiler_path": {
+      "description": "The compiler executable, or the directory that holds it (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_args": {
+      "description": "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added",
+      "type": [
+        "array",
+        "string",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "compiler_mod_dir": {
+      "description": "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "symbol_skip_mem": {
       "description": "Do not include type members in document symbol results",
       "type": "boolean",

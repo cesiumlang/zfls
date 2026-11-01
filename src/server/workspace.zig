@@ -30,6 +30,7 @@ const Server = srv.Server;
 const definition = @import("definition.zig");
 const references = @import("references.zig");
 const diagnostics = @import("diagnostics.zig");
+const compile = @import("compile.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -48,6 +49,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try loadConfigFile(self, a);
     try loadProjectFiles(self, a);
     try diagnostics.checkDiagnosticSeverity(self, a);
+    try compile.checkSetting(self, a);
     try resolveGlobsInPaths(self, a);
     try configLogger(self);
     try loadIntrinsics(self);
@@ -538,6 +540,8 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         return .null;
     };
     if (changed) try fullRelink(self, a);
+    // the compiler checks the file as saved, on its own thread
+    if (!did_close and !self.s.disable_diagnostics) compile.check(self, a, uri, filepath) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
     // a change can change the diagnostics of the files that use it
     if (changed and self.s.workspace_diagnostics) {
         diagnostics.publishWorkspace(self, a);

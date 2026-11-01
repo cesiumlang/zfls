@@ -192,6 +192,44 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 
 These are zfls's own options: fortls does not have them.
 
+### Compiler diagnostics
+
+With `compiler_diagnostics` set to a compiler (`gfortran`, `ifx`, `ifort`,
+`flang`, `nvfortran`, `nagfor` or `lfortran`), zfls has it check each file
+when the file is opened and saved, and publishes the compiler's errors and
+warnings with its own diagnostics of the file, labelled with the compiler's
+name. This works in every editor, not only VS Code.
+
+The compiler runs on a thread of its own, in syntax-only mode, one file at a
+time (a newer save of a file replaces a run that has not started). First it
+compiles the workspace modules that the file uses, and those they use,
+whose `.mod` files are missing or older than their sources, in compile order
+from zfls's module graph.
+
+```json
+{
+  "compiler_diagnostics": "gfortran",
+  "compiler_path": "/opt/gcc/bin",
+  "compiler_args": ["-Wall", "-std=f2018"],
+  "compiler_mod_dir": "build/zfls-mod"
+}
+```
+
+- `compiler_path`: the executable, or the directory that holds it (by
+  default the compiler on the `PATH`).
+- `compiler_args`: the compiler's own options; by default its warnings
+  (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for
+  nvfortran). zfls adds the syntax-only, form, preprocessor and module
+  directory options, the file's directory and `include_dirs` (`-I`), and,
+  for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
+  string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
+- `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
+  default a directory per project and compiler in zfls's cache
+  (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
+  `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls` elsewhere).
+
+`.fypp` files are not checked: no compiler reads fypp's directives.
+
 ## Testing
 
 | Command | Checks |

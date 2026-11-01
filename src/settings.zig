@@ -88,6 +88,19 @@ pub const Settings = struct {
     diagnostic_severity: std.ArrayList(DiagLevel) = .empty,
     /// Glob patterns of modules USE may name that are not in the project
     external_modules: StrList = .{},
+    // Compiler diagnostics
+    /// The compiler whose errors and warnings are published with zfls's
+    /// diagnostics (gfortran, ifx, ifort, flang, nvfortran, nagfor or
+    /// lfortran); null: none
+    compiler_diagnostics: ?[]const u8 = null,
+    /// The compiler executable, or the directory that holds it; null: the
+    /// one on the PATH
+    compiler_path: ?[]const u8 = null,
+    /// The compiler's arguments; null: its defaults (gfortran's -Wall)
+    compiler_args: ?StrList = null,
+    /// Where the compiler's .mod files go, relative to the root; null: in
+    /// zfls's cache directory
+    compiler_mod_dir: ?[]const u8 = null,
     // Preprocessor options
     /// null: use the default rule (uppercase extensions are preprocessed)
     pp_suffixes: ?StrList = null,
@@ -190,6 +203,11 @@ const opts = [_]Opt{
     .{ .long = "workspace_diagnostics", .kind = .flag, .help = "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
     .{ .long = "external_modules", .kind = .list, .metavar = "[MODULES ...]", .help = "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic", .group = "Diagnostic options (error swigles)" },
+
+    .{ .long = "compiler_diagnostics", .kind = .string, .metavar = "COMPILER", .help = "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
@@ -345,6 +363,13 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
                     continue;
                 }
+                if (std.mem.eql(u8, o.long, "compiler_args")) {
+                    var list: StrList = .{};
+                    var words = std.mem.tokenizeAny(u8, val, " \t");
+                    while (words.next()) |w| try list.items.append(a, w);
+                    s.compiler_args = list;
+                    continue;
+                }
                 var handled = false;
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
                     if (!handled and std.mem.eql(u8, fname, o.long)) {
@@ -485,6 +510,26 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.workspace_diagnostics = jsonBool(json.get(cfg, "workspace_diagnostics"), s.workspace_diagnostics);
     if (json.get(cfg, "diagnostic_severity")) |v| try applyDiagnosticSeverity(a, s, v);
     if (json.get(cfg, "external_modules")) |v| s.external_modules = try jsonList(a, v);
+    // Compiler diagnostics
+    if (json.get(cfg, "compiler_diagnostics")) |v| s.compiler_diagnostics = json.str(v);
+    if (json.get(cfg, "compiler_path")) |v| s.compiler_path = json.str(v);
+    if (json.get(cfg, "compiler_args")) |v| s.compiler_args = switch (v) {
+        .null => null,
+        .string => |x| blk: {
+            var list: StrList = .{};
+            var words = std.mem.tokenizeAny(u8, x, " \t");
+            while (words.next()) |w| try list.items.append(a, w);
+            break :blk list;
+        },
+        // a list keeps repeated arguments (-I a -I b)
+        .array => |arr| blk: {
+            var list: StrList = .{};
+            for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item));
+            break :blk list;
+        },
+        else => s.compiler_args,
+    };
+    if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
     // Code Actions options

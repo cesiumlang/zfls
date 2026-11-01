@@ -118,6 +118,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     patterns.init();
     paths.init(io);
+    paths.initCache(init.arena.allocator(), init.environ_map);
 
     const arena = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(arena);
