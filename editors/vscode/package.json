@@ -599,6 +599,20 @@
           "scope": "language-overridable",
           "markdownDescription": "Extra arguments for `fprettify`, one per item, for example `[\"--indent\", \"4\", \"--enable-decl\"]`. fprettify also reads `.fprettify.rc` files from the file's directory and its parents. Variables are expanded as in `#zfls.formatting.path#`."
         },
+        "zfls.linter.runner": {
+          "type": "string",
+          "enum": [
+            "extension",
+            "server"
+          ],
+          "enumDescriptions": [
+            "This extension runs the compiler: with lint while typing, fypp, and glob patterns in the include paths",
+            "zfls runs the compiler, as it does for every editor (its compiler_diagnostics option): on opening and saving a file, after compiling the modules it uses. The include directories are zfls's (zfls.includeDirs); fypp files are still checked by the extension"
+          ],
+          "default": "extension",
+          "scope": "resource",
+          "markdownDescription": "Who runs `#zfls.linter.compiler#`: this extension, or the zfls language server. With `server`, `#zfls.linter.compilerPath#`, `#zfls.linter.extraArgs#` and `#zfls.linter.modOutput#` go to zfls; the other linter settings are the extension's."
+        },
         "zfls.linter.compiler": {
           "type": "string",
           "enum": [
