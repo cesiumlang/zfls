@@ -20,8 +20,6 @@ projects zfls replaces:
 - [ ] Compiler diagnostics from the server, for every editor (Neovim, Emacs,
   Helix as well as VS Code): the compilers the extension's linter knows,
   run by zfls. The extension's own linter is then optional. FL #85, HS #205
-- [ ] Custom comment markers (`;*` comments of a preprocessed dialect), in the
-  parser and the grammar, from a setting. MF #197
 - [ ] Index cache: each file's symbols on disk, keyed by its contents and
   zfls's version and settings, so that a workspace of thousands of files
   starts without parsing them again. Summaries for unopened files and a
@@ -64,6 +62,8 @@ Editor features:
 - [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
   (`zfls.fixedFormCommentCharacter`). MF #535
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
+- [x] Comment markers of a dialect (`comment_markers`, `zfls.commentMarkers`:
+  `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,

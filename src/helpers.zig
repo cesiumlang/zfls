@@ -73,6 +73,51 @@ pub fn isComment(fixed: bool, line: []const u8) bool {
     return if (fixed) isFixedComment(line) else isFreeComment(line);
 }
 
+/// Makes the first of `markers` (`comment_markers`, such as `;*`) that
+/// starts a comment in `line` one zfls reads: its first byte becomes `!`.
+/// A marker starts a comment outside strings and before any `!`; a
+/// preprocessor directive has none. The line keeps its length.
+pub fn markComments(line: []u8, markers: []const []const u8) void {
+    if (std.mem.startsWith(u8, std.mem.trimStart(u8, line, " "), "#")) return;
+    var quote: u8 = 0;
+    for (line, 0..) |c, i| {
+        if (quote != 0) {
+            // a doubled quote closes and opens again
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' or c == '"') {
+            quote = c;
+            continue;
+        }
+        if (c == '!') return;
+        for (markers) |m| if (m.len > 0 and std.mem.startsWith(u8, line[i..], m)) {
+            line[i] = '!';
+            return;
+        };
+    }
+}
+
+test "comment markers become comments outside strings" {
+    const markers = [_][]const u8{";*"};
+    var buf: [64]u8 = undefined;
+    const cases = [_][2][]const u8{
+        .{ "  if (x) go to 110    ;* it's a comment", "  if (x) go to 110    !* it's a comment" },
+        .{ ";* a whole line", "!* a whole line" },
+        .{ "  s = 'a;*b' ;* c", "  s = 'a;*b' !* c" },
+        .{ "  s = \"it''s;*\" ; t = 1", "  s = \"it''s;*\" ; t = 1" },
+        .{ "  x = 1 ! a comment ;* already", "  x = 1 ! a comment ;* already" },
+        .{ "#define X ;*", "#define X ;*" },
+        .{ "  a = 1; b = 2", "  a = 1; b = 2" },
+    };
+    for (cases) |c| {
+        const line = buf[0..c[0].len];
+        @memcpy(line, c[0]);
+        markComments(line, &markers);
+        try std.testing.expectEqualStrings(c[1], line);
+    }
+}
+
 /// Index of the mark (`<`, `>` or `!`) of a documentation comment such as
 /// `!>` (FIXED_DOC, FREE_DOC)
 pub fn docMark(fixed: bool, line: []const u8) ?usize {
