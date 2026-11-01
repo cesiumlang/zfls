@@ -1,6 +1,7 @@
 //! Inlay hints (`textDocument/inlayHint`): the names of the dummy arguments
 //! that the positional arguments of a call to a workspace procedure go to,
-//! and the types of ASSOCIATE names.
+//! the types of ASSOCIATE names, and the implicit type of a name that is
+//! not declared, where it is first written in the range.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -21,6 +22,8 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
 const signature = @import("signature.zig");
+const semantic = @import("../semantic.zig");
+const implicit = @import("../implicit.zig");
 
 pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
@@ -34,6 +37,18 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
     for (ast.scope_list.items) |sc| {
         if (sc.kind != .associate or sc.sline == 0 or sc.sline - 1 < first or sc.sline - 1 > last) continue;
         try associateHints(a, file, sc, &out);
+    }
+    // implicit types (hansec #201): once per scope and name
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    for (try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, first, last, self.fixedLimit())) |u| {
+        const t = implicit.typeOf(u.scope, u.name) orelse continue;
+        const key = try std.fmt.allocPrint(a, "{x}:{s}", .{ @intFromPtr(u.scope), try std.ascii.allocLowerString(a, u.name) });
+        if ((try seen.getOrPut(a, key)).found_existing) continue;
+        try out.append(a, .{
+            .position = .{ .line = u.line, .character = Server.toLspCol(file, u.line, u.end) },
+            .label = try std.fmt.allocPrint(a, ": {s}", .{t}),
+            .kind = 1,
+        });
     }
     return json.from(a, out.items);
 }
