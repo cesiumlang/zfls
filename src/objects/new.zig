@@ -57,8 +57,9 @@ pub fn newScope(file_ast: *Ast, kind: Kind, line_number: usize, name: []const u8
         .sline = line_number,
         .eline = line_number,
         .fqsn = try Obj.computeFqsn(a, file_ast, nm),
-        .data = .{ .scope = .{ .ext = scopeExtFor(kind) } },
+        .data = .{ .scope = try a.create(Scope) },
     };
+    o.data.scope.* = .{ .ext = scopeExtFor(kind) };
     try o.keywords.appendSlice(a, keywords);
     switch (kind) {
         .type => {

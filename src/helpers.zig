@@ -618,13 +618,20 @@ pub const KeywordInfo = struct {
         return null;
     }
 
-    pub fn dupe(self: KeywordInfo, a: Allocator) !KeywordInfo {
-        return .{
+    /// None of them: what most objects have
+    pub const empty: KeywordInfo = .{};
+
+    /// A copy in `a`, or `empty` (shared) when there is nothing to copy
+    pub fn dupe(self: KeywordInfo, a: Allocator) !*const KeywordInfo {
+        if (self.intent == null and self.dimension == null and self.pass == null and self.codimension == null) return &empty;
+        const out = try a.create(KeywordInfo);
+        out.* = .{
             .intent = try str.dupeOpt(a, self.intent),
             .dimension = try str.dupeOpt(a, self.dimension),
             .pass = try str.dupeOpt(a, self.pass),
             .codimension = try str.dupeOpt(a, self.codimension),
         };
+        return out;
     }
 };
 

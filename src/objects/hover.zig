@@ -168,7 +168,7 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
             // of the array it is cut from (upstream #108)
             var ids: std.ArrayList(C.Kw) = .empty;
             for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
-            var info = l.keyword_info;
+            var info = l.keyword_info.*;
             info.dimension = null;
             if (self.varDataConst().slice_rank > 0) {
                 try ids.append(a, KW.dimension);
@@ -181,9 +181,9 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
             }
             return helpers.getKeywords(a, ids.items, info);
         }
-        return helpers.getKeywords(a, l.keywords.items, l.keyword_info);
+        return helpers.getKeywords(a, l.keywords.items, l.keyword_info.*);
     }
-    return helpers.getKeywords(a, self.keywords.items, self.keyword_info);
+    return helpers.getKeywords(a, self.keywords.items, self.keyword_info.*);
 }
 
 pub fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: ?usize) !void {
