@@ -997,3 +997,29 @@ test "hansec #95 definition, hover and references of user-defined operators" {
     defer w.deinit();
     try h.checkIn(.hansec, 95, .fixed, expectOperators(w));
 }
+
+fn expectLiteralHover(w: *h.Workspace) !void {
+    try w.expectHoverContains("l.f90", w.pos("l.f90", "3.0_dp", 0, 1), "REAL(dp)");
+    try w.expectHoverContains("l.f90", w.pos("l.f90", "1d0", 0, 1), "DOUBLE PRECISION");
+    try w.expectHoverContains("l.f90", w.pos("l.f90", "7_8", 0, 0), "INTEGER(8)");
+    try w.expectHoverContains("l.f90", w.pos("l.f90", "'abc'", 0, 2), "CHARACTER(LEN=3)");
+    try w.expectHoverContains("l.f90", w.pos("l.f90", ".false._1", 0, 2), "LOGICAL(1)");
+    try w.expectHoverContains("l.f90", w.pos("l.f90", "z'ff'", 0, 2), "value 255");
+}
+
+test "#125 hover on a literal constant shows its type with its kind" {
+    const w = try h.Workspace.init(&.{.{ .name = "l.f90", .text =
+        \\program l
+        \\  integer, parameter :: dp = kind(1d0)
+        \\  real(dp) :: x
+        \\  character(len=3) :: s
+        \\  logical :: t
+        \\  x = 3.0_dp + 1d0 + 7_8 + z'ff'
+        \\  s = 'abc'
+        \\  t = .false._1
+        \\end program l
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.check(125, .fixed, expectLiteralHover(w));
+}

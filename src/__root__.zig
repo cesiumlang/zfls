@@ -33,6 +33,7 @@ pub const implicit = @import("implicit.zig");
 pub const unused = @import("unused.zig");
 pub const modgraph = @import("modgraph.zig");
 pub const argcheck = @import("argcheck.zig");
+pub const literals = @import("literals.zig");
 pub const rewrite = @import("rewrite.zig");
 pub const outline = @import("outline.zig");
 pub const project = @import("project.zig");
