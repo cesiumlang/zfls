@@ -11,6 +11,7 @@ import {
 } from "vscode-languageclient/node";
 import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
+import { Fortitude } from "./fortitude";
 import { toggleComments } from "./comments";
 import { namelistGroups } from "./namelist";
 import { registerRunCommands } from "./runFile";
@@ -38,11 +39,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
   const linter = new Linter(context, output);
+  const fortitude = new Fortitude(output);
   registerFormatting(context, output);
   registerRunCommands(context, output);
   context.subscriptions.push(
     output,
     linter,
+    fortitude,
+    vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitude.fixAll(uri)),
     vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
@@ -64,6 +68,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   );
   // compiler diagnostics do not wait for the language server
   linter.activate();
+  fortitude.activate();
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
