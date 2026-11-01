@@ -9,3 +9,4 @@ package-lock.json
 test/**
 out/**
 .vscode-test/**
+CONTRIBUTING.md

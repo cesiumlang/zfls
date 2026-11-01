@@ -254,6 +254,10 @@ jobs:
       - name: Configuration file schema is up to date
         run: python3 tools/gen_config_schema.py --check
 
+      # the extension's strings are in package.nls.json, for translations
+      - name: Extension strings are in package.nls.json
+        run: python3 tools/package_nls.py --check
+
       - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
