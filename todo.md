@@ -14,16 +14,7 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-- [ ] Messages the extension shows while it runs go through `vscode.l10n`
-  (English only; translations as they are asked for)
-- [ ] pFUnit's tests in the Testing view: each `@test` of a `.pf` file, run
-  and reported one by one, with the place of a failed assertion
-- [ ] Fortran and C: references across the languages (the C calls of a
-  `BIND(C)` procedure, the Fortran calls of a C function); in VS Code, go to
-  the Fortran of a C function before any Fortran file is opened
-- [ ] A smarter index: less memory per file (400 MiB for OpenBLAS's 52 MiB
-  of sources), the parsed symbols kept in the index cache too (they take
-  half a second to build for 3,870 files). FL #563, HS #39
+Nothing left: 0.4.0 is ready for its release.
 
 ## After 0.4.0
 
@@ -35,6 +26,9 @@ projects zfls replaces:
   server attached to C files)
 - [ ] Translations and walkthroughs, as they are asked for (MF #616,
   MF #472)
+- [ ] The parsed symbols kept in the index cache too, so that a start does
+  not parse unchanged files again (half a second of the second it takes to
+  start on OpenBLAS's 3,936 files). FL #563, HS #39
 
 ## Watching upstream
 
@@ -69,12 +63,17 @@ Editor features:
   problem matchers, running and debugging their targets, Run and Debug
   Fortran File on a target's program, and the Testing view (each test
   target, and test-drive's suites and tests with their results)
+- [x] pFUnit's tests in the Testing view, in CMake projects
+  (`add_pfunit_ctest`): each `@test` of a `.pf` file run and reported one by
+  one, a failed assertion at its line
 - [x] The `fortran` debug type: launch configurations of a program or an
   fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
   GDB); F5 debugs the current file; a configuration per fpm target.
   Conditional breakpoints set before launch work (FB #7)
 - [x] Hooks for translations (every string of `package.json` in
-  `package.nls.json`, `tools/package_nls.py`) and walkthroughs; English only
+  `package.nls.json`, `tools/package_nls.py`; the messages shown while the
+  extension runs through `vscode.l10n`, in `l10n/bundle.l10n.json`,
+  `tools/l10n_bundle.py`) and walkthroughs; English only
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
@@ -101,7 +100,9 @@ Navigation and hover:
 - [x] Fortran and C: go to definition of a `BIND(C)` procedure gives its C
   declarations (in VS Code from clangd or Microsoft's C/C++, else zfls's
   search of the workspace's C files), and from a C file the Fortran
-  procedures (`zfls/bindC`, `zfls/bindCTargets`). HS #115
+  procedures (`zfls/bindC`, `zfls/bindCTargets`); find references across
+  the languages (`zfls/bindCReferences`), in VS Code from a C file before
+  any Fortran file is opened. HS #115
 - [x] User-defined operators (`.ord.`) and defined assignment
   (`assignment(=)`): definition, hover, references. HS #95
 
@@ -157,6 +158,8 @@ Server:
 - [x] Index cache: the texts of a large workspace's files in one file of
   zfls's cache, so that a cold start reads one file instead of thousands
   (`disable_index_cache`). HS #39
+- [x] Less memory: 302 MiB after indexing OpenBLAS (3,936 files, 52 MiB of
+  sources; 366 MiB before), each symbol 256 bytes instead of 544
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)

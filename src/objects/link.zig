@@ -272,7 +272,7 @@ pub fn resolveSubmoduleLink(self: *Obj, env: Env) !void {
                 } else if (iface.kind == .function) {
                     child.becomeProcedure(.function);
                     child.procData().result_name = child.name;
-                    child.keyword_info = .{};
+                    child.keyword_info = &helpers.KeywordInfo.empty;
                 } else continue;
                 const proc = child.procData();
                 proc.args = "";

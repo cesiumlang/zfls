@@ -311,6 +311,9 @@ pub const FortranFile = struct {
         }
         var fresh: std.ArrayList([]const u8) = .empty;
         errdefer fresh.deinit(self.gpa);
+        // as many as there are lines, not more (a workspace has millions)
+        const breaks = std.mem.count(u8, text, "\n");
+        try fresh.ensureTotalCapacityPrecise(self.gpa, (if (breaks > 0) breaks else std.mem.count(u8, text, "\r")) + 1);
         var start: usize = 0;
         var i: usize = 0;
         while (i < text.len) {

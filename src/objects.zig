@@ -316,8 +316,10 @@ pub const Intrinsic = struct {
 /// The data of an object: what fortls's `Scope`, `Variable` and
 /// `Intrinsic` classes hold. `Obj.kind` says which; the accessors
 /// (`scope()`, `variable()`, `procedure()`, ...) check it in safe builds.
+/// A scope's is apart (in its AST's arena), so that variables, most of the
+/// objects, are not the size of a scope.
 pub const Data = union(enum) {
-    scope: Scope,
+    scope: *Scope,
     variable: Variable,
     intrinsic: Intrinsic,
 };
@@ -335,7 +337,8 @@ pub const Obj = struct {
     implicit_vars: ?bool = null,
     file_ast: *Ast,
     keywords: std.ArrayList(C.Kw) = .empty,
-    keyword_info: KeywordInfo = .{},
+    /// shared `KeywordInfo.empty` unless the object has some
+    keyword_info: *const KeywordInfo = &KeywordInfo.empty,
     data: Data,
 
     /// Allocator owning this object's persistent data
@@ -355,11 +358,11 @@ pub const Obj = struct {
     // Data by kind
 
     pub fn scopeData(self: *Obj) *Scope {
-        return &self.data.scope;
+        return self.data.scope;
     }
 
     pub fn scopeDataConst(self: *const Obj) *const Scope {
-        return &self.data.scope;
+        return self.data.scope;
     }
 
     pub fn varData(self: *Obj) *Variable {
@@ -440,7 +443,7 @@ pub const Obj = struct {
     /// The procedure data, when the object is a subroutine or function
     pub fn procDataOpt(self: *Obj) ?*Procedure {
         return switch (self.data) {
-            .scope => |*s| switch (s.ext) {
+            .scope => |s| switch (s.ext) {
                 .procedure => |*p| p,
                 else => null,
             },
@@ -450,7 +453,7 @@ pub const Obj = struct {
 
     pub fn procDataOptConst(self: *const Obj) ?*const Procedure {
         return switch (self.data) {
-            .scope => |*s| switch (s.ext) {
+            .scope => |s| switch (s.ext) {
                 .procedure => |*p| p,
                 else => null,
             },
