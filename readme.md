@@ -188,6 +188,16 @@ Fortran procedures of a C name, and `zfls/bindCReferences` (`{"name":
 ...}`) their Fortran references. The VS Code extension uses them with
 clangd or Microsoft's C/C++.
 
+### Module variables, for a debugger
+
+`zfls/moduleVariables` (a position) gives the module variables that the
+line sees: those of the module or submodule around it (private ones too,
+and a submodule's ancestors'), then those its USE statements, and its
+hosts', make visible, each with the module that declares it, its name
+there, its name at the line (a USE may rename it) and its type; named
+constants are left out. The VS Code extension shows them while debugging,
+with their values, which the C debuggers' variables view leaves out.
+
 ### Index cache
 
 A workspace of 200 files or more has its files' texts kept in one file of

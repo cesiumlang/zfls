@@ -457,3 +457,71 @@ test "hansec #115: references across Fortran and C" {
     const hl = try w.server.dispatchPublic(a, "textDocument/documentHighlight", try w.positionOf("iface.f90", w.pos("iface.f90", "c_add(n", 0, 1)));
     for (h.json.items(hl)) |item| try std.testing.expect(std.mem.endsWith(u8, h.json.str(h.json.get(item, "uri")).?, "iface.f90"));
 }
+
+test "FortranBreaker #10: the module variables a line sees, for the debugger" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "consts.f90", .text =
+        \\module consts
+        \\  implicit none
+        \\  integer, parameter :: n = 3
+        \\  real :: scale = 2.0
+        \\  real, private :: hidden
+        \\  integer :: counter, other
+        \\end module consts
+        \\
+        },
+        .{ .name = "grid.f90", .text =
+        \\module grid
+        \\  use consts, only: factor => scale, counter
+        \\  implicit none
+        \\  real :: cells(10)
+        \\  integer, private :: secret
+        \\contains
+        \\  subroutine step()
+        \\    integer :: local_i
+        \\    local_i = counter
+        \\  end subroutine step
+        \\end module grid
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main
+        \\  use grid
+        \\  use consts
+        \\  implicit none
+        \\  call step()
+        \\end program main
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const names = struct {
+        fn of(al: std.mem.Allocator, v: h.json.Value) ![]const []const u8 {
+            var out: std.ArrayList([]const u8) = .empty;
+            for (h.json.items(v)) |item| try out.append(al, try std.fmt.allocPrint(al, "{s}:{s}:{s}", .{
+                h.json.str(h.json.get(item, "module")).?,
+                h.json.str(h.json.get(item, "name")).?,
+                h.json.str(h.json.get(item, "local")).?,
+            }));
+            return out.items;
+        }
+    };
+    // in a module procedure: the module's own variables, private ones too,
+    // then those of its USE, under their local names; no named constant,
+    // nor what ONLY leaves out
+    const in_step = try names.of(a, try w.zflsRequest("zfls/moduleVariables", try w.positionOf("grid.f90", w.pos("grid.f90", "local_i = counter", 0, 0))));
+    const want_step = [_][]const u8{ "grid:cells:cells", "grid:secret:secret", "consts:scale:factor", "consts:counter:counter" };
+    try std.testing.expectEqual(want_step.len, in_step.len);
+    for (want_step, in_step) |x, y| try std.testing.expectEqualStrings(x, y);
+    // in the program: the public variables of the modules it uses
+    const in_main = try names.of(a, try w.zflsRequest("zfls/moduleVariables", try w.positionOf("main.f90", w.pos("main.f90", "call step", 0, 0))));
+    const want_main = [_][]const u8{ "grid:cells:cells", "consts:scale:scale", "consts:counter:counter", "consts:other:other" };
+    try std.testing.expectEqual(want_main.len, in_main.len);
+    for (want_main, in_main) |x, y| try std.testing.expectEqualStrings(x, y);
+    // the type, for the view
+    const one = h.json.items(try w.zflsRequest("zfls/moduleVariables", try w.positionOf("grid.f90", w.pos("grid.f90", "local_i = counter", 0, 0))))[0];
+    try std.testing.expectEqualStrings("REAL", h.json.str(h.json.get(one, "type")).?);
+}

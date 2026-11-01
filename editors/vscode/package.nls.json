@@ -157,5 +157,6 @@
   "walkthrough.gettingStarted.format.title": "Format your code",
   "walkthrough.gettingStarted.format.description": "Format with findent or fprettify, once you have installed one and chosen it.\n[Choose a Formatter](command:workbench.action.openSettings?%5B%22zfls.formatting.formatter%22%5D)",
   "walkthrough.gettingStarted.help.title": "When something goes wrong",
-  "walkthrough.gettingStarted.help.description": "The output of zfls says what it did and why something failed.\n[Show Output](command:zfls.showOutput)"
+  "walkthrough.gettingStarted.help.description": "The output of zfls says what it did and why something failed.\n[Show Output](command:zfls.showOutput)",
+  "view.zfls.moduleVariables.name": "Fortran Module Variables"
 }

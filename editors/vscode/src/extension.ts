@@ -23,6 +23,7 @@ import { registerFpm } from "./fpmCommands";
 import { registerFpmTests } from "./fpmTests";
 import { registerPfunitTests } from "./pfunitTests";
 import { registerDebugType } from "./debugType";
+import { registerModuleVariables } from "./moduleVariablesView";
 
 import { affectsServer, serverArguments } from "./options";
 
@@ -55,6 +56,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFpmTests(context, output);
   registerPfunitTests(context, output);
   registerDebugType(context, output);
+  registerModuleVariables(context, clientForUri);
   context.subscriptions.push(
     output,
     linter,
@@ -389,6 +391,14 @@ async function restartAll(): Promise<void> {
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
+}
+
+/** The language client of the server of a Fortran file, started if need be */
+async function clientForUri(uri: vscode.Uri): Promise<LanguageClient | undefined> {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  await ensureClient(doc);
+  const where = serverRoot(doc);
+  return where ? await clients.get(where.root.toString()) : undefined;
 }
 
 /** The outermost workspace folder containing `folder` (a nested folder is
