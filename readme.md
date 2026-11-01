@@ -318,7 +318,7 @@ zfls deliberately differs from fortls in a few places:
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
   ...) shows its documentation (fortls #547); fortls has no hover there.
 - Hover on a name that is not declared shows the type that the IMPLICIT
-  statements of its scope and the scopes around it, or the default rules
+  statements of its scope and the surrounding scopes, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has
   no hover there. Under IMPLICIT NONE there is none.
 - Workspace symbol search also finds the names the query matches fuzzily
