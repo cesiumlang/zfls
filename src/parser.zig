@@ -176,6 +176,14 @@ pub const FortranFile = struct {
     preproc: bool = false,
     ast: ?*Ast = null,
     hash: ?u64 = null,
+    /// Further markers that start a comment as `!` does (`comment_markers`,
+    /// such as `;*`): outside strings, the first byte of one is `!` in
+    /// `lines`, the text zfls reads, so that it is a comment there
+    comment_markers: []const []const u8 = &.{},
+    /// With `comment_markers`: the lines as the editor has them, slices of
+    /// `raw_text` (owned by `gpa`), to which changes apply
+    raw_lines: std.ArrayList([]const u8) = .empty,
+    raw_text: []u8 = &.{},
 
     pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
         const self = try gpa.create(FortranFile);
@@ -204,6 +212,8 @@ pub const FortranFile = struct {
     pub fn destroy(self: *FortranFile) void {
         self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
+        self.gpa.free(self.raw_text);
+        self.raw_lines.deinit(self.gpa);
         self.pp_arena.deinit();
         self.gpa.free(self.path);
         self.gpa.destroy(self);
@@ -238,13 +248,50 @@ pub const FortranFile = struct {
         if (detect_format) self.fixed = helpers.detectFixedFormat(self.lines.items);
     }
 
-    /// Take `buf` (owned by `gpa`) and the lines in it as the contents
+    /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
+    /// With comment markers, they are the raw lines, and `lines` a copy
+    /// with the markers made comments.
     fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
+        if (self.comment_markers.len > 0) {
+            if (self.markedCopy(buf, new_lines.items)) |marked| {
+                self.gpa.free(self.raw_text);
+                self.raw_lines.deinit(self.gpa);
+                self.raw_text = buf;
+                self.raw_lines = new_lines;
+                self.gpa.free(self.text);
+                self.lines.deinit(self.gpa);
+                self.text = marked.text;
+                self.lines = marked.lines;
+                self.resetPp();
+                return;
+            } else |_| {}
+        }
         self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
         self.text = buf;
         self.lines = new_lines;
         self.resetPp();
+    }
+
+    /// A copy of `buf` and its lines with the comment markers made `!`
+    fn markedCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+        const text = try self.gpa.dupe(u8, buf);
+        errdefer self.gpa.free(text);
+        var lines: std.ArrayList([]const u8) = .empty;
+        errdefer lines.deinit(self.gpa);
+        try lines.ensureTotalCapacity(self.gpa, raw.len);
+        for (raw) |l| {
+            const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
+            const line = text[at .. at + l.len];
+            helpers.markComments(line, self.comment_markers);
+            lines.appendAssumeCapacity(line);
+        }
+        return .{ .text = text, .lines = lines };
+    }
+
+    /// The lines that changes apply to: the editor's
+    fn editLines(self: *const FortranFile) []const []const u8 {
+        return if (self.comment_markers.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 
     /// Set contents from text; returns false if unchanged (same hash)
@@ -456,24 +503,25 @@ pub const FortranFile = struct {
             return true;
         };
         const n = self.nLines();
+        const current = self.editLines();
         if (rng.sl == n) {
             var all: std.ArrayList([]const u8) = .empty;
-            for (self.lines.items) |l| try all.append(a, l);
+            for (current) |l| try all.append(a, l);
             try all.appendSlice(a, text_split);
             try self.setContents(all.items, true);
             return true;
         }
         if (rng.sl > n or rng.el >= n + 1) return error.InvalidRange;
-        const start_line = self.lines.items[rng.sl];
-        const end_line = if (rng.el < n) self.lines.items[rng.el] else "";
+        const start_line = current[rng.sl];
+        const end_line = if (rng.el < n) current[rng.el] else "";
         const start_col = @min(str.utf16ToByte(start_line, rng.sc), start_line.len);
         const end_col = @min(str.utf16ToByte(end_line, rng.ec), end_line.len);
 
         // Single line edit
         if (rng.sl == rng.el and text_split.len == 1) {
-            const prev = self.lines.items[rng.sl];
+            const prev = current[rng.sl];
             const new_line = try std.mem.concat(a, u8, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
-            const replaced = try a.dupe([]const u8, self.lines.items);
+            const replaced = try a.dupe([]const u8, current);
             replaced[rng.sl] = new_line;
             // The buffer is rebuilt, which the preprocessed lines that are
             // the raw lines themselves must follow; the others are in pp_arena
@@ -499,7 +547,7 @@ pub const FortranFile = struct {
         }
 
         var new_contents: std.ArrayList([]const u8) = .empty;
-        for (self.lines.items, 0..) |line, i| {
+        for (current, 0..) |line, i| {
             if (i < rng.sl or i > rng.el) {
                 try new_contents.append(a, line);
                 continue;
@@ -668,4 +716,22 @@ test "the definition tests are chosen by the first word, labels fall back to all
     try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
     try std.testing.expect(firstWord("_x: block", &buf) == null);
     try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
+}
+
+test "comment markers: zfls reads comments, changes apply to the editor's text" {
+    patterns.init();
+    const gpa = std.testing.allocator;
+    const f = try FortranFile.create(gpa, "/w/a.f90", null);
+    defer f.destroy();
+    f.comment_markers = &.{";*"};
+    _ = try f.setText("program p\n  go to 110 ;* it's a comment\nend program p\n");
+    try std.testing.expectEqualStrings("  go to 110 !* it's a comment", f.getLine(1, false).?);
+    // deleting the `*` leaves a statement separator, not a comment
+    _ = try f.applyChange(.{ .text = "", .range = .{ .sl = 1, .sc = 13, .el = 1, .ec = 14 } });
+    try std.testing.expectEqualStrings("  go to 110 ; it's a comment", f.getLine(1, false).?);
+    // and typing it again makes the comment again, across a multi-line edit
+    _ = try f.applyChange(.{ .text = "*\n  x = 1 ;* two", .range = .{ .sl = 1, .sc = 13, .el = 1, .ec = 13 } });
+    try std.testing.expectEqualStrings("  go to 110 !*", f.getLine(1, false).?);
+    try std.testing.expectEqualStrings("  x = 1 !* two it's a comment", f.getLine(2, false).?);
+    try std.testing.expectEqual(@as(usize, 5), f.nLines());
 }

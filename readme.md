@@ -171,6 +171,21 @@ Two requests of zfls's own let an editor ask its C language server instead:
 procedures of a C name. The VS Code extension uses them with clangd or
 Microsoft's C/C++.
 
+### Comment markers
+
+Some codebases are written in a dialect that a preprocessor turns into
+Fortran, with comments that start with something other than `!`, such as
+`;*` (`go to 110  ;* it's done`). `comment_markers` lists such markers:
+outside strings, zfls reads what follows one as a comment, so that its words
+are not names and a quote in it does not start a string.
+
+```json
+{ "comment_markers": [";*"] }
+```
+
+In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
+those comments too, after a window reload.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
