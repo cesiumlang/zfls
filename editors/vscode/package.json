@@ -164,6 +164,13 @@
         ]
       },
       {
+        "scopeName": "source.fortran.doc-code.injection",
+        "path": "./syntaxes/fortran_doc-code.injection.json",
+        "injectTo": [
+          "source.fortran.free"
+        ]
+      },
+      {
         "language": "FortranFixedForm",
         "scopeName": "source.fortran.fixed",
         "path": "./syntaxes/fortran_fixed-form.tmLanguage.json"
