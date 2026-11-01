@@ -12,6 +12,7 @@ import {
 import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
 import { Fortitude } from "./fortitude";
+import { Codee } from "./codee";
 import { toggleComments } from "./comments";
 import { namelistGroups } from "./namelist";
 import { registerRunCommands } from "./runFile";
@@ -40,12 +41,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("zfls", { log: true });
   const linter = new Linter(context, output);
   const fortitude = new Fortitude(output);
+  const codee = new Codee(output);
   registerFormatting(context, output);
   registerRunCommands(context, output);
   context.subscriptions.push(
     output,
     linter,
     fortitude,
+    codee,
     vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitude.fixAll(uri)),
     vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
@@ -69,6 +72,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // compiler diagnostics do not wait for the language server
   linter.activate();
   fortitude.activate();
+  codee.activate();
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }

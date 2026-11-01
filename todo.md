@@ -31,8 +31,6 @@ projects zfls replaces:
   configurations, conditional breakpoints set before launch, FB #7); then
   Fortran values and arrays in the variables view (FB #10); in the end a
   Fortran debug adapter of zfls's own
-- [ ] Codee: documented, best-effort support like fortitude's, not tested
-  until a license is available
 - [ ] Hooks for translations (`package.nls.json`, MF #616) and walkthroughs
   (MF #472), with English only and no walkthrough yet
 
@@ -63,6 +61,8 @@ Editor features:
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
+- [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
+  output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195

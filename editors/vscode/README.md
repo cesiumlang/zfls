@@ -20,8 +20,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   indexed again; the server restarts when `.fortlsrc`, `.fortls.json`,
   `.fortls`, `fpm.toml` or `compile_commands.json` changes
 - diagnostics, a compiler's errors and warnings (see
-  [Compiler diagnostics](#compiler-diagnostics)), and fortitude's problems
-  with its fixes (see [Linting with fortitude](#linting-with-fortitude))
+  [Compiler diagnostics](#compiler-diagnostics)), fortitude's problems
+  with its fixes (see [Linting with fortitude](#linting-with-fortitude)),
+  and Codee's checks (see [Codee checks](#codee-checks))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives, and Fortran code in documentation comments (a block
   from `` !> ```fortran `` to `` !> ``` ``)
@@ -245,6 +246,26 @@ fortitude-lint`.
 | `zfls.fortitude.args` | `[]` | Extra arguments for `fortitude check` (`--select`, `--preview`, ...) |
 | `zfls.fortitude.lintOnType` | `false` | Also lint while the file is edited |
 | `zfls.fortitude.lintOnTypeDelay` | `500` | Milliseconds without changes before linting |
+
+## Codee checks
+
+With `zfls.codee.enabled`, the checks of [Codee](https://www.codee.com),
+a commercial analyzer of Fortran correctness, modernization and
+performance (installed and licensed separately), show in the file and in
+the Problems panel when it is opened and saved: `codee checks --json` on the
+file as saved. Each check links to its page of Codee's Open Catalog. Its
+defects (`PWD...`) are errors, its recommendations (`PWR...`) warnings and
+its remarks (`RMK...`) hints, as in Codee's own editor integrations.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `zfls.codee.enabled` | `false` | Run Codee on Fortran files |
+| `zfls.codee.path` | empty | The codee executable, or its directory |
+| `zfls.codee.args` | `[]` | More arguments, before the file: `["-p", "build/compile_commands.json"]`, or with `${file}` where the file goes, `["${file}", "--", "gfortran", "-O2", "${file}"]` |
+
+This support follows Codee's documentation of its output: zfls has not been
+tested with Codee itself. For other editors, Codee documents its own
+integrations (Neovim, Vim, Emacs).
 
 ## Formatting
 
