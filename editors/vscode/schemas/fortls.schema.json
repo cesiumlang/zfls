@@ -41,6 +41,15 @@
       "uniqueItems": true,
       "default": []
     },
+    "comment_markers": {
+      "description": "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
     "nthreads": {
       "description": "Number of threads to use during workspace initialization (default: 4)",
       "type": "integer",
@@ -68,6 +77,11 @@
     },
     "disable_autoupdate": {
       "description": "Accepted for compatibility with fortls and ignored: zfls does not update itself.",
+      "type": "boolean",
+      "default": false
+    },
+    "disable_index_cache": {
+      "description": "Do not keep the texts of the workspace's files in one file of zfls's cache, from which a start reads those that have not changed instead of reading each file",
       "type": "boolean",
       "default": false
     },

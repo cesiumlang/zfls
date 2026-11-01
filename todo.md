@@ -17,8 +17,6 @@ projects zfls replaces:
 - [ ] fpm, fully: tasks (`build`, `run`, `test`, `install`), the targets of
   `fpm.toml` in the run and debug commands, `fpm test` in the test explorer,
   then test-drive's tests one by one. pFUnit after that
-- [ ] Custom comment markers (`;*` comments of a preprocessed dialect), in the
-  parser and the grammar, from a setting. MF #197
 - [ ] Index cache: each file's symbols on disk, keyed by its contents and
   zfls's version and settings, so that a workspace of thousands of files
   starts without parsing them again. Summaries for unopened files and a
@@ -59,6 +57,8 @@ Editor features:
 - [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
   (`zfls.fixedFormCommentCharacter`). MF #535
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
+- [x] Comment markers of a dialect (`comment_markers`, `zfls.commentMarkers`:
+  `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON

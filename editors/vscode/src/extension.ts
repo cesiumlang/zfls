@@ -15,7 +15,10 @@ import { Fortitude } from "./fortitude";
 import { Codee } from "./codee";
 import { toggleComments } from "./comments";
 import { namelistGroups } from "./namelist";
+import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
+import { registerFpm } from "./fpmCommands";
+import { registerFpmTests } from "./fpmTests";
 
 import { affectsServer, serverArguments } from "./options";
 
@@ -44,6 +47,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const codee = new Codee(output);
   registerFormatting(context, output);
   registerRunCommands(context, output);
+  registerFpm(context, output);
+  registerFpmTests(context, output);
   context.subscriptions.push(
     output,
     linter,
@@ -59,6 +64,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (affectsServer(e)) {
         void restartAll();
       }
+      if (e.affectsConfiguration("zfls.commentMarkers")) {
+        void updateMarkerGrammar(true);
+      }
     }),
     vscode.workspace.onDidOpenTextDocument((doc) => void ensureClient(doc)),
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
@@ -69,6 +77,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       void restartAll();
     }),
   );
+  void updateMarkerGrammar(false);
   // compiler diagnostics do not wait for the language server
   linter.activate();
   fortitude.activate();
@@ -77,6 +86,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await ensureClient(doc);
   }
   void checkModernFortran();
+}
+
+/** Writes the grammar of zfls.commentMarkers (of the workspace, as grammars
+ * are not per folder) when it differs from the one there, and offers to
+ * reload the window, which reads grammars once. After an update of the
+ * extension, which brings the empty grammar back, it is written again. */
+async function updateMarkerGrammar(changed: boolean): Promise<void> {
+  const markers = vscode.workspace.getConfiguration("zfls").get<string[]>("commentMarkers", []);
+  const file = path.join(context.extensionPath, "syntaxes", INJECTION_FILE);
+  const text = markerGrammarText(markers);
+  try {
+    // a checkout or package may have CRLF line ends: the same grammar
+    if (isMarkerGrammar(fs.readFileSync(file, "utf8"), markers)) {
+      return;
+    }
+    fs.writeFileSync(file, text, "utf8");
+  } catch (err) {
+    output?.warn(`could not write ${file} for zfls.commentMarkers: ${String(err)}`);
+    if (changed) {
+      void vscode.window.showWarningMessage(
+        "zfls: the comment markers could not be highlighted (the extension's grammar is not writable); zfls still reads them as comments.",
+      );
+    }
+    return;
+  }
+  const reload = "Reload Window";
+  const choice = await vscode.window.showInformationMessage(
+    "zfls: reload the window to highlight the comments of zfls.commentMarkers.",
+    reload,
+  );
+  if (choice === reload) {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
 }
 
 /** Toggle Line Comment in fixed form with `zfls.fixedFormCommentCharacter`

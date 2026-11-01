@@ -196,7 +196,8 @@ class Server:
 
 def server_cmd(args) -> list[str]:
     sync = ["--incremental_sync"] if args.incremental else []
-    return [args.zfls] + sync + args.zfls_arg
+    # a test run leaves nothing in zfls's cache directory
+    return [args.zfls, "--disable_index_cache"] + sync + args.zfls_arg
 
 
 def uses_preprocessor(path: Path) -> bool:

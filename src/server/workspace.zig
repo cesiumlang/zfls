@@ -31,6 +31,7 @@ const definition = @import("definition.zig");
 const references = @import("references.zig");
 const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
+const cache = @import("cache.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -270,8 +271,10 @@ pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
 /// (the file and its AST).
 pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
+    f.comment_markers = self.s.comment_markers.slice();
     errdefer f.destroy();
-    _ = try f.loadFromDisk(self.io);
+    // from the index cache during initialization
+    _ = try f.setTextOwned(try cache.read(self, filepath));
     const ast = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), parseOptions(self)) catch return error.ParseFailed;
     // Emulate Python's recursion limit (deeply nested scopes)
     if (maxScopeDepth(ast) > self.s.recursion_limit) {
@@ -297,6 +300,8 @@ pub fn maxScopeDepth(ast: *Ast) i64 {
 /// initialize request, report the progress (FL #417, MF #757)
 pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
     const files = try getSourceFiles(self, a);
+    cache.begin(self, a, files.len);
+    defer cache.end(self);
     const results = try a.alloc(Server.InitResult, files.len);
     @memset(results, .none);
     var job: Server.InitJob = .{ .server = self, .files = files, .results = results };
@@ -605,6 +610,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
     if (did_open) {
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
+            nf.comment_markers = self.s.comment_markers.slice();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
@@ -632,6 +638,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
     if (read_file) {
         if (file == null) {
             const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
+            nf.comment_markers = self.s.comment_markers.slice();
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;
