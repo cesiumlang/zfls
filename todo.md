@@ -25,8 +25,8 @@ projects zfls replaces:
 - [ ] Test explorer (pFUnit, test-drive, `fpm test`); fpm tasks
 - [ ] Navigation between C headers and `bind(C)` procedures. HS #115
 - [ ] References to defined assignment (`assignment(=)`)
-- [ ] Fixed form: toggle `C` comments (MF #535); custom comment patterns
-  (MF #197)
+- [ ] Custom comment markers (`;*` comments of a preprocessed dialect): the
+  parser and grammar would take them from a setting. MF #197
 - [ ] Optional exact diagnostics from a compiler (lfortran, gfortran). FL #85,
   HS #205
 - [ ] Debugging with the generated launch configurations: conditional
@@ -55,6 +55,8 @@ Editor features:
 - [x] Call hierarchy; type hierarchy (`extends`)
 - [x] Inlay hints: dummy argument names of positional arguments, `associate`
   types, implicit types, values of named constants
+- [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
+  (`zfls.fixedFormCommentCharacter`). MF #535
 - [x] Fuzzy workspace symbol search. HS #195
 - [x] Untitled files
 

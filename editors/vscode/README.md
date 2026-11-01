@@ -64,6 +64,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.maxLineLength` | `-1` (off) | Warn about longer code lines |
 | `zfls.maxCommentLineLength` | `-1` (off) | Warn about longer comment lines |
 | `zfls.fixedFormLineLength` | `72` | Columns of code in a fixed-form line (80 or 132 for longer cards); the rest is shown as a comment |
+| `zfls.fixedFormCommentCharacter` | `!` | The character **Toggle Line Comment** (`Ctrl+/`) puts in column 1 of a fixed-form line: `C`, `c` or `*` (`!`: VS Code's own toggle) |
 | `zfls.configFile` | empty | Configuration file instead of `.fortlsrc` / `.fortls.json` / `.fortls` |
 | `zfls.sourceDirs` | the workspace folder | Folders with source files (globs allowed) |
 | `zfls.includeDirs` | none | Folders searched for `#include` and `INCLUDE` files |
@@ -323,6 +324,10 @@ Most snippets are adapted from those of Modern Fortran.
 
 - **zfls: Restart Language Server**
 - **zfls: Show Output**
+- **zfls: Show Module Compile Order**
+- **zfls: Toggle Fixed-Form Line Comment** (`Ctrl+/` in fixed form): with
+  `zfls.fixedFormCommentCharacter` set to `C`, `c` or `*`, comments the lines
+  with that character in column 1, or uncomments them (Modern Fortran #535)
 - **zfls: Run Fortran File**, **zfls: Debug Fortran File** (also buttons in
   the editor title)
 - **zfls: Add Build Task and Debug Configuration for Fortran File**
