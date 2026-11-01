@@ -21,7 +21,6 @@ projects zfls replaces:
 - [ ] Walkthroughs (MF #472); translations (MF #616)
 - [ ] Test explorer (pFUnit, test-drive, `fpm test`); fpm tasks
 - [ ] Navigation between C headers and `bind(C)` procedures. HS #115
-- [ ] References to defined assignment (`assignment(=)`)
 - [ ] Custom comment markers (`;*` comments of a preprocessed dialect): the
   parser and grammar would take them from a setting. MF #197
 - [ ] Optional exact diagnostics from a compiler (lfortran, gfortran). FL #85,
@@ -76,8 +75,8 @@ Navigation and hover:
 - [x] Hover on literals: kinds (`REAL(dp)`, `INTEGER(8)`), `DOUBLE
   PRECISION`, BOZ values. FL #125
 - [x] `lowercase_hover`: keywords in hover in lowercase. FL #28
-- [x] User-defined operators (`.ord.`): definition, hover, references.
-  HS #95
+- [x] User-defined operators (`.ord.`) and defined assignment
+  (`assignment(=)`): definition, hover, references. HS #95
 
 Completion:
 

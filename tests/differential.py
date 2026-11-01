@@ -443,6 +443,21 @@ def on_user_operator(lines: list, line: int, char: int) -> bool:
     return False
 
 
+def on_assignment(lines: list, line: int, char: int) -> bool:
+    """Whether the position is on the `=` of an assignment or on
+    `assignment(=)`, where zfls answers for a defined assignment (hansec
+    #95) and fortls does not."""
+    if not (0 <= line < len(lines)):
+        return False
+    text = lines[line]
+    if any(0 <= c < len(text) and text[c] == "=" for c in (char, char - 1)):
+        return True
+    for m in re.finditer(r"(?i)assignment\s*\(\s*=\s*\)", text):
+        if m.start() <= char <= m.end():
+            return True
+    return False
+
+
 def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     """Whether (line, char) is on a statement label or on a construct name
     that the file defines (`name: do`); zfls answers definition, references
@@ -657,6 +672,13 @@ def main() -> int:
                 and on_user_operator(src_lines, pos.get("line", -1), pos.get("character", 0))
             ):
                 # user-defined operators (hansec #95)
+                continue
+            if (
+                kind in ("hover", "definition", "references")
+                and not a
+                and on_assignment(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # defined assignment (hansec #95)
                 continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per

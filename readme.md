@@ -321,7 +321,11 @@ zfls deliberately differs from fortls in a few places:
   `rec.field` or `arr(i).field` (hansec #45). fortls reads none of these.
 - A user-defined operator (`.ord.`) has a definition (its `interface
   operator (.ord.)`), a hover (the procedures of that interface) and
-  references (its uses in the workspace) (hansec #95); fortls has none.
+  references (its uses in the workspace) (hansec #95); fortls has none. So
+  has the `=` of an assignment to a variable whose type has a defined
+  assignment (`generic :: assignment(=) => p` in the type or a type it
+  extends, else an `interface assignment(=)` for it): its references are
+  the binding and the assignments to variables of the types that use it.
 - Hover on a coarray shows its codimension (`REAL, CODIMENSION[*] :: x`),
   written after its name or as an attribute; fortls drops it.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,

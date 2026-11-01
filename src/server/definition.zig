@@ -20,6 +20,7 @@ const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const directives = @import("../data/directives.zig");
 const operators = @import("operators.zig");
+const assignment = @import("assignment.zig");
 const literals = @import("../literals.zig");
 
 const Obj = objects.Obj;
@@ -255,6 +256,14 @@ pub fn constructLocations(a: Allocator, uri: []const u8, file: *const FortranFil
     return out;
 }
 
+/// The defined assignment at a position: on the `=` of an assignment to a
+/// variable whose type has one, or on its `assignment(=)`
+pub fn assignmentAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?assignment.Binding {
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
+    const line = params.position.line;
+    return assignment.at(self, a, file, line, Server.toByteCol(file, line, params.position.character));
+}
+
 /// The user-defined operator at a position (`.ord.`)
 pub fn operatorAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
@@ -264,6 +273,7 @@ pub fn operatorAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]c
 
 pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.definition(self, a, op);
+    if (try assignmentAt(self, a, params)) |b| return assignment.definition(self, a, b);
     if (try constructAt(self, a, params)) |c| {
         const d = c.target.def orelse return .null;
         return json.from(a, Server.locationOf(try paths.pathToUri(a, c.file.path), c.file, d.line, d.start, d.line, d.end));
@@ -460,6 +470,7 @@ pub fn lowercaseKeywords(a: Allocator, md: []const u8) ![]const u8 {
 
 fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
+    if (try assignmentAt(self, a, params)) |b| return assignment.hover(self, a, b);
     const d = (try definitionAt(self, a, params, true)) orelse {
         if (try literalHover(self, a, params)) |v| return v;
         return implicitHover(self, a, params);
