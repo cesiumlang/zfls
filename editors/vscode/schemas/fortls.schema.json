@@ -263,6 +263,10 @@
       "type": "boolean",
       "default": false
     },
+    "bind_c_clangd": {
+      "description": "Start this clangd (its path, or clangd for the one on the PATH) and ask it for the C declarations and calls of BIND(C) procedures too, besides zfls's search of the C files: its index of the project's compile_commands.json has those of headers outside the source directories and of names a macro makes",
+      "type": "string"
+    },
     "enable_code_actions": {
       "description": "Enable experimental code actions (default: false)",
       "type": "boolean",

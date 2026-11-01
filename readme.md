@@ -164,6 +164,17 @@ references of the other Fortran procedures of the same C name (interfaces
 of the C function in other modules). `disable_bind_c_search` turns that
 search off.
 
+With `bind_c_clangd` set to a clangd (its path, or `clangd` for the one on
+the `PATH`), zfls starts it after initialization and adds its answers to
+those of the search: clangd's index of the project's
+`compile_commands.json` has the declarations in headers outside the source
+directories, and the names a macro makes. This is for editors that have no
+C language server to ask (VS Code's extension asks clangd or Microsoft's
+C/C++ itself). clangd needs a `compile_commands.json` to know the files it
+has not opened, and keeps its index in `.cache/clangd/index`; until that
+index is built, and when clangd does not answer within 3 seconds, the
+search answers alone.
+
 The other way, an editor that attaches zfls to C files too (in Neovim, with
 `c` and `cpp` among its filetypes) gets, on a C name, the Fortran procedures
 that bind it (go to definition) and their Fortran references with the C

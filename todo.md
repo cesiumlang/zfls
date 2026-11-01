@@ -14,8 +14,6 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-- [ ] zfls asking clangd itself for C declarations (for editors without a C
-  server attached to C files)
 - [ ] Debugging, a first step: Fortran module variables, which the C
   debuggers do not list, in a view of their own while debugging. FB #10
 
@@ -103,6 +101,10 @@ Navigation and hover:
   procedures (`zfls/bindC`, `zfls/bindCTargets`); find references across
   the languages (`zfls/bindCReferences`), in VS Code from a C file before
   any Fortran file is opened. HS #115
+- [x] zfls asking clangd itself (`bind_c_clangd`), in editors with no C
+  language server to ask, for the C declarations and calls of `BIND(C)`
+  procedures, added to its own search: those of headers outside the source
+  directories and of names a macro makes
 - [x] User-defined operators (`.ord.`) and defined assignment
   (`assignment(=)`): definition, hover, references. HS #95
 
