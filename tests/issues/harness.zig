@@ -12,7 +12,7 @@
 
 const std = @import("std");
 const zfls = @import("zfls");
-const json = zfls.json;
+pub const json = zfls.json;
 const paths = zfls.paths;
 const Server = zfls.server.Server;
 const Logger = zfls.logger;
@@ -321,6 +321,36 @@ pub const Workspace = struct {
 
     pub fn definition(w: *Workspace, name: []const u8, p: Pos) !?Location {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/definition", try w.posParams(name, p)));
+    }
+
+    /// Every location go to definition gives (one, or a list)
+    pub fn definitions(w: *Workspace, name: []const u8, p: Pos) ![]const Location {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/definition", try w.posParams(name, p));
+        var out: std.ArrayList(Location) = .empty;
+        if (v == .array) {
+            for (json.items(v)) |item| if (location(item)) |l| try out.append(w.a(), l);
+        } else if (location(v)) |l| try out.append(w.a(), l);
+        return out.items;
+    }
+
+    /// A request of zfls's own (`zfls/...`), its result
+    pub fn zflsRequest(w: *Workspace, method: []const u8, params: anytype) !Value {
+        return w.request(method, params);
+    }
+
+    /// The position parameters of a request
+    pub fn positionOf(w: *Workspace, name: []const u8, p: Pos) !Value {
+        return w.posParams(name, p);
+    }
+
+    /// `textDocument/didOpen` of a workspace file with its text
+    pub fn open(w: *Workspace, name: []const u8) !void {
+        _ = try w.server.dispatchPublic(w.a(), "textDocument/didOpen", try json.from(w.a(), .{ .textDocument = .{
+            .uri = try w.uri(name),
+            .languageId = "",
+            .version = 1,
+            .text = w.text(name),
+        } }));
     }
 
     pub fn implementation(w: *Workspace, name: []const u8, p: Pos) !?Location {

@@ -38,6 +38,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const bindc = @import("server/bindc.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -117,6 +118,13 @@ pub const Server = struct {
     compiler_diags: std.StringHashMapUnmanaged([]u8) = .empty,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
+    /// C documents opened in zfls (an editor that attaches it to C files
+    /// too), for going to the Fortran procedures they call: their text
+    /// only, never parsed (keys owned by `gpa`)
+    c_docs: std.StringHashMapUnmanaged(*FortranFile) = .empty,
+    /// The declarations of the workspace's C names in its C files, found
+    /// when go to definition first needed them
+    c_index: ?*bindc.CIndex = null,
     next_id: i64 = 1,
     log: *Logger,
 
@@ -146,6 +154,13 @@ pub const Server = struct {
     pub fn destroy(self: *Server) void {
         compile.stop(self);
         compile.deinitStore(self);
+        bindc.deinitIndex(self);
+        var c_it = self.c_docs.iterator();
+        while (c_it.next()) |e| {
+            self.gpa.free(e.key_ptr.*);
+            e.value_ptr.*.destroy();
+        }
+        self.c_docs.deinit(self.gpa);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();
             f.destroy();
@@ -305,6 +320,8 @@ pub const Server = struct {
         supertypes,
         subtypes,
         compile_order,
+        bind_c,
+        bind_c_targets,
         initialized,
         did_open,
         did_save,
@@ -343,6 +360,8 @@ pub const Server = struct {
         .{ "typeHierarchy/supertypes", .supertypes },
         .{ "typeHierarchy/subtypes", .subtypes },
         .{ "zfls/compileOrder", .compile_order },
+        .{ "zfls/bindC", .bind_c },
+        .{ "zfls/bindCTargets", .bind_c_targets },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -383,6 +402,8 @@ pub const Server = struct {
             .supertypes => calls.serveSupertypes(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .subtypes => calls.serveSubtypes(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .compile_order => diagnostics.serveCompileOrder(self, a),
+            .bind_c => bindc.serveBindC(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .bind_c_targets => bindc.serveBindCTargets(self, a, params),
             .initialized => blk: {
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
                 break :blk .null;

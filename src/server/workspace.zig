@@ -31,6 +31,7 @@ const definition = @import("definition.zig");
 const references = @import("references.zig");
 const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
+const bindc = @import("bindc.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -471,6 +472,10 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
 
 pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
     const path = try self.pathFromUri(a, params.textDocument.uri);
+    if (self.c_docs.get(path)) |doc| {
+        for (params.contentChanges) |c| _ = doc.applyChange(toChange(c)) catch {};
+        return .null;
+    }
     const file = self.workspace.get(path) orelse {
         self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for unknown file '{s}'", .{path}), C.Severity.err);
         return .null;
@@ -523,6 +528,7 @@ pub fn toChange(c: lsp.ContentChange) parser.Change {
 pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
     const uri = params.textDocument.uri;
     const filepath = try self.pathFromUri(a, uri);
+    if (bindc.isCFile(filepath)) return cDocument(self, filepath, params.textDocument.text, did_close);
     if (did_open and !self.open_docs.contains(filepath)) {
         const key = try self.gpa.dupe(u8, filepath);
         errdefer self.gpa.free(key);
@@ -550,6 +556,33 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     return .null;
 }
 
+/// A C document opened in zfls, by an editor that attaches it to C files
+/// (bindc.zig): its text, for go to definition; it is not parsed. Its
+/// declarations may have changed, so the C search is done again.
+fn cDocument(self: *Server, path: []const u8, text: ?[]const u8, did_close: bool) !Value {
+    bindc.deinitIndex(self);
+    if (did_close) {
+        if (self.c_docs.fetchRemove(path)) |kv| {
+            self.gpa.free(kv.key);
+            kv.value.destroy();
+        }
+        return .null;
+    }
+    // didSave without its text: the one from didOpen and the changes
+    const t = text orelse return .null;
+    if (self.c_docs.get(path)) |doc| {
+        _ = try doc.setText(t);
+        return .null;
+    }
+    const doc = try FortranFile.create(self.gpa, path, null);
+    errdefer doc.destroy();
+    _ = try doc.setText(t);
+    const key = try self.gpa.dupe(u8, path);
+    errdefer self.gpa.free(key);
+    try self.c_docs.put(self.gpa, key, doc);
+    return .null;
+}
+
 /// Files created, changed or deleted outside the editor (a checkout, a
 /// generator): the workspace follows them. Documents open in the editor
 /// are left alone, their text being the editor's.
@@ -557,6 +590,10 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
     var changed = false;
     for (params.changes) |ev| {
         const path = try self.pathFromUri(a, ev.uri);
+        if (bindc.isCFile(path)) {
+            bindc.deinitIndex(self);
+            continue;
+        }
         if (self.open_docs.contains(path) or paths.isVirtualUri(path)) continue;
         if (ev.type == 3) {
             const f = self.workspace.get(path) orelse continue;

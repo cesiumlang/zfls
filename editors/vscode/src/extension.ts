@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import {
   LanguageClient,
   LanguageClientOptions,
+  Location as ProtocolLocation,
   ServerOptions,
 } from "vscode-languageclient/node";
 import { FORTRAN_FILES, Linter } from "./linter";
@@ -15,6 +16,7 @@ import { Fortitude } from "./fortitude";
 import { toggleComments } from "./comments";
 import { namelistGroups } from "./namelist";
 import { registerRunCommands } from "./runFile";
+import { BindC, C_LANGUAGES, identifierAt, isCFile, uniqueByPlace } from "./interop";
 
 import { affectsServer, serverArguments } from "./options";
 
@@ -52,6 +54,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
     vscode.commands.registerCommand("zfls.toggleFixedFormComment", () => toggleFixedFormComment()),
     vscode.languages.registerDocumentSymbolProvider({ language: "FortranNamelist" }, { provideDocumentSymbols: namelistSymbols }),
+    vscode.languages.registerDefinitionProvider(
+      C_LANGUAGES.map((language) => ({ language })),
+      { provideDefinition: fortranOfC },
+    ),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
         void restartAll();
@@ -73,6 +79,79 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await ensureClient(doc);
   }
   void checkModernFortran();
+}
+
+/** zfls's definitions of a position, and, when it is a BIND(C) procedure
+ * (`zfls/bindC`), the declarations of its C name that the C language
+ * server gives (VS Code's workspace symbols), each place once */
+async function withCDeclarations(
+  client: LanguageClient,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+  result: vscode.Definition | vscode.LocationLink[] | null | undefined,
+): Promise<vscode.Definition | vscode.LocationLink[] | null | undefined> {
+  let bind: BindC | null;
+  try {
+    bind = await client.sendRequest<BindC | null>(
+      "zfls/bindC",
+      client.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
+      token,
+    );
+  } catch {
+    return result;
+  }
+  if (!bind || token.isCancellationRequested) {
+    return result;
+  }
+  const symbols =
+    (await vscode.commands.executeCommand<vscode.SymbolInformation[] | undefined>(
+      "vscode.executeWorkspaceSymbolProvider",
+      bind.cName,
+    )) ?? [];
+  const cName = bind.cName;
+  const found = symbols
+    .filter((s) => s.name === cName && s.location?.uri && isCFile(s.location.uri.fsPath))
+    .map((s) => s.location);
+  if (found.length === 0) {
+    return result;
+  }
+  const own: vscode.Location[] = (result === null || result === undefined ? [] : Array.isArray(result) ? result : [result]).map(
+    (r) => ("targetUri" in r ? new vscode.Location(r.targetUri, r.targetSelectionRange ?? r.targetRange) : r),
+  );
+  return uniqueByPlace([...own, ...found], (l) => ({ uri: l.uri.toString(), line: l.range.start.line }));
+}
+
+/** Go to definition in a C or C++ file: the Fortran procedures that a
+ * name is the C name of (`zfls/bindCTargets`), from every zfls running */
+async function fortranOfC(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[] | undefined> {
+  const name = identifierAt(document.lineAt(position.line).text, position.character);
+  if (!name) {
+    return undefined;
+  }
+  const out: vscode.Location[] = [];
+  for (const pending of clients.values()) {
+    const client = await pending;
+    if (!client?.isRunning() || token.isCancellationRequested) {
+      continue;
+    }
+    try {
+      const locations = await client.sendRequest<ProtocolLocation[] | null>("zfls/bindCTargets", { name }, token);
+      for (const l of locations ?? []) {
+        const location = client.protocol2CodeConverter.asLocation(l);
+        if (location) {
+          out.push(location);
+        }
+      }
+    } catch {
+      // an older zfls, or one stopping
+    }
+  }
+  return out.length ? out : undefined;
 }
 
 /** Toggle Line Comment in fixed form with `zfls.fixedFormCommentCharacter`
@@ -310,6 +389,13 @@ async function startClient(
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
     synchronize: { fileEvents: sourceWatcher },
     outputChannel: output,
+    middleware: {
+      // a BIND(C) procedure: its declarations from the C language server too
+      provideDefinition: async (document, position, token, next) => {
+        const result = await next(document, position, token);
+        return withCDeclarations(client, document, position, token, result);
+      },
+    },
   };
   const name = folder ? `zfls (${folder.name})` : `zfls (${root.fsPath})`;
   const client = new LanguageClient("zfls", name, serverOptions, clientOptions);
