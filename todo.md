@@ -14,10 +14,9 @@ projects zfls replaces:
 
 ## Next
 
-- [ ] fpm, what is left: pFUnit's tests in the Testing view; debug
-  configurations in launch.json for fpm targets
-- [ ] Custom comment markers (`;*` comments of a preprocessed dialect), in the
-  parser and the grammar, from a setting. MF #197
+- [ ] fpm, fully: tasks (`build`, `run`, `test`, `install`), the targets of
+  `fpm.toml` in the run and debug commands, `fpm test` in the test explorer,
+  then test-drive's tests one by one. pFUnit after that
 - [ ] Index cache: each file's symbols on disk, keyed by its contents and
   zfls's version and settings, so that a workspace of thousands of files
   starts without parsing them again. Summaries for unopened files and a
@@ -64,12 +63,10 @@ Editor features:
   GDB); F5 debugs the current file; a configuration per fpm target.
   Conditional breakpoints set before launch work (FB #7)
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
+- [x] Comment markers of a dialect (`comment_markers`, `zfls.commentMarkers`:
+  `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
-- [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
-  problem matchers, running and debugging their targets, Run and Debug
-  Fortran File on a target's program, and the Testing view (each test
-  target, and test-drive's suites and tests with their results)
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195

@@ -48,11 +48,15 @@ pub const Settings = struct {
     disable_autoupdate: bool = false,
     preserve_keyword_order: bool = false,
     debug_log: bool = false,
+    /// Do not keep the texts of the workspace's files in zfls's cache
+    disable_index_cache: bool = false,
     // File parsing options
     source_dirs: StrList = .{},
     incl_suffixes: StrList = .{},
     excl_suffixes: StrList = .{},
     excl_paths: StrList = .{},
+    /// Further markers that start a comment as `!` does, such as `;*`
+    comment_markers: StrList = .{},
     // Autocomplete options
     autocomplete_no_prefix: bool = false,
     /// Do not offer names of modules that are not used yet (with the USE
@@ -173,12 +177,14 @@ const opts = [_]Opt{
     .{ .long = "disable_autoupdate", .kind = .flag, .help = "Accepted for compatibility with fortls and ignored: zfls does not update itself." },
     .{ .long = "preserve_keyword_order", .kind = .flag, .help = "DEPRECATED, this is now the default. To sort use sort_keywords" },
     .{ .long = "debug_log", .kind = .flag, .help = "Generate debug log in project root folder" },
+    .{ .long = "disable_index_cache", .kind = .flag, .help = "Do not keep the texts of the workspace's files in one file of zfls's cache, from which a start reads those that have not changed instead of reading each file" },
     .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
     .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP, .CUF (lower & upper casing))", .group = "Sources file parsing options" },
     .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
+    .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
 
     .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
     .{ .long = "autocomplete_no_auto_use", .kind = .flag, .help = "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)", .group = "Autocomplete options" },
@@ -394,6 +400,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                 if (std.mem.eql(u8, o.long, "incl_suffixes")) s.incl_suffixes = list;
                 if (std.mem.eql(u8, o.long, "excl_suffixes")) s.excl_suffixes = list;
                 if (std.mem.eql(u8, o.long, "excl_paths")) s.excl_paths = list;
+                if (std.mem.eql(u8, o.long, "comment_markers")) s.comment_markers = list;
                 if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
                 if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
                 if (std.mem.eql(u8, o.long, "external_modules")) s.external_modules = list;
@@ -478,6 +485,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "source_dirs")) |v| s.source_dirs = try jsonList(a, v);
     if (json.get(cfg, "incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
+    if (json.get(cfg, "comment_markers")) |v| s.comment_markers = try jsonList(a, v);
     // General options
     s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
     s.notify_init = jsonBool(json.get(cfg, "notify_init"), s.notify_init);
@@ -485,6 +493,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.recursion_limit = jsonInt(json.get(cfg, "recursion_limit"), s.recursion_limit);
     s.sort_keywords = jsonBool(json.get(cfg, "sort_keywords"), s.sort_keywords);
     s.disable_autoupdate = jsonBool(json.get(cfg, "disable_autoupdate"), s.disable_autoupdate);
+    s.disable_index_cache = jsonBool(json.get(cfg, "disable_index_cache"), s.disable_index_cache);
     // Autocomplete options
     s.autocomplete_no_prefix = jsonBool(json.get(cfg, "autocomplete_no_prefix"), s.autocomplete_no_prefix);
     s.autocomplete_no_auto_use = jsonBool(json.get(cfg, "autocomplete_no_auto_use"), s.autocomplete_no_auto_use);

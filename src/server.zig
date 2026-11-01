@@ -38,6 +38,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const cache = @import("server/cache.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -117,6 +118,10 @@ pub const Server = struct {
     compiler_diags: std.StringHashMapUnmanaged([]u8) = .empty,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
+    /// The index cache, during initialization
+    index: ?*cache.Snapshot = null,
+    /// The thread writing the index cache after initialization
+    index_writer: ?std.Thread = null,
     next_id: i64 = 1,
     log: *Logger,
 
@@ -146,6 +151,7 @@ pub const Server = struct {
     pub fn destroy(self: *Server) void {
         compile.stop(self);
         compile.deinitStore(self);
+        cache.wait(self);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();
             f.destroy();

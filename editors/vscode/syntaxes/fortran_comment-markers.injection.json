@@ -1,0 +1,7 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "comment": "Written by the zfls extension from zfls.commentMarkers; do not edit",
+  "scopeName": "source.fortran.comment-markers.injection",
+  "injectionSelector": "L:source.fortran.free -string -comment, L:source.fortran.fixed -string -comment",
+  "patterns": []
+}
