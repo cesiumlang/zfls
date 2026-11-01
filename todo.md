@@ -15,8 +15,8 @@ projects zfls replaces:
 ## Later
 
 - [ ] Argument checking of kinds, and of the types and ranks of expressions
-- [ ] Richer hover: case preference (FL #28), code blocks in documentation
-  (FL #209)
+- [ ] Code blocks in documentation comments: Fortran highlighting in the
+  editor. FL #209
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
 - [ ] Linters: fortitude (MF #1165), Codee
@@ -76,6 +76,7 @@ Navigation and hover:
 - [x] Coarrays: codimensions in hover (`x[*]`, `codimension[2,*]`)
 - [x] Hover on literals: kinds (`REAL(dp)`, `INTEGER(8)`), `DOUBLE
   PRECISION`, BOZ values. FL #125
+- [x] `lowercase_hover`: keywords in hover in lowercase. FL #28
 - [x] User-defined operators (`.ord.`): definition, hover, references.
   HS #95
 

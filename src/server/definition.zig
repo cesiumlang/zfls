@@ -411,6 +411,54 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 }
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const v = try hoverAt(self, a, params);
+    if (!self.s.lowercase_hover) return v;
+    const md = json.str(json.get(json.get(v, "contents"), "value")) orelse return v;
+    return json.from(a, lsp.Hover{ .contents = .{ .value = try lowercaseKeywords(a, md) } });
+}
+
+/// The keywords in the code blocks of hover Markdown in lowercase (fortls
+/// #28): `REAL, INTENT(IN) :: X` is `real, intent(in) :: X`; names and
+/// strings are left as they are
+pub fn lowercaseKeywords(a: Allocator, md: []const u8) ![]const u8 {
+    const out = try a.dupe(u8, md);
+    var in_code = false;
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    var start: usize = 0;
+    while (lines.next()) |line| : (start += line.len + 1) {
+        if (std.mem.startsWith(u8, line, "```")) {
+            in_code = !in_code;
+            continue;
+        }
+        if (!in_code) continue;
+        var quote: u8 = 0;
+        var i: usize = 0;
+        while (i < line.len) {
+            const c = line[i];
+            if (quote != 0) {
+                if (c == quote) quote = 0;
+                i += 1;
+            } else if (c == '\'' or c == '"') {
+                quote = c;
+                i += 1;
+            } else if (std.ascii.isAlphabetic(c) or c == '_') {
+                var e = i;
+                while (e < line.len and (std.ascii.isAlphanumeric(line[e]) or line[e] == '_')) e += 1;
+                const word = line[i..e];
+                const upper = for (word) |ch| {
+                    if (std.ascii.isLower(ch)) break false;
+                } else true;
+                if (upper and semantic.isKeyword(word)) {
+                    for (out[start + i .. start + e]) |*ch| ch.* = std.ascii.toLower(ch.*);
+                }
+                i = e;
+            } else i += 1;
+        }
+    }
+    return out;
+}
+
+fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
     const d = (try definitionAt(self, a, params, true)) orelse {
         if (try literalHover(self, a, params)) |v| return v;

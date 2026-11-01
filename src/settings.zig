@@ -70,6 +70,8 @@ pub const Settings = struct {
     /// declared in an interface (a separate module procedure's body in a
     /// submodule) rather than the interface
     prefer_implementation: bool = false,
+    /// Keywords in hover in lowercase (`real, intent(in) :: x`)
+    lowercase_hover: bool = false,
     // Diagnostic options
     max_line_length: i64 = -1,
     max_comment_line_length: i64 = -1,
@@ -175,6 +177,7 @@ const opts = [_]Opt{
     .{ .long = "variable_hover", .kind = .flag, .help = "DEPRECATED: This option is always on. Show hover information for variables", .group = "Hover options" },
     .{ .long = "hover_signature", .kind = .flag, .help = "Show signature information in hover for arguments ", .group = "Hover options" },
     .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
+    .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
     .{ .long = "prefer_implementation", .kind = .flag, .help = "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface", .group = "Hover options" },
 
     .{ .long = "max_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum line length (default: -1)", .group = "Diagnostic options (error swigles)" },
@@ -468,6 +471,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.hover_signature = jsonBool(json.get(cfg, "hover_signature"), s.hover_signature);
     if (json.str(json.get(cfg, "hover_language"))) |hl| s.hover_language = hl;
     s.prefer_implementation = jsonBool(json.get(cfg, "prefer_implementation"), s.prefer_implementation);
+    s.lowercase_hover = jsonBool(json.get(cfg, "lowercase_hover"), s.lowercase_hover);
     // Diagnostic options
     s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);

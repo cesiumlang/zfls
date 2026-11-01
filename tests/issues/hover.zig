@@ -1023,3 +1023,25 @@ test "#125 hover on a literal constant shows its type with its kind" {
     defer w.deinit();
     try h.check(125, .fixed, expectLiteralHover(w));
 }
+
+fn expectLowercaseHover(w: *h.Workspace) !void {
+    try w.expectHoverContains("c.f90", w.pos("c.f90", "X, name", 0, 0), "real, intent(in) :: X");
+    try w.expectHoverContains("c.f90", w.pos("c.f90", "s(X)", 0, 0), "subroutine s(X)");
+    try w.expectHoverContains("c.f90", w.pos("c.f90", "name = 'IN", 0, 0), "character(len=4), parameter :: name = 'IN T'");
+}
+
+test "#28 lowercase_hover: keywords in hover in lowercase" {
+    const w = try h.Workspace.init(&.{.{ .name = "c.f90", .text =
+        \\module c
+        \\contains
+        \\  subroutine s(X)
+        \\    real, intent(in) :: X
+        \\    character(len=4), parameter :: name = 'IN T'
+        \\    print *, X, name
+        \\  end subroutine s
+        \\end module c
+        \\
+    }}, .{ .settings = .{ .lowercase_hover = true } });
+    defer w.deinit();
+    try h.check(28, .fixed, expectLowercaseHover(w));
+}

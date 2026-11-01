@@ -448,6 +448,9 @@ zfls deliberately differs from fortls in a few places:
   documentation of that implementation (the interface's when it has none)
   and go to definition goes to it (fortls #501, #502); fortls always uses the
   interface.
+- With the `lowercase_hover` option, the keywords of hover are in lowercase
+  (`real, intent(in) :: x`), names and strings as written (fortls #28);
+  fortls's are always uppercase.
 - A rename without `ONLY` (`use m, local => original`) is read: the local
   name is the module's entity and the original name is not visible under
   that name. On the USE line, hover, definition and references on either
