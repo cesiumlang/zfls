@@ -1,7 +1,7 @@
 # Translations and walkthroughs
 
-The extension is in English only, with the hooks for translations and
-walkthroughs in place, to be used when someone asks for them.
+The extension is in English only, with the hooks for translations in
+place, to be used when someone asks for them.
 
 ## Translations
 
@@ -27,8 +27,11 @@ takes the English text of the keys it lacks.
 
 ## Walkthroughs
 
-`contributes.walkthroughs` in `package.json` is empty. A walkthrough is an
-entry there with an `id`, a `title`, a `description` and `steps`, each step
-with a `media` file (Markdown or an image, under `media/walkthroughs/`); its
-strings go to `package.nls.json` as `walkthrough.<id>.<step>.title` and
-`.description` when `tools/package_nls.py` runs.
+`contributes.walkthroughs` in `package.json` has the Getting Started
+walkthrough (**zfls: Get Started**). Each step has an `id`, a `title`, a
+`description` (a sentence or two, and a button: a link to a command) and a
+`media` file, a Markdown page under `media/walkthroughs/`. Its strings go
+to `package.nls.json` as `walkthrough.<id>.<step>.title` and
+`.description` when `tools/package_nls.py` runs; the unit tests check that
+each step's page exists and that its buttons run commands of the
+extension.
