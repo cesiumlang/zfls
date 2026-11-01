@@ -152,6 +152,21 @@ build files say:
 A definition from the options or the configuration file is kept over one
 from a build file.
 
+### Comment markers
+
+Some codebases are written in a dialect that a preprocessor turns into
+Fortran, with comments that start with something other than `!`, such as
+`;*` (`go to 110  ;* it's done`). `comment_markers` lists such markers:
+outside strings, zfls reads what follows one as a comment, so that its words
+are not names and a quote in it does not start a string.
+
+```json
+{ "comment_markers": [";*"] }
+```
+
+In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
+those comments too, after a window reload.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
