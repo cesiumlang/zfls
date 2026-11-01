@@ -50,6 +50,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#171](https://github.com/fortran-lang/fortls/issues/171) | DEC `STRUCTURE`, `RECORD`, `UNION` and `MAP`, with `.` between components | parsing | fixed (feature) | not parsed |
 | [#496](https://github.com/fortran-lang/fortls/issues/496) | user-defined functions highlighted where they are called (semantic tokens) | highlighting | fixed (feature) | no semantic tokens |
 | [#547](https://github.com/fortran-lang/fortls/issues/547) | hover on a statement or attribute keyword (`ALLOCATE`, `INTENT`) shows its documentation | hover | fixed (feature) | no hover |
+| [#28](https://github.com/fortran-lang/fortls/issues/28) | `lowercase_hover`: keywords in hover in lowercase (`real, intent(in) :: x`) | hover | fixed (feature) | uppercase only |
 | [#125](https://github.com/fortran-lang/fortls/issues/125) | hover on a literal constant shows its type with its kind (`REAL(dp)`, `INTEGER(8)`, `DOUBLE PRECISION`, BOZ values) | hover | fixed (feature) | the type without its kind; none on `1d0`, `7_8` |
 | [#501](https://github.com/fortran-lang/fortls/issues/501) | `prefer_implementation`: hover shows the documentation of a separate module procedure's body in a submodule | hover | fixed (feature) | the interface only |
 | [#502](https://github.com/fortran-lang/fortls/issues/502) | `prefer_implementation`: go to definition goes to the body in the submodule | hover | fixed (feature) | the interface only |

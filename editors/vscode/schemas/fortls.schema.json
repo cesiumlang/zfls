@@ -116,6 +116,11 @@
       "type": "boolean",
       "default": false
     },
+    "lowercase_hover": {
+      "description": "Show the keywords of hover in lowercase (real, intent(in) :: x)",
+      "type": "boolean",
+      "default": false
+    },
     "max_line_length": {
       "description": "Maximum line length (default: -1)",
       "type": "integer",
