@@ -12,22 +12,29 @@ projects zfls replaces:
 
 `[ ]` to do, `[~]` in progress, `[x]` done (merged into `dev`).
 
-## Next
+## Now (0.4.0)
 
-- [ ] fpm: pFUnit's tests in the Testing view
-- [ ] A smarter index: the parsed symbols cached too (they take half a
-  second to build for 3,870 files), summaries for unopened files to save
-  memory (400 MiB for OpenBLAS). FL #563, HS #39
-- [ ] Fortran and C: references across the languages; zfls asking clangd
-  itself (for editors without a C server attached to C files); C to Fortran
-  in VS Code before a Fortran file is opened
+- [ ] Messages the extension shows while it runs go through `vscode.l10n`
+  (English only; translations as they are asked for)
+- [ ] pFUnit's tests in the Testing view: each `@test` of a `.pf` file, run
+  and reported one by one, with the place of a failed assertion
+- [ ] Fortran and C: references across the languages (the C calls of a
+  `BIND(C)` procedure, the Fortran calls of a C function); in VS Code, go to
+  the Fortran of a C function before any Fortran file is opened
+- [ ] A smarter index: less memory per file (400 MiB for OpenBLAS's 52 MiB
+  of sources), the parsed symbols kept in the index cache too (they take
+  half a second to build for 3,870 files). FL #563, HS #39
+
+## After 0.4.0
+
 - [ ] Debugging: Fortran values in the variables view (module variables,
   which the C debuggers do not list; arrays of assumed shape and derived
   types; FB #10), then a Fortran debug adapter of zfls's own behind the
   `fortran` debug type
-- [ ] Translations of the messages the extension shows while it runs
-  (`vscode.l10n`), and translations and walkthroughs as they are asked for
-  (MF #616, MF #472)
+- [ ] zfls asking clangd itself for C declarations (for editors without a C
+  server attached to C files)
+- [ ] Translations and walkthroughs, as they are asked for (MF #616,
+  MF #472)
 
 ## Watching upstream
 
