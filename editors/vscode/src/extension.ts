@@ -16,6 +16,8 @@ import { toggleComments } from "./comments";
 import { namelistGroups } from "./namelist";
 import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
+import { registerFpm } from "./fpmCommands";
+import { registerFpmTests } from "./fpmTests";
 
 import { affectsServer, serverArguments } from "./options";
 
@@ -43,6 +45,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const fortitude = new Fortitude(output);
   registerFormatting(context, output);
   registerRunCommands(context, output);
+  registerFpm(context, output);
+  registerFpmTests(context, output);
   context.subscriptions.push(
     output,
     linter,
