@@ -22,6 +22,28 @@ pub fn getCwd() []const u8 {
     return cwd;
 }
 
+var cache_root: ?[]const u8 = null;
+
+/// Find zfls's cache directory (call once at startup): `%LOCALAPPDATA%\zfls`
+/// on Windows, `~/Library/Caches/zfls` on macOS, else
+/// `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls`
+pub fn initCache(a: Allocator, env: *const std.process.Environ.Map) void {
+    const tag = builtin.os.tag;
+    const base: ?[]const u8 = if (tag == .windows)
+        env.get("LOCALAPPDATA")
+    else if (tag == .macos)
+        (if (env.get("HOME")) |h| std.fs.path.join(a, &.{ h, "Library", "Caches" }) catch null else null)
+    else if (env.get("XDG_CACHE_HOME")) |x| (if (x.len > 0) x else null) else if (env.get("HOME")) |h| std.fs.path.join(a, &.{ h, ".cache" }) catch null else null;
+    const b = base orelse return;
+    if (b.len == 0) return;
+    cache_root = std.fs.path.join(a, &.{ b, "zfls" }) catch null;
+}
+
+/// zfls's cache directory, null when there is none (no home directory)
+pub fn cacheDir() ?[]const u8 {
+    return cache_root;
+}
+
 /// `os.path.normpath`
 pub fn normpath(a: Allocator, p: []const u8) ![]u8 {
     if (p.len == 0) return a.dupe(u8, ".");
