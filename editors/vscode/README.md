@@ -23,6 +23,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   [Compiler diagnostics](#compiler-diagnostics))
 - syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
   OpenACC directives
+- namelist files (`.nml`, `.namelist`): highlighting, folding of each group,
+  and an outline of the groups and the variables they set
 - snippets for program units and constructs (see [Snippets](#snippets))
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))

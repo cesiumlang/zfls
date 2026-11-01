@@ -12,6 +12,7 @@ import {
 import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
 import { toggleComments } from "./comments";
+import { namelistGroups } from "./namelist";
 import { registerRunCommands } from "./runFile";
 
 import { affectsServer, serverArguments } from "./options";
@@ -46,6 +47,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
     vscode.commands.registerCommand("zfls.toggleFixedFormComment", () => toggleFixedFormComment()),
+    vscode.languages.registerDocumentSymbolProvider({ language: "FortranNamelist" }, { provideDocumentSymbols: namelistSymbols }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
         void restartAll();
@@ -100,6 +102,26 @@ async function toggleFixedFormComment(): Promise<void> {
         }
       });
     }
+  });
+}
+
+/** The outline of a namelist file: its groups and the variables they set */
+function namelistSymbols(doc: vscode.TextDocument): vscode.DocumentSymbol[] {
+  const lines = Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text);
+  return namelistGroups(lines).map((g) => {
+    const name = new vscode.Range(g.line, g.column, g.line, g.column + g.name.length);
+    const group = new vscode.DocumentSymbol(
+      g.name,
+      "namelist group",
+      vscode.SymbolKind.Namespace,
+      new vscode.Range(g.line, 0, g.endLine, doc.lineAt(g.endLine).text.length),
+      name,
+    );
+    group.children = g.variables.map((v) => {
+      const range = new vscode.Range(v.line, v.column, v.line, v.column + v.name.length);
+      return new vscode.DocumentSymbol(v.name, "", vscode.SymbolKind.Variable, range, range);
+    });
+    return group;
   });
 }
 

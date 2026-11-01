@@ -20,7 +20,6 @@ projects zfls replaces:
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
 - [ ] Linters: fortitude (MF #1165), Codee
-- [ ] Namelist (`.nml`) files (MF #1296, MF #153); pFUnit `.pf` files (MF #185)
 - [ ] Walkthroughs (MF #472); translations (MF #616)
 - [ ] Test explorer (pFUnit, test-drive, `fpm test`); fpm tasks
 - [ ] Navigation between C headers and `bind(C)` procedures. HS #115
@@ -57,6 +56,8 @@ Editor features:
   types, implicit types, values of named constants
 - [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
   (`zfls.fixedFormCommentCharacter`). MF #535
+- [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
+  MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195
 - [x] Untitled files
 
