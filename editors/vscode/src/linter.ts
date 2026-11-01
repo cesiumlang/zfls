@@ -308,17 +308,19 @@ export class Linter implements vscode.Disposable {
   private async lintActive(): Promise<void> {
     const doc = vscode.window.activeTextEditor?.document;
     if (!doc || doc.uri.scheme !== "file" || !LANGUAGES.has(doc.languageId)) {
-      void vscode.window.showInformationMessage("zfls: open a Fortran file to lint it.");
+      void vscode.window.showInformationMessage(vscode.l10n.t("zfls: open a Fortran file to lint it."));
       return;
     }
     if (!isCompilerId(readSettings(doc.uri).compiler)) {
       void vscode.window.showInformationMessage(
-        "zfls: compiler diagnostics are off; choose a compiler in zfls.linter.compiler.");
+        vscode.l10n.t("zfls: compiler diagnostics are off; choose a compiler in zfls.linter.compiler."),
+      );
       return;
     }
     if (!this.wanted(doc)) {
       void vscode.window.showInformationMessage(
-        "zfls: the language server checks this file when it is saved (zfls.linter.runner is server).");
+        vscode.l10n.t("zfls: the language server checks this file when it is saved (zfls.linter.runner is server)."),
+      );
       return;
     }
     await this.enqueue(doc);
@@ -430,11 +432,15 @@ export class Linter implements vscode.Disposable {
     }
     this.notified.add(name);
     this.log.warn(`[lint] ${name} not found; no compiler diagnostics`);
-    const open = "Open Settings";
-    const off = "Turn Off";
+    const open = vscode.l10n.t("Open Settings");
+    const off = vscode.l10n.t("Turn Off");
     const choice = await vscode.window.showInformationMessage(
-      `zfls: ${name} was not found, so Fortran files are not checked with a compiler. ` +
-        `Set zfls.linter.${setting}, choose another zfls.linter.compiler, or turn compiler diagnostics off.`,
+      vscode.l10n.t(
+        "zfls: {0} was not found, so Fortran files are not checked with a compiler. " +
+          "Set zfls.linter.{1}, choose another zfls.linter.compiler, or turn compiler diagnostics off.",
+        name,
+        setting,
+      ),
       open,
       off,
     );

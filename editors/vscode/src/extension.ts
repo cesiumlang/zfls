@@ -187,14 +187,16 @@ async function updateMarkerGrammar(changed: boolean): Promise<void> {
     output?.warn(`could not write ${file} for zfls.commentMarkers: ${String(err)}`);
     if (changed) {
       void vscode.window.showWarningMessage(
-        "zfls: the comment markers could not be highlighted (the extension's grammar is not writable); zfls still reads them as comments.",
+        vscode.l10n.t(
+          "zfls: the comment markers could not be highlighted (the extension's grammar is not writable); zfls still reads them as comments.",
+        ),
       );
     }
     return;
   }
-  const reload = "Reload Window";
+  const reload = vscode.l10n.t("Reload Window");
   const choice = await vscode.window.showInformationMessage(
-    "zfls: reload the window to highlight the comments of zfls.commentMarkers.",
+    vscode.l10n.t("zfls: reload the window to highlight the comments of zfls.commentMarkers."),
     reload,
   );
   if (choice === reload) {
@@ -359,17 +361,17 @@ async function showCompileOrder(): Promise<void> {
   }
   client ??= await [...clients.values()][0];
   if (!client) {
-    void vscode.window.showInformationMessage("zfls: open a Fortran file first.");
+    void vscode.window.showInformationMessage(vscode.l10n.t("zfls: open a Fortran file first."));
     return;
   }
   const res = await client.sendRequest<CompileOrder>("zfls/compileOrder", {});
-  const lines = ["# Module compile order", ""];
+  const lines = [`# ${vscode.l10n.t("Module compile order")}`, ""];
   res.order.forEach((u, i) => {
     const file = vscode.workspace.asRelativePath(vscode.Uri.parse(u.uri));
-    lines.push(`${i + 1}. \`${u.name}\` (${u.kind}) in ${file}`);
+    lines.push(`${i + 1}. ${vscode.l10n.t("`{0}` ({1}) in {2}", u.name, u.kind, file)}`);
   });
   if (res.cycles.length > 0) {
-    lines.push("", "## Modules that use each other", "");
+    lines.push("", `## ${vscode.l10n.t("Modules that use each other")}`, "");
     for (const c of res.cycles) {
       lines.push(`- ${c.map((n) => `\`${n}\``).join(", ")}`);
     }
@@ -394,8 +396,8 @@ async function startClient(
   const command = findServer(context, config.get<string>("path", ""));
   if (!command) {
     const choice = await vscode.window.showErrorMessage(
-      "zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH.",
-      "Open Settings",
+      vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."),
+      vscode.l10n.t("Open Settings"),
     );
     if (choice) {
       await vscode.commands.executeCommand("workbench.action.openSettings", "zfls.path");
@@ -450,7 +452,7 @@ async function startClient(
   try {
     await client.start();
   } catch (err) {
-    void vscode.window.showErrorMessage(`zfls failed to start: ${String(err)}`);
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls failed to start: {0}", String(err)));
     return undefined;
   }
   return client;
@@ -518,14 +520,16 @@ async function checkModernFortran(): Promise<void> {
     // kept on purpose, with its language server and linter off
     return;
   }
-  const disable = "Disable Modern Fortran...";
-  const keep = "Keep it, turn off its fortls and linter";
-  const never = "Don't ask again";
+  const disable = vscode.l10n.t("Disable Modern Fortran...");
+  const keep = vscode.l10n.t("Keep it, turn off its fortls and linter");
+  const never = vscode.l10n.t("Don't ask again");
   const choice = await vscode.window.showWarningMessage(
-    "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, " +
-      "compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two " +
-      "language servers, two linters and two sets of grammars compete for Fortran files, so " +
-      "disable Modern Fortran.",
+    vscode.l10n.t(
+      "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, " +
+        "compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two " +
+        "language servers, two linters and two sets of grammars compete for Fortran files, so " +
+        "disable Modern Fortran.",
+    ),
     disable,
     keep,
     never,
@@ -533,7 +537,7 @@ async function checkModernFortran(): Promise<void> {
   if (choice === disable) {
     await vscode.commands.executeCommand("extension.open", MODERN_FORTRAN);
     void vscode.window.showInformationMessage(
-      'Select "Disable" on the Modern Fortran page, then reload the window.',
+      vscode.l10n.t('Select "Disable" on the Modern Fortran page, then reload the window.'),
     );
   } else if (choice === keep) {
     if (lintOn) {
@@ -544,8 +548,8 @@ async function checkModernFortran(): Promise<void> {
     }
     await fortran.update("fortls.disabled", true, vscode.ConfigurationTarget.Global);
     const reload = await vscode.window.showInformationMessage(
-      "Modern Fortran's fortls is turned off; reload the window to stop it.",
-      "Reload Window",
+      vscode.l10n.t("Modern Fortran's fortls is turned off; reload the window to stop it."),
+      vscode.l10n.t("Reload Window"),
     );
     if (reload) {
       await vscode.commands.executeCommand("workbench.action.reloadWindow");

@@ -17,11 +17,13 @@ takes the English text of the keys it lacks.
   left in `package.json`).
 - The unit tests check that every key is in `package.nls.json`, and that a
   translation has no key that is not.
-- The messages the extension shows while it runs are not translated yet.
-  The next step is to write them with `vscode.l10n.t(...)`, add
-  `"l10n": "./l10n"` to `package.json`, and generate `l10n/bundle.l10n.json`
-  with `npx @vscode/l10n-dev export`; a translation is then
-  `l10n/bundle.l10n.<language>.json` too.
+- The messages the extension shows while it runs are written with
+  `vscode.l10n.t("...")`, with `{0}`, `{1}`, ... for the values put in them;
+  each is a whole sentence, never pieces glued together, so that a
+  translation can order its words its own way. `python
+  tools/l10n_bundle.py` collects them into `l10n/bundle.l10n.json` (each
+  message is its own key; CI fails when the bundle is out of date). A
+  translation is `l10n/bundle.l10n.<language>.json`, with the same keys.
 
 ## Walkthroughs
 

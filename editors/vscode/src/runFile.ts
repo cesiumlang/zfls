@@ -105,13 +105,15 @@ async function runOrDebug(
   );
   if (built !== 0) {
     if (typeof built !== "number") {
+      const why = built ? `: ${String(built.error)}` : "";
       void vscode.window.showErrorMessage(
-        `zfls: could not run the build task${built ? `: ${String(built.error)}` : ""}` +
-          (plan.folder ? "." : "; tasks may need a folder to be open: open the file's folder."),
+        plan.folder
+          ? vscode.l10n.t("zfls: could not run the build task{0}.", why)
+          : vscode.l10n.t("zfls: could not run the build task{0}; tasks may need a folder to be open: open the file's folder.", why),
       );
     } else {
       void vscode.window.showErrorMessage(
-        `zfls: building ${path.basename(plan.source)} failed (exit code ${built}); see the terminal.`,
+        vscode.l10n.t("zfls: building {0} failed (exit code {1}); see the terminal.", path.basename(plan.source), built),
       );
     }
     return;
@@ -144,7 +146,7 @@ async function runOrDebug(
   log.info(`[run] debugging with ${JSON.stringify(config)}`);
   const started = await vscode.debug.startDebugging(plan.folder, config);
   if (!started) {
-    void vscode.window.showErrorMessage(`zfls: the ${debugType} debugger did not start; see the Debug Console.`);
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls: the {0} debugger did not start; see the Debug Console.", debugType!));
   }
 }
 
@@ -155,11 +157,11 @@ async function fortranDocument(uri: vscode.Uri | undefined): Promise<vscode.Text
     ? await vscode.workspace.openTextDocument(uri)
     : vscode.window.activeTextEditor?.document;
   if (!document || !LANGUAGES.includes(document.languageId)) {
-    void vscode.window.showErrorMessage("zfls: open a Fortran file to run or debug it.");
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls: open a Fortran file to run or debug it."));
     return undefined;
   }
   if (document.isUntitled || document.uri.scheme !== "file") {
-    void vscode.window.showErrorMessage("zfls: save the file first; only files on disk can be built.");
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls: save the file first; only files on disk can be built."));
     return undefined;
   }
   if (document.isDirty && !(await document.save())) {
@@ -176,12 +178,19 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
   const configuredPath = expandVariables(config.get<string>("compilerPath", "").trim(), ctx);
   const compiler = findExecutable(compilerName, configuredPath, ctx.workspaceFolder);
   if (!compiler) {
-    const where = configuredPath ? `in ${configuredPath} (zfls.run.compilerPath)` : "on the PATH";
     void vscode.window
       .showErrorMessage(
-        `zfls: the compiler ${compilerName} was not found ${where}. Install it, or set zfls.run.compiler ` +
-          "and zfls.run.compilerPath.",
-        "Open Settings",
+        configuredPath
+          ? vscode.l10n.t(
+              "zfls: the compiler {0} was not found in {1} (zfls.run.compilerPath). Install it, or set zfls.run.compiler and zfls.run.compilerPath.",
+              compilerName,
+              configuredPath,
+            )
+          : vscode.l10n.t(
+              "zfls: the compiler {0} was not found on the PATH. Install it, or set zfls.run.compiler and zfls.run.compilerPath.",
+              compilerName,
+            ),
+        vscode.l10n.t("Open Settings"),
       )
       .then((choice) => {
         if (choice) {
@@ -236,9 +245,14 @@ export async function chooseInstalledDebugger(preference: string, msvc: boolean)
     const ext = Object.values(DEBUGGER_EXTENSIONS).find((e) => e.id === id);
     return `${ext?.name ?? id} (${id})`;
   });
-  const install = "Show Extension";
+  const install = vscode.l10n.t("Show Extension");
+  const list = names.join(", ");
   const picked = await vscode.window.showErrorMessage(
-    `zfls: debugging needs ${choice.missing}. Install one of: ${names.join(", ")}.`,
+    choice.missing === "any"
+      ? vscode.l10n.t("zfls: debugging needs a debugger. Install one of: {0}.", list)
+      : choice.missing === "msvc"
+        ? vscode.l10n.t("zfls: debugging needs a debugger for MSVC-ABI programs. Install one of: {0}.", list)
+        : vscode.l10n.t("zfls: debugging needs the {0} debugger. Install one of: {1}.", choice.missing, list),
     install,
   );
   if (picked === install) {
@@ -302,7 +316,7 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
   const folder = vscode.workspace.getWorkspaceFolder(document.uri);
   if (!folder) {
     void vscode.window.showErrorMessage(
-      "zfls: launch.json and tasks.json belong to a workspace folder; open the folder of this file first.",
+      vscode.l10n.t("zfls: launch.json and tasks.json belong to a workspace folder; open the folder of this file first."),
     );
     return;
   }
@@ -363,9 +377,13 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
     upsertByKey(configs, launch, "name"),
     vscode.ConfigurationTarget.WorkspaceFolder,
   );
-  const open = "Open launch.json";
+  const open = vscode.l10n.t("Open launch.json");
   const choice = await vscode.window.showInformationMessage(
-    `zfls: added the build task "${label}" to tasks.json and the configuration "Debug ${base}" to launch.json.`,
+    vscode.l10n.t(
+      'zfls: added the build task "{0}" to tasks.json and the configuration "Debug {1}" to launch.json.',
+      label,
+      base,
+    ),
     open,
   );
   if (choice === open) {

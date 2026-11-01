@@ -89,7 +89,7 @@ async function resolve(
   if (typeof config.fpmTarget === "string" && config.fpmTarget) {
     const project = fpmProjectFor(folder, cwd);
     if (!project) {
-      void vscode.window.showErrorMessage(`zfls: no fpm.toml for the fpm target ${config.fpmTarget}.`);
+      void vscode.window.showErrorMessage(vscode.l10n.t("zfls: no fpm.toml for the fpm target {0}.", config.fpmTarget));
       return undefined;
     }
     const compiler = fpmCompiler(project);
@@ -108,7 +108,7 @@ async function resolve(
     return finish(config, debugType, program, cwd, compilerExe, scope, log);
   }
   if (typeof config.program !== "string" || !config.program) {
-    void vscode.window.showErrorMessage("zfls: a fortran launch configuration needs a program or an fpmTarget.");
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran launch configuration needs a program or an fpmTarget."));
     return undefined;
   }
   program = path.resolve(folder?.uri.fsPath ?? "", config.program);

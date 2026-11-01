@@ -96,7 +96,9 @@ export const DEBUGGER_EXTENSIONS: Record<DebugType, { id: string; name: string }
 
 export type DebuggerChoice =
   | { type: DebugType }
-  | { missing: string; extensions: string[] };
+  /** `missing`: the debug type configured, else any debugger (`msvc`: for
+   * MSVC-ABI programs) */
+  | { missing: DebugType | "any" | "msvc"; extensions: string[] };
 
 /**
  * The debugger for a program: the configured one (`auto` or a debug type),
@@ -112,7 +114,7 @@ export function chooseDebugger(
   if (preference in DEBUGGER_EXTENSIONS) {
     const type = preference as DebugType;
     const ext = DEBUGGER_EXTENSIONS[type];
-    return installed(ext.id) ? { type } : { missing: `the ${type} debugger`, extensions: [ext.id] };
+    return installed(ext.id) ? { type } : { missing: type, extensions: [ext.id] };
   }
   const candidates: DebugType[] = msvc ? ["cppvsdbg"] : ["cppdbg", "lldb", "gdb"];
   for (const type of candidates) {
@@ -121,7 +123,7 @@ export function chooseDebugger(
     }
   }
   return {
-    missing: msvc ? "a debugger for MSVC-ABI programs" : "a debugger",
+    missing: msvc ? "msvc" : "any",
     extensions: [...new Set(candidates.map((t) => DEBUGGER_EXTENSIONS[t].id))],
   };
 }
