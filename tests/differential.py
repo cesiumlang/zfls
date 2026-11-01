@@ -428,6 +428,20 @@ def generic_specific_definition(lines: list, ref, got) -> bool:
     return False
 
 
+INTRINSIC_DOT_OPS = {"eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "eqv", "neqv", "true", "false"}
+
+
+def on_user_operator(lines: list, line: int, char: int) -> bool:
+    """Whether the position is on a user-defined operator `.name.` (hansec
+    #95), which zfls answers on and fortls does not."""
+    if not (0 <= line < len(lines)):
+        return False
+    for m in re.finditer(r"\.([A-Za-z]+)\.", lines[line]):
+        if m.start() <= char <= m.end() and m.group(1).lower() not in INTRINSIC_DOT_OPS:
+            return True
+    return False
+
+
 def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     """Whether (line, char) is on a statement label or on a construct name
     that the file defines (`name: do`); zfls answers definition, references
@@ -631,6 +645,13 @@ def main() -> int:
             if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                 # the implicit type of a name that is not declared (hansec
                 # #201); fortls has no hover there
+                continue
+            if (
+                kind in ("hover", "definition", "references")
+                and not a
+                and on_user_operator(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # user-defined operators (hansec #95)
                 continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per

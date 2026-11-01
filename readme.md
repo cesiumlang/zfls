@@ -319,6 +319,9 @@ zfls deliberately differs from fortls in a few places:
   declares the fields its name list gives. `.` separates a component when it
   follows a name or `)` and does not start an operator (`a.and.b`), as in
   `rec.field` or `arr(i).field` (hansec #45). fortls reads none of these.
+- A user-defined operator (`.ord.`) has a definition (its `interface
+  operator (.ord.)`), a hover (the procedures of that interface) and
+  references (its uses in the workspace) (hansec #95); fortls has none.
 - Hover on a coarray shows its codimension (`REAL, CODIMENSION[*] :: x`),
   written after its name or as an attribute; fortls drops it.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,

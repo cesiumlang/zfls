@@ -19,6 +19,7 @@ const selection = @import("../selection.zig");
 const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const directives = @import("../data/directives.zig");
+const operators = @import("operators.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -253,7 +254,15 @@ pub fn constructLocations(a: Allocator, uri: []const u8, file: *const FortranFil
     return out;
 }
 
+/// The user-defined operator at a position (`.ord.`)
+pub fn operatorAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
+    const line = params.position.line;
+    return operators.at(a, file, line, Server.toByteCol(file, line, params.position.character));
+}
+
 pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    if (try operatorAt(self, a, params)) |op| return operators.definition(self, a, op);
     if (try constructAt(self, a, params)) |c| {
         const d = c.target.def orelse return .null;
         return json.from(a, Server.locationOf(try paths.pathToUri(a, c.file.path), c.file, d.line, d.start, d.line, d.end));
@@ -384,6 +393,7 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 }
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
     const d = (try definitionAt(self, a, params, true)) orelse return implicitHover(self, a, params);
     const ast = d.file.ast.?;
     var var_obj = (try externalTarget(self, a, ast, d.obj)) orelse (try calledFunction(self, a, ast, d)) orelse d.obj;

@@ -960,3 +960,40 @@ test "hover on the words of OpenMP and OpenACC directives" {
     // not on the sentinel, nor on a variable of a clause
     try std.testing.expect((try w.hover("d.f90", w.pos("d.f90", "!$omp parallel", 0, 1))) == null);
 }
+
+fn expectOperators(w: *h.Workspace) !void {
+    const d = (try w.definition("o.f90", w.pos("o.f90", ".ord. 3", 0, 2))) orelse return h.unmet("no definition of .ord.", .{});
+    try h.expect(d.line == w.pos("o.f90", "interface operator", 0, 0).line, ".ord. goes to line {d}", .{d.line});
+    try w.expectHoverContains("o.f90", w.pos("o.f90", ".ORD.k", 0, 3), "FUNCTION ord_int(a)");
+    const refs = try w.references("o.f90", w.pos("o.f90", ".ord. 3", 0, 2));
+    // the interface line, its END, and the two uses
+    try h.expect(refs.len == 4, "{d} references", .{refs.len});
+    // intrinsic operators are not
+    try h.expect((try w.definition("o.f90", w.pos("o.f90", ".and.", 0, 2))) == null, ".and. has a definition", .{});
+}
+
+test "hansec #95 definition, hover and references of user-defined operators" {
+    const w = try h.Workspace.init(&.{.{ .name = "o.f90", .text =
+        \\module ops
+        \\  interface operator (.ord.)
+        \\    module procedure ord_int
+        \\  end interface operator (.ord.)
+        \\contains
+        \\  integer function ord_int(a)
+        \\    integer, intent(in) :: a
+        \\    ord_int = a
+        \\  end function ord_int
+        \\end module ops
+        \\program p
+        \\  use ops
+        \\  integer :: k
+        \\  logical :: t
+        \\  k = .ord. 3
+        \\  k = .ORD.k
+        \\  t = t .and. t
+        \\end program p
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 95, .fixed, expectOperators(w));
+}
