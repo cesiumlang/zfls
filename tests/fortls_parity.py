@@ -262,7 +262,7 @@ def main() -> int:
         import subprocess
         from io import StringIO
 
-        command = [zfls, "--incremental_sync"]
+        command = [zfls, "--incremental_sync", "--disable_index_cache"]
         if fortls_args:
             for i in fortls_args:
                 command.extend(shlex.split(i, posix=False))

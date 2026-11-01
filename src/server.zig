@@ -39,6 +39,7 @@ const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const bindc = @import("server/bindc.zig");
+const cache = @import("server/cache.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -125,6 +126,10 @@ pub const Server = struct {
     /// The declarations of the workspace's C names in its C files, found
     /// when go to definition first needed them
     c_index: ?*bindc.CIndex = null,
+    /// The index cache, during initialization
+    index: ?*cache.Snapshot = null,
+    /// The thread writing the index cache after initialization
+    index_writer: ?std.Thread = null,
     next_id: i64 = 1,
     log: *Logger,
 
@@ -161,6 +166,7 @@ pub const Server = struct {
             e.value_ptr.*.destroy();
         }
         self.c_docs.deinit(self.gpa);
+        cache.wait(self);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();
             f.destroy();
