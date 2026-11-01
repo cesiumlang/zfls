@@ -796,6 +796,27 @@
           "scope": "resource",
           "markdownDescription": "Milliseconds without changes before `#zfls.fortitude.lintOnType#` lints a file."
         },
+        "zfls.codee.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Show the checks of [Codee](https://www.codee.com) (`codee checks --json`) when Fortran files are opened and saved, each linked to its page of Codee's Open Catalog. Codee is a commercial tool, installed and licensed separately; this support follows its documentation and is best-effort."
+        },
+        "zfls.codee.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The codee executable, or the directory that holds it. Empty: `codee` on the `PATH`."
+        },
+        "zfls.codee.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "More arguments for `codee checks --json`, before the file: for example `[\"-p\", \"build/compile_commands.json\"]`, or a compile command, `[\"${file}\", \"--\", \"gfortran\", \"-O2\", \"${file}\"]` (where `${file}` is, the file is not added at the end)."
+        },
         "zfls.linter.fypp.enabled": {
           "type": "boolean",
           "default": false,

@@ -152,6 +152,25 @@ build files say:
 A definition from the options or the configuration file is kept over one
 from a build file.
 
+### Fortran and C
+
+For a procedure with `BIND(C)`, whose C name is its `NAME=` or else its
+name in lowercase, go to definition gives its C declarations too: zfls looks
+for them in the workspace's C and C++ files (`.h`, `.c`, `.cpp`, `.cu`, ...),
+in lines where the name follows a type and an opening parenthesis follows
+it, without parsing C. `disable_bind_c_search` turns that search off.
+
+The other way, an editor that attaches zfls to C files too (in Neovim, with
+`c` and `cpp` among its filetypes) gets, on a C name, the Fortran procedures
+that bind it. zfls only keeps the text of a C document: it neither parses
+nor diagnoses it, and answers nothing else there.
+
+Two requests of zfls's own let an editor ask its C language server instead:
+`zfls/bindC` (a position) gives the procedure there and its C name, or null;
+`zfls/bindCTargets` (`{"name": ...}`) gives the locations of the Fortran
+procedures of a C name. The VS Code extension uses them with clangd or
+Microsoft's C/C++.
+
 ### Index cache
 
 A workspace of 200 files or more has its files' texts kept in one file of

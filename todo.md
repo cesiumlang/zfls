@@ -21,16 +21,13 @@ projects zfls replaces:
   zfls's version and settings, so that a workspace of thousands of files
   starts without parsing them again. Summaries for unopened files and a
   smarter index later. FL #563, HS #39
-- [ ] C interoperability through a C language server (clangd, or Microsoft's
-  C/C++): from a `bind(C)` procedure to its C declaration, and from a C call
-  to the Fortran procedure, without parsing C in zfls. A plain search of
-  the headers only as a fallback. HS #115
-- [ ] Debugging, what is left: Fortran values in the variables view (module
-  variables, which the C debuggers do not list; arrays of assumed shape and
-  derived types; FB #10), then a Fortran debug adapter of zfls's own behind
-  the `fortran` debug type
-- [ ] Codee: documented, best-effort support like fortitude's, not tested
-  until a license is available
+- [ ] Fortran and C, what is left: references across the languages; zfls
+  asking clangd itself (for editors without a C server attached to C
+  files); C→Fortran in VS Code before a Fortran file is opened
+- [ ] Debugging: first a host for the debuggers there are (the launch
+  configurations, conditional breakpoints set before launch, FB #7); then
+  Fortran values and arrays in the variables view (FB #10); in the end a
+  Fortran debug adapter of zfls's own
 - [ ] Hooks for translations (`package.nls.json`, MF #616) and walkthroughs
   (MF #472), with English only and no walkthrough yet
 
@@ -58,15 +55,13 @@ Editor features:
   types, implicit types, values of named constants
 - [x] Fixed form: Toggle Line Comment with `C`, `c` or `*` in column 1
   (`zfls.fixedFormCommentCharacter`). MF #535
-- [x] The `fortran` debug type: launch configurations of a program or an
-  fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
-  GDB); F5 debugs the current file; a configuration per fpm target.
-  Conditional breakpoints set before launch work (FB #7)
 - [x] Fortran code blocks in documentation comments highlighted. FL #209
 - [x] Comment markers of a dialect (`comment_markers`, `zfls.commentMarkers`:
   `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
+- [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
+  output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195
@@ -88,6 +83,10 @@ Navigation and hover:
 - [x] Hover on literals: kinds (`REAL(dp)`, `INTEGER(8)`), `DOUBLE
   PRECISION`, BOZ values. FL #125
 - [x] `lowercase_hover`: keywords in hover in lowercase. FL #28
+- [x] Fortran and C: go to definition of a `BIND(C)` procedure gives its C
+  declarations (in VS Code from clangd or Microsoft's C/C++, else zfls's
+  search of the workspace's C files), and from a C file the Fortran
+  procedures (`zfls/bindC`, `zfls/bindCTargets`). HS #115
 - [x] User-defined operators (`.ord.`) and defined assignment
   (`assignment(=)`): definition, hover, references. HS #95
 

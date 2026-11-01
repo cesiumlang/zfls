@@ -264,3 +264,73 @@ test "inlay hints: the values of named constants where they are used" {
     try std.testing.expectEqualStrings("= 3.1415926535897932384...", hs[1].label);
     try std.testing.expectEqual(w.pos("p.f90", "pi * n", 0, 2).col, hs[1].col);
 }
+
+test "hansec #115: from a BIND(C) procedure to its C declaration, and back" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "cfuncs.h", .text =
+        \\#ifndef CFUNCS_H
+        \\/* c_add(1, 2) in a comment */
+        \\int c_add(int a, int b);
+        \\double *make_grid (int n);
+        \\#endif
+        \\
+        },
+        .{ .name = "cfuncs.c", .text =
+        \\#include "cfuncs.h"
+        \\int c_add(int a, int b) { return a + b; }
+        \\void use_it(void) {
+        \\  int x = c_add(1, 2);
+        \\  solve_f(x);
+        \\}
+        \\
+        },
+        .{ .name = "iface.f90", .text =
+        \\module iface
+        \\  use iso_c_binding
+        \\  interface
+        \\    integer(c_int) function c_add(a, b) bind(C, name="c_add")
+        \\      import :: c_int
+        \\      integer(c_int), value :: a, b
+        \\    end function c_add
+        \\  end interface
+        \\contains
+        \\  subroutine solve(n) bind(c, &
+        \\      name="solve_f")
+        \\    integer(c_int), value :: n
+        \\    print *, c_add(n, 1)
+        \\  end subroutine solve
+        \\  subroutine plain()
+        \\  end subroutine plain
+        \\end module iface
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    // the call goes to the interface, and to the C prototype and definition
+    const defs = try w.definitions("iface.f90", w.pos("iface.f90", "c_add(n", 0, 1));
+    try std.testing.expectEqual(@as(usize, 3), defs.len);
+    try std.testing.expectEqual(@as(i64, 3), defs[0].line);
+    var lines: [2]i64 = undefined;
+    for (defs[1..], &lines) |d, *l| l.* = d.line;
+    std.mem.sort(i64, &lines, {}, std.sort.asc(i64));
+    // the prototype (cfuncs.h line 2) and the definition (cfuncs.c line 1),
+    // not the comment or the call
+    try std.testing.expect(std.mem.endsWith(u8, defs[1].uri, ".h") or std.mem.endsWith(u8, defs[1].uri, ".c"));
+    try std.testing.expectEqualSlices(i64, &.{ 1, 2 }, &lines);
+    // a procedure without BIND(C): its definition alone
+    try std.testing.expectEqual(@as(usize, 1), (try w.definitions("iface.f90", w.pos("iface.f90", "plain", 0, 1))).len);
+    // zfls/bindC: the C name of the procedure at a position
+    const b = try w.zflsRequest("zfls/bindC", try w.positionOf("iface.f90", w.pos("iface.f90", "solve(n)", 0, 1)));
+    try std.testing.expectEqualStrings("solve_f", h.json.str(h.json.get(b, "cName")).?);
+    // zfls/bindCTargets: from C to the Fortran procedure
+    const t = try w.zflsRequest("zfls/bindCTargets", .{ .name = "solve_f" });
+    try std.testing.expectEqual(@as(usize, 1), h.json.items(t).len);
+    try std.testing.expectEqual(@as(i64, 9), h.json.int(h.json.path(h.json.items(t)[0], &.{ "range", "start", "line" })).?);
+    // a C document opened in zfls: definition of the Fortran procedure it
+    // calls, and nothing parsed or diagnosed
+    try w.open("cfuncs.c", "c");
+    const from_c = try w.definitions("cfuncs.c", w.pos("cfuncs.c", "solve_f", 0, 2));
+    try std.testing.expectEqual(@as(usize, 1), from_c.len);
+    try std.testing.expect(std.mem.endsWith(u8, from_c[0].uri, "iface.f90"));
+    try std.testing.expectEqual(@as(usize, 0), (try w.messages()).len);
+}

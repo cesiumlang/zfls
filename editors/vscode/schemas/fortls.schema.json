@@ -258,6 +258,11 @@
       "type": "boolean",
       "default": false
     },
+    "disable_bind_c_search": {
+      "description": "Go to definition of a BIND(C) procedure does not search the workspace's C files for its C declaration (an editor with a C language server can ask that instead)",
+      "type": "boolean",
+      "default": false
+    },
     "enable_code_actions": {
       "description": "Enable experimental code actions (default: false)",
       "type": "boolean",

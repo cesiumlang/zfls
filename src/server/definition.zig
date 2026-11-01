@@ -36,6 +36,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const bindc = @import("bindc.zig");
 
 /// A temporary variable allocated in `a` (not owned by any AST)
 pub fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8, desc: []const u8, keywords: []const C.Kw) !*Obj {
@@ -272,6 +273,8 @@ pub fn operatorAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]c
 }
 
 pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    // a C document: the Fortran procedures of the name
+    if (self.c_docs.get(try self.pathFromUri(a, params.textDocument.uri))) |doc| return bindc.cDefinition(self, a, doc, params);
     if (try operatorAt(self, a, params)) |op| return operators.definition(self, a, op);
     if (try assignmentAt(self, a, params)) |b| return assignment.definition(self, a, b);
     if (try constructAt(self, a, params)) |c| {
@@ -285,8 +288,19 @@ pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) 
     if (try definitionAt(self, a, params, false)) |d| {
         if (try signature.genericSpecific(self, a, d.file, d.line, d.col, d.obj)) |s| if (s.file_ast.file != null) return createRefLink(self, a, preferredBody(self, s));
         const target = preferredBody(self, d.obj);
-        if (target.file_ast.file != null) return createRefLink(self, a, target);
-        return .null;
+        if (target.file_ast.file == null) return .null;
+        const link = try createRefLink(self, a, target);
+        // a BIND(C) procedure: its C declarations too
+        if (try bindc.cNameOf(a, target)) |cname| {
+            const decls = try bindc.cDeclarations(self, a, cname);
+            if (decls.len > 0) {
+                var all: std.ArrayList(lsp.Location) = .empty;
+                try all.append(a, try json.decode(lsp.Location, a, link));
+                try all.appendSlice(a, decls);
+                return json.from(a, all.items);
+            }
+        }
+        return link;
     }
     // an INCLUDE statement is its own definition when its file is in the
     // workspace; open one that is not
