@@ -12,81 +12,15 @@ projects zfls replaces:
 
 `[ ]` to do, `[~]` in progress, `[x]` done (merged into `dev`).
 
-## Now
-
-- [x] Submodule procedures: with `prefer_implementation`, hover and go to
-  definition use the implementation in the submodule (its documentation and
-  location) instead of the interface in the parent module. FL #501, FL #502,
-  HS #168
-- [x] Keyword-argument completion: inside a call, offer `name=` for each
-  dummy argument with its type and intent. HS #133
-- [x] Auto-`use` completion: complete public names from modules the scope
-  does not use yet, adding the `use` statement; an "add use" quick fix for
-  undefined names. HS #62
-- [x] Smaller LSP features:
-  - [x] `textDocument/prepareRename` (reject intrinsics and keywords before
-    the user types a new name)
-  - [x] `textDocument/selectionRange` (expand selection by expression,
-    statement, block, scope)
-  - [x] `textDocument/documentLink` (`include` and `#include` files)
-  - [x] `completionItem/resolve` (documentation on demand): not needed,
-    completion with documentation takes 0.3 ms (median, json-fortran)
-  - [x] Fuzzy workspace symbol search. HS #195
-  - [x] `$/cancelRequest`
-  - [x] Indexing progress (`workDoneProgress`). FL #417, MF #757
-- [x] Benchmark find-references across a large multi-file workspace:
-  json-fortran (61 files, 12k-line `json_value_module.F90`, ReleaseSafe),
-  references median 1.5 ms, p95 12 ms; initialization 58 ms; 55 MiB
-- [x] Split the largest source files into smaller modules: `server.zig`
-  (request handlers in `src/server/`), `objects.zig` (`src/objects/`),
-  `parser.zig` (`src/parser/`), `regex.zig` (`src/regex/`); no file is over
-  900 lines
-
-## Next
-
-- [x] Implicit typing:
-  - [x] Hover on a name that is not declared shows the type its IMPLICIT
-    rules (or the default ones) give it. HS #201
-  - [x] A diagnostic for names that are not declared under IMPLICIT NONE,
-    and a "declare" quick fix. HS #129
-- [x] Vendor extensions:
-  - [x] DEC `STRUCTURE`/`RECORD`/`UNION`/`MAP`. FL #171, HS #230, MF #571
-  - [x] `.` as the component separator (`rec.field`). HS #45
-  - [x] CUDA Fortran: `attributes(global|device)` procedures, `<<<...>>>`
-    kernel launches, `.cuf` files, the CUDA modules (`cudafor`, ...) as
-    external modules
-- [x] fypp: its inline expressions, eval lines and macro calls are no
-  Fortran names (no warnings, no tokens), and the extension highlights
-  them, its directives and comments. MF #617, MF #715. Linting through fypp
-  (any compiler: fypp writes a file with line markers) came with 0.3.
-  MF #215, MF #615
-- [x] Fixed form: configurable code column limit (72/80/132), paste and
-  indentation behavior. MF #87, MF #199, MF #254, MF #168, MF #177
-
 ## Later
 
 - [ ] Pull diagnostics (`textDocument/diagnostic`) with workspace
   diagnostics: problems in files that are not open
-- [x] Unused local variables and `use` names (faded, with a quick fix)
-- [~] Inlay hints:
-  - [x] Dummy argument names of positional arguments; `associate` types
-  - [x] Implicit types (at the first use of a name that is not declared)
-  - [ ] Parameter values
-- [x] Call hierarchy
-- [x] Type hierarchy (`extends`); parent components in completion. HS #121
-- [x] Module dependency graph: cycles (`circular-use`) and compile order
-  (`zfls/compileOrder`, "zfls: Show Module Compile Order")
-- [x] Argument checking: count, unknown keywords, missing required arguments,
-  assigning an `intent(in)` argument
+- [ ] Inlay hints of parameter values
 - [ ] Argument checking of types, kinds and ranks
-- [x] More quick fixes: add `implicit none`, `.eq.` to `==`, `real*8` to a
-  kind, keyword case (upper, lower, title). HS #226, MF #234
-- [ ] Interface and submodule stubs; hover in the keyword case. FL #28
-- [~] Richer hover:
-  - [x] Statements and keywords. FL #547
-  - [ ] Case preference (FL #28), code blocks in documentation (FL #209),
-    OpenMP/OpenACC directives, literals (FL #125)
-- [x] Stubs for MPI (`mpi`, `mpi_f08`); `omp_lib` and `openacc` were there
+- [ ] Interface and submodule stubs (code actions)
+- [ ] Richer hover: case preference (FL #28), code blocks in documentation
+  (FL #209), OpenMP/OpenACC directives, literals (FL #125)
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
 - [ ] Linters: fortitude (MF #1165), Codee
@@ -95,7 +29,6 @@ projects zfls replaces:
 - [ ] Test explorer (pFUnit, test-drive, `fpm test`); fpm tasks
 - [ ] Navigation between C headers and `bind(C)` procedures. HS #115
 - [ ] References to user-defined operators and assignment. HS #95
-- [x] Coarrays: codimensions in hover (`x[*]`, `codimension[2,*]`)
 - [ ] Fixed form: toggle `C` comments (MF #535); custom comment patterns
   (MF #197)
 - [ ] Optional exact diagnostics from a compiler (lfortran, gfortran). FL #85,
@@ -115,18 +48,75 @@ projects zfls replaces:
 
 ## Done in 0.4.0
 
+Editor features:
+
 - [x] Outline tree (breadcrumbs, sticky scroll) and folding ranges. MF #135,
   MF #647, HS #166, FL #413
 - [x] Semantic highlighting; inactive `#if` code grayed out. FL #56, FL #496,
   MF #245, MF #401, HS #78, FL #309
-- [x] Diagnostic codes, per-code severity, `! zfls: disable` comments, an
-  allowlist of external modules. FL #438, MF #981, MF #1306, HS #150
-- [x] Include directories and macros from `compile_commands.json` and
-  `fpm.toml`. FL #512, HS #40, MF #471
-- [x] Generic interfaces: signature help for each specific procedure, go to
-  the specific a call resolves to. FL #6, FL #423, HS #135
+- [x] Selection ranges, document links on `include` and `#include` files,
+  `prepareRename`
+- [x] Call hierarchy; type hierarchy (`extends`)
+- [x] Inlay hints: dummy argument names of positional arguments, `associate`
+  types, implicit types
+- [x] Fuzzy workspace symbol search. HS #195
+- [x] Untitled files
+
+Navigation and hover:
+
 - [x] Construct names and statement labels: definition, references, rename,
   completion. FL #424, HS #157
+- [x] Generic interfaces: signature help for each specific procedure, go to
+  the specific a call resolves to. FL #6, FL #423, HS #135
+- [x] Submodule procedures: with `prefer_implementation`, hover and go to
+  definition use the implementation in the submodule. FL #501, FL #502,
+  HS #168
+- [x] Hover on a name that is not declared shows its implicit type. HS #201
+- [x] Hover on statements and keywords. FL #547
+- [x] Coarrays: codimensions in hover (`x[*]`, `codimension[2,*]`)
+
+Completion:
+
+- [x] Keyword arguments (`name=`) inside a call. HS #133
+- [x] Names of modules not used yet, adding the `use` statement. HS #62
+- [x] Parent components of an extended type. HS #121
+
+Diagnostics and code actions:
+
+- [x] Diagnostic codes, per-code severity, `! zfls: disable` comments, an
+  allowlist of external modules. FL #438, MF #981, MF #1306, HS #150
+- [x] Names not declared under IMPLICIT NONE, with a "declare" quick fix.
+  HS #129
+- [x] Unused local variables and `use` names (faded, with a quick fix)
+- [x] Argument checking: count, unknown keywords, missing required arguments,
+  assigning an `intent(in)` argument
+- [x] Module dependency graph: cycles (`circular-use`) and compile order
+  (`zfls/compileOrder`, "zfls: Show Module Compile Order")
+- [x] Quick fixes: add `implicit none` and `use` statements, `.eq.` to `==`,
+  `real*8` to a kind, keyword case (upper, lower, title). HS #226, MF #234
+
+Projects and languages:
+
+- [x] Include directories and macros from `compile_commands.json` and
+  `fpm.toml`. FL #512, HS #40, MF #471
 - [x] Files changed outside the editor; restart when `.fortlsrc`, `fpm.toml`
   or `compile_commands.json` change. FL #114, MF #296
-- [x] Untitled files
+- [x] DEC `STRUCTURE`/`RECORD`/`UNION`/`MAP`, `.` as the component separator.
+  FL #171, HS #230, HS #45, MF #571
+- [x] CUDA Fortran: `attributes(global|device)` procedures, `<<<...>>>`
+  kernel launches, `.cuf` files, the CUDA modules
+- [x] fypp: no Fortran names in its syntax, highlighting of its directives.
+  MF #617, MF #715
+- [x] Fixed form: configurable code column limit (72/80/132), paste and
+  indentation behavior. MF #87, MF #199, MF #254, MF #168, MF #177
+- [x] Stubs of the MPI modules (`mpi`, `mpi_f08`)
+
+Server:
+
+- [x] `$/cancelRequest`; indexing progress (`workDoneProgress`). FL #417,
+  MF #757
+- [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
+  ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
+  55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
+- [x] Source files split into smaller modules (`src/server/`,
+  `src/objects/`, `src/parser/`, `src/regex/`); none over 900 lines
