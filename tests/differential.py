@@ -577,7 +577,7 @@ def main() -> int:
     env["PYTHONHASHSEED"] = "0"
     common = ["--incremental_sync", "--disable_autoupdate", *args.args.split()]
     fortls_cmd = [sys.executable, "-m", "fortls_ordered", *common]
-    zfls_cmd = [str(Path(args.zfls).resolve()), *common]
+    zfls_cmd = [str(Path(args.zfls).resolve()), *common, "--disable_index_cache"]
 
     exts = {".f", ".f90", ".f08", ".f03", ".f95", ".f77", ".for", ".fpp", ".h"}
     files = sorted(
