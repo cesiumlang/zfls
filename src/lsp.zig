@@ -193,6 +193,9 @@ pub const TextDocumentIdentifier = struct {
     /// `didOpen`: the document's text (zfls reads files from disk, as fortls
     /// does; it uses this for documents that are not files)
     text: ?[]const u8 = null,
+    /// `didOpen`: the document's language, which tells a C header from a
+    /// Fortran one (both `.h`)
+    languageId: ?[]const u8 = null,
 };
 
 /// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange` and

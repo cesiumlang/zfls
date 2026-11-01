@@ -21,10 +21,9 @@ projects zfls replaces:
   zfls's version and settings, so that a workspace of thousands of files
   starts without parsing them again. Summaries for unopened files and a
   smarter index later. FL #563, HS #39
-- [ ] C interoperability through a C language server (clangd, or Microsoft's
-  C/C++): from a `bind(C)` procedure to its C declaration, and from a C call
-  to the Fortran procedure, without parsing C in zfls. A plain search of
-  the headers only as a fallback. HS #115
+- [ ] Fortran and C, what is left: references across the languages; zfls
+  asking clangd itself (for editors without a C server attached to C
+  files); C→Fortran in VS Code before a Fortran file is opened
 - [ ] Debugging: first a host for the debuggers there are (the launch
   configurations, conditional breakpoints set before launch, FB #7); then
   Fortran values and arrays in the variables view (FB #10); in the end a
@@ -84,6 +83,10 @@ Navigation and hover:
 - [x] Hover on literals: kinds (`REAL(dp)`, `INTEGER(8)`), `DOUBLE
   PRECISION`, BOZ values. FL #125
 - [x] `lowercase_hover`: keywords in hover in lowercase. FL #28
+- [x] Fortran and C: go to definition of a `BIND(C)` procedure gives its C
+  declarations (in VS Code from clangd or Microsoft's C/C++, else zfls's
+  search of the workspace's C files), and from a C file the Fortran
+  procedures (`zfls/bindC`, `zfls/bindCTargets`). HS #115
 - [x] User-defined operators (`.ord.`) and defined assignment
   (`assignment(=)`): definition, hover, references. HS #95
 

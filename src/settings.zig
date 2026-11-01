@@ -90,6 +90,9 @@ pub const Settings = struct {
     diagnostic_severity: std.ArrayList(DiagLevel) = .empty,
     /// Glob patterns of modules USE may name that are not in the project
     external_modules: StrList = .{},
+    /// Do not search the workspace's C files for the declarations of the
+    /// C names of `BIND(C)` procedures in go to definition
+    disable_bind_c_search: bool = false,
     // Compiler diagnostics
     /// The compiler whose errors and warnings are published with zfls's
     /// diagnostics (gfortran, ifx, ifort, flang, nvfortran, nagfor or
@@ -205,6 +208,7 @@ const opts = [_]Opt{
     .{ .long = "disable_diagnostics", .kind = .flag, .help = "Disable diagnostics", .group = "Diagnostic options (error swigles)" },
     .{ .long = "workspace_diagnostics", .kind = .flag, .help = "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
+    .{ .long = "disable_bind_c_search", .kind = .flag, .help = "Go to definition of a BIND(C) procedure does not search the workspace's C files for its C declaration (an editor with a C language server can ask that instead)", .group = "Symbols options" },
     .{ .long = "external_modules", .kind = .list, .metavar = "[MODULES ...]", .help = "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic", .group = "Diagnostic options (error swigles)" },
 
     .{ .long = "compiler_diagnostics", .kind = .string, .metavar = "COMPILER", .help = "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first", .group = "Compiler diagnostics options" },
@@ -536,6 +540,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
+    s.disable_bind_c_search = jsonBool(json.get(cfg, "disable_bind_c_search"), s.disable_bind_c_search);
     // Code Actions options
     s.enable_code_actions = jsonBool(json.get(cfg, "enable_code_actions"), s.enable_code_actions);
     // Preprocessor options

@@ -30,6 +30,11 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - snippets for program units and constructs (see [Snippets](#snippets))
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))
+- Fortran and C: go to definition of a `BIND(C)` procedure gives its C
+  declarations too (from clangd or Microsoft's C/C++, when one is
+  installed, and from zfls's own search of the workspace's C files), and go
+  to definition on a name in a C or C++ file gives the Fortran procedures
+  that bind it
 - breakpoints in Fortran files, for debuggers such as C/C++ (cppdbg,
   cppvsdbg) and CodeLLDB
 - run and debug the current file with one click (see
