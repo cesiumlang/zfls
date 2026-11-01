@@ -25,6 +25,12 @@
 ### **Description**
 
 `dble` Converts `a` to double precision _real_ type.
+It is equivalent to
+
+```text
+integer,parameter :: dp=kind(0.0d0)
+real(a,kind=dp)
+```
 
 ### **Options**
 

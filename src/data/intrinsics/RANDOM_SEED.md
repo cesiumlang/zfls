@@ -55,7 +55,7 @@ Sample program:
 program demo_random_seed
    implicit none
    integer, allocatable :: seed(:),initial_seed(:)
-   integer :: i,j,n
+   integer :: i,n
    real :: x(3)
    call random_seed() ! set random seed if f2023
 

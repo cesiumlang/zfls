@@ -40,8 +40,42 @@ in radians such that (see _Euler's formula_):
     exp((re,im)) = exp(re) * cmplx(cos(im),sin(im),kind=kind(cx))
 ```
 
-Since `exp` is the inverse function of `log`(3) the maximum valid magnitude
-of the _real_ component of `x` is `log(huge(x))`.
+When the real component is zero (0.0) this reduces to the returned
+value containing sine and the cosine of the imaginary component of the
+input. This is relevant as it is a
+common situation in conversion between Polar and Cartesian coordinates,
+signal processing, Fourier analysis,
+and the computation of Jacobi and Givens rotations in linear algebra to
+require both the sine and cosine of a value. It is so common that
+languages other than Fortran frequently
+supply a sincos() function that returns both values. The equivalent
+to a sincos() function in Fortran could thus be
+
+```fortran
+    complex :: cv
+    cv=exp(cmplx(0.0,EXPRESSION))
+    mycos=cv%re
+    mysin=cv%im
+    ! or equivalently 
+    mycos=real(cv,kind=kind(cv))
+    mysin=imag(cv)
+```
+
+Like a "sincos()" function this computes both values with a single
+call. As demonstrated, the complex value returned contains the `cos()`
+in the real part and the `sin()` in the imaginary part. But modern
+compilers typically optimize an adjacent `sin()` and `cos()` call with
+the same argument into a call to an equivalent of sincos() and `exp()`
+solves a lot more than just the special case of an angle of zero (0) so
+this is potentially slower than the explicit separate calls (i.e. `exp()`
+will likely execute conditional code that will be evaluated because
+the angle can be non-zero). On the other hand the `EXP()` expression vectorized
+on at least one compiler and outperforms the separate calls by a factor of
+ten in another case so if your program spends a significant amount of time
+calculating such values it is worthwhile testing this usage.
+
+Since `exp` is the inverse function of `log`(3) the maximum valid
+magnitude of the _real_ component of `x` is `log(huge(x))`.
 
 `exp` being elemental, when X is an array (real or complex), the
 function is applied element-wise, returning an array of the same shape.
@@ -50,7 +84,7 @@ function is applied element-wise, returning an array of the same shape.
 Numerical Considerations
 
  For very large real X, the result may overflow to infinity in
- finite-precision arithmetic. For very small (negative) real X ,
+ finite-precision arithmetic. For very small (negative) real X 
  the result approaches zero. Complex inputs with large imaginary
  parts may produce results with significant numerical errors due
  to the trigonometric functions involved.
