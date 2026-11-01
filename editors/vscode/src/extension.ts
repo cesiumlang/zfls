@@ -11,6 +11,7 @@ import {
 } from "vscode-languageclient/node";
 import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
+import { toggleComments } from "./comments";
 import { registerRunCommands } from "./runFile";
 
 import { affectsServer, serverArguments } from "./options";
@@ -44,6 +45,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
+    vscode.commands.registerCommand("zfls.toggleFixedFormComment", () => toggleFixedFormComment()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
         void restartAll();
@@ -64,6 +66,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await ensureClient(doc);
   }
   void checkModernFortran();
+}
+
+/** Toggle Line Comment in fixed form with `zfls.fixedFormCommentCharacter`
+ * in column 1 (Modern Fortran #535); VS Code's own toggle for `!` */
+async function toggleFixedFormComment(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return;
+  }
+  const doc = editor.document;
+  const ch = vscode.workspace.getConfiguration("zfls", doc).get<string>("fixedFormCommentCharacter", "!");
+  if (doc.languageId !== "FortranFixedForm" || ch === "!") {
+    await vscode.commands.executeCommand("editor.action.commentLine");
+    return;
+  }
+  const done = new Set<number>();
+  await editor.edit((edit) => {
+    for (const sel of editor.selections) {
+      // a selection that ends at the start of a line leaves that line out
+      const last = sel.end.line > sel.start.line && sel.end.character === 0 ? sel.end.line - 1 : sel.end.line;
+      const lines: number[] = [];
+      for (let ln = sel.start.line; ln <= last; ln++) {
+        if (!done.has(ln)) {
+          lines.push(ln);
+          done.add(ln);
+        }
+      }
+      const old = lines.map((ln) => doc.lineAt(ln).text);
+      toggleComments(old, ch).forEach((text, i) => {
+        if (text !== old[i]) {
+          edit.replace(doc.lineAt(lines[i]).range, text);
+        }
+      });
+    }
+  });
 }
 
 export async function deactivate(): Promise<void> {

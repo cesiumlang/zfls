@@ -341,6 +341,18 @@
           "scope": "resource",
           "markdownDescription": "Columns of code in a fixed-form line, as gfortran's `-ffixed-line-length-n` (72, 80 or 132): the rest is highlighted as a comment and is not read for names; `-1` for no limit (`--fixed_line_length`). Shown through semantic highlighting."
         },
+        "zfls.fixedFormCommentCharacter": {
+          "type": "string",
+          "enum": [
+            "!",
+            "C",
+            "c",
+            "*"
+          ],
+          "default": "!",
+          "scope": "resource",
+          "markdownDescription": "The character that **Toggle Line Comment** (`Ctrl+/`) puts in column 1 of a fixed-form line: `C`, `c` or `*` as in FORTRAN 77, or `!` for VS Code's own `!` at the indentation."
+        },
         "zfls.configFile": {
           "type": "string",
           "default": "",
@@ -715,6 +727,19 @@
         "command": "zfls.linter.clear",
         "title": "Clear Compiler Diagnostics",
         "category": "zfls"
+      },
+      {
+        "command": "zfls.toggleFixedFormComment",
+        "title": "Toggle Fixed-Form Line Comment",
+        "category": "zfls"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "zfls.toggleFixedFormComment",
+        "key": "ctrl+/",
+        "mac": "cmd+/",
+        "when": "editorTextFocus && !editorReadonly && editorLangId == FortranFixedForm"
       }
     ],
     "menus": {
@@ -742,6 +767,10 @@
         {
           "command": "zfls.generateLaunchConfig",
           "when": "editorLangId =~ /^Fortran(Free|Fixed)Form$/ && !virtualWorkspace && shellExecutionSupported"
+        },
+        {
+          "command": "zfls.toggleFixedFormComment",
+          "when": "editorLangId == FortranFixedForm"
         }
       ]
     },
