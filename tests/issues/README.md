@@ -121,7 +121,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#226](https://github.com/hansec/fortran-language-server/issues/226) | a Source Action puts the keywords of a file in upper case (also lower and title case) | diagnostics | fixed (feature) | none |
 | [#135](https://github.com/hansec/fortran-language-server/issues/135) | go to definition on a call of a generic interface goes to the procedure the arguments fit | hover | fixed (feature) | goes to the interface |
 | [#62](https://github.com/hansec/fortran-language-server/issues/62) | completion of names from modules not used yet adds the `use` statement; a quick fix for a type not found | completion | fixed (feature) | names in scope only |
-| [#95](https://github.com/hansec/fortran-language-server/issues/95) | definition, hover and references of user-defined operators (`.ord.`) | hover | fixed (feature) | no answer |
+| [#95](https://github.com/hansec/fortran-language-server/issues/95) | definition, hover and references of user-defined operators (`.ord.`) and of defined assignment (`assignment(=)`) | hover | fixed (feature) | no answer |
 | [#121](https://github.com/hansec/fortran-language-server/issues/121) | completion of a component offers the parent components of an extended type | completion | fixed (feature) | not offered |
 | [#133](https://github.com/hansec/fortran-language-server/issues/133) | completion of keyword arguments (`name=`) inside a call | completion | fixed (feature) | names in scope only |
 | [#195](https://github.com/hansec/fortran-language-server/issues/195) | fuzzy workspace symbol search (`tar` finds `this_amazing_routine`) | navigation | fixed (feature) | names containing the query only |

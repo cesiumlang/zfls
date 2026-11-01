@@ -1045,3 +1045,68 @@ test "#28 lowercase_hover: keywords in hover in lowercase" {
     defer w.deinit();
     try h.check(28, .fixed, expectLowercaseHover(w));
 }
+
+fn expectAssignment(w: *h.Workspace) !void {
+    // on the `=` of an assignment to a type with a GENERIC binding
+    const d = (try w.definition("a.f90", w.pos("a.f90", "= 1 ! t", 0, 0))) orelse return h.unmet("no definition of = for t", .{});
+    try h.expect(d.line == w.pos("a.f90", "generic :: assignment", 0, 0).line, "= of t goes to line {d}", .{d.line});
+    // a type extending it has it too
+    const e = (try w.definition("a.f90", w.pos("a.f90", "= 4 ! e", 0, 0))) orelse return h.unmet("no definition of = for e", .{});
+    try h.expect(e.line == d.line, "= of e goes to line {d}", .{e.line});
+    // an interface for the type
+    const f = (try w.definition("a.f90", w.pos("a.f90", "= 2 ! u", 0, 0))) orelse return h.unmet("no definition of = for u", .{});
+    try h.expect(f.line == w.pos("a.f90", "interface assignment", 0, 0).line, "= of u goes to line {d}", .{f.line});
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "= 2 ! u", 0, 0), "SUBROUTINE assign_u(lhs, rhs)");
+    // the binding, and the assignments to t and e
+    const refs = try w.references("a.f90", w.pos("a.f90", "assignment(=) =>", 0, 3));
+    try h.expect(refs.len == 4, "{d} references of t's assignment", .{refs.len});
+    // no defined assignment for an integer, nor for `==`
+    try h.expect((try w.definition("a.f90", w.pos("a.f90", "= 3 ! i", 0, 0))) == null, "= of an integer has a definition", .{});
+}
+
+test "hansec #95 definition, hover and references of defined assignment" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text =
+        \\module m
+        \\  type :: t
+        \\    integer :: v
+        \\  contains
+        \\    procedure :: assign_t
+        \\    generic :: assignment(=) => assign_t
+        \\  end type t
+        \\  type, extends(t) :: e
+        \\  end type e
+        \\  type :: u
+        \\    integer :: w
+        \\  end type u
+        \\  interface assignment(=)
+        \\    module procedure assign_u
+        \\  end interface assignment(=)
+        \\contains
+        \\  subroutine assign_t(lhs, rhs)
+        \\    class(t), intent(out) :: lhs
+        \\    integer, intent(in) :: rhs
+        \\    lhs%v = rhs
+        \\  end subroutine assign_t
+        \\  subroutine assign_u(lhs, rhs)
+        \\    type(u), intent(out) :: lhs
+        \\    integer, intent(in) :: rhs
+        \\    lhs%w = rhs
+        \\  end subroutine assign_u
+        \\end module m
+        \\program p
+        \\  use m
+        \\  type(t) :: x
+        \\  type(e) :: y
+        \\  type(u) :: z
+        \\  integer :: i
+        \\  x = 1 ! t
+        \\  z = 2 ! u
+        \\  i = 3 ! i
+        \\  y = 4 ! e
+        \\  if (i == 3) x = 5
+        \\end program p
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 95, .fixed, expectAssignment(w));
+}
