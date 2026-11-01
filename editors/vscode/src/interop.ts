@@ -1,9 +1,11 @@
 // Fortran and C (BIND(C), hansec #115): go to definition of a BIND(C)
 // procedure adds its declarations from the C language server (clangd, or
-// Microsoft's C/C++, through VS Code's workspace symbols), and go to
-// definition in a C or C++ file adds the Fortran procedures of the name,
-// which zfls gives (`zfls/bindCTargets`). zfls parses no C. The pure parts;
-// extension.ts registers them. No `vscode` import (see test/unit).
+// Microsoft's C/C++, through VS Code's workspace symbols), and find
+// references the C server's references of them; in a C or C++ file, go to
+// definition and find references add the Fortran procedures of the name
+// and their references, which zfls gives (`zfls/bindCTargets`,
+// `zfls/bindCReferences`). zfls parses no C. The pure parts; extension.ts
+// registers them. No `vscode` import (see test/unit).
 
 /** The languages of C files whose definitions zfls adds to */
 export const C_LANGUAGES = ["c", "cpp", "cuda-cpp"];
@@ -22,11 +24,13 @@ export interface BindC {
   cName: string;
 }
 
-/** A location by file and line, for dropping the same declaration found
- * twice (by zfls's search and by the C language server) */
+/** A location by file and line (and column, for references), for dropping
+ * the same place found twice (by zfls's search and by the C language
+ * server) */
 export interface Place {
   uri: string;
   line: number;
+  character?: number;
 }
 
 /** `items` without those of a place already seen, in order */
@@ -34,7 +38,7 @@ export function uniqueByPlace<T>(items: readonly T[], placeOf: (item: T) => Plac
   const seen = new Set<string>();
   return items.filter((item) => {
     const p = placeOf(item);
-    const key = `${p.uri}\u0000${p.line}`;
+    const key = `${p.uri}\u0000${p.line}\u0000${p.character ?? ""}`;
     if (seen.has(key)) {
       return false;
     }

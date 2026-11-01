@@ -1,11 +1,13 @@
 //! Fortran and C (`BIND(C)`, hansec #115): the C name of a procedure, the
-//! Fortran procedures of a C name (go to definition from a C file, in
-//! VS Code by `zfls/bindCTargets`, in other editors in a C document opened
-//! in zfls), and, for the editors that have no C language server to ask,
-//! a light search of the workspace's C files for the declarations of a
-//! procedure's C name, which go to definition adds. zfls parses no C: a
-//! declaration is a line where the name follows a type and an opening
-//! parenthesis follows it.
+//! Fortran procedures of a C name and their references (go to definition
+//! and references from a C file, in VS Code by `zfls/bindCTargets` and
+//! `zfls/bindCReferences`, in other editors in a C document opened in
+//! zfls), and, for the editors that have no C language server to ask, a
+//! light search of the workspace's C files for the declarations and calls
+//! of a procedure's C name, which go to definition and references add. zfls
+//! parses no C: a declaration is a line where the name follows a type and
+//! an opening parenthesis follows it, a call a name an opening parenthesis
+//! follows elsewhere.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -19,6 +21,7 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const glob = @import("../glob.zig");
 const definition = @import("definition.zig");
+const references = @import("references.zig");
 
 const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
@@ -77,21 +80,85 @@ pub fn cNameIn(a: Allocator, statement: []const u8, name: []const u8) !?[]const 
 
 /// The workspace's procedures whose C name is `cname`, definitions before
 /// interface bodies
-pub fn fortranTargets(self: *Server, a: Allocator, cname: []const u8) ![]const lsp.Location {
-    var defs: std.ArrayList(lsp.Location) = .empty;
-    var ifaces: std.ArrayList(lsp.Location) = .empty;
+pub fn proceduresOf(self: *Server, a: Allocator, cname: []const u8) ![]const *Obj {
+    var defs: std.ArrayList(*Obj) = .empty;
+    var ifaces: std.ArrayList(*Obj) = .empty;
     for (self.workspace.values()) |f| {
         const ast = f.ast orelse continue;
         for (ast.scope_list.items) |sc| {
             const n = (try cNameOf(a, sc)) orelse continue;
             if (!std.mem.eql(u8, n, cname)) continue;
-            const loc = try json.decode(lsp.Location, a, try definition.createRefLink(self, a, sc));
             const in_interface = if (sc.parent) |p| p.kind == .interface else false;
-            try (if (in_interface) &ifaces else &defs).append(a, loc);
+            try (if (in_interface) &ifaces else &defs).append(a, sc);
         }
     }
     try defs.appendSlice(a, ifaces.items);
     return defs.items;
+}
+
+/// The places of the workspace's procedures whose C name is `cname`
+pub fn fortranTargets(self: *Server, a: Allocator, cname: []const u8) ![]const lsp.Location {
+    var out: std.ArrayList(lsp.Location) = .empty;
+    for (try proceduresOf(self, a, cname)) |o| try out.append(a, try json.decode(lsp.Location, a, try definition.createRefLink(self, a, o)));
+    return out.items;
+}
+
+/// The Fortran references of the procedures whose C name is `cname`
+/// (except `skip`'s), appended to `out`
+pub fn fortranReferences(self: *Server, a: Allocator, cname: []const u8, skip: ?*const Obj, out: *std.ArrayList(lsp.Location)) !void {
+    for (try proceduresOf(self, a, cname)) |o| {
+        if (o == skip) continue;
+        const rs = references.referenceScope(self, o) orelse continue;
+        for (try references.getAllReferences(self, a, o, rs.type_mem, rs.restrict, false)) |fr| {
+            const uri = try paths.pathToUri(a, fr.path);
+            for (fr.refs.items) |r| try out.append(a, Server.locationOf(uri, fr.file, r.line, r.start, r.line, r.end));
+        }
+    }
+}
+
+/// `zfls/bindCReferences`: the Fortran references of the procedures of a C
+/// name (`{name}`); a C language server gives the C ones
+pub fn serveBindCReferences(self: *Server, a: Allocator, params: Value) !Value {
+    const name = json.str(json.get(params, "name")) orelse return error.InvalidParams;
+    var out: std.ArrayList(lsp.Location) = .empty;
+    try fortranReferences(self, a, name, null, &out);
+    return json.from(a, try unique(a, out.items));
+}
+
+/// Find references in a C document opened in zfls: the Fortran references
+/// of the procedures of the name at the position, and the name's places in
+/// the workspace's C files
+pub fn cReferences(self: *Server, a: Allocator, doc: *const FortranFile, params: lsp.PositionParams) !Value {
+    const name = identifierAt(doc, params) orelse return .null;
+    if ((try proceduresOf(self, a, name)).len == 0) return .null;
+    var out: std.ArrayList(lsp.Location) = .empty;
+    try fortranReferences(self, a, name, null, &out);
+    try out.appendSlice(a, try cUses(self, a, name));
+    return json.from(a, try unique(a, out.items));
+}
+
+/// `locations`, each place once, in order
+pub fn unique(a: Allocator, locations: []const lsp.Location) ![]const lsp.Location {
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    var out: std.ArrayList(lsp.Location) = .empty;
+    for (locations) |l| {
+        const key = try std.fmt.allocPrint(a, "{s}\x00{d}:{d}", .{ l.uri, l.range.start.line, l.range.start.character });
+        if ((try seen.getOrPut(a, key)).found_existing) continue;
+        try out.append(a, l);
+    }
+    return out.items;
+}
+
+/// The identifier at a position of a C document
+fn identifierAt(doc: *const FortranFile, params: lsp.PositionParams) ?[]const u8 {
+    const text = doc.getLine(params.position.line, false) orelse return null;
+    const col = @min(Server.toByteCol(doc, params.position.line, params.position.character), text.len);
+    var s = col;
+    while (s > 0 and isIdent(text[s - 1])) s -= 1;
+    var e = col;
+    while (e < text.len and isIdent(text[e])) e += 1;
+    if (s == e or std.ascii.isDigit(text[s])) return null;
+    return text[s..e];
 }
 
 /// `zfls/bindC`: the procedure at a position and its C name, null when it
@@ -111,14 +178,8 @@ pub fn serveBindCTargets(self: *Server, a: Allocator, params: Value) !Value {
 /// Go to definition in a C document opened in zfls: the Fortran procedures
 /// of the name at the position
 pub fn cDefinition(self: *Server, a: Allocator, doc: *const FortranFile, params: lsp.PositionParams) !Value {
-    const text = doc.getLine(params.position.line, false) orelse return .null;
-    const col = @min(Server.toByteCol(doc, params.position.line, params.position.character), text.len);
-    var s = col;
-    while (s > 0 and isIdent(text[s - 1])) s -= 1;
-    var e = col;
-    while (e < text.len and isIdent(text[e])) e += 1;
-    if (s == e or std.ascii.isDigit(text[s])) return .null;
-    const targets = try fortranTargets(self, a, text[s..e]);
+    const name = identifierAt(doc, params) orelse return .null;
+    const targets = try fortranTargets(self, a, name);
     if (targets.len == 0) return .null;
     return json.from(a, targets);
 }
@@ -130,12 +191,14 @@ fn isIdent(c: u8) bool {
 // --------------------------------------------------------------------------
 // The C search
 
-/// The declarations found of each C name the workspace binds, and when
+/// The declarations found of each C name the workspace binds, its places
+/// (declarations and calls), and when
 pub const CIndex = struct {
     arena: std.heap.ArenaAllocator,
     built_ns: i96,
     names: std.StringHashMapUnmanaged(void) = .empty,
     found: std.StringHashMapUnmanaged(std.ArrayList(lsp.Location)) = .empty,
+    uses: std.StringHashMapUnmanaged(std.ArrayList(lsp.Location)) = .empty,
 };
 
 pub fn deinitIndex(self: *Server) void {
@@ -148,13 +211,25 @@ pub fn deinitIndex(self: *Server) void {
 
 /// The declarations of `cname` in the workspace's C files
 pub fn cDeclarations(self: *Server, a: Allocator, cname: []const u8) ![]const lsp.Location {
-    if (self.s.disable_bind_c_search) return &.{};
+    const ix = (try cIndex(self, a, cname)) orelse return &.{};
+    return if (ix.found.get(cname)) |l| l.items else &.{};
+}
+
+/// The places of `cname` in the workspace's C files: its declarations and
+/// calls
+pub fn cUses(self: *Server, a: Allocator, cname: []const u8) ![]const lsp.Location {
+    const ix = (try cIndex(self, a, cname)) orelse return &.{};
+    return if (ix.uses.get(cname)) |l| l.items else &.{};
+}
+
+/// The C search, done again when it is old or `cname` is not in it; null
+/// when it is off
+fn cIndex(self: *Server, a: Allocator, cname: []const u8) !?*CIndex {
+    if (self.s.disable_bind_c_search) return null;
     const now = Io.Clock.awake.now(self.io).nanoseconds;
     if (self.c_index) |ix| {
         const fresh = now - ix.built_ns < @as(i96, index_ttl_s) * std.time.ns_per_s;
-        if (fresh and ix.names.contains(cname)) {
-            return if (ix.found.get(cname)) |l| l.items else &.{};
-        }
+        if (fresh and ix.names.contains(cname)) return ix;
     }
     deinitIndex(self);
     const ix = try self.gpa.create(CIndex);
@@ -171,7 +246,7 @@ pub fn cDeclarations(self: *Server, a: Allocator, cname: []const u8) ![]const ls
         }
     }
     for (try cFiles(self, a)) |path| try scanFile(self, a, ix, path);
-    return if (ix.found.get(cname)) |l| l.items else &.{};
+    return ix;
 }
 
 /// The C files of the source directories
@@ -193,18 +268,69 @@ fn scanFile(self: *Server, a: Allocator, ix: *CIndex, path: []const u8) !void {
     var uri: ?[]const u8 = null;
     var it = std.mem.splitScalar(u8, text, '\n');
     var ln: usize = 0;
+    const ia = ix.arena.allocator();
     while (it.next()) |raw| : (ln += 1) {
         const line = std.mem.trimEnd(u8, raw, "\r");
-        const d = declarationIn(line) orelse continue;
-        const name = line[d.start..d.end];
-        if (!ix.names.contains(name)) continue;
-        const ia = ix.arena.allocator();
-        if (uri == null) uri = try paths.pathToUri(ia, path);
-        const gop = try ix.found.getOrPut(ia, ix.names.getKey(name).?);
-        if (!gop.found_existing) gop.value_ptr.* = .empty;
-        try gop.value_ptr.append(ia, .{ .uri = uri.?, .range = .{ .start = .{ .line = ln, .character = d.start }, .end = .{ .line = ln, .character = d.end } } });
+        if (declarationIn(line)) |d| if (ix.names.getKey(line[d.start..d.end])) |name| {
+            if (uri == null) uri = try paths.pathToUri(ia, path);
+            try addPlace(ia, &ix.found, name, uri.?, ln, d.start, d.end);
+        };
+        var calls = Calls{ .line = line };
+        while (calls.next()) |c| if (ix.names.getKey(line[c.start..c.end])) |name| {
+            if (uri == null) uri = try paths.pathToUri(ia, path);
+            try addPlace(ia, &ix.uses, name, uri.?, ln, c.start, c.end);
+        };
     }
 }
+
+fn addPlace(ia: Allocator, map: *std.StringHashMapUnmanaged(std.ArrayList(lsp.Location)), name: []const u8, uri: []const u8, ln: usize, s: usize, e: usize) !void {
+    const gop = try map.getOrPut(ia, name);
+    if (!gop.found_existing) gop.value_ptr.* = .empty;
+    try gop.value_ptr.append(ia, .{ .uri = uri, .range = .{ .start = .{ .line = ln, .character = s }, .end = .{ .line = ln, .character = e } } });
+}
+
+/// The names of a C line that an opening parenthesis follows (calls and
+/// declarations), outside comments, strings and preprocessor lines (a
+/// `/* */` comment over several lines is not seen)
+const Calls = struct {
+    line: []const u8,
+    i: usize = 0,
+
+    fn next(self: *Calls) ?struct { start: usize, end: usize } {
+        const l = self.line;
+        if (self.i == 0) {
+            const t = std.mem.trimStart(u8, l, " \t");
+            if (t.len == 0 or t[0] == '#' or t[0] == '*' or std.mem.startsWith(u8, t, "//")) return null;
+        }
+        while (self.i < l.len) {
+            const c = l[self.i];
+            if (c == '/' and self.i + 1 < l.len and l[self.i + 1] == '/') return null;
+            if (c == '/' and self.i + 1 < l.len and l[self.i + 1] == '*') {
+                self.i = if (std.mem.indexOfPos(u8, l, self.i + 2, "*/")) |e| e + 2 else l.len;
+                continue;
+            }
+            if (c == '"' or c == '\'') {
+                var j = self.i + 1;
+                while (j < l.len and l[j] != c) : (j += 1) {
+                    if (l[j] == '\\') j += 1;
+                }
+                self.i = j + 1;
+                continue;
+            }
+            if (!isIdent(c)) {
+                self.i += 1;
+                continue;
+            }
+            const s = self.i;
+            while (self.i < l.len and isIdent(l[self.i])) self.i += 1;
+            const e = self.i;
+            var k = e;
+            while (k < l.len and (l[k] == ' ' or l[k] == '\t')) k += 1;
+            if (k < l.len and l[k] == '(' and !std.ascii.isDigit(l[s])) return .{ .start = s, .end = e };
+        }
+        return null;
+    }
+};
 
 const statement_words = [_][]const u8{ "return", "if", "while", "for", "switch", "else", "do", "case", "sizeof", "goto" };
 
@@ -245,6 +371,24 @@ test "the C names of procedure statements" {
     try std.testing.expectEqualStrings("g", (try cNameIn(a, "function g(x) result(r) &      bind(c, &   name=\"g\")", "g")).?);
     try std.testing.expect((try cNameIn(a, "subroutine h() bind(c, name=\"\")", "h")) == null);
     try std.testing.expect((try cNameIn(a, "subroutine k()", "k")) == null);
+}
+
+test "the names of C calls" {
+    const Case = struct { line: []const u8, names: []const []const u8 };
+    const cases = [_]Case{
+        .{ .line = "  x = c_add(1, sq (2));", .names = &.{ "c_add", "sq" } },
+        .{ .line = "void c_add(int a, int b);", .names = &.{"c_add"} },
+        .{ .line = "  printf(\"c_add(%d)\", n); // c_add(1)", .names = &.{"printf"} },
+        .{ .line = "  /* c_add(1) */ solve(n);", .names = &.{"solve"} },
+        .{ .line = "#define c_add(a, b) ((a) + (b))", .names = &.{} },
+        .{ .line = " * c_add(int) in a comment", .names = &.{} },
+    };
+    for (cases) |c| {
+        var calls = Calls{ .line = c.line };
+        var n: usize = 0;
+        while (calls.next()) |r| : (n += 1) try std.testing.expectEqualStrings(c.names[n], c.line[r.start..r.end]);
+        try std.testing.expectEqual(c.names.len, n);
+    }
 }
 
 test "C declarations, not calls" {

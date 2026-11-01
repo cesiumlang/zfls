@@ -334,3 +334,126 @@ test "hansec #115: from a BIND(C) procedure to its C declaration, and back" {
     try std.testing.expect(std.mem.endsWith(u8, from_c[0].uri, "iface.f90"));
     try std.testing.expectEqual(@as(usize, 0), (try w.messages()).len);
 }
+
+test "hansec #115: references across Fortran and C" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "cfuncs.h", .text =
+        \\/* c_add(1, 2) in a comment */
+        \\int c_add(int a, int b);
+        \\
+        },
+        .{ .name = "cfuncs.c", .text =
+        \\#include "cfuncs.h"
+        \\int c_add(int a, int b) { return a + b; }
+        \\void use_it(void) {
+        \\  int x = c_add(1, 2);
+        \\  solve_f(x); // solve_f(0)
+        \\}
+        \\
+        },
+        .{ .name = "iface.f90", .text =
+        \\module iface
+        \\  use iso_c_binding
+        \\  interface
+        \\    integer(c_int) function c_add(a, b) bind(C, name="c_add")
+        \\      import :: c_int
+        \\      integer(c_int), value :: a, b
+        \\    end function c_add
+        \\  end interface
+        \\contains
+        \\  subroutine solve(n) bind(c, name="solve_f")
+        \\    integer(c_int), value :: n
+        \\    print *, c_add(n, 1)
+        \\  end subroutine solve
+        \\end module iface
+        \\
+        },
+        .{ .name = "other.f90", .text =
+        \\module other
+        \\  interface
+        \\    function add2(a, b) bind(C, name="c_add")
+        \\      use iso_c_binding, only: c_int
+        \\      integer(c_int), value :: a, b
+        \\      integer(c_int) :: add2
+        \\    end function add2
+        \\  end interface
+        \\contains
+        \\  subroutine run()
+        \\    use iface, only: solve
+        \\    print *, add2(1, 2)
+        \\    call solve(3)
+        \\  end subroutine run
+        \\end module other
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const Place = struct { file: []const u8, line: i64 };
+    const places = struct {
+        fn of(al: std.mem.Allocator, locs: []const h.Location) ![]const Place {
+            var out: std.ArrayList(Place) = .empty;
+            for (locs) |l| try out.append(al, .{ .file = std.fs.path.basename(l.uri), .line = l.line });
+            std.mem.sort(Place, out.items, {}, struct {
+                fn lt(_: void, x: Place, y: Place) bool {
+                    const o = std.mem.order(u8, x.file, y.file);
+                    return o == .lt or (o == .eq and x.line < y.line);
+                }
+            }.lt);
+            return out.items;
+        }
+        fn expect(want: []const Place, got: []const Place) !void {
+            errdefer for (got) |g| std.debug.print("  {s}:{d}\n", .{ g.file, g.line });
+            try std.testing.expectEqual(want.len, got.len);
+            for (want, got) |x, y| {
+                try std.testing.expectEqualStrings(x.file, y.file);
+                try std.testing.expectEqual(x.line, y.line);
+            }
+        }
+    };
+    // references of c_add: its Fortran references, those of the other
+    // interface of the same C name, and the C declarations and call (not
+    // the comment)
+    const refs = try places.of(a, try w.references("iface.f90", w.pos("iface.f90", "c_add(n", 0, 1)));
+    try places.expect(&.{
+        .{ .file = "cfuncs.c", .line = 1 },
+        .{ .file = "cfuncs.c", .line = 3 },
+        .{ .file = "cfuncs.h", .line = 1 },
+        .{ .file = "iface.f90", .line = 3 },
+        .{ .file = "iface.f90", .line = 6 },
+        .{ .file = "iface.f90", .line = 11 },
+        .{ .file = "other.f90", .line = 2 },
+        .{ .file = "other.f90", .line = 6 },
+        .{ .file = "other.f90", .line = 11 },
+    }, refs);
+    // zfls/bindCReferences: the Fortran references alone (a C language
+    // server gives the C ones)
+    const fr = try w.zflsRequest("zfls/bindCReferences", .{ .name = "solve_f" });
+    var locs: std.ArrayList(h.Location) = .empty;
+    for (h.json.items(fr)) |item| try locs.append(a, .{
+        .uri = h.json.str(h.json.get(item, "uri")).?,
+        .line = h.json.int(h.json.path(item, &.{ "range", "start", "line" })).?,
+        .col = 0,
+    });
+    try places.expect(&.{
+        .{ .file = "iface.f90", .line = 9 },
+        .{ .file = "iface.f90", .line = 12 },
+        .{ .file = "other.f90", .line = 10 },
+        .{ .file = "other.f90", .line = 12 },
+    }, try places.of(a, locs.items));
+    // a C document opened in zfls: the Fortran references and the C call
+    try w.open("cfuncs.c", "c");
+    const from_c = try places.of(a, try w.references("cfuncs.c", w.pos("cfuncs.c", "solve_f", 0, 2)));
+    try places.expect(&.{
+        .{ .file = "cfuncs.c", .line = 4 },
+        .{ .file = "iface.f90", .line = 9 },
+        .{ .file = "iface.f90", .line = 12 },
+        .{ .file = "other.f90", .line = 10 },
+        .{ .file = "other.f90", .line = 12 },
+    }, from_c);
+    // highlights stay in the document
+    const hl = try w.server.dispatchPublic(a, "textDocument/documentHighlight", try w.positionOf("iface.f90", w.pos("iface.f90", "c_add(n", 0, 1)));
+    for (h.json.items(hl)) |item| try std.testing.expect(std.mem.endsWith(u8, h.json.str(h.json.get(item, "uri")).?, "iface.f90"));
+}

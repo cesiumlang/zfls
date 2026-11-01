@@ -24,6 +24,7 @@ const assignment = @import("assignment.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
+const bindc = @import("bindc.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
     return switch (o.kind) {
@@ -207,7 +208,12 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
     return .{ .type_mem = type_mem, .restrict = restrict };
 }
 
-pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+/// Find references (and, without the other files' places, document
+/// highlights): those of a `BIND(C)` procedure have the other Fortran
+/// procedures of its C name's and the C name's places in C files too
+/// (bindc.zig)
+pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, with_c: bool) !Value {
+    if (with_c) if (self.c_docs.get(try self.pathFromUri(a, params.textDocument.uri))) |doc| return bindc.cReferences(self, a, doc, params);
     if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.assignmentAt(self, a, params)) |b| return assignment.references(self, a, b);
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
@@ -220,6 +226,11 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams) 
         const uri = try paths.pathToUri(a, fr.path);
         for (fr.refs.items) |r| try out.append(a, Server.locationOf(uri, fr.file, r.line, r.start, r.line, r.end));
     }
+    if (with_c) if (try bindc.cNameOf(a, d.obj)) |cname| {
+        try bindc.fortranReferences(self, a, cname, d.obj, &out);
+        try out.appendSlice(a, try bindc.cUses(self, a, cname));
+        return json.from(a, try bindc.unique(a, out.items));
+    };
     return json.from(a, out.items);
 }
 

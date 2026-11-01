@@ -31,6 +31,9 @@
     "onDebugDynamicConfigurations:fortran",
     "onDebugInitialConfigurations",
     "onDebugResolve:fortran",
+    "onLanguage:c",
+    "onLanguage:cpp",
+    "onLanguage:cuda-cpp",
     "onTaskType:fpm",
     "workspaceContains:fpm.toml"
   ],
