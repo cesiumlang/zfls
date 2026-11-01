@@ -451,7 +451,7 @@ class FpmTests implements vscode.Disposable {
 }
 
 /** The end of the next debug session to start */
-function sessionEnd(): { promise: Promise<void>; dispose: () => void } {
+export function sessionEnd(): { promise: Promise<void>; dispose: () => void } {
   let session: vscode.DebugSession | undefined;
   let resolve!: () => void;
   const promise = new Promise<void>((r) => (resolve = r));

@@ -136,5 +136,9 @@
   "debugger.fortran.snippet.1.label": "Fortran: fpm target",
   "debugger.fortran.snippet.1.description": "Build an fpm target with fpm, then debug it",
   "problemMatcher.zfls-gfortran.label": "gfortran",
-  "problemMatcher.zfls-intel.label": "Intel Fortran (ifx, ifort)"
+  "problemMatcher.zfls-intel.label": "Intel Fortran (ifx, ifort)",
+  "config.zfls.pfunit.testExplorer.markdownDescription": "pFUnit's tests in the Testing view: each test program of CMake's `add_pfunit_ctest`, with the suite of each of its `.pf` files and their `@test` procedures. Running a test builds its program with CMake and runs it.",
+  "config.zfls.pfunit.buildDirectory.markdownDescription": "The CMake build directory of the pFUnit test programs. Empty: CMake Tools' `#cmake.buildDirectory#` when it has no variables but `${workspaceFolder}`, else `build` in the workspace folder.",
+  "config.zfls.pfunit.build.markdownDescription": "Build a pFUnit test program (`cmake --build DIR --target NAME`) before running its tests.",
+  "config.zfls.pfunit.args.markdownDescription": "More arguments of the pFUnit test programs, after zfls's `-x -o FILE` (and `-f NAME` when one test is run)."
 }

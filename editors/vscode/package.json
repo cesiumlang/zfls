@@ -32,6 +32,7 @@
     "onDebugInitialConfigurations",
     "onDebugResolve:fortran",
     "onTaskType:fpm",
+    "workspaceContains:**/*.pf",
     "workspaceContains:fpm.toml"
   ],
   "capabilities": {
@@ -627,6 +628,33 @@
           "default": true,
           "scope": "window",
           "markdownDescription": "%config.zfls.fpm.testExplorer.markdownDescription%"
+        },
+        "zfls.pfunit.testExplorer": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "markdownDescription": "%config.zfls.pfunit.testExplorer.markdownDescription%"
+        },
+        "zfls.pfunit.buildDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.pfunit.buildDirectory.markdownDescription%"
+        },
+        "zfls.pfunit.build": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.pfunit.build.markdownDescription%"
+        },
+        "zfls.pfunit.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.pfunit.args.markdownDescription%"
         },
         "zfls.formatting.formatter": {
           "type": "string",
