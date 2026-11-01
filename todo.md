@@ -14,7 +14,7 @@ projects zfls replaces:
 
 ## Later
 
-- [ ] Argument checking of types, kinds and ranks
+- [ ] Argument checking of kinds, and of the types and ranks of expressions
 - [ ] Interface and submodule stubs (code actions)
 - [ ] Richer hover: case preference (FL #28), code blocks in documentation
   (FL #209), OpenMP/OpenACC directives, literals (FL #125)
@@ -88,7 +88,8 @@ Diagnostics and code actions:
 - [x] Workspace diagnostics: problems in files that are not open
   (`workspace_diagnostics`)
 - [x] Argument checking: count, unknown keywords, missing required arguments,
-  assigning an `intent(in)` argument
+  assigning an `intent(in)` argument; the type and rank of variables and
+  literals
 - [x] Module dependency graph: cycles (`circular-use`) and compile order
   (`zfls/compileOrder`, "zfls: Show Module Compile Order")
 - [x] Quick fixes: add `implicit none` and `use` statements, `.eq.` to `==`,

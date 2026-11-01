@@ -854,3 +854,65 @@ test "quick fixes: IMPLICIT NONE, modern operators, kind parameters, keyword cas
     try std.testing.expectEqual(@as(usize, 10), upper.edits);
     try std.testing.expectEqualStrings("PROGRAM", upper.new_text);
 }
+
+test "argument checks: the type and rank of variables and literals" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module ops
+        \\  implicit none
+        \\  type :: pt
+        \\    real :: x
+        \\  end type pt
+        \\contains
+        \\  subroutine take(n, x, v, p, s)
+        \\    integer, intent(in) :: n
+        \\    real(8), intent(in) :: x
+        \\    real, intent(in) :: v(:)
+        \\    type(pt), intent(in) :: p
+        \\    character(len=*), intent(in) :: s
+        \\  end subroutine take
+        \\  elemental real function sq(a)
+        \\    real, intent(in) :: a
+        \\    sq = a * a
+        \\  end function sq
+        \\  subroutine any_rank(a)
+        \\    real, intent(in) :: a(..)
+        \\  end subroutine any_rank
+        \\end module ops
+        \\program main
+        \\  use ops
+        \\  implicit none
+        \\  integer :: i
+        \\  real :: r, arr(3)
+        \\  type(pt) :: q
+        \\  call take(1, 2.0d0, arr, q, 'ok')
+        \\  call take(1.5, 2, arr, q, 'ok')
+        \\  call take(i, r, r, q, 'ok')
+        \\  call take(i, r, arr, q, s=3)
+        \\  call take(i, r, 1.0, 'x', 'ok')
+        \\  arr = sq(arr)
+        \\  call any_rank(arr)
+        \\  call any_rank(r)
+        \\end program main
+        \\
+    }}, .{});
+    defer w.deinit();
+    var msgs: std.ArrayList([]const u8) = .empty;
+    defer msgs.deinit(std.testing.allocator);
+    for (try w.diagnostics("t.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "argument-mismatch")) try msgs.append(std.testing.allocator, d.message);
+    }
+    const want = [_][]const u8{
+        "Argument n of take: integer expected, real given",
+        "Argument x of take: real expected, integer given",
+        // not for a scalar variable: it may be an array element passed to an
+        // explicit-shape or assumed-size array (sequence association)
+        "Argument s of take: character expected, integer given",
+        "Argument v of take: an array expected, a scalar given",
+        "Argument p of take: derived expected, character given",
+    };
+    if (msgs.items.len != want.len) {
+        std.debug.print("got: {any}\n", .{msgs.items});
+        return error.TestExpectedEqual;
+    }
+    for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
+}

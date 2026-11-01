@@ -344,7 +344,10 @@ zfls deliberately differs from fortls in a few places:
   fortls only implements deferred procedures.
 - Calls of workspace procedures are checked (`argument-mismatch`): too
   many arguments, a keyword the procedure does not have, an argument given
-  twice, a required (not OPTIONAL) argument missing. Generic interfaces,
+  twice, a required (not OPTIONAL) argument missing, and the kind of type
+  (integer, real, complex, logical, character, derived) of an argument that
+  is a variable or a literal, a whole array for a scalar, a literal for an
+  array (not for elemental or assumed-rank). Generic interfaces,
   intrinsics, procedure pointers, alternate returns and procedures whose
   argument list has preprocessor lines are not checked. Assigning to an
   INTENT(IN) dummy argument (not a pointer) is an `intent-in-assigned`
