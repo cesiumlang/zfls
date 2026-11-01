@@ -166,6 +166,21 @@ the workspace is the same. The cache is written again, on a thread of its
 own, when files were added, changed or removed; those of other workspaces
 are deleted after 60 days without use. `disable_index_cache` turns it off.
 
+### Comment markers
+
+Some codebases are written in a dialect that a preprocessor turns into
+Fortran, with comments that start with something other than `!`, such as
+`;*` (`go to 110  ;* it's done`). `comment_markers` lists such markers:
+outside strings, zfls reads what follows one as a comment, so that its words
+are not names and a quote in it does not start a string.
+
+```json
+{ "comment_markers": [";*"] }
+```
+
+In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
+those comments too, after a window reload.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems

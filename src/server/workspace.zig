@@ -271,6 +271,7 @@ pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
 /// (the file and its AST).
 pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
+    f.comment_markers = self.s.comment_markers.slice();
     errdefer f.destroy();
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
@@ -609,6 +610,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
     if (did_open) {
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
+            nf.comment_markers = self.s.comment_markers.slice();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
@@ -636,6 +638,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
     if (read_file) {
         if (file == null) {
             const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
+            nf.comment_markers = self.s.comment_markers.slice();
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;

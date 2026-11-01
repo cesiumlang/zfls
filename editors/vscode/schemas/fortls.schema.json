@@ -41,6 +41,15 @@
       "uniqueItems": true,
       "default": []
     },
+    "comment_markers": {
+      "description": "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
     "nthreads": {
       "description": "Number of threads to use during workspace initialization (default: 4)",
       "type": "integer",
