@@ -322,7 +322,9 @@ zfls deliberately differs from fortls in a few places:
 - Hover on a coarray shows its codimension (`REAL, CODIMENSION[*] :: x`),
   written after its name or as an attribute; fortls drops it.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
-  ...) shows its documentation (fortls #547); fortls has no hover there.
+  ...) shows its documentation (fortls #547), and so does hover on a word of
+  an OpenMP or OpenACC directive (`!$omp parallel do`, `reduction`,
+  `!$acc data`); fortls has no hover there.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the surrounding scopes, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has
