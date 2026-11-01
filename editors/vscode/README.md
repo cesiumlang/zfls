@@ -56,6 +56,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.sortKeywords` | `false` | Sort variable keywords in hover |
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
+| `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |

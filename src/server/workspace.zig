@@ -537,6 +537,11 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         return .null;
     };
     if (changed) try fullRelink(self, a);
+    // a change can change the diagnostics of the files that use it
+    if (changed and self.s.workspace_diagnostics) {
+        diagnostics.publishWorkspace(self, a);
+        return .null;
+    }
     if (!self.s.disable_diagnostics) diagnostics.sendDiagnostics(self, a, uri);
     return .null;
 }
@@ -557,6 +562,8 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
             // so that the same text, restored, is parsed again
             f.hash = null;
             changed = true;
+            // its problems are gone with it
+            if (self.s.workspace_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = ev.uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
             continue;
         }
         if (!isSourceFile(self, path)) continue;
@@ -567,6 +574,7 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         changed = changed or updated;
     }
     if (changed) try fullRelink(self, a);
+    if (changed and self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
     return .null;
 }
 

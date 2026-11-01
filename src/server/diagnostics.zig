@@ -522,6 +522,17 @@ pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
     return try json.from(a, diags);
 }
 
+/// The diagnostics of every workspace file (`workspace_diagnostics`), so
+/// that editors list the problems of files that are not open
+pub fn publishWorkspace(self: *Server, a: Allocator) void {
+    if (self.s.disable_diagnostics) return;
+    for (self.workspace.values()) |f| {
+        if (f.ast == null) continue;
+        const uri = paths.pathToUri(a, f.path) catch continue;
+        sendDiagnostics(self, a, uri);
+    }
+}
+
 pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
     const res = diagnosticsOf(self, a, uri) catch |e| {
         self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);

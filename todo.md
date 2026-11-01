@@ -14,8 +14,6 @@ projects zfls replaces:
 
 ## Later
 
-- [ ] Pull diagnostics (`textDocument/diagnostic`) with workspace
-  diagnostics: problems in files that are not open
 - [ ] Inlay hints of parameter values
 - [ ] Argument checking of types, kinds and ranks
 - [ ] Interface and submodule stubs (code actions)
@@ -88,6 +86,8 @@ Diagnostics and code actions:
 - [x] Names not declared under IMPLICIT NONE, with a "declare" quick fix.
   HS #129
 - [x] Unused local variables and `use` names (faded, with a quick fix)
+- [x] Workspace diagnostics: problems in files that are not open
+  (`workspace_diagnostics`)
 - [x] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument
 - [x] Module dependency graph: cycles (`circular-use`) and compile order

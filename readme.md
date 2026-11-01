@@ -281,6 +281,10 @@ zfls deliberately differs from fortls in a few places:
   as used when it appears anywhere else in the scope, contained procedures
   and inactive preprocessor branches included; dummy arguments, function
   results and module names are not reported. fortls has no such check.
+- `workspace_diagnostics` publishes the diagnostics of every workspace file
+  after initialization, and again when a saved or changed file changes
+  them, so that editors list the problems of files that are not open; a
+  deleted file's are cleared. fortls only checks open files.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
   fortls only checks the types named in declarations. It is left out where
@@ -318,7 +322,7 @@ zfls deliberately differs from fortls in a few places:
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
   ...) shows its documentation (fortls #547); fortls has no hover there.
 - Hover on a name that is not declared shows the type that the IMPLICIT
-  statements of its scope and the scopes around it, or the default rules
+  statements of its scope and the surrounding scopes, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has
   no hover there. Under IMPLICIT NONE there is none.
 - Workspace symbol search also finds the names the query matches fuzzily

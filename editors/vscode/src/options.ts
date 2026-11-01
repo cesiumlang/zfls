@@ -26,6 +26,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "sortKeywords", flag: "--sort_keywords", kind: "flag" },
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
+  { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
   { setting: "nthreads", flag: "--nthreads", kind: "int" },
   { setting: "maxLineLength", flag: "--max_line_length", kind: "int" },

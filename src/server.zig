@@ -285,6 +285,7 @@ pub const Server = struct {
         supertypes,
         subtypes,
         compile_order,
+        initialized,
         did_open,
         did_save,
         did_close,
@@ -328,7 +329,7 @@ pub const Server = struct {
         .{ "textDocument/didChange", .did_change },
         .{ "textDocument/codeAction", .code_action },
         .{ "workspace/symbol", .workspace_symbol },
-        .{ "initialized", .ignored },
+        .{ "initialized", .initialized },
         .{ "workspace/didChangeWatchedFiles", .watched_files },
         .{ "workspace/didChangeConfiguration", .ignored },
         .{ "$/cancelRequest", .ignored },
@@ -362,6 +363,10 @@ pub const Server = struct {
             .supertypes => calls.serveSupertypes(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .subtypes => calls.serveSubtypes(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .compile_order => diagnostics.serveCompileOrder(self, a),
+            .initialized => blk: {
+                if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
+                break :blk .null;
+            },
             .did_open => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), true, false),
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
