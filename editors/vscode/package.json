@@ -1249,6 +1249,15 @@
         ]
       }
     ],
+    "views": {
+      "debug": [
+        {
+          "id": "zfls.moduleVariables",
+          "name": "%view.zfls.moduleVariables.name%",
+          "when": "inDebugMode && zfls.fortranFrame"
+        }
+      ]
+    },
     "walkthroughs": [
       {
         "id": "gettingStarted",

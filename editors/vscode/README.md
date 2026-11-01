@@ -403,6 +403,18 @@ Breakpoints in Fortran files may have conditions in Fortran (`i .eq. 5`,
 `x > 1.0`), set before the program starts or while it runs: gdb reads them
 in the language of the breakpoint's line.
 
+While the program is stopped in a Fortran file, the **Fortran Module
+Variables** view of Run and Debug lists the module variables that the
+selected frame's line sees, which the debuggers' Variables view leaves out:
+those of its module, private ones too, and those its USE statements bring
+in, under the names they have there (FortranBreaker #10). Their values come
+from the debugger, asked for each variable by the names that the compilers
+give it: `module::name` (gdb), `__module_MOD_name` (gfortran's symbol, for
+lldb), `_QMmoduleEname` (LLVM Flang's), `MODULE_mp_NAME` (Intel's, for the
+Visual Studio debugger). Arrays and derived types expand as in the
+Variables view. A variable the debugger has no value for shows as not
+available.
+
 **zfls: Add Build Task and Debug Configuration for Fortran File** writes
 the same build as a task in `.vscode/tasks.json` and a debug configuration
 that builds first in `.vscode/launch.json`, replacing those of the same

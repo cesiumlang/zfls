@@ -14,13 +14,12 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-- [ ] Debugging, a first step: Fortran module variables, which the C
-  debuggers do not list, in a view of their own while debugging. FB #10
+Nothing left: 0.4.0 is ready for its release.
 
 ## After 0.4.0
 
-- [ ] Debugging: the other Fortran values in the variables view (arrays of
-  assumed shape and derived types; FB #10), then a Fortran debug adapter of
+- [ ] Debugging: Fortran values in the Variables view itself (arrays of
+  assumed shape, derived types; FB #10), then a Fortran debug adapter of
   zfls's own behind the `fortran` debug type
 - [ ] Translations, as they are asked for (MF #616)
 
@@ -64,6 +63,11 @@ Editor features:
   fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
   GDB); F5 debugs the current file; a configuration per fpm target.
   Conditional breakpoints set before launch work (FB #7)
+- [x] The Fortran Module Variables view while debugging: the module
+  variables the selected frame's line sees (its module's, and those of its
+  USE statements, under their local names; `zfls/moduleVariables`), with
+  their values from the debugger, which lists only a procedure's own.
+  FB #10
 - [x] Hooks for translations (every string of `package.json` in
   `package.nls.json`, `tools/package_nls.py`; the messages shown while the
   extension runs through `vscode.l10n`, in `l10n/bundle.l10n.json`,

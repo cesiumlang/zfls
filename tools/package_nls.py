@@ -89,6 +89,9 @@ def convert(pkg: dict, strings: dict[str, str]) -> int:
         for i, snip in enumerate(dbg.get("configurationSnippets", [])):
             m.move(snip, "label", f"debugger.{t}.snippet.{i}.label")
             m.move(snip, "description", f"debugger.{t}.snippet.{i}.description")
+    for container, views in c.get("views", {}).items():
+        for v in views:
+            m.move(v, "name", f"view.{v['id']}.name")
     for w in c.get("walkthroughs", []):
         wid = w["id"]
         m.move(w, "title", f"walkthrough.{wid}.title")

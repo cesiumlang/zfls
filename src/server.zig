@@ -39,6 +39,7 @@ const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const bindc = @import("server/bindc.zig");
+const modvars = @import("server/modvars.zig");
 const cache = @import("server/cache.zig");
 const clangd = @import("server/clangd.zig");
 
@@ -333,6 +334,7 @@ pub const Server = struct {
         bind_c,
         bind_c_targets,
         bind_c_references,
+        module_variables,
         initialized,
         did_open,
         did_save,
@@ -374,6 +376,7 @@ pub const Server = struct {
         .{ "zfls/bindC", .bind_c },
         .{ "zfls/bindCTargets", .bind_c_targets },
         .{ "zfls/bindCReferences", .bind_c_references },
+        .{ "zfls/moduleVariables", .module_variables },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -418,6 +421,7 @@ pub const Server = struct {
             .bind_c => bindc.serveBindC(self, a, try json.decode(lsp.PositionParams, a, params)),
             .bind_c_targets => bindc.serveBindCTargets(self, a, params),
             .bind_c_references => bindc.serveBindCReferences(self, a, params),
+            .module_variables => modvars.serveModuleVariables(self, a, try json.decode(lsp.PositionParams, a, params)),
             .initialized => blk: {
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
                 break :blk .null;
