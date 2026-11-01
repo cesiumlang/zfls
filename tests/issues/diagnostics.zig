@@ -967,3 +967,63 @@ test "stub actions: an interface block for an external procedure, submodule stub
     try std.testing.expect(std.mem.indexOf(u8, new_sub.new_text, "submodule (m) m_impl\ncontains\n  module procedure foo\n") != null);
     try std.testing.expect(actionNamed(try w.codeActions("n.f90", 2), "Implement bar in submodule n_sub") != null);
 }
+
+test "argument checks: kinds of variables and literals" {
+    const w = try h.Workspace.init(&.{.{ .name = "k.f90", .text =
+        \\module kinds
+        \\  use, intrinsic :: iso_fortran_env, only: real64, int64
+        \\  use, intrinsic :: iso_c_binding, only: c_double
+        \\  implicit none
+        \\  integer, parameter :: dp = kind(1d0), sp = selected_real_kind(6)
+        \\  integer, parameter :: wp = dp, qp = selected_real_kind(p=30)
+        \\contains
+        \\  subroutine take(x, n, y)
+        \\    real(dp), intent(in) :: x
+        \\    integer(int64), intent(in) :: n
+        \\    real(kind=sp), intent(in) :: y
+        \\  end subroutine take
+        \\end module kinds
+        \\program main
+        \\  use kinds
+        \\  implicit none
+        \\  real(real64) :: a
+        \\  real(c_double) :: b
+        \\  double precision :: c
+        \\  real :: d
+        \\  real*8 :: e
+        \\  real(wp) :: f
+        \\  real(qp) :: g
+        \\  integer :: i
+        \\  integer(8) :: j
+        \\  call take(a, j, d)
+        \\  call take(b, 1_int64, 1.0)
+        \\  call take(c, 3_8, 2.5e0)
+        \\  call take(e, j, 1.0_sp)
+        \\  call take(f, j, d)
+        \\  call take(1.0, j, d)
+        \\  call take(d, i, 1d0)
+        \\  call take(g, 3, d)
+        \\  call take(2.0_dp, j, d)
+        \\end program main
+        \\
+    }}, .{});
+    defer w.deinit();
+    var msgs: std.ArrayList([]const u8) = .empty;
+    defer msgs.deinit(std.testing.allocator);
+    for (try w.diagnostics("k.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "argument-kind")) try msgs.append(std.testing.allocator, d.message);
+    }
+    const want = [_][]const u8{
+        "Argument x of take: REAL(8) expected, REAL(4) given",
+        "Argument x of take: REAL(8) expected, REAL(4) given",
+        "Argument n of take: INTEGER(8) expected, INTEGER(4) given",
+        "Argument y of take: REAL(4) expected, REAL(8) given",
+        "Argument x of take: REAL(8) expected, REAL(16) given",
+        "Argument n of take: INTEGER(8) expected, INTEGER(4) given",
+    };
+    if (msgs.items.len != want.len) {
+        std.debug.print("got: {any}\n", .{msgs.items});
+        return error.TestExpectedEqual;
+    }
+    for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
+}

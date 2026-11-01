@@ -296,7 +296,11 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
         .ech = p.end,
         .message = p.message,
         .severity = C.Severity.err,
-        .code = if (p.kind == .arguments) .argument_mismatch else .intent_in_assigned,
+        .code = switch (p.kind) {
+            .arguments => .argument_mismatch,
+            .kinds => .argument_kind,
+            .intent_in => .intent_in_assigned,
+        },
     });
     return out.items;
 }

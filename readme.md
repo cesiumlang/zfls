@@ -161,8 +161,8 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `import-outside-interface`, `module-not-found`, `use-after-implicit`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
 `argument-not-declared`, `not-imported`, `object-not-found`,
-`undeclared-name`, `unused-name`, `circular-use`, `argument-mismatch` and
-`intent-in-assigned`.
+`undeclared-name`, `unused-name`, `circular-use`, `argument-mismatch`,
+`argument-kind` and `intent-in-assigned`.
 
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
@@ -363,9 +363,16 @@ zfls deliberately differs from fortls in a few places:
   is a variable or a literal, a whole array for a scalar, a literal for an
   array (not for elemental or assumed-rank). Generic interfaces,
   intrinsics, procedure pointers, alternate returns and procedures whose
-  argument list has preprocessor lines are not checked. Assigning to an
-  INTENT(IN) dummy argument (not a pointer) is an `intent-in-assigned`
-  error. fortls checks neither.
+  argument list has preprocessor lines are not checked. When the type is
+  right but its kind differs (`1.0` for a `REAL(dp)` argument), that is an
+  `argument-kind` error, a code of its own, as a compiler option such as
+  gfortran's `-fdefault-real-8` changes the default kinds. Kinds are
+  numbered as gfortran does on x86-64, from kind numbers, `*8`, `DOUBLE
+  PRECISION`, literals (`1d0`, `1_8`), the constants of `ISO_FORTRAN_ENV`
+  and `ISO_C_BINDING`, `KIND()`, `SELECTED_REAL_KIND()`,
+  `SELECTED_INT_KIND()` and the PARAMETERs set from them; a kind none of
+  these gives is not checked. Assigning to an INTENT(IN) dummy argument (not
+  a pointer) is an `intent-in-assigned` error. fortls checks none of these.
 - The modules and submodules of the workspace form a dependency graph: a
   USE that closes a cycle of modules using each other is a `circular-use`
   error, and the `zfls/compileOrder` request (the VS Code command "zfls: Show

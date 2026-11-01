@@ -14,7 +14,7 @@ projects zfls replaces:
 
 ## Later
 
-- [ ] Argument checking of kinds, and of the types and ranks of expressions
+- [ ] Argument checking of the types and ranks of expressions
 - [ ] Large projects: summaries for unopened files (FL #563), an on-disk index
   cache (HS #39)
 - [ ] Linters: fortitude (MF #1165), Codee
@@ -95,8 +95,8 @@ Diagnostics and code actions:
 - [x] Workspace diagnostics: problems in files that are not open
   (`workspace_diagnostics`)
 - [x] Argument checking: count, unknown keywords, missing required arguments,
-  assigning an `intent(in)` argument; the type and rank of variables and
-  literals
+  assigning an `intent(in)` argument; the type, rank and kind of variables
+  and literals (`argument-kind`)
 - [x] Module dependency graph: cycles (`circular-use`) and compile order
   (`zfls/compileOrder`, "zfls: Show Module Compile Order")
 - [x] Quick fixes: add `implicit none` and `use` statements, `.eq.` to `==`,
