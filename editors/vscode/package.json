@@ -26,7 +26,10 @@
     "vscode": "^1.102.0"
   },
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "workspaceContains:fpm.toml",
+    "onTaskType:fpm"
+  ],
   "capabilities": {
     "virtualWorkspaces": {
       "supported": false,
@@ -559,6 +562,51 @@
           "scope": "machine-overridable",
           "markdownDescription": "The `gdb` for the `cppdbg` and `gdb` debuggers. Empty: the `gdb` next to the compiler, else the one on the `PATH`."
         },
+        "zfls.fpm.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The [fpm](https://fpm.fortran-lang.org) executable, or the directory that holds it. Empty: `fpm` on the `PATH`. Variables are expanded as in `#zfls.run.compilerPath#`."
+        },
+        "zfls.fpm.profile": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "`--profile` of fpm's builds, runs and tests: `debug`, `release`, or a feature profile of `fpm.toml`. Empty: fpm's default (`debug`). A task's `profile` takes precedence."
+        },
+        "zfls.fpm.compiler": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "`--compiler` of fpm's builds, runs and tests, for example `ifx` or `flang`. Empty: fpm's default (`FPM_FC`, else `gfortran`). Debugging uses it to choose the debugger."
+        },
+        "zfls.fpm.flags": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "`--flag` of fpm's builds, runs and tests: the compiler flags, which replace the profile's."
+        },
+        "zfls.fpm.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Extra arguments of fpm's builds, runs and tests, one per item, for example `[\"--features\", \"mpi\"]`."
+        },
+        "zfls.fpm.runFile": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "**Run Fortran File** and **Debug Fortran File**, on the main program of a target of an fpm project, run or debug that target with fpm instead of building the file by itself. Its program arguments are `#zfls.run.programArgs#`."
+        },
+        "zfls.fpm.testExplorer": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "markdownDescription": "Show the tests of fpm projects in the Testing view: each test target (`fpm test --list`), and the suites and tests of [test-drive](https://github.com/fortran-lang/test-drive) below it, with their results."
+        },
         "zfls.formatting.formatter": {
           "type": "string",
           "enum": [
@@ -789,6 +837,16 @@
         "category": "zfls"
       },
       {
+        "command": "zfls.fpm.run",
+        "title": "Run fpm Target",
+        "category": "zfls"
+      },
+      {
+        "command": "zfls.fpm.debug",
+        "title": "Debug fpm Target",
+        "category": "zfls"
+      },
+      {
         "command": "zfls.linter.lint",
         "title": "Lint Current File with Compiler",
         "category": "zfls"
@@ -869,6 +927,63 @@
             "description": "Building or running the file of zfls.runFile and zfls.debugFile"
           }
         }
+      },
+      {
+        "type": "fpm",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "build",
+              "run",
+              "test",
+              "install",
+              "clean"
+            ],
+            "description": "The fpm command"
+          },
+          "target": {
+            "type": "string",
+            "description": "The executable, example or test to run (all of them when not set)"
+          },
+          "example": {
+            "type": "boolean",
+            "description": "Run an example (`fpm run --example`)"
+          },
+          "profile": {
+            "type": "string",
+            "description": "--profile: debug, release or a feature profile (default: zfls.fpm.profile)"
+          },
+          "compiler": {
+            "type": "string",
+            "description": "--compiler (default: zfls.fpm.compiler)"
+          },
+          "flags": {
+            "type": "string",
+            "description": "--flag: the compiler flags (default: zfls.fpm.flags)"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "More fpm arguments, after those of zfls.fpm.args"
+          },
+          "programArgs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The program's arguments, after --"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "The project's directory, relative to the workspace folder (default: the folder)"
+          }
+        }
       }
     ],
     "configurationDefaults": {
@@ -880,7 +995,59 @@
       "[FortranFreeForm]": {
         "editor.formatOnType": true
       }
-    }
+    },
+    "problemMatchers": [
+      {
+        "name": "zfls-gfortran",
+        "label": "gfortran",
+        "owner": "fortran",
+        "source": "gfortran",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": [
+          {
+            "regexp": "^(.+?):(\\d+):(\\d+)(?:-\\d+)?:$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          },
+          {
+            "regexp": "^.*$"
+          },
+          {
+            "regexp": "^.*$"
+          },
+          {
+            "regexp": "^.*$"
+          },
+          {
+            "regexp": "^(Error|Warning|Fatal Error):\\s*(.*)$",
+            "severity": 1,
+            "message": 2
+          }
+        ]
+      },
+      {
+        "name": "zfls-intel",
+        "label": "Intel Fortran (ifx, ifort)",
+        "owner": "fortran",
+        "source": "ifx",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?)\\((\\d+)\\): (error|warning|remark) #(\\d+): (.*)$",
+          "file": 1,
+          "line": 2,
+          "severity": 3,
+          "code": 4,
+          "message": 5
+        }
+      }
+    ]
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --minify --sourcemap",

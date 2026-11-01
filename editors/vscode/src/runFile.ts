@@ -25,6 +25,17 @@ import { documentVariables } from "./variables";
 
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 
+/** Runs or debugs a file another way (fpm, for the programs of its
+ * projects): true when it did, false to build the file by itself */
+type FileRunner = (document: vscode.TextDocument, debug: boolean) => Promise<boolean>;
+
+const fileRunners: FileRunner[] = [];
+
+/** Lets `runner` run or debug a file before zfls.run's single-file build */
+export function addFileRunner(runner: FileRunner): void {
+  fileRunners.push(runner);
+}
+
 export function registerRunCommands(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, false)),
@@ -62,6 +73,11 @@ async function runOrDebug(
   const document = await fortranDocument(uri);
   if (!document) {
     return;
+  }
+  for (const runner of fileRunners) {
+    if (await runner(document, debug)) {
+      return;
+    }
   }
   const plan = makePlan(context, document);
   if (!plan) {
@@ -182,11 +198,7 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
     : outputDirFor(path.join(context.globalStorageUri.fsPath, "run"), source);
   const program = programPath(outDir, source);
   const cwdSetting = expandVariables(config.get<string>("cwd", "${fileDirname}").trim() || "${fileDirname}", ctx);
-  const gdbSetting = expandVariables(config.get<string>("gdbPath", "").trim(), ctx);
-  const gdbPath =
-    findExecutable("gdb", gdbSetting, ctx.workspaceFolder) ??
-    findExecutable("gdb", path.dirname(compiler), undefined) ??
-    (gdbSetting || undefined);
+  const gdbPath = gdbFor(document.uri, compiler);
   return {
     document,
     folder: vscode.workspace.getWorkspaceFolder(document.uri),
@@ -206,10 +218,16 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
 
 /** The debugger to use, or undefined (with a message) when none is installed */
 async function pickDebugger(plan: Plan): Promise<DebugType | undefined> {
+  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc);
+}
+
+/** The debugger of `preference` (zfls.run.debugger) for a program, MSVC-ABI
+ * or not, or undefined (with a message) when none is installed */
+export async function chooseInstalledDebugger(preference: string, msvc: boolean): Promise<DebugType | undefined> {
   const choice = chooseDebugger(
-    plan.debuggerPreference,
+    preference,
     (id) => vscode.extensions.getExtension(id) !== undefined,
-    plan.msvc,
+    msvc,
   );
   if ("type" in choice) {
     return choice.type;
@@ -229,9 +247,24 @@ async function pickDebugger(plan: Plan): Promise<DebugType | undefined> {
   return undefined;
 }
 
+/** The gdb of zfls.run.gdbPath, else the one next to `compiler`, else on
+ * the PATH */
+export function gdbFor(uri: vscode.Uri, compiler: string | undefined): string | undefined {
+  const ctx = documentVariables(uri);
+  const gdbSetting = expandVariables(
+    vscode.workspace.getConfiguration("zfls.run", uri).get<string>("gdbPath", "").trim(),
+    ctx,
+  );
+  return (
+    findExecutable("gdb", gdbSetting, ctx.workspaceFolder) ??
+    (compiler ? findExecutable("gdb", path.dirname(compiler), undefined) : undefined) ??
+    (gdbSetting || undefined)
+  );
+}
+
 /** Runs a task to its end: its exit code, undefined when there is none, or
  * the error when it did not start */
-async function runTask(task: vscode.Task): Promise<number | undefined | { error: unknown }> {
+export async function runTask(task: vscode.Task): Promise<number | undefined | { error: unknown }> {
   task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, clear: true, showReuseMessage: false };
   return new Promise((resolve) => {
     let execution: vscode.TaskExecution | undefined;

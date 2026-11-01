@@ -34,6 +34,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   cppvsdbg) and CodeLLDB
 - run and debug the current file with one click (see
   [Running and debugging](#running-and-debugging))
+- fpm projects: tasks, running and debugging their targets, and their tests
+  in the Testing view (see [fpm projects](#fpm-projects))
 - a Fortran file icon, in file icon themes that use the language's icon
 
 The extension includes the `zfls` executable for Windows, Linux and macOS
@@ -282,8 +284,10 @@ title (also commands, **zfls: Run Fortran File** and **zfls: Debug Fortran
 File**) build the file in the editor, saving it first, and then run it in a
 terminal, or start the debugger on it. Programs of a single file are the
 aim: the directory of the file is on the include path, but other source
-files are not compiled. For a project, use a build system and a launch
-configuration of your own.
+files are not compiled. In an fpm project, they run the target the file is
+the main program of with fpm instead (see [fpm projects](#fpm-projects)).
+For other projects, use a build system and a launch configuration of your
+own.
 
 The build uses `zfls.run.compiler` (`gfortran` by default) with debug
 information and no optimization. The program and the compiler's module and
@@ -325,6 +329,51 @@ the same build as a task in `.vscode/tasks.json` and a debug configuration
 that builds first in `.vscode/launch.json`, replacing those of the same
 name, for starting it with F5 and changing it to suit.
 
+## fpm projects
+
+For a directory with an `fpm.toml`, the
+[Fortran Package Manager](https://fpm.fortran-lang.org) builds, runs and
+tests the project. fpm must be installed (`pip install fpm`, conda, or a
+release from its site); `zfls.fpm.path` says where when it is not on the
+`PATH`.
+
+- **Tasks:** **Terminal > Run Task > fpm** offers `build`, `build --profile
+  release`, `run`, `test`, `install` and `clean` for each project. In
+  `tasks.json`, a task of type `fpm` takes a `command`, and optionally a
+  `target`, `example`, `profile`, `compiler`, `flags`, `args`,
+  `programArgs` and `cwd` (the project's directory in the folder). The
+  compiler's errors appear in the Problems view (the problem matchers
+  `$zfls-gfortran` and `$zfls-intel`).
+- **zfls: Run fpm Target** and **zfls: Debug fpm Target** offer the
+  executables and examples (and, to debug, the tests) that fpm lists.
+  Debugging builds the target with fpm, then starts the debugger of
+  `zfls.run.debugger` on its program, in the project's directory.
+- **Run Fortran File** and **Debug Fortran File**, on the main program of a
+  target (a `main` of `fpm.toml`, or a program in `app`, `test` or
+  `example`), do the same for that target, unless `zfls.fpm.runFile` is
+  off. `zfls.run.programArgs` are the program's arguments.
+- **Testing view:** each test target of `fpm test --list`, with a gutter
+  button on its program. For [test-drive](https://github.com/fortran-lang/test-drive),
+  the suites the program makes (`new_testsuite`) and the tests of their
+  collect procedures (`new_unittest`) are listed below it, and their results
+  are read from its output. Running one suite or test passes its name to the
+  program when it takes them, as test-drive's template does
+  (`select_suite`, `run_selected`); otherwise the whole target runs. The
+  debug profile runs the program under the debugger.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `zfls.fpm.path` | empty | The fpm executable, or its directory |
+| `zfls.fpm.profile` | empty | `--profile`: `debug` (fpm's default), `release` or a feature profile |
+| `zfls.fpm.compiler` | empty | `--compiler`; empty: `FPM_FC`, else `gfortran` |
+| `zfls.fpm.flags` | empty | `--flag`, the compiler flags |
+| `zfls.fpm.args` | `[]` | More arguments of fpm's builds, runs and tests |
+| `zfls.fpm.runFile` | `true` | Run and Debug Fortran File use fpm for the programs of fpm projects |
+| `zfls.fpm.testExplorer` | `true` | fpm's tests in the Testing view |
+
+zfls itself reads `fpm.toml` too: the include directories and macros of a
+project come from it (see the server's documentation).
+
 ## Snippets
 
 Type a prefix and pick the snippet from the completion list:
@@ -357,6 +406,7 @@ Most snippets are adapted from those of Modern Fortran.
 - **zfls: Run Fortran File**, **zfls: Debug Fortran File** (also buttons in
   the editor title)
 - **zfls: Add Build Task and Debug Configuration for Fortran File**
+- **zfls: Run fpm Target**, **zfls: Debug fpm Target**
 - **zfls: Lint Current File with Compiler**
 - **zfls: Clear Compiler Diagnostics**
 - **zfls: Fix All Safe fortitude Problems**
