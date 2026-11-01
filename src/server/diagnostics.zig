@@ -12,6 +12,7 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const glob = @import("../glob.zig");
 const autouse = @import("../autouse.zig");
+const definition = @import("definition.zig");
 const semantic = @import("../semantic.zig");
 const suppress = @import("../suppress.zig");
 const implicit = @import("../implicit.zig");
@@ -42,6 +43,7 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
     try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);
     try addRewriteActions(self, a, file, ast, sline, eline, &out);
+    try addStubActions(self, a, file, ast, sline, eline, &out);
     if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
@@ -155,6 +157,88 @@ pub fn addRewriteActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
     }
     if (op_edits.items.len > 0) try out.append(a, try action(a, uri, "Write .eq. ... .ge. as == ... >=", "refactor.rewrite", op_edits.items));
     if (kind_edits.items.len > 0) try out.append(a, try action(a, uri, "Write the kinds given with * as kind parameters", "refactor.rewrite", kind_edits.items));
+}
+
+/// `text` (lines) with `indent` before each line, and two spaces more
+/// before the lines between the first and the last
+fn indentBlock(a: Allocator, text: []const u8, indent: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var lines: std.ArrayList([]const u8) = .empty;
+    while (it.next()) |l| try lines.append(a, l);
+    for (lines.items, 0..) |l, i| {
+        try out.appendSlice(a, indent);
+        if (i > 0 and i + 1 < lines.items.len) try out.appendSlice(a, "  ");
+        try out.appendSlice(a, l);
+        try out.append(a, '\n');
+    }
+    return out.items;
+}
+
+/// Code actions that write declarations from others:
+/// - on a line calling a procedure defined outside any module, an
+///   interface block for it in the unit around the call;
+/// - on a separate module procedure that has no implementation, its
+///   `module procedure` stub in a submodule of its module (a new one at the
+///   end of the file when there is none)
+pub fn addStubActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+    const uri = try paths.pathToUri(a, file.path);
+    var ln = sline;
+    while (ln <= eline and ln < file.nLines()) : (ln += 1) {
+        const raw = file.getLine(ln, false) orelse continue;
+        if (helpers.isComment(file.fixed, raw)) continue;
+        var code = try helpers.stripStrings(a, raw, true);
+        if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        var it = helpers.words(code);
+        var offered: std.ArrayList(*Obj) = .empty;
+        while (it.next()) |w| {
+            const o = (try definition.getDefinition(self, a, file, ln, w.start, false)) orelse continue;
+            if ((o.kind != .subroutine and o.kind != .function) or o.file_ast.file == null) continue;
+            if (std.mem.indexOfScalar(*Obj, offered.items, o) != null) continue;
+            try offered.append(a, o);
+            if (o.parent == null) {
+                // an external procedure, called from another unit
+                const unit = autouse.unitOf(try ast.getScopes(a, ln + 1)) orelse continue;
+                if (unit == o or o.sline == ln + 1) continue;
+                const iface = (try o.getInterface(a, null, null, null)) orelse continue;
+                const at = try declarationPoint(a, file, unit);
+                const body = try indentBlock(a, iface, try std.mem.concat(a, u8, &.{ at.indent, "  " }));
+                const text = try std.fmt.allocPrint(a, "{s}interface\n{s}{s}end interface\n", .{ at.indent, body, at.indent });
+                const edits = try a.alloc(lsp.TextEdit, 1);
+                edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text };
+                try out.append(a, try action(a, uri, try std.fmt.allocPrint(a, "Add an interface block for {s}", .{o.name}), "quickfix", edits));
+            } else if (o.parent.?.kind == .interface and o.isModScope() and o.linkObj() == null and o.sline == ln + 1) {
+                try submoduleStub(self, a, file, o, out);
+            }
+        }
+    }
+}
+
+/// The `module procedure` stub of separate module procedure `proto`
+fn submoduleStub(self: *Server, a: Allocator, file: *FortranFile, proto: *Obj, out: *std.ArrayList(lsp.CodeAction)) !void {
+    // the module of the interface
+    var m: ?*Obj = proto.parent;
+    while (m) |s| : (m = s.parent) if (s.kind == .module) break;
+    const module = m orelse return;
+    // a submodule of it in the workspace
+    for (try workspaceUnits(self, a)) |u| {
+        if (u.kind != .submodule or u.submodDataConst().ancestor_obj != module or u.eline == 0) continue;
+        const path = u.file_ast.path orelse continue;
+        const target = self.fileForPath(path) orelse continue;
+        const line = u.eline - 1;
+        const edits = try a.alloc(lsp.TextEdit, 1);
+        edits[0] = .{ .range = Server.rangeOf(target, line, 0, line, 0), .newText = try std.fmt.allocPrint(a, "  module procedure {s}\n  end procedure {s}\n", .{ proto.name, proto.name }) };
+        try out.append(a, try action(a, try paths.pathToUri(a, path), try std.fmt.allocPrint(a, "Implement {s} in submodule {s}", .{ proto.name, u.name }), "quickfix", edits));
+        return;
+    }
+    // a new submodule after the module
+    const end_line = file.nLines();
+    const edits = try a.alloc(lsp.TextEdit, 1);
+    edits[0] = .{
+        .range = Server.rangeOf(file, end_line, 0, end_line, 0),
+        .newText = try std.fmt.allocPrint(a, "\nsubmodule ({s}) {s}_impl\ncontains\n  module procedure {s}\n  end procedure {s}\nend submodule {s}_impl\n", .{ module.name, module.name, proto.name, proto.name, module.name }),
+    };
+    try out.append(a, try action(a, try paths.pathToUri(a, file.path), try std.fmt.allocPrint(a, "Implement {s} in a new submodule", .{proto.name}), "quickfix", edits));
 }
 
 /// The keywords of the file in upper, lower or title case (hansec #226,

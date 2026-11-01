@@ -269,7 +269,13 @@ pub fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []con
                 }
             }
         }
-        try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ arg_doc, arg_obj.name }));
+        // the hover of a variable ends with its name already
+        const named = try std.fmt.allocPrint(a, ":: {s}", .{arg_obj.name});
+        if (std.ascii.endsWithIgnoreCase(arg_doc, named)) {
+            try arr.append(a, arg_doc);
+        } else {
+            try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ arg_doc, arg_obj.name }));
+        }
     }
     return arr;
 }

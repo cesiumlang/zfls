@@ -335,6 +335,10 @@ zfls deliberately differs from fortls in a few places:
   on; fortls ignores cancellations.
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
+- Stub actions: on a call of a procedure defined outside any module, an
+  interface block for it in the calling unit; on a separate module procedure
+  without implementation, its `module procedure` stub in a submodule of its
+  module (a new one at the end of the file when there is none).
 - More code actions: "Add IMPLICIT NONE" on the first line of a program
   unit without IMPLICIT statement, the relational operators `.eq.` ...
   `.ge.` as `==` ... `>=` and the kinds written with `*` (`real*8`,
