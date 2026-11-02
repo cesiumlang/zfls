@@ -22,6 +22,7 @@ import { BindC, C_LANGUAGES, identifierAt, isCFile, uniqueByPlace } from "./inte
 import { registerFpm } from "./fpmCommands";
 import { registerFpmTests } from "./fpmTests";
 import { registerPfunitTests } from "./pfunitTests";
+import { registerIfxSetup } from "./ifxSetup";
 import { registerDebugType } from "./debugType";
 import { registerModuleVariables } from "./moduleVariablesView";
 
@@ -55,6 +56,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFpm(context, output);
   registerFpmTests(context, output);
   registerPfunitTests(context, output);
+  registerIfxSetup(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
   registerDebugType(context, output, clientForUri);
   registerModuleVariables(context, clientForUri);
   context.subscriptions.push(

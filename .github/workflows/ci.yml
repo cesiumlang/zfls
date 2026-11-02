@@ -308,6 +308,12 @@ jobs:
             done
             cp LICENSE "$pkg/"
             cp readme.md "$pkg/README.md"
+            # x86_64 Windows: what ifx needs to link without Visual Studio
+            # (zfls setup-ifx), next to zfls
+            if [ "$target" = x86_64-windows ]; then
+              zig build ifx-kit --prefix "out/$target"
+              cp -r "out/$target/lib/ifx" "$pkg/ifx-kit"
+            fi
             case "$target" in
               *windows) (cd pkg && zip -qr "../dist/$name.zip" "$name") ;;
               *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
@@ -454,6 +460,18 @@ jobs:
           exe=zfls
           case "$TARGET" in *windows) exe=zfls.exe ;; esac
           echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
+
+      - name: The ifx kit in the package (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          kit="$(dirname "$ZFLS")/ifx-kit"
+          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib; do
+            if [ ! -s "$kit/$f" ]; then
+              echo "::error::the Windows x64 package has no ifx-kit/$f"
+              exit 1
+            fi
+          done
+          "$ZFLS" setup-ifx --help | head -1
 
       - name: Version under test
         run: |

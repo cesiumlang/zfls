@@ -172,5 +172,6 @@
   "debugger.fortran.attach.gdb.description": "The gdb of zfls's debugger (gdb 14 or later, built with Python); default zfls.run.gdbPath.",
   "debugger.fortran.attach.setupCommands.description": "gdb commands to run before attaching, such as `set print elements 0`.",
   "debugger.fortran.snippet.2.label": "Fortran: attach",
-  "debugger.fortran.snippet.2.description": "Attach zfls's debugger to a running Fortran program"
+  "debugger.fortran.snippet.2.description": "Attach zfls's debugger to a running Fortran program",
+  "command.zfls.setUpIfx.title": "Set Up ifx (Intel Fortran) without Visual Studio"
 }

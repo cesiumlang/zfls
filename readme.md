@@ -136,6 +136,40 @@ The fortls debug options work as well, for instance
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
 --debug_line 10 --debug_char 5` runs a single hover request.
 
+### ifx without Visual Studio (Windows x64)
+
+`zfls setup-ifx` sets up Intel's Fortran compiler, ifx, from Intel's
+offline installer for Windows, without running the installer (no
+administrator rights, nothing registered) and without Visual Studio:
+
+```sh
+zfls setup-ifx intel-fortran-compiler-2026.2.0.605_offline.exe --show-license
+zfls setup-ifx intel-fortran-compiler-2026.2.0.605_offline.exe --accept-intel-license
+```
+
+Download the offline installer from
+[Intel](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler-download.html);
+zfls distributes nothing of Intel's. It reads the installer as the zip it
+is, unpacks what a Fortran compiler needs (about 210 MB, leaving out OpenCL,
+SYCL, GPU offload and the debug and static runtimes), with Intel's license
+and notices, into `%LOCALAPPDATA%\zfls\ifx\<version>` (or `--dest`), once
+Intel's license is accepted (`--show-license` prints it). It then copies
+zfls's ifx kit (`ifx-kit`, next to zfls in the Windows x64 package) next to
+it and writes `bin\ifx.cfg`, so that this ifx links with its own `lld-link`
+and the kit instead of Visual Studio's linker and libraries: `ifx` works in
+any shell, Makefile or fpm build with its `bin` on the `PATH`.
+
+The kit is a startup object of zfls's (the program's entry point over the
+Universal C Runtime of Windows, the stack probe and the `/GS` stack cookie,
+`src/ifxkit/shim.zig`) and import libraries made from MinGW-w64's
+definition files (`zig build ifx-kit`). Programs are built with `/MD`, the
+C runtime in DLLs (Windows's UCRT, part of Windows 10 and later), and need
+Intel's runtime DLLs (in ifx's `bin`) to run. `/MT` (Microsoft's static C
+runtime) does not link; CMake, which runs the linker itself, needs
+`CMAKE_LINKER` set to ifx's `lld-link` and `LIB` to ifx's `lib` and `zfls`
+directories. The VS Code extension's **zfls: Set Up ifx** does the same,
+showing Intel's license first.
+
 ### Build files
 
 zfls adds to the `include_dirs` and `pp_defs` options what the project's
@@ -604,7 +638,12 @@ zfls deliberately differs from fortls in a few places:
 
 ## Licenses
 
-zfls is distributed under the MIT license, see `LICENSE`. It is derived from
+zfls is distributed under the MIT license, see `LICENSE`, except for the ifx
+kit's startup code (`src/ifxkit/shim.zig`), which is under MIT No
+Attribution (MIT-0) because it is linked into the programs ifx builds with
+the kit; the kit's import libraries come from MinGW-w64's public-domain
+definition files. ifx itself is Intel's, under Intel's license, which
+`zfls setup-ifx` shows and which the user accepts. zfls is derived from
 fortls and its predecessor fortran-language-server, also MIT licensed, whose
 copyright notices `LICENSE` includes. The intrinsic procedure documentation
 comes from the

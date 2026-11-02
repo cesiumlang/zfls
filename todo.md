@@ -84,6 +84,12 @@ Editor features:
   Welcome): opening a project, configuring it, compiler diagnostics,
   running and debugging, fpm and pFUnit tests, formatting, the output.
   MF #472
+- [x] ifx without Visual Studio (Windows x64): `zfls setup-ifx` and **zfls:
+  Set Up ifx** unpack ifx from Intel's offline installer (downloaded from
+  Intel) without running it, once Intel's license is accepted, and set it
+  up to link with its own lld-link and zfls's ifx kit (a startup object,
+  MIT-0, and import libraries from MinGW-w64's definition files, made by
+  `zig build ifx-kit`) instead of Visual Studio's
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
