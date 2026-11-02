@@ -184,18 +184,18 @@ pub fn destination(a: Allocator, name: []const u8) !?[]const u8 {
 /// C/C++ drivers, debug (`*mdd`) and static (`/MT`) runtimes
 fn leftOut(rel: []const u8) bool {
     const bin_prefixes = [_][]const u8{
-        "common_clang64",   "intelocl64", "opencl",  "omptarget", "ur_", "xptifw", "sycl-ls", "syclbin-dump",
-        "qkmalloc",         "libocl_svml", "icx-cc", "icx-cl", "cl.cfg", "icx.cfg", "clbltfn", "cllibrary",
+        "common_clang64", "intelocl64",  "opencl", "omptarget", "ur_",    "xptifw",  "sycl-ls", "syclbin-dump",
+        "qkmalloc",       "libocl_svml", "icx-cc", "icx-cl",    "cl.cfg", "icx.cfg", "clbltfn", "cllibrary",
     };
     const tool_prefixes = [_][]const u8{
-        "lld.exe",        "ld.lld.exe",    "llc.exe",       "modularize",  "llvm-spirv", "sycl-post-link",
-        "llvm-profgen",   "llvm-profdata", "clang-offload", "file-table-tform", "spirv-to-ir", "llvm-foreach",
-        "append-file",    "llvm-cov",      "llvm-symbolizer", "yaml2obj", "llvm-link", "llvm-objcopy",
-        "llvm-nm",        "llvm-ar",       "llvm-ml",
+        "lld.exe",      "ld.lld.exe",    "llc.exe",         "modularize",       "llvm-spirv",  "sycl-post-link",
+        "llvm-profgen", "llvm-profdata", "clang-offload",   "file-table-tform", "spirv-to-ir", "llvm-foreach",
+        "append-file",  "llvm-cov",      "llvm-symbolizer", "yaml2obj",         "llvm-link",   "llvm-objcopy",
+        "llvm-nm",      "llvm-ar",       "llvm-ml",
     };
     const static_libs = [_][]const u8{
-        "svml_dispmt", "libmmt", "libmmds", "libm", "libifcoremt", "libifcore", "libifport", "libirc",
-        "libdecimal", "libistrconv", "libirng", "intelocl64", "opencl",
+        "svml_dispmt", "libmmt",      "libmmds", "libm",       "libifcoremt", "libifcore", "libifport", "libirc",
+        "libdecimal",  "libistrconv", "libirng", "intelocl64", "opencl",
     };
     var buf: [512]u8 = undefined;
     if (rel.len > buf.len) return false;
@@ -523,9 +523,9 @@ test "what a Fortran compiler needs" {
     defer arena.deinit();
     const a = arena.allocator();
     const kept = [_][]const u8{
-        "bin/ifx.exe",               "bin/compiler/xfortcom.exe", "bin/compiler/lld-link.exe", "bin/libifcoremd.dll",
-        "bin/libmmd.dll",            "bin/svml_dispmd.dll",       "bin/libiomp5md.dll",        "lib/libifcoremd.lib",
-        "lib/libifportmd.lib",       "lib/libircmt.lib",          "lib/libmmd.lib",            "lib/svml_dispmd.lib",
+        "bin/ifx.exe",                              "bin/compiler/xfortcom.exe", "bin/compiler/lld-link.exe", "bin/libifcoremd.dll",
+        "bin/libmmd.dll",                           "bin/svml_dispmd.dll",       "bin/libiomp5md.dll",        "lib/libifcoremd.lib",
+        "lib/libifportmd.lib",                      "lib/libircmt.lib",          "lib/libmmd.lib",            "lib/svml_dispmd.lib",
         "opt/compiler/include/intel64/omp_lib.mod",
     };
     for (kept) |k| {
@@ -533,8 +533,8 @@ test "what a Fortran compiler needs" {
         try std.testing.expectEqualStrings(k, (try destination(a, name)) orelse return error.LeftOut);
     }
     const out_ = [_][]const u8{
-        "bin/common_clang64.dll", "bin/libifcoremdd.dll", "bin/compiler/lld.exe",  "bin/compiler/llvm-spirv.exe",
-        "lib/svml_dispmt.lib",    "lib/libifcoremt.lib",  "lib/libmmdd.lib",       "lib/clang/23/lib/x.a",
+        "bin/common_clang64.dll", "bin/libifcoremdd.dll", "bin/compiler/lld.exe", "bin/compiler/llvm-spirv.exe",
+        "lib/svml_dispmt.lib",    "lib/libifcoremt.lib",  "lib/libmmdd.lib",      "lib/clang/23/lib/x.a",
         "lib/sycl9.lib",          "bin/libiomp5md.pdb",
     };
     for (out_) |o| {
