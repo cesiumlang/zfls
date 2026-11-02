@@ -329,7 +329,11 @@ export class GdbAdapter {
 
   private start(): string | undefined {
     try {
-      this.gdb = spawn(this.options.gdb, ["-q", "-i=dap"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      this.gdb = spawn(this.options.gdb, ["-q", "-i=dap"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        env: gdbEnv(this.options.gdb, process.env),
+      });
     } catch (e) {
       return String(e);
     }
@@ -1051,7 +1055,9 @@ export function gdbHasDap(gdb: string): Promise<boolean> {
       if (!version || version[0] < 14) {
         return false;
       }
-      return (await output(gdb, ["-nx", "-q", "-batch", "-ex", "python print(6*7)"])).trim() === "42";
+      // the modules its DAP needs, which another Python's library lacks
+      const check = "python import json, struct, threading; print(6*7)";
+      return (await output(gdb, ["-nx", "-q", "-batch", "-ex", check])).trim() === "42";
     })();
     dapSupport.set(gdb, known);
   }
@@ -1060,8 +1066,24 @@ export function gdbHasDap(gdb: string): Promise<boolean> {
 
 function output(exe: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
-    execFile(exe, args, { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? "" : stdout));
+    execFile(exe, args, { timeout: 10000, windowsHide: true, env: gdbEnv(exe, process.env) }, (error, stdout) =>
+      resolve(error ? "" : stdout),
+    );
   });
+}
+
+/** gdb's environment: its own directory first on the PATH. gdb's Python
+ * finds its library by the `python3` on the PATH, and another one there
+ * first (a virtual environment, conda, pyenv, CI's) breaks it ("No module
+ * named '_struct'"); next to gdb is the one it was built with. */
+export function gdbEnv(gdb: string, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const dir = path.isAbsolute(gdb) ? path.dirname(gdb) : undefined;
+  if (!dir) {
+    return base;
+  }
+  const key = Object.keys(base).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const current = base[key] ?? "";
+  return { ...base, [key]: current ? `${dir}${path.delimiter}${current}` : dir };
 }
 
 /** The program's environment: this process's with `extra` over it (gdb

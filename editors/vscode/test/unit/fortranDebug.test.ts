@@ -24,7 +24,8 @@ import {
   shapePreview,
   structPreview,
 } from "../../src/fortranDebug";
-import { gdbVersion, mergeEnv } from "../../src/gdbAdapter";
+import * as path from "node:path";
+import { gdbEnv, gdbVersion, mergeEnv } from "../../src/gdbAdapter";
 
 test("arrays of gdb's type strings", () => {
   assert.deepEqual(arrayType("real(kind=4) (3)"), { element: "real(kind=4)", allocatable: false, dims: [{ lo: 1, hi: 3 }] });
@@ -162,4 +163,13 @@ test("gdb's version, the program's environment", () => {
   assert.equal(gdbVersion("lldb version 21"), undefined);
   const env = mergeEnv({ A: "1", B: "2" }, { B: "3", C: 4 });
   assert.deepEqual(env, { A: "1", B: "3", C: "4" });
+});
+
+test("gdb's own directory first on its PATH, for its Python", () => {
+  const gdb = path.resolve("/opt/gdb/bin/gdb");
+  const env = gdbEnv(gdb, { Path: "x", HOME: "h" });
+  assert.equal(env.Path, `${path.dirname(gdb)}${path.delimiter}x`);
+  assert.equal(env.HOME, "h");
+  // a bare name: the PATH as it is
+  assert.deepEqual(gdbEnv("gdb", { PATH: "x" }), { PATH: "x" });
 });
