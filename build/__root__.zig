@@ -124,7 +124,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .root_source_file = b.path("tests/lsp_client.zig"),
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap)");
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap with the engine and gdb)");
     const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false };
     const tools = [_]Tool{
         .{
@@ -148,6 +148,13 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it)",
             .needs_fortls = false,
             .needs_zig = true,
+        },
+        .{
+            .name = "dap_gdb",
+            .root = "tests/dap_gdb.zig",
+            .step = "test-dap-gdb",
+            .desc = "Debug a gfortran program with zfls dap and gdb (skipped without gfortran or gdb 14+)",
+            .needs_fortls = false,
         },
         .{
             .name = "bench_workspace",

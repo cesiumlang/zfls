@@ -453,11 +453,13 @@ the component, not the variable of that name.
 
 ### zfls's debugger
 
-zfls's debugger runs gdb (`zfls.run.gdbPath`) in its Debug Adapter
-Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), or, for
-the programs of `ifx`, `ifort` and LLVM Flang on Windows, Windows's own
-Debugger Engine (`dbgeng.dll`, which every Windows 10 and later has; `zfls
-dap`), and shows the program as Fortran:
+zfls's debugger is `zfls dap`, the debug adapter of the zfls executable
+(the extension's own, or `zfls.path`), which other editors use too. It
+runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb
+-i=dap`: gdb 14 or later, built with Python), or, for the programs of
+`ifx`, `ifort` and LLVM Flang on Windows, Windows's own Debugger Engine
+(`dbgeng.dll`, which every Windows 10 and later has), and shows the program
+as Fortran:
 
 - arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a
   large one in sections (`(1:100)`, ...), with a preview of their first
@@ -470,7 +472,8 @@ dap`), and shows the program as Fortran:
 - the module variables that the frame's line sees, as the **Module
   variables** scope of the Variables view: those of its module, private
   ones too, and those its USE statements bring in, under their names there
-  (`local => name` when renamed);
+  (`local => name` when renamed), as zfls's index of the sources (the
+  workspace folder) finds them;
 - each variable with its Fortran expression, for **Add to Watch**, **Copy
   as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
 - gfortran's hidden lengths of CHARACTER arguments left out;
@@ -521,14 +524,18 @@ release from its site); `zfls.fpm.path` says where when it is not on the
   target (a `main` of `fpm.toml`, or a program in `app`, `test` or
   `example`), do the same for that target, unless `zfls.fpm.runFile` is
   off. `zfls.run.programArgs` are the program's arguments.
-- **Testing view:** each test target of `fpm test --list`, with a gutter
-  button on its program. For [test-drive](https://github.com/fortran-lang/test-drive),
-  the suites the program makes (`new_testsuite`) and the tests of their
-  collect procedures (`new_unittest`) are listed below it, and their results
-  are read from its output. Running one suite or test passes its name to the
-  program when it takes them, as test-drive's template does
-  (`select_suite`, `run_selected`); otherwise the whole target runs. The
-  debug profile runs the program under the debugger.
+- **Testing view:** each test target, with a gutter button on its program:
+  the `[[test]]` tables of `fpm.toml`, and (unless `auto-tests = false`)
+  each program in `test` and below, named after its file, as fpm makes
+  them. For [test-drive](https://github.com/fortran-lang/test-drive), the
+  suites the program makes (`new_testsuite`) and the tests of their collect
+  procedures (`new_unittest`, in the sources next to the program) are
+  listed below it, and their results are read from its output. Running one
+  suite or test passes its name to the program when it takes them, as
+  test-drive's template does (`select_suite`, `run_selected`); otherwise
+  the whole target runs. The debug profile runs the program under the
+  debugger. zfls finds the tests (`zfls/fpmTests`, which other editors can
+  ask too); the extension runs them.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -549,7 +556,8 @@ In a CMake project that builds its [pFUnit](https://github.com/Goddard-Fortran-E
 tests with `add_pfunit_ctest`, the Testing view lists each test program,
 with the suite of each of its `.pf` files (`@suite(name=...)`, else the
 module's name with `_suite`) and their `@test` procedures, with gutter
-buttons on them.
+buttons on them. zfls finds them (`zfls/pfunitTests`, which other editors
+can ask too); the extension builds and runs them.
 
 - **Running** builds the program (`cmake --build DIR --target NAME`, with
   the compiler's problems in the Problems view), takes its command from

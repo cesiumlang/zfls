@@ -39,6 +39,8 @@ pub const rewrite = @import("rewrite.zig");
 pub const outline = @import("outline.zig");
 pub const namelist = @import("namelist.zig");
 pub const project = @import("project.zig");
+pub const fpm = @import("fpm.zig");
+pub const pfunit = @import("pfunit.zig");
 pub const semantic = @import("semantic.zig");
 pub const suppress = @import("suppress.zig");
 pub const server = @import("server.zig");
@@ -46,6 +48,9 @@ pub const version_info = @import("version.zig");
 pub const debug = @import("debug.zig");
 pub const ifxsetup = @import("ifxsetup.zig");
 pub const dap_values = @import("dap/values.zig");
+pub const dap_fortran = @import("dap/fortran.zig");
+pub const dap_gdb = @import("dap/gdb.zig");
+pub const dap_gdb_variables = @import("dap/gdb_variables.zig");
 
 test {
     std.testing.refAllDecls(@This());

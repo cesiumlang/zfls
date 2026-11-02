@@ -393,8 +393,8 @@ jobs:
 
       # gfortran is the oracle for symbol extraction; the oracle test is
       # skipped where none is available (Windows on Arm). gdb is the
-      # debugger of the extension's test of its debug adapter, skipped
-      # without one (macOS, Windows on Arm)
+      # debugger of the test of zfls dap with gdb, run where both are
+      # (Linux, Windows x64)
       - name: gfortran and gdb (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -471,8 +471,8 @@ jobs:
           done
           "$ZFLS" setup-ifx --help | head -1
 
-      # the Zig test drivers (tests/dap_windows.zig, tests/gfortran_oracle.zig,
-      # tests/stress_edit.zig)
+      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig,
+      # tests/gfortran_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
 
@@ -481,6 +481,17 @@ jobs:
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
         run: zig-out/bin/dap_windows --zfls "$ZFLS"
+
+      # zfls dap with gdb on a gfortran program: the variables as Fortran,
+      # the module variables, a runtime error (GFORTRAN and GDB name
+      # MSYS2's on Windows x64)
+      - name: zfls dap with gdb (Linux, Windows x64)
+        if: runner.os == 'Linux' || matrix.target == 'x86_64-windows'
+        # setup-python's library directory, on the library path for the
+        # fortls tests, would give Ubuntu's gdb another Python than its own
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS"
 
       - name: Version under test
         run: |

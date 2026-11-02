@@ -1,8 +1,9 @@
 // The `fortran` debug type: a launch configuration that the extension
-// resolves into zfls's own debugger (gdbAdapter.ts, when there is a gdb of
-// the Debug Adapter Protocol) or one of the debugger extensions installed
-// (C/C++, CodeLLDB, CDT GDB), as Debug Fortran File chooses: the program,
-// or an fpm target that it builds first, with its arguments, directory and
+// resolves into zfls's own debugger (`zfls dap`, which runs gdb when there
+// is a gdb of the Debug Adapter Protocol, or Windows's Debugger Engine for
+// MSVC-ABI programs) or one of the debugger extensions installed (C/C++,
+// CodeLLDB, CDT GDB), as Debug Fortran File chooses: the program, or an fpm
+// target that it builds first, with its arguments, directory and
 // environment, and the compiler's runtime libraries on the PATH on
 // Windows. launch.json keeps saying `fortran` whichever debugger runs it.
 // F5 without a launch.json debugs the file in the editor; the Run and
@@ -12,12 +13,9 @@
 import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { LanguageClient } from "vscode-languageclient/node";
 import { TargetKind } from "./fpm";
 import { FpmProject, buildTarget, findProjects, fpmCompiler, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
-import { hoverExpressionStart } from "./fortranDebug";
-import { AdapterText, GdbAdapter, gdbHasDap } from "./gdbAdapter";
-import { ModuleVariable } from "./moduleVariables";
+import { gdbHasDap, hoverExpressionStart } from "./debugSupport";
 import { compilerKind, fortranLaunch, parseProcesses, runtimeEnv } from "./run";
 import { chooseInstalledDebugger, gdbFor } from "./runFile";
 import { expandVariables, findExecutable } from "./tools";
@@ -30,28 +28,22 @@ const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 export function registerDebugType(
   context: vscode.ExtensionContext,
   log: vscode.LogOutputChannel,
-  clientFor: (uri: vscode.Uri) => Promise<LanguageClient | undefined>,
   zfls: () => string | undefined,
 ): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, {
+      // zfls dap: Windows's Debugger Engine for MSVC-ABI programs, else gdb;
+      // the words it shows, in VS Code's language
       createDebugAdapterDescriptor: (session) => {
-        // MSVC-ABI programs: Windows's Debugger Engine, by zfls dap
-        if (session.configuration.dbgeng === true) {
-          const exe = zfls();
-          if (!exe) {
-            throw new Error(vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."));
-          }
-          return new vscode.DebugAdapterExecutable(exe, ["dap"]);
+        const exe = zfls();
+        if (!exe) {
+          throw new Error(vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."));
         }
-        return new vscode.DebugAdapterInlineImplementation(
-          new GdbAdapter({
-            gdb: typeof session.configuration.gdb === "string" && session.configuration.gdb ? session.configuration.gdb : "gdb",
-            moduleVariables: (file, line) => moduleVariables(clientFor, file, line),
-            text: adapterText(),
-            log: (line) => log.info(line),
-          }),
-        );
+        const config = session.configuration;
+        const debuggerArgs =
+          config.dbgeng === true ? ["--dbgeng"] : ["--gdb", typeof config.gdb === "string" && config.gdb ? config.gdb : "gdb"];
+        log.info(`[debug] ${exe} dap ${debuggerArgs.join(" ")}`);
+        return new vscode.DebugAdapterExecutable(exe, ["dap", ...debuggerArgs, "--text", JSON.stringify(adapterText())]);
       },
     }),
     vscode.languages.registerEvaluatableExpressionProvider(
@@ -187,37 +179,16 @@ async function attach(
     ...config,
     type: DEBUG_TYPE,
     gdb: typeof config.gdb === "string" && config.gdb ? config.gdb : gdb,
+    // the sources zfls dap indexes, for the module variables
+    ...(typeof config.sourceRoot !== "string" && folder ? { sourceRoot: folder.uri.fsPath } : {}),
     ...(typeof config.program === "string" && config.program ? { program: path.resolve(folder?.uri.fsPath ?? "", config.program) } : {}),
   };
   log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
   return resolved;
 }
 
-/** The module variables a line of a Fortran file sees, from its server */
-async function moduleVariables(
-  clientFor: (uri: vscode.Uri) => Promise<LanguageClient | undefined>,
-  file: string,
-  line: number,
-): Promise<ModuleVariable[]> {
-  const uri = vscode.Uri.file(file);
-  try {
-    const doc = await vscode.workspace.openTextDocument(uri);
-    if (!LANGUAGES.includes(doc.languageId)) {
-      return [];
-    }
-  } catch {
-    return [];
-  }
-  const client = await clientFor(uri);
-  return (
-    (await client?.sendRequest<ModuleVariable[] | null>("zfls/moduleVariables", {
-      textDocument: { uri: client.code2ProtocolConverter.asUri(uri) },
-      position: { line: line - 1, character: 0 },
-    })) ?? []
-  );
-}
-
-function adapterText(): AdapterText {
+/** The words zfls dap shows, translated (`zfls dap --text`) */
+function adapterText(): Record<string, string> {
   return {
     moduleVariables: vscode.l10n.t("Module variables"),
     notAllocated: vscode.l10n.t("not allocated"),

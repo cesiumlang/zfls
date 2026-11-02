@@ -133,9 +133,9 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    // a debug adapter over Windows's Debugger Engine
-    if (builtin.target.os.tag == .windows and args.items.len > 0 and std.mem.eql(u8, args.items[0], "dap")) {
-        const code = try @import("dap/session.zig").run(gpa, io, args.items[1..]);
+    // a debug adapter over gdb or Windows's Debugger Engine
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "dap")) {
+        const code = try @import("dap/session.zig").run(gpa, io, init.environ_map, args.items[1..]);
         if (code != 0) std.process.exit(code);
         return;
     }
