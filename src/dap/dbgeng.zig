@@ -225,8 +225,14 @@ pub const Engine = struct {
     /// Starts `command_line` (the program and its arguments, quoted), in a
     /// console of its own unless not `window`, in `cwd`, with zfls's
     /// environment, and stops at its first instruction
-    pub fn launch(self: *Engine, a: Allocator, command_line: []const u8, cwd: ?[]const u8, window: bool) !void {
+    pub fn launch(self: *Engine, a: Allocator, program: []const u8, command_line: []const u8, cwd: ?[]const u8, window: bool) !void {
         try self.setup();
+        // symbols from the program's own directory, where compilers put its
+        // PDB: not a machine's symbol server (`srv*`), which then hides it
+        if (std.fs.path.dirname(program)) |dir| {
+            const wdir = try std.unicode.utf8ToUtf16LeAllocZ(a, dir);
+            _ = self.symbols.SetSymbolPathWide(wdir.ptr);
+        }
         const cmd = try std.unicode.utf8ToUtf16LeAllocZ(a, command_line);
         const dir = if (cwd) |d| try std.unicode.utf8ToUtf16LeAllocZ(a, d) else null;
         var options: dbg.DEBUG_CREATE_PROCESS_OPTIONS = .{
@@ -343,7 +349,13 @@ pub const Engine = struct {
             std.unicode.utf16LeToUtf8Alloc(a, file[0 .. flen - 1]) catch "?"
         else
             "";
-        return a.print("symbols {d}, file {s}, path {s}", .{ kind, pdb, sym_path }) catch "";
+        var module: [256:0]u16 = undefined;
+        var mlen: u32 = 0;
+        const mod_name = if (succeeded(self.symbols.GetModuleNameStringWide(dbg.DEBUG_MODNAME_MODULE, 0, 0, &module, module.len, &mlen)) and mlen > 0)
+            std.unicode.utf16LeToUtf8Alloc(a, module[0 .. mlen - 1]) catch "?"
+        else
+            "(none)";
+        return a.print("module {s}: symbols {d}, file {s}, path {s}", .{ mod_name, kind, pdb, sym_path }) catch "";
     }
 
     pub fn breakpointOffset(self: *Engine, id: u32) ?u64 {

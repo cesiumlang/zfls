@@ -258,7 +258,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             try setEnv(a, json.get(args, "env"));
             // a console of its own, unless the configuration wants none (its output is then lost)
             const window = !std.mem.eql(u8, json.str(json.get(args, "console")) orelse "", "internalConsole");
-            s.engine.launch(a, cmdline.items, cwd, window) catch |e| return s.fail(a, req, try a.print("could not start the program: {s} at {s} (0x{x})", .{ @errorName(e), dbgeng.last_step, dbgeng.last_failure }));
+            s.engine.launch(a, program, cmdline.items, cwd, window) catch |e| return s.fail(a, req, try a.print("could not start the program: {s} at {s} (0x{x})", .{ @errorName(e), dbgeng.last_step, dbgeng.last_failure }));
             s.stop_at_entry = flag(args, "stopAtEntry");
             s.launched = true;
             index(s, a, json.str(json.get(args, "sourceRoot")) orelse cwd orelse std.fs.path.dirname(program) orelse ".");
