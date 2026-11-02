@@ -123,6 +123,21 @@ pub const Settings = struct {
     compiler_fypp: ?[]const u8 = null,
     /// fypp's further arguments (-I, -D, ...)
     compiler_fypp_args: StrList = .{},
+    // Linters
+    /// Lint files with fortitude
+    fortitude: bool = false,
+    /// fortitude's executable; null: `fortitude` on the PATH
+    fortitude_path: ?[]const u8 = null,
+    fortitude_args: StrList = .{},
+    /// Lint a file while it is edited too, after `fortitude_change_delay`
+    /// milliseconds without a change
+    fortitude_on_change: bool = false,
+    fortitude_change_delay: i64 = 500,
+    /// Check files with Codee (`codee checks`)
+    codee: bool = false,
+    /// Codee's executable; null: `codee` on the PATH
+    codee_path: ?[]const u8 = null,
+    codee_args: StrList = .{},
     // Preprocessor options
     /// null: use the default rule (uppercase extensions are preprocessed)
     pp_suffixes: ?StrList = null,
@@ -240,6 +255,15 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
+
+    .{ .long = "fortitude", .kind = .flag, .help = "Lint files with fortitude (pip install fortitude-lint) when they are opened and saved: its problems are warnings, its fixes quick fixes, and source.fixAll.fortitude applies the safe ones", .group = "Linter options" },
+    .{ .long = "fortitude_path", .kind = .string, .metavar = "PATH", .help = "fortitude's executable (default: the one on the PATH)", .group = "Linter options" },
+    .{ .long = "fortitude_args", .kind = .string, .metavar = "ARGS", .help = "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
+    .{ .long = "fortitude_on_change", .kind = .flag, .help = "Also lint a file with fortitude while it is edited, after fortitude_change_delay milliseconds without a change", .group = "Linter options" },
+    .{ .long = "fortitude_change_delay", .kind = .int, .metavar = "MS", .help = "With fortitude_on_change, the milliseconds without a change before linting (default: 500)", .group = "Linter options" },
+    .{ .long = "codee", .kind = .flag, .help = "Check files with Codee (codee checks, a commercial tool) when they are opened and saved", .group = "Linter options" },
+    .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
+    .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
@@ -395,11 +419,13 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
                     continue;
                 }
-                if (std.mem.eql(u8, o.long, "compiler_args") or std.mem.eql(u8, o.long, "compiler_fypp_args")) {
+                if (isArgList(o.long)) {
                     var list: StrList = .{};
                     var words = std.mem.tokenizeAny(u8, val, " \t");
                     while (words.next()) |w| try list.items.append(a, w);
-                    if (o.long.len == "compiler_args".len) s.compiler_args = list else s.compiler_fypp_args = list;
+                    inline for (arg_lists) |name| if (std.mem.eql(u8, o.long, name)) {
+                        @field(s, name) = if (@FieldType(Settings, name) == StrList) list else @as(?StrList, list);
+                    };
                     continue;
                 }
                 var handled = false;
@@ -500,6 +526,16 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
     };
 }
 
+/// The options that are arguments of another program: one string, split at
+/// spaces, on the command line, and a list or a string in a configuration
+/// file
+const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args" };
+
+fn isArgList(name: []const u8) bool {
+    inline for (arg_lists) |n| if (std.mem.eql(u8, name, n)) return true;
+    return false;
+}
+
 /// Arguments: a string split at spaces, or a list, which keeps repeated
 /// ones (-I a -I b); null for anything else
 fn argList(a: Allocator, v: json.Value) !?StrList {
@@ -572,6 +608,19 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
     if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
         s.compiler_fypp_args = l;
+    };
+    // Linters
+    s.fortitude = jsonBool(json.get(cfg, "fortitude"), s.fortitude);
+    if (json.get(cfg, "fortitude_path")) |v| s.fortitude_path = json.str(v);
+    if (json.get(cfg, "fortitude_args")) |v| if (try argList(a, v)) |l| {
+        s.fortitude_args = l;
+    };
+    s.fortitude_on_change = jsonBool(json.get(cfg, "fortitude_on_change"), s.fortitude_on_change);
+    s.fortitude_change_delay = jsonInt(json.get(cfg, "fortitude_change_delay"), s.fortitude_change_delay);
+    s.codee = jsonBool(json.get(cfg, "codee"), s.codee);
+    if (json.get(cfg, "codee_path")) |v| s.codee_path = json.str(v);
+    if (json.get(cfg, "codee_args")) |v| if (try argList(a, v)) |l| {
+        s.codee_args = l;
     };
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);

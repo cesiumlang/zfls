@@ -489,6 +489,10 @@ jobs:
       # MSYS2's on Windows x64)
       - name: zfls dap with gdb (Linux, Windows x64)
         if: runner.os == 'Linux' || matrix.target == 'x86_64-windows'
+        # setup-python's library directory, on the library path for the
+        # fortls tests, would give Ubuntu's gdb another Python than its own
+        env:
+          LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
 
       - name: Version under test

@@ -33,9 +33,7 @@ Not scheduled yet:
 
 - Code of the VS Code extension that other editors could use, moved into
   the server:
-  - fortitude and Codee checks as the server's diagnostics
   - formatting with findent or fprettify as the server's formatting
-  - the outline of namelist files (`.nml`) as the server's document symbols
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
 - `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
   `zig build` steps
@@ -124,7 +122,8 @@ Editor features:
   `zig build ifx-kit`) instead of Visual Studio's
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
-- [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
+- [x] Namelist files (`.nml`): highlighting, folding, outline (from the
+  server, for every editor). MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195
 - [x] Untitled files

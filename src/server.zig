@@ -38,6 +38,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const linters = @import("server/linters.zig");
 const bindc = @import("server/bindc.zig");
 const modvars = @import("server/modvars.zig");
 const cache = @import("server/cache.zig");
@@ -113,18 +114,23 @@ pub const Server = struct {
     sink: Sink = .{},
     /// Serializes the messages of the compiler's thread with the others
     send_lock: Io.Mutex = .init,
-    /// The last diagnostics published of each URI, zfls's and the
-    /// compiler's (`compiler_diagnostics`), as JSON arrays; keys and values
-    /// owned by `gpa`, under `diag_lock`
+    /// The last diagnostics published of each URI, zfls's and those of each
+    /// program it runs (compile.Source: the compiler, fortitude, Codee), as
+    /// JSON arrays; keys and values owned by `gpa`, under `diag_lock`
     diag_lock: Io.Mutex = .init,
     own_diags: std.StringHashMapUnmanaged([]u8) = .empty,
-    compiler_diags: std.StringHashMapUnmanaged([]u8) = .empty,
+    external_diags: [@typeInfo(compile.Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8) = @splat(.empty),
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
+    /// The thread that runs fortitude and Codee, once it has a job
+    linters: ?*linters.Worker = null,
     /// C documents opened in zfls (an editor that attaches it to C files
     /// too), for going to the Fortran procedures they call: their text
     /// only, never parsed (keys owned by `gpa`)
     c_docs: std.StringHashMapUnmanaged(*FortranFile) = .empty,
+    /// Namelist documents opened in zfls (namelist.zig): their text only,
+    /// for their outline, never parsed as Fortran (keys owned by `gpa`)
+    nml_docs: std.StringHashMapUnmanaged(*FortranFile) = .empty,
     /// The declarations of the workspace's C names in its C files, found
     /// when go to definition first needed them
     c_index: ?*bindc.CIndex = null,
@@ -162,6 +168,7 @@ pub const Server = struct {
 
     pub fn destroy(self: *Server) void {
         compile.stop(self);
+        linters.stop(self);
         compile.deinitStore(self);
         clangd.stop(self);
         bindc.deinitIndex(self);
@@ -171,6 +178,12 @@ pub const Server = struct {
             e.value_ptr.*.destroy();
         }
         self.c_docs.deinit(self.gpa);
+        var nml_it = self.nml_docs.iterator();
+        while (nml_it.next()) |e| {
+            self.gpa.free(e.key_ptr.*);
+            e.value_ptr.*.destroy();
+        }
+        self.nml_docs.deinit(self.gpa);
         cache.wait(self);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();

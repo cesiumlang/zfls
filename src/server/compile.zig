@@ -157,9 +157,12 @@ pub fn stop(self: *Server) void {
     self.compiler = null;
 }
 
+/// The programs whose diagnostics are published with zfls's own
+pub const Source = enum { compiler, fortitude, codee };
+
 /// Frees the diagnostics kept for publication
 pub fn deinitStore(self: *Server) void {
-    inline for (.{ &self.own_diags, &self.compiler_diags }) |m| {
+    for ([_]*std.StringHashMapUnmanaged([]u8){&self.own_diags} ++ ptrs(&self.external_diags)) |m| {
         var it = m.iterator();
         while (it.next()) |e| {
             self.gpa.free(e.key_ptr.*);
@@ -169,23 +172,33 @@ pub fn deinitStore(self: *Server) void {
     }
 }
 
-/// Publishes zfls's diagnostics of `uri` with the compiler's last ones
+fn ptrs(maps: *[@typeInfo(Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8)) [maps.len]*std.StringHashMapUnmanaged([]u8) {
+    var out: [maps.len]*std.StringHashMapUnmanaged([]u8) = undefined;
+    for (maps, &out) |*m, *p| p.* = m;
+    return out;
+}
+
+/// Publishes zfls's diagnostics of `uri` with the other sources' last ones
 pub fn publish(self: *Server, a: Allocator, uri: []const u8, diags: []const lsp.Diagnostic) !void {
     const own = try json.stringify(a, try json.from(a, diags));
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.own_diags, uri, own);
-    try send(self, a, uri, own, self.compiler_diags.get(uri) orelse "[]");
+    try send(self, a, uri);
 }
 
-/// Publishes the compiler's diagnostics of `uri` with zfls's last ones (on
-/// the compiler's thread)
-fn publishCompiler(self: *Server, a: Allocator, uri: []const u8, diags: []const lsp.Diagnostic) !void {
+/// Publishes the diagnostics of `uri` that `source` found with the others'
+/// last ones (on the thread that ran it)
+pub fn publishFrom(self: *Server, a: Allocator, source: Source, uri: []const u8, diags: []const lsp.Diagnostic) !void {
     const mine = try json.stringify(a, try json.from(a, diags));
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
-    try store(self, &self.compiler_diags, uri, mine);
-    try send(self, a, uri, self.own_diags.get(uri) orelse "[]", mine);
+    try store(self, &self.external_diags[@backingInt(source)], uri, mine);
+    try send(self, a, uri);
+}
+
+fn publishCompiler(self: *Server, a: Allocator, uri: []const u8, diags: []const lsp.Diagnostic) !void {
+    return publishFrom(self, a, .compiler, uri, diags);
 }
 
 fn store(self: *Server, m: *std.StringHashMapUnmanaged([]u8), uri: []const u8, value: []const u8) !void {
@@ -203,15 +216,19 @@ fn store(self: *Server, m: *std.StringHashMapUnmanaged([]u8), uri: []const u8, v
     gop.value_ptr.* = copy;
 }
 
-/// `textDocument/publishDiagnostics` of the two JSON arrays, joined
-fn send(self: *Server, a: Allocator, uri: []const u8, own: []const u8, compiled: []const u8) !void {
-    const x = std.mem.trim(u8, own, "[] \n");
-    const y = std.mem.trim(u8, compiled, "[] \n");
-    const body = try a.print("{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{{\"uri\":{s},\"diagnostics\":[{s}{s}{s}]}}}}", .{
+/// `textDocument/publishDiagnostics` of `uri`: the JSON arrays kept of each
+/// source, joined (under `diag_lock`)
+fn send(self: *Server, a: Allocator, uri: []const u8) !void {
+    var items: std.ArrayList(u8) = .empty;
+    for ([_]*std.StringHashMapUnmanaged([]u8){&self.own_diags} ++ ptrs(&self.external_diags)) |m| {
+        const x = std.mem.trim(u8, m.get(uri) orelse continue, "[] \n");
+        if (x.len == 0) continue;
+        if (items.items.len > 0) try items.append(a, ',');
+        try items.appendSlice(a, x);
+    }
+    const body = try a.print("{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{{\"uri\":{s},\"diagnostics\":[{s}]}}}}", .{
         try json.stringify(a, .{ .string = uri }),
-        x,
-        if (x.len > 0 and y.len > 0) "," else "",
-        y,
+        items.items,
     });
     self.sendRaw(body);
 }
@@ -374,7 +391,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
 }
 
 /// The text as the editor has it
-fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
+pub fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
     const lines = if (file.comment_markers.len > 0) file.raw_lines.items else file.lines.items;
     return std.mem.join(a, "\n", lines);
 }
@@ -637,7 +654,7 @@ fn runJob(w: *Worker, job: *Job) !void {
 }
 
 /// The 0-based lines of `text`, without line ends
-fn splitLines(a: Allocator, text: []const u8) ![]const []const u8 {
+pub fn splitLines(a: Allocator, text: []const u8) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |l| try out.append(a, std.mem.trimEnd(u8, l, "\r"));
@@ -646,7 +663,7 @@ fn splitLines(a: Allocator, text: []const u8) ![]const []const u8 {
 
 /// A path for comparing: normalized, and on Windows lowercase with
 /// backslashes
-fn comparable(a: Allocator, cwd: []const u8, p: []const u8) ![]const u8 {
+pub fn comparable(a: Allocator, cwd: []const u8, p: []const u8) ![]const u8 {
     const abs = if (std.Io.Dir.path.isAbsolute(p)) p else try paths.join(a, &.{ cwd, p });
     const n = try paths.normpath(a, abs);
     if (!is_windows) return n;
@@ -656,7 +673,7 @@ fn comparable(a: Allocator, cwd: []const u8, p: []const u8) ![]const u8 {
 
 /// The range of a message at 1-based `line` and `column` (or the whole line
 /// without one; an LFortran span when it has one)
-fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line: ?usize, end_column: ?usize) lsp.Range {
+pub fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line: ?usize, end_column: ?usize) lsp.Range {
     if (line == 0 or line > lines.len) return .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
     const ln = line - 1;
     const text = lines[ln];
@@ -739,7 +756,7 @@ pub fn serveClear(self: *Server, a: Allocator) !Value {
     {
         self.diag_lock.lockUncancelable(self.io);
         defer self.diag_lock.unlock(self.io);
-        var it = self.compiler_diags.keyIterator();
+        var it = self.external_diags[@backingInt(Source.compiler)].keyIterator();
         while (it.next()) |k| try uris.append(a, try a.dupe(u8, k.*));
     }
     for (uris.items) |uri| try publishCompiler(self, a, uri, &.{});

@@ -54,6 +54,9 @@ command line options and configuration files.
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures,
   signature help in a kernel launch (`call k<<<grid, block>>>(...)`), `.cuf`
   files
+- Namelist files (`.nml`, `.namelist`, or a document the client opens with
+  the language `FortranNamelist`): an outline of their groups and the
+  variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
 - Documentation for intrinsic procedures, statements, keywords and the
@@ -421,6 +424,42 @@ the open files that use them.
   options (`-I`, `-D`; a list, or one string split at spaces). fypp's own
   errors show as diagnostics labelled `fypp`. Without it, `.fypp` files are
   not checked: no compiler reads fypp's directives.
+
+### Linters
+
+zfls also runs [fortitude](https://fortitude.readthedocs.io) (`pip install
+fortitude-lint`) and [Codee](https://www.codee.com) (a commercial analyzer,
+installed and licensed separately) on a file when it is opened and saved,
+on a thread of their own, and publishes what they find with its
+diagnostics, labelled `fortitude` and `codee`, each code linking to its
+rule's page.
+
+```json
+{
+  "fortitude": true,
+  "fortitude_args": ["--select", "C,S"],
+  "codee": true,
+  "codee_args": ["${file}", "--", "gfortran", "-O2", "${file}"]
+}
+```
+
+- `fortitude`: lint with fortitude, which reads the editor's text on stdin
+  and its rules from `fpm.toml` or `fortitude.toml`. Its problems are
+  warnings, its fixes quick fixes (the unsafe ones say so), and the source
+  action `source.fixAll.fortitude` applies the safe ones
+  (`fortitude check --fix-only`). `fortitude_path` is its executable or
+  directory, `fortitude_args` further arguments of `fortitude check`, and
+  `fortitude_on_change` lints while a file is edited too, after
+  `fortitude_change_delay` milliseconds (500) without a change.
+- `codee`: run `codee checks --json` on the file as saved. Its defects
+  (`PWD...`) are errors, its recommendations (`PWR...`) warnings and its
+  remarks (`RMK...`) hints. `codee_path` is its executable or directory,
+  and `codee_args` further arguments, before the file, or with `${file}`
+  where the file goes. zfls follows Codee's documentation of its output,
+  untested with Codee itself.
+
+The code actions are offered with fortitude on even when
+`enable_code_actions` is off (then only fortitude's).
 
 Two requests act on the checks: `zfls/compilerCheck` (`{textDocument:
 {uri}}`) checks a file now, its text in the editor, and `zfls/compilerClear`
