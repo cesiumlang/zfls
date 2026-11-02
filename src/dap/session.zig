@@ -204,7 +204,7 @@ fn readRequests(s: *Session) void {
     while (true) {
         const body = (jsonrpc.readMessage(&reader.interface, s.gpa) catch null) orelse break;
         // a pause cannot wait for the engine's thread, which waits for the program
-        if (std.mem.indexOf(u8, body, "\"pause\"") != null) s.engine.interrupt();
+        if (std.mem.find(u8, body, "\"pause\"") != null) s.engine.interrupt();
         s.queue.mutex.lockUncancelable(s.io);
         s.queue.items.append(s.gpa, body) catch {};
         s.queue.cond.broadcast(s.io);
@@ -261,7 +261,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             s.engine.launch(a, program, cmdline.items, cwd, window) catch |e| return s.fail(a, req, try a.print("could not start the program: {s} at {s} (0x{x})", .{ @errorName(e), dbgeng.last_step, dbgeng.last_failure }));
             s.stop_at_entry = flag(args, "stopAtEntry");
             s.launched = true;
-            index(s, a, json.str(json.get(args, "sourceRoot")) orelse cwd orelse std.fs.path.dirname(program) orelse ".");
+            index(s, a, json.str(json.get(args, "sourceRoot")) orelse cwd orelse std.Io.Dir.path.dirname(program) orelse ".");
             s.respond(a, req, null);
             s.event(a, "initialized", null);
         },
@@ -319,7 +319,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
         .setFunctionBreakpoints => s.respond(a, req, .{ .breakpoints = &[_]u8{} }),
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
-            .description = if (std.mem.indexOf(u8, s.last_error, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
+            .description = if (std.mem.find(u8, s.last_error, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
             .breakMode = "always",
         }),
         .configurationDone => {
@@ -433,7 +433,7 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
                 .reason = "exception",
                 .threadId = b.thread,
                 .allThreadsStopped = true,
-                .description = if (std.mem.indexOf(u8, f, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
+                .description = if (std.mem.find(u8, f, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
             });
         } else if (isUserBreakpoint(s, b.id))
             s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} })
@@ -503,12 +503,12 @@ fn addNode(s: *Session, n: Node) !i64 {
 
 /// `min1!GRID::WORK` -> `grid::work`
 fn displayName(name: []const u8) []const u8 {
-    return if (std.mem.indexOfScalar(u8, name, '!')) |i| name[i + 1 ..] else name;
+    return if (std.mem.findScalar(u8, name, '!')) |i| name[i + 1 ..] else name;
 }
 
 /// A command line's argument, quoted as Windows's programs read them
 fn quoteArg(a: Allocator, out: *std.ArrayList(u8), arg: []const u8) !void {
-    if (arg.len > 0 and std.mem.indexOfAny(u8, arg, " \t\"") == null) return out.appendSlice(a, arg);
+    if (arg.len > 0 and std.mem.findAny(u8, arg, " \t\"") == null) return out.appendSlice(a, arg);
     try out.append(a, '"');
     var slashes: usize = 0;
     for (arg) |c| {
@@ -585,7 +585,7 @@ fn frameVariables(s: *Session, a: Allocator, frame: Frame) ![]FrameVariable {
     var next_length: usize = 0;
     var out: std.ArrayList(FrameVariable) = .empty;
     for (vars) |v| {
-        if (std.mem.indexOfScalar(u8, v.name, '.') != null or std.mem.startsWith(u8, v.name, "_")) continue;
+        if (std.mem.findScalar(u8, v.name, '.') != null or std.mem.startsWith(u8, v.name, "_")) continue;
         var decl: ?Decl = if (where) |w| if (declaration(w.scope, v.name)) |o| declOf(a, o) else null else null;
         // a module's variable seen by a USE statement
         if (decl == null and !v.parameter) if (where) |w| if (useDeclaration(s, a, w.file, w.line, v.name)) |o| {
@@ -859,7 +859,7 @@ fn derivedPreview(s: *Session, a: Allocator, v: Val) ![]const u8 {
     for (comps[0..@min(comps.len, 4)], 0..) |c, i| {
         if (i > 0) try out.appendSlice(a, ", ");
         const text = if (c.rank > 0 or c.t.kind == .derived or c.empty) "…" else try scalarText(s, a, c);
-        try out.print(a, "{s}={s}", .{ c.expr[std.mem.lastIndexOfScalar(u8, c.expr, '%').? + 1 ..], text });
+        try out.print(a, "{s}={s}", .{ c.expr[std.mem.findScalarLast(u8, c.expr, '%').? + 1 ..], text });
     }
     if (comps.len > 4) try out.appendSlice(a, ", …");
     try out.append(a, ')');
@@ -966,7 +966,7 @@ fn children(s: *Session, a: Allocator, node: Node) ![]Value {
         },
         .value => |v| {
             if (v.t.kind == .derived and v.rank == v.chosen.len) {
-                for (try components(s, a, v)) |c| try out.append(a, try show(s, a, c.expr[std.mem.lastIndexOfScalar(u8, c.expr, '%').? + 1 ..], c));
+                for (try components(s, a, v)) |c| try out.append(a, try show(s, a, c.expr[std.mem.findScalarLast(u8, c.expr, '%').? + 1 ..], c));
                 return out.items;
             }
             const left = v.rank - v.chosen.len;
@@ -1043,10 +1043,10 @@ fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val {
     const text = std.mem.trim(u8, expr, " ");
     var parts = std.mem.splitScalar(u8, text, '%');
     const head = parts.first();
-    const name_end = std.mem.indexOfScalar(u8, head, '(') orelse head.len;
+    const name_end = std.mem.findScalar(u8, head, '(') orelse head.len;
     const name = std.mem.trim(u8, head[0..name_end], " ");
     var v: Val = undefined;
-    if (std.mem.indexOf(u8, name, "::")) |sep| {
+    if (std.mem.find(u8, name, "::")) |sep| {
         const g = (try moduleGlobal(s, a, name[0..sep], name[sep + 2 ..])) orelse return null;
         v = try valueOf(s, a, g, null, frame, try std.ascii.allocLowerString(a, name));
     } else {
@@ -1057,11 +1057,11 @@ fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val {
     }
     v = (try subscript(a, v, head[name_end..])) orelse return null;
     while (parts.next()) |p| {
-        const pe = std.mem.indexOfScalar(u8, p, '(') orelse p.len;
+        const pe = std.mem.findScalar(u8, p, '(') orelse p.len;
         const comp = std.mem.trim(u8, p[0..pe], " ");
         const comps = try components(s, a, v);
         v = for (comps) |c| {
-            if (std.ascii.eqlIgnoreCase(c.expr[std.mem.lastIndexOfScalar(u8, c.expr, '%').? + 1 ..], comp)) break c;
+            if (std.ascii.eqlIgnoreCase(c.expr[std.mem.findScalarLast(u8, c.expr, '%').? + 1 ..], comp)) break c;
         } else return null;
         v = (try subscript(a, v, p[pe..])) orelse return null;
     }

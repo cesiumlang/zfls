@@ -452,7 +452,7 @@ const PyEval = struct {
             return v;
         }
         if (c == '\'' or c == '"') {
-            const close = std.mem.indexOfScalarPos(u8, e.src, e.pos + 1, c) orelse return error.Syntax;
+            const close = std.mem.findScalarPos(u8, e.src, e.pos + 1, c) orelse return error.Syntax;
             const s = e.src[e.pos + 1 .. close];
             e.pos = close + 1;
             return .{ .string = s };
@@ -532,9 +532,9 @@ fn expandFuncMacro(a: Allocator, def_name: []const u8, args: []const u8, value: 
     try pat.appendSlice(a, "\\)");
     var sub = value;
     for (def_args, 0..) |arg, i| {
-        var arg_re = try regex.Regex.compile(a, try std.fmt.allocPrint(a, "\\b({s})\\b", .{str.strip(arg)}), .{});
+        var arg_re = try regex.Regex.compile(a, try a.print("\\b({s})\\b", .{str.strip(arg)}), .{});
         defer arg_re.deinit();
-        sub = try arg_re.sub(a, try std.fmt.allocPrint(a, "\\\\{d}", .{i + 1}), sub);
+        sub = try arg_re.sub(a, try a.print("\\\\{d}", .{i + 1}), sub);
     }
     return .{ .re = try regex.Regex.compile(a, pat.items, .{}), .template = sub };
 }
@@ -721,7 +721,7 @@ fn preprocessInner(
             if (std.mem.eql(u8, directive, "define") and !defs_tmp.contains(def_name)) {
                 var def_value: []const u8 = undefined;
                 const rest = line[m.end(0)..];
-                if (std.mem.indexOfScalar(u8, rest, ' ')) |eq_ind| {
+                if (std.mem.findScalar(u8, rest, ' ')) |eq_ind| {
                     const rs = str.rstrip(line);
                     if (rs.len > 0 and rs[rs.len - 1] == '\\') {
                         def_value = str.strip(line[m.end(0) + eq_ind .. @max(line.len -| 1, m.end(0) + eq_ind)]);
@@ -781,7 +781,7 @@ fn preprocessInner(
         while (it.next()) |e| {
             const def_tmp = e.key_ptr.*;
             const value = e.value_ptr.*;
-            if (std.mem.indexOf(u8, line, def_tmp) == null) continue;
+            if (std.mem.find(u8, line, def_tmp) == null) continue;
             const gop = try def_regexes.getOrPut(a, def_tmp);
             if (!gop.found_existing) {
                 gop.key_ptr.* = def_tmp;
@@ -791,7 +791,7 @@ fn preprocessInner(
                         break :blk null;
                     };
                 } else {
-                    const re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "\\b{s}\\b", .{def_tmp}), .{}) catch null;
+                    const re = regex.Regex.compile(a, try a.print("\\b{s}\\b", .{def_tmp}), .{}) catch null;
                     gop.value_ptr.* = if (re) |r| .{ .re = r, .template = "" } else null;
                 }
             }

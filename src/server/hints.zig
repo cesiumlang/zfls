@@ -44,12 +44,12 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
     for (try semantic.constantUses(a, self.env(a), file, ast, first, last)) |c| {
         const value = str.strip(c.obj.varDataConst().param_val orelse continue);
         if (value.len == 0 or std.ascii.eqlIgnoreCase(value, c.obj.name)) continue;
-        const key = try std.fmt.allocPrint(a, "{d}:{x}", .{ c.line, @intFromPtr(c.obj) });
+        const key = try a.print("{d}:{x}", .{ c.line, @intFromPtr(c.obj) });
         if ((try shown.getOrPut(a, key)).found_existing) continue;
-        const short = if (value.len > 24) try std.fmt.allocPrint(a, "{s}...", .{value[0..21]}) else value;
+        const short = if (value.len > 24) try a.print("{s}...", .{value[0..21]}) else value;
         try out.append(a, .{
             .position = .{ .line = c.line, .character = Server.toLspCol(file, c.line, c.end) },
-            .label = try std.fmt.allocPrint(a, "= {s}", .{short}),
+            .label = try a.print("= {s}", .{short}),
             .kind = 1,
             .paddingLeft = true,
         });
@@ -58,11 +58,11 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     for (try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, first, last, self.fixedLimit())) |u| {
         const t = implicit.typeOf(u.scope, u.name) orelse continue;
-        const key = try std.fmt.allocPrint(a, "{x}:{s}", .{ @intFromPtr(u.scope), try std.ascii.allocLowerString(a, u.name) });
+        const key = try a.print("{x}:{s}", .{ @intFromPtr(u.scope), try std.ascii.allocLowerString(a, u.name) });
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         try out.append(a, .{
             .position = .{ .line = u.line, .character = Server.toLspCol(file, u.line, u.end) },
-            .label = try std.fmt.allocPrint(a, ": {s}", .{t}),
+            .label = try a.print(": {s}", .{t}),
             .kind = 1,
         });
     }
@@ -76,14 +76,14 @@ fn argumentHints(self: *Server, a: Allocator, file: *FortranFile, ln: usize, out
     const raw = file.getLine(ln, false) orelse return;
     if (helpers.isComment(file.fixed, raw)) return;
     var code = try helpers.stripStrings(a, raw, true);
-    if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+    if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
     var it = helpers.words(code);
     while (it.next()) |w| {
         var j = w.end;
         while (j < code.len and code[j] == ' ') j += 1;
         // a CUDA Fortran kernel launch, `k<<<grid, block>>>(args)`
         if (std.mem.startsWith(u8, code[j..], "<<<")) {
-            const e = std.mem.indexOfPos(u8, code, j, ">>>") orelse continue;
+            const e = std.mem.findPos(u8, code, j, ">>>") orelse continue;
             j = e + 3;
             while (j < code.len and code[j] == ' ') j += 1;
         }
@@ -120,7 +120,7 @@ fn argumentHints(self: *Server, a: Allocator, file: *FortranFile, ln: usize, out
             const at = @intFromPtr(text.ptr) - @intFromPtr(code.ptr);
             try out.append(a, .{
                 .position = .{ .line = ln, .character = Server.toLspCol(file, ln, at) },
-                .label = try std.fmt.allocPrint(a, "{s}:", .{name}),
+                .label = try a.print("{s}:", .{name}),
                 .kind = 2,
                 .paddingRight = true,
             });
@@ -135,7 +135,7 @@ fn associateHints(a: Allocator, file: *FortranFile, sc: *Obj, out: *std.ArrayLis
     for (sc.data.scope.ext.associate.links.items) |l| {
         const h = try l.var_.getHover(a, false, null);
         const msg = h.msg orelse continue;
-        const sep = std.mem.indexOf(u8, msg, "::") orelse continue;
+        const sep = std.mem.find(u8, msg, "::") orelse continue;
         const type_text = str.strip(msg[0..sep]);
         if (type_text.len == 0) continue;
         // the name, before its `=>`
@@ -150,7 +150,7 @@ fn associateHints(a: Allocator, file: *FortranFile, sc: *Obj, out: *std.ArrayLis
             if (end) |e| {
                 try out.append(a, .{
                     .position = .{ .line = ln, .character = Server.toLspCol(file, ln, e) },
-                    .label = try std.fmt.allocPrint(a, ": {s}", .{type_text}),
+                    .label = try a.print(": {s}", .{type_text}),
                     .kind = 1,
                 });
                 break;
@@ -161,7 +161,7 @@ fn associateHints(a: Allocator, file: *FortranFile, sc: *Obj, out: *std.ArrayLis
 
 /// The keyword of an argument, `dx` of `dx = 1.0`
 fn keywordOf(arg: []const u8) ?[]const u8 {
-    const eq = std.mem.indexOfScalar(u8, arg, '=') orelse return null;
+    const eq = std.mem.findScalar(u8, arg, '=') orelse return null;
     if (eq + 1 < arg.len and (arg[eq + 1] == '=' or arg[eq + 1] == '>')) return null;
     if (eq > 0 and (arg[eq - 1] == '/' or arg[eq - 1] == '<' or arg[eq - 1] == '>')) return null;
     const name = str.strip(arg[0..eq]);

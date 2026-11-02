@@ -60,7 +60,7 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
         var start = open;
         var kind: ?[]const u8 = null;
         var boz: ?u8 = null;
-        if (open > 0 and (open < 2 or !isWord(line[open - 2])) and std.mem.indexOfScalar(u8, "bBoOzZ", line[open - 1]) != null) {
+        if (open > 0 and (open < 2 or !isWord(line[open - 2])) and std.mem.findScalar(u8, "bBoOzZ", line[open - 1]) != null) {
             start = open - 1;
             boz = std.ascii.toLower(line[open - 1]);
         } else if (open > 1 and line[open - 1] == '_' and isWord(line[open - 2])) {
@@ -77,9 +77,9 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
             return .{ .type = "BOZ", .value = std.fmt.parseInt(u128, line[open + 1 .. close], base) catch null };
         }
         return .{ .type = if (kind) |k|
-            try std.fmt.allocPrint(a, "CHARACTER(LEN={d}, KIND={s})", .{ n, k })
+            try a.print("CHARACTER(LEN={d}, KIND={s})", .{ n, k })
         else
-            try std.fmt.allocPrint(a, "CHARACTER(LEN={d})", .{n}) };
+            try a.print("CHARACTER(LEN={d})", .{n}) };
     }
     if (col >= comment) return null;
     const c = code[0..comment];
@@ -96,7 +96,7 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
                 kind = c[ks..e];
             }
             if (col < s or col >= e) continue;
-            return .{ .type = if (kind) |k| try std.fmt.allocPrint(a, "LOGICAL({s})", .{k}) else "LOGICAL" };
+            return .{ .type = if (kind) |k| try a.print("LOGICAL({s})", .{k}) else "LOGICAL" };
         }
     }
     // a number
@@ -123,7 +123,7 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
             }
         }
         // an exponent
-        if (i + 1 < c.len and std.mem.indexOfScalar(u8, "eEdDqQ", c[i]) != null) {
+        if (i + 1 < c.len and std.mem.findScalar(u8, "eEdDqQ", c[i]) != null) {
             var j = i + 1;
             if (c[j] == '+' or c[j] == '-') j += 1;
             if (j < c.len and std.ascii.isDigit(c[j])) {
@@ -148,7 +148,7 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
         if (exponent == 'd') return .{ .type = "DOUBLE PRECISION" };
         if (exponent == 'q') return .{ .type = "REAL(16)" };
         const t = if (real or exponent != 0) "REAL" else "INTEGER";
-        return .{ .type = if (kind) |k| try std.fmt.allocPrint(a, "{s}({s})", .{ t, k }) else t };
+        return .{ .type = if (kind) |k| try a.print("{s}({s})", .{ t, k }) else t };
     }
     return null;
 }
@@ -156,7 +156,7 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
 fn expectType(line: []const u8, on: []const u8, expected: ?[]const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const col = std.mem.indexOf(u8, line, on).?;
+    const col = std.mem.find(u8, line, on).?;
     const lit = try at(arena.allocator(), line, col);
     if (expected) |e| {
         try std.testing.expect(lit != null);
@@ -198,7 +198,7 @@ test "BOZ constants" {
     defer arena.deinit();
     const line = "i = z'ff' + b\"101\" + o'17'";
     for ([_]struct { []const u8, u128 }{ .{ "z'", 255 }, .{ "101", 5 }, .{ "o'", 15 } }) |case| {
-        const lit = (try at(arena.allocator(), line, std.mem.indexOf(u8, line, case[0]).?)).?;
+        const lit = (try at(arena.allocator(), line, std.mem.find(u8, line, case[0]).?)).?;
         try std.testing.expectEqualStrings("BOZ", lit.type);
         try std.testing.expectEqual(case[1], lit.value.?);
     }

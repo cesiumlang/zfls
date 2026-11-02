@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !u8 {
             stale = true;
             continue;
         }
-        if (std.fs.path.dirname(f.path)) |d| try root.createDirPath(io, d);
+        if (std.Io.Dir.path.dirname(f.path)) |d| try root.createDirPath(io, d);
         try root.writeFile(io, .{ .sub_path = f.path, .data = f.text });
         std.debug.print("wrote {s}\n", .{f.path});
     }
@@ -198,15 +198,15 @@ fn defaultJson(a: Allocator, comptime T: type, v: T) !Value {
 
 /// The configuration keys `applyConfig` reads, in its order
 fn configKeys(a: Allocator, src: []const u8) ![]const []const u8 {
-    const start = std.mem.indexOf(u8, src, "pub fn applyConfig(") orelse return error.NoApplyConfig;
-    const end = std.mem.indexOfPos(u8, src, start, "\n}\n") orelse return error.NoApplyConfig;
+    const start = std.mem.find(u8, src, "pub fn applyConfig(") orelse return error.NoApplyConfig;
+    const end = std.mem.findPos(u8, src, start, "\n}\n") orelse return error.NoApplyConfig;
     const body = src[start..end];
     const call = "json.get(cfg, \"";
     var keys: std.ArrayList([]const u8) = .empty;
     var pos: usize = 0;
-    while (std.mem.indexOfPos(u8, body, pos, call)) |i| {
+    while (std.mem.findPos(u8, body, pos, call)) |i| {
         const k = i + call.len;
-        const q = std.mem.indexOfScalarPos(u8, body, k, '"') orelse break;
+        const q = std.mem.findScalarPos(u8, body, k, '"') orelse break;
         pos = q;
         const key = body[k..q];
         for (keys.items) |seen| {
@@ -219,7 +219,7 @@ fn configKeys(a: Allocator, src: []const u8) ![]const []const u8 {
 fn configSchema(a: Allocator, settings_src: []const u8, where: *[]const u8) !Value {
     var properties: std.json.ObjectMap = .empty;
     for (try configKeys(a, settings_src)) |key| {
-        where.* = try std.fmt.allocPrint(a, "src/settings.zig, applyConfig's key {s}", .{key});
+        where.* = try a.print("src/settings.zig, applyConfig's key {s}", .{key});
         const opt = for (settings.opts) |o| {
             if (std.mem.eql(u8, o.long, key)) break o;
         } else return error.NotInOpts;
@@ -274,7 +274,7 @@ const Mover = struct {
         const v = o.object.getPtr(name) orelse return;
         if (v.* != .string or isRef(v.string) or isBlank(v.string)) return;
         try m.strings.put(m.a, key, v.*);
-        v.* = .{ .string = try std.fmt.allocPrint(m.a, "%{s}%", .{key}) };
+        v.* = .{ .string = try m.a.print("%{s}%", .{key}) };
         m.moved += 1;
     }
 
@@ -284,9 +284,9 @@ const Mover = struct {
         if (v.* != .array) return;
         for (v.array.items, 0..) |*s, i| {
             if (s.* != .string or isRef(s.string) or isBlank(s.string)) continue;
-            const k = try std.fmt.allocPrint(m.a, "{s}.{d}", .{ key, i });
+            const k = try m.a.print("{s}.{d}", .{ key, i });
             try m.strings.put(m.a, k, s.*);
-            s.* = .{ .string = try std.fmt.allocPrint(m.a, "%{s}%", .{k}) };
+            s.* = .{ .string = try m.a.print("%{s}%", .{k}) };
             m.moved += 1;
         }
     }
@@ -297,17 +297,17 @@ const Mover = struct {
         if (p.* != .object) return;
         for (p.object.keys(), p.object.values()) |name, *prop| {
             if (prop.* != .object) continue;
-            const key = try std.fmt.allocPrint(m.a, "{s}.{s}", .{ prefix, name });
+            const key = try m.a.print("{s}.{s}", .{ prefix, name });
             for ([_][]const u8{ "description", "markdownDescription", "deprecationMessage", "markdownDeprecationMessage" }) |f|
-                try m.move(prop, f, try std.fmt.allocPrint(m.a, "{s}.{s}", .{ key, f }));
+                try m.move(prop, f, try m.a.print("{s}.{s}", .{ key, f }));
             for ([_][]const u8{ "enumDescriptions", "markdownEnumDescriptions" }) |f|
-                try m.moveList(prop, f, try std.fmt.allocPrint(m.a, "{s}.{s}", .{ key, f }));
+                try m.moveList(prop, f, try m.a.print("{s}.{s}", .{ key, f }));
             try m.schema(prop.object.getPtr("properties"), key);
         }
     }
 
     fn print(m: *Mover, comptime fmt: []const u8, args: anytype) ![]const u8 {
-        return std.fmt.allocPrint(m.a, fmt, args);
+        return m.a.print(fmt, args);
     }
 };
 
@@ -387,14 +387,14 @@ fn l10nBundle(io: Io, a: Allocator, root: Io.Dir, where: *[]const u8) !Value {
     while (try walker.next(io)) |e| {
         if (e.kind == .file and std.mem.endsWith(u8, e.basename, ".ts")) try paths.append(a, try a.dupe(u8, e.path));
     }
-    var found: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var found: std.array_hash_map.String(void) = .empty;
     for (paths.items) |p| {
-        where.* = try std.fmt.allocPrint(a, "{s}/{s}", .{ sources_path, p });
+        where.* = try a.print("{s}/{s}", .{ sources_path, p });
         const src = try dir.readFileAlloc(io, p, a, .limited(16 << 20));
         var line: usize = 0;
         for (try messages(a, src, &line)) |msg| try found.put(a, msg, {});
         if (line != 0) {
-            where.* = try std.fmt.allocPrint(a, "{s}:{d}: l10n.t needs a string literal (not a template or a variable)", .{ where.*, line });
+            where.* = try a.print("{s}:{d}: l10n.t needs a string literal (not a template or a variable)", .{ where.*, line });
             return error.NotALiteral;
         }
     }
@@ -424,7 +424,7 @@ fn messages(a: Allocator, src: []const u8, bad_line: *usize) ![]const []const u8
     const call = "l10n.t(";
     var out: std.ArrayList([]const u8) = .empty;
     var from: usize = 0;
-    while (std.mem.indexOfPos(u8, src, from, call)) |start| {
+    while (std.mem.findPos(u8, src, from, call)) |start| {
         from = start + call.len;
         if (start > 0 and isWord(src[start - 1])) continue;
         var pos = from;

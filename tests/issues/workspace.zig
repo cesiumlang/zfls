@@ -28,7 +28,7 @@ test "#565 editing a file that is included by an include file" {
         // open leaf.f90, change its text and save it
         w.replaceText("leaf.f90", "integer :: x, y\n") catch |e| break :blk h.unmet("the change failed: {s}", .{@errorName(e)});
         for (try w.messages()) |m| {
-            if (std.mem.indexOf(u8, m, "failed") != null) break :blk h.unmet("the server reported: {s}", .{m});
+            if (std.mem.find(u8, m, "failed") != null) break :blk h.unmet("the server reported: {s}", .{m});
         }
         break :blk {};
     };
@@ -151,7 +151,7 @@ test "an untitled document is served from the text the client sends" {
         .contentChanges = &[_]struct { text: []const u8 }{.{ .text = "program p\n  use lib\n  real :: mine\n  print *, shared, mine\nend program p\n" }},
     }));
     const hov = try w.server.dispatchPublic(a, "textDocument/hover", try at.params(a, 3, 20));
-    try std.testing.expect(std.mem.indexOf(u8, json.str(json.path(hov, &.{ "contents", "value" })) orelse "", "REAL") != null);
+    try std.testing.expect(std.mem.find(u8, json.str(json.path(hov, &.{ "contents", "value" })) orelse "", "REAL") != null);
     _ = try w.server.dispatchPublic(a, "textDocument/didClose", try json.from(a, .{ .textDocument = .{ .uri = uri } }));
 }
 
@@ -219,19 +219,19 @@ test "indexing reports its progress with the initialize request's workDoneToken 
     var many: [30]h.File = undefined;
     var names: [30][16]u8 = undefined;
     for (&many, &names, 0..) |*f, *n, i| {
-        f.* = .{ .name = try std.fmt.bufPrint(n, "m{d}.f90", .{i}), .text = "module m\nend module m\n" };
+        f.* = .{ .name = try std.mem.print(n, "m{d}.f90", .{i}), .text = "module m\nend module m\n" };
     }
     const w = try h.Workspace.init(&many, .{ .progress_token = 7, .settings = .{ .nthreads = 1 } });
     defer w.deinit();
     var kinds: std.ArrayList([]const u8) = .empty;
     defer kinds.deinit(std.testing.allocator);
     for (w.sent.items) |msg| {
-        if (std.mem.indexOf(u8, msg, "\"$/progress\"") == null) continue;
-        try std.testing.expect(std.mem.indexOf(u8, msg, "\"token\":7") != null);
+        if (std.mem.find(u8, msg, "\"$/progress\"") == null) continue;
+        try std.testing.expect(std.mem.find(u8, msg, "\"token\":7") != null);
         for ([_][]const u8{ "begin", "report", "end" }) |k| {
-            const needle = try std.fmt.allocPrint(std.testing.allocator, "\"kind\":\"{s}\"", .{k});
+            const needle = try std.testing.allocator.print("\"kind\":\"{s}\"", .{k});
             defer std.testing.allocator.free(needle);
-            if (std.mem.indexOf(u8, msg, needle) != null) try kinds.append(std.testing.allocator, k);
+            if (std.mem.find(u8, msg, needle) != null) try kinds.append(std.testing.allocator, k);
         }
     }
     try std.testing.expect(kinds.items.len >= 3);
@@ -243,13 +243,13 @@ test "indexing reports its progress with the initialize request's workDoneToken 
 test "no progress without a workDoneToken" {
     const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text = "module a\nend module a\n" }}, .{});
     defer w.deinit();
-    for (w.sent.items) |msg| try std.testing.expect(std.mem.indexOf(u8, msg, "$/progress") == null);
+    for (w.sent.items) |msg| try std.testing.expect(std.mem.find(u8, msg, "$/progress") == null);
 }
 
 fn publishedFor(w: *h.Workspace, file: []const u8) bool {
     for (w.sent.items) |msg| {
-        if (std.mem.indexOf(u8, msg, "publishDiagnostics") == null) continue;
-        if (std.mem.indexOf(u8, msg, file) != null) return true;
+        if (std.mem.find(u8, msg, "publishDiagnostics") == null) continue;
+        if (std.mem.find(u8, msg, file) != null) return true;
     }
     return false;
 }

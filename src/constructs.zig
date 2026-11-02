@@ -65,7 +65,7 @@ fn codeOf(a: Allocator, file: *const FortranFile, ln: usize) !?[]const u8 {
     const t = std.mem.trimStart(u8, raw, " \t");
     if (t.len > 0 and t[0] == '#') return null;
     var code = try helpers.stripStrings(a, raw, true);
-    if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+    if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
     return code;
 }
 
@@ -108,8 +108,8 @@ fn analyze(a: Allocator, code: []const u8, fixed: bool) !LineInfo {
         const field = code[0..@min(code.len, 5)];
         const trimmed = std.mem.trim(u8, field, " ");
         const cont = code.len > 5 and code[5] != ' ' and code[5] != '0';
-        if (trimmed.len > 0 and !cont and std.mem.indexOfNone(u8, trimmed, "0123456789") == null) {
-            const s = std.mem.indexOf(u8, field, trimmed).?;
+        if (trimmed.len > 0 and !cont and std.mem.findNone(u8, trimmed, "0123456789") == null) {
+            const s = std.mem.find(u8, field, trimmed).?;
             info.label_def = .{ .kind = .number, .start = s, .end = s + trimmed.len, .depth = 0 };
         }
         from = @min(code.len, 6);

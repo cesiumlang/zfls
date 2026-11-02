@@ -28,7 +28,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 
-const is_windows = builtin.os.tag == .windows;
+const is_windows = builtin.target.os.tag == .windows;
 /// A compiler run that takes longer is stopped
 const timeout_s = 120;
 
@@ -43,7 +43,7 @@ pub fn checkSetting(self: *Server, a: Allocator) !void {
     const name = self.s.compiler_diagnostics orelse return;
     const trimmed = std.mem.trim(u8, name, " ");
     if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "none") or compilerOf(self) != null) return;
-    self.postMessage(a, try std.fmt.allocPrint(a, "compiler_diagnostics: unknown compiler \"{s}\"; it is one of gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran", .{name}), 2);
+    self.postMessage(a, try a.print("compiler_diagnostics: unknown compiler \"{s}\"; it is one of gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran", .{name}), 2);
 }
 
 /// One compiler run: the modules the file uses first, then the file
@@ -166,7 +166,7 @@ fn store(self: *Server, m: *std.StringHashMapUnmanaged([]u8), uri: []const u8, v
 fn send(self: *Server, a: Allocator, uri: []const u8, own: []const u8, compiled: []const u8) !void {
     const x = std.mem.trim(u8, own, "[] \n");
     const y = std.mem.trim(u8, compiled, "[] \n");
-    const body = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{{\"uri\":{s},\"diagnostics\":[{s}{s}{s}]}}}}", .{
+    const body = try a.print("{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{{\"uri\":{s},\"diagnostics\":[{s}{s}{s}]}}}}", .{
         try json.stringify(a, .{ .string = uri }),
         x,
         if (x.len > 0 and y.len > 0) "," else "",
@@ -181,7 +181,7 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8) !vo
     const id = compilerOf(self) orelse return;
     const file = self.workspace.get(path) orelse return;
     // no compiler reads fypp's directives
-    if (std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".fypp")) return;
+    if (std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(path), ".fypp")) return;
     const job = try makeJob(self, a, id, uri, file);
     errdefer freeJob(self.gpa, job);
     const w = self.compiler orelse blk: {
@@ -210,11 +210,11 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8) !vo
 /// and compiler in zfls's cache
 fn modDir(self: *Server, a: Allocator, id: compilers.Id) ![]const u8 {
     if (self.s.compiler_mod_dir) |d| {
-        if (d.len > 0) return if (std.fs.path.isAbsolute(d)) d else paths.join(a, &.{ self.root_path, d });
+        if (d.len > 0) return if (std.Io.Dir.path.isAbsolute(d)) d else paths.join(a, &.{ self.root_path, d });
     }
     var h = std.hash.Wyhash.init(0);
     h.update(self.root_path);
-    const key = try std.fmt.allocPrint(a, "{x:0>16}", .{h.final()});
+    const key = try a.print("{x:0>16}", .{h.final()});
     const base = paths.cacheDir() orelse return paths.join(a, &.{ self.root_path, ".zfls", "mod", @tagName(id) });
     return paths.join(a, &.{ base, "mod", key, @tagName(id) });
 }
@@ -225,10 +225,10 @@ fn executables(self: *Server, a: Allocator, id: compilers.Id) ![]const []const u
     const names = compilers.executables(id);
     const configured = self.s.compiler_path orelse return names;
     if (configured.len == 0) return names;
-    const p = if (std.fs.path.isAbsolute(configured)) configured else try paths.join(a, &.{ self.root_path, configured });
+    const p = if (std.Io.Dir.path.isAbsolute(configured)) configured else try paths.join(a, &.{ self.root_path, configured });
     if (!paths.isDir(self.io, p)) return a.dupe([]const u8, &.{p});
     var out: std.ArrayList([]const u8) = .empty;
-    for (names) |n| try out.append(a, try paths.join(a, &.{ p, if (is_windows) try std.fmt.allocPrint(a, "{s}.exe", .{n}) else n }));
+    for (names) |n| try out.append(a, try paths.join(a, &.{ p, if (is_windows) try a.print("{s}.exe", .{n}) else n }));
     return out.items;
 }
 
@@ -312,7 +312,7 @@ fn dependencies(self: *Server, a: Allocator, file: *FortranFile) ![]const *Fortr
         const u = units[i];
         if (!need[i] or u.file_ast == ast) continue;
         const f = self.workspace.get(u.file_ast.path orelse continue) orelse continue;
-        if (std.mem.indexOfScalar(*FortranFile, out.items, f) == null) try out.append(a, f);
+        if (std.mem.findScalar(*FortranFile, out.items, f) == null) try out.append(a, f);
     };
     return out.items;
 }
@@ -326,7 +326,7 @@ fn stale(self: *Server, a: Allocator, file: *const FortranFile, mod_dir: []const
     for (ast.scope_list.items) |sc| {
         if (sc.kind != .module) continue;
         modules += 1;
-        const name = std.fmt.allocPrint(a, "{s}.mod", .{sc.name}) catch return true;
+        const name = a.print("{s}.mod", .{sc.name}) catch return true;
         const mod = paths.join(a, &.{ mod_dir, std.ascii.lowerString(name, name) }) catch return true;
         const st = Io.Dir.cwd().statFile(self.io, mod, .{}) catch return true;
         if (st.mtime.nanoseconds < src.mtime.nanoseconds) return true;
@@ -383,7 +383,7 @@ fn runJob(w: *Worker, job: *Job) !void {
         .missing => {
             if (!w.reported_missing) {
                 w.reported_missing = true;
-                self.postMessage(a, try std.fmt.allocPrint(a, "compiler_diagnostics: {s} was not found{s}{s}", .{
+                self.postMessage(a, try a.print("compiler_diagnostics: {s} was not found{s}{s}", .{
                     @tagName(job.id),
                     if (self.s.compiler_path != null) " at " else " on the PATH",
                     self.s.compiler_path orelse "",
@@ -414,7 +414,7 @@ fn splitLines(a: Allocator, text: []const u8) ![]const []const u8 {
 /// A path for comparing: normalized, and on Windows lowercase with
 /// backslashes
 fn comparable(a: Allocator, cwd: []const u8, p: []const u8) ![]const u8 {
-    const abs = if (std.fs.path.isAbsolute(p)) p else try paths.join(a, &.{ cwd, p });
+    const abs = if (std.Io.Dir.path.isAbsolute(p)) p else try paths.join(a, &.{ cwd, p });
     const n = try paths.normpath(a, abs);
     if (!is_windows) return n;
     for (n) |*c| c.* = if (c.* == '/') '\\' else std.ascii.toLower(c.*);
@@ -428,7 +428,7 @@ fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line: ?us
     const ln = line - 1;
     const text = lines[ln];
     const c = column orelse {
-        const first = std.mem.indexOfNone(u8, text, " \t") orelse 0;
+        const first = std.mem.findNone(u8, text, " \t") orelse 0;
         return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, first) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, text.len) } };
     };
     const start = @min(c -| 1, text.len);
@@ -452,7 +452,7 @@ fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const 
         const ours = if (m.file) |f| std.mem.eql(u8, try comparable(a, job.cwd, f), here) else true;
         var related: std.ArrayList(lsp.DiagnosticRelatedInformation) = .empty;
         for (m.related.items) |r| {
-            const rpath = if (r.file) |f| (if (std.fs.path.isAbsolute(f)) f else try paths.join(a, &.{ job.cwd, f })) else job.path;
+            const rpath = if (r.file) |f| (if (std.Io.Dir.path.isAbsolute(f)) f else try paths.join(a, &.{ job.cwd, f })) else job.path;
             const rl = r.line -| 1;
             const rc = (r.column orelse 1) -| 1;
             try related.append(a, .{
@@ -462,7 +462,7 @@ fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const 
         }
         // a message about another file (an included one): at the top, with
         // its location
-        const message = if (ours) m.message else try std.fmt.allocPrint(a, "{s}:{d}: {s}", .{ m.file.?, m.line, m.message });
+        const message = if (ours) m.message else try a.print("{s}:{d}: {s}", .{ m.file.?, m.line, m.message });
         try out.append(a, .{
             .range = if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else rangeAt(lines, 0, null, null, null),
             .message = message,

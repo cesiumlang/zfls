@@ -103,7 +103,7 @@ const Client = struct {
         c.seq += 1;
         const body = try std.json.Stringify.valueAlloc(c.gpa, .{ .seq = seq, .type = "request", .command = command, .arguments = args }, .{});
         defer c.gpa.free(body);
-        const framed = try std.fmt.allocPrint(c.gpa, "Content-Length: {d}\r\n\r\n{s}", .{ body.len, body });
+        const framed = try c.gpa.print("Content-Length: {d}\r\n\r\n{s}", .{ body.len, body });
         defer c.gpa.free(framed);
         try c.child.stdin.?.writeStreamingAll(c.io, framed);
         const deadline = Io.Clock.awake.now(c.io).addDuration(c.timeout);
@@ -154,7 +154,7 @@ fn items(v: Value, key: []const u8) []Value {
 }
 
 fn contains(s: ?[]const u8, part: []const u8) bool {
-    return std.mem.indexOf(u8, s orelse return false, part) != null;
+    return std.mem.find(u8, s orelse return false, part) != null;
 }
 
 fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
@@ -183,17 +183,17 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG]\n", .{});
         return 2;
     }
-    if (builtin.os.tag != .windows) {
+    if (builtin.target.os.tag != .windows) {
         std.debug.print("skipped: Windows only\n", .{});
         return 0;
     }
     const cwd = Io.Dir.cwd();
     const src = try cwd.realPathFileAlloc(io, source, a);
-    const src_dir = std.fs.path.dirname(src).?;
+    const src_dir = std.Io.Dir.path.dirname(src).?;
     const exe_zfls = try cwd.realPathFileAlloc(io, zfls_exe.?, a);
     const tmp = try lsp.tempDir(io, a, init.environ_map, "zfls-dap-");
     defer cwd.deleteTree(io, tmp) catch {};
-    const exe = try std.fs.path.join(a, &.{ tmp, "hello.exe" });
+    const exe = try std.Io.Dir.path.join(a, &.{ tmp, "hello.exe" });
     const built = try std.process.run(a, io, .{
         .argv = &.{ zig, "cc", "-target", "x86_64-windows-msvc", "-g", "-O0", src, "-o", exe },
         .cwd = .{ .path = tmp },

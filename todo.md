@@ -14,9 +14,10 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-- [ ] Before the release, after the rest: a pass over all the Zig code
-  (zfls, build, tools) replacing what Zig 0.17 deprecates
-  (`std.fmt.allocPrint` for `Allocator.print`, and the like)
+- [x] Before the release, after the rest: a pass over all the Zig code
+  (zfls, build, tools, tests) replacing what Zig 0.17 deprecates
+  (`std.fmt.allocPrint` for `Allocator.print`, and the like), found by
+  ZLS: 585 uses, none left
 
 ## After 0.4.0
 

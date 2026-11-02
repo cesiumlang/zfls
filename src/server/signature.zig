@@ -77,7 +77,7 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
     var sub_name_raw = str.strip(pl2.str);
     // a CUDA Fortran kernel launch, `call k<<<grid, block>>>(args)`
     if (std.mem.endsWith(u8, sub_name_raw, ">>>")) {
-        if (std.mem.indexOf(u8, sub_name_raw, "<<<")) |i| sub_name_raw = str.strip(sub_name_raw[0..i]);
+        if (std.mem.find(u8, sub_name_raw, "<<<")) |i| sub_name_raw = str.strip(sub_name_raw[0..i]);
     }
     const arg_strings = try helpers.splitArgs(a, arg_string);
     const sub_end = pl2.sections[pl2.sections.len - 1].start;
@@ -155,8 +155,8 @@ pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, li
             if (args.len < required) continue;
         }
         const keywords_ok = for (args) |arg| {
-            const eq = std.mem.indexOfScalar(u8, arg, '=') orelse continue;
-            if (std.mem.indexOf(u8, arg, "==") != null or str.strip(arg[0..eq]).len == 0) continue;
+            const eq = std.mem.findScalar(u8, arg, '=') orelse continue;
+            if (std.mem.find(u8, arg, "==") != null or str.strip(arg[0..eq]).len == 0) continue;
             if (checkOptional(arg, sig.params) == null) break false;
         } else true;
         if (keywords_ok and sig.params.len < best_size) {
@@ -173,7 +173,7 @@ pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, li
 pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize } {
     const sig = try vo.getSignature(a, null);
     const label = sig.label orelse return null;
-    const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
+    const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
     for (sig.params, parameters) |p, *pv| {
         pv.* = .{ .label = p.label };
@@ -193,15 +193,15 @@ pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const [
     // it takes as many arguments, and has the keywords given
     var fits = arg_strings.len <= sig.params.len;
     for (arg_strings) |arg| {
-        const eq = std.mem.indexOfScalar(u8, arg, '=') orelse continue;
-        if (std.mem.indexOf(u8, arg, "==") != null) continue;
+        const eq = std.mem.findScalar(u8, arg, '=') orelse continue;
+        if (std.mem.find(u8, arg, "==") != null) continue;
         if (checkOptional(arg, sig.params) == null and str.strip(arg[0..eq]).len > 0) fits = false;
     }
     return .{ .info = info, .param = param_num, .fits = fits, .size = sig.params.len };
 }
 
 pub fn checkOptional(arg: []const u8, params: []const Obj.ArgSig) ?i64 {
-    const eq = std.mem.indexOfScalar(u8, arg, '=') orelse return null;
+    const eq = std.mem.findScalar(u8, arg, '=') orelse return null;
     const opt_arg = str.strip(arg[0..eq]);
     for (params, 0..) |p, i| {
         const lbl = str.beforeFirst(p.label, "=");

@@ -98,7 +98,7 @@ pub fn start(self: *Server, a: Allocator) void {
 fn firstFile(self: *Server, a: Allocator) ?[]const u8 {
     const files = bindc.cFiles(self, a) catch return null;
     for (files) |f| {
-        const ext = std.fs.path.extension(f);
+        const ext = std.Io.Dir.path.extension(f);
         if (!std.mem.startsWith(u8, ext, ".h") and !std.mem.eql(u8, ext, ".cuh")) return f;
     }
     return if (files.len > 0) files[0] else null;
@@ -183,7 +183,7 @@ fn initialized(self: *Server, c: *Clangd, a: Allocator) void {
 fn openFile(self: *Server, c: *Clangd, a: Allocator, uri: []const u8) void {
     const path = paths.pathFromUri(self.io, a, uri) catch return;
     const text = Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(64 * 1024 * 1024)) catch return;
-    const ext = std.fs.path.extension(path);
+    const ext = std.Io.Dir.path.extension(path);
     const cpp = !std.mem.eql(u8, ext, ".c") and !std.mem.eql(u8, ext, ".h");
     const msg = json.from(a, .{
         .jsonrpc = "2.0",
