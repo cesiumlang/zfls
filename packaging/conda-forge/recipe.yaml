@@ -12,9 +12,6 @@ package:
   version: ${{ version }}
 
 source:
-  # zfls with its submodules (GitHub's own archives leave them out): rstd,
-  # with its Win32 bindings, and M_intrinsics, the intrinsic procedure
-  # documentation zfls embeds; attached to every release
   - url: https://github.com/cesiumlang/zfls/releases/download/v${{ version }}/zfls-v${{ version }}-src.tar.gz
     sha256: ${{ zfls_sha256 }}
 
