@@ -156,8 +156,10 @@ Diagnostics and code actions:
   (`workspace_diagnostics`)
 - [x] Compiler diagnostics from the server, for every editor
   (`compiler_diagnostics`: gfortran, ifx, ifort, flang, nvfortran, nagfor,
-  lfortran), after compiling the modules a file uses; in VS Code with
-  `zfls.linter.runner` set to `server`. FL #85, HS #205
+  lfortran), after compiling the modules a file uses; also while a file is
+  edited, through fypp, and with further include directories. VS Code's
+  `zfls.linter` settings are its options: the extension has no linter of
+  its own. FL #85, HS #205
 - [x] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; the type, rank and kind of variables
   and literals (`argument-kind`), the type and rank of expressions

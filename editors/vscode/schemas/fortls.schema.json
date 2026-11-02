@@ -253,6 +253,53 @@
         "null"
       ]
     },
+    "compiler_include_dirs": {
+      "description": "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "compiler_no_save": {
+      "description": "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_on_change": {
+      "description": "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_change_delay": {
+      "description": "With compiler_on_change, the milliseconds without a change before a check (default: 1000)",
+      "type": "integer",
+      "default": 1000
+    },
+    "compiler_no_dependencies": {
+      "description": "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_fypp": {
+      "description": "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_fypp_args": {
+      "description": "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
     "symbol_skip_mem": {
       "description": "Do not include type members in document symbol results",
       "type": "boolean",

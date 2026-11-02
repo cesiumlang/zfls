@@ -20,8 +20,7 @@ import {
   testDriveDefs,
 } from "./fpm";
 import { FpmProject, buildOptions, debugTarget, findProjects, fpmExecutable, listTargets } from "./fpmCommands";
-import { FORTRAN_FILES } from "./linter";
-import { runProcess } from "./tools";
+import { FORTRAN_FILES, runProcess } from "./tools";
 
 /** What a test item stands for */
 interface ItemData {

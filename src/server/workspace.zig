@@ -522,6 +522,8 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
         try self.mergePpDefs(&out.defs);
     }
+    // the compiler checks the unsaved text after a pause (compiler_on_change)
+    if (!self.s.disable_diagnostics) compile.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ path, @errorName(e) });
     return .null;
 }
 
@@ -558,7 +560,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     };
     if (changed) try fullRelink(self, a);
     // the compiler checks the file as saved, on its own thread
-    if (!did_close and !self.s.disable_diagnostics) compile.check(self, a, uri, filepath) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
+    if (!did_close and !self.s.disable_diagnostics) compile.check(self, a, uri, filepath, if (did_open) .open else .save) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
     // a change can change the diagnostics of the files that use it
     if (changed and self.s.workspace_diagnostics) {
         diagnostics.publishWorkspace(self, a);
