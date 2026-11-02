@@ -57,7 +57,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFpmTests(context, output);
   registerPfunitTests(context, output);
   registerIfxSetup(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
-  registerDebugType(context, output, clientForUri);
+  registerDebugType(context, output, clientForUri, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
   registerModuleVariables(context, clientForUri);
   context.subscriptions.push(
     output,

@@ -107,6 +107,10 @@ test("zfls's debugger, when there is a gdb of the Debug Adapter Protocol", () =>
   assert.deepEqual(chooseDebugger("zfls", cpptools, true, true), { missing: "zfls", extensions: [] });
   // a debugger configured is used
   assert.deepEqual(chooseDebugger("cppdbg", cpptools, false, true), { type: "cppdbg" });
+  // MSVC-ABI programs on Windows: zfls's debugger of Windows's Debugger Engine
+  assert.deepEqual(chooseDebugger("auto", cpptools, true, false, true), { type: "zfls" });
+  assert.deepEqual(chooseDebugger("zfls", () => false, true, false, true), { type: "zfls" });
+  assert.deepEqual(chooseDebugger("cppvsdbg", cpptools, true, false, true), { type: "cppvsdbg" });
 });
 
 test("a missing debugger names the extensions to install", () => {
@@ -171,6 +175,17 @@ test("zfls's launch configuration: the fortran type, resolved", () => {
   assert.equal(launchConfiguration({ ...spec, type: "cppdbg" }).externalConsole, false);
   assert.equal(launchConfiguration({ ...spec, type: "lldb", console: "integratedTerminal" }).terminal, "integrated");
   assert.equal(launchConfiguration({ ...spec, type: "cppvsdbg", console: "externalTerminal" }).console, "externalTerminal");
+});
+
+test("zfls's debugger of an MSVC-ABI program: zfls dap", () => {
+  const z = launchConfiguration({ ...spec, type: "zfls", gdbPath: "/opt/gdb", msvc: true, sourceRoot: "/w" });
+  assert.equal(z.type, "fortran");
+  assert.equal(z.dbgeng, true);
+  assert.equal(z.gdb, undefined);
+  assert.equal(z.sourceRoot, "/w");
+  const g = launchConfiguration({ ...spec, type: "zfls", gdbPath: "/opt/gdb" });
+  assert.equal(g.dbgeng, undefined);
+  assert.equal(g.gdb, "/opt/gdb");
 });
 
 test("the processes to attach to", () => {

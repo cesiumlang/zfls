@@ -418,6 +418,8 @@ export async function debugTarget(
     env: compiler.exe ? runtimeEnv(compiler.exe, process.platform, process.env) : {},
     platform: process.platform,
     gdbPath,
+    msvc: kind.msvc,
+    sourceRoot: project.root,
   }) as vscode.DebugConfiguration;
   log.info(`[fpm] debugging with ${JSON.stringify(config)}`);
   const started = await vscode.debug.startDebugging(project.folder, config);
