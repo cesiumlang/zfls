@@ -367,8 +367,9 @@ only VS Code; zfls offers formatting only when a formatter is set.
 
 zfls gives the formatter the document's text, as the editor has it, on its
 standard input, reads the result from its standard output (no files are
-written), and answers with one edit, of the part the formatter changed.
-The formatter runs in the file's directory, so fprettify finds the
+written), and answers with an edit for each block of lines the formatter
+changed (from a line diff), so the lines it left alone keep their exact
+text. The formatter runs in the file's directory, so fprettify finds the
 `.fprettify.rc` files there and above.
 
 ```json
