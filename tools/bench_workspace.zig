@@ -24,7 +24,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const zfls = @import("zfls");
-const jsonrpc = zfls.jsonrpc;
+const lsp = @import("lsp_client");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 const Kind = enum { hover, definition, references, completion, signature };
@@ -62,6 +62,10 @@ pub fn main(init: std.process.Init) !u8 {
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
         const arg = argv[i];
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            std.debug.print("{s}", .{usage});
+            return 0;
+        }
         if (!std.mem.startsWith(u8, arg, "--")) {
             args.workspace = arg;
             continue;
@@ -90,118 +94,50 @@ pub fn main(init: std.process.Init) !u8 {
     }
     const cwd = Io.Dir.cwd();
     const src = try cwd.realPathFileAlloc(io, args.workspace, a);
-    const tmp = init.environ_map.get("TMPDIR") orelse init.environ_map.get("TEMP") orelse init.environ_map.get("TMP") orelse "/tmp";
 
     var stdout_buf: [4096]u8 = undefined;
     var stdout = Io.File.stdout().writer(io, &stdout_buf);
     const out = &stdout.interface;
 
     const zfls_exe = try cwd.realPathFileAlloc(io, args.zfls, a);
-    try report(out, "zfls", try run(io, a, "zfls", &.{zfls_exe}, src, tmp, args));
+    try report(out, "zfls", try run(io, init.gpa, a, init.environ_map, "zfls", &.{zfls_exe}, src, args));
     try out.flush();
     if (args.fortls) |cmd| {
         var fortls: std.ArrayList([]const u8) = .empty;
         var words = std.mem.tokenizeScalar(u8, cmd, ' ');
         while (words.next()) |w| try fortls.append(a, w);
         try fortls.append(a, "--disable_autoupdate");
-        try report(out, "fortls", try run(io, a, "fortls", fortls.items, src, tmp, args));
+        try report(out, "fortls", try run(io, init.gpa, a, init.environ_map, "fortls", fortls.items, src, args));
         try out.flush();
     }
     return 0;
 }
 
-/// A language server process
-const Server = struct {
-    io: Io,
-    child: std.process.Child,
-    reader: Io.File.Reader,
-    next_id: i64 = 100,
-
-    fn start(io: Io, a: Allocator, argv: []const []const u8) !*Server {
-        const s = try a.create(Server);
-        s.* = .{
-            .io = io,
-            .child = try std.process.spawn(io, .{
-                .argv = argv,
-                .stdin = .pipe,
-                .stdout = .pipe,
-                .stderr = .ignore,
-                .create_no_window = true,
-            }),
-            .reader = undefined,
-        };
-        s.reader = s.child.stdout.?.reader(io, try a.alloc(u8, 64 * 1024));
-        return s;
-    }
-
-    /// A notification (`id` null) or request
-    fn send(s: *Server, a: Allocator, method_name: []const u8, params: anytype, id: ?i64) !void {
-        const body = if (@TypeOf(params) == @TypeOf(null))
-            try std.json.Stringify.valueAlloc(a, .{ .jsonrpc = "2.0", .id = id, .method = method_name }, .{ .emit_null_optional_fields = false })
-        else
-            try std.json.Stringify.valueAlloc(a, .{ .jsonrpc = "2.0", .id = id, .method = method_name, .params = params }, .{ .emit_null_optional_fields = false });
-        try s.child.stdin.?.writeStreamingAll(s.io, try jsonrpc.frame(a, body));
-    }
-
-    /// Sends a request and waits for its response (the server's own requests
-    /// are answered with null, its notifications dropped)
-    fn request(s: *Server, a: Allocator, method_name: []const u8, params: anytype) !void {
-        s.next_id += 1;
-        const id = s.next_id;
-        try s.send(a, method_name, params, id);
-        while (true) {
-            const body = (try jsonrpc.readMessage(&s.reader.interface, a)) orelse return error.ServerClosedItsOutput;
-            const msg = std.json.parseFromSliceLeaky(Value, a, body, .{}) catch continue;
-            if (msg != .object) continue;
-            const msg_id = msg.object.get("id") orelse continue;
-            if (msg.object.get("method") != null) {
-                const answer = try std.json.Stringify.valueAlloc(a, .{ .jsonrpc = "2.0", .id = msg_id, .result = null }, .{});
-                try s.child.stdin.?.writeStreamingAll(s.io, try jsonrpc.frame(a, answer));
-                continue;
+/// Peak resident memory of the process, in bytes
+fn peakMemory(server: *lsp.Client, io: Io, a: Allocator) ?u64 {
+    const id = server.child.id orelse return null;
+    switch (builtin.os.tag) {
+        .windows => {
+            var c: ProcessMemoryCounters = undefined;
+            c.cb = @sizeOf(ProcessMemoryCounters);
+            if (K32GetProcessMemoryInfo(id, &c, c.cb) == .FALSE) return null;
+            return c.PeakWorkingSetSize;
+        },
+        .linux => {
+            const path = std.fmt.allocPrint(a, "/proc/{d}/status", .{id}) catch return null;
+            const status = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch return null;
+            var lines = std.mem.splitScalar(u8, status, '\n');
+            while (lines.next()) |line| {
+                if (!std.mem.startsWith(u8, line, "VmHWM:")) continue;
+                var words = std.mem.tokenizeAny(u8, line["VmHWM:".len..], " \t");
+                const kb = std.fmt.parseInt(u64, words.next() orelse return null, 10) catch return null;
+                return kb * 1024;
             }
-            if (msg_id == .integer and msg_id.integer == id) return;
-        }
+            return null;
+        },
+        else => return null,
     }
-
-    /// Waits until everything sent so far has been handled
-    fn sync(s: *Server, a: Allocator) !void {
-        try s.request(a, "textDocument/documentSymbol", .{ .textDocument = .{ .uri = "file:///sync.f90" } });
-    }
-
-    fn close(s: *Server, a: Allocator) void {
-        s.request(a, "shutdown", null) catch {};
-        s.send(a, "exit", null, null) catch {};
-        if (s.child.stdin) |f| f.close(s.io);
-        s.child.stdin = null;
-        if (s.child.wait(s.io)) |_| {} else |_| s.child.kill(s.io);
-    }
-
-    /// Peak resident memory of the process, in bytes
-    fn peakMemory(s: *Server, io: Io, a: Allocator) ?u64 {
-        const id = s.child.id orelse return null;
-        switch (builtin.os.tag) {
-            .windows => {
-                var c: ProcessMemoryCounters = undefined;
-                c.cb = @sizeOf(ProcessMemoryCounters);
-                if (K32GetProcessMemoryInfo(id, &c, c.cb) == .FALSE) return null;
-                return c.PeakWorkingSetSize;
-            },
-            .linux => {
-                const path = std.fmt.allocPrint(a, "/proc/{d}/status", .{id}) catch return null;
-                const status = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch return null;
-                var lines = std.mem.splitScalar(u8, status, '\n');
-                while (lines.next()) |line| {
-                    if (!std.mem.startsWith(u8, line, "VmHWM:")) continue;
-                    var words = std.mem.tokenizeAny(u8, line["VmHWM:".len..], " \t");
-                    const kb = std.fmt.parseInt(u64, words.next() orelse return null, 10) catch return null;
-                    return kb * 1024;
-                }
-                return null;
-            },
-            else => return null,
-        }
-    }
-};
+}
 
 const ProcessMemoryCounters = extern struct {
     cb: u32,
@@ -339,8 +275,8 @@ fn positions(a: Allocator, text: []const u8, count: usize) ![]Pos {
     return out.items;
 }
 
-fn run(io: Io, a: Allocator, name: []const u8, cmd: []const []const u8, src: []const u8, tmp: []const u8, args: Args) !Result {
-    const dir = try std.fmt.allocPrint(a, "{s}{c}bench_{s}_{d}", .{ tmp, std.fs.path.sep, name, now(io) });
+fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map, name: []const u8, cmd: []const []const u8, src: []const u8, args: Args) !Result {
+    const dir = try lsp.tempDir(io, a, env, try std.fmt.allocPrint(a, "zfls_bench_{s}_", .{name}));
     defer Io.Dir.cwd().deleteTree(io, dir) catch {};
     const work = try std.fs.path.join(a, &.{ dir, "ws" });
     const rel = try copyWorkspace(io, a, src, work);
@@ -363,26 +299,27 @@ fn run(io: Io, a: Allocator, name: []const u8, cmd: []const []const u8, src: []c
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(a, cmd);
     try argv.append(a, "--incremental_sync");
-    const server = try Server.start(io, a, argv.items);
-    errdefer server.child.kill(io);
+    const server = try lsp.Client.start(io, gpa, argv.items, null);
+    defer server.deinit();
+    errdefer server.kill();
 
     var start = now(io);
-    try server.request(a, "initialize", .{
+    _ = try server.request("initialize", .{
         .rootUri = try zfls.paths.pathToUri(a, work),
         .rootPath = work,
         .capabilities = .{},
     });
     result.init = seconds(io, start);
-    try server.send(a, "initialized", .{}, null);
+    try server.send("initialized", .{}, null);
 
     start = now(io);
-    try server.send(a, "textDocument/didOpen", .{ .textDocument = .{
+    try server.send("textDocument/didOpen", .{ .textDocument = .{
         .uri = uri,
         .languageId = "fortran",
         .version = 1,
         .text = text,
     } }, null);
-    try server.sync(a);
+    try server.sync();
     result.open = seconds(io, start);
 
     const td = .{ .uri = uri };
@@ -391,9 +328,9 @@ fn run(io: Io, a: Allocator, name: []const u8, cmd: []const []const u8, src: []c
         const pos: LspPos = .{ .line = p.line, .character = p.character };
         start = now(io);
         if (p.kind == .references) {
-            try server.request(a, method(p.kind), .{ .textDocument = td, .position = pos, .context = .{ .includeDeclaration = true } });
+            _ = try server.request(method(p.kind), .{ .textDocument = td, .position = pos, .context = .{ .includeDeclaration = true } });
         } else {
-            try server.request(a, method(p.kind), .{ .textDocument = td, .position = pos });
+            _ = try server.request(method(p.kind), .{ .textDocument = td, .position = pos });
         }
         try result.requests.getPtr(p.kind).append(a, seconds(io, start));
     }
@@ -418,14 +355,14 @@ fn run(io: Io, a: Allocator, name: []const u8, cmd: []const []const u8, src: []c
         version += 1;
         const at: LspPos = .{ .line = line, .character = 0 };
         start = now(io);
-        try server.send(a, "textDocument/didChange", .{
+        try server.send("textDocument/didChange", .{
             .textDocument = .{ .uri = uri, .version = version },
             .contentChanges = .{.{
                 .range = .{ .start = at, .end = at },
                 .text = try std.fmt.allocPrint(a, "    integer :: zz_bench_{d}\n", .{n}),
             }},
         }, null);
-        try server.request(a, "textDocument/hover", .{
+        _ = try server.request("textDocument/hover", .{
             .textDocument = td,
             .position = LspPos{ .line = line, .character = 16 },
         });
@@ -436,13 +373,13 @@ fn run(io: Io, a: Allocator, name: []const u8, cmd: []const []const u8, src: []c
     var saves: std.ArrayList(f64) = .empty;
     for (0..args.saves) |_| {
         start = now(io);
-        try server.send(a, "textDocument/didSave", .{ .textDocument = td }, null);
-        try server.sync(a);
+        try server.send("textDocument/didSave", .{ .textDocument = td }, null);
+        try server.sync();
         try saves.append(a, seconds(io, start));
     }
     result.save = saves.items;
-    result.memory = server.peakMemory(io, a);
-    server.close(a);
+    result.memory = peakMemory(server, io, a);
+    _ = try server.close();
     return result;
 }
 

@@ -101,33 +101,76 @@ pub fn build(b: *std.Build) !void {
     fuzz_step.dependOn(&run_fuzz_tests.step);
     test_step.dependOn(&run_fuzz_tests.step);
 
-    addScriptTests(b, exe);
-    test_step.dependOn(&b.addRunArtifact(addBench(b, mod, exe)).step);
+    addScriptTests(b, mod, exe, test_step);
 }
 
-/// `zig build bench -- WORKSPACE [--fortls CMD] ...`: zfls, and fortls when
-/// CMD starts it, timed on a large workspace (tools/bench_workspace.zig;
-/// build with -Doptimize=ReleaseSafe). Returns the benchmark's unit tests.
-fn addBench(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile) *std.Build.Step.Compile {
-    const bench_mod = b.createModule(.{
-        .root_source_file = b.path("tools/bench_workspace.zig"),
-        .target = mod.resolved_target,
-        .optimize = mod.optimize,
-        .imports = &.{.{ .name = "zfls", .module = mod }},
-    });
-    const run = b.addRunArtifact(b.addExecutable(.{ .name = "bench_workspace", .root_module = bench_mod }));
-    run.addArg("--zfls");
-    run.addArtifactArg(exe);
-    run.addPassthruArgs();
-    run.has_side_effects = true;
-    b.step("bench", "Time zfls (and fortls, with -- --fortls CMD) on a workspace (-- WORKSPACE)").dependOn(&run.step);
-    return b.addTest(.{ .root_module = bench_mod });
-}
-
-/// Steps running the Python test drivers in tests/ against the built server
-fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
+/// Steps running the test drivers in tests/ against the built server: the
+/// Zig ones, which `zig build test-tools` installs (for a server built
+/// elsewhere: `zig-out/bin/stress_edit --zfls EXE`), and the Python ones,
+/// which run fortls; and `zig build bench -- WORKSPACE [--fortls CMD] ...`,
+/// zfls (and fortls when CMD starts it) timed on a large workspace
+/// (tools/bench_workspace.zig; build with -Doptimize=ReleaseSafe). Their
+/// unit tests are part of `test_step`.
+fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
+    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
+    all.dependOn(b.getInstallStep());
+    all.dependOn(test_step);
+
+    const client = b.createModule(.{
+        .root_source_file = b.path("tests/lsp_client.zig"),
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test)");
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool };
+    const tools = [_]Tool{
+        .{
+            .name = "gfortran_oracle",
+            .root = "tests/gfortran_oracle.zig",
+            .step = "test-oracle",
+            .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "stress_edit",
+            .root = "tests/stress_edit.zig",
+            .step = "test-stress",
+            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
+            .needs_fortls = true,
+        },
+        .{
+            .name = "bench_workspace",
+            .root = "tools/bench_workspace.zig",
+            .step = null,
+            .desc = "Time zfls (and fortls, with -- --fortls CMD) on a workspace (-- WORKSPACE)",
+            .needs_fortls = false,
+        },
+    };
+    for (tools) |t| {
+        const tool_mod = b.createModule(.{
+            .root_source_file = b.path(t.root),
+            .target = mod.resolved_target,
+            .optimize = mod.optimize,
+            .imports = &.{
+                .{ .name = "zfls", .module = mod },
+                .{ .name = "lsp_client", .module = client },
+            },
+        });
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tool_mod })).step);
+        const tool = b.addExecutable(.{ .name = t.name, .root_module = tool_mod });
+        if (t.step != null) tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
+        const run = b.addRunArtifact(tool);
+        run.setCwd(b.path(""));
+        run.addArg("--zfls");
+        run.addArtifactArg(exe);
+        if (t.needs_fortls) if (fortls) |f| run.addArgs(&.{ "--fortls", f });
+        run.addPassthruArgs();
+        // They report their own results; always rerun them
+        run.has_side_effects = true;
+        b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
+        if (t.step != null) all.dependOn(&run.step);
+    }
 
     const Script = struct { step: []const u8, desc: []const u8, script: []const u8, needs_fortls: bool };
     const scripts = [_]Script{
@@ -138,27 +181,12 @@ fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
             .needs_fortls = true,
         },
         .{
-            .step = "test-oracle",
-            .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
-            .script = "tests/gfortran_oracle.py",
-            .needs_fortls = false,
-        },
-        .{
-            .step = "test-stress",
-            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
-            .script = "tests/stress_edit.py",
-            .needs_fortls = true,
-        },
-        .{
             .step = "test-differential",
             .desc = "Compare zfls responses with Python fortls over its corpus (slow)",
             .script = "tests/differential.py",
             .needs_fortls = true,
         },
     };
-    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
-    all.dependOn(b.getInstallStep());
-    if (b.top_level_steps.get("test")) |t| all.dependOn(&t.step);
     for (scripts) |s| {
         const run = b.addSystemCommand(&.{python});
         run.addFileArg(b.path(s.script));

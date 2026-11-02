@@ -485,14 +485,18 @@ jobs:
       - name: fortls test suite
         run: python tests/fortls_parity.py --zfls "$ZFLS" --fortls "$FORTLS"
 
+      # the Zig test drivers (tests/gfortran_oracle.zig, tests/stress_edit.zig)
+      - name: Build the test drivers
+        run: zig build test-tools
+
       - name: gfortran oracle
-        run: python tests/gfortran_oracle.py --zfls "$ZFLS"
+        run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
 
       - name: Stress sessions
         run: |
-          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --seeds 10 --steps 3000
-          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 200 --seeds 4 --steps 3000 --no-incremental
-          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 300 --seeds 4 --steps 3000 --preprocessor
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --seeds 10 --steps 3000
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 200 --seeds 4 --steps 3000 --no-incremental
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 300 --seeds 4 --steps 3000 --preprocessor
 
       - name: Differential test against Python fortls
         run: python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS"

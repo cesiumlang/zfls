@@ -353,12 +353,16 @@ from zfls's module graph.
 The stress test edits a copy of fortls's test sources thousands of times,
 with saves, close/reopen and requests mixed in, and then checks that every
 edited file's symbols and diagnostics match a fresh server's. Run it on a
-Debug build so memory errors and leaks are caught; for longer runs call
-`python tests/stress_edit.py --seeds N --steps M` (see `--help`).
+Debug build so memory errors and leaks are caught; for longer runs, `zig
+build test-stress -- --seeds N --steps M` (`--help` lists the options).
+`zig build test-tools` installs the oracle and stress test drivers in
+`zig-out/bin`, to run them against a server built elsewhere (`--zfls EXE`).
 
 The parity, differential and stress tests need a fortls checkout, `../fortls` by
-default or `-Dfortls=PATH`, and Python 3 (`-Dpython=EXE`); no third-party
-Python packages are required. The oracle test needs `gfortran` on the `PATH`
+default or `-Dfortls=PATH` (the stress test takes its test sources, else
+`tests/fortran`). The parity and differential tests, which run fortls's
+own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
+required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
 
 `zig build bench` times zfls on a large workspace (workspace
