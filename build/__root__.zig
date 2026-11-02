@@ -74,6 +74,8 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(intrinsic_docs_tests).step);
     test_step.dependOn(&b.addRunArtifact(addCondaRecipe(b)).step);
     test_step.dependOn(&b.addRunArtifact(addGenerated(b)).step);
+    test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "source_archive", "source-archive", "Write the source archive zfls-v<version>-src.tar.gz, submodules included (-- [OUT_DIR], default dist)")).step);
+    test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "package_vscode", "package-vscode", "Package the VS Code extension per platform from the release archives (-- DIST)")).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)
@@ -230,6 +232,28 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     gen.has_side_effects = true;
     b.step("conda-recipe", "Write the conda-forge recipe for a zfls source archive (-- --release|--local ARCHIVE OUT_DIR)").dependOn(&gen.step);
     return b.addTest(.{ .root_module = gen_mod });
+}
+
+/// `zig build STEP -- ARGS...`: the release packaging program
+/// build/NAME.zig, run at the root of the repository with build.zig.zon's
+/// version as its first argument: `source-archive` (build/source_archive.zig)
+/// and `package-vscode` (build/package_vscode.zig). Paths are relative to
+/// the repository. Returns its unit tests.
+fn addReleaseTool(b: *std.Build, name: []const u8, step: []const u8, desc: []const u8) *std.Build.Step.Compile {
+    const tool_mod = b.createModule(.{
+        .root_source_file = b.path(b.fmt("build/{s}.zig", .{name})),
+        .target = b.graph.host,
+        // compressing the source archive takes minutes in Debug
+        .optimize = .ReleaseSafe,
+    });
+    const run = b.addRunArtifact(b.addExecutable(.{ .name = name, .root_module = tool_mod }));
+    run.setCwd(b.path(""));
+    run.addArg(zon.version);
+    run.addPassthruArgs();
+    // writes outside the cache
+    run.has_side_effects = true;
+    b.step(step, desc).dependOn(&run.step);
+    return b.addTest(.{ .root_module = tool_mod });
 }
 
 /// `zig build generated` writes the files of the repository generated from
