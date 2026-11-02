@@ -143,6 +143,8 @@ async function runOrDebug(
     env: plan.env,
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    msvc: plan.msvc,
+    sourceRoot: plan.folder?.uri.fsPath ?? path.dirname(plan.source),
   }) as vscode.DebugConfiguration;
   log.info(`[run] debugging with ${JSON.stringify(config)}`);
   const started = await vscode.debug.startDebugging(plan.folder, config);
@@ -240,11 +242,14 @@ export async function chooseInstalledDebugger(
   gdb: string | undefined,
 ): Promise<DebugType | undefined> {
   const dap = !msvc && (preference === "auto" || preference === "zfls") && gdb ? await gdbHasDap(gdb) : false;
+  // MSVC-ABI programs: Windows's Debugger Engine, which every Windows has
+  const dbgeng = msvc && process.platform === "win32";
   const choice = chooseDebugger(
     preference,
     (id) => vscode.extensions.getExtension(id) !== undefined,
     msvc,
     dap,
+    dbgeng,
   );
   if ("type" in choice) {
     return choice.type;

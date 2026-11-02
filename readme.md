@@ -170,6 +170,22 @@ runtime) does not link; CMake, which runs the linker itself, needs
 directories. The VS Code extension's **zfls: Set Up ifx** does the same,
 showing Intel's license first.
 
+### A debugger for Windows's programs (`zfls dap`)
+
+`zfls dap` is a debug adapter (the Debug Adapter Protocol on standard input
+and output) over Windows's own Debugger Engine (`dbgeng.dll` of System32,
+which every Windows 10 and later has), for the programs whose debug
+information is Microsoft's: those of ifx, ifort and LLVM Flang on Windows.
+The VS Code extension's `fortran` debug type uses it for them. It launches
+the program (in a console window of its own) or attaches to it, stops at
+breakpoints of source lines and at the Fortran runtime's errors (Intel's
+`for__issue_diagnostic`, ERROR STOP), steps by lines, and shows the
+variables as Fortran: dbghelp says where each is, and zfls, which indexes
+the program's sources (`sourceRoot` of the launch configuration), its
+declared type, kind and rank; arrays are read through Intel's descriptors,
+with their bounds, derived types by their components, and the module
+variables the frame's line sees are a scope of their own.
+
 ### Build files
 
 zfls adds to the `include_dirs` and `pp_defs` options what the project's
