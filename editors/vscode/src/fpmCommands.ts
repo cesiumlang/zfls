@@ -399,8 +399,9 @@ export async function debugTarget(
   const kind = compilerKind(compiler.exe ?? compiler.name, process.platform);
   const scope = vscode.Uri.file(project.root);
   const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
+  const gdbPath = gdbFor(scope, compiler.exe);
   // choose the debugger first: no point building for a debugger that is not there
-  const debugType = await chooseInstalledDebugger(preference, kind.msvc);
+  const debugType = await chooseInstalledDebugger(preference, kind.msvc, gdbPath);
   if (!debugType) {
     return false;
   }
@@ -416,7 +417,7 @@ export async function debugTarget(
     cwd: project.root,
     env: compiler.exe ? runtimeEnv(compiler.exe, process.platform, process.env) : {},
     platform: process.platform,
-    gdbPath: gdbFor(scope, compiler.exe),
+    gdbPath,
   }) as vscode.DebugConfiguration;
   log.info(`[fpm] debugging with ${JSON.stringify(config)}`);
   const started = await vscode.debug.startDebugging(project.folder, config);

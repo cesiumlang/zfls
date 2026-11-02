@@ -196,7 +196,11 @@ and a submodule's ancestors'), then those its USE statements, and its
 hosts', make visible, each with the module that declares it, its name
 there, its name at the line (a USE may rename it) and its type; named
 constants are left out. The VS Code extension shows them while debugging,
-with their values, which the C debuggers' variables view leaves out.
+with their values, which the C debuggers' variables view leaves out: as a
+scope of the Variables view in its own debugger (in front of gdb's Debug
+Adapter Protocol, `gdb -i=dap`, which also shows arrays by their Fortran
+subscripts, derived types, polymorphic objects by their dynamic type, and
+stops on Fortran runtime errors), else in a view of their own.
 
 ### Index cache
 

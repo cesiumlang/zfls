@@ -55,7 +55,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFpm(context, output);
   registerFpmTests(context, output);
   registerPfunitTests(context, output);
-  registerDebugType(context, output);
+  registerDebugType(context, output, clientForUri);
   registerModuleVariables(context, clientForUri);
   context.subscriptions.push(
     output,

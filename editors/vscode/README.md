@@ -37,8 +37,11 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   the workspace's C files); on a name in a C or C++ file, go to definition
   gives the Fortran procedures that bind it and find references their
   Fortran calls, even before a Fortran file is opened
-- breakpoints in Fortran files, for debuggers such as C/C++ (cppdbg,
-  cppvsdbg) and CodeLLDB
+- a debugger of its own, for programs that gdb debugs: arrays by their
+  subscripts, derived types and polymorphic objects as Fortran shows them,
+  module variables, stopping on Fortran runtime errors (see
+  [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the
+  other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
 - run and debug the current file with one click (see
   [Running and debugging](#running-and-debugging))
 - fpm projects: tasks, running and debugging their targets, and their tests
@@ -349,14 +352,16 @@ its runtime libraries.
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |
-| `zfls.run.debugger` | `auto` | `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto` picks an installed one |
-| `zfls.run.gdbPath` | empty | The `gdb` for `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH` |
+| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it, else an installed one |
+| `zfls.run.gdbPath` | empty | The `gdb` for `zfls`, `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH` |
 
 `${workspaceFolder}`, `${env:NAME}`, `${userHome}`, `${file}`,
 `${fileDirname}` and a leading `~` are expanded in these settings.
 
-No debugger comes with the extension; debugging uses one of these
-extensions, the first installed one with `zfls.run.debugger` set to `auto`:
+With `zfls.run.debugger` set to `auto`, debugging uses zfls's own debugger
+when there is a gdb for it (gdb 14 or later, built with Python, as MSYS2's,
+Ubuntu's since 24.04 and most others are; see [zfls's
+debugger](#zflss-debugger)), else the first installed of these extensions:
 
 | Extension | Debugger | For |
 | --- | --- | --- |
@@ -365,14 +370,18 @@ extensions, the first installed one with `zfls.run.debugger` set to `auto`:
 | [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) | `lldb` | lldb |
 | [CDT GDB Debug Adapter](https://marketplace.visualstudio.com/items?itemName=eclipse-cdt.cdt-gdb-vscode) | `gdb` | gdb |
 
-If none is installed, **Debug Fortran File** says which to install. With
-Intel's compilers on Windows, start VS Code from a oneAPI command prompt (or
-after `setvars.bat`), so that the compiler finds the linker and libraries.
+If there is none, **Debug Fortran File** says which to install. gdb cannot
+debug the programs of `ifx`, `ifort` and LLVM Flang on Windows (their debug
+information is Microsoft's), nor run on macOS on Arm, where lldb, which
+knows no Fortran, is the debugger. With Intel's compilers on Windows,
+start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
+that the compiler finds the linker and libraries.
 
 ### The `fortran` debug type
 
 A launch configuration of type `fortran` is resolved, when it starts, into
-one of the debugger extensions above, chosen as for Debug Fortran File:
+zfls's debugger or one of the debugger extensions above, chosen as for
+Debug Fortran File:
 
 ```json
 {
@@ -387,13 +396,21 @@ one of the debugger extensions above, chosen as for Debug Fortran File:
 `program` is the program; or `fpmTarget` (with `fpmTargetKind`
 `executable`, `example` or `test`) names an fpm target, which fpm builds
 first. `args`, `cwd`, `env` and `stopAtEntry` are as their names say;
-`debugger` picks the debugger (`auto` by default, as `zfls.run.debugger`),
+`console` is where the program's input and output go: the Debug Console
+(`internalConsole`, the default: the program reads no input),
+`integratedTerminal` or `externalTerminal`. `debugger` picks the debugger
+(`auto` by default, as `zfls.run.debugger`),
 and `compiler` says which compiler built the program (by default
 `zfls.run.compiler`, or for an fpm target `zfls.fpm.compiler`), which
 decides the debugger on Windows (`ifx` and LLVM Flang programs need the
 Visual Studio one) and puts its runtime libraries on the `PATH`. Any other
 key goes to the debugger as it is (`setupCommands`, `MIMode`, ...). The
 configuration stays the same whichever debugger runs it.
+
+An `attach` configuration attaches zfls's debugger to a running program,
+picked from a list (`"processId": "${command:pickProcess}"`), or to a
+gdbserver (`"target": "host:2345"`), with `program` for its debug
+information.
 
 F5 without a `launch.json` debugs the file in the editor, as Debug Fortran
 File does, and the Run and Debug view lists a configuration for each
@@ -403,9 +420,10 @@ Breakpoints in Fortran files may have conditions in Fortran (`i .eq. 5`,
 `x > 1.0`), set before the program starts or while it runs: gdb reads them
 in the language of the breakpoint's line.
 
-While the program is stopped in a Fortran file, the **Fortran Module
-Variables** view of Run and Debug lists the module variables that the
-selected frame's line sees, which the debuggers' Variables view leaves out:
+With the debugger extensions, while the program is stopped in a Fortran
+file, the **Fortran Module Variables** view of Run and Debug lists the
+module variables that the selected frame's line sees, which their Variables
+view leaves out (zfls's debugger shows them in the Variables view):
 those of its module, private ones too, and those its USE statements bring
 in, under the names they have there (FortranBreaker #10). Their values come
 from the debugger, asked for each variable by the names that the compilers
@@ -414,6 +432,40 @@ lldb), `_QMmoduleEname` (LLVM Flang's), `MODULE_mp_NAME` (Intel's, for the
 Visual Studio debugger). Arrays and derived types expand as in the
 Variables view. A variable the debugger has no value for shows as not
 available.
+
+Hovering over a component (`p%x`, `a(i)%x`) while debugging with gdb shows
+the component, not the variable of that name.
+
+### zfls's debugger
+
+zfls's debugger runs gdb (`zfls.run.gdbPath`) in its Debug Adapter
+Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), and
+shows the program as Fortran:
+
+- arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a
+  large one in sections (`(1:100)`, ...), with a preview of their first
+  elements (`[1.0, 2.0, …]`) or their shape (`[2×3]`); an unallocated
+  array, or a pointer not associated, says so;
+- derived types with a preview of their components
+  (`point(x=9.0, y=-2.0, id=7)`), pointers as their targets, and a
+  polymorphic object (`class(point)`) with the components of its dynamic
+  type;
+- the module variables that the frame's line sees, as the **Module
+  variables** scope of the Variables view: those of its module, private
+  ones too, and those its USE statements bring in, under their names there
+  (`local => name` when renamed);
+- each variable with its Fortran expression, for **Add to Watch**, **Copy
+  as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
+- gfortran's hidden lengths of CHARACTER arguments left out;
+- **Fortran runtime errors**, an exception breakpoint of the Breakpoints
+  view, on by default: the program stops where the runtime reports an
+  error (an array bound exceeded under `-fcheck=bounds`, an allocation that
+  failed, an I/O error without `iostat=`) or at ERROR STOP, at the line of
+  the program, before it ends.
+
+The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`).
+`setupCommands` (gdb commands, such as `set print elements 0`) run before
+the program starts.
 
 **zfls: Add Build Task and Debug Configuration for Fortran File** writes
 the same build as a task in `.vscode/tasks.json` and a debug configuration

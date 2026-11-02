@@ -565,6 +565,7 @@
           "type": "string",
           "enum": [
             "auto",
+            "zfls",
             "cppdbg",
             "cppvsdbg",
             "lldb",
@@ -575,7 +576,8 @@
             "%config.zfls.run.debugger.enumDescriptions.1%",
             "%config.zfls.run.debugger.enumDescriptions.2%",
             "%config.zfls.run.debugger.enumDescriptions.3%",
-            "%config.zfls.run.debugger.enumDescriptions.4%"
+            "%config.zfls.run.debugger.enumDescriptions.4%",
+            "%config.zfls.run.debugger.enumDescriptions.5%"
           ],
           "default": "auto",
           "scope": "resource",
@@ -1148,6 +1150,9 @@
           "FortranFreeForm",
           "FortranFixedForm"
         ],
+        "variables": {
+          "pickProcess": "zfls.pickProcess"
+        },
         "configurationAttributes": {
           "launch": {
             "properties": {
@@ -1193,6 +1198,7 @@
                 "type": "string",
                 "enum": [
                   "auto",
+                  "zfls",
                   "cppdbg",
                   "cppvsdbg",
                   "lldb",
@@ -1209,6 +1215,65 @@
                 "type": "boolean",
                 "default": false,
                 "description": "%debugger.fortran.launch.stopAtEntry.description%"
+              },
+              "console": {
+                "type": "string",
+                "enum": [
+                  "internalConsole",
+                  "integratedTerminal",
+                  "externalTerminal"
+                ],
+                "enumDescriptions": [
+                  "%debugger.fortran.launch.console.enumDescriptions.0%",
+                  "%debugger.fortran.launch.console.enumDescriptions.1%",
+                  "%debugger.fortran.launch.console.enumDescriptions.2%"
+                ],
+                "default": "internalConsole",
+                "description": "%debugger.fortran.launch.console.description%"
+              },
+              "gdb": {
+                "type": "string",
+                "description": "%debugger.fortran.launch.gdb.description%"
+              },
+              "setupCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "%debugger.fortran.launch.setupCommands.description%"
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "processId": {
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "default": "${command:pickProcess}",
+                "description": "%debugger.fortran.attach.processId.description%"
+              },
+              "target": {
+                "type": "string",
+                "description": "%debugger.fortran.attach.target.description%"
+              },
+              "program": {
+                "type": "string",
+                "description": "%debugger.fortran.attach.program.description%"
+              },
+              "gdb": {
+                "type": "string",
+                "description": "%debugger.fortran.attach.gdb.description%"
+              },
+              "setupCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "%debugger.fortran.attach.setupCommands.description%"
               }
             }
           }
@@ -1244,6 +1309,16 @@
               "name": "Debug ${1:target}",
               "fpmTarget": "${1:target}",
               "fpmTargetKind": "executable"
+            }
+          },
+          {
+            "label": "%debugger.fortran.snippet.2.label%",
+            "description": "%debugger.fortran.snippet.2.description%",
+            "body": {
+              "type": "fortran",
+              "request": "attach",
+              "name": "Attach to a Fortran program",
+              "processId": "^\"\\${command:pickProcess}\""
             }
           }
         ]

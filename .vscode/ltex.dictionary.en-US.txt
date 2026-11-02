@@ -77,6 +77,7 @@ cppvsdbg
 cptr
 CSHIFT
 ctest
+CTest
 cublas
 CUDA
 cudafor
@@ -106,6 +107,7 @@ ekibun
 eline
 Emscripten
 Emscripten-generated
+Ename
 end-select-stmt
 enddo
 Endian
@@ -123,6 +125,7 @@ FFFFFFTFFFTFFFFTFFFFFFFFFFFFFFFF
 ffoorrttrraann
 FGET
 FGHIJKLMNOPQRSTUVWX
+filetypes
 findent
 finishd
 flang
@@ -154,6 +157,7 @@ fypp
 Gantt
 gatsu
 gdb
+gdbserver
 GEMMW
 GERROR
 gfortran
@@ -191,6 +195,7 @@ ifirst
 ifndef
 ifort
 IFSRC
+ifx
 ilets
 imag
 indx
@@ -271,6 +276,7 @@ Mpreprocess
 mseconds
 mshta
 msvc
+MSVC-ABI
 MSYS
 msystem
 mtune
@@ -284,6 +290,7 @@ myprod
 mysin
 mytype
 n-th
+nagfor
 namelist
 Namelist
 NAMELIST
@@ -307,6 +314,7 @@ oidc
 oneAPI
 OOXML
 OpenACC
+OpenBLAS
 OpenMP
 openvsx
 ovsx
@@ -426,8 +434,3 @@ Zig
 Zigify
 zthree
 
-CTest
-filetypes
-OpenBLAS
-ifx
-nagfor

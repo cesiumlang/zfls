@@ -20,6 +20,7 @@ import {
   upsertByKey,
   workspaceRelative,
 } from "./run";
+import { gdbHasDap } from "./gdbAdapter";
 import { expandVariables, findExecutable } from "./tools";
 import { documentVariables } from "./variables";
 
@@ -227,19 +228,39 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
 
 /** The debugger to use, or undefined (with a message) when none is installed */
 async function pickDebugger(plan: Plan): Promise<DebugType | undefined> {
-  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc);
+  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath);
 }
 
 /** The debugger of `preference` (zfls.run.debugger) for a program, MSVC-ABI
- * or not, or undefined (with a message) when none is installed */
-export async function chooseInstalledDebugger(preference: string, msvc: boolean): Promise<DebugType | undefined> {
+ * or not, or undefined (with a message) when none is installed; `gdb`: the
+ * gdb that zfls's debugger would run */
+export async function chooseInstalledDebugger(
+  preference: string,
+  msvc: boolean,
+  gdb: string | undefined,
+): Promise<DebugType | undefined> {
+  const dap = !msvc && (preference === "auto" || preference === "zfls") && gdb ? await gdbHasDap(gdb) : false;
   const choice = chooseDebugger(
     preference,
     (id) => vscode.extensions.getExtension(id) !== undefined,
     msvc,
+    dap,
   );
   if ("type" in choice) {
     return choice.type;
+  }
+  if (choice.missing === "zfls") {
+    const settings = vscode.l10n.t("Open Settings");
+    const picked = await vscode.window.showErrorMessage(
+      msvc
+        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug MSVC-ABI programs (ifx, ifort, LLVM Flang on Windows); set zfls.run.debugger to cppvsdbg.")
+        : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
+      settings,
+    );
+    if (picked === settings) {
+      await vscode.commands.executeCommand("workbench.action.openSettings", "zfls.run");
+    }
+    return undefined;
   }
   const names = choice.extensions.map((id) => {
     const ext = Object.values(DEBUGGER_EXTENSIONS).find((e) => e.id === id);
@@ -269,11 +290,10 @@ export function gdbFor(uri: vscode.Uri, compiler: string | undefined): string | 
     vscode.workspace.getConfiguration("zfls.run", uri).get<string>("gdbPath", "").trim(),
     ctx,
   );
-  return (
-    findExecutable("gdb", gdbSetting, ctx.workspaceFolder) ??
-    (compiler ? findExecutable("gdb", path.dirname(compiler), undefined) : undefined) ??
-    (gdbSetting || undefined)
-  );
+  if (gdbSetting) {
+    return findExecutable("gdb", gdbSetting, ctx.workspaceFolder) ?? gdbSetting;
+  }
+  return (compiler ? findExecutable("gdb", path.dirname(compiler), undefined) : undefined) ?? findExecutable("gdb");
 }
 
 /** Runs a task to its end: its exit code, undefined when there is none, or
