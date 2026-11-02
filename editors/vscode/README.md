@@ -304,16 +304,19 @@ fprettify for free form and findent for fixed form:
 }
 ```
 
-The extension sends the text to the formatter on its standard input and
-reads the result from its standard output, so no files are written, and
-changes only the lines the formatter changed. findent is told the source
-form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs`
-sets one. fprettify reads `.fprettify.rc` files from the directory of the
-file and its parents, as when it formats the file itself. Changes to these
-settings apply to the next formatting, without a restart. In
-`zfls.formatting.path` and the argument settings, `${workspaceFolder}`,
-`${workspaceFolder:name}`, `${userHome}`, `${env:NAME}`, `${file}`,
-`${fileDirname}` and a leading `~` are expanded.
+The zfls server runs the formatter (its `formatter` options, which these
+settings set; other editors set them in a configuration file, see the
+[zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the
+text to the formatter on its standard input and reads the result from its
+standard output, so no files are written, and changes only the lines the
+formatter changed. findent is told the source form of the file (`-ifree` or
+`-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads
+`.fprettify.rc` files from the directory of the file and its parents, as
+when it formats the file itself. Changing these settings restarts the
+server. In `zfls.formatting.path` and the argument settings,
+`${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
+`${env:NAME}` and a leading `~` are expanded; an argument with a space in
+it becomes two.
 
 **Format Selection** formats the whole lines the selection touches. The
 formatter sees only those lines, not the surrounding code: findent starts

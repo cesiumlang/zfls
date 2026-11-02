@@ -11,7 +11,6 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 import { FORTRAN_FILES, Linter } from "./linter";
-import { registerFormatting } from "./formatting";
 import { Fortitude } from "./fortitude";
 import { Codee } from "./codee";
 import { toggleComments } from "./comments";
@@ -51,7 +50,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const linter = new Linter(context, output);
   const fortitude = new Fortitude(output);
   const codee = new Codee(output);
-  registerFormatting(context, output);
   registerRunCommands(context, output);
   registerFpm(context, output);
   registerFpmTests(context, output);

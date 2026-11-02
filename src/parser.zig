@@ -290,7 +290,7 @@ pub const FortranFile = struct {
     }
 
     /// The lines that changes apply to: the editor's
-    fn editLines(self: *const FortranFile) []const []const u8 {
+    pub fn editLines(self: *const FortranFile) []const []const u8 {
         return if (self.comment_markers.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 

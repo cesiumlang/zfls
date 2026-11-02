@@ -109,6 +109,19 @@ pub const Settings = struct {
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
+    // Formatting
+    /// The formatter of `textDocument/formatting` and `rangeFormatting`:
+    /// findent or fprettify; null or `none`: none
+    formatter: ?[]const u8 = null,
+    /// The formatter executable, or the directory that holds it; null: the
+    /// one on the PATH
+    formatter_path: ?[]const u8 = null,
+    /// The formatter's further arguments
+    formatter_args: StrList = .{},
+    /// The formatter of fixed-form files; null: `formatter`
+    formatter_fixed: ?[]const u8 = null,
+    /// The further arguments of `formatter_fixed`
+    formatter_fixed_args: StrList = .{},
     // Preprocessor options
     /// null: use the default rule (uppercase extensions are preprocessed)
     pp_suffixes: ?StrList = null,
@@ -219,6 +232,12 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
+
+    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
+    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
+    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
+    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
+    .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
@@ -381,6 +400,10 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     s.compiler_args = list;
                     continue;
                 }
+                if (argsOption(&s, o.long)) |field| {
+                    field.* = try splitArgs(a, val);
+                    continue;
+                }
                 var handled = false;
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
                     if (!handled and std.mem.eql(u8, fname, o.long)) {
@@ -478,6 +501,36 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
     };
 }
 
+/// The `StrList` options of arguments, which a command line gives as one
+/// string
+fn argsOption(s: *Settings, name: []const u8) ?*StrList {
+    if (std.mem.eql(u8, name, "formatter_args")) return &s.formatter_args;
+    if (std.mem.eql(u8, name, "formatter_fixed_args")) return &s.formatter_fixed_args;
+    return null;
+}
+
+/// Arguments separated by spaces; a list keeps repeated ones
+fn splitArgs(a: Allocator, text: []const u8) !StrList {
+    var list: StrList = .{};
+    var words = std.mem.tokenizeAny(u8, text, " \t");
+    while (words.next()) |w| try list.items.append(a, w);
+    return list;
+}
+
+/// Arguments: a string split at spaces, or a list, which keeps repeated
+/// ones (-I a -I b); null for anything else
+fn argList(a: Allocator, v: json.Value) !?StrList {
+    return switch (v) {
+        .string => |x| try splitArgs(a, x),
+        .array => |arr| blk: {
+            var list: StrList = .{};
+            for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item));
+            break :blk list;
+        },
+        else => null,
+    };
+}
+
 fn jsonInt(v: ?json.Value, default: i64) i64 {
     const x = v orelse return default;
     return json.int(x) orelse default;
@@ -542,6 +595,16 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
         else => s.compiler_args,
     };
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
+    // Formatting
+    if (json.get(cfg, "formatter")) |v| s.formatter = json.str(v);
+    if (json.get(cfg, "formatter_path")) |v| s.formatter_path = json.str(v);
+    if (json.get(cfg, "formatter_args")) |v| if (try argList(a, v)) |l| {
+        s.formatter_args = l;
+    };
+    if (json.get(cfg, "formatter_fixed")) |v| s.formatter_fixed = json.str(v);
+    if (json.get(cfg, "formatter_fixed_args")) |v| if (try argList(a, v)) |l| {
+        s.formatter_fixed_args = l;
+    };
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
     s.disable_bind_c_search = jsonBool(json.get(cfg, "disable_bind_c_search"), s.disable_bind_c_search);
@@ -589,6 +652,22 @@ test "a config file only replaces the preprocessor options it sets" {
     try std.testing.expectEqualStrings("FROM_FILE", s.pp_defs.items[0].name);
     try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
     try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());
+}
+
+test "formatter arguments: a string split at spaces, or a list" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = try parseArgs(a, &.{ "--formatter", "findent", "--formatter_args=-i4  -r1", "--formatter_fixed_args", "" }, "0.1.0");
+    var s = r.run;
+    try std.testing.expectEqualStrings("findent", s.formatter.?);
+    try std.testing.expectEqual(@as(usize, 2), s.formatter_args.len());
+    try std.testing.expectEqualStrings("-r1", s.formatter_args.slice()[1]);
+    try std.testing.expectEqual(@as(usize, 0), s.formatter_fixed_args.len());
+    try applyConfig(a, &s, try json5.parse(a, "{\"formatter\": \"fprettify\", \"formatter_args\": [\"-i\", \"4\", \"-i\", \"4\"], \"formatter_fixed_args\": \"-ifixed -i2\"}"));
+    try std.testing.expectEqualStrings("fprettify", s.formatter.?);
+    try std.testing.expectEqual(@as(usize, 4), s.formatter_args.len());
+    try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
 }
 
 test "cli parsing" {
