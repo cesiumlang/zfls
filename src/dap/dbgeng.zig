@@ -297,12 +297,21 @@ pub const Engine = struct {
         var bp: ?*dbg.IDebugBreakpoint2 = null;
         try ok(self.control.AddBreakpoint2(DEBUG_BREAKPOINT_CODE, DEBUG_ANY_ID, &bp));
         const b = bp.?;
+        var id: u32 = 0;
+        try ok(b.GetId(&id));
+        // the line's code, when its module's symbols are loaded: by the
+        // symbols' own lookup, by the file's path, else its name (the
+        // engine's expression of a source line does not match every path)
+        if (try self.lineOffset(a, file, line)) |at| {
+            try ok(b.SetOffset(at));
+            try ok(b.AddFlags(DEBUG_BREAKPOINT_ENABLED));
+            return .{ .id = id, .offset = at };
+        }
+        // else the engine's expression, deferred until the module loads
         const expr = try a.print("`{s}:{d}`", .{ file, line });
         const wexpr = try std.unicode.utf8ToUtf16LeAllocZ(a, expr);
         _ = b.SetOffsetExpressionWide(wexpr.ptr);
         try ok(b.AddFlags(DEBUG_BREAKPOINT_ENABLED));
-        var id: u32 = 0;
-        try ok(b.GetId(&id));
         var offset: u64 = 0;
         if (!succeeded(b.GetOffset(&offset))) {
             // its module's symbols not loaded yet: once more after a reload
@@ -315,6 +324,18 @@ pub const Engine = struct {
             }
         }
         return .{ .id = id, .offset = offset };
+    }
+
+    /// The address of the code of `file`:`line` in the loaded modules
+    fn lineOffset(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
+        for ([_][]const u8{ file, std.fs.path.basename(file) }) |name| {
+            const w = try std.unicode.utf8ToUtf16LeAllocZ(a, name);
+            var off: u64 = 0;
+            const hr = self.symbols.GetOffsetByLineWide(line, w.ptr, &off);
+            if (succeeded(hr) and off != 0) return off;
+            last_failure = @bitCast(hr);
+        }
+        return null;
     }
 
     /// A breakpoint at a symbol (`MAIN__`, a runtime's function), maybe once
