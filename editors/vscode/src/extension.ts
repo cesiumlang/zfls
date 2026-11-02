@@ -11,8 +11,6 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 import { registerFormatting } from "./formatting";
-import { Fortitude } from "./fortitude";
-import { Codee } from "./codee";
 import { toggleComments } from "./comments";
 import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
@@ -49,8 +47,6 @@ let context: vscode.ExtensionContext;
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
-  const fortitude = new Fortitude(output);
-  const codee = new Codee(output);
   registerFormatting(context, output);
   registerRunCommands(context, output);
   registerFpm(context, output);
@@ -61,11 +57,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerModuleVariables(context, clientForUri);
   context.subscriptions.push(
     output,
-    fortitude,
-    codee,
     vscode.commands.registerCommand("zfls.linter.lint", () => lintActive()),
     vscode.commands.registerCommand("zfls.linter.clear", () => clearCompilerDiagnostics()),
-    vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitude.fixAll(uri)),
+    vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitudeFixAll(uri)),
     vscode.commands.registerCommand("zfls.gettingStarted", () =>
       vscode.commands.executeCommand("workbench.action.openWalkthrough", `${context.extension.id}#gettingStarted`, false),
     ),
@@ -99,8 +93,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
   void updateMarkerGrammar(false);
-  fortitude.activate();
-  codee.activate();
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
@@ -371,6 +363,15 @@ async function restartAll(): Promise<void> {
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
+}
+
+/** zfls.fortitude.fixAll: zfls's source action that applies fortitude's
+ * safe fixes to the file */
+async function fortitudeFixAll(uri?: vscode.Uri): Promise<void> {
+  if (uri && vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) {
+    await vscode.window.showTextDocument(uri);
+  }
+  await vscode.commands.executeCommand("editor.action.codeAction", { kind: "source.fixAll.fortitude", apply: "first" });
 }
 
 /** zfls.linter.lint: the server checks the active file with the compiler
