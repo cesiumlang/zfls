@@ -1,3 +1,5 @@
+![zfls logo](logo.svg)
+
 # zfls
 
 A Fortran language server written in Zig. zfls is a native port of
