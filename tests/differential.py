@@ -247,12 +247,33 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
     return out
 
 
+def zfls_only_item(item) -> bool:
+    """A zfls completion item of its own: `name=` for a keyword argument
+    (hansec #133), or a name of a module not used yet that adds the USE
+    statement (hansec #62)."""
+    if not isinstance(item, dict):
+        return False
+    # the parent components of an extended type (hansec #121)
+    if "labelDetails" in item:
+        return True
+    if "additionalTextEdits" in item:
+        return True
+    return str(item.get("label", "")).endswith("=") and "filterText" in item
+
+
 def normalize(v):
     """Drop details that legitimately differ between the servers."""
     if isinstance(v, dict):
-        return {k: normalize(x) for k, x in v.items() if k != "traceback"}
+        # zfls gives each diagnostic a code and source (fortls has neither)
+        diagnostic = {"range", "message", "severity"} <= v.keys()
+        return {
+            k: normalize(x) for k, x in v.items()
+            if k != "traceback" and not (diagnostic and k in ("code", "source"))
+        }
     if isinstance(v, list):
-        return [normalize(x) for x in v]
+        # names not declared under IMPLICIT NONE (hansec #129): zfls only
+        # and unused names: zfls only
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
@@ -377,6 +398,87 @@ def notifications(res: dict, method: str) -> list:
     return [n["params"] for n in res["notifications"] if n["method"] == method]
 
 
+CONSTRUCT_KEYWORDS = r"(do|if|select|block|associate|where|forall|critical|change)\b"
+
+
+INTERFACE_LINE = re.compile(r"\s*interface\s+(\w+)", re.I)
+PROCEDURE_LINE = re.compile(r".*\b(?:subroutine|function)\s+(\w+)", re.I)
+
+
+def generic_specific_definition(lines: list, ref, got) -> bool:
+    """Whether fortls's definition is a generic interface of the file and
+    zfls's a procedure that the interface lists: on a call of a generic
+    interface zfls goes to the procedure the arguments fit (hansec #135)."""
+    if not (isinstance(ref, dict) and isinstance(got, dict)) or ref.get("uri") != got.get("uri"):
+        return False
+    a = ref.get("range", {}).get("start", {}).get("line", -1)
+    b = got.get("range", {}).get("start", {}).get("line", -1)
+    if not (0 <= a < len(lines) and 0 <= b < len(lines)):
+        return False
+    iface = INTERFACE_LINE.match(lines[a])
+    proc = PROCEDURE_LINE.match(lines[b])
+    if not (iface and proc):
+        return False
+    name = proc.group(1).lower()
+    for line in lines[a + 1:]:
+        if re.match(r"\s*end\s*interface", line, re.I):
+            return False
+        if name in re.findall(r"\w+", line.lower()):
+            return True
+    return False
+
+
+LITERAL_HOVER = re.compile(r"```\w*\n(REAL|INTEGER|LOGICAL|CHARACTER\(LEN=\d+\))\n```")
+INTRINSIC_DOT_OPS = {"eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "eqv", "neqv", "true", "false"}
+
+
+def on_user_operator(lines: list, line: int, char: int) -> bool:
+    """Whether the position is on a user-defined operator `.name.` (hansec
+    #95), which zfls answers on and fortls does not."""
+    if not (0 <= line < len(lines)):
+        return False
+    for m in re.finditer(r"\.([A-Za-z]+)\.", lines[line]):
+        if m.start() <= char <= m.end() and m.group(1).lower() not in INTRINSIC_DOT_OPS:
+            return True
+    return False
+
+
+def on_assignment(lines: list, line: int, char: int) -> bool:
+    """Whether the position is on the `=` of an assignment or on
+    `assignment(=)`, where zfls answers for a defined assignment (hansec
+    #95) and fortls does not."""
+    if not (0 <= line < len(lines)):
+        return False
+    text = lines[line]
+    if any(0 <= c < len(text) and text[c] == "=" for c in (char, char - 1)):
+        return True
+    for m in re.finditer(r"(?i)assignment\s*\(\s*=\s*\)", text):
+        if m.start() <= char <= m.end():
+            return True
+    return False
+
+
+def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on a statement label or on a construct name
+    that the file defines (`name: do`); zfls answers definition, references
+    and rename there (fortls #424), fortls has no answer."""
+    if not 0 <= line < len(lines):
+        return False
+    text = lines[line]
+    for m in re.finditer(r"[A-Za-z_]\w*|\d+", text):
+        if m.start() <= char <= m.end():
+            token = m.group(0)
+            break
+    else:
+        return False
+    if token.isdigit():
+        return True
+    name = re.compile(
+        r"^\s*(\d+\s+)?" + re.escape(token) + r"\s*:(?!:)\s*" + CONSTRUCT_KEYWORDS, re.I
+    )
+    return any(name.match(l) for l in lines)
+
+
 def own_file_definition(ref, got, own: str) -> bool:
     """Whether zfls found the definition in the requesting file (path
     suffix `own`) where fortls found one in another file."""
@@ -475,7 +577,7 @@ def main() -> int:
     env["PYTHONHASHSEED"] = "0"
     common = ["--incremental_sync", "--disable_autoupdate", *args.args.split()]
     fortls_cmd = [sys.executable, "-m", "fortls_ordered", *common]
-    zfls_cmd = [str(Path(args.zfls).resolve()), *common]
+    zfls_cmd = [str(Path(args.zfls).resolve()), *common, "--disable_index_cache"]
 
     exts = {".f", ".f90", ".f08", ".f03", ".f95", ".f77", ".for", ".fpp", ".h"}
     files = sorted(
@@ -517,6 +619,11 @@ def main() -> int:
                 # cross-file order follows workspace iteration order
                 if isinstance(a, list) and isinstance(b, list):
                     a, b = sorted(a, key=ref_key), sorted(b, key=ref_key)
+            if kind == "completion" and isinstance(b, list):
+                # zfls offers the keyword arguments of the call the position
+                # is in (hansec #133) and names of modules not used yet
+                # (hansec #62); fortls does not
+                b = [x for x in b if not zfls_only_item(x)]
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway
@@ -543,6 +650,41 @@ def main() -> int:
             ):
                 # the original name of a USE rename is the module's entity
                 # (hansec #137); fortls has no answer there
+                continue
+            if (
+                kind in ("definition", "references", "rename")
+                and a is None
+                and on_construct_name_or_label(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # construct names and statement labels (fortls #424)
+                continue
+            if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
+                # the implicit type of a name that is not declared (hansec
+                # #201); fortls has no hover there
+                continue
+            if kind == "hover" and "Literal constant" in json.dumps(b) and (a is None or LITERAL_HOVER.fullmatch(a.get("contents", {}).get("value", ""))):
+                # the type of a literal, with its kind (fortls #125); fortls
+                # shows none, or the type without its kind
+                continue
+            if (
+                kind in ("hover", "definition", "references")
+                and not a
+                and on_user_operator(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # user-defined operators (hansec #95)
+                continue
+            if (
+                kind in ("hover", "definition", "references")
+                and not a
+                and on_assignment(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # defined assignment (hansec #95)
+                continue
+            if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
+                # signature help on a generic interface: a signature per
+                # procedure (fortls #6); fortls has none
+                continue
+            if kind == "definition" and generic_specific_definition(src_lines, a, b):
                 continue
             if kind == "references" and use_rename_extras(src_lines, a, b):
                 # references also find the original name on USE rename lines

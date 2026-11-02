@@ -20,24 +20,18 @@ import {
   dedupe,
   isCompilerId,
 } from "./lint/compilers";
-import {
-  Folder,
-  VariableContext,
-  expandDirectoryGlob,
-  findExecutable,
-  resolvePath,
-  resolveVariables,
-  samePath,
-} from "./lint/paths";
+import { expandDirectoryGlob, resolvePath, samePath } from "./lint/paths";
 import { findIncludes, scanModules } from "./lint/sources";
+import { VariableContext, expandVariables, findExecutable } from "./tools";
+import { documentVariables } from "./variables";
 
 const LANGUAGES = new Set(["FortranFreeForm", "FortranFixedForm"]);
 /** The extensions of package.json's FortranFixedForm language, for files
  * compiled without being open */
 const FIXED_FORM = new Set([".f", ".f77", ".for"]);
 /** Every Fortran extension of package.json, both cases */
-const FORTRAN_GLOB =
-  "**/*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+const FORTRAN_GLOB = `**/${FORTRAN_FILES}`;
 /** Debounce of runs on open and save */
 const SAVE_DELAY_MS = 250;
 const TIMEOUT_MS = 60_000;
@@ -54,6 +48,8 @@ interface FyppSettings {
 }
 
 interface Settings {
+  /** `extension`: this linter; `server`: zfls runs the compiler */
+  runner: string;
   compiler: string;
   compilerPath: string;
   extraArgs: string[];
@@ -97,6 +93,7 @@ interface RunResult {
 function readSettings(uri?: vscode.Uri): Settings {
   const c = vscode.workspace.getConfiguration("zfls.linter", uri);
   return {
+    runner: c.get<string>("runner", "extension"),
     compiler: c.get<string>("compiler", "gfortran"),
     compilerPath: c.get<string>("compilerPath", ""),
     extraArgs: c.get<string[]>("extraArgs", []),
@@ -220,8 +217,14 @@ export class Linter implements vscode.Disposable {
     if (!isCompilerId(settings.compiler)) {
       return false;
     }
+    const fypp = path.extname(doc.fileName).toLowerCase() === ".fypp";
+    // zfls checks the files itself, except fypp's, which it cannot
+    // preprocess
+    if (settings.runner === "server") {
+      return fypp && settings.fypp.enabled;
+    }
     // without fypp the compiler cannot read fypp's directives
-    return settings.fypp.enabled || path.extname(doc.fileName).toLowerCase() !== ".fypp";
+    return settings.fypp.enabled || !fypp;
   }
 
   /** Lints `doc` after `delay` ms, unless asked again before then */
@@ -305,12 +308,19 @@ export class Linter implements vscode.Disposable {
   private async lintActive(): Promise<void> {
     const doc = vscode.window.activeTextEditor?.document;
     if (!doc || doc.uri.scheme !== "file" || !LANGUAGES.has(doc.languageId)) {
-      void vscode.window.showInformationMessage("zfls: open a Fortran file to lint it.");
+      void vscode.window.showInformationMessage(vscode.l10n.t("zfls: open a Fortran file to lint it."));
       return;
     }
     if (!isCompilerId(readSettings(doc.uri).compiler)) {
       void vscode.window.showInformationMessage(
-        "zfls: compiler diagnostics are off; choose a compiler in zfls.linter.compiler.");
+        vscode.l10n.t("zfls: compiler diagnostics are off; choose a compiler in zfls.linter.compiler."),
+      );
+      return;
+    }
+    if (!this.wanted(doc)) {
+      void vscode.window.showInformationMessage(
+        vscode.l10n.t("zfls: the language server checks this file when it is saved (zfls.linter.runner is server)."),
+      );
       return;
     }
     await this.enqueue(doc);
@@ -367,8 +377,9 @@ export class Linter implements vscode.Disposable {
       return undefined;
     }
     const spec = COMPILERS[settings.compiler];
-    const vars = this.variables(uri);
-    const base = vars.folder?.path ?? path.dirname(uri.fsPath);
+    const vars = documentVariables(uri);
+    // relative paths: the file's own workspace folder, else its directory
+    const base = vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath ?? path.dirname(uri.fsPath);
     const exe = this.executable(settings, spec, vars, base);
     if (!exe) {
       void this.notifyMissing(settings.compilerPath || spec.executables[0], "compilerPath");
@@ -390,25 +401,10 @@ export class Linter implements vscode.Disposable {
     return path.join((this.context.storageUri ?? this.context.globalStorageUri).fsPath, "lint");
   }
 
-  private variables(uri: vscode.Uri): VariableContext {
-    const toFolder = (f: vscode.WorkspaceFolder): Folder => ({ name: f.name, path: f.uri.fsPath });
-    const own = vscode.workspace.getWorkspaceFolder(uri);
-    return {
-      folders: (vscode.workspace.workspaceFolders ?? []).map(toFolder),
-      folder: own ? toFolder(own) : undefined,
-      file: uri.fsPath,
-      env: process.env,
-    };
-  }
-
   private executable(settings: Settings, spec: CompilerSpec, vars: VariableContext, base: string): string | undefined {
-    if (settings.compilerPath) {
-      const p = resolveVariables(settings.compilerPath.trim(), vars);
-      const hasDir = p.includes("/") || p.includes("\\");
-      return findExecutable(hasDir ? path.resolve(base, p) : p);
-    }
+    const configured = expandVariables(settings.compilerPath.trim(), vars);
     for (const name of spec.executables) {
-      const found = findExecutable(name);
+      const found = findExecutable(name, configured, base);
       if (found) {
         return found;
       }
@@ -436,11 +432,15 @@ export class Linter implements vscode.Disposable {
     }
     this.notified.add(name);
     this.log.warn(`[lint] ${name} not found; no compiler diagnostics`);
-    const open = "Open Settings";
-    const off = "Turn Off";
+    const open = vscode.l10n.t("Open Settings");
+    const off = vscode.l10n.t("Turn Off");
     const choice = await vscode.window.showInformationMessage(
-      `zfls: ${name} was not found, so Fortran files are not checked with a compiler. ` +
-        `Set zfls.linter.${setting}, choose another zfls.linter.compiler, or turn compiler diagnostics off.`,
+      vscode.l10n.t(
+        "zfls: {0} was not found, so Fortran files are not checked with a compiler. " +
+          "Set zfls.linter.{1}, choose another zfls.linter.compiler, or turn compiler diagnostics off.",
+        name,
+        setting,
+      ),
       open,
       off,
     );
@@ -484,8 +484,7 @@ export class Linter implements vscode.Disposable {
    * then shown in the file) */
   private async fypp(source: Source, fixed: boolean, job: Job, signal: AbortSignal): Promise<string | undefined> {
     const fy = job.settings.fypp;
-    const p = resolveVariables(fy.path.trim() || "fypp", job.vars);
-    const exe = findExecutable(p.includes("/") || p.includes("\\") ? path.resolve(job.base, p) : p);
+    const exe = findExecutable("fypp", expandVariables(fy.path.trim(), job.vars), job.base);
     if (!exe) {
       void this.notifyMissing(fy.path || "fypp", "fypp.path");
       return undefined;
@@ -499,7 +498,7 @@ export class Linter implements vscode.Disposable {
       ...(fixed ? ["--fixed-format"] : []),
       ...this.globs(fy.includes, job.vars, job.base).map((d) => `-I${d}`),
       ...Object.entries(fy.definitions).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
-      ...fy.extraArgs.map((a) => resolveVariables(a, job.vars)),
+      ...fy.extraArgs.map((a) => expandVariables(a, job.vars)),
       // forward slashes: the path goes into the line markers, where a
       // backslash would be an escape
       source.path.replace(/\\/g, "/"),
@@ -527,7 +526,7 @@ export class Linter implements vscode.Disposable {
   private async compile(source: Source, fixed: boolean, job: Job, signal: AbortSignal): Promise<RunResult | undefined> {
     const { spec, flags, settings } = job;
     const extra = settings.extraArgs.length > 0
-      ? settings.extraArgs.map((a) => resolveVariables(a, job.vars))
+      ? settings.extraArgs.map((a) => expandVariables(a, job.vars))
       : spec.defaultArgs(flags);
     const args = [
       ...spec.syntaxOnly(flags),

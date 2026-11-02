@@ -12,7 +12,7 @@
 
 const std = @import("std");
 const zfls = @import("zfls");
-const json = zfls.json;
+pub const json = zfls.json;
 const paths = zfls.paths;
 const Server = zfls.server.Server;
 const Logger = zfls.logger;
@@ -53,6 +53,9 @@ pub const Repo = enum {
     fortls,
     /// hansec/fortran-language-server, which fortls was forked from
     hansec,
+    /// fortran-lang/vscode-fortran-support (Modern Fortran), the VS Code
+    /// extension that runs fortls
+    modern_fortran,
 };
 
 /// Evaluate the outcome `result` of a test's expectations for fortls issue
@@ -93,13 +96,19 @@ fn record(repo: Repo, issue: u32, status: Status, why: []const u8) void {
 
 pub const Pos = struct { line: i64, col: i64 };
 
-pub const Diagnostic = struct { line: i64, severity: i64, message: []const u8 };
+pub const Diagnostic = struct { line: i64, severity: i64, message: []const u8, code: []const u8 = "" };
 
 pub const Location = struct { uri: []const u8, line: i64, col: i64 };
 
 pub const Edit = struct { uri: []const u8, line: i64, start: i64, end: i64, new_text: []const u8 };
 
 pub const File = struct { name: []const u8, text: []const u8 };
+
+/// A semantic token: 0-based line, its text and its type (`variable`, ...)
+pub const Token = struct { line: i64, text: []const u8, type: []const u8 };
+
+/// A folding range: 0-based first and last lines
+pub const Fold = struct { start: i64, end: i64 };
 
 pub const Link = struct { name: []const u8, target: []const u8 };
 
@@ -113,6 +122,14 @@ pub const Options = struct {
     unreadable: []const []const u8 = &.{},
     /// `--pp_defs`
     pp_defs: []const zfls.settings.PpDef = &.{},
+    /// `--external_modules`
+    external_modules: []const []const u8 = &.{},
+    /// `--diagnostic_severity`
+    diagnostic_severity: []const zfls.settings.DiagLevel = &.{},
+    /// the client takes a tree of document symbols (as VS Code does)
+    hierarchical_symbols: bool = false,
+    /// the `workDoneToken` of the initialize request
+    progress_token: ?i64 = null,
 };
 
 // --------------------------------------------------------------------------
@@ -126,6 +143,14 @@ pub const Workspace = struct {
     root: []const u8,
     files: []const File,
     unreadable: []const []const u8,
+    /// the notifications the server sent (JSON texts)
+    sent: std.ArrayList([]const u8) = .empty,
+
+    fn collect(ctx: ?*anyopaque, body: []const u8) void {
+        const w: *Workspace = @ptrCast(@alignCast(ctx.?));
+        const aa = w.arena.allocator();
+        w.sent.append(aa, aa.dupe(u8, body) catch return) catch return;
+    }
 
     /// Write `files` (names may contain subdirectories) to a temporary
     /// directory and start a server on it, as `initialize` would.
@@ -142,6 +167,7 @@ pub const Workspace = struct {
         const aa = w.arena.allocator();
         w.files = files;
         w.unreadable = &.{};
+        w.sent = .empty;
         for (files) |f| {
             if (std.fs.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
@@ -150,7 +176,7 @@ pub const Workspace = struct {
         for (opts.unreadable) |d| {
             if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
             try w.tmp.dir.createDirPath(io, d);
-            w.tmp.dir.setFilePermissions(io, d, @enumFromInt(0), .{}) catch return error.SkipZigTest;
+            w.tmp.dir.setFilePermissions(io, d, @fromBackingInt(@intCast(0)), .{}) catch return error.SkipZigTest;
             // root reads it anyway
             if (w.tmp.dir.openDir(io, d, .{ .iterate = true })) |opened| {
                 opened.close(io);
@@ -164,9 +190,18 @@ pub const Workspace = struct {
         w.log.stderr_level = .off;
         var settings = opts.settings;
         for (opts.pp_defs) |d| try settings.pp_defs.append(aa, d);
+        for (opts.external_modules) |m| try settings.external_modules.add(aa, m);
+        for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
-        _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{ .rootPath = w.root }));
+        w.server.sink = .{ .ctx = w, .sendFn = collect };
+        _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
+            .rootPath = w.root,
+            .capabilities = .{ .textDocument = .{ .documentSymbol = .{
+                .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols,
+            } } },
+            .workDoneToken = opts.progress_token,
+        }));
         return w;
     }
 
@@ -264,6 +299,7 @@ pub const Workspace = struct {
                 .line = json.int(json.path(d, &.{ "range", "start", "line" })) orelse -1,
                 .severity = json.int(json.get(d, "severity")) orelse 0,
                 .message = json.str(json.get(d, "message")) orelse "",
+                .code = json.str(json.get(d, "code")) orelse "",
             });
         }
         return out.items;
@@ -285,6 +321,36 @@ pub const Workspace = struct {
 
     pub fn definition(w: *Workspace, name: []const u8, p: Pos) !?Location {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/definition", try w.posParams(name, p)));
+    }
+
+    /// Every location go to definition gives (one, or a list)
+    pub fn definitions(w: *Workspace, name: []const u8, p: Pos) ![]const Location {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/definition", try w.posParams(name, p));
+        var out: std.ArrayList(Location) = .empty;
+        if (v == .array) {
+            for (json.items(v)) |item| if (location(item)) |l| try out.append(w.a(), l);
+        } else if (location(v)) |l| try out.append(w.a(), l);
+        return out.items;
+    }
+
+    /// A request of zfls's own (`zfls/...`), its result
+    pub fn zflsRequest(w: *Workspace, method: []const u8, params: anytype) !Value {
+        return w.request(method, params);
+    }
+
+    /// The position parameters of a request
+    pub fn positionOf(w: *Workspace, name: []const u8, p: Pos) !Value {
+        return w.posParams(name, p);
+    }
+
+    /// `textDocument/didOpen` of a workspace file with its text and language
+    pub fn open(w: *Workspace, name: []const u8, language: []const u8) !void {
+        _ = try w.server.dispatchPublic(w.a(), "textDocument/didOpen", try json.from(w.a(), .{ .textDocument = .{
+            .uri = try w.uri(name),
+            .languageId = language,
+            .version = 1,
+            .text = w.text(name),
+        } }));
     }
 
     pub fn implementation(w: *Workspace, name: []const u8, p: Pos) !?Location {
@@ -331,16 +397,209 @@ pub const Workspace = struct {
         return out.items;
     }
 
-    pub const Signature = struct { label: []const u8, active: i64 };
+    /// A completion item and the text its additional edits insert (the
+    /// first one's), with the 0-based line it goes before
+    pub const Item = struct { label: []const u8, detail: []const u8, added: ?[]const u8 = null, added_line: i64 = -1 };
+
+    pub fn completionItems(w: *Workspace, name: []const u8, p: Pos) ![]const Item {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/completion", try w.posParams(name, p));
+        var out: std.ArrayList(Item) = .empty;
+        for (json.items(v)) |item| {
+            var it: Item = .{ .label = json.str(json.get(item, "label")) orelse "", .detail = json.str(json.get(item, "detail")) orelse "" };
+            const edits = json.items(json.get(item, "additionalTextEdits") orelse .null);
+            if (edits.len > 0) {
+                it.added = json.str(json.get(edits[0], "newText"));
+                it.added_line = json.int(json.path(edits[0], &.{ "range", "start", "line" })) orelse -1;
+            }
+            try out.append(w.a(), it);
+        }
+        return out.items;
+    }
+
+    /// A code action: its title, the text of its first edit and the 0-based
+    /// line that edit starts on
+    pub const Action = struct { title: []const u8, new_text: []const u8, line: i64, edits: usize = 0 };
+
+    pub fn codeActions(w: *Workspace, name: []const u8, line: i64) ![]const Action {
+        return w.codeActionsOf(name, line, line, null);
+    }
+
+    /// The code actions on 0-based lines `first`..`last`, of the kinds
+    /// `only` names (all, when null), and the number of edits of each
+    pub fn codeActionsOf(w: *Workspace, name: []const u8, first: i64, last: i64, only: ?[]const []const u8) ![]const Action {
+        const v = try w.request("textDocument/codeAction", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = first, .character = 0 }, .end = .{ .line = last, .character = 0 } },
+            .context = .{ .only = only },
+        });
+        var out: std.ArrayList(Action) = .empty;
+        for (json.items(v)) |act| {
+            const files = json.get(json.path(act, &.{ "edit", "changes" }) orelse .null, try w.uri(name)) orelse .null;
+            const edits = json.items(files);
+            try out.append(w.a(), .{
+                .title = json.str(json.get(act, "title")) orelse "",
+                .new_text = if (edits.len > 0) json.str(json.get(edits[0], "newText")) orelse "" else "",
+                .line = if (edits.len > 0) json.int(json.path(edits[0], &.{ "range", "start", "line" })) orelse -1 else -1,
+                .edits = edits.len,
+            });
+        }
+        return out.items;
+    }
+
+    /// What prepareRename answers: the range of the name (one line) and the
+    /// placeholder
+    pub const Prepared = struct { line: i64, start: i64, end: i64, placeholder: []const u8 };
+
+    pub fn prepareRename(w: *Workspace, name: []const u8, p: Pos) !?Prepared {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/prepareRename", try w.posParams(name, p));
+        if (v == .null) return null;
+        return .{
+            .line = json.int(json.path(v, &.{ "range", "start", "line" })) orelse -1,
+            .start = json.int(json.path(v, &.{ "range", "start", "character" })) orelse -1,
+            .end = json.int(json.path(v, &.{ "range", "end", "character" })) orelse -1,
+            .placeholder = json.str(json.get(v, "placeholder")) orelse "",
+        };
+    }
+
+    /// A selection range: its start and end lines and columns
+    pub const Sel = struct { sl: i64, sc: i64, el: i64, ec: i64 };
+
+    /// The selection ranges at a position, innermost first
+    pub fn selectionRanges(w: *Workspace, name: []const u8, p: Pos) ![]const Sel {
+        const v = try w.request("textDocument/selectionRange", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .positions = &[_]struct { line: i64, character: i64 }{.{ .line = p.line, .character = p.col }},
+        });
+        var out: std.ArrayList(Sel) = .empty;
+        var node: ?Value = if (json.items(v).len > 0) json.items(v)[0] else null;
+        while (node) |n| {
+            try out.append(w.a(), .{
+                .sl = json.int(json.path(n, &.{ "range", "start", "line" })) orelse -1,
+                .sc = json.int(json.path(n, &.{ "range", "start", "character" })) orelse -1,
+                .el = json.int(json.path(n, &.{ "range", "end", "line" })) orelse -1,
+                .ec = json.int(json.path(n, &.{ "range", "end", "character" })) orelse -1,
+            });
+            node = json.get(n, "parent");
+        }
+        return out.items;
+    }
+
+    /// A document link: the line and columns of its text, and its target
+    pub const DocLink = struct { line: i64, start: i64, end: i64, target: []const u8 };
+
+    pub fn documentLinks(w: *Workspace, name: []const u8) ![]const DocLink {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/documentLink", try w.docParams(name));
+        var out: std.ArrayList(DocLink) = .empty;
+        for (json.items(v)) |l| try out.append(w.a(), .{
+            .line = json.int(json.path(l, &.{ "range", "start", "line" })) orelse -1,
+            .start = json.int(json.path(l, &.{ "range", "start", "character" })) orelse -1,
+            .end = json.int(json.path(l, &.{ "range", "end", "character" })) orelse -1,
+            .target = json.str(json.get(l, "target")) orelse "",
+        });
+        return out.items;
+    }
+
+    /// The edits of `textDocument/onTypeFormatting` after typing `ch`:
+    /// their start and end columns on the line, and new text
+    pub const TypeEdit = struct { start: i64, end: i64, new_text: []const u8 };
+
+    pub fn onTypeFormatting(w: *Workspace, name: []const u8, p: Pos, ch: []const u8) ![]const TypeEdit {
+        const v = try w.request("textDocument/onTypeFormatting", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .position = .{ .line = p.line, .character = p.col },
+            .ch = ch,
+        });
+        var out: std.ArrayList(TypeEdit) = .empty;
+        for (json.items(v)) |e| try out.append(w.a(), .{
+            .start = json.int(json.path(e, &.{ "range", "start", "character" })) orelse -1,
+            .end = json.int(json.path(e, &.{ "range", "end", "character" })) orelse -1,
+            .new_text = json.str(json.get(e, "newText")) orelse "",
+        });
+        return out.items;
+    }
+
+    /// The call hierarchy item at a position (its JSON), or null
+    pub fn prepareCallHierarchy(w: *Workspace, name: []const u8, p: Pos) !?Value {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/prepareCallHierarchy", try w.posParams(name, p));
+        const items = json.items(v);
+        return if (items.len > 0) items[0] else null;
+    }
+
+    /// The type hierarchy item at a position (its JSON), or null
+    pub fn prepareTypeHierarchy(w: *Workspace, name: []const u8, p: Pos) !?Value {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/prepareTypeHierarchy", try w.posParams(name, p));
+        const items = json.items(v);
+        return if (items.len > 0) items[0] else null;
+    }
+
+    /// The names of the supertypes (`super`) or subtypes of a type item
+    pub fn typeHierarchy(w: *Workspace, item: Value, super: bool) ![]const []const u8 {
+        const v = try w.request(if (super) "typeHierarchy/supertypes" else "typeHierarchy/subtypes", .{ .item = item });
+        var out: std.ArrayList([]const u8) = .empty;
+        for (json.items(v)) |t| try out.append(w.a(), json.str(json.get(t, "name")) orelse "");
+        return out.items;
+    }
+
+    /// `zfls/compileOrder`: the module names in order, and the cycles
+    pub fn compileOrder(w: *Workspace) !struct { order: []const []const u8, cycles: usize } {
+        const v = try w.request("zfls/compileOrder", .{});
+        var order: std.ArrayList([]const u8) = .empty;
+        for (json.items(json.get(v, "order"))) |u| try order.append(w.a(), json.str(json.get(u, "name")) orelse "");
+        return .{ .order = order.items, .cycles = json.items(json.get(v, "cycles")).len };
+    }
+
+    /// The name of a call hierarchy item
+    pub fn itemName(item: Value) []const u8 {
+        return json.str(json.get(item, "name")) orelse "";
+    }
+
+    /// A call of the hierarchy: the other procedure, and how many call
+    /// sites
+    pub const Call = struct { name: []const u8, sites: usize };
+
+    /// `callHierarchy/incomingCalls` (`incoming`) or `outgoingCalls`
+    pub fn calls(w: *Workspace, item: Value, incoming: bool) ![]const Call {
+        const method = if (incoming) "callHierarchy/incomingCalls" else "callHierarchy/outgoingCalls";
+        const v = try w.request(method, .{ .item = item });
+        var out: std.ArrayList(Call) = .empty;
+        for (json.items(v)) |c| {
+            const other = json.get(c, if (incoming) "from" else "to") orelse continue;
+            try out.append(w.a(), .{ .name = json.str(json.get(other, "name")) orelse "", .sites = json.items(json.get(c, "fromRanges")).len });
+        }
+        return out.items;
+    }
+
+    /// An inlay hint: its 0-based line and column, and label
+    pub const Hint = struct { line: i64, col: i64, label: []const u8 };
+
+    pub fn inlayHints(w: *Workspace, name: []const u8) ![]const Hint {
+        const v = try w.request("textDocument/inlayHint", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 10000, .character = 0 } },
+        });
+        var out: std.ArrayList(Hint) = .empty;
+        for (json.items(v)) |item| try out.append(w.a(), .{
+            .line = json.int(json.path(item, &.{ "position", "line" })) orelse -1,
+            .col = json.int(json.path(item, &.{ "position", "character" })) orelse -1,
+            .label = json.str(json.get(item, "label")) orelse "",
+        });
+        return out.items;
+    }
+
+    /// The active signature's label (the first one's when none is active),
+    /// the active parameter, and how many signatures there are
+    pub const Signature = struct { label: []const u8, active: i64, count: usize = 1 };
 
     pub fn signature(w: *Workspace, name: []const u8, p: Pos) !?Signature {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/signatureHelp", try w.posParams(name, p));
         if (v == .null) return null;
         const sigs = json.items(json.get(v, "signatures"));
         if (sigs.len == 0) return null;
+        const which: usize = @intCast(@min(json.int(json.get(v, "activeSignature")) orelse 0, @as(i64, @intCast(sigs.len - 1))));
         return .{
-            .label = json.str(json.get(sigs[0], "label")) orelse "",
+            .label = json.str(json.get(sigs[which], "label")) orelse "",
             .active = json.int(json.get(v, "activeParameter")) orelse -1,
+            .count = sigs.len,
         };
     }
 
@@ -349,6 +608,66 @@ pub const Workspace = struct {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/documentSymbol", try w.docParams(name));
         var out: std.ArrayList([]const u8) = .empty;
         for (json.items(v)) |s| try out.append(w.a(), json.str(json.get(s, "name")) orelse "");
+        return out.items;
+    }
+
+    /// The document symbols of a client with `hierarchical_symbols`, as
+    /// paths from the outermost (`mod/proc/var`), parents before children
+    pub fn symbolPaths(w: *Workspace, name: []const u8) ![]const []const u8 {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/documentSymbol", try w.docParams(name));
+        var out: std.ArrayList([]const u8) = .empty;
+        try w.appendSymbolPaths(v, "", &out);
+        return out.items;
+    }
+
+    fn appendSymbolPaths(w: *Workspace, v: Value, prefix: []const u8, out: *std.ArrayList([]const u8)) !void {
+        for (json.items(v)) |s| {
+            const sym = json.str(json.get(s, "name")) orelse "";
+            const p = if (prefix.len == 0) sym else try std.fmt.allocPrint(w.a(), "{s}/{s}", .{ prefix, sym });
+            try out.append(w.a(), p);
+            if (json.get(s, "children")) |c| try w.appendSymbolPaths(c, p, out);
+        }
+    }
+
+    /// The folding ranges of a file, as 0-based `start-end` line pairs
+    pub fn foldingRanges(w: *Workspace, name: []const u8) ![]const Fold {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/foldingRange", try w.docParams(name));
+        var out: std.ArrayList(Fold) = .empty;
+        for (json.items(v)) |f| try out.append(w.a(), .{
+            .start = json.int(json.get(f, "startLine")) orelse -1,
+            .end = json.int(json.get(f, "endLine")) orelse -1,
+        });
+        return out.items;
+    }
+
+    /// The semantic tokens of a file, decoded
+    pub fn semanticTokens(w: *Workspace, name: []const u8) ![]const Token {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/semanticTokens/full", try w.docParams(name));
+        const data = json.items(json.get(v, "data"));
+        var lines = std.mem.splitScalar(u8, w.text(name), '\n');
+        var line_texts: std.ArrayList([]const u8) = .empty;
+        while (lines.next()) |l| try line_texts.append(w.a(), l);
+        var out: std.ArrayList(Token) = .empty;
+        var line: i64 = 0;
+        var col: i64 = 0;
+        var i: usize = 0;
+        while (i + 5 <= data.len) : (i += 5) {
+            const dl = json.int(data[i]) orelse 0;
+            const dc = json.int(data[i + 1]) orelse 0;
+            const n: usize = @intCast(json.int(data[i + 2]) orelse 0);
+            const t: usize = @intCast(json.int(data[i + 3]) orelse 0);
+            if (dl != 0) {
+                line += dl;
+                col = dc;
+            } else col += dc;
+            const lt = if (line < line_texts.items.len) line_texts.items[@intCast(line)] else "";
+            const s: usize = @min(lt.len, @as(usize, @intCast(col)));
+            try out.append(w.a(), .{
+                .line = line,
+                .text = lt[s..@min(lt.len, s + n)],
+                .type = if (t < zfls.semantic.legend.tokenTypes.len) zfls.semantic.legend.tokenTypes[t] else "?",
+            });
+        }
         return out.items;
     }
 
@@ -363,9 +682,12 @@ pub const Workspace = struct {
     // ---- expectations -------------------------------------------------
 
     /// No diagnostics at all in `name`
+    /// No diagnostic in `name`, besides the faded hints about names a
+    /// fixture declares and does not use (`unused-name`)
     pub fn expectNoDiagnostics(w: *Workspace, name: []const u8) !void {
-        const ds = try w.diagnostics(name);
-        if (ds.len > 0) return unmet("{s}: expected no diagnostics, got {d}: line {d}: {s}", .{ name, ds.len, ds[0].line + 1, ds[0].message });
+        var ds: std.ArrayList(Diagnostic) = .empty;
+        for (try w.diagnostics(name)) |d| if (!std.mem.eql(u8, d.code, "unused-name")) try ds.append(w.a(), d);
+        if (ds.items.len > 0) return unmet("{s}: expected no diagnostics, got {d}: line {d}: {s}", .{ name, ds.items.len, ds.items[0].line + 1, ds.items[0].message });
     }
 
     /// No diagnostic in `name` whose message contains `fragment`

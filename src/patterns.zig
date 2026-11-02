@@ -58,13 +58,19 @@ const defs = [_]Def{
     .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*(\\w*)", true },
     .{ "END_INT", "INTERFACE", true },
     .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK[ ]*DATA|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
-        "|TYPE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
+        "|TYPE|STRUCTURE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
         "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?!\\W)|$)", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
     .{ "EXTENDS", "EXTENDS[ ]*\\((\\w*)\\)", true },
     .{ "GENERIC_PRO", "[ ]*(GENERIC)[, ]*(PRIVATE|PUBLIC)?[ ]*::[ ]*[a-z]", true },
     .{ "GEN_ASSIGN", "(ASSIGNMENT|OPERATOR)\\(", true },
     .{ "END_TYPED", "TYPE", true },
+    // DEC structures (fortls #171): `STRUCTURE /name/ [fields]`, `RECORD
+    // /name/ vars`, and the UNION and MAP blocks inside a structure
+    .{ "STRUCTURE_DEF", "[ ]*STRUCTURE[ ]*(?:/[ ]*(\\w+)[ ]*/)?[ ]*([\\w, ]*)$", true },
+    .{ "END_STRUCTURED", "STRUCTURE", true },
+    .{ "RECORD_STMT", "[ ]*RECORD[ ]*/[ ]*(\\w+)[ ]*/[ ]*(.*)$", true },
+    .{ "DEC_UNION_MAP", "[ ]*(END[ ]*)?(UNION|MAP)[ ]*$", true },
     .{ "ENUM_DEF", "[ ]*ENUM[, ]+", true },
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
@@ -75,7 +81,7 @@ const defs = [_]Def{
         "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
         "PASS[ ]*\\(\\w*\\)|SAVE|PARAMETER|EXTERNAL|" ++
-        "CONTIGUOUS)", true },
+        "CONTIGUOUS|CODIMENSION[ ]*\\[)", true },
     .{ "PARAMETER_VAL", "\\w*[\\s\\&]*=(([\\s\\&]*[\\w\\.\\-\\+\\*\\/\\'\\\"])*)", true },
     .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS\\(\\w*\\))", true },
     .{ "VIS", "[ ]*\\b(PUBLIC|PRIVATE)\\b", true },
@@ -159,7 +165,8 @@ pub fn init() void {
 /// Port of `create_src_file_exts_regex`: build a regex matching the default
 /// Fortran file extensions plus `input_exts` (already escaped regex snippets).
 pub fn createSrcFileExtsRegex(a: std.mem.Allocator, input_exts: []const []const u8) !Regex {
-    const default = "\\.[fF](77|90|95|03|05|08|18|[oO][rR]|[pP]{2})?";
+    // and CUDA Fortran's .cuf
+    const default = "\\.([fF](77|90|95|03|05|08|18|[oO][rR]|[pP]{2})?|[cC][uU][fF])";
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(a);
     try buf.appendSlice(a, "((");
@@ -201,6 +208,7 @@ test "src file exts regex" {
     try std.testing.expect(re.search("test.fypp") != null);
     try std.testing.expect(re.search("test.inc") != null);
     try std.testing.expect(re.search("test.F90") != null);
+    try std.testing.expect(re.search("kernels.cuf") != null);
     try std.testing.expect(re.search("test.c") == null);
 
     const bad = [_][]const u8{"*.inc"};
@@ -212,9 +220,10 @@ test "src file exts regex" {
 test "the prefilter never rejects a line that matches" {
     init();
     const words = [_][]const u8{
-        "subroutine", "end", "module", "program", "integer", "real", "type", "class", "use", "only",
-        "interface", "if", "do", "call", "function", "contains", "implicit", "none", "parameter", "block",
-        "foo", "x", "(", ")", ",", "::", "=", "=>", "!", "!>", "&", "#", "'", "\"", "1", "10", "*", "%", ":",
+        "subroutine", "end", "module", "program", "integer",  "real",     "type",     "class", "use",       "only",
+        "interface",  "if",  "do",     "call",    "function", "contains", "implicit", "none",  "parameter", "block",
+        "foo",        "x",   "(",      ")",       ",",        "::",       "=",        "=>",    "!",         "!>",
+        "&",          "#",   "'",      "\"",      "1",        "10",       "*",        "%",     ":",
     };
     var prng = std.Random.DefaultPrng.init(0xf17e);
     const rng = prng.random();

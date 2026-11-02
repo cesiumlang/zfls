@@ -21,7 +21,8 @@ import {
   parseNag,
   parseNvfortran,
 } from "../../src/lint/compilers";
-import { expandDirectoryGlob, findExecutable, resolveVariables, samePath } from "../../src/lint/paths";
+import { expandDirectoryGlob, samePath } from "../../src/lint/paths";
+import { findExecutable } from "../../src/tools";
 import { findIncludes, scanModules } from "../../src/lint/sources";
 
 /** The fields that matter, for comparing */
@@ -225,22 +226,6 @@ test("every compiler checks syntax only and writes .mod files to the given direc
 
 // --- paths ------------------------------------------------------------------
 
-test("variables in path settings", () => {
-  const ctx = {
-    folders: [{ name: "app", path: "/w/app" }, { name: "lib", path: "/w/lib" }],
-    folder: { name: "lib", path: "/w/lib" },
-    file: "/w/lib/src/m.f90",
-    env: { FOO: "bar" },
-  };
-  assert.equal(resolveVariables("${workspaceFolder}/inc", ctx), "/w/lib/inc");
-  assert.equal(resolveVariables("${workspaceFolder:app}/inc", ctx), "/w/app/inc");
-  assert.equal(resolveVariables("${env:FOO}/x", ctx), "bar/x");
-  assert.equal(resolveVariables("${fileDirname}|${fileBasenameNoExtension}", ctx), "/w/lib/src|m");
-  assert.equal(resolveVariables("${unknown}", ctx), "${unknown}");
-  assert.equal(resolveVariables("~/mods", ctx), os.homedir() + "/mods");
-  assert.equal(resolveVariables("a~b", ctx), "a~b");
-});
-
 test("glob patterns match directories", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-glob-"));
   try {
@@ -262,9 +247,7 @@ test("glob patterns match directories", () => {
   }
 });
 
-test("findExecutable and samePath", () => {
-  assert.equal(findExecutable("zfls-no-such-program-xyz"), undefined);
-  assert.ok(findExecutable(process.execPath));
+test("samePath", () => {
   assert.ok(samePath("/a/b/../c", "/a/c"));
 });
 

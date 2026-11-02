@@ -79,7 +79,6 @@ program demo_min
 implicit none
 integer :: i
 integer :: rectangle(3,4)=reshape([(-6+i,i=0,11)],[3,4])
-character(len=:),allocatable :: answer
 character(len=:),allocatable :: aanswer(:)
     print *, 'basics'
     print *, min(10.0,11.0,30.0,-100.0)

@@ -73,6 +73,51 @@ pub fn isComment(fixed: bool, line: []const u8) bool {
     return if (fixed) isFixedComment(line) else isFreeComment(line);
 }
 
+/// Makes the first of `markers` (`comment_markers`, such as `;*`) that
+/// starts a comment in `line` one zfls reads: its first byte becomes `!`.
+/// A marker starts a comment outside strings and before any `!`; a
+/// preprocessor directive has none. The line keeps its length.
+pub fn markComments(line: []u8, markers: []const []const u8) void {
+    if (std.mem.startsWith(u8, std.mem.trimStart(u8, line, " "), "#")) return;
+    var quote: u8 = 0;
+    for (line, 0..) |c, i| {
+        if (quote != 0) {
+            // a doubled quote closes and opens again
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' or c == '"') {
+            quote = c;
+            continue;
+        }
+        if (c == '!') return;
+        for (markers) |m| if (m.len > 0 and std.mem.startsWith(u8, line[i..], m)) {
+            line[i] = '!';
+            return;
+        };
+    }
+}
+
+test "comment markers become comments outside strings" {
+    const markers = [_][]const u8{";*"};
+    var buf: [64]u8 = undefined;
+    const cases = [_][2][]const u8{
+        .{ "  if (x) go to 110    ;* it's a comment", "  if (x) go to 110    !* it's a comment" },
+        .{ ";* a whole line", "!* a whole line" },
+        .{ "  s = 'a;*b' ;* c", "  s = 'a;*b' !* c" },
+        .{ "  s = \"it''s;*\" ; t = 1", "  s = \"it''s;*\" ; t = 1" },
+        .{ "  x = 1 ! a comment ;* already", "  x = 1 ! a comment ;* already" },
+        .{ "#define X ;*", "#define X ;*" },
+        .{ "  a = 1; b = 2", "  a = 1; b = 2" },
+    };
+    for (cases) |c| {
+        const line = buf[0..c[0].len];
+        @memcpy(line, c[0]);
+        markComments(line, &markers);
+        try std.testing.expectEqualStrings(c[1], line);
+    }
+}
+
 /// Index of the mark (`<`, `>` or `!`) of a documentation comment such as
 /// `!>` (FIXED_DOC, FREE_DOC)
 pub fn docMark(fixed: bool, line: []const u8) ?usize {
@@ -342,12 +387,18 @@ pub fn findWordInLineIgnoreCase(line: []const u8, word: []const u8) Range {
 /// Find matching closing parenthesis from an already open parenthesis scope
 pub fn findParenMatch(s: []const u8) isize {
     var paren_count: isize = 1;
-    var sq = false;
-    var dq = false;
+    // the quote of the string literal the character is in: a quote of the
+    // other kind inside it is text (upstream #569)
+    var quote: ?u8 = null;
     for (s, 0..) |c, i| {
-        if (c == '\'') sq = !sq;
-        if (c == '"') dq = !dq;
-        if (sq or dq) continue;
+        if (quote) |q| {
+            if (c == q) quote = null;
+            continue;
+        }
+        if (c == '\'' or c == '"') {
+            quote = c;
+            continue;
+        }
         if (c == '(') paren_count += 1 else if (c == ')') paren_count -= 1;
         if (paren_count == 0) return @intCast(i);
     }
@@ -433,10 +484,75 @@ pub fn getParenLevel(a: Allocator, line: []const u8) !ParenLevel {
 }
 
 /// Get user-defined type field sequence terminating the given line
-pub fn getVarStack(a: Allocator, line: []const u8) ![][]const u8 {
+/// Intrinsic operators and logical literals written between dots
+const dot_operators = [_][]const u8{ "eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "eqv", "neqv", "true", "false", "xor" };
+
+/// Whether the `.` at `i` of `text` separates a component (`rec.field`, the
+/// DEC extension of hansec #45): it follows a name (not a number) or a `)`
+/// and comes before a name that is not an intrinsic operator (`a.and.b`),
+/// or ends the text (a line up to the position of a request)
+pub fn isComponentDot(text: []const u8, i: usize) bool {
+    if (i == 0 or i >= text.len or text[i] != '.') return false;
+    if (i + 1 < text.len and !std.ascii.isAlphabetic(text[i + 1])) return false;
+    const prev = text[i - 1];
+    if (prev != ')') {
+        if (!(std.ascii.isAlphanumeric(prev) or prev == '_')) return false;
+        var s = i;
+        while (s > 0 and (std.ascii.isAlphanumeric(text[s - 1]) or text[s - 1] == '_')) s -= 1;
+        // a number: `1.e5`, `2.d0`
+        if (!(std.ascii.isAlphabetic(text[s]) or text[s] == '_')) return false;
+    }
+    var e = i + 1;
+    while (e < text.len and (std.ascii.isAlphanumeric(text[e]) or text[e] == '_')) e += 1;
+    if (e < text.len and text[e] == '.') {
+        for (dot_operators) |op| if (std.ascii.eqlIgnoreCase(text[i + 1 .. e], op)) return false;
+    }
+    return true;
+}
+
+/// `text` with the dots that separate components written `%`
+pub fn dotComponents(a: Allocator, text: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, text, '.') == null) return text;
+    var out: ?[]u8 = null;
+    // not in strings (`include "inc.f90"`)
+    var quote: u8 = 0;
+    for (text, 0..) |c, i| {
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' or c == '"') {
+            quote = c;
+            continue;
+        }
+        if (c != '.' or !isComponentDot(text, i)) continue;
+        if (out == null) out = try a.dupe(u8, text);
+        out.?[i] = '%';
+    }
+    return out orelse text;
+}
+
+test "component dots" {
+    try std.testing.expect(isComponentDot("rec.field", 3));
+    try std.testing.expect(isComponentDot("a(1).b", 4));
+    try std.testing.expect(!isComponentDot("a.and.b", 1));
+    try std.testing.expect(!isComponentDot("x .eq. y", 2));
+    try std.testing.expect(!isComponentDot("1.e5", 1));
+    try std.testing.expect(isComponentDot("x2.d0", 2));
+    try std.testing.expect(isComponentDot("a.b.c", 1) and isComponentDot("a.b.c", 3));
+    try std.testing.expect(isComponentDot("rec.", 3));
+    try std.testing.expect(!isComponentDot("x = 1.", 5));
+    const a = std.testing.allocator;
+    const s = try dotComponents(a, "include 'a.f90' rec.f");
+    defer if (s.ptr != "include 'a.f90' rec.f".ptr) a.free(s);
+    try std.testing.expectEqualStrings("include 'a.f90' rec%f", s);
+}
+
+pub fn getVarStack(a: Allocator, line_in: []const u8) ![][]const u8 {
     const empty = try a.alloc([]const u8, 1);
     empty[0] = "";
-    if (line.len == 0) return empty;
+    if (line_in.len == 0) return empty;
+    const line = try dotComponents(a, line_in);
     const pl = try getParenLevel(a, line);
     if (pl.str.len == 0) return empty;
     var i_last: usize = 0;
@@ -491,20 +607,31 @@ pub const KeywordInfo = struct {
     intent: ?[]const u8 = null,
     dimension: ?[]const u8 = null,
     pass: ?[]const u8 = null,
+    /// the cobounds of a coarray, `*` of `[*]`
+    codimension: ?[]const u8 = null,
 
     pub fn get(self: KeywordInfo, key: []const u8) ?[]const u8 {
         if (std.mem.eql(u8, key, "intent")) return self.intent;
         if (std.mem.eql(u8, key, "dimension")) return self.dimension;
         if (std.mem.eql(u8, key, "pass")) return self.pass;
+        if (std.mem.eql(u8, key, "codimension")) return self.codimension;
         return null;
     }
 
-    pub fn dupe(self: KeywordInfo, a: Allocator) !KeywordInfo {
-        return .{
+    /// None of them: what most objects have
+    pub const empty: KeywordInfo = .{};
+
+    /// A copy in `a`, or `empty` (shared) when there is nothing to copy
+    pub fn dupe(self: KeywordInfo, a: Allocator) !*const KeywordInfo {
+        if (self.intent == null and self.dimension == null and self.pass == null and self.codimension == null) return &empty;
+        const out = try a.create(KeywordInfo);
+        out.* = .{
             .intent = try str.dupeOpt(a, self.intent),
             .dimension = try str.dupeOpt(a, self.dimension),
             .pass = try str.dupeOpt(a, self.pass),
+            .codimension = try str.dupeOpt(a, self.codimension),
         };
+        return out;
     }
 };
 
@@ -515,10 +642,13 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
     var ids: std.ArrayList(constants.Kw) = .empty;
     var info: KeywordInfo = .{};
     for (keywords) |kw| {
-        const prefix_raw = str.strip(str.beforeFirst(kw, "("));
+        const prefix_raw = str.strip(str.beforeFirst(str.beforeFirst(kw, "("), "["));
         const prefix = try std.ascii.allocLowerString(a, prefix_raw);
         const id = constants.Kw.fromName(prefix) orelse continue;
         try ids.append(a, id);
+        if (id == .codimension) if (std.mem.indexOfScalar(u8, kw, '[')) |o| if (std.mem.lastIndexOfScalar(u8, kw, ']')) |c| {
+            if (c > o) info.codimension = kw[o + 1 .. c];
+        };
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
             if (getParenSubstring(kw)) |sub| {
                 if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
@@ -537,7 +667,10 @@ pub fn getKeywords(a: Allocator, ids: []const constants.Kw, info: KeywordInfo) !
         const rep = @tagName(id);
         const up = try std.ascii.allocUpperString(a, rep);
         if (info.get(rep)) |addl| {
-            try out.append(a, try std.fmt.allocPrint(a, "{s}({s})", .{ up, addl }));
+            // cobounds go in brackets
+            const fmt_open: []const u8 = if (id == .codimension) "[" else "(";
+            const fmt_close: []const u8 = if (id == .codimension) "]" else ")";
+            try out.append(a, try std.fmt.allocPrint(a, "{s}{s}{s}{s}", .{ up, fmt_open, addl, fmt_close }));
         } else {
             try out.append(a, up);
         }
@@ -558,6 +691,8 @@ test "helper functions" {
     try testing.expectEqual(@as(isize, -1), findParenMatch("a, (b, (c, d)"));
     try testing.expectEqual(@as(isize, 29), findParenMatch("nt(sin(0.5))+8+len(\"ab((c\")-3) :: y"));
     try testing.expectEqual(@as(isize, 29), findParenMatch("nt(sin(0.5))+8+len('ab))c')-3) :: y"));
+    try testing.expectEqual(@as(isize, 12), findParenMatch("len(\"don't\")) :: msg"));
+    try testing.expectEqual(@as(isize, 14), findParenMatch("len('say \"hi')) :: msg"));
 
     const l1 = (try separateDefList(a, "var1, var2, var3")).?;
     try testing.expectEqual(@as(usize, 3), l1.len);

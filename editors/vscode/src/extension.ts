@@ -7,11 +7,24 @@ import * as vscode from "vscode";
 import {
   LanguageClient,
   LanguageClientOptions,
+  Location as ProtocolLocation,
   ServerOptions,
 } from "vscode-languageclient/node";
-import { Linter } from "./linter";
+import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
+import { Fortitude } from "./fortitude";
+import { Codee } from "./codee";
+import { toggleComments } from "./comments";
+import { namelistGroups } from "./namelist";
+import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
+import { BindC, C_LANGUAGES, identifierAt, isCFile, uniqueByPlace } from "./interop";
+import { registerFpm } from "./fpmCommands";
+import { registerFpmTests } from "./fpmTests";
+import { registerPfunitTests } from "./pfunitTests";
+import { registerIfxSetup } from "./ifxSetup";
+import { registerDebugType } from "./debugType";
+import { registerModuleVariables } from "./moduleVariablesView";
 
 import { affectsServer, serverArguments } from "./options";
 
@@ -22,6 +35,13 @@ const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
  * URI), and one per directory of a Fortran file outside every folder (keyed
  * by the directory's URI), as in VS Code's multi-root language server sample */
 const clients = new Map<string, Promise<LanguageClient | undefined>>();
+/** The file watchers of each client, disposed when it stops */
+const watchers = new Map<string, vscode.Disposable[]>();
+/** The files whose change restarts the server that reads them */
+const SERVER_CONFIG_FILES = "{.fortlsrc,.fortls.json,.fortls,fpm.toml,compile_commands.json,build/compile_commands.json}";
+/** Restarts after configuration files change, waiting for them to settle */
+const CONFIG_RESTART_DELAY_MS = 1000;
+let restartTimer: NodeJS.Timeout | undefined;
 let output: vscode.LogOutputChannel | undefined;
 let context: vscode.ExtensionContext;
 
@@ -29,16 +49,44 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
   const linter = new Linter(context, output);
+  const fortitude = new Fortitude(output);
+  const codee = new Codee(output);
   registerFormatting(context, output);
   registerRunCommands(context, output);
+  registerFpm(context, output);
+  registerFpmTests(context, output);
+  registerPfunitTests(context, output);
+  registerIfxSetup(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
+  registerDebugType(context, output, clientForUri);
+  registerModuleVariables(context, clientForUri);
   context.subscriptions.push(
     output,
     linter,
+    fortitude,
+    codee,
+    vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitude.fixAll(uri)),
+    vscode.commands.registerCommand("zfls.gettingStarted", () =>
+      vscode.commands.executeCommand("workbench.action.openWalkthrough", `${context.extension.id}#gettingStarted`, false),
+    ),
     vscode.commands.registerCommand("zfls.restart", () => restartAll()),
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
+    vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
+    vscode.commands.registerCommand("zfls.toggleFixedFormComment", () => toggleFixedFormComment()),
+    vscode.languages.registerDocumentSymbolProvider({ language: "FortranNamelist" }, { provideDocumentSymbols: namelistSymbols }),
+    vscode.languages.registerDefinitionProvider(
+      C_LANGUAGES.map((language) => ({ language })),
+      { provideDefinition: fortranOfC },
+    ),
+    vscode.languages.registerReferenceProvider(
+      C_LANGUAGES.map((language) => ({ language })),
+      { provideReferences: fortranReferencesOfC },
+    ),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
         void restartAll();
+      }
+      if (e.affectsConfiguration("zfls.commentMarkers")) {
+        void updateMarkerGrammar(true);
       }
     }),
     vscode.workspace.onDidOpenTextDocument((doc) => void ensureClient(doc)),
@@ -50,12 +98,283 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       void restartAll();
     }),
   );
+  void updateMarkerGrammar(false);
   // compiler diagnostics do not wait for the language server
   linter.activate();
+  fortitude.activate();
+  codee.activate();
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
   void checkModernFortran();
+}
+
+/** The C declarations of the BIND(C) procedure at a position
+ * (`zfls/bindC`), as the C language server gives them (VS Code's workspace
+ * symbols); none when it is not one */
+async function cDeclarationsAt(
+  client: LanguageClient,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[]> {
+  let bind: BindC | null;
+  try {
+    bind = await client.sendRequest<BindC | null>(
+      "zfls/bindC",
+      client.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
+      token,
+    );
+  } catch {
+    return [];
+  }
+  if (!bind || token.isCancellationRequested) {
+    return [];
+  }
+  const symbols =
+    (await vscode.commands.executeCommand<vscode.SymbolInformation[] | undefined>(
+      "vscode.executeWorkspaceSymbolProvider",
+      bind.cName,
+    )) ?? [];
+  const cName = bind.cName;
+  return symbols
+    .filter((s) => s.name === cName && s.location?.uri && isCFile(s.location.uri.fsPath))
+    .map((s) => s.location);
+}
+
+/** zfls's definitions of a position, and, when it is a BIND(C) procedure,
+ * the declarations of its C name that the C language server gives, each
+ * place once */
+async function withCDeclarations(
+  client: LanguageClient,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+  result: vscode.Definition | vscode.LocationLink[] | null | undefined,
+): Promise<vscode.Definition | vscode.LocationLink[] | null | undefined> {
+  const found = await cDeclarationsAt(client, document, position, token);
+  if (found.length === 0) {
+    return result;
+  }
+  const own: vscode.Location[] = (result === null || result === undefined ? [] : Array.isArray(result) ? result : [result]).map(
+    (r) => ("targetUri" in r ? new vscode.Location(r.targetUri, r.targetSelectionRange ?? r.targetRange) : r),
+  );
+  return uniqueByPlace([...own, ...found], (l) => ({ uri: l.uri.toString(), line: l.range.start.line }));
+}
+
+/** zfls's references of a position, and, when it is a BIND(C) procedure,
+ * the references of its C declarations that the C language server gives
+ * (zfls's own search of the C files gives those it finds), each place once */
+async function withCReferences(
+  client: LanguageClient,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+  result: vscode.Location[] | null | undefined,
+): Promise<vscode.Location[] | null | undefined> {
+  const declarations = await cDeclarationsAt(client, document, position, token);
+  if (declarations.length === 0 || token.isCancellationRequested) {
+    return result;
+  }
+  const found: vscode.Location[] = [];
+  for (const d of declarations) {
+    found.push(
+      ...((await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        "vscode.executeReferenceProvider",
+        d.uri,
+        d.range.start,
+      )) ?? []),
+    );
+  }
+  return uniqueByPlace([...(result ?? []), ...found], (l) => ({
+    uri: l.uri.toString(),
+    line: l.range.start.line,
+    character: l.range.start.character,
+  }));
+}
+
+/** The zfls servers to ask about a C file: those running, else one started
+ * for its folder when the folder has Fortran files (a C file opened before
+ * any Fortran one) */
+async function clientsForC(document: vscode.TextDocument): Promise<LanguageClient[]> {
+  if (clients.size === 0) {
+    const where = serverRoot(document);
+    const folder = where?.folder;
+    if (where && folder && !clients.has(where.root.toString())) {
+      const fortran = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(folder, `**/${FORTRAN_FILES}`),
+        "**/{build,node_modules,.git}/**",
+        1,
+      );
+      if (fortran.length && !clients.has(where.root.toString())) {
+        const key = where.root.toString();
+        const client = startClient(where.root, folder, folder.uri.toString() === untitledFolder()?.uri.toString());
+        clients.set(key, client);
+        if (!(await client)) {
+          clients.delete(key);
+          disposeWatchers(key);
+        }
+      }
+    }
+  }
+  const out: LanguageClient[] = [];
+  for (const pending of clients.values()) {
+    const client = await pending;
+    if (client?.isRunning()) {
+      out.push(client);
+    }
+  }
+  return out;
+}
+
+/** The locations a request of zfls's own gives for a C name, from every
+ * zfls running */
+async function fromEveryServer(
+  document: vscode.TextDocument,
+  method: string,
+  name: string,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[]> {
+  const out: vscode.Location[] = [];
+  for (const client of await clientsForC(document)) {
+    if (token.isCancellationRequested) {
+      break;
+    }
+    try {
+      const locations = await client.sendRequest<ProtocolLocation[] | null>(method, { name }, token);
+      for (const l of locations ?? []) {
+        const location = client.protocol2CodeConverter.asLocation(l);
+        if (location) {
+          out.push(location);
+        }
+      }
+    } catch {
+      // an older zfls, or one stopping
+    }
+  }
+  return out;
+}
+
+/** Go to definition in a C or C++ file: the Fortran procedures that a
+ * name is the C name of (`zfls/bindCTargets`) */
+async function fortranOfC(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[] | undefined> {
+  const name = identifierAt(document.lineAt(position.line).text, position.character);
+  if (!name) {
+    return undefined;
+  }
+  const out = await fromEveryServer(document, "zfls/bindCTargets", name, token);
+  return out.length ? out : undefined;
+}
+
+/** Find references in a C or C++ file: the Fortran references of the
+ * procedures that a name is the C name of (`zfls/bindCReferences`); the C
+ * language server gives the C ones */
+async function fortranReferencesOfC(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  _context: vscode.ReferenceContext,
+  token: vscode.CancellationToken,
+): Promise<vscode.Location[] | undefined> {
+  const name = identifierAt(document.lineAt(position.line).text, position.character);
+  if (!name) {
+    return undefined;
+  }
+  const out = await fromEveryServer(document, "zfls/bindCReferences", name, token);
+  return out.length ? out : undefined;
+}
+
+/** Writes the grammar of zfls.commentMarkers (of the workspace, as grammars
+ * are not per folder) when it differs from the one there, and offers to
+ * reload the window, which reads grammars once. After an update of the
+ * extension, which brings the empty grammar back, it is written again. */
+async function updateMarkerGrammar(changed: boolean): Promise<void> {
+  const markers = vscode.workspace.getConfiguration("zfls").get<string[]>("commentMarkers", []);
+  const file = path.join(context.extensionPath, "syntaxes", INJECTION_FILE);
+  const text = markerGrammarText(markers);
+  try {
+    // a checkout or package may have CRLF line ends: the same grammar
+    if (isMarkerGrammar(fs.readFileSync(file, "utf8"), markers)) {
+      return;
+    }
+    fs.writeFileSync(file, text, "utf8");
+  } catch (err) {
+    output?.warn(`could not write ${file} for zfls.commentMarkers: ${String(err)}`);
+    if (changed) {
+      void vscode.window.showWarningMessage(
+        vscode.l10n.t(
+          "zfls: the comment markers could not be highlighted (the extension's grammar is not writable); zfls still reads them as comments.",
+        ),
+      );
+    }
+    return;
+  }
+  const reload = vscode.l10n.t("Reload Window");
+  const choice = await vscode.window.showInformationMessage(
+    vscode.l10n.t("zfls: reload the window to highlight the comments of zfls.commentMarkers."),
+    reload,
+  );
+  if (choice === reload) {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
+/** Toggle Line Comment in fixed form with `zfls.fixedFormCommentCharacter`
+ * in column 1 (Modern Fortran #535); VS Code's own toggle for `!` */
+async function toggleFixedFormComment(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return;
+  }
+  const doc = editor.document;
+  const ch = vscode.workspace.getConfiguration("zfls", doc).get<string>("fixedFormCommentCharacter", "!");
+  if (doc.languageId !== "FortranFixedForm" || ch === "!") {
+    await vscode.commands.executeCommand("editor.action.commentLine");
+    return;
+  }
+  const done = new Set<number>();
+  await editor.edit((edit) => {
+    for (const sel of editor.selections) {
+      // a selection that ends at the start of a line leaves that line out
+      const last = sel.end.line > sel.start.line && sel.end.character === 0 ? sel.end.line - 1 : sel.end.line;
+      const lines: number[] = [];
+      for (let ln = sel.start.line; ln <= last; ln++) {
+        if (!done.has(ln)) {
+          lines.push(ln);
+          done.add(ln);
+        }
+      }
+      const old = lines.map((ln) => doc.lineAt(ln).text);
+      toggleComments(old, ch).forEach((text, i) => {
+        if (text !== old[i]) {
+          edit.replace(doc.lineAt(lines[i]).range, text);
+        }
+      });
+    }
+  });
+}
+
+/** The outline of a namelist file: its groups and the variables they set */
+function namelistSymbols(doc: vscode.TextDocument): vscode.DocumentSymbol[] {
+  const lines = Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text);
+  return namelistGroups(lines).map((g) => {
+    const name = new vscode.Range(g.line, g.column, g.line, g.column + g.name.length);
+    const group = new vscode.DocumentSymbol(
+      g.name,
+      "namelist group",
+      vscode.SymbolKind.Namespace,
+      new vscode.Range(g.line, 0, g.endLine, doc.lineAt(g.endLine).text.length),
+      name,
+    );
+    group.children = g.variables.map((v) => {
+      const range = new vscode.Range(v.line, v.column, v.line, v.column + v.name.length);
+      return new vscode.DocumentSymbol(v.name, "", vscode.SymbolKind.Variable, range, range);
+    });
+    return group;
+  });
 }
 
 export async function deactivate(): Promise<void> {
@@ -65,6 +384,7 @@ export async function deactivate(): Promise<void> {
 async function stopClient(key: string): Promise<void> {
   const client = clients.get(key);
   clients.delete(key);
+  disposeWatchers(key);
   await (await client)?.stop();
 }
 
@@ -73,6 +393,14 @@ async function restartAll(): Promise<void> {
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
+}
+
+/** The language client of the server of a Fortran file, started if need be */
+async function clientForUri(uri: vscode.Uri): Promise<LanguageClient | undefined> {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  await ensureClient(doc);
+  const where = serverRoot(doc);
+  return where ? await clients.get(where.root.toString()) : undefined;
 }
 
 /** The outermost workspace folder containing `folder` (a nested folder is
@@ -88,33 +416,114 @@ function outermost(folder: vscode.WorkspaceFolder): vscode.WorkspaceFolder {
   return best;
 }
 
+/** The workspace folder whose server takes untitled files: the first */
+function untitledFolder(): vscode.WorkspaceFolder | undefined {
+  const first = vscode.workspace.workspaceFolders?.[0];
+  return first ? outermost(first) : undefined;
+}
+
+/** The root of the server of untitled files when no folder is open: an
+ * empty directory, so that it indexes nothing */
+function untitledRoot(): vscode.Uri {
+  const root = vscode.Uri.joinPath(context.globalStorageUri, "untitled");
+  fs.mkdirSync(root.fsPath, { recursive: true });
+  return root;
+}
+
 /** Starts the server for a Fortran file, unless it has one */
+/** The folder and root directory of the server that serves `doc` */
+function serverRoot(doc: vscode.TextDocument): { folder?: vscode.WorkspaceFolder; root: vscode.Uri } | undefined {
+  if (doc.uri.scheme === "file") {
+    const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    const folder = inFolder ? outermost(inFolder) : undefined;
+    return { folder, root: folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath)) };
+  }
+  if (doc.uri.scheme === "untitled") {
+    const folder = untitledFolder();
+    return { folder, root: folder ? folder.uri : untitledRoot() };
+  }
+  return undefined;
+}
+
 async function ensureClient(doc: vscode.TextDocument): Promise<void> {
-  if (!LANGUAGES.includes(doc.languageId) || doc.uri.scheme !== "file") {
+  if (!LANGUAGES.includes(doc.languageId)) {
     return;
   }
-  const inFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  const folder = inFolder ? outermost(inFolder) : undefined;
-  const root = folder ? folder.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
+  const where = serverRoot(doc);
+  if (!where) {
+    return;
+  }
+  const { folder, root } = where;
   const key = root.toString();
   if (clients.has(key)) {
     return;
   }
+  // untitled files go to the server of the first workspace folder, or to
+  // one of their own
+  const untitled = folder ? folder.uri.toString() === untitledFolder()?.uri.toString() : doc.uri.scheme === "untitled";
   // the start in progress is recorded, so that files opened meanwhile share it
-  const client = startClient(root, folder);
+  const client = startClient(root, folder, untitled);
   clients.set(key, client);
   if (!(await client)) {
     clients.delete(key);
+    disposeWatchers(key);
   }
 }
 
-async function startClient(root: vscode.Uri, folder: vscode.WorkspaceFolder | undefined): Promise<LanguageClient | undefined> {
+interface CompileOrder {
+  order: { name: string; kind: string; uri: string }[];
+  cycles: string[][];
+}
+
+/** Opens the module compile order of the active document's server (each
+ * module after those it uses), and the modules that use each other */
+async function showCompileOrder(): Promise<void> {
+  const doc = vscode.window.activeTextEditor?.document;
+  let client: LanguageClient | undefined;
+  if (doc && LANGUAGES.includes(doc.languageId)) {
+    await ensureClient(doc);
+    const where = serverRoot(doc);
+    client = where ? await clients.get(where.root.toString()) : undefined;
+  }
+  client ??= await [...clients.values()][0];
+  if (!client) {
+    void vscode.window.showInformationMessage(vscode.l10n.t("zfls: open a Fortran file first."));
+    return;
+  }
+  const res = await client.sendRequest<CompileOrder>("zfls/compileOrder", {});
+  const lines = [`# ${vscode.l10n.t("Module compile order")}`, ""];
+  res.order.forEach((u, i) => {
+    const file = vscode.workspace.asRelativePath(vscode.Uri.parse(u.uri));
+    lines.push(`${i + 1}. ${vscode.l10n.t("`{0}` ({1}) in {2}", u.name, u.kind, file)}`);
+  });
+  if (res.cycles.length > 0) {
+    lines.push("", `## ${vscode.l10n.t("Modules that use each other")}`, "");
+    for (const c of res.cycles) {
+      lines.push(`- ${c.map((n) => `\`${n}\``).join(", ")}`);
+    }
+  }
+  const md = await vscode.workspace.openTextDocument({ language: "markdown", content: lines.join("\n") + "\n" });
+  await vscode.window.showTextDocument(md, { preview: true });
+}
+
+function disposeWatchers(key: string): void {
+  for (const w of watchers.get(key) ?? []) {
+    w.dispose();
+  }
+  watchers.delete(key);
+}
+
+async function startClient(
+  root: vscode.Uri,
+  folder: vscode.WorkspaceFolder | undefined,
+  untitled: boolean,
+): Promise<LanguageClient | undefined> {
   const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
   const command = findServer(context, config.get<string>("path", ""));
   if (!command) {
     const choice = await vscode.window.showErrorMessage(
-      "zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH.",
-      "Open Settings",
+      vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."),
+      vscode.l10n.t("Open Settings"),
     );
     if (choice) {
       await vscode.commands.executeCommand("workbench.action.openSettings", "zfls.path");
@@ -131,17 +540,50 @@ async function startClient(root: vscode.Uri, folder: vscode.WorkspaceFolder | un
   // a folder's server takes the files under it; a directory's server only
   // the files directly in it
   const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
+  // the server follows Fortran files changed outside the editor, and is
+  // restarted when a file it reads its configuration from changes
+  const sourceWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(root, folder ? `**/${FORTRAN_FILES}` : FORTRAN_FILES),
+  );
+  const configWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, SERVER_CONFIG_FILES));
+  const restartSoon = (): void => {
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => {
+      output?.info("A configuration file changed: restarting zfls");
+      void restartAll();
+    }, CONFIG_RESTART_DELAY_MS);
+  };
+  configWatcher.onDidCreate(restartSoon);
+  configWatcher.onDidChange(restartSoon);
+  configWatcher.onDidDelete(restartSoon);
+  watchers.set(root.toString(), [sourceWatcher, configWatcher]);
   const clientOptions: LanguageClientOptions = {
-    documentSelector: LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
+    documentSelector: [
+      ...LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
+      ...(untitled ? LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
+    ],
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
+    synchronize: { fileEvents: sourceWatcher },
     outputChannel: output,
+    middleware: {
+      // a BIND(C) procedure: its declarations from the C language server too
+      provideDefinition: async (document, position, token, next) => {
+        const result = await next(document, position, token);
+        return withCDeclarations(client, document, position, token, result);
+      },
+      // and its references from the C language server
+      provideReferences: async (document, position, options, token, next) => {
+        const result = await next(document, position, options, token);
+        return withCReferences(client, document, position, token, result);
+      },
+    },
   };
   const name = folder ? `zfls (${folder.name})` : `zfls (${root.fsPath})`;
   const client = new LanguageClient("zfls", name, serverOptions, clientOptions);
   try {
     await client.start();
   } catch (err) {
-    void vscode.window.showErrorMessage(`zfls failed to start: ${String(err)}`);
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls failed to start: {0}", String(err)));
     return undefined;
   }
   return client;
@@ -209,14 +651,16 @@ async function checkModernFortran(): Promise<void> {
     // kept on purpose, with its language server and linter off
     return;
   }
-  const disable = "Disable Modern Fortran...";
-  const keep = "Keep it, turn off its fortls and linter";
-  const never = "Don't ask again";
+  const disable = vscode.l10n.t("Disable Modern Fortran...");
+  const keep = vscode.l10n.t("Keep it, turn off its fortls and linter");
+  const never = vscode.l10n.t("Don't ask again");
   const choice = await vscode.window.showWarningMessage(
-    "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, " +
-      "compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two " +
-      "language servers, two linters and two sets of grammars compete for Fortran files, so " +
-      "disable Modern Fortran.",
+    vscode.l10n.t(
+      "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, " +
+        "compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two " +
+        "language servers, two linters and two sets of grammars compete for Fortran files, so " +
+        "disable Modern Fortran.",
+    ),
     disable,
     keep,
     never,
@@ -224,7 +668,7 @@ async function checkModernFortran(): Promise<void> {
   if (choice === disable) {
     await vscode.commands.executeCommand("extension.open", MODERN_FORTRAN);
     void vscode.window.showInformationMessage(
-      'Select "Disable" on the Modern Fortran page, then reload the window.',
+      vscode.l10n.t('Select "Disable" on the Modern Fortran page, then reload the window.'),
     );
   } else if (choice === keep) {
     if (lintOn) {
@@ -235,8 +679,8 @@ async function checkModernFortran(): Promise<void> {
     }
     await fortran.update("fortls.disabled", true, vscode.ConfigurationTarget.Global);
     const reload = await vscode.window.showInformationMessage(
-      "Modern Fortran's fortls is turned off; reload the window to stop it.",
-      "Reload Window",
+      vscode.l10n.t("Modern Fortran's fortls is turned off; reload the window to stop it."),
+      vscode.l10n.t("Reload Window"),
     );
     if (reload) {
       await vscode.commands.executeCommand("workbench.action.reloadWindow");

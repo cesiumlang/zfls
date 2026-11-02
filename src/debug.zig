@@ -128,7 +128,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, input_config: []
 
 fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {
     for (try obj.getChildren(a, false)) |child| {
-        o.print("  {s}{d}: {s}\n", .{ indent, @intFromEnum(child.getType(false)), child.fqsn });
+        o.print("  {s}{d}: {s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn });
         try printChildren(a, o, child, try std.mem.concat(a, u8, &.{ indent, "  " }));
     }
 }
@@ -162,12 +162,12 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     }
     o.print("\n{s}\nObject Tree\n{s}\n\n", .{ sep80, sep80 });
     for (try ast.getScopes(a, null)) |obj| {
-        o.print("{d}: {s}\n", .{ @intFromEnum(obj.getType(false)), obj.fqsn });
+        o.print("{d}: {s}\n", .{ @backingInt(obj.getType(false)), obj.fqsn });
         try printChildren(a, o, obj, "");
     }
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
-    while (it.next()) |e| o.print("{d}: {s}\n", .{ @intFromEnum(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
+    while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
     separator(o);
 }
 

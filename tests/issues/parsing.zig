@@ -366,3 +366,151 @@ test "a submodule of a submodule is named after the parentheses and extends its 
     }
     try w.expectHoverContains("a_child.f90", w.pos("a_child.f90", "procedure f", 0, 10), "FUNCTION f() RESULT(f)");
 }
+
+const dec_structures = [_]h.File{.{ .name = "s.f", .text =
+    \\      SUBROUTINE SHOW
+    \\      IMPLICIT NONE
+    \\      STRUCTURE /DBTAG/
+    \\        INTEGER*4 ID
+    \\        UNION
+    \\          MAP
+    \\            INTEGER*4 IVAL
+    \\          END MAP
+    \\          MAP
+    \\            REAL*4 RVAL
+    \\          END MAP
+    \\        END UNION
+    \\        STRUCTURE /STAMP/ WHEN
+    \\          INTEGER*4 SECS
+    \\        END STRUCTURE
+    \\      END STRUCTURE
+    \\      RECORD /DBTAG/ TAG, TAGS(10)
+    \\      TAG.ID = 4
+    \\      TAG.RVAL = 1.5
+    \\      TAGS(2).WHEN.SECS = 0
+    \\      IF (TAG.ID .EQ. 4 .AND. TAG.IVAL .GT. 0) TAG.ID = 1
+    \\      END
+    \\
+}};
+
+fn expectStructures(w: *h.Workspace) !void {
+    // a RECORD is a variable of the structure's type
+    try w.expectHoverContains("s.f", w.pos("s.f", "TAG, TAGS", 0, 0), "TYPE(DBTAG)");
+    // `.` separates components: go to definition on a field, also of a MAP
+    // and of a nested structure
+    const id = (try w.definition("s.f", w.pos("s.f", "TAG.ID = 4", 0, 4))) orelse return h.unmet("no definition of TAG.ID", .{});
+    try h.expect(id.line == w.pos("s.f", "INTEGER*4 ID", 0, 0).line, "TAG.ID goes to line {d}", .{id.line});
+    const rval = (try w.definition("s.f", w.pos("s.f", "TAG.RVAL", 0, 4))) orelse return h.unmet("no definition of TAG.RVAL", .{});
+    try h.expect(rval.line == w.pos("s.f", "REAL*4 RVAL", 0, 0).line, "TAG.RVAL goes to line {d}", .{rval.line});
+    const secs = (try w.definition("s.f", w.pos("s.f", "WHEN.SECS", 0, 5))) orelse return h.unmet("no definition of WHEN.SECS", .{});
+    try h.expect(secs.line == w.pos("s.f", "INTEGER*4 SECS", 0, 0).line, "WHEN.SECS goes to line {d}", .{secs.line});
+    // the fields after `TAG.`
+    const items = try w.completion("s.f", w.pos("s.f", "TAG.RVAL", 0, 5));
+    var has_rval = false;
+    for (items) |i| if (std.ascii.eqlIgnoreCase(i, "rval")) {
+        has_rval = true;
+    };
+    try h.expect(has_rval, "completion after TAG.R: {any}", .{items});
+    // the structure parses: no diagnostics (UNION and MAP end no scope),
+    // operators between dots stay operators
+    try w.expectNoDiagnostics("s.f");
+}
+
+test "#171 DEC STRUCTURE, RECORD, UNION and MAP, with `.` between components" {
+    const w = try h.Workspace.init(&dec_structures, .{});
+    defer w.deinit();
+    try h.check(171, .fixed, expectStructures(w));
+}
+
+test "Modern Fortran #571 a file of DEC structures has no diagnostics" {
+    const w = try h.Workspace.init(&.{.{ .name = "db.f", .text =
+        \\      Structure /DbTag/
+        \\      Integer*4      Name(10)
+        \\      Integer*4      Id
+        \\      End Structure
+        \\
+        \\      Structure /DbValue/
+        \\      Real*4         Value
+        \\      Integer*4      Status
+        \\      End Structure
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 571, .fixed, w.expectNoDiagnostics("db.f"));
+}
+
+fn expectDotted(w: *h.Workspace) !void {
+    const d = (try w.definition("t.f90", w.pos("t.f90", "inst.member2", 0, 6))) orelse return h.unmet("no definition of inst.member2", .{});
+    try h.expect(d.line == w.pos("t.f90", "integer :: member2", 0, 0).line, "inst.member2 goes to line {d}", .{d.line});
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "inst.member2", 0, 6), "INTEGER :: member2");
+}
+
+test "hansec #45 `.` between a derived-type variable and its component" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\program t
+        \\  type mytype
+        \\    integer :: member1
+        \\    integer :: member2
+        \\  end type
+        \\  type(mytype) :: inst
+        \\  inst%member1 = 1
+        \\  inst.member2 = 2
+        \\end program t
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 45, .fixed, expectDotted(w));
+}
+
+const cuda = [_]h.File{
+    .{ .name = "kern.cuf", .text =
+    \\module kern
+    \\  use cudafor
+    \\  implicit none
+    \\contains
+    \\  attributes(global) subroutine saxpy(n, a, x, y)
+    \\    integer, value :: n
+    \\    real, value :: a
+    \\    real, device :: x(n), y(n)
+    \\    integer :: i
+    \\    i = blockDim%x * (blockIdx%x - 1) + threadIdx%x
+    \\    if (i <= n) y(i) = a * x(i) + y(i)
+    \\  end subroutine saxpy
+    \\  attributes(device) real function twice(v)
+    \\    real, value :: v
+    \\    twice = 2 * v
+    \\  end function twice
+    \\end module kern
+    \\
+    },
+    .{ .name = "main.cuf", .text =
+    \\program main
+    \\  use kern
+    \\  implicit none
+    \\  real, device, allocatable :: xd(:), yd(:)
+    \\  allocate(xd(10), yd(10))
+    \\  call saxpy<<<1, 10>>>(10, 2.0, xd, yd)
+    \\end program main
+    \\
+    },
+};
+
+fn expectCuda(w: *h.Workspace) !void {
+    // kernels and device procedures are procedures of the module, in .cuf
+    // files
+    const d = (try w.definition("main.cuf", w.pos("main.cuf", "saxpy<<<", 0, 1))) orelse return h.unmet("no definition of saxpy", .{});
+    try h.expect(std.mem.endsWith(u8, d.uri, "kern.cuf") and d.line == w.pos("kern.cuf", "subroutine saxpy", 0, 0).line, "saxpy goes to {s}:{d}", .{ d.uri, d.line });
+    try w.expectHoverContains("kern.cuf", w.pos("kern.cuf", "twice = 2", 0, 0), "twice");
+    // signature help past the launch configuration
+    const sig = (try w.signature("main.cuf", w.pos("main.cuf", "2.0, xd", 0, 5))) orelse return h.unmet("no signature help in the kernel launch", .{});
+    try h.expect(std.mem.indexOf(u8, sig.label, "saxpy") != null and sig.active == 2, "signature {s}, parameter {d}", .{ sig.label, sig.active });
+    // cudafor is known, ATTRIBUTES is no name
+    try w.expectNoDiagnostics("kern.cuf");
+    try w.expectNoDiagnostics("main.cuf");
+}
+
+test "CUDA Fortran: kernels, the launch syntax and .cuf files" {
+    const w = try h.Workspace.init(&cuda, .{});
+    defer w.deinit();
+    try expectCuda(w);
+}

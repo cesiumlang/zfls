@@ -24,9 +24,26 @@ pub const settings = @import("settings.zig");
 pub const glob = @import("glob.zig");
 pub const jsonrpc = @import("jsonrpc.zig");
 pub const logger = @import("logger.zig");
+pub const constructs = @import("constructs.zig");
+pub const arguments = @import("arguments.zig");
+pub const autouse = @import("autouse.zig");
+pub const selection = @import("selection.zig");
+pub const fuzzy = @import("fuzzy.zig");
+pub const implicit = @import("implicit.zig");
+pub const unused = @import("unused.zig");
+pub const modgraph = @import("modgraph.zig");
+pub const compilers = @import("compilers.zig");
+pub const argcheck = @import("argcheck.zig");
+pub const literals = @import("literals.zig");
+pub const rewrite = @import("rewrite.zig");
+pub const outline = @import("outline.zig");
+pub const project = @import("project.zig");
+pub const semantic = @import("semantic.zig");
+pub const suppress = @import("suppress.zig");
 pub const server = @import("server.zig");
 pub const version_info = @import("version.zig");
 pub const debug = @import("debug.zig");
+pub const ifxsetup = @import("ifxsetup.zig");
 
 test {
     std.testing.refAllDecls(@This());

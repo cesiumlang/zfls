@@ -40,7 +40,7 @@
     ["\"", "\""]
   ],
   "indentationRules": {
-    "unIndentedLinePattern": "^\\s*!.*",
+    "unIndentedLinePattern": "^\\s*[!#].*",
     "increaseIndentPattern": {
       "pattern": "then(\\s*|\\s*!.*)$|^\\s*(program|subroutine|function|module|do|block|associate|case|select\\s*case)\\b.*$|\\s*(else|else\\s*if|elsewhere)\\b.*$",
       "flags": "i"

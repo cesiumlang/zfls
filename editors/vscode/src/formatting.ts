@@ -15,7 +15,8 @@ import {
   textDiff,
   unsupportedReason,
 } from "./format";
-import { VariableContext, expandVariables, findExecutable, runProcess } from "./tools";
+import { expandVariables, findExecutable, runProcess } from "./tools";
+import { documentVariables } from "./variables";
 
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 const TIMEOUT_MS = 30_000;
@@ -113,21 +114,33 @@ class FortranFormatter
       return [];
     }
     const formatter = name as Formatter;
-    const unsupported = unsupportedReason(formatter, document.languageId);
-    if (unsupported) {
-      this.reportOnce(`unsupported:${formatter}:${document.languageId}`, `zfls: ${unsupported}.`);
+    if (unsupportedReason(formatter, document.languageId)) {
+      // the one reason there is: fprettify on fixed form
+      this.reportOnce(
+        `unsupported:${formatter}:${document.languageId}`,
+        vscode.l10n.t("zfls: fprettify formats free-form Fortran only; use findent for fixed-form files."),
+      );
       return [];
     }
 
-    const ctx = variableContext(document);
+    const ctx = documentVariables(document.uri);
     const configured = expandVariables(config.get<string>("path", "").trim(), ctx);
     const exe = findExecutable(formatter, configured, ctx.workspaceFolder);
     if (!exe) {
-      const where = configured ? `in ${configured} (zfls.formatting.path)` : "on the PATH";
       this.reportOnce(
         `missing:${formatter}:${configured}`,
-        `zfls: ${formatter} was not found ${where}. Install it with \`${INSTALL_HINTS[formatter]}\`, ` +
-          "or set zfls.formatting.path to it.",
+        configured
+          ? vscode.l10n.t(
+              "zfls: {0} was not found in {1} (zfls.formatting.path). Install it with `{2}`, or set zfls.formatting.path to it.",
+              formatter,
+              configured,
+              INSTALL_HINTS[formatter],
+            )
+          : vscode.l10n.t(
+              "zfls: {0} was not found on the PATH. Install it with `{1}`, or set zfls.formatting.path to it.",
+              formatter,
+              INSTALL_HINTS[formatter],
+            ),
         "zfls.formatting.path",
       );
       return [];
@@ -159,17 +172,25 @@ class FortranFormatter
       this.log.warn(`[format] ${formatter}: ${result.stderr.trim()}`);
     }
     if (result.error || result.code !== 0) {
-      const why = result.error ? result.error.message : `exit code ${result.code}`;
+      const why = result.error ? result.error.message : vscode.l10n.t("exit code {0}", String(result.code));
+      const detail = result.stderr.trim() ? `: ${lastLine(result.stderr)}` : "";
       this.reportOnce(
         `failed:${formatter}:${why}:${result.stderr}`,
-        `zfls: ${formatter} failed (${why})${result.stderr.trim() ? `: ${lastLine(result.stderr)}` : ""}. ` +
-          "The document is unchanged; see the zfls output for details.",
+        vscode.l10n.t(
+          "zfls: {0} failed ({1}){2}. The document is unchanged; see the zfls output for details.",
+          formatter,
+          why,
+          detail,
+        ),
       );
       return [];
     }
     const after = outputLines(result.stdout).join("\n");
     if (after.trim() === "" && before.trim() !== "") {
-      this.reportOnce(`empty:${formatter}`, `zfls: ${formatter} printed nothing; the document is unchanged.`);
+      this.reportOnce(
+        `empty:${formatter}`,
+        vscode.l10n.t("zfls: {0} printed nothing; the document is unchanged.", formatter),
+      );
       return [];
     }
     const diff = textDiff(before, after);
@@ -196,10 +217,12 @@ class FortranFormatter
       return;
     }
     this.reported.add(key);
-    void vscode.window.showErrorMessage(message, "Open Settings", "Show Output").then((choice) => {
-      if (choice === "Open Settings") {
+    const settings = vscode.l10n.t("Open Settings");
+    const show = vscode.l10n.t("Show Output");
+    void vscode.window.showErrorMessage(message, settings, show).then((choice) => {
+      if (choice === settings) {
         void vscode.commands.executeCommand("workbench.action.openSettings", setting);
-      } else if (choice === "Show Output") {
+      } else if (choice === show) {
         this.log.show(true);
       }
     });
@@ -210,18 +233,4 @@ class FortranFormatter
 function lastLine(text: string): string {
   const lines = text.trim().split(/\r?\n/);
   return lines[lines.length - 1];
-}
-
-function variableContext(document: vscode.TextDocument): VariableContext {
-  const folders: Record<string, string> = {};
-  for (const f of vscode.workspace.workspaceFolders ?? []) {
-    folders[f.name] = f.uri.fsPath;
-  }
-  const folder =
-    vscode.workspace.getWorkspaceFolder(document.uri) ?? vscode.workspace.workspaceFolders?.[0];
-  return {
-    workspaceFolder: folder?.uri.fsPath,
-    workspaceFolders: folders,
-    file: document.uri.scheme === "file" ? document.uri.fsPath : undefined,
-  };
 }

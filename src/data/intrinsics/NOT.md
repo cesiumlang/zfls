@@ -29,6 +29,13 @@
   If an input bit is a one, that position is a zero on output. Conversely,
   any input bit that is zero is a one on output.
 
+  This is called a bitwise Boolean inversion of integers. That is, `NOT(3f)`
+  flips all the bits of its integer argument (changing 0s to 1s and 1s
+  to 0s).
+
+  `NOT(3)` alongside other bitwise functions like `IAND(3)`, `IOR(3)`, or
+  `ISHFT(3)` allows for complex bit manipulation.
+
 ### **Options**
 
 - `i`
@@ -68,6 +75,31 @@ integer :: i
    print *, 1234, not(1234)+1
    print *, -1234, not(-1234)+1
    print *, " of course 'x=-x' works just fine and more generally."
+   !
+   call bitmask_example()
+contains
+
+subroutine bitmask_example() ! Creating a Bitmask with NOT() and IAND()
+
+! A real-world use case for NOT() is combining it  with IAND() (bitwise
+! AND) to clear specific bits in a bitmask. In modern Fortran there
+! procedures like IBCLR(3f) to do such operations.
+
+integer :: flags, mask, cleared_flags
+
+   ! Binary: 00001111 (in decimal: 15)
+   flags = 15 
+    
+   ! We want to clear the 3rd bit (binary: 00000100, decimal: 4)
+   mask = 4    
+
+   ! NOT(mask) turns 00000100 into 11111011
+   ! IAND then preserves everything EXCEPT the 3rd bit
+   cleared_flags = IAND(flags, NOT(mask))
+
+   print *, "Resulting value: ", cleared_flags ! Outputs: 11 (binary: 00001011)
+end subroutine bitmask_example
+
 end program demo_not
 ```
 
@@ -83,6 +115,7 @@ Results:
   >        1234       -1234
   >       -1234        1234
   >  of course 'x=-x' works just fine and more generally.
+  >  Resulting value: 11
 ```
 
 ### **Standard**

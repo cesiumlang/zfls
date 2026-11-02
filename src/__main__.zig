@@ -49,21 +49,68 @@ fn runServer(ctx: *Ctx) void {
     var reader = Io.File.stdin().readerStreaming(io, &read_buf);
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
+    // messages read but not handled yet, so that a request the client
+    // cancels while it waits is not worked on ($/cancelRequest)
+    var queue: std.ArrayList([]u8) = .empty;
+    defer {
+        for (queue.items) |b| gpa.free(b);
+        queue.deinit(gpa);
+    }
     while (server.running) {
         _ = arena.reset(.retain_capacity);
         const a = arena.allocator();
-        const body = jsonrpc.readMessage(&reader.interface, a) catch |e| {
-            server.postMessage(a, std.fmt.allocPrint(a, "Unexpected error: {s}", .{@errorName(e)}) catch "Unexpected error", 1);
-            break;
-        } orelse break;
+        if (queue.items.len == 0) {
+            readMessages(gpa, &reader.interface, &queue) catch |e| {
+                server.postMessage(a, std.fmt.allocPrint(a, "Unexpected error: {s}", .{@errorName(e)}) catch "Unexpected error", 1);
+                break;
+            };
+            if (queue.items.len == 0) break;
+        }
+        const body = queue.orderedRemove(0);
+        defer gpa.free(body);
         const request = json.parse(a, body) catch {
             server.postMessage(a, "Unexpected error: invalid JSON message", 1);
             break;
         };
         if (log.enabled(.debug)) log.debug("RECV {s}", .{json.pretty(a, request) catch ""});
+        if (json.get(request, "id")) |id| if (cancelledLater(a, queue.items, id)) {
+            server.cancelled(a, id);
+            continue;
+        };
         server.handle(a, request);
         server.flushPostMessages(a);
     }
+}
+
+/// Read one message, waiting for it, and then those that have arrived
+/// whole with it; none at the end of the input
+fn readMessages(gpa: std.mem.Allocator, r: *Io.Reader, queue: *std.ArrayList([]u8)) !void {
+    const first = (try jsonrpc.readMessage(r, gpa)) orelse return;
+    try queue.append(gpa, first);
+    while (jsonrpc.hasWholeMessage(r.buffered())) {
+        const next = (try jsonrpc.readMessage(r, gpa)) orelse return;
+        try queue.append(gpa, next);
+    }
+}
+
+/// Whether one of the messages waiting cancels request `id`
+fn cancelledLater(a: std.mem.Allocator, waiting: []const []u8, id: json.Value) bool {
+    for (waiting) |body| {
+        if (std.mem.indexOf(u8, body, "$/cancelRequest") == null) continue;
+        const msg = json.parse(a, body) catch continue;
+        const method = json.str(json.get(msg, "method")) orelse continue;
+        if (!std.mem.eql(u8, method, "$/cancelRequest")) continue;
+        const cid = json.path(msg, &.{ "params", "id" }) orelse continue;
+        if (sameId(cid, id)) return true;
+    }
+    return false;
+}
+
+/// Request ids are integers or strings
+fn sameId(x: json.Value, y: json.Value) bool {
+    if (json.int(x)) |i| return if (json.int(y)) |j| i == j else false;
+    if (json.str(x)) |s| return if (json.str(y)) |t| std.mem.eql(u8, s, t) else false;
+    return false;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -71,11 +118,19 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     patterns.init();
     paths.init(io);
+    paths.initCache(init.arena.allocator(), init.environ_map);
 
     const arena = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(arena);
     var args: std.ArrayList([]const u8) = .empty;
     for (argv[1..]) |arg| try args.append(arena, arg);
+
+    // ifx without Intel's installer or Visual Studio (Windows)
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "setup-ifx")) {
+        const code = try @import("ifxsetup.zig").run(gpa, io, init.environ_map, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
 
     version_info.reported = version_info.get(io, version);
     const parsed = try settings.parseArgs(arena, args.items, version_info.reported);

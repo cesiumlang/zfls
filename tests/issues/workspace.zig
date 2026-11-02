@@ -72,9 +72,9 @@ test "#558 an unreadable directory under a source_dirs glob is skipped" {
 
 test "#536 a broken symlink under the workspace is skipped" {
     const w = try h.Workspace.init(&.{.{ .name = "sub/bar.f90", .text =
-    \\module bar_mod
-    \\end module bar_mod
-    \\
+        \\module bar_mod
+        \\end module bar_mod
+        \\
     }}, .{
         .links = &.{.{ .name = "dangling.f90", .target = "does_not_exist.f90" }},
     });
@@ -113,4 +113,163 @@ test "#301 an INCLUDE statement is searched in the include directories" {
         break :blk h.expect(std.mem.endsWith(u8, inc.uri, "consts.inc"), "definition of the INCLUDE is {s}", .{inc.uri});
     };
     try h.check(301, .fixed, outcome);
+}
+
+test "an untitled document is served from the text the client sends" {
+    const zfls = @import("zfls");
+    const json = zfls.json;
+    const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
+        \\module lib
+        \\  integer :: shared = 1
+        \\end module lib
+        \\
+    }}, .{});
+    defer w.deinit();
+    const a = w.arena.allocator();
+    const uri = "untitled:Untitled-1";
+    _ = try w.server.dispatchPublic(a, "textDocument/didOpen", try json.from(a, .{ .textDocument = .{
+        .uri = uri,
+        .languageId = "FortranFreeForm",
+        .version = 1,
+        .text = "program p\n  use lib\n  integer :: mine\n  print *, shared, mine\nend program p\n",
+    } }));
+    const at = struct {
+        fn params(al: std.mem.Allocator, line: usize, character: usize) !json.Value {
+            return json.from(al, .{ .textDocument = .{ .uri = uri }, .position = .{ .line = line, .character = character } });
+        }
+    };
+    // a name from a workspace file: its file's URI
+    const def = try w.server.dispatchPublic(a, "textDocument/definition", try at.params(a, 3, 12));
+    try std.testing.expect(std.mem.endsWith(u8, json.str(json.get(def, "uri")) orelse "", "lib.f90"));
+    // a name of the document itself: the document's URI
+    const own = try w.server.dispatchPublic(a, "textDocument/definition", try at.params(a, 3, 20));
+    try std.testing.expectEqualStrings(uri, json.str(json.get(own, "uri")) orelse "");
+    try std.testing.expectEqual(@as(?i64, 2), json.int(json.path(own, &.{ "range", "start", "line" })));
+    // its changes are applied
+    _ = try w.server.dispatchPublic(a, "textDocument/didChange", try json.from(a, .{
+        .textDocument = .{ .uri = uri, .version = 2 },
+        .contentChanges = &[_]struct { text: []const u8 }{.{ .text = "program p\n  use lib\n  real :: mine\n  print *, shared, mine\nend program p\n" }},
+    }));
+    const hov = try w.server.dispatchPublic(a, "textDocument/hover", try at.params(a, 3, 20));
+    try std.testing.expect(std.mem.indexOf(u8, json.str(json.path(hov, &.{ "contents", "value" })) orelse "", "REAL") != null);
+    _ = try w.server.dispatchPublic(a, "textDocument/didClose", try json.from(a, .{ .textDocument = .{ .uri = uri } }));
+}
+
+fn watched(w: *h.Workspace, name: []const u8, kind: i64) !void {
+    const zfls = @import("zfls");
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "workspace/didChangeWatchedFiles", try zfls.json.from(a, .{
+        .changes = &[_]struct { uri: []const u8, type: i64 }{.{ .uri = try w.uri(name), .type = kind }},
+    }));
+}
+
+fn hasSymbol(w: *h.Workspace, name: []const u8) !bool {
+    for (try w.workspaceSymbols(name)) |s| if (std.mem.eql(u8, s, name)) return true;
+    return false;
+}
+
+test "files changed, created and deleted outside the editor are followed" {
+    const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
+        \\module lib
+        \\  integer :: old_name
+        \\end module lib
+        \\
+    }}, .{});
+    defer w.deinit();
+    const io = std.testing.io;
+    try std.testing.expect(try hasSymbol(w, "old_name"));
+    // changed on disk (a checkout)
+    try w.tmp.dir.writeFile(io, .{ .sub_path = "lib.f90", .data = "module lib\n  integer :: new_name\nend module lib\n" });
+    try watched(w, "lib.f90", 2);
+    try std.testing.expect(try hasSymbol(w, "new_name"));
+    try std.testing.expect(!try hasSymbol(w, "old_name"));
+    // created, in a directory that did not exist at start-up
+    try w.tmp.dir.createDirPath(io, "gen");
+    try w.tmp.dir.writeFile(io, .{ .sub_path = "gen/made.f90", .data = "module made\nend module made\n" });
+    try watched(w, "gen/made.f90", 1);
+    try std.testing.expect(try hasSymbol(w, "made"));
+    // deleted
+    try w.tmp.dir.deleteFile(io, "gen/made.f90");
+    try watched(w, "gen/made.f90", 3);
+    try std.testing.expect(!try hasSymbol(w, "made"));
+    // restored as it was
+    try w.tmp.dir.writeFile(io, .{ .sub_path = "gen/made.f90", .data = "module made\nend module made\n" });
+    try watched(w, "gen/made.f90", 1);
+    try std.testing.expect(try hasSymbol(w, "made"));
+}
+
+test "a document open in the editor keeps the editor's text when its file changes" {
+    const zfls = @import("zfls");
+    const w = try h.Workspace.init(&.{.{ .name = "lib.f90", .text =
+        \\module lib
+        \\  integer :: edited_name
+        \\end module lib
+        \\
+    }}, .{});
+    defer w.deinit();
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "textDocument/didOpen", try zfls.json.from(a, .{ .textDocument = .{ .uri = try w.uri("lib.f90") } }));
+    try w.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "lib.f90", .data = "module lib\n  integer :: disk_name\nend module lib\n" });
+    try watched(w, "lib.f90", 2);
+    try std.testing.expect(try hasSymbol(w, "edited_name"));
+    try std.testing.expect(!try hasSymbol(w, "disk_name"));
+}
+
+test "indexing reports its progress with the initialize request's workDoneToken (fortls #417, Modern Fortran #757)" {
+    var many: [30]h.File = undefined;
+    var names: [30][16]u8 = undefined;
+    for (&many, &names, 0..) |*f, *n, i| {
+        f.* = .{ .name = try std.fmt.bufPrint(n, "m{d}.f90", .{i}), .text = "module m\nend module m\n" };
+    }
+    const w = try h.Workspace.init(&many, .{ .progress_token = 7, .settings = .{ .nthreads = 1 } });
+    defer w.deinit();
+    var kinds: std.ArrayList([]const u8) = .empty;
+    defer kinds.deinit(std.testing.allocator);
+    for (w.sent.items) |msg| {
+        if (std.mem.indexOf(u8, msg, "\"$/progress\"") == null) continue;
+        try std.testing.expect(std.mem.indexOf(u8, msg, "\"token\":7") != null);
+        for ([_][]const u8{ "begin", "report", "end" }) |k| {
+            const needle = try std.fmt.allocPrint(std.testing.allocator, "\"kind\":\"{s}\"", .{k});
+            defer std.testing.allocator.free(needle);
+            if (std.mem.indexOf(u8, msg, needle) != null) try kinds.append(std.testing.allocator, k);
+        }
+    }
+    try std.testing.expect(kinds.items.len >= 3);
+    try std.testing.expectEqualStrings("begin", kinds.items[0]);
+    try std.testing.expectEqualStrings("report", kinds.items[1]);
+    try std.testing.expectEqualStrings("end", kinds.items[kinds.items.len - 1]);
+}
+
+test "no progress without a workDoneToken" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text = "module a\nend module a\n" }}, .{});
+    defer w.deinit();
+    for (w.sent.items) |msg| try std.testing.expect(std.mem.indexOf(u8, msg, "$/progress") == null);
+}
+
+fn publishedFor(w: *h.Workspace, file: []const u8) bool {
+    for (w.sent.items) |msg| {
+        if (std.mem.indexOf(u8, msg, "publishDiagnostics") == null) continue;
+        if (std.mem.indexOf(u8, msg, file) != null) return true;
+    }
+    return false;
+}
+
+const two_files = [_]h.File{
+    .{ .name = "good.f90", .text = "module good\n  implicit none\nend module good\n" },
+    .{ .name = "bad.f90", .text = "module bad\n  implicit none\ncontains\n  subroutine s()\n    x = 1\n  end subroutine s\nend module bad\n" },
+};
+
+test "workspace_diagnostics publishes the diagnostics of files that are not open" {
+    const w = try h.Workspace.init(&two_files, .{ .settings = .{ .workspace_diagnostics = true } });
+    defer w.deinit();
+    _ = try w.server.dispatchPublic(w.arena.allocator(), "initialized", .{ .object = .empty });
+    try std.testing.expect(publishedFor(w, "bad.f90"));
+    try std.testing.expect(publishedFor(w, "good.f90"));
+}
+
+test "without workspace_diagnostics, nothing is published at start" {
+    const w = try h.Workspace.init(&two_files, .{});
+    defer w.deinit();
+    _ = try w.server.dispatchPublic(w.arena.allocator(), "initialized", .{ .object = .empty });
+    try std.testing.expect(!publishedFor(w, "bad.f90"));
 }

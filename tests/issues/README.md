@@ -43,6 +43,17 @@ give the same answer, and the test fails for the reason in the issue.
 | [#532](https://github.com/fortran-lang/fortls/issues/532) | identifiers starting with `block` parse as BLOCK | parsing | fixed (patched) | fails, same cause |
 | [#478](https://github.com/fortran-lang/fortls/issues/478) | Markdown list in a parameter's docs indents the next parameter (fixture rebuilt from the screenshot) | hover | fixed (patched) | fails, same cause |
 | [#498](https://github.com/fortran-lang/fortls/issues/498) | go to definition on `#include` | hover | fixed (patched) | fails, same cause |
+| [#6](https://github.com/fortran-lang/fortls/issues/6) | signature help on a generic interface: a signature per procedure, the matching one active | hover | fixed (feature) | no signature help |
+| [#424](https://github.com/fortran-lang/fortls/issues/424) | construct names: go to definition, references, rename | constructs | fixed (feature) | no answer |
+| [#512](https://github.com/fortran-lang/fortls/issues/512) | include directories and definitions from `compile_commands.json` | project | fixed (feature) | not read |
+| [#438](https://github.com/fortran-lang/fortls/issues/438) | diagnostics have codes; `diagnostic_severity` turns a code off or changes its severity | diagnostics | fixed (feature) | no codes, only `disable_diagnostics` |
+| [#171](https://github.com/fortran-lang/fortls/issues/171) | DEC `STRUCTURE`, `RECORD`, `UNION` and `MAP`, with `.` between components | parsing | fixed (feature) | not parsed |
+| [#496](https://github.com/fortran-lang/fortls/issues/496) | user-defined functions highlighted where they are called (semantic tokens) | highlighting | fixed (feature) | no semantic tokens |
+| [#547](https://github.com/fortran-lang/fortls/issues/547) | hover on a statement or attribute keyword (`ALLOCATE`, `INTENT`) shows its documentation | hover | fixed (feature) | no hover |
+| [#28](https://github.com/fortran-lang/fortls/issues/28) | `lowercase_hover`: keywords in hover in lowercase (`real, intent(in) :: x`) | hover | fixed (feature) | uppercase only |
+| [#125](https://github.com/fortran-lang/fortls/issues/125) | hover on a literal constant shows its type with its kind (`REAL(dp)`, `INTEGER(8)`, `DOUBLE PRECISION`, BOZ values) | hover | fixed (feature) | the type without its kind; none on `1d0`, `7_8` |
+| [#501](https://github.com/fortran-lang/fortls/issues/501) | `prefer_implementation`: hover shows the documentation of a separate module procedure's body in a submodule | hover | fixed (feature) | the interface only |
+| [#502](https://github.com/fortran-lang/fortls/issues/502) | `prefer_implementation`: go to definition goes to the body in the submodule | hover | fixed (feature) | the interface only |
 | [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | fixed (patched) | fails, same cause |
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | fixed (patched) | fails, same cause |
@@ -84,8 +95,8 @@ Notes:
 - [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
   test suite on Python 3.14; it does not apply to zfls.
 - The feature requests and discussions have no behavior to test yet:
-  #563, #547, #512, #502, #501, #496, #438, #424, #423, #417, #348, #309,
-  #209, #171, #126, #125, #96, #85, #56, #28 and #6.
+  #563, #423, #417, #348, #309,
+  #209, #171, #126, #125, #96, #85, #56 and #28.
 
 ## Issues of hansec/fortran-language-server
 
@@ -105,3 +116,34 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/hansec/fortran-language-server/issues/203) | preprocessor conditional inside a continued declaration: the inactive branch adds its attributes | hover | fixed (patched) | fails, same cause |
+| [#129](https://github.com/hansec/fortran-language-server/issues/129) | a warning for names that are not declared under IMPLICIT NONE, with a quick fix declaring them | diagnostics | fixed (feature) | not reported |
+| [#201](https://github.com/hansec/fortran-language-server/issues/201) | hover on a name that is not declared shows the type its IMPLICIT rules (or the default ones) give it | hover | fixed (feature) | no hover |
+| [#226](https://github.com/hansec/fortran-language-server/issues/226) | a Source Action puts the keywords of a file in upper case (also lower and title case) | diagnostics | fixed (feature) | none |
+| [#135](https://github.com/hansec/fortran-language-server/issues/135) | go to definition on a call of a generic interface goes to the procedure the arguments fit | hover | fixed (feature) | goes to the interface |
+| [#62](https://github.com/hansec/fortran-language-server/issues/62) | completion of names from modules not used yet adds the `use` statement; a quick fix for a type not found | completion | fixed (feature) | names in scope only |
+| [#95](https://github.com/hansec/fortran-language-server/issues/95) | definition, hover and references of user-defined operators (`.ord.`) and of defined assignment (`assignment(=)`) | hover | fixed (feature) | no answer |
+| [#121](https://github.com/hansec/fortran-language-server/issues/121) | completion of a component offers the parent components of an extended type | completion | fixed (feature) | not offered |
+| [#133](https://github.com/hansec/fortran-language-server/issues/133) | completion of keyword arguments (`name=`) inside a call | completion | fixed (feature) | names in scope only |
+| [#195](https://github.com/hansec/fortran-language-server/issues/195) | fuzzy workspace symbol search (`tar` finds `this_amazing_routine`) | navigation | fixed (feature) | names containing the query only |
+| [#45](https://github.com/hansec/fortran-language-server/issues/45) | `.` between a derived-type variable and its component (`inst.member`) | parsing | fixed (feature) | not resolved |
+| [#157](https://github.com/hansec/fortran-language-server/issues/157) | completion of construct names after `exit` and `cycle` | constructs | fixed (feature) | no completion |
+| [#166](https://github.com/hansec/fortran-language-server/issues/166) | folding by program units, constructs and their branches, preprocessor conditionals and comment blocks | outline | fixed (feature) | no folding ranges |
+
+## Issues of fortran-lang/vscode-fortran-support
+
+Feature requests of the Modern Fortran extension that the server answers.
+Their tests use `h.checkIn(.modern_fortran, ...)`.
+
+| Issue | Behavior | Test file | zfls | fortls |
+| --- | --- | --- | --- | --- |
+| [#981](https://github.com/fortran-lang/vscode-fortran-support/issues/981) | a `! zfls: disable=masks-parent` comment hides the "masks variable in parent scope" warning | diagnostics | fixed (feature) | cannot be hidden |
+| [#1306](https://github.com/fortran-lang/vscode-fortran-support/issues/1306) | `external_modules` stops `use mpi` (and other library modules) being reported as not found | diagnostics | fixed (feature) | always reported |
+| [#401](https://github.com/fortran-lang/vscode-fortran-support/issues/401) | variables and functions named like keywords (`if`, `module`, `format`) highlighted as keywords | highlighting | fixed (feature) | no semantic tokens |
+| [#245](https://github.com/fortran-lang/vscode-fortran-support/issues/245) | type-bound procedures not highlighted at their calls | highlighting | fixed (feature) | no semantic tokens |
+| [#471](https://github.com/fortran-lang/vscode-fortran-support/issues/471) | `fpm.toml`: its include directory and preprocessor macros | project | fixed (feature) | not read |
+| [#571](https://github.com/fortran-lang/vscode-fortran-support/issues/571) | a file of DEC structures has no diagnostics | parsing | fixed (feature) | diagnostics |
+| [#87](https://github.com/fortran-lang/vscode-fortran-support/issues/87) | `fixed_line_length` (72, 80, 132): the columns past it of a fixed-form line are a comment (semantic tokens; the grammar no longer stops at 72) | highlighting | fixed (feature) | always 72, in the grammar |
+| [#177](https://github.com/fortran-lang/vscode-fortran-support/issues/177) | typing `#` first on an indented line moves the directive to the first column; `#` lines do not change the indentation after them | highlighting | fixed (feature) | indented |
+| [#617](https://github.com/fortran-lang/vscode-fortran-support/issues/617) | fypp: inline `${...}$`, `$:` and `@:` are no Fortran names (no warnings, no tokens); the extension highlights them | highlighting | fixed (feature) | read as Fortran |
+| [#234](https://github.com/fortran-lang/vscode-fortran-support/issues/234) | keywords in title case (a Source Action) | diagnostics | fixed (feature) | none |
+| [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |

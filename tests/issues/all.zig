@@ -3,9 +3,15 @@
 //! README.md for the status of each.
 
 test {
+    _ = @import("completion.zig");
+    _ = @import("constructs.zig");
     _ = @import("diagnostics.zig");
+    _ = @import("highlighting.zig");
     _ = @import("hover.zig");
+    _ = @import("navigation.zig");
+    _ = @import("outline.zig");
     _ = @import("rename.zig");
     _ = @import("parsing.zig");
+    _ = @import("project.zig");
     _ = @import("workspace.zig");
 }

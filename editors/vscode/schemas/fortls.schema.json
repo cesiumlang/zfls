@@ -24,7 +24,7 @@
       "default": []
     },
     "incl_suffixes": {
-      "description": "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP (lower & upper casing))",
+      "description": "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP, .CUF (lower & upper casing))",
       "type": "array",
       "items": {
         "type": "string"
@@ -34,6 +34,15 @@
     },
     "excl_suffixes": {
       "description": "Source file extensions to be excluded (default: set())",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "comment_markers": {
+      "description": "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran",
       "type": "array",
       "items": {
         "type": "string"
@@ -71,8 +80,18 @@
       "type": "boolean",
       "default": false
     },
+    "disable_index_cache": {
+      "description": "Do not keep the workspace's files, and what zfls parsed from them, in one file of zfls's cache, from which a start reads those that have not changed instead of reading and parsing each file",
+      "type": "boolean",
+      "default": false
+    },
     "autocomplete_no_prefix": {
       "description": "Do not filter autocomplete results by variable prefix",
+      "type": "boolean",
+      "default": false
+    },
+    "autocomplete_no_auto_use": {
+      "description": "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)",
       "type": "boolean",
       "default": false
     },
@@ -106,6 +125,16 @@
       "type": "string",
       "default": "fortran90"
     },
+    "prefer_implementation": {
+      "description": "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface",
+      "type": "boolean",
+      "default": false
+    },
+    "lowercase_hover": {
+      "description": "Show the keywords of hover in lowercase (real, intent(in) :: x)",
+      "type": "boolean",
+      "default": false
+    },
     "max_line_length": {
       "description": "Maximum line length (default: -1)",
       "type": "integer",
@@ -116,15 +145,130 @@
       "type": "integer",
       "default": -1
     },
+    "fixed_line_length": {
+      "description": "Columns of code in a fixed-form line, as gfortran's -ffixed-line-length-n (72, 80, 132): the rest is highlighted as a comment and is not read for names (default: -1, no limit)",
+      "type": "integer",
+      "default": -1
+    },
     "disable_diagnostics": {
       "description": "Disable diagnostics",
       "type": "boolean",
       "default": false
     },
+    "workspace_diagnostics": {
+      "description": "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)",
+      "type": "boolean",
+      "default": false
+    },
+    "diagnostic_severity": {
+      "description": "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint",
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "line-too-long",
+          "comment-too-long",
+          "statement-without-scope",
+          "multiple-contains",
+          "unexpected-end",
+          "invalid-parent",
+          "procedure-before-contains",
+          "declared-twice",
+          "masks-parent",
+          "import-outside-interface",
+          "module-not-found",
+          "use-after-implicit",
+          "deferred-not-implemented",
+          "intent-not-in-arguments",
+          "argument-not-declared",
+          "not-imported",
+          "object-not-found",
+          "undeclared-name",
+          "unused-name",
+          "circular-use",
+          "argument-mismatch",
+          "argument-kind",
+          "intent-in-assigned"
+        ]
+      },
+      "additionalProperties": {
+        "enum": [
+          "off",
+          "error",
+          "warning",
+          "information",
+          "hint"
+        ]
+      },
+      "default": {}
+    },
+    "external_modules": {
+      "description": "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "compiler_diagnostics": {
+      "description": "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "gfortran",
+        "ifx",
+        "ifort",
+        "flang",
+        "nvfortran",
+        "nagfor",
+        "lfortran",
+        "none",
+        null
+      ]
+    },
+    "compiler_path": {
+      "description": "The compiler executable, or the directory that holds it (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_args": {
+      "description": "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added",
+      "type": [
+        "array",
+        "string",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "compiler_mod_dir": {
+      "description": "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "symbol_skip_mem": {
       "description": "Do not include type members in document symbol results",
       "type": "boolean",
       "default": false
+    },
+    "disable_bind_c_search": {
+      "description": "Go to definition of a BIND(C) procedure does not search the workspace's C files for its C declaration (an editor with a C language server can ask that instead)",
+      "type": "boolean",
+      "default": false
+    },
+    "bind_c_clangd": {
+      "description": "Start this clangd (its path, or clangd for the one on the PATH) and ask it for the C declarations and calls of BIND(C) procedures too, besides zfls's search of the C files: its index of the project's compile_commands.json has those of headers outside the source directories and of names a macro makes",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "enable_code_actions": {
       "description": "Enable experimental code actions (default: false)",
@@ -169,6 +313,18 @@
       },
       "uniqueItems": true,
       "default": []
+    },
+    "compile_commands": {
+      "description": "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root, root/build or root/builddir)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "disable_compile_commands": {
+      "description": "Do not read a compile_commands.json",
+      "type": "boolean",
+      "default": false
     },
     "debug_log": {
       "description": "Generate debug log in project root folder",

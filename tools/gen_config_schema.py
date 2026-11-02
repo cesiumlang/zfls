@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS = ROOT / "src" / "settings.zig"
+CONSTANTS = ROOT / "src" / "constants.zig"
 SCHEMA = ROOT / "editors" / "vscode" / "schemas" / "fortls.schema.json"
 
 # JSON schema of each option kind of `opts`
@@ -80,11 +81,34 @@ def parse_defaults(src: str) -> dict:
             defaults[name] = zig_string(value)
         elif typ == "StrList" and value == ".{}":
             defaults[name] = []
-        elif value == ".empty" and typ.startswith("std.ArrayList(PpDef)"):
+        elif value == ".empty" and typ.startswith("std.ArrayList("):
+            # pp_defs, diagnostic_severity: JSON objects
             defaults[name] = {}
         else:
             raise ValueError(f"unknown default of Settings.{name}: {value}")
     return defaults
+
+
+def diagnostic_codes() -> list:
+    """The names of `C.DiagCode`, with `-` for `_`"""
+    body = block(CONSTANTS.read_text(encoding="utf-8"), "pub const DiagCode = enum {")
+    return [m.replace("_", "-") for m in re.findall(r"(?m)^\s+(\w+),$", body)]
+
+
+# Options whose JSON is not that of their option kind
+SPECIAL = {
+    "diagnostic_severity": lambda: {
+        "type": "object",
+        "propertyNames": {"enum": diagnostic_codes()},
+        "additionalProperties": {"enum": ["off", "error", "warning", "information", "hint"]},
+    },
+    "compiler_diagnostics": lambda: {
+        "type": "string",
+        "enum": ["gfortran", "ifx", "ifort", "flang", "nvfortran", "nagfor", "lfortran", "none", None],
+    },
+    # a list keeps repeated arguments; a string is split at spaces
+    "compiler_args": lambda: {"type": ["array", "string"], "items": {"type": "string"}},
+}
 
 
 def config_keys(src: str) -> list:
@@ -106,10 +130,11 @@ def schema() -> dict:
             raise ValueError(f"applyConfig reads {key!r}, which opts or Settings lacks")
         kind, help_text = opts[key]
         prop = {"description": help_text}
-        prop.update(json.loads(json.dumps(KIND_TYPES[kind])))
+        prop.update(SPECIAL[key]() if key in SPECIAL else json.loads(json.dumps(KIND_TYPES[kind])))
         default = defaults[key]
         if default is None:
-            prop["type"] = [prop["type"], "null"]
+            types = prop["type"] if isinstance(prop["type"], list) else [prop["type"]]
+            prop["type"] = [*types, "null"]
         else:
             prop["default"] = default
         properties[key] = prop

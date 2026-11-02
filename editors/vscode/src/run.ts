@@ -85,9 +85,14 @@ function stem(file: string, platform: NodeJS.Platform): string {
 
 // Debuggers
 
-export type DebugType = "cppdbg" | "cppvsdbg" | "lldb" | "gdb";
+/** The debuggers of other extensions */
+export type ExtensionDebugType = "cppdbg" | "cppvsdbg" | "lldb" | "gdb";
 
-export const DEBUGGER_EXTENSIONS: Record<DebugType, { id: string; name: string }> = {
+/** `zfls`: zfls's own debug adapter, of gdb's Debug Adapter Protocol
+ * (gdbAdapter.ts), behind the `fortran` debug type */
+export type DebugType = ExtensionDebugType | "zfls";
+
+export const DEBUGGER_EXTENSIONS: Record<ExtensionDebugType, { id: string; name: string }> = {
   cppdbg: { id: "ms-vscode.cpptools", name: "C/C++" },
   cppvsdbg: { id: "ms-vscode.cpptools", name: "C/C++" },
   lldb: { id: "vadimcn.vscode-lldb", name: "CodeLLDB" },
@@ -96,32 +101,44 @@ export const DEBUGGER_EXTENSIONS: Record<DebugType, { id: string; name: string }
 
 export type DebuggerChoice =
   | { type: DebugType }
-  | { missing: string; extensions: string[] };
+  /** `missing`: the debug type configured, else any debugger (`msvc`: for
+   * MSVC-ABI programs); `zfls`: no gdb of the Debug Adapter Protocol */
+  | { missing: DebugType | "any" | "msvc"; extensions: string[] };
 
 /**
  * The debugger for a program: the configured one (`auto` or a debug type),
- * else the first installed of C/C++ (cppvsdbg for MSVC-ABI programs, else
- * cppdbg), CodeLLDB and CDT GDB. For an MSVC-ABI program only C/C++ will
- * do. When the chosen one's extension is not installed, which to install.
+ * else zfls's own when there is a gdb of the Debug Adapter Protocol (gdb
+ * 14 or later, with Python), else the first installed of C/C++ (cppvsdbg
+ * for MSVC-ABI programs, else cppdbg), CodeLLDB and CDT GDB. For an
+ * MSVC-ABI program only C/C++ will do (gdb cannot read its debug
+ * information). When the chosen one's extension is not installed, which
+ * to install.
  */
 export function chooseDebugger(
   preference: string,
   installed: (extensionId: string) => boolean,
   msvc: boolean,
+  gdbDap = false,
 ): DebuggerChoice {
-  if (preference in DEBUGGER_EXTENSIONS) {
-    const type = preference as DebugType;
-    const ext = DEBUGGER_EXTENSIONS[type];
-    return installed(ext.id) ? { type } : { missing: `the ${type} debugger`, extensions: [ext.id] };
+  if (preference === "zfls") {
+    return gdbDap && !msvc ? { type: "zfls" } : { missing: "zfls", extensions: [] };
   }
-  const candidates: DebugType[] = msvc ? ["cppvsdbg"] : ["cppdbg", "lldb", "gdb"];
+  if (preference in DEBUGGER_EXTENSIONS) {
+    const type = preference as ExtensionDebugType;
+    const ext = DEBUGGER_EXTENSIONS[type];
+    return installed(ext.id) ? { type } : { missing: type, extensions: [ext.id] };
+  }
+  if (gdbDap && !msvc) {
+    return { type: "zfls" };
+  }
+  const candidates: ExtensionDebugType[] = msvc ? ["cppvsdbg"] : ["cppdbg", "lldb", "gdb"];
   for (const type of candidates) {
     if (installed(DEBUGGER_EXTENSIONS[type].id)) {
       return { type };
     }
   }
   return {
-    missing: msvc ? "a debugger for MSVC-ABI programs" : "a debugger",
+    missing: msvc ? "msvc" : "any",
     extensions: [...new Set(candidates.map((t) => DEBUGGER_EXTENSIONS[t].id))],
   };
 }
@@ -135,27 +152,44 @@ export interface LaunchSpec {
   /** Extra environment of the program */
   env: Record<string, string>;
   platform: NodeJS.Platform;
-  /** gdb for cppdbg and CDT GDB; empty: the debugger's default */
+  /** gdb for zfls, cppdbg and CDT GDB; empty: the debugger's default */
   gdbPath?: string;
   preLaunchTask?: string;
+  /** Where the program's input and output go: the Debug Console (no
+   * input), VS Code's terminal, or a terminal of its own */
+  console?: "internalConsole" | "integratedTerminal" | "externalTerminal";
 }
 
-/** A launch configuration for the debugger extension of `spec.type`. */
+/** A launch configuration for the debugger of `spec.type`: zfls's is the
+ * `fortran` type itself, resolved. */
 export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
   const config: Record<string, unknown> = {
     name: spec.name,
-    type: spec.type,
+    type: spec.type === "zfls" ? "fortran" : spec.type,
     request: "launch",
     program: spec.program,
   };
   const envList = Object.entries(spec.env).map(([name, value]) => ({ name, value }));
+  const terminal = spec.console && spec.console !== "internalConsole";
   switch (spec.type) {
+    case "zfls":
+      Object.assign(config, { args: spec.args, cwd: spec.cwd, debugger: "zfls" });
+      if (spec.gdbPath) {
+        config.gdb = spec.gdbPath;
+      }
+      if (envList.length) {
+        config.env = spec.env;
+      }
+      if (spec.console) {
+        config.console = spec.console;
+      }
+      break;
     case "cppdbg":
       Object.assign(config, {
         args: spec.args,
         cwd: spec.cwd,
         stopAtEntry: false,
-        externalConsole: false,
+        externalConsole: spec.console === "externalTerminal",
         // gdb, except on macOS, where gfortran programs are debugged with lldb
         MIMode: spec.platform === "darwin" ? "lldb" : "gdb",
       });
@@ -172,7 +206,12 @@ export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
       }
       break;
     case "cppvsdbg":
-      Object.assign(config, { args: spec.args, cwd: spec.cwd, stopAtEntry: false, console: "integratedTerminal" });
+      Object.assign(config, {
+        args: spec.args,
+        cwd: spec.cwd,
+        stopAtEntry: false,
+        console: spec.console === "externalTerminal" ? "externalTerminal" : "integratedTerminal",
+      });
       if (envList.length) {
         config.environment = envList;
       }
@@ -181,6 +220,9 @@ export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
       Object.assign(config, { args: spec.args, cwd: spec.cwd });
       if (envList.length) {
         config.env = spec.env;
+      }
+      if (terminal) {
+        config.terminal = spec.console === "externalTerminal" ? "external" : "integrated";
       }
       break;
     case "gdb":
@@ -227,6 +269,32 @@ export function runtimeEnv(
   return { [key]: current ? `${dir};${current}` : dir };
 }
 
+export interface ProcessInfo {
+  pid: number;
+  name: string;
+  command: string;
+}
+
+/** The processes of `tasklist /fo csv /nh` (Windows) or `ps -A -o pid=,args=` */
+export function parseProcesses(text: string, platform: NodeJS.Platform): ProcessInfo[] {
+  const out: ProcessInfo[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (platform === "win32") {
+      const m = /^"([^"]*)","(\d+)"/.exec(line.trim());
+      if (m) {
+        out.push({ pid: Number(m[2]), name: m[1], command: m[1] });
+      }
+    } else {
+      const m = /^\s*(\d+)\s+(.+)$/.exec(line);
+      if (m) {
+        const exe = m[2].split(/\s+/)[0];
+        out.push({ pid: Number(m[1]), name: path.posix.basename(exe), command: m[2].trim() });
+      }
+    }
+  }
+  return out;
+}
+
 /** Upserts `entry` into `list` by the value of `key`. */
 export function upsertByKey<T extends Record<string, unknown>>(list: readonly T[], entry: T, key: string): T[] {
   const result = list.filter((e) => e[key] !== entry[key]);
@@ -251,4 +319,70 @@ export function workspaceRelative(file: string, folder: string | undefined): str
     return file;
   }
   return `\${workspaceFolder}/${rel.split(path.sep).join("/")}`;
+}
+
+// The `fortran` debug type
+
+/** What a `fortran` launch configuration takes, beyond `name` */
+export const FORTRAN_LAUNCH_KEYS = [
+  "type",
+  "request",
+  "name",
+  "program",
+  "fpmTarget",
+  "fpmTargetKind",
+  "args",
+  "cwd",
+  "env",
+  "debugger",
+  "compiler",
+  "stopAtEntry",
+  "preLaunchTask",
+  "console",
+] as const;
+
+const CONSOLES = ["internalConsole", "integratedTerminal", "externalTerminal"] as const;
+
+/** How a `fortran` configuration was resolved */
+export interface FortranResolution {
+  type: DebugType;
+  program: string;
+  cwd: string;
+  /** The compiler's runtime libraries on the PATH (Windows) */
+  runtimeEnv: Record<string, string>;
+  platform: NodeJS.Platform;
+  gdbPath?: string;
+}
+
+/**
+ * The launch configuration of the chosen debugger for a `fortran` one: its
+ * program, arguments, directory and environment (its own after the
+ * compiler's runtime PATH), `stopAtEntry`, and every key it has that the
+ * `fortran` type does not know (`MIMode`, `setupCommands`, ...), as they
+ * are, for the debugger.
+ */
+export function fortranLaunch(config: Record<string, unknown>, r: FortranResolution): Record<string, unknown> {
+  const env = { ...r.runtimeEnv, ...((config.env as Record<string, string> | undefined) ?? {}) };
+  const out = launchConfiguration({
+    name: String(config.name ?? "Fortran"),
+    type: r.type,
+    program: r.program,
+    args: Array.isArray(config.args) ? config.args.map(String) : [],
+    cwd: r.cwd,
+    env,
+    platform: r.platform,
+    gdbPath: r.gdbPath,
+    preLaunchTask: typeof config.preLaunchTask === "string" ? config.preLaunchTask : undefined,
+    console: CONSOLES.find((c) => c === config.console),
+  });
+  // CodeLLDB's name for it; CDT GDB has none
+  if (config.stopAtEntry === true && r.type !== "gdb") {
+    out[r.type === "lldb" ? "stopOnEntry" : "stopAtEntry"] = true;
+  }
+  for (const [k, v] of Object.entries(config)) {
+    if (!(FORTRAN_LAUNCH_KEYS as readonly string[]).includes(k)) {
+      out[k] = v;
+    }
+  }
+  return out;
 }
