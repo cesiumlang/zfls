@@ -549,10 +549,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.sha }}
+          submodules: recursive
 
-      - uses: actions/setup-python@v7
+      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          version: ${{ env.ZIG_VERSION }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -572,10 +573,16 @@ jobs:
           echo "$dir" >> "$GITHUB_PATH"
 
       # The conda-forge recipe, built from this run's source archive with
-      # conda-forge's zig; its tests check the installed zfls
+      # conda-forge's zig; its tests check the installed zfls. Writing it
+      # downloads the packages it pins (retried, like the fetches)
       - name: Build and test the conda package
         run: |
-          python packaging/conda-forge/local_recipe.py "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/recipe"
+          for wait in 15 30 60 0; do
+            zig build conda-recipe -- --local "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/recipe" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::writing the recipe failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
           rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
 
   release:
@@ -600,6 +607,7 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
+          submodules: recursive
 
       - uses: actions/download-artifact@v8
         with:
@@ -607,6 +615,10 @@ jobs:
           path: dist
           run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
+
+      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+        with:
+          version: ${{ env.ZIG_VERSION }}
 
       - name: Check the archives
         run: |
@@ -627,6 +639,18 @@ jobs:
               exit 1
             fi
           done
+
+      # The conda-forge recipe of this release, published with it (the
+      # feedstock job below proposes it to conda-forge)
+      - name: Write the conda-forge recipe
+        run: |
+          for wait in 15 30 60 0; do
+            zig build conda-recipe -- --release "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/conda-recipe" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::writing the recipe failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          cp "$RUNNER_TEMP/conda-recipe/recipe.yaml" "dist/zfls-v$VERSION-conda-recipe.yaml"
 
       - name: Tag the tested commit
         run: |
@@ -746,3 +770,82 @@ jobs:
           for wf in open-vsx.yml marketplace.yml; do
             gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$VERSION"
           done
+
+  # Proposes the release's conda-forge recipe (zfls-vX.Y.Z-conda-recipe.yaml)
+  # to conda-forge's zfls feedstock, as a pull request from FORK.
+  #
+  # OFF until the feedstock exists (conda-forge/staged-recipes merged the
+  # recipe) and the secret CONDA_FORGE_TOKEN holds a token that may push to
+  # FORK and open pull requests on FEEDSTOCK; then remove `false &&` from
+  # `if:`, and turn off the version updates of conda-forge's bot in the
+  # feedstock's conda-forge.yml.
+  #
+  # When the feedstock's recipe is not the one of the previous release (a
+  # change made in the feedstock), it stops: carry the change over into
+  # packaging/conda-forge, then run the job again.
+  conda-forge:
+    name: Propose v${{ needs.version.outputs.version }} to conda-forge
+    needs: [version, release]
+    if: ${{ false && !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      FEEDSTOCK: conda-forge/zfls-feedstock
+      FORK: emanspeaks/zfls-feedstock
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+          path: zfls
+
+      - name: Fetch this release's recipe and the previous one's
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -p "zfls-v$VERSION-conda-recipe.yaml" -D new
+          prev=$(git -C zfls tag --list 'v[0-9]*' --sort=-version:refname | grep -A1 -x "v$VERSION" | sed -n 2p)
+          echo "previous release: ${prev:-none}"
+          echo "PREV=$prev" >> "$GITHUB_ENV"
+          if [ -n "$prev" ]; then
+            gh release download "$prev" -R "$GITHUB_REPOSITORY" -p "zfls-${prev}-conda-recipe.yaml" -D old || true
+          fi
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.CONDA_FORGE_TOKEN }}
+        run: |
+          git clone -q "https://x-access-token:$GH_TOKEN@github.com/$FORK.git" feedstock
+          cd feedstock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/$FEEDSTOCK.git"
+          git fetch -q upstream main
+          git checkout -q -B "v$VERSION" upstream/main
+
+          # the feedstock's own changes (its build number aside) are not lost
+          old=$(ls ../old/*.yaml 2>/dev/null | head -1)
+          if [ -z "$old" ]; then
+            echo "::warning::the previous release has no recipe to compare the feedstock's with"
+          else
+            changed=false
+            diff -u <(grep -v '^  number: ' "$old") <(grep -v '^  number: ' recipe/recipe.yaml) || changed=true
+            for f in build.sh build.bat; do
+              diff -u <(git -C ../zfls show "$PREV:packaging/conda-forge/$f") "recipe/$f" || changed=true
+            done
+            if [ "$changed" = true ]; then
+              echo "::error::$FEEDSTOCK changed its recipe since $PREV (above); carry the change over into packaging/conda-forge, then run this job again"
+              exit 1
+            fi
+          fi
+
+          cp "../new/zfls-v$VERSION-conda-recipe.yaml" recipe/recipe.yaml
+          cp ../zfls/packaging/conda-forge/build.sh ../zfls/packaging/conda-forge/build.bat recipe/
+          git add recipe
+          git commit -qm "zfls v$VERSION"
+          git push -q --force origin "v$VERSION"
+          gh pr create -R "$FEEDSTOCK" --base main --head "${FORK%%/*}:v$VERSION" \
+            --title "zfls v$VERSION" \
+            --body "The recipe of [zfls v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION), written by its release (zig build conda-recipe)."

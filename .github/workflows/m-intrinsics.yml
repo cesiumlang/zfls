@@ -3,9 +3,10 @@ name: M_intrinsics update
 # The intrinsic procedure documentation zfls embeds is the M_intrinsics
 # package build.zig.zon pins (build/intrinsic_docs.zig). Each week, when
 # upstream has moved past the version main pins, this opens (or refreshes) a
-# pull request to main that pins upstream's latest commit, in build.zig.zon
-# and the conda-forge recipe, at the next patch version: merging it releases
-# that patch. CI then merges the release into dev, as after every release.
+# pull request to main that pins upstream's latest commit in build.zig.zon,
+# at the next patch version: merging it releases that patch (the conda-forge
+# recipe takes the pin from build.zig.zon). CI then merges the release into
+# dev, as after every release.
 #
 # Pull requests opened with the workflow's token get no pull_request runs, so
 # this starts CI on the branch itself; its checks are those of the pull
@@ -91,13 +92,6 @@ jobs:
         run: |
           url="https://github.com/$UPSTREAM/archive/$LATEST.tar.gz"
           zig fetch --save=m_intrinsics "$url"
-          hash=$(sed -nE '/\.m_intrinsics = /,/\}/s/^\s*\.hash = "([^"]+)",/\1/p' build.zig.zon)
-          sha256=$(curl -fsSL --retry 4 "$url" | sha256sum | cut -d' ' -f1)
-          recipe=packaging/conda-forge/recipe.yaml
-          sed -i -E \
-            -e "s/^(  m_intrinsics_commit: ).*/\1$LATEST/" \
-            -e "s/^(  m_intrinsics_sha256: ).*/\1$sha256/" \
-            -e "s/^(  m_intrinsics_hash: ).*/\1$hash/" "$recipe"
 
           tagged() { git rev-parse -q --verify "refs/tags/v$1" >/dev/null; }
           version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)

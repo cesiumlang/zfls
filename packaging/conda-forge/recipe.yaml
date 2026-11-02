@@ -1,16 +1,24 @@
+# Written by zfls's `zig build conda-recipe` (build/conda_recipe.zig) from
+# its packaging/conda-forge/recipe.yaml, where the values of this context
+# that come from elsewhere are left empty (""): those of the zfls source
+# archive, and the Zig packages zfls's build.zig.zon files pin, which the
+# build would otherwise download
 context:
   name: zfls
-  version: "0.1.2"
-  # The zigwin32 package rstd's build.zig.zon pins (Windows builds only):
-  # its commit, and the Zig package hash naming its directory in zig-pkg/
-  zigwin32_commit: 65cb93421729e89c0acc99f90550e8ad0e6ceb87
-  zigwin32_hash: win32-32.0.17-preview-mX5pFV2k5QN3LlWB1QQWEJv6wltK3Eq5Nn-ZDa_2_Na6
-  # The M_intrinsics package build.zig.zon pins (the intrinsic procedure
-  # documentation): its commit, archive checksum and Zig package hash;
-  # .github/workflows/m-intrinsics.yml keeps them in step with build.zig.zon
-  m_intrinsics_commit: fc14233036d910e3678d350efc24609e11475067
-  m_intrinsics_sha256: f7312d8fb3428bbc5d2eed3c0f775addf430e1da4073ff730cd59acf6c621596
-  m_intrinsics_hash: N-V-__8AAI66bgG_VvNv_AuQWE5cmXjI4WPplnwamTROarDS
+  version: ""
+  zfls_sha256: ""
+  # rstd's Win32 bindings (Windows builds only): the GitHub repository and
+  # commit, the checksum of GitHub's archive of it, and the Zig package hash
+  # naming its directory in zig-pkg/
+  zigwin32_repo: ""
+  zigwin32_commit: ""
+  zigwin32_sha256: ""
+  zigwin32_hash: ""
+  # M_intrinsics, the intrinsic procedure documentation zfls embeds, likewise
+  m_intrinsics_repo: ""
+  m_intrinsics_commit: ""
+  m_intrinsics_sha256: ""
+  m_intrinsics_hash: ""
 
 package:
   name: ${{ name }}
@@ -20,15 +28,14 @@ source:
   # zfls with its vendor/rstd submodule (GitHub's own archives leave
   # submodules out), attached to every release
   - url: https://github.com/cesiumlang/zfls/releases/download/v${{ version }}/zfls-v${{ version }}-src.tar.gz
-    sha256: a165c29498192dbc35307b301dd861ef07272f5a53c615ecba4d614d321f7182
-  # Zig would otherwise download it during the build; unpacked where Zig
-  # looks for a project's packages
+    sha256: ${{ zfls_sha256 }}
+  # unpacked where Zig looks for a project's packages
   - if: win
     then:
-      url: https://github.com/marlersoft/zigwin32/archive/${{ zigwin32_commit }}.tar.gz
-      sha256: 430b1ba180c033d92f2b9a8070d288cc2394948a64867e1f05ec5e5f32d22edb
+      url: https://github.com/${{ zigwin32_repo }}/archive/${{ zigwin32_commit }}.tar.gz
+      sha256: ${{ zigwin32_sha256 }}
       target_directory: zig-pkg/${{ zigwin32_hash }}
-  - url: https://github.com/urbanjost/M_intrinsics/archive/${{ m_intrinsics_commit }}.tar.gz
+  - url: https://github.com/${{ m_intrinsics_repo }}/archive/${{ m_intrinsics_commit }}.tar.gz
     sha256: ${{ m_intrinsics_sha256 }}
     target_directory: zig-pkg/${{ m_intrinsics_hash }}
 
@@ -44,12 +51,16 @@ requirements:
       then: ${{ stdlib('c') }}
 
 tests:
+  - package_contents:
+      bin:
+        - zfls
   - script:
-      - python -c "import subprocess, sys; v = subprocess.run(['zfls', '--version'], capture_output=True, text=True).stdout.strip(); print(v); sys.exit(v != '${{ version }}')"
-      - python -c "import subprocess, sys; sys.exit(subprocess.run(['zfls', '--help'], capture_output=True).returncode)"
-    requirements:
-      run:
-        - python
+      - zfls --help
+      - zfls --version
+      # a released zfls reports exactly its version
+      - if: unix
+        then: test "$(zfls --version)" = "${{ version }}"
+        else: for /f "delims=" %%v in ('zfls --version') do if not "%%v"=="${{ version }}" exit 1
 
 about:
   homepage: https://github.com/cesiumlang/zfls

@@ -69,6 +69,7 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run zfls's unit tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&b.addRunArtifact(intrinsic_docs_tests).step);
+    test_step.dependOn(&b.addRunArtifact(addCondaRecipe(b)).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)
@@ -149,6 +150,32 @@ fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
         step.dependOn(&run.step);
         if (!std.mem.eql(u8, s.step, "test-differential")) all.dependOn(&run.step);
     }
+}
+
+/// `zig build conda-recipe -- (--release | --local) ARCHIVE OUT_DIR`: the
+/// conda-forge recipe of packaging/conda-forge, for the zfls source archive
+/// ARCHIVE, with the Zig packages it provides pinned as the build.zig.zon
+/// files pin them (build/conda_recipe.zig). Paths are relative to the
+/// repository. Returns the generator's unit tests.
+fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("build/conda_recipe.zig"),
+        .target = b.graph.host,
+    });
+    const gen = b.addRunArtifact(b.addExecutable(.{ .name = "conda_recipe", .root_module = gen_mod }));
+    gen.setCwd(b.path(""));
+    gen.addDirectoryArg(b.path("packaging/conda-forge"));
+    const pins = .{
+        // Windows builds only: rstd's Win32 bindings
+        .{ "zigwin32", rstd.buildroot.zon.dependencies.win32 },
+        .{ "m_intrinsics", zon.dependencies.m_intrinsics },
+    };
+    inline for (pins) |p| gen.addArgs(&.{ "--pin", p[0], p[1].url, p[1].hash });
+    gen.addPassthruArgs();
+    // downloads, and writes outside the cache
+    gen.has_side_effects = true;
+    b.step("conda-recipe", "Write the conda-forge recipe for a zfls source archive (-- --release|--local ARCHIVE OUT_DIR)").dependOn(&gen.step);
+    return b.addTest(.{ .root_module = gen_mod });
 }
 
 /// Generate the module `intrinsic_docs` (`docs: []const struct { name,
