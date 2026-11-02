@@ -255,6 +255,18 @@ pub const Engine = struct {
         if (succeeded(self.system.GetCurrentProcessSystemId(&pid))) self.own_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         // steps by source lines (once there is a target)
         _ = self.control.SetCodeLevel(dbg.DEBUG_LEVEL_SOURCE);
+        // symbols from the program's own directory, where compilers put its
+        // PDB: not a machine's symbol server (`srv*`), which then hides it
+        var image: [1024:0]u16 = undefined;
+        var image_len: u32 = 0;
+        if (succeeded(self.symbols.GetModuleNameStringWide(dbg.DEBUG_MODNAME_IMAGE, 0, 0, &image, image.len, &image_len)) and image_len > 1) {
+            var end: usize = image_len - 1;
+            while (end > 0 and image[end - 1] != '\\' and image[end - 1] != '/') end -= 1;
+            if (end > 1) {
+                image[end - 1] = 0;
+                _ = self.symbols.SetSymbolPathWide(image[0 .. end - 1 :0]);
+            }
+        }
         // the program's own symbols now (the engine loads them lazily), for
         // the breakpoints of its lines
         var name: [256:0]u16 = undefined;
