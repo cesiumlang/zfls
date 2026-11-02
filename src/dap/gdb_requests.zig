@@ -91,12 +91,22 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const root = json.str(json.get(args, "sourceRoot")) orelse cwd orelse if (program) |p| std.Io.Dir.path.dirname(p) else null;
     s.g.source_root = if (root) |r| try s.gpa.dupe(u8, r) else null;
     var o: json.ObjectMap = .empty;
+    const hold = std.mem.eql(u8, command, "launch") and s.g.runs_at_launch;
     if (std.mem.eql(u8, command, "launch")) {
-        if (program) |p| try o.put(a, "program", .{ .string = p });
+        if (hold) {
+            // as gdb 16 does: the directory and the program now, so that
+            // the breakpoints find it, and the run at `configurationDone`
+            for ([_]struct { []const u8, ?[]const u8 }{ .{ "cd", cwd }, .{ "file", program } }) |c| {
+                const r = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("{s} {s}", .{ c[0], c[1] orelse continue }), .context = "repl" });
+                if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
+            }
+        } else {
+            if (program) |p| try o.put(a, "program", .{ .string = p });
+            if (cwd) |c| try o.put(a, "cwd", .{ .string = c });
+        }
         var list: json.Array = .init(a);
         for (json.items(json.get(args, "args"))) |x| try list.append(.{ .string = try text(a, x) });
         try o.put(a, "args", .{ .array = list });
-        if (cwd) |c| try o.put(a, "cwd", .{ .string = c });
         try o.put(a, "env", try environment(s, a, json.get(args, "env")));
         const at_entry = json.get(args, "stopAtEntry");
         try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = at_entry != null and at_entry.? == .bool and at_entry.?.bool });
@@ -108,6 +118,15 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         };
         if (program) |p| if (p.len > 0) try o.put(a, "program", .{ .string = p });
         if (json.get(args, "target")) |t| if (t != .null) try o.put(a, "target", .{ .string = try text(a, t) });
+    }
+    if (hold) {
+        if (s.g.held_launch) |h| s.gpa.free(h);
+        s.g.held_launch = try s.gpa.dupe(u8, try json.stringify(a, try json.from(a, .{
+            .seq = json.int(json.get(req, "seq")) orelse 0,
+            .command = command,
+            .arguments = Value{ .object = o },
+        })));
+        return;
     }
     try gdb.forward(s, a, req, .{ .object = o });
 }
@@ -201,12 +220,21 @@ fn killTerminal(s: *Session) void {
 pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
-    const Cmd = enum { setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, disconnect, terminate };
+    const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, disconnect, terminate };
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
         for (resuming) |r| if (std.mem.eql(u8, r, command)) vars.clear(s);
         return gdb.forward(s, a, req, args);
     };
     switch (cmd) {
+        .configurationDone => {
+            const held = s.g.held_launch orelse return gdb.forward(s, a, req, args);
+            s.g.held_launch = null;
+            defer s.gpa.free(held);
+            // gdb's own does nothing, and would find the program running
+            s.respond(a, req, null);
+            const launched = try json.parse(a, held);
+            try gdb.forward(s, a, launched, json.get(launched, "arguments"));
+        },
         .setFunctionBreakpoints => {
             if (s.g.user_functions.len > 0) s.gpa.free(s.g.user_functions);
             s.g.user_functions = try s.gpa.dupe(u8, try json.stringify(a, json.get(args, "breakpoints") orelse Value{ .array = .init(a) }));

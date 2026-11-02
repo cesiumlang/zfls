@@ -45,6 +45,12 @@ pub const State = struct {
     /// gdb's `initialized` event went to the client (a second gdb's is
     /// left out)
     initialized_sent: bool = false,
+    /// gdb runs the program at `launch` (before gdb 16), where the client's
+    /// breakpoints are still to come: the adapter holds the `launch` back
+    /// until `configurationDone`, as gdb 16 does
+    runs_at_launch: bool = false,
+    /// The `launch` held: the client's request (JSON text, `gpa`'s)
+    held_launch: ?[]u8 = null,
     /// The session is ending (`disconnect`): gdb's exit is not news
     ended: bool = false,
     /// In place of gdb, for tests: its answers to requests
@@ -90,7 +96,8 @@ pub const Fake = struct {
 };
 
 /// Whether a gdb has the Debug Adapter Protocol (gdb 14 or later, built
-/// with Python): null when it has, else why not
+/// with Python): null when it has, else why not. Notes whether it runs the
+/// program at `launch`.
 pub fn checkDap(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     const env = try gdbEnv(a, s.environ, gdb);
     const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(10), .clock = .awake } };
@@ -107,6 +114,7 @@ pub fn checkDap(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     }) catch |e| return try a.print("{s}: {s}", .{ gdb, @errorName(e) });
     if (!std.mem.eql(u8, std.mem.trim(u8, check.stdout, " \t\r\n"), "42"))
         return try a.print("{s} ({s}) has no working Python, which its Debug Adapter Protocol needs: {s}", .{ gdb, first, std.mem.trim(u8, check.stderr, " \t\r\n") });
+    s.g.runs_at_launch = v[0] < 16;
     return null;
 }
 
@@ -171,6 +179,8 @@ pub fn stop(s: *Session) void {
     var it = s.g.relays.valueIterator();
     while (it.next()) |r| s.gpa.free(r.command);
     s.g.relays.clearRetainingCapacity();
+    if (s.g.held_launch) |h| s.gpa.free(h);
+    s.g.held_launch = null;
 }
 
 /// After `disconnect`: gdb's own end, for a moment, then its stop
@@ -400,6 +410,7 @@ pub fn deinit(s: *Session) void {
     if (s.g.exit_message) |m| s.gpa.free(m);
     if (s.g.user_functions.len > 0) s.gpa.free(s.g.user_functions);
     if (s.g.source_root) |r| s.gpa.free(r);
+    if (s.g.held_launch) |h| s.gpa.free(h);
     s.g.error_breakpoints.deinit(s.gpa);
     s.g.frames.deinit(s.gpa);
     s.g.nodes.deinit(s.gpa);
