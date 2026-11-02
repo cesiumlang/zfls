@@ -125,6 +125,10 @@ Navigation and hover:
   directories and of names a macro makes
 - [x] User-defined operators (`.ord.`) and defined assignment
   (`assignment(=)`): definition, hover, references. HS #95
+- [x] Intrinsic procedure documentation: the latest M_intrinsics, fetched
+  by the build as upstream wrote it, its links to other procedures opening
+  the pages M_intrinsics publishes; a weekly workflow proposes each upstream
+  update as a patch release
 
 Completion:
 

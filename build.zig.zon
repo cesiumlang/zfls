@@ -6,6 +6,10 @@
     .dependencies = .{
         .rstd = .{ .path = "vendor/rstd" },
         // .rgui = .{ .path = "vendor/rgui" },
+        .m_intrinsics = .{
+            .url = "https://github.com/urbanjost/M_intrinsics/archive/fc14233036d910e3678d350efc24609e11475067.tar.gz",
+            .hash = "N-V-__8AAI66bgG_VvNv_AuQWE5cmXjI4WPplnwamTROarDS",
+        },
     },
 
     // package hash is computed from files in .paths

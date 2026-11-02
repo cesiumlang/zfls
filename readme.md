@@ -73,9 +73,13 @@ also generates the API documentation in `zig-out/docs`; `zig build bin`
 installs only the executable.
 
 Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
-the `vendor/rstd` submodule included (`tools/make_source_archive.sh`), which
-the conda-forge recipe in `packaging/conda-forge` builds from. CI builds and
-tests that recipe on Linux, macOS and Windows for every change.
+the `vendor/rstd` submodule included (`tools/make_source_archive.sh`), and
+`zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
+`zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
+from the template in `packaging/conda-forge`, pinning the Zig packages it
+provides as the `build.zig.zon` files do (`--local` instead builds from the
+archive itself). CI builds and tests the recipe on Linux, macOS and Windows
+for every change.
 
 ### VS Code extension
 
@@ -575,8 +579,9 @@ zfls deliberately differs from fortls in a few places:
   and suppressed by code (see [Diagnostics](#diagnostics)).
 - There is no automatic update from PyPI; `--disable_autoupdate` is accepted
   and ignored.
-- The intrinsic documentation in `src/data/intrinsics` is formatted to pass
-  markdownlint, so hover texts differ slightly in whitespace.
+- The intrinsic procedure documentation is a newer M_intrinsics than
+  fortls's, and its links to other procedures open the pages M_intrinsics
+  publishes.
 - `--recursion_limit` limits the nesting depth of scopes, emulating the
   recursion error fortls reports for deeply nested code.
 - When several files define the same module, program or procedure name,
@@ -646,5 +651,7 @@ definition files. ifx itself is Intel's, under Intel's license, which
 `zfls setup-ifx` shows and which the user accepts. zfls is derived from
 fortls and its predecessor fortran-language-server, also MIT licensed, whose
 copyright notices `LICENSE` includes. The intrinsic procedure documentation
-comes from the
-[M_intrinsics](https://github.com/urbanjost/M_intrinsics) project via fortls.
+comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
+project, also MIT licensed, whose notice `LICENSE` includes too. The build
+fetches the version `build.zig.zon` pins; a scheduled workflow moves the pin
+to upstream's latest commit.

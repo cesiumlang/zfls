@@ -1,0 +1,138 @@
+name: M_intrinsics update
+
+# The intrinsic procedure documentation zfls embeds is the M_intrinsics
+# package build.zig.zon pins (build/intrinsic_docs.zig). Each week, when
+# upstream has moved past the version main pins, this opens (or refreshes) a
+# pull request to main that pins upstream's latest commit in build.zig.zon,
+# at the next patch version: merging it releases that patch (the conda-forge
+# recipe takes the pin from build.zig.zon). CI then merges the release into
+# dev, as after every release.
+#
+# Pull requests opened with the workflow's token get no pull_request runs, so
+# this starts CI on the branch itself; its checks are those of the pull
+# request's head commit.
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+
+env:
+  ZIG_VERSION: 0.17.0
+  UPSTREAM: urbanjost/M_intrinsics
+  BRANCH: bot/m-intrinsics
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  update:
+    name: Pin upstream's latest commit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Compare the pinned commit with upstream's
+        id: check
+        run: |
+          pinned_commit() { sed -nE 's|^\s*\.url = "https://github.com/'"$UPSTREAM"'/archive/([0-9a-f]{40})\.tar\.gz",|\1|p'; }
+          pinned=$(pinned_commit < build.zig.zon)
+          if [ -z "$pinned" ] && ! grep -q '^\s*\.m_intrinsics = ' build.zig.zon; then
+            echo "main does not use the M_intrinsics package yet" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest=$(gh api "repos/$UPSTREAM/commits/HEAD" --jq .sha)
+          if [ -z "$pinned" ] || [ -z "$latest" ]; then
+            echo "::error::cannot read the pinned ($pinned) or latest ($latest) M_intrinsics commit"
+            exit 1
+          fi
+          echo "main pins $pinned; upstream is at $latest" | tee -a "$GITHUB_STEP_SUMMARY"
+          update=true
+          if [ "$pinned" = "$latest" ]; then
+            update=false
+          elif git fetch -q origin "$BRANCH" 2>/dev/null \
+              && [ "$(git show "origin/$BRANCH:build.zig.zon" | pinned_commit)" = "$latest" ] \
+              && git merge-base --is-ancestor origin/main "origin/$BRANCH"; then
+            echo "$BRANCH already pins it on top of main" | tee -a "$GITHUB_STEP_SUMMARY"
+            update=false
+          fi
+          {
+            echo "pinned=$pinned"
+            echo "latest=$latest"
+            echo "update=$update"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+        if: steps.check.outputs.update == 'true'
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Pin it at the next patch version
+        id: pin
+        if: steps.check.outputs.update == 'true'
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          url="https://github.com/$UPSTREAM/archive/$LATEST.tar.gz"
+          zig fetch --save=m_intrinsics "$url"
+
+          tagged() { git rev-parse -q --verify "refs/tags/v$1" >/dev/null; }
+          version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)
+          while tagged "$version"; do
+            IFS=. read -r ma mi pa <<< "$version"
+            version="$ma.$mi.$((pa + 1))"
+          done
+          sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$version\2/" build.zig.zon
+          git diff --stat
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Push the branch and start CI on it
+        if: steps.check.outputs.update == 'true'
+        env:
+          PINNED: ${{ steps.check.outputs.pinned }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          VERSION: ${{ steps.pin.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -B "$BRANCH"
+          title="Intrinsic documentation from M_intrinsics ${LATEST:0:7} (v$VERSION)"
+          git commit -qam "$title"
+          git push -q --force origin "$BRANCH"
+
+          {
+            echo "Pins [$UPSTREAM@${LATEST:0:7}](https://github.com/$UPSTREAM/commit/$LATEST)"
+            echo "(was ${PINNED:0:7}) and sets the version to $VERSION: merging this"
+            echo "releases v$VERSION. Upstream's changes since:"
+            echo
+            gh api "repos/$UPSTREAM/compare/$PINNED...$LATEST" \
+              --jq '.commits[] | "- [`\(.sha[0:7])`](\(.html_url)) \(.commit.message | split("\n")[0])"'
+            echo
+            echo "Opened by .github/workflows/m-intrinsics.yml, which also started"
+            echo "CI on the branch (pull requests a workflow opens get no runs of"
+            echo "their own)."
+          } > "$RUNNER_TEMP/body.md"
+          number=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+          gh workflow run ci.yml --ref "$BRANCH"
