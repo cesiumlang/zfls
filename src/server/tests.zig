@@ -223,7 +223,7 @@ pub fn servePfunitTests(self: *Server, a: Allocator) !Value {
         for (try pfunit.parseAddPfunitCtest(a, text)) |p| {
             var suites: std.ArrayList(PfSuite) = .empty;
             for (p.sources) |rel| {
-                const file = try std.Io.Dir.path.resolve(a, &.{ paths.dirname(cmake), rel });
+                const file = try std.Io.Dir.path.resolveAlloc(a, &.{ paths.dirname(cmake), rel });
                 if (!paths.isFile(self.io, file)) continue;
                 try listed.append(a, file);
                 if (try pfSuite(a, &sources, file)) |s| try suites.append(a, s);

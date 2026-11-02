@@ -147,11 +147,11 @@ pub fn testTargets(a: Allocator, m: Manifest, root: []const u8, programs: []cons
     var out: std.ArrayList(TestTarget) = .empty;
     for (m.targets) |t| {
         if (t.kind != .@"test" or hasTarget(out.items, t.name)) continue;
-        try out.append(a, .{ .name = t.name, .main = try std.Io.Dir.path.resolve(a, &.{ root, t.source_dir, t.main }) });
+        try out.append(a, .{ .name = t.name, .main = try std.Io.Dir.path.resolveAlloc(a, &.{ root, t.source_dir, t.main }) });
     }
     const explicit = out.items.len;
     if (m.auto.get(.@"test")) for (programs) |p| {
-        const file = try std.Io.Dir.path.resolve(a, &.{p});
+        const file = try std.Io.Dir.path.resolveAlloc(a, &.{p});
         const main = for (out.items[0..explicit]) |t| {
             if (samePath(t.main, file)) break true;
         } else false;
@@ -356,7 +356,7 @@ test "the test targets: fpm.toml's, then the programs of test/ named after their
     const a = arena.allocator();
     const m = try parseManifest(a, manifest_text ++ "[[test]]\nname = \"own\"\nsource-dir = \"test\"\nmain = \"own_main.f90\"\n");
     const root = if (builtin.target.os.tag == .windows) "C:\\p" else "/p";
-    const p = std.Io.Dir.path.resolve;
+    const p = std.Io.Dir.path.resolveAlloc;
     const programs = [_][]const u8{
         try p(a, &.{ root, "test", "check.F90" }),
         try p(a, &.{ root, "test", "sub", "more.f90" }),
