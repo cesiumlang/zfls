@@ -38,6 +38,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const format = @import("server/format.zig");
 const linters = @import("server/linters.zig");
 const bindc = @import("server/bindc.zig");
 const modvars = @import("server/modvars.zig");
@@ -123,6 +124,8 @@ pub const Server = struct {
     external_diags: [@typeInfo(compile.Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8) = @splat(.empty),
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
+    /// The formatting problems posted (hashes of their keys), each once
+    format_reported: std.ArrayList(u64) = .empty,
     /// The thread that runs fortitude and Codee, once it has a job
     linters: ?*linters.Worker = null,
     /// C documents opened in zfls (an editor that attaches it to C files
@@ -198,6 +201,7 @@ pub const Server = struct {
         while (open_it.next()) |k| self.gpa.free(k.*);
         self.open_docs.deinit(self.gpa);
         self.post_messages.deinit(self.gpa);
+        self.format_reported.deinit(self.gpa);
         self.intr.deinit();
         self.pp_defs_arena.deinit();
         self.arena.deinit();
@@ -337,6 +341,8 @@ pub const Server = struct {
         selection_range,
         document_link,
         on_type_formatting,
+        formatting,
+        range_formatting,
         inlay_hint,
         prepare_call_hierarchy,
         incoming_calls,
@@ -383,6 +389,8 @@ pub const Server = struct {
         .{ "textDocument/selectionRange", .selection_range },
         .{ "textDocument/documentLink", .document_link },
         .{ "textDocument/onTypeFormatting", .on_type_formatting },
+        .{ "textDocument/formatting", .formatting },
+        .{ "textDocument/rangeFormatting", .range_formatting },
         .{ "textDocument/inlayHint", .inlay_hint },
         .{ "textDocument/prepareCallHierarchy", .prepare_call_hierarchy },
         .{ "callHierarchy/incomingCalls", .incoming_calls },
@@ -432,6 +440,8 @@ pub const Server = struct {
             .selection_range => definition.serveSelectionRanges(self, a, try json.decode(lsp.SelectionRangeParams, a, params)),
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
+            .formatting => format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
+            .range_formatting => format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
             .inlay_hint => hints.serveInlayHints(self, a, try json.decode(lsp.InlayHintParams, a, params)),
             .prepare_call_hierarchy => calls.servePrepare(self, a, try json.decode(lsp.PositionParams, a, params)),
             .incoming_calls => calls.serveIncoming(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),

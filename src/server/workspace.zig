@@ -32,6 +32,7 @@ const definition = @import("definition.zig");
 const references = @import("references.zig");
 const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
+const format = @import("format.zig");
 const linters = @import("linters.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
@@ -55,6 +56,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try loadProjectFiles(self, a);
     try diagnostics.checkDiagnosticSeverity(self, a);
     try compile.checkSetting(self, a);
+    try format.checkSetting(self, a);
     try resolveGlobsInPaths(self, a);
     try configLogger(self);
     try loadIntrinsics(self);
@@ -72,6 +74,8 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .codeActionProvider = if (self.s.enable_code_actions or self.s.fortitude) true else null,
         .semanticTokensProvider = .{ .legend = semantic.legend },
         .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
+        .documentFormattingProvider = if (format.enabled(self)) true else null,
+        .documentRangeFormattingProvider = if (format.enabled(self)) true else null,
     } });
 }
 

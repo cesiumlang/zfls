@@ -356,6 +356,60 @@
       },
       "default": []
     },
+    "formatter": {
+      "description": "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "findent",
+        "fprettify",
+        "none",
+        null
+      ]
+    },
+    "formatter_path": {
+      "description": "The formatter executable, or the directory that holds it (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "formatter_args": {
+      "description": "The formatter's further arguments, separated by spaces on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "formatter_fixed": {
+      "description": "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "findent",
+        "none",
+        null
+      ]
+    },
+    "formatter_fixed_args": {
+      "description": "The further arguments of formatter_fixed, as formatter_args",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
     "symbol_skip_mem": {
       "description": "Do not include type members in document symbol results",
       "type": "boolean",
