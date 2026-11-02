@@ -1,6 +1,7 @@
 // The pure parts of the fpm (Fortran Package Manager) support: the targets
-// of fpm.toml, the arguments of fpm commands, and reading fpm's and
-// test-drive's output. No `vscode` import (see test/unit).
+// of fpm.toml, the arguments of fpm commands, reading fpm's and
+// test-drive's output, and the tests zfls finds (`zfls/fpmTests`). No
+// `vscode` import (see test/unit).
 
 import * as path from "node:path";
 
@@ -139,16 +140,6 @@ export function targetOfFile(
     }
   }
   return undefined;
-}
-
-/** The source files that may hold the main program of `target`: its
- * `main`, or the files named after it in its kind's directory */
-export function sourcesOfTarget(manifest: Manifest, target: Target): { file?: string; dir: string; stem?: string } {
-  const t = manifest.targets.find((m) => m.kind === target.kind && m.name === target.name);
-  if (t) {
-    return { file: path.join(t.sourceDir, t.main), dir: t.sourceDir };
-  }
-  return { dir: DEFAULT_DIRS[target.kind], stem: target.name };
 }
 
 /** What to pass to every fpm command that builds */
@@ -344,47 +335,38 @@ export function passed(status: TestStatus): boolean {
   return status === "passed" || status === "expected-fail" || status === "skipped";
 }
 
-/** A test of test-drive in a source file, 0-based line */
-export interface TestDef {
-  name: string;
+/** A position of the server's answers: 0-based line, UTF-16 character */
+export interface Position {
   line: number;
-  /** The collect procedure that returns it */
-  collect?: string;
+  character: number;
 }
 
-/** A test suite of test-drive: `new_testsuite("name", collect)` */
-export interface SuiteDef {
+/** A test, a suite or a target that zfls found, and where it is */
+export interface Located {
   name: string;
-  collect: string;
-  line: number;
+  uri: string;
+  range: { start: Position; end: Position };
 }
 
-/** The suites and tests of test-drive in `text`: `new_testsuite` and
- * `new_unittest` calls, each test with the subroutine it is in */
-export function testDriveDefs(text: string): { suites: SuiteDef[]; tests: TestDef[] } {
-  const suites: SuiteDef[] = [];
-  const tests: TestDef[] = [];
-  let sub: string | undefined;
-  text.split(/\r?\n/).forEach((line, i) => {
-    const code = line.replace(/!.*$/, "");
-    const start = /^\s*(?:(?:pure|impure|recursive|module)\s+)*subroutine\s+(\w+)/i.exec(code);
-    if (start) {
-      sub = start[1].toLowerCase();
-    } else if (/^\s*end\s*subroutine\b/i.test(code)) {
-      sub = undefined;
-    }
-    for (const m of code.matchAll(/new_testsuite\s*\(\s*(["'])(.+?)\1\s*,\s*(\w+)/gi)) {
-      suites.push({ name: m[2], collect: m[3].toLowerCase(), line: i });
-    }
-    for (const m of code.matchAll(/new_unittest\s*\(\s*(["'])(.+?)\1/gi)) {
-      tests.push({ name: m[2], line: i, collect: sub });
-    }
-  });
-  return { suites, tests };
+/** The tests of an fpm project, as zfls finds them (`zfls/fpmTests`) */
+export interface FpmTestProject {
+  /** fpm.toml's `name`, else the directory's */
+  name: string;
+  /** The project's directory */
+  uri: string;
+  targets: FpmTestTarget[];
 }
 
-/** Whether a test program takes a suite and a test on its command line, as
- * test-drive's template does (`select_suite`, `run_selected`) */
-export function selectsTests(programText: string): boolean {
-  return /\bselect_suite\b/i.test(programText) && /\brun_selected\b/i.test(programText);
+/** A test target: those of fpm.toml, and the programs in `test` */
+export interface FpmTestTarget {
+  name: string;
+  /** Its main program, when the file is found */
+  uri?: string;
+  range?: Located["range"];
+  /** The program takes a suite and a test on its command line, as
+   * test-drive's template does (`select_suite`, `run_selected`) */
+  selectsTests: boolean;
+  /** test-drive's suites that the program makes (`new_testsuite`), with
+   * the tests their collect procedures return (`new_unittest`) */
+  suites: (Located & { tests: Located[] })[];
 }

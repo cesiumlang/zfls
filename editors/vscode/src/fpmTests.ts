@@ -1,44 +1,37 @@
 // The test explorer for fpm projects: a test item per test target of each
-// project (`fpm test --list`), and below it, for test-drive, its suites and
-// tests, found in the sources. Running a target runs `fpm test NAME` (with
+// project, and below it, for test-drive, its suites and tests, as zfls
+// finds them (`zfls/fpmTests`). Running a target runs `fpm test NAME` (with
 // the suite and test when one is picked and the program takes them) and
 // reads test-drive's results from its output; debugging it runs the program
 // under the debugger.
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import {
-  Target,
-  TestDef,
-  isProgram,
-  parseTestDrive,
-  passed,
-  runArgs,
-  selectsTests,
-  sourcesOfTarget,
-  testDriveDefs,
-} from "./fpm";
-import { FpmProject, buildOptions, debugTarget, findProjects, fpmExecutable, listTargets } from "./fpmCommands";
+import type { LanguageClient } from "vscode-languageclient/node";
+import { FpmTestProject, FpmTestTarget, Located, Target, parseTestDrive, passed, runArgs } from "./fpm";
+import { FpmProject, buildOptions, debugTarget, fpmExecutable, projectAt } from "./fpmCommands";
 import { FORTRAN_FILES } from "./linter";
 import { runProcess } from "./tools";
+
+/** The servers of the workspace folders, started if need be */
+export type Servers = () => Promise<LanguageClient[]>;
 
 /** What a test item stands for */
 interface ItemData {
   project: FpmProject;
   target: Target;
-  /** The program's source, when found */
-  program?: string;
+  /** The program takes a suite and a test on its command line */
+  selectsTests?: boolean;
   suite?: string;
   test?: string;
 }
 
-export function registerFpmTests(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
+export function registerFpmTests(context: vscode.ExtensionContext, log: vscode.LogOutputChannel, servers: Servers): void {
   let tests: FpmTests | undefined;
   const update = (): void => {
     const enabled = vscode.workspace.getConfiguration("zfls.fpm").get<boolean>("testExplorer", true);
     if (enabled && !tests) {
-      tests = new FpmTests(log);
+      tests = new FpmTests(log, servers);
     } else if (!enabled && tests) {
       tests.dispose();
       tests = undefined;
@@ -61,7 +54,10 @@ class FpmTests implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private timer: NodeJS.Timeout | undefined;
 
-  constructor(private readonly log: vscode.LogOutputChannel) {
+  constructor(
+    private readonly log: vscode.LogOutputChannel,
+    private readonly servers: Servers,
+  ) {
     this.controller.resolveHandler = async (item) => {
       if (!item) {
         await this.discover();
@@ -134,25 +130,27 @@ class FpmTests implements vscode.Disposable {
   /** The test targets of every project, as the items at the top (a project
    * each, when there are several) */
   async discover(): Promise<void> {
-    const projects = await findProjects();
-    const top: vscode.TestItem[] = [];
-    for (const project of projects) {
-      const fpm = fpmExecutable(project, true);
-      if (!fpm) {
-        this.log.info(`[fpm] fpm not found: no tests of ${project.root}`);
-        continue;
-      }
-      let names: string[];
+    const projects: { project: FpmProject; found: FpmTestProject }[] = [];
+    for (const server of await this.servers()) {
+      let found: FpmTestProject[] | null;
       try {
-        names = await listTargets(project, "test", fpm);
+        found = await server.sendRequest<FpmTestProject[] | null>("zfls/fpmTests", {});
       } catch (err) {
-        this.log.error(`[fpm] listing the tests of ${project.root}: ${String(err)}`);
+        this.log.error(`[fpm] finding the tests: ${String(err)}`);
         continue;
       }
-      const targets = await Promise.all(names.map((name) => this.targetItem(project, { kind: "test", name })));
+      for (const p of found ?? []) {
+        const project = projectAt(vscode.Uri.parse(p.uri).fsPath);
+        if (project) {
+          projects.push({ project, found: p });
+        }
+      }
+    }
+    const top: vscode.TestItem[] = [];
+    for (const { project, found } of projects) {
+      const targets = found.targets.map((t) => this.targetItem(project, t));
       if (projects.length > 1) {
-        const label = project.manifest.name ?? path.basename(project.root);
-        const item = this.controller.createTestItem(project.root, label, vscode.Uri.file(project.root));
+        const item = this.controller.createTestItem(project.root, found.name, vscode.Uri.file(project.root));
         item.children.replace(targets);
         this.data.set(item, { project, target: { kind: "test", name: "" } });
         top.push(item);
@@ -163,70 +161,36 @@ class FpmTests implements vscode.Disposable {
     this.controller.items.replace(top);
   }
 
-  private async targetItem(project: FpmProject, target: Target): Promise<vscode.TestItem> {
-    const program = await this.programOf(project, target);
+  /** A target's item, with test-drive's suites and tests below it */
+  private targetItem(project: FpmProject, found: FpmTestTarget): vscode.TestItem {
+    const target: Target = { kind: "test", name: found.name };
+    const { selectsTests } = found;
     const item = this.controller.createTestItem(
       `${project.root}::${target.name}`,
       target.name,
-      program ? vscode.Uri.file(program) : undefined,
+      found.uri ? vscode.Uri.parse(found.uri) : undefined,
     );
-    this.data.set(item, { project, target, program });
-    if (program) {
-      item.range = new vscode.Range(0, 0, 0, 0);
-      this.addTestDrive(item, project, target, program);
+    this.data.set(item, { project, target, selectsTests });
+    if (found.range) {
+      item.range = asRange(found.range);
     }
-    return item;
-  }
-
-  /** The main program of a target: its `main`, or the program named after
-   * it in its directory */
-  private async programOf(project: FpmProject, target: Target): Promise<string | undefined> {
-    const where = sourcesOfTarget(project.manifest, target);
-    if (where.file) {
-      const file = path.resolve(project.root, where.file);
-      return fs.existsSync(file) ? file : undefined;
-    }
-    const files = await vscode.workspace.findFiles(
-      new vscode.RelativePattern(path.join(project.root, where.dir), `**/${where.stem}.*`),
-    );
-    for (const f of files) {
-      if (/\.(f90|f95|f03|f08|f18|fpp|f|for|f77)$/i.test(f.fsPath) && isProgram(readText(f.fsPath))) {
-        return f.fsPath;
-      }
-    }
-    return undefined;
-  }
-
-  /** The suites and tests of test-drive that the target's program runs:
-   * the suites it makes, and the tests their collect procedures return, in
-   * the sources next to it */
-  private addTestDrive(item: vscode.TestItem, project: FpmProject, target: Target, program: string): void {
-    const { suites } = testDriveDefs(readText(program));
-    if (!suites.length) {
-      return;
-    }
-    const tests = new Map<string, (TestDef & { file: string })[]>();
-    for (const file of fortranFiles(path.dirname(program))) {
-      for (const t of testDriveDefs(readText(file)).tests) {
-        if (t.collect) {
-          const list = tests.get(t.collect) ?? [];
-          list.push({ ...t, file });
-          tests.set(t.collect, list);
-        }
-      }
-    }
-    for (const s of suites) {
-      const suite = this.controller.createTestItem(`${item.id}::${s.name}`, s.name, vscode.Uri.file(program));
-      suite.range = new vscode.Range(s.line, 0, s.line, 0);
-      this.data.set(suite, { project, target, program, suite: s.name });
-      for (const t of tests.get(s.collect) ?? []) {
-        const test = this.controller.createTestItem(`${suite.id}::${t.name}`, t.name, vscode.Uri.file(t.file));
-        test.range = new vscode.Range(t.line, 0, t.line, 0);
-        this.data.set(test, { project, target, program, suite: s.name, test: t.name });
+    for (const s of found.suites) {
+      const suite = this.locatedItem(`${item.id}::${s.name}`, s);
+      this.data.set(suite, { project, target, selectsTests, suite: s.name });
+      for (const t of s.tests) {
+        const test = this.locatedItem(`${suite.id}::${t.name}`, t);
+        this.data.set(test, { project, target, selectsTests, suite: s.name, test: t.name });
         suite.children.add(test);
       }
       item.children.add(suite);
     }
+    return item;
+  }
+
+  private locatedItem(id: string, found: Located): vscode.TestItem {
+    const item = this.controller.createTestItem(id, found.name, vscode.Uri.parse(found.uri));
+    item.range = asRange(found.range);
+    return item;
   }
 
   /** The requested items, by target */
@@ -288,7 +252,7 @@ class FpmTests implements vscode.Disposable {
    * test) is picked and the program takes them */
   private selection(target: vscode.TestItem, picked: vscode.TestItem[]): string[] {
     const d = this.data.get(target)!;
-    if (picked.includes(target) || !d.program || !selectsTests(readText(d.program))) {
+    if (picked.includes(target) || !d.selectsTests) {
       return [];
     }
     const suites = new Set(picked.map((p) => this.data.get(p)?.suite));
@@ -474,35 +438,9 @@ export function sessionEnd(): { promise: Promise<void>; dispose: () => void } {
   };
 }
 
-function readText(file: string): string {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-/** The Fortran files in `dir` and below */
-function fortranFiles(dir: string): string[] {
-  const out: string[] = [];
-  const walk = (d: string, depth: number): void => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(d, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const p = path.join(d, e.name);
-      if (e.isDirectory() && depth < 8 && e.name !== "build") {
-        walk(p, depth + 1);
-      } else if (e.isFile() && /\.(f90|f95|f03|f08|f18|fpp|f|for|f77)$/i.test(e.name)) {
-        out.push(p);
-      }
-    }
-  };
-  walk(dir, 0);
-  return out;
+/** A range of the server's answers */
+export function asRange(range: Located["range"]): vscode.Range {
+  return new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character);
 }
 
 function lastLines(text: string, n: number): string {

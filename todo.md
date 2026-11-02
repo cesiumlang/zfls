@@ -40,7 +40,6 @@ Not scheduled yet:
   - fortitude and Codee checks as the server's diagnostics
   - formatting with findent or fprettify as the server's formatting
   - the outline of namelist files (`.nml`) as the server's document symbols
-  - finding fpm and pFUnit tests (the test explorer stays in the extension)
 - `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
   `zig build` steps
 - Source files over 1,000 lines split, as the others were
@@ -83,10 +82,12 @@ Editor features:
 - [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
   problem matchers, running and debugging their targets, Run and Debug
   Fortran File on a target's program, and the Testing view (each test
-  target, and test-drive's suites and tests with their results)
+  target, and test-drive's suites and tests with their results); the
+  server finds the tests (`zfls/fpmTests`), for other editors too
 - [x] pFUnit's tests in the Testing view, in CMake projects
   (`add_pfunit_ctest`): each `@test` of a `.pf` file run and reported one by
-  one, a failed assertion at its line
+  one, a failed assertion at its line; the server finds the tests
+  (`zfls/pfunitTests`), for other editors too
 - [x] The `fortran` debug type: launch configurations of a program or an
   fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
   GDB); F5 debugs the current file; a configuration per fpm target.

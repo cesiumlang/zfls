@@ -526,14 +526,18 @@ release from its site); `zfls.fpm.path` says where when it is not on the
   target (a `main` of `fpm.toml`, or a program in `app`, `test` or
   `example`), do the same for that target, unless `zfls.fpm.runFile` is
   off. `zfls.run.programArgs` are the program's arguments.
-- **Testing view:** each test target of `fpm test --list`, with a gutter
-  button on its program. For [test-drive](https://github.com/fortran-lang/test-drive),
-  the suites the program makes (`new_testsuite`) and the tests of their
-  collect procedures (`new_unittest`) are listed below it, and their results
-  are read from its output. Running one suite or test passes its name to the
-  program when it takes them, as test-drive's template does
-  (`select_suite`, `run_selected`); otherwise the whole target runs. The
-  debug profile runs the program under the debugger.
+- **Testing view:** each test target, with a gutter button on its program:
+  the `[[test]]` tables of `fpm.toml`, and (unless `auto-tests = false`)
+  each program in `test` and below, named after its file, as fpm makes
+  them. For [test-drive](https://github.com/fortran-lang/test-drive), the
+  suites the program makes (`new_testsuite`) and the tests of their collect
+  procedures (`new_unittest`, in the sources next to the program) are
+  listed below it, and their results are read from its output. Running one
+  suite or test passes its name to the program when it takes them, as
+  test-drive's template does (`select_suite`, `run_selected`); otherwise
+  the whole target runs. The debug profile runs the program under the
+  debugger. zfls finds the tests (`zfls/fpmTests`, which other editors can
+  ask too); the extension runs them.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -554,7 +558,8 @@ In a CMake project that builds its [pFUnit](https://github.com/Goddard-Fortran-E
 tests with `add_pfunit_ctest`, the Testing view lists each test program,
 with the suite of each of its `.pf` files (`@suite(name=...)`, else the
 module's name with `_suite`) and their `@test` procedures, with gutter
-buttons on them.
+buttons on them. zfls finds them (`zfls/pfunitTests`, which other editors
+can ask too); the extension builds and runs them.
 
 - **Running** builds the program (`cmake --build DIR --target NAME`, with
   the compiler's problems in the Problems view), takes its command from

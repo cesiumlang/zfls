@@ -1,133 +1,34 @@
-// Reading pFUnit projects: the suites and tests of `.pf` files, the test
-// programs that CMake's `add_pfunit_ctest` makes of them, the programs'
-// commands from `ctest --show-only=json-v1`, and the results a program
-// writes with `-x -o FILE` (JUnit-style XML). No `vscode` import (see
-// test/unit).
+// Running pFUnit's test programs: their commands from
+// `ctest --show-only=json-v1`, their arguments, and the results a program
+// writes with `-x -o FILE` (JUnit-style XML); and the tests zfls finds of
+// them (`zfls/pfunitTests`). No `vscode` import (see test/unit).
 
-export interface PfTest {
-  name: string;
-  /** 0-based line of its `@test` */
-  line: number;
+import type { Located } from "./fpm";
+
+/** A `@test` procedure of a `.pf` file, at its `@test` */
+export interface PfTest extends Located {
   /** run once per parameter (`testParameters`, `cases`, `@testCase`), so
    * reported under names of its own */
   parameterized: boolean;
 }
 
-export interface PfSuite {
-  /** As pFUnit names it: `@suite(name=...)`, else the module's name, else
-   * the file's, with `_suite` */
-  name: string;
-  /** 0-based line of its `module` (or 0) */
-  line: number;
+/** The suite of a `.pf` file, at its module: as pFUnit names it,
+ * `@suite(name=...)`, else the module's name, else the file's, with
+ * `_suite` */
+export interface PfSuite extends Located {
   tests: PfTest[];
 }
 
-/** The suite and tests of a `.pf` file, read as funitproc reads them: the
- * first `subroutine` after each `@test` is a test */
-export function parsePf(text: string, baseName: string): PfSuite {
-  let suite: string | undefined;
-  let module: string | undefined;
-  let moduleLine = 0;
-  let pending: { line: number; parameterized: boolean } | undefined;
-  let caseParameterized = false;
-  const tests: PfTest[] = [];
-  text.split(/\r?\n/).forEach((line, i) => {
-    const named = /^\s*@suite\s*\(\s*name\s*=\s*(["'])(\w+)\1\s*\)\s*$/i.exec(line);
-    if (named) {
-      suite = named[2];
-      return;
-    }
-    if (/^\s*@testcase\b/i.test(line)) {
-      caseParameterized = /\b(testParameters|cases)\s*=/i.test(line);
-      return;
-    }
-    if (/^\s*@testparameter\b/i.test(line)) {
-      caseParameterized = true;
-      return;
-    }
-    const at = /^\s*@(?:mpi)?test\s*(\(.*\))?\s*$/i.exec(line);
-    if (at) {
-      pending = { line: i, parameterized: /\b(testParameters|cases|npes)\s*=/i.test(at[1] ?? "") };
-      return;
-    }
-    const mod = /^\s*module\s+(\w+)\s*(!.*)?$/i.exec(line);
-    if (mod && !module && !/^procedure$/i.test(mod[1])) {
-      module = mod[1];
-      moduleLine = i;
-      return;
-    }
-    const sub = /^\s*subroutine\s+(\w+)/i.exec(line);
-    if (sub && pending) {
-      tests.push({ name: sub[1], line: pending.line, parameterized: pending.parameterized || caseParameterized });
-      pending = undefined;
-    }
-  });
-  return { name: suite ?? `${module ?? baseName}_suite`, line: module ? moduleLine : 0, tests };
+/** A test program of `add_pfunit_ctest`, at its name in the CMakeLists.txt */
+export interface PfProgram extends Located {
+  suites: PfSuite[];
 }
 
-export interface PfunitTarget {
-  /** The test's name: CMake's target and CTest's test */
-  name: string;
-  /** The `.pf` files, as written (relative to the CMakeLists.txt's
-   * directory, or absolute) */
-  sources: string[];
-}
-
-const KEYWORDS = new Set([
-  "TEST_SOURCES",
-  "OTHER_SOURCES",
-  "LINK_LIBRARIES",
-  "REGISTRY",
-  "EXTRA_USE",
-  "EXTRA_INITIALIZE",
-  "EXTRA_FINALIZE",
-  "MAX_PES",
-  "WORKING_DIRECTORY",
-  "LABELS",
-  "TIMEOUT",
-  "ENV",
-  "PROPERTIES",
-]);
-
-/** The `add_pfunit_ctest` calls of a CMakeLists.txt, with their
- * TEST_SOURCES; `${var}` of a plain `set(var ...)` in the same file is
- * expanded, and `${CMAKE_CURRENT_SOURCE_DIR}/` dropped */
-export function parseAddPfunitCtest(cmake: string): PfunitTarget[] {
-  const text = cmake.replace(/#.*$/gm, "");
-  const vars = new Map<string, string[]>();
-  for (const m of text.matchAll(/\bset\s*\(\s*(\w+)\s+([^)]*)\)/gi)) {
-    vars.set(m[1], words(m[2]));
-  }
-  const expand = (w: string, depth = 0): string[] => {
-    const only = /^\$\{(\w+)\}$/.exec(w);
-    if (only && vars.has(only[1]) && depth < 5) {
-      return vars.get(only[1])!.flatMap((v) => expand(v, depth + 1));
-    }
-    return [w.replace(/^\$\{CMAKE_CURRENT_(?:SOURCE|LIST)_DIR\}\//, "")];
-  };
-  const out: PfunitTarget[] = [];
-  for (const m of text.matchAll(/\badd_pfunit_ctest\s*\(([^)]*)\)/gi)) {
-    const [name, ...rest] = words(m[1]);
-    if (!name) {
-      continue;
-    }
-    const sources: string[] = [];
-    let inSources = false;
-    for (const w of rest) {
-      if (KEYWORDS.has(w.toUpperCase())) {
-        inSources = w.toUpperCase() === "TEST_SOURCES";
-      } else if (inSources) {
-        sources.push(...expand(w).filter((s) => /\.pf$/i.test(s)));
-      }
-    }
-    out.push({ name, sources });
-  }
-  return out;
-}
-
-/** The words of CMake arguments, without quotes */
-function words(args: string): string[] {
-  return [...args.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+/** The tests zfls finds (`zfls/pfunitTests`): the test programs, and the
+ * suites of the `.pf` files no `add_pfunit_ctest` lists */
+export interface PfunitTests {
+  programs: PfProgram[];
+  unlisted: PfSuite[];
 }
 
 export interface CtestCommand {

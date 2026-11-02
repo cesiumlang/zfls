@@ -52,7 +52,8 @@ const fortran_extensions = [_][]const u8{
     ".f", ".for", ".ftn", ".fpp", ".f77", ".f90", ".f95", ".f03", ".f08", ".f18",
 };
 
-fn isFortran(file: []const u8) bool {
+/// Whether a file name has an extension of Fortran sources
+pub fn isFortran(file: []const u8) bool {
     const ext = std.Io.Dir.path.extension(file);
     for (fortran_extensions) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;
     return false;
@@ -199,7 +200,8 @@ pub fn readFpm(io: Io, a: Allocator, root: []const u8, text: []const u8) !Found 
     return found;
 }
 
-fn stripTomlComment(line: []const u8) []const u8 {
+/// A line of TOML without its `#` comment (outside strings)
+pub fn stripTomlComment(line: []const u8) []const u8 {
     var quote: u8 = 0;
     for (line, 0..) |c, i| {
         if (quote != 0) {

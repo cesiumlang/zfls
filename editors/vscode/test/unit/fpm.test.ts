@@ -1,5 +1,6 @@
 // Plain Node.js tests (no VS Code) of the fpm support: fpm.toml, fpm's
-// arguments and output, test-drive's tests and results: `npm run unit`.
+// arguments and output, test-drive's results: `npm run unit`. zfls finds
+// the tests (src/fpm.zig).
 
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
@@ -11,11 +12,8 @@ import {
   parseRunnerEcho,
   parseTestDrive,
   runArgs,
-  selectsTests,
-  sourcesOfTarget,
   targetOfFile,
   taskArgs,
-  testDriveDefs,
 } from "../../src/fpm";
 
 const MANIFEST = `
@@ -61,15 +59,6 @@ test("the target of a main program", () => {
   assert.equal(of("example/ex1.f90"), undefined);
   assert.equal(of("src/lib.f90"), undefined);
   assert.equal(of("app.f90"), undefined);
-});
-
-test("the source of a target", () => {
-  const m = parseManifest(MANIFEST);
-  assert.deepEqual(sourcesOfTarget(m, { kind: "test", name: "unit" }), {
-    file: path.join("tests/unit", "main.f90"),
-    dir: "tests/unit",
-  });
-  assert.deepEqual(sourcesOfTarget(m, { kind: "test", name: "check" }), { dir: "test", stem: "check" });
 });
 
 test("the arguments of fpm's commands", () => {
@@ -160,38 +149,4 @@ test("test-drive's results", () => {
     { suite: "math", name: "bad_expected", status: "expected-fail", message: "math is broken" },
     { suite: "strings", name: "later", status: "skipped" },
   ]);
-});
-
-const SUITE = `module suite_math
-  use testdrive, only : new_unittest, unittest_type, error_type, check
-contains
-  subroutine collect_math(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
-    testsuite = [ &
-      new_unittest("adds", test_adds), &
-      ! new_unittest("commented", test_x), &
-      new_unittest('fails', test_fails, should_fail=.true.) &
-      ]
-  end subroutine collect_math
-end module
-program tester
-  use testdrive, only : run_testsuite, new_testsuite, testsuite_type
-  testsuites = [new_testsuite("math", collect_math), &
-    new_testsuite("Strings", Collect_Strings)]
-end program
-`;
-
-test("test-drive's suites and tests in the sources", () => {
-  assert.deepEqual(testDriveDefs(SUITE), {
-    suites: [
-      { name: "math", collect: "collect_math", line: 14 },
-      { name: "Strings", collect: "collect_strings", line: 15 },
-    ],
-    tests: [
-      { name: "adds", line: 6, collect: "collect_math" },
-      { name: "fails", line: 8, collect: "collect_math" },
-    ],
-  });
-  assert.equal(selectsTests(SUITE), false);
-  assert.equal(selectsTests("is = select_suite(testsuites, name)\ncall run_selected(testsuites(is)%collect, t, u, stat)"), true);
 });

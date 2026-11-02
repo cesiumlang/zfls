@@ -58,7 +58,7 @@
   "config.zfls.fpm.flags.markdownDescription": "`--flag` of fpm's builds, runs and tests: the compiler flags, which replace the profile's.",
   "config.zfls.fpm.args.markdownDescription": "Extra arguments of fpm's builds, runs and tests, one per item, for example `[\"--features\", \"mpi\"]`.",
   "config.zfls.fpm.runFile.markdownDescription": "**Run Fortran File** and **Debug Fortran File**, on the main program of a target of an fpm project, run or debug that target with fpm instead of building the file by itself. Its program arguments are `#zfls.run.programArgs#`.",
-  "config.zfls.fpm.testExplorer.markdownDescription": "Show the tests of fpm projects in the Testing view: each test target (`fpm test --list`), and the suites and tests of [test-drive](https://github.com/fortran-lang/test-drive) below it, with their results.",
+  "config.zfls.fpm.testExplorer.markdownDescription": "Show the tests of fpm projects in the Testing view: each test target (those of `fpm.toml`, and the programs in `test`), and the suites and tests of [test-drive](https://github.com/fortran-lang/test-drive) below it, with their results.",
   "config.zfls.formatting.formatter.markdownDescription": "The external tool that formats Fortran files and selections (**Format Document**, **Format Selection**, format on save). It must be installed separately: `pip install findent` or `pip install fprettify`. Can be set per language, for example `\"[FortranFixedForm]\": { \"zfls.formatting.formatter\": \"findent\" }`.",
   "config.zfls.formatting.formatter.enumDescriptions.0": "Do not format Fortran files",
   "config.zfls.formatting.formatter.enumDescriptions.1": "Indent with findent (free and fixed form)",
