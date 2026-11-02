@@ -15,7 +15,6 @@ import { registerFormatting } from "./formatting";
 import { Fortitude } from "./fortitude";
 import { Codee } from "./codee";
 import { toggleComments } from "./comments";
-import { namelistGroups } from "./namelist";
 import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
 import { BindC, C_LANGUAGES, identifierAt, isCFile, uniqueByPlace } from "./interop";
@@ -30,6 +29,8 @@ import { affectsServer, serverArguments } from "./options";
 
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
+/** The languages zfls serves: Fortran's, and namelist files (their outline) */
+const SERVED_LANGUAGES = [...LANGUAGES, "FortranNamelist"];
 
 /** The running servers: one per outermost workspace folder (keyed by its
  * URI), and one per directory of a Fortran file outside every folder (keyed
@@ -72,7 +73,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
     vscode.commands.registerCommand("zfls.toggleFixedFormComment", () => toggleFixedFormComment()),
-    vscode.languages.registerDocumentSymbolProvider({ language: "FortranNamelist" }, { provideDocumentSymbols: namelistSymbols }),
     vscode.languages.registerDefinitionProvider(
       C_LANGUAGES.map((language) => ({ language })),
       { provideDefinition: fortranOfC },
@@ -357,26 +357,6 @@ async function toggleFixedFormComment(): Promise<void> {
   });
 }
 
-/** The outline of a namelist file: its groups and the variables they set */
-function namelistSymbols(doc: vscode.TextDocument): vscode.DocumentSymbol[] {
-  const lines = Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text);
-  return namelistGroups(lines).map((g) => {
-    const name = new vscode.Range(g.line, g.column, g.line, g.column + g.name.length);
-    const group = new vscode.DocumentSymbol(
-      g.name,
-      "namelist group",
-      vscode.SymbolKind.Namespace,
-      new vscode.Range(g.line, 0, g.endLine, doc.lineAt(g.endLine).text.length),
-      name,
-    );
-    group.children = g.variables.map((v) => {
-      const range = new vscode.Range(v.line, v.column, v.line, v.column + v.name.length);
-      return new vscode.DocumentSymbol(v.name, "", vscode.SymbolKind.Variable, range, range);
-    });
-    return group;
-  });
-}
-
 export async function deactivate(): Promise<void> {
   await Promise.all([...clients.keys()].map((key) => stopClient(key)));
 }
@@ -446,7 +426,7 @@ function serverRoot(doc: vscode.TextDocument): { folder?: vscode.WorkspaceFolder
 }
 
 async function ensureClient(doc: vscode.TextDocument): Promise<void> {
-  if (!LANGUAGES.includes(doc.languageId)) {
+  if (!SERVED_LANGUAGES.includes(doc.languageId)) {
     return;
   }
   const where = serverRoot(doc);
@@ -559,8 +539,8 @@ async function startClient(
   watchers.set(root.toString(), [sourceWatcher, configWatcher]);
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
-      ...LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
-      ...(untitled ? LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
+      ...SERVED_LANGUAGES.map((language) => ({ scheme: "file", language, pattern })),
+      ...(untitled ? SERVED_LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
     ],
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
     synchronize: { fileEvents: sourceWatcher },

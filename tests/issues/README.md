@@ -147,3 +147,4 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | [#617](https://github.com/fortran-lang/vscode-fortran-support/issues/617) | fypp: inline `${...}$`, `$:` and `@:` are no Fortran names (no warnings, no tokens); the extension highlights them | highlighting | fixed (feature) | read as Fortran |
 | [#234](https://github.com/fortran-lang/vscode-fortran-support/issues/234) | keywords in title case (a Source Action) | diagnostics | fixed (feature) | none |
 | [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |
+| [#1296](https://github.com/fortran-lang/vscode-fortran-support/issues/1296) | the outline of a namelist file (`.nml`, or a document opened as `FortranNamelist`): its groups and the variables they set, never parsed as Fortran | outline | fixed (feature) | not served |

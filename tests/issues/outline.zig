@@ -74,6 +74,58 @@ test "Modern Fortran #647 the outline is a tree, for breadcrumbs and sticky scro
     try h.checkIn(.modern_fortran, 647, .fixed, expectOutline(w));
 }
 
+const namelist_source =
+    \\! the run
+    \\&run_params
+    \\  steps = 100, dt = 1.0d-3 ! seconds
+    \\  title = 'a = b / c', flags(1:2) = .true., .false.
+    \\/
+    \\$output
+    \\  path = "out/"
+    \\$end
+    \\
+;
+
+/// The outline of the namelist documents, and nothing of Fortran: no
+/// workspace file, no diagnostics, no messages
+fn expectNamelistOutline(w: *h.Workspace) !void {
+    // by its language, and by its name with any language
+    try w.open("params.in", "FortranNamelist");
+    try w.open("run.nml", "FortranFreeForm");
+    const expected = [_][]const u8{
+        "run_params", "run_params/steps", "run_params/dt", "run_params/title", "run_params/flags",
+        "output",     "output/path",
+    };
+    for ([_][]const u8{ "params.in", "run.nml" }) |name| {
+        const got = try w.symbolPaths(name);
+        try h.expect(got.len == expected.len, "{s}: {d} symbols, not {d}", .{ name, got.len, expected.len });
+        for (expected, got) |e, g| try h.expect(std.mem.eql(u8, e, g), "{s}: {s}, not {s}", .{ name, g, e });
+        try h.expect(w.server.workspace.get(try w.path(name)) == null, "{s} is parsed as Fortran", .{name});
+    }
+    // its changes are followed
+    try w.replaceText("run.nml", "&solo n = 1 /\n");
+    const changed = try w.symbolPaths("run.nml");
+    try h.expect(changed.len == 2 and std.mem.eql(u8, changed[1], "solo/n"), "{d} symbols after a change", .{changed.len});
+    for (w.sent.items) |body| try h.expect(std.mem.find(u8, body, "publishDiagnostics") == null, "diagnostics published: {s}", .{body});
+    try h.expect((try w.messages()).len == 0, "messages posted", .{});
+}
+
+test "Modern Fortran #1296 the outline of a namelist file: its groups and their variables" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "params.in", .text = namelist_source },
+        .{ .name = "run.nml", .text = namelist_source },
+    }, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 1296, .fixed, expectNamelistOutline(w));
+    // and the flat list of a client without the tree
+    const w2 = try h.Workspace.init(&.{.{ .name = "run.nml", .text = namelist_source }}, .{});
+    defer w2.deinit();
+    try w2.open("run.nml", "FortranNamelist");
+    const names = try w2.documentSymbols("run.nml");
+    try std.testing.expectEqual(@as(usize, 7), names.len);
+    try std.testing.expectEqualStrings("steps", names[1]);
+}
+
 test "a client without hierarchical symbols gets fortls's flat list" {
     const w = try h.Workspace.init(&.{.{ .name = "shapes.f90", .text = source }}, .{});
     defer w.deinit();

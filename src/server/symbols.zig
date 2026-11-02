@@ -1,4 +1,5 @@
-//! Document and workspace symbols, folding ranges and semantic tokens.
+//! Document and workspace symbols (and the outline of namelist files),
+//! folding ranges and semantic tokens.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -12,6 +13,7 @@ const objects = @import("../objects.zig");
 const outline = @import("../outline.zig");
 const fuzzy = @import("../fuzzy.zig");
 const semantic = @import("../semantic.zig");
+const namelist = @import("../namelist.zig");
 
 const Obj = objects.Obj;
 const Value = json.Value;
@@ -86,6 +88,12 @@ pub fn symbolOf(name: []const u8, kind: i64, uri: []const u8, sln: usize, eln: ?
 
 pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
     const uri = params.textDocument.uri;
+    // a namelist file: its groups and the variables they set
+    if (self.nml_docs.get(try self.pathFromUri(a, uri))) |doc| {
+        const lines = doc.lines.items;
+        if (self.hierarchical_symbols) return json.from(a, try namelist.documentSymbols(a, lines));
+        return json.from(a, try namelist.flatSymbols(a, uri, lines));
+    }
     const file = (try self.fileFromUri(a, uri)) orelse return .{ .array = .init(a) };
     const ast = file.ast orelse return .{ .array = .init(a) };
     if (self.hierarchical_symbols) return json.from(a, try outline.documentSymbols(a, file, ast, self.s.symbol_skip_mem));

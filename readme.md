@@ -54,6 +54,9 @@ command line options and configuration files.
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures,
   signature help in a kernel launch (`call k<<<grid, block>>>(...)`), `.cuf`
   files
+- Namelist files (`.nml`, `.namelist`, or a document the client opens with
+  the language `FortranNamelist`): an outline of their groups and the
+  variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
 - Documentation for intrinsic procedures, statements, keywords and the
