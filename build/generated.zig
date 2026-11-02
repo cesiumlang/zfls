@@ -166,8 +166,7 @@ fn specialSchema(a: Allocator, key: []const u8) !?Value {
         \\{"type": "string", "enum": ["findent", "none", null]}
     );
     // a list keeps repeated arguments; a string is split at spaces
-    if (std.mem.eql(u8, key, "compiler_args") or std.mem.eql(u8, key, "formatter_args") or
-        std.mem.eql(u8, key, "formatter_fixed_args")) return try parseLiteral(a,
+    if (std.mem.endsWith(u8, key, "_args")) return try parseLiteral(a,
         \\{"type": ["array", "string"], "items": {"type": "string"}}
     );
     return null;

@@ -253,6 +253,109 @@
         "null"
       ]
     },
+    "compiler_include_dirs": {
+      "description": "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "compiler_no_save": {
+      "description": "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_on_change": {
+      "description": "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_change_delay": {
+      "description": "With compiler_on_change, the milliseconds without a change before a check (default: 1000)",
+      "type": "integer",
+      "default": 1000
+    },
+    "compiler_no_dependencies": {
+      "description": "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_fypp": {
+      "description": "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_fypp_args": {
+      "description": "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "fortitude": {
+      "description": "Lint files with fortitude (pip install fortitude-lint) when they are opened and saved: its problems are warnings, its fixes quick fixes, and source.fixAll.fortitude applies the safe ones",
+      "type": "boolean",
+      "default": false
+    },
+    "fortitude_path": {
+      "description": "fortitude's executable (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fortitude_args": {
+      "description": "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "fortitude_on_change": {
+      "description": "Also lint a file with fortitude while it is edited, after fortitude_change_delay milliseconds without a change",
+      "type": "boolean",
+      "default": false
+    },
+    "fortitude_change_delay": {
+      "description": "With fortitude_on_change, the milliseconds without a change before linting (default: 500)",
+      "type": "integer",
+      "default": 500
+    },
+    "codee": {
+      "description": "Check files with Codee (codee checks, a commercial tool) when they are opened and saved",
+      "type": "boolean",
+      "default": false
+    },
+    "codee_path": {
+      "description": "Codee's executable (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "codee_args": {
+      "description": "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
     "formatter": {
       "description": "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)",
       "type": [

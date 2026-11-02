@@ -109,6 +109,35 @@ pub const Settings = struct {
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
+    /// Further include directories, for the compiler only
+    compiler_include_dirs: StrList = .{},
+    /// Do not check a file when it is saved (only when it is opened)
+    compiler_no_save: bool = false,
+    /// Check a file while it is edited, its unsaved text, after
+    /// `compiler_change_delay` milliseconds without a change
+    compiler_on_change: bool = false,
+    compiler_change_delay: i64 = 1000,
+    /// Do not compile the workspace modules a file uses first
+    compiler_no_dependencies: bool = false,
+    /// fypp, run on each file before the compiler checks it; null: none
+    compiler_fypp: ?[]const u8 = null,
+    /// fypp's further arguments (-I, -D, ...)
+    compiler_fypp_args: StrList = .{},
+    // Linters
+    /// Lint files with fortitude
+    fortitude: bool = false,
+    /// fortitude's executable; null: `fortitude` on the PATH
+    fortitude_path: ?[]const u8 = null,
+    fortitude_args: StrList = .{},
+    /// Lint a file while it is edited too, after `fortitude_change_delay`
+    /// milliseconds without a change
+    fortitude_on_change: bool = false,
+    fortitude_change_delay: i64 = 500,
+    /// Check files with Codee (`codee checks`)
+    codee: bool = false,
+    /// Codee's executable; null: `codee` on the PATH
+    codee_path: ?[]const u8 = null,
+    codee_args: StrList = .{},
     // Formatting
     /// The formatter of `textDocument/formatting` and `rangeFormatting`:
     /// findent or fprettify; null or `none`: none
@@ -232,6 +261,22 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_on_change", .kind = .flag, .help = "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
+
+    .{ .long = "fortitude", .kind = .flag, .help = "Lint files with fortitude (pip install fortitude-lint) when they are opened and saved: its problems are warnings, its fixes quick fixes, and source.fixAll.fortitude applies the safe ones", .group = "Linter options" },
+    .{ .long = "fortitude_path", .kind = .string, .metavar = "PATH", .help = "fortitude's executable (default: the one on the PATH)", .group = "Linter options" },
+    .{ .long = "fortitude_args", .kind = .string, .metavar = "ARGS", .help = "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
+    .{ .long = "fortitude_on_change", .kind = .flag, .help = "Also lint a file with fortitude while it is edited, after fortitude_change_delay milliseconds without a change", .group = "Linter options" },
+    .{ .long = "fortitude_change_delay", .kind = .int, .metavar = "MS", .help = "With fortitude_on_change, the milliseconds without a change before linting (default: 500)", .group = "Linter options" },
+    .{ .long = "codee", .kind = .flag, .help = "Check files with Codee (codee checks, a commercial tool) when they are opened and saved", .group = "Linter options" },
+    .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
+    .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
 
     .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
     .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
@@ -393,15 +438,13 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
                     continue;
                 }
-                if (std.mem.eql(u8, o.long, "compiler_args")) {
+                if (isArgList(o.long)) {
                     var list: StrList = .{};
                     var words = std.mem.tokenizeAny(u8, val, " \t");
                     while (words.next()) |w| try list.items.append(a, w);
-                    s.compiler_args = list;
-                    continue;
-                }
-                if (argsOption(&s, o.long)) |field| {
-                    field.* = try splitArgs(a, val);
+                    inline for (arg_lists) |name| if (std.mem.eql(u8, o.long, name)) {
+                        @field(s, name) = if (@FieldType(Settings, name) == StrList) list else @as(?StrList, list);
+                    };
                     continue;
                 }
                 var handled = false;
@@ -435,6 +478,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                 if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
                 if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
                 if (std.mem.eql(u8, o.long, "external_modules")) s.external_modules = list;
+                if (std.mem.eql(u8, o.long, "compiler_include_dirs")) s.compiler_include_dirs = list;
             },
         }
     }
@@ -501,34 +545,29 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
     };
 }
 
-/// The `StrList` options of arguments, which a command line gives as one
-/// string
-fn argsOption(s: *Settings, name: []const u8) ?*StrList {
-    if (std.mem.eql(u8, name, "formatter_args")) return &s.formatter_args;
-    if (std.mem.eql(u8, name, "formatter_fixed_args")) return &s.formatter_fixed_args;
-    return null;
-}
+/// The options that are arguments of another program: one string, split at
+/// spaces, on the command line, and a list or a string in a configuration
+/// file
+const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
 
-/// Arguments separated by spaces; a list keeps repeated ones
-fn splitArgs(a: Allocator, text: []const u8) !StrList {
-    var list: StrList = .{};
-    var words = std.mem.tokenizeAny(u8, text, " \t");
-    while (words.next()) |w| try list.items.append(a, w);
-    return list;
+fn isArgList(name: []const u8) bool {
+    inline for (arg_lists) |n| if (std.mem.eql(u8, name, n)) return true;
+    return false;
 }
 
 /// Arguments: a string split at spaces, or a list, which keeps repeated
 /// ones (-I a -I b); null for anything else
 fn argList(a: Allocator, v: json.Value) !?StrList {
-    return switch (v) {
-        .string => |x| try splitArgs(a, x),
-        .array => |arr| blk: {
-            var list: StrList = .{};
-            for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item));
-            break :blk list;
+    var list: StrList = .{};
+    switch (v) {
+        .string => |x| {
+            var words = std.mem.tokenizeAny(u8, x, " \t");
+            while (words.next()) |w| try list.items.append(a, w);
         },
-        else => null,
-    };
+        .array => |arr| for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item)),
+        else => return null,
+    }
+    return list;
 }
 
 fn jsonInt(v: ?json.Value, default: i64) i64 {
@@ -578,23 +617,30 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Compiler diagnostics
     if (json.get(cfg, "compiler_diagnostics")) |v| s.compiler_diagnostics = json.str(v);
     if (json.get(cfg, "compiler_path")) |v| s.compiler_path = json.str(v);
-    if (json.get(cfg, "compiler_args")) |v| s.compiler_args = switch (v) {
-        .null => null,
-        .string => |x| blk: {
-            var list: StrList = .{};
-            var words = std.mem.tokenizeAny(u8, x, " \t");
-            while (words.next()) |w| try list.items.append(a, w);
-            break :blk list;
-        },
-        // a list keeps repeated arguments (-I a -I b)
-        .array => |arr| blk: {
-            var list: StrList = .{};
-            for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item));
-            break :blk list;
-        },
-        else => s.compiler_args,
-    };
+    if (json.get(cfg, "compiler_args")) |v| s.compiler_args = if (v == .null) null else try argList(a, v) orelse s.compiler_args;
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
+    if (json.get(cfg, "compiler_include_dirs")) |v| s.compiler_include_dirs = try jsonList(a, v);
+    s.compiler_no_save = jsonBool(json.get(cfg, "compiler_no_save"), s.compiler_no_save);
+    s.compiler_on_change = jsonBool(json.get(cfg, "compiler_on_change"), s.compiler_on_change);
+    s.compiler_change_delay = jsonInt(json.get(cfg, "compiler_change_delay"), s.compiler_change_delay);
+    s.compiler_no_dependencies = jsonBool(json.get(cfg, "compiler_no_dependencies"), s.compiler_no_dependencies);
+    if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
+    if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
+        s.compiler_fypp_args = l;
+    };
+    // Linters
+    s.fortitude = jsonBool(json.get(cfg, "fortitude"), s.fortitude);
+    if (json.get(cfg, "fortitude_path")) |v| s.fortitude_path = json.str(v);
+    if (json.get(cfg, "fortitude_args")) |v| if (try argList(a, v)) |l| {
+        s.fortitude_args = l;
+    };
+    s.fortitude_on_change = jsonBool(json.get(cfg, "fortitude_on_change"), s.fortitude_on_change);
+    s.fortitude_change_delay = jsonInt(json.get(cfg, "fortitude_change_delay"), s.fortitude_change_delay);
+    s.codee = jsonBool(json.get(cfg, "codee"), s.codee);
+    if (json.get(cfg, "codee_path")) |v| s.codee_path = json.str(v);
+    if (json.get(cfg, "codee_args")) |v| if (try argList(a, v)) |l| {
+        s.codee_args = l;
+    };
     // Formatting
     if (json.get(cfg, "formatter")) |v| s.formatter = json.str(v);
     if (json.get(cfg, "formatter_path")) |v| s.formatter_path = json.str(v);

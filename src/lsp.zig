@@ -33,6 +33,8 @@ pub const Diagnostic = struct {
     severity: i64,
     relatedInformation: ?[]const DiagnosticRelatedInformation = null,
     code: ?[]const u8 = null,
+    /// A page about the code
+    codeDescription: ?struct { href: []const u8 } = null,
     source: ?[]const u8 = null,
     /// 1: unnecessary (shown faded), 2: deprecated
     tags: ?[]const i64 = null,
@@ -124,6 +126,7 @@ pub const CodeAction = struct {
     kind: []const u8,
     edit: WorkspaceEdit,
     diagnostics: []const Diagnostic,
+    isPreferred: ?bool = null,
 };
 
 pub const PublishDiagnosticsParams = struct {
