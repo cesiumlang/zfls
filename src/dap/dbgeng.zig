@@ -355,7 +355,24 @@ pub const Engine = struct {
             std.unicode.utf16LeToUtf8Alloc(a, module[0 .. mlen - 1]) catch "?"
         else
             "(none)";
-        return a.print("module {s}: symbols {d}, file {s}, path {s}", .{ mod_name, kind, pdb, sym_path }) catch "";
+        // where the PDB puts the main program: its lines read, and its files' names
+        var where: []const u8 = "no main";
+        for ([_][]const u8{ "main", "MAIN__", "_QQmain" }) |m| {
+            const full = a.print("{s}!{s}", .{ mod_name, m }) catch break;
+            const wfull = std.unicode.utf8ToUtf16LeAllocZ(a, full) catch break;
+            var off: u64 = 0;
+            if (!succeeded(self.symbols.GetOffsetByNameWide(wfull.ptr, &off))) continue;
+            var src: [1024:0]u16 = undefined;
+            var slen: u32 = 0;
+            var line: u32 = 0;
+            const hr = self.symbols.GetLineByOffsetWide(off, &line, &src, src.len, &slen, null);
+            where = if (succeeded(hr) and slen > 0)
+                a.print("{s} at {s}:{d}", .{ m, std.unicode.utf16LeToUtf8Alloc(a, src[0 .. slen - 1]) catch "?", line }) catch ""
+            else
+                a.print("{s} at 0x{x}, no line (0x{x})", .{ m, off, @as(u32, @bitCast(hr)) }) catch "";
+            break;
+        }
+        return a.print("module {s}: symbols {d}, file {s}, path {s}, {s}", .{ mod_name, kind, pdb, sym_path, where }) catch "";
     }
 
     pub fn breakpointOffset(self: *Engine, id: u32) ?u64 {
