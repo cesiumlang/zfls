@@ -224,8 +224,15 @@ pub fn splitSubMod(a: Allocator, line: []const u8) E!struct { []const []const u8
 }
 
 /// Attempt to read FUNCTION definition line
-pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_flag: bool) E!?DefResult {
-    const keywords, const line = try splitSubMod(a, line_in);
+pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_flag_in: bool) E!?DefResult {
+    const keywords, var line = try splitSubMod(a, line_in);
+    // MODULE after the type, among the prefixes, which go in any order:
+    // `real(dp) module function f(x)` (a MODULE first is readModDef's)
+    var mod_flag = mod_flag_in;
+    if (result_in != null) if (afterModulePrefix(line)) |rest| {
+        line = rest;
+        mod_flag = true;
+    };
     if (keywords.len > 0) {
         if (try readVarDef(a, line, null, true)) |tmp_var| {
             var tv = tmp_var;
@@ -245,6 +252,16 @@ pub fn readFunDef(a: Allocator, line_in: []const u8, result_in: ?ResultSig, mod_
     }
     if (result.name == null or result.name.?.len == 0) result.name = pm.name;
     return .{ .fun = .{ .name = pm.name, .args = pm.args, .keywords = keywords, .mod_flag = mod_flag, .result = result } };
+}
+
+/// The text after a MODULE prefix that a FUNCTION follows, `module function
+/// f(x)`
+fn afterModulePrefix(line: []const u8) ?[]const u8 {
+    const t = std.mem.trimStart(u8, line, " ");
+    if (t.len < 7 or !std.ascii.startsWithIgnoreCase(t, "module") or t[6] != ' ') return null;
+    const rest = t[6..];
+    if (!std.ascii.startsWithIgnoreCase(std.mem.trimStart(u8, rest, " "), "function")) return null;
+    return rest;
 }
 
 pub fn readSubDef(a: Allocator, line_in: []const u8, mod_flag: bool) E!?DefResult {

@@ -195,7 +195,13 @@ pub const Parser = struct {
             // Test for scope end
             if (ast.end_scope_regex != null) {
                 const m = R().END_WORD.match(line_no_comment);
+                const ends_do = if (ast.current_scope) |cs| cs.getType(false) == C.TypeId.do_ else false;
                 if (try p.parseEndScopeWord(line_no_comment, line_no, m)) {
+                    // `10 END DO` ends the `DO 10` loop: its label is done with
+                    if (ends_do) if (line_label) |label| {
+                        const ids = block_id_stack.items;
+                        if (ids.len > 0 and std.mem.eql(u8, label, ids[ids.len - 1])) _ = block_id_stack.pop();
+                    };
                     ast.pending_doc = null;
                     continue;
                 }
@@ -504,6 +510,9 @@ pub const Parser = struct {
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
         var end_scope_word: ?[]const u8 = null;
+        // a main program without a PROGRAM statement: its statements are
+        // outside any scope, and END ends it
+        if (m.group(1) == null and cs == ast.none_scope and ast.scope_stack.items.len == 0) return true;
         if (m.group(1) == null) {
             end_scope_word = "";
             if (cs.reqNamedEnd() and cs != ast.none_scope) {
