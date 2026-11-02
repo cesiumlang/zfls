@@ -168,12 +168,10 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     const gen = b.addRunArtifact(b.addExecutable(.{ .name = "conda_recipe", .root_module = gen_mod }));
     gen.setCwd(b.path(""));
     gen.addDirectoryArg(b.path("packaging/conda-forge"));
-    const pins = .{
-        // Windows builds only: rstd's Win32 bindings
-        .{ "zigwin32", rstd.buildroot.zon.dependencies.win32 },
-        .{ "m_intrinsics", zon.dependencies.m_intrinsics },
-    };
-    inline for (pins) |p| gen.addArgs(&.{ "--pin", p[0], p[1].url, p[1].hash });
+    // Windows builds only: rstd's Win32 bindings, until rstd has them as a
+    // submodule (which the source archive includes)
+    const win32 = rstd.buildroot.zon.dependencies.win32;
+    if (@hasField(@TypeOf(win32), "url")) gen.addArgs(&.{ "--pin", "zigwin32", win32.url, win32.hash });
     gen.addPassthruArgs();
     // downloads, and writes outside the cache
     gen.has_side_effects = true;
@@ -182,8 +180,9 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
 }
 
 /// Generate the module `intrinsic_docs` (`docs: []const struct { name,
-/// markdown }`) from the Markdown pages of the M_intrinsics package, one
-/// `md3/NAME.md` per intrinsic procedure (build/intrinsic_docs.zig). Returns
+/// markdown }`) from the Markdown pages of M_intrinsics (the vendor/
+/// submodule), one `md3/NAME.md` per intrinsic procedure
+/// (build/intrinsic_docs.zig). Returns
 /// the generator's unit tests.
 fn addIntrinsicDocs(b: *std.Build, mod: *std.Build.Module) *std.Build.Step.Compile {
     const gen_mod = b.createModule(.{
@@ -191,9 +190,8 @@ fn addIntrinsicDocs(b: *std.Build, mod: *std.Build.Module) *std.Build.Step.Compi
         .target = b.graph.host,
     });
     const gen = b.addRunArtifact(b.addExecutable(.{ .name = "intrinsic_docs", .root_module = gen_mod }));
-    const upstream = b.dependency("m_intrinsics", .{});
-    gen.addDirectoryArg(upstream.path("md3"));
-    gen.addDirectoryArg(upstream.path("docs"));
+    gen.addDirectoryArg(b.path("vendor/M_intrinsics/md3"));
+    gen.addDirectoryArg(b.path("vendor/M_intrinsics/docs"));
     const out = gen.addOutputDirectoryArg("intrinsic_docs");
     mod.addImport("intrinsic_docs", b.createModule(.{ .root_source_file = out.path(b, "intrinsic_docs.zig") }));
     return b.addTest(.{ .root_module = gen_mod });

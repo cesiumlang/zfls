@@ -75,7 +75,7 @@ also generates the API documentation in `zig-out/docs`; `zig build bin`
 installs only the executable.
 
 Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
-the `vendor/rstd` submodule included (`tools/make_source_archive.sh`), and
+its submodules included (`tools/make_source_archive.sh`), and
 `zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
 `zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
 from the template in `packaging/conda-forge`, pinning the Zig packages it
@@ -670,6 +670,6 @@ definition files. ifx itself is Intel's, under Intel's license, which
 fortls and its predecessor fortran-language-server, also MIT licensed, whose
 copyright notices `LICENSE` includes. The intrinsic procedure documentation
 comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
-project, also MIT licensed, whose notice `LICENSE` includes too. The build
-fetches the version `build.zig.zon` pins; a scheduled workflow moves the pin
-to upstream's latest commit.
+project, also MIT licensed, whose notice `LICENSE` includes too: the
+`vendor/M_intrinsics` submodule, which a scheduled workflow moves to
+upstream's latest commit.
