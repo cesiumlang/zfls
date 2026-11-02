@@ -1,36 +1,19 @@
-# Written by zfls's `zig build conda-recipe` (build/conda_recipe.zig) from
-# its packaging/conda-forge/recipe.yaml, where the values of this context
-# that come from elsewhere are left empty (""): those of the zfls source
-# archive, and the Zig packages rstd's build.zig.zon pins, which the build
-# would otherwise download
+# The template of the conda-forge recipe, which `zig build conda-recipe`
+# (build/conda_recipe.zig) writes for a zfls source archive: it fills in the
+# empty ("") values of the context, those of the archive, and leaves out
+# this comment
 context:
   name: zfls
   version: ""
   zfls_sha256: ""
-  # rstd's Win32 bindings (Windows builds only): the GitHub repository and
-  # commit, the checksum of GitHub's archive of it, and the Zig package hash
-  # naming its directory in zig-pkg/
-  zigwin32_repo: ""
-  zigwin32_commit: ""
-  zigwin32_sha256: ""
-  zigwin32_hash: ""
 
 package:
   name: ${{ name }}
   version: ${{ version }}
 
 source:
-  # zfls with its submodules, vendor/rstd and vendor/M_intrinsics (the
-  # intrinsic procedure documentation zfls embeds; GitHub's own archives
-  # leave submodules out), attached to every release
   - url: https://github.com/cesiumlang/zfls/releases/download/v${{ version }}/zfls-v${{ version }}-src.tar.gz
     sha256: ${{ zfls_sha256 }}
-  # unpacked where Zig looks for a project's packages
-  - if: win
-    then:
-      url: https://github.com/${{ zigwin32_repo }}/archive/${{ zigwin32_commit }}.tar.gz
-      sha256: ${{ zigwin32_sha256 }}
-      target_directory: zig-pkg/${{ zigwin32_hash }}
 
 build:
   number: 0
@@ -61,7 +44,7 @@ about:
   summary: Fortran language server; a native Zig implementation of fortls
   description: |
     zfls is a Fortran language server (LSP) written in Zig: a native,
-    dependency-free reimplementation of fortls with the same features and
+    dependency-free re-implementation of fortls with the same features and
     command-line options. It provides completion, hover, go to definition,
     references, rename, signature help and diagnostics for Fortran code.
   license: MIT
@@ -70,7 +53,7 @@ about:
     - vendor/rstd/LICENSE
     - vendor/M_intrinsics/LICENSE
     - if: win
-      then: zig-pkg/${{ zigwin32_hash }}/LICENSE
+      then: vendor/rstd/vendor/zigwin32/LICENSE
 
 extra:
   recipe-maintainers:

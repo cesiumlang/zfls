@@ -2,22 +2,17 @@
 //! from the template in packaging/conda-forge.
 //!
 //! The template leaves empty (`""`) the values of its `context:` that are
-//! known elsewhere, and this fills them in:
-//!
-//! - `version` and `zfls_sha256`: of the zfls source archive given;
-//! - `PREFIX_repo`, `PREFIX_commit`, `PREFIX_sha256` and `PREFIX_hash` of
-//!   each Zig package the recipe provides in zig-pkg/ (`--pin`, which
-//!   build.zig passes from the build.zig.zon files): its GitHub repository
-//!   and commit, the checksum of GitHub's archive of that commit (downloaded
-//!   for it) and its Zig package hash.
+//! known elsewhere, `version` and `zfls_sha256`, and this fills them in from
+//! the zfls source archive given (which has every dependency, as
+//! submodules). The template's leading comment, about the template, is left
+//! out.
 //!
 //! With `--release` the recipe is the one for conda-forge, building the
 //! archive attached to the GitHub release; with `--local` its first source
 //! is the archive itself, and `variants.yaml` stands in for conda-forge's
 //! global pinning (a build of an unreleased zfls, in CI).
 //!
-//! Usage: conda_recipe TEMPLATE_DIR [--pin PREFIX URL HASH]...
-//!            (--release | --local) ARCHIVE OUT_DIR
+//! Usage: conda_recipe TEMPLATE_DIR (--release | --local) ARCHIVE OUT_DIR
 
 const std = @import("std");
 const Io = std.Io;
@@ -38,32 +33,19 @@ const variants =
 
 const Mode = enum { release, local };
 
-const Pin = struct { prefix: []const u8, url: []const u8, hash: []const u8 };
-
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const a = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(a);
 
-    var pins: std.ArrayList(Pin) = .empty;
-    var mode: ?Mode = null;
-    var i: usize = 2;
-    while (i < argv.len and mode == null) {
-        if (std.mem.eql(u8, argv[i], "--pin") and i + 3 < argv.len) {
-            try pins.append(a, .{ .prefix = argv[i + 1], .url = argv[i + 2], .hash = argv[i + 3] });
-            i += 4;
-        } else if (std.meta.stringToEnum(Mode, std.mem.trimStart(u8, argv[i], "-"))) |m| {
-            mode = m;
-            i += 1;
-        } else break;
-    }
-    if (argv.len < 2 or mode == null or argv.len - i != 2) {
+    const mode: ?Mode = if (argv.len == 5) std.meta.stringToEnum(Mode, std.mem.trimStart(u8, argv[2], "-")) else null;
+    if (mode == null) {
         std.log.err("usage: zig build conda-recipe -- (--release | --local) ARCHIVE OUT_DIR", .{});
         std.process.exit(2);
     }
     const template_dir = argv[1];
-    const archive = argv[i];
-    const out_path = argv[i + 1];
+    const archive = argv[3];
+    const out_path = argv[4];
     const cwd = Io.Dir.cwd();
 
     const version = archiveVersion(std.fs.path.basename(archive)) orelse {
@@ -73,26 +55,6 @@ pub fn main(init: std.process.Init) !void {
     var values: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
     try values.put(a, "version", try std.fmt.allocPrint(a, "\"{s}\"", .{version}));
     try values.put(a, "zfls_sha256", try sha256Hex(a, try cwd.readFileAlloc(io, archive, a, .limited(1 << 30))));
-
-    var http: std.http.Client = .{ .allocator = a, .io = io };
-    defer http.deinit();
-    for (pins.items) |p| {
-        const gh = githubCommit(p.url) orelse {
-            std.log.err("{s}: not a GitHub commit: {s}", .{ p.prefix, p.url });
-            std.process.exit(1);
-        };
-        const url = try std.fmt.allocPrint(a, "https://github.com/{s}/archive/{s}.tar.gz", .{ gh.repo, gh.commit });
-        var body: Io.Writer.Allocating = .init(a);
-        const res = try http.fetch(.{ .location = .{ .url = url }, .response_writer = &body.writer });
-        if (res.status != .ok) {
-            std.log.err("{s}: {d} {s}", .{ url, @backingInt(res.status), @tagName(res.status) });
-            std.process.exit(1);
-        }
-        try values.put(a, try key(a, p.prefix, "repo"), gh.repo);
-        try values.put(a, try key(a, p.prefix, "commit"), gh.commit);
-        try values.put(a, try key(a, p.prefix, "sha256"), try sha256Hex(a, body.written()));
-        try values.put(a, try key(a, p.prefix, "hash"), p.hash);
-    }
 
     var tdir = try cwd.openDir(io, template_dir, .{});
     defer tdir.close(io);
@@ -112,10 +74,6 @@ pub fn main(init: std.process.Init) !void {
         try out.writeFile(io, .{ .sub_path = f, .data = try tdir.readFileAlloc(io, f, a, .limited(1 << 20)) });
     if (mode.? == .local) try out.writeFile(io, .{ .sub_path = "variants.yaml", .data = variants });
     std.log.info("wrote {s}/recipe.yaml", .{out_path});
-}
-
-fn key(a: Allocator, prefix: []const u8, name: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{s}_{s}", .{ prefix, name });
 }
 
 fn sha256Hex(a: Allocator, data: []const u8) ![]const u8 {
@@ -139,34 +97,6 @@ fn archiveVersion(name: []const u8) ?[]const u8 {
     return if (n == 3) v else null;
 }
 
-const GitHubCommit = struct { repo: []const u8, commit: []const u8 };
-
-/// The repository and commit of a package URL from build.zig.zon:
-/// `git+https://github.com/OWNER/REPO[.git]#COMMIT` or
-/// `https://github.com/OWNER/REPO/archive/COMMIT.tar.gz`
-fn githubCommit(url: []const u8) ?GitHubCommit {
-    const host = "https://github.com/";
-    if (std.mem.startsWith(u8, url, "git+" ++ host)) {
-        const rest = url["git+".len + host.len ..];
-        const hash = std.mem.indexOfScalar(u8, rest, '#') orelse return null;
-        const repo = rest[0..hash];
-        const trimmed = if (std.mem.endsWith(u8, repo, ".git")) repo[0 .. repo.len - 4] else repo;
-        return checked(trimmed, rest[hash + 1 ..]);
-    }
-    if (std.mem.startsWith(u8, url, host) and std.mem.endsWith(u8, url, ".tar.gz")) {
-        const rest = url[host.len .. url.len - ".tar.gz".len];
-        const at = std.mem.indexOf(u8, rest, "/archive/") orelse return null;
-        return checked(rest[0..at], rest[at + "/archive/".len ..]);
-    }
-    return null;
-}
-
-fn checked(repo: []const u8, commit: []const u8) ?GitHubCommit {
-    if (std.mem.count(u8, repo, "/") != 1 or commit.len != 40) return null;
-    for (commit) |c| if (!std.ascii.isHex(c)) return null;
-    return .{ .repo = repo, .commit = commit };
-}
-
 fn absolute(a: Allocator, io: Io, path: []const u8) ![]const u8 {
     const full = try Io.Dir.cwd().realPathFileAlloc(io, path, a);
     // forward slashes, which the recipe takes on Windows too
@@ -174,10 +104,10 @@ fn absolute(a: Allocator, io: Io, path: []const u8) ![]const u8 {
 }
 
 /// The template with its empty `context:` values filled in from `values`
-/// (each of which it must use), and with `archive_path` as the first
-/// source in place of its `url` and `sha256`. On an error about a value,
-/// `name` is its name. The lines are written with `\n` (a checkout on
-/// Windows may give the template `\r\n`).
+/// (each of which it must use), without its leading comment, and with
+/// `archive_path` as the first source in place of its `url` and `sha256`.
+/// On an error about a value, `name` is its name. The lines are written
+/// with `\n` (a checkout on Windows may give the template `\r\n`).
 fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMapUnmanaged([]const u8), archive_path: ?[]const u8, name: *[]const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     var used: std.StringHashMapUnmanaged(void) = .empty;
@@ -186,8 +116,11 @@ fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMa
     var sources: usize = 0;
     var lines = std.mem.splitScalar(u8, template, '\n');
     var first = true;
+    var header = true;
     while (lines.next()) |crlf_line| {
         const line = std.mem.trimEnd(u8, crlf_line, "\r");
+        if (header and std.mem.startsWith(u8, line, "#")) continue;
+        header = false;
         if (line.len > 0 and line[0] != ' ' and line[0] != '#') section = line;
         if (archive_path) |path| if (std.mem.eql(u8, section, "source:")) {
             if (std.mem.startsWith(u8, line, "  - ")) sources += 1;
@@ -233,20 +166,6 @@ test archiveVersion {
     try std.testing.expect(archiveVersion("zfls-v0.4.0.tar.gz") == null);
 }
 
-test githubCommit {
-    const c = "5bfdb4c9b01297f97fb2b28b53597ed4b1e4e341";
-    const git = githubCommit("git+https://github.com/emanspeaks/zigwin32#" ++ c).?;
-    try std.testing.expectEqualStrings("emanspeaks/zigwin32", git.repo);
-    try std.testing.expectEqualStrings(c, git.commit);
-    const dotgit = githubCommit("git+https://github.com/baldurk/renderdoc.git#" ++ c).?;
-    try std.testing.expectEqualStrings("baldurk/renderdoc", dotgit.repo);
-    const archive = githubCommit("https://github.com/urbanjost/M_intrinsics/archive/" ++ c ++ ".tar.gz").?;
-    try std.testing.expectEqualStrings("urbanjost/M_intrinsics", archive.repo);
-    try std.testing.expectEqualStrings(c, archive.commit);
-    try std.testing.expect(githubCommit("https://codeberg.org/x/y/archive/" ++ c ++ ".tar.gz") == null);
-    try std.testing.expect(githubCommit("git+https://github.com/x/y#main") == null);
-}
-
 test fill {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -256,6 +175,8 @@ test fill {
     try values.put(a, "version", "\"0.4.0\"");
     try values.put(a, "zfls_sha256", "abc");
     const template =
+        \\# about the template,
+        \\# left out
         \\context:
         \\  name: zfls
         \\  # comment

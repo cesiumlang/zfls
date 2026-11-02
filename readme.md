@@ -78,9 +78,8 @@ Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
 its submodules included (`tools/make_source_archive.sh`), and
 `zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
 `zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
-from the template in `packaging/conda-forge`, pinning the Zig packages it
-provides as the `build.zig.zon` files do (`--local` instead builds from the
-archive itself). CI builds and tests the recipe on Linux, macOS and Windows
+from the template in `packaging/conda-forge` (`--local` instead builds from
+the archive itself). CI builds and tests the recipe on Linux, macOS and Windows
 for every change.
 
 ### VS Code extension
@@ -676,4 +675,6 @@ copyright notices `LICENSE` includes. The intrinsic procedure documentation
 comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
 project, also MIT licensed, whose notice `LICENSE` includes too: the
 `vendor/M_intrinsics` submodule, which a scheduled workflow moves to
-upstream latest commit.
+upstream latest commit. The Windows builds include the Win32 API bindings
+of [zigwin32](https://github.com/marlersoft/zigwin32), which rstd vendors,
+also MIT licensed, whose notice `LICENSE` includes as well.

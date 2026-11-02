@@ -215,9 +215,8 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
 
 /// `zig build conda-recipe -- (--release | --local) ARCHIVE OUT_DIR`: the
 /// conda-forge recipe of packaging/conda-forge, for the zfls source archive
-/// ARCHIVE, with the Zig packages it provides pinned as the build.zig.zon
-/// files pin them (build/conda_recipe.zig). Paths are relative to the
-/// repository. Returns the generator's unit tests.
+/// ARCHIVE (build/conda_recipe.zig). Paths are relative to the repository.
+/// Returns the generator's unit tests.
 fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     const gen_mod = b.createModule(.{
         .root_source_file = b.path("build/conda_recipe.zig"),
@@ -226,12 +225,8 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     const gen = b.addRunArtifact(b.addExecutable(.{ .name = "conda_recipe", .root_module = gen_mod }));
     gen.setCwd(b.path(""));
     gen.addDirectoryArg(b.path("packaging/conda-forge"));
-    // Windows builds only: rstd's Win32 bindings, until rstd has them as a
-    // submodule (which the source archive includes)
-    const win32 = rstd.buildroot.zon.dependencies.win32;
-    if (@hasField(@TypeOf(win32), "url")) gen.addArgs(&.{ "--pin", "zigwin32", win32.url, win32.hash });
     gen.addPassthruArgs();
-    // downloads, and writes outside the cache
+    // writes outside the cache
     gen.has_side_effects = true;
     b.step("conda-recipe", "Write the conda-forge recipe for a zfls source archive (-- --release|--local ARCHIVE OUT_DIR)").dependOn(&gen.step);
     return b.addTest(.{ .root_module = gen_mod });
