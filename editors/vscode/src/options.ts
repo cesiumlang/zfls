@@ -98,6 +98,8 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
     }
   }
   args.push(...linterArguments(folder));
+  args.push(...fortitudeArguments(folder));
+  args.push(...codeeArguments(folder));
   args.push(...config.get<string[]>("arguments", []));
   return args;
 }
@@ -152,7 +154,7 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   if (config.get<boolean>("fypp.enabled", false)) {
     const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
     // a name is looked for on the PATH; a path is resolved
-    args.push("--compiler_fypp", /[\\/]/.test(fypp) ? resolvePath(fypp, folder) : expandVariables(fypp, folderVariables(folder)));
+    args.push("--compiler_fypp", programPath(fypp, folder));
     const fyppArgs = [
       ...directories(config.get<string[]>("fypp.includes", []), folder).map((d) => `-I${d}`),
       ...Object.entries(config.get<Record<string, string>>("fypp.definitions", {})).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
@@ -165,12 +167,61 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   return args;
 }
 
+/** A program's path setting: a name is looked for on the PATH, a path is
+ * resolved */
+function programPath(value: string, folder: vscode.WorkspaceFolder | undefined): string {
+  return /[\\/]/.test(value) ? resolvePath(value, folder) : expandVariables(value, folderVariables(folder));
+}
+
+/** The zfls options of fortitude (zfls.fortitude settings): zfls runs it
+ * and offers its fixes (src/server/linters.zig) */
+function fortitudeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
+  const config = vscode.workspace.getConfiguration("zfls.fortitude", folder?.uri);
+  if (!config.get<boolean>("enabled", false)) {
+    return [];
+  }
+  const args = ["--fortitude"];
+  const exe = config.get<string>("path", "").trim();
+  if (exe) {
+    args.push("--fortitude_path", programPath(exe, folder));
+  }
+  const extra = config.get<string[]>("args", []).filter((a) => a !== "");
+  if (extra.length) {
+    args.push(`--fortitude_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+  }
+  if (config.get<boolean>("lintOnType", false)) {
+    args.push("--fortitude_on_change", "--fortitude_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 500))));
+  }
+  return args;
+}
+
+/** The zfls options of Codee (zfls.codee settings); `${file}` in its
+ * arguments is left for zfls, which puts each file there */
+function codeeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
+  const config = vscode.workspace.getConfiguration("zfls.codee", folder?.uri);
+  if (!config.get<boolean>("enabled", false)) {
+    return [];
+  }
+  const args = ["--codee"];
+  const exe = config.get<string>("path", "").trim();
+  if (exe) {
+    args.push("--codee_path", programPath(exe, folder));
+  }
+  const extra = config.get<string[]>("args", []).filter((a) => a !== "");
+  if (extra.length) {
+    args.push(`--codee_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+  }
+  return args;
+}
+
 /** Whether a configuration change needs the language servers restarted */
 export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
   return (
     e.affectsConfiguration("zfls.path") ||
     e.affectsConfiguration("zfls.arguments") ||
     e.affectsConfiguration("zfls.linter") ||
+    e.affectsConfiguration("zfls.fortitude") ||
+    e.affectsConfiguration("zfls.codee") ||
     OPTIONS.some((o) => e.affectsConfiguration(`zfls.${o.setting}`))
   );
 }

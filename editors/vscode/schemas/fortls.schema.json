@@ -300,6 +300,62 @@
       },
       "default": []
     },
+    "fortitude": {
+      "description": "Lint files with fortitude (pip install fortitude-lint) when they are opened and saved: its problems are warnings, its fixes quick fixes, and source.fixAll.fortitude applies the safe ones",
+      "type": "boolean",
+      "default": false
+    },
+    "fortitude_path": {
+      "description": "fortitude's executable (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fortitude_args": {
+      "description": "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "fortitude_on_change": {
+      "description": "Also lint a file with fortitude while it is edited, after fortitude_change_delay milliseconds without a change",
+      "type": "boolean",
+      "default": false
+    },
+    "fortitude_change_delay": {
+      "description": "With fortitude_on_change, the milliseconds without a change before linting (default: 500)",
+      "type": "integer",
+      "default": 500
+    },
+    "codee": {
+      "description": "Check files with Codee (codee checks, a commercial tool) when they are opened and saved",
+      "type": "boolean",
+      "default": false
+    },
+    "codee_path": {
+      "description": "Codee's executable (default: the one on the PATH)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "codee_args": {
+      "description": "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file",
+      "type": [
+        "array",
+        "string"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
     "symbol_skip_mem": {
       "description": "Do not include type members in document symbol results",
       "type": "boolean",

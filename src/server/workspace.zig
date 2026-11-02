@@ -31,6 +31,7 @@ const definition = @import("definition.zig");
 const references = @import("references.zig");
 const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
+const linters = @import("linters.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
@@ -67,7 +68,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
         .textDocumentSync = self.sync_type,
         .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
-        .codeActionProvider = if (self.s.enable_code_actions) true else null,
+        .codeActionProvider = if (self.s.enable_code_actions or self.s.fortitude) true else null,
         .semanticTokensProvider = .{ .legend = semantic.legend },
         .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
     } });
@@ -523,7 +524,10 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         try self.mergePpDefs(&out.defs);
     }
     // the compiler checks the unsaved text after a pause (compiler_on_change)
-    if (!self.s.disable_diagnostics) compile.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ path, @errorName(e) });
+    if (!self.s.disable_diagnostics) {
+        compile.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ path, @errorName(e) });
+        linters.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("linters of {s}: {s}", .{ path, @errorName(e) });
+    }
     return .null;
 }
 
@@ -560,7 +564,11 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     };
     if (changed) try fullRelink(self, a);
     // the compiler checks the file as saved, on its own thread
-    if (!did_close and !self.s.disable_diagnostics) compile.check(self, a, uri, filepath, if (did_open) .open else .save) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
+    if (!did_close and !self.s.disable_diagnostics) {
+        const trigger: compile.Trigger = if (did_open) .open else .save;
+        compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
+        linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });
+    }
     // a change can change the diagnostics of the files that use it
     if (changed and self.s.workspace_diagnostics) {
         diagnostics.publishWorkspace(self, a);

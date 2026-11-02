@@ -35,7 +35,6 @@ Not scheduled yet:
   the server:
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
-  - fortitude and Codee checks as the server's diagnostics
   - formatting with findent or fprettify as the server's formatting
   - the outline of namelist files (`.nml`) as the server's document symbols
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
