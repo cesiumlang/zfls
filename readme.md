@@ -676,4 +676,4 @@ copyright notices `LICENSE` includes. The intrinsic procedure documentation
 comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
 project, also MIT licensed, whose notice `LICENSE` includes too: the
 `vendor/M_intrinsics` submodule, which a scheduled workflow moves to
-upstream's latest commit.
+upstream latest commit.
