@@ -1,12 +1,12 @@
 name: M_intrinsics update
 
-# The intrinsic procedure documentation zfls embeds is the M_intrinsics
-# package build.zig.zon pins (build/intrinsic_docs.zig). Each week, when
-# upstream has moved past the version main pins, this opens (or refreshes) a
-# pull request to main that pins upstream's latest commit in build.zig.zon,
-# at the next patch version: merging it releases that patch (the conda-forge
-# recipe takes the pin from build.zig.zon). CI then merges the release into
-# dev, as after every release.
+# The intrinsic procedure documentation zfls embeds comes from the
+# vendor/M_intrinsics submodule (build/intrinsic_docs.zig). Each week, when
+# upstream has moved past the commit main's submodule is at, this opens (or
+# refreshes) a pull request to main that moves it to upstream's latest
+# commit, at the next patch version: merging it releases that patch (whose
+# source archive, which the conda-forge recipe builds, includes it). CI then
+# merges the release into dev, as after every release.
 #
 # Pull requests opened with the workflow's token get no pull_request runs, so
 # this starts CI on the branch itself; its checks are those of the pull
@@ -24,8 +24,8 @@ concurrency:
   group: ${{ github.workflow }}
 
 env:
-  ZIG_VERSION: 0.17.0
   UPSTREAM: urbanjost/M_intrinsics
+  SUBMODULE: vendor/M_intrinsics
   BRANCH: bot/m-intrinsics
 
 defaults:
@@ -51,15 +51,16 @@ jobs:
       - name: Compare the pinned commit with upstream's
         id: check
         run: |
-          pinned_commit() { sed -nE 's|^\s*\.url = "https://github.com/'"$UPSTREAM"'/archive/([0-9a-f]{40})\.tar\.gz",|\1|p'; }
-          pinned=$(pinned_commit < build.zig.zon)
-          if [ -z "$pinned" ] && ! grep -q '^\s*\.m_intrinsics = ' build.zig.zon; then
-            echo "main does not use the M_intrinsics package yet" | tee -a "$GITHUB_STEP_SUMMARY"
+          # the commit a tree's submodule is at (its gitlink)
+          pinned_commit() { git ls-tree "$1" "$SUBMODULE" | awk '$2 == "commit" { print $3 }'; }
+          pinned=$(pinned_commit HEAD)
+          if [ -z "$pinned" ]; then
+            echo "main does not have the $SUBMODULE submodule yet" | tee -a "$GITHUB_STEP_SUMMARY"
             echo "update=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           latest=$(gh api "repos/$UPSTREAM/commits/HEAD" --jq .sha)
-          if [ -z "$pinned" ] || [ -z "$latest" ]; then
+          if [ -z "$latest" ]; then
             echo "::error::cannot read the pinned ($pinned) or latest ($latest) M_intrinsics commit"
             exit 1
           fi
@@ -68,7 +69,7 @@ jobs:
           if [ "$pinned" = "$latest" ]; then
             update=false
           elif git fetch -q origin "$BRANCH" 2>/dev/null \
-              && [ "$(git show "origin/$BRANCH:build.zig.zon" | pinned_commit)" = "$latest" ] \
+              && [ "$(pinned_commit "origin/$BRANCH")" = "$latest" ] \
               && git merge-base --is-ancestor origin/main "origin/$BRANCH"; then
             echo "$BRANCH already pins it on top of main" | tee -a "$GITHUB_STEP_SUMMARY"
             update=false
@@ -79,19 +80,14 @@ jobs:
             echo "update=$update"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
-        if: steps.check.outputs.update == 'true'
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
       - name: Pin it at the next patch version
         id: pin
         if: steps.check.outputs.update == 'true'
         env:
           LATEST: ${{ steps.check.outputs.latest }}
         run: |
-          url="https://github.com/$UPSTREAM/archive/$LATEST.tar.gz"
-          zig fetch --save=m_intrinsics "$url"
+          # the gitlink alone: nothing of the submodule is checked out
+          git update-index --cacheinfo "160000,$LATEST,$SUBMODULE"
 
           tagged() { git rev-parse -q --verify "refs/tags/v$1" >/dev/null; }
           version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)
