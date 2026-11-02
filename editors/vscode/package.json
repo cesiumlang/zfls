@@ -899,6 +899,11 @@
         "category": "%command.category%"
       },
       {
+        "command": "zfls.setUpIfx",
+        "title": "%command.zfls.setUpIfx.title%",
+        "category": "%command.category%"
+      },
+      {
         "command": "zfls.restart",
         "title": "%command.zfls.restart.title%",
         "category": "%command.category%"
@@ -983,6 +988,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "zfls.setUpIfx",
+          "when": "isWindows"
+        },
         {
           "command": "zfls.runFile",
           "when": "editorLangId =~ /^Fortran(Free|Fixed)Form$/ && !virtualWorkspace && shellExecutionSupported"

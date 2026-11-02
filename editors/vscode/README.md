@@ -375,7 +375,25 @@ debug the programs of `ifx`, `ifort` and LLVM Flang on Windows (their debug
 information is Microsoft's), nor run on macOS on Arm, where lldb, which
 knows no Fortran, is the debugger. With Intel's compilers on Windows,
 start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
-that the compiler finds the linker and libraries.
+that the compiler finds the linker and libraries, or set up ifx without
+Visual Studio:
+
+### ifx without Visual Studio (Windows x64)
+
+**zfls: Set Up ifx (Intel Fortran) without Visual Studio** sets up Intel's
+ifx from Intel's Fortran offline installer for Windows, which you download
+from
+[Intel](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler-download.html)
+(the command opens the page): it shows Intel's license from the installer
+and, once you accept it, unpacks the compiler without running the installer
+(no administrator rights, nothing registered, about 210 MB in
+`%LOCALAPPDATA%\zfls\ifx`) and sets it up to link with its own `lld-link`
+and zfls's ifx kit instead of Visual Studio's linker and libraries. It then
+offers to set `zfls.run.compiler`, `zfls.run.compilerPath` and
+`zfls.fpm.compiler` to it. Programs are built with `/MD` (the C runtime of
+Windows); debugging them needs the C/C++ extension's Visual Studio debugger
+(`cppvsdbg`), as for any ifx program. The same is `zfls setup-ifx` on the
+command line (see zfls's readme).
 
 ### The `fortran` debug type
 
