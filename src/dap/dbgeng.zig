@@ -255,6 +255,19 @@ pub const Engine = struct {
         if (succeeded(self.system.GetCurrentProcessSystemId(&pid))) self.own_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         // steps by source lines (once there is a target)
         _ = self.control.SetCodeLevel(dbg.DEBUG_LEVEL_SOURCE);
+        // the program's own symbols now (the engine loads them lazily), for
+        // the breakpoints of its lines
+        var name: [256:0]u16 = undefined;
+        var len: u32 = 0;
+        if (succeeded(self.symbols.GetModuleNameStringWide(dbg.DEBUG_MODNAME_MODULE, 0, 0, &name, name.len, &len)) and len > 1) {
+            var cmd: [300:0]u16 = undefined;
+            const prefix = std.unicode.utf8ToUtf16LeStringLiteral("/f ");
+            @memcpy(cmd[0..prefix.len], prefix);
+            const n = @min(len - 1, cmd.len - prefix.len - 1);
+            @memcpy(cmd[prefix.len..][0..n], name[0..n]);
+            cmd[prefix.len + n] = 0;
+            _ = self.symbols.ReloadWide(&cmd);
+        }
         var h: u64 = 0;
         try ok(self.system.GetCurrentProcessHandle(&h));
         self.process = @intCast(h);
@@ -273,7 +286,17 @@ pub const Engine = struct {
         var id: u32 = 0;
         try ok(b.GetId(&id));
         var offset: u64 = 0;
-        return .{ .id = id, .offset = if (succeeded(b.GetOffset(&offset))) offset else null };
+        if (!succeeded(b.GetOffset(&offset))) {
+            // its module's symbols not loaded yet: once more after a reload
+            _ = self.symbols.ReloadWide(std.unicode.utf8ToUtf16LeStringLiteral(""));
+            _ = b.SetOffsetExpressionWide(wexpr.ptr);
+            const hr = b.GetOffset(&offset);
+            if (!succeeded(hr)) {
+                last_failure = @bitCast(hr);
+                return .{ .id = id, .offset = null };
+            }
+        }
+        return .{ .id = id, .offset = offset };
     }
 
     /// A breakpoint at a symbol (`MAIN__`, a runtime's function), maybe once

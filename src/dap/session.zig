@@ -55,6 +55,9 @@ const Session = struct {
     /// The breakpoints on the Fortran runtime's errors, and the function of
     /// the last one hit
     error_breakpoints: std.ArrayList(u32) = .empty,
+    /// The breakpoints whose lines had no code yet (a module not loaded):
+    /// their lines, until they have
+    unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     last_error: []const u8 = "",
     attached: bool = false,
     /// Breakpoints by source file: the engine's ids
@@ -166,6 +169,7 @@ pub fn run(gpa: Allocator, io: Io, args: []const []const u8) !u8 {
         }
         s.breakpoints.deinit(gpa);
         s.error_breakpoints.deinit(gpa);
+        s.unverified.deinit(gpa);
         s.nodes.deinit(gpa);
         for (s.queue.items.items) |b| gpa.free(b);
         s.queue.items.deinit(gpa);
@@ -276,7 +280,10 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             const gop = try s.breakpoints.getOrPut(s.gpa, key);
             if (gop.found_existing) {
                 s.gpa.free(key);
-                for (gop.value_ptr.items) |id| s.engine.removeBreakpoint(id);
+                for (gop.value_ptr.items) |id| {
+                    s.engine.removeBreakpoint(id);
+                    _ = s.unverified.remove(id);
+                }
                 gop.value_ptr.clearRetainingCapacity();
             } else gop.value_ptr.* = .empty;
             var out: std.ArrayList(Value) = .empty;
@@ -287,7 +294,12 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
                     continue;
                 };
                 try gop.value_ptr.append(s.gpa, bp.id);
-                try out.append(a, try json.from(a, .{ .id = bp.id, .verified = bp.offset != null, .line = line }));
+                if (bp.offset != null) {
+                    try out.append(a, try json.from(a, .{ .id = bp.id, .verified = true, .line = line }));
+                } else {
+                    try s.unverified.put(s.gpa, bp.id, line);
+                    try out.append(a, try json.from(a, .{ .id = bp.id, .verified = false, .line = line, .message = try a.print("not resolved yet (0x{x})", .{dbgeng.last_failure}) }));
+                }
             }
             s.respond(a, req, .{ .breakpoints = out.items });
         },
@@ -401,6 +413,14 @@ fn go(s: *Session, how: Engine.Resume, thread: ?u32) !void {
 
 fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
     s.running = false;
+    // breakpoints resolved since (a module loaded): the client is told
+    var it = s.unverified.iterator();
+    var resolved: std.ArrayList(u32) = .empty;
+    while (it.next()) |kv| if (s.engine.breakpointOffset(kv.key_ptr.*) != null) {
+        s.event(a, "breakpoint", .{ .reason = "changed", .breakpoint = .{ .id = kv.key_ptr.*, .verified = true, .line = kv.value_ptr.* } });
+        resolved.append(a, kv.key_ptr.*) catch {};
+    };
+    for (resolved.items) |id| _ = s.unverified.remove(id);
     switch (stop) {
         .running => s.running = true,
         .exited => |code| {

@@ -95,7 +95,7 @@ def main() -> int:
         c.request("launch", {"program": str(exe), "cwd": str(tmp), "console": "internalConsole", "sourceRoot": str(SOURCE.parent)})
         c.event("initialized")
         bps = c.request("setBreakpoints", {"source": {"path": str(SOURCE)}, "breakpoints": [{"line": 8}]})
-        check(bps["breakpoints"][0]["verified"], "a verified breakpoint")
+        check(bps["breakpoints"][0]["verified"], f"a verified breakpoint ({bps['breakpoints'][0]})")
         c.request("setExceptionBreakpoints", {"filters": []})
         c.request("configurationDone")
 
