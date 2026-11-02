@@ -207,7 +207,8 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(eql(try listed(a, columns), "(:,1)=[-10, -20]:b(:,1) (:,2)=[0, 0]:b(:,2) (:,3)=[10, 20]:b(:,3)"), "b's columns: {s}", .{try listed(a, columns)});
     const first = try variables(c, columns[0]);
     try check(eql(try listed(a, first), "(1,1)=-10:b(1,1) (2,1)=-20:b(2,1)"), "b's first column: {s}", .{try listed(a, first)});
-    try check(eql(str(try named(args, "s"), "value"), "'abcdef'"), "s = {s}", .{str(try named(args, "s"), "value").?});
+    const sv = try named(args, "s");
+    try check(eql(str(sv, "value"), "'abcdef'"), "s = {s} ({s})", .{ str(sv, "value").?, str(sv, "type") orelse "?" });
     const p = try named(args, "p");
     try check(eql(str(p, "value"), "point(x=9.0, y=-2.0, id=7)"), "p = {s}", .{str(p, "value").?});
     try check(eql(str(try named(try variables(c, p), "x"), "evaluateName"), "p%x"), "p%x", .{});

@@ -366,6 +366,9 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         return out;
     }
     const at = try fortran.arrayType(a, v.type);
+    // a string whose type reads as an array of characters (a dummy's of
+    // assumed length, in gdb 15): gdb's value is the string
+    if (at != null and sub == null and v.value.len > 0 and v.value[0] == '\'') return out;
     if (at != null or sub != null) {
         if (at) |t| if (sub == null and fortran.isUnallocated(t)) {
             out.value = if (t.allocatable) s.text.not_allocated else s.text.not_associated;
@@ -551,6 +554,20 @@ test "a large array: a preview of its first elements, and sections" {
     try std.testing.expectEqualStrings("(200:249)", sections[2].name);
     try std.testing.expectEqualStrings("big(200:249)", sections[2].evaluate_name.?);
     try std.testing.expectEqualStrings("evaluate big(0:5); variables 9; ", fake.asked.items);
+}
+
+test "a string typed as an array of characters: the string" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    var fake: FakeGdb = .{};
+    var s = testSession(&env, &fake);
+    defer testDeinit(&s);
+    const v = try present(&s, a, .{ .name = "s", .value = "'abcdef'", .type = "character (6)", .ref = 0 }, "s", "s", 1, null, null);
+    try std.testing.expectEqualStrings("'abcdef'", v.value);
+    try std.testing.expectEqual(@as(i64, 0), v.ref);
+    try std.testing.expectEqualStrings("", fake.asked.items);
 }
 
 test "a pointer as its target; a null one, an unallocated array" {
