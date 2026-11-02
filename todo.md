@@ -108,10 +108,10 @@ Editor features:
   in front of gdb's Debug Adapter Protocol (`gdb -i=dap`, gdb 14+ with
   Python), the default when there is one, and for any editor with a client
   of the Debug Adapter Protocol (nvim-dap, dape, Helix): Fortran values in
-  the Variables view itself (array elements by their subscripts and bounds, large arrays in
-  sections, previews of arrays and derived types, unallocated arrays,
-  polymorphic objects by their dynamic type, hidden CHARACTER lengths left
-  out), the module variables as a scope, Fortran expressions for watches
+  the Variables view itself (array elements by their subscripts and
+  bounds, large arrays in sections, previews of arrays and derived types,
+  unallocated arrays, polymorphic objects by their dynamic type, hidden
+  CHARACTER lengths left out), the module variables as a scope, Fortran expressions for watches
   and setting values, a stop at Fortran runtime errors and ERROR STOP,
   the program in a terminal for its input, attaching to a process or a
   gdbserver. FB #10. lldb has no Fortran (no type system for it), so
