@@ -244,7 +244,7 @@ fn addReleaseTool(b: *std.Build, name: []const u8, step: []const u8, desc: []con
         .root_source_file = b.path(b.fmt("build/{s}.zig", .{name})),
         .target = b.graph.host,
         // compressing the source archive takes minutes in Debug
-        .optimize = .ReleaseSafe,
+        .optimize = .safe,
     });
     const run = b.addRunArtifact(b.addExecutable(.{ .name = name, .root_module = tool_mod }));
     run.setCwd(b.path(""));
