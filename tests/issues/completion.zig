@@ -139,7 +139,7 @@ fn expectAutoUse(w: *h.Workspace) !void {
     var items = try w.completionItems("sim.f90", w.pos("sim.f90", "v = grav", 0, 8));
     const g = find(items, "gravity") orelse return h.unmet("gravity not offered: {any}", .{items});
     try h.expect(g.added != null and std.mem.eql(u8, g.added.?, "    use consts, only: gravity\n") and g.added_line == step_line + 1, "gravity adds {?s} before line {d}", .{ g.added, g.added_line });
-    try h.expect(std.mem.indexOf(u8, g.detail, "(use consts)") != null, "detail: {s}", .{g.detail});
+    try h.expect(std.mem.find(u8, g.detail, "(use consts)") != null, "detail: {s}", .{g.detail});
     // not a private one
     items = try w.completionItems("sim.f90", w.pos("sim.f90", "v = hidd", 0, 8));
     try h.expect(find(items, "hidden_value") == null, "a private name is offered", .{});

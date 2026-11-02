@@ -152,11 +152,11 @@ pub const Ast = struct {
     }
 
     pub fn addPrivate(self: *Ast, name: []const u8) !void {
-        try self.private_list.append(self.allocator(), try std.fmt.allocPrint(self.allocator(), "{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
+        try self.private_list.append(self.allocator(), try self.allocator().print("{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
     }
 
     pub fn addPublic(self: *Ast, name: []const u8) !void {
-        try self.public_list.append(self.allocator(), try std.fmt.allocPrint(self.allocator(), "{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
+        try self.public_list.append(self.allocator(), try self.allocator().print("{s}::{s}", .{ self.enc_scope_name orelse "None", name }));
     }
 
     pub fn addUse(self: *Ast, use_mod: *UseStmt) !void {
@@ -290,11 +290,11 @@ pub const Ast = struct {
     /// (absolute), as `#include` is (upstream #301)
     fn findInclude(workspace: anytype, file_dir: []const u8, include_dirs: []const []const u8, name: []const u8, tmp: Allocator) !?[]const u8 {
         // `#include` directives are resolved to absolute paths by the preprocessor
-        if (std.fs.path.isAbsolute(name)) return try parser.normPath(tmp, name);
-        const local = try parser.normPath(tmp, try std.fs.path.join(tmp, &.{ file_dir, name }));
+        if (std.Io.Dir.path.isAbsolute(name)) return try parser.normPath(tmp, name);
+        const local = try parser.normPath(tmp, try std.Io.Dir.path.join(tmp, &.{ file_dir, name }));
         if (workspace.get(local) != null) return local;
         for (include_dirs) |dir| {
-            const candidate = try parser.normPath(tmp, try std.fs.path.join(tmp, &.{ dir, name }));
+            const candidate = try parser.normPath(tmp, try std.Io.Dir.path.join(tmp, &.{ dir, name }));
             if (workspace.get(candidate) != null) return candidate;
         }
         return null;
@@ -303,7 +303,7 @@ pub const Ast = struct {
     /// Link the objects of included files into the including scopes
     pub fn resolveIncludes(self: *Ast, workspace: anytype, include_dirs: []const []const u8, only_path: ?[]const u8, tmp: Allocator) !void {
         const path = self.path orelse return;
-        const file_dir = std.fs.path.dirname(path) orelse "";
+        const file_dir = std.Io.Dir.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
             const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse continue;
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
@@ -344,7 +344,7 @@ pub const Ast = struct {
         if (self.none_scope) |ns| try tmp_list.append(a, ns);
         for (self.end_errors.items) |e| {
             const message = if (e.end_line) |el|
-                try std.fmt.allocPrint(a, "Unexpected end of scope at line {d}", .{el})
+                try a.print("Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
             try errors.append(a, Diagnostic.init(.unexpected_end, e.scope_line -| 1, message, 1, null));
@@ -354,7 +354,7 @@ pub const Ast = struct {
                 try errors.append(a, Diagnostic.init(
                     .invalid_parent,
                     scope.sline -| 1,
-                    try std.fmt.allocPrint(a, "Invalid parent for \"{s}\" declaration", .{try scope.getDesc(a)}),
+                    try a.print("Invalid parent for \"{s}\" declaration", .{try scope.getDesc(a)}),
                     1,
                     null,
                 ));

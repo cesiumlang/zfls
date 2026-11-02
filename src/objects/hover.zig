@@ -75,9 +75,9 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
             var kws: std.ArrayList([]const u8) = .empty;
             try kws.append(a, "TYPE");
             if (self.typeDataConst().abstract) try kws.append(a, "ABSTRACT");
-            if (self.scopeDataConst().inherit) |inh| if (inh.len > 0) try kws.append(a, try std.fmt.allocPrint(a, "EXTENDS({s})", .{inh}));
+            if (self.scopeDataConst().inherit) |inh| if (inh.len > 0) try kws.append(a, try a.print("EXTENDS({s})", .{inh}));
             const decl = try std.mem.join(a, ", ", kws.items);
-            return .{ .msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ decl, self.name }), .docs = self.getDocumentation() };
+            return .{ .msg = try a.print("{s} :: {s}", .{ decl, self.name }), .docs = self.getDocumentation() };
         },
         .subroutine => {
             const sig = try self.getSnippet(a, null, drop_arg);
@@ -96,23 +96,23 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
         .function => {
             const proc = self.procDataConst();
             var fun_sig = (try self.getSnippet(a, null, drop_arg)).call.?;
-            if (long) fun_sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ fun_sig, proc.result_name orelse self.name });
+            if (long) fun_sig = try a.print("{s} RESULT({s})", .{ fun_sig, proc.result_name orelse self.name });
             var kw: std.ArrayList([]const u8) = .empty;
             try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
             try kw.append(a, "FUNCTION");
             var hover_array: std.ArrayList([]const u8) = .empty;
-            try hover_array.append(a, try std.fmt.allocPrint(a, "{s} {s}", .{ try std.mem.join(a, " ", kw.items), fun_sig }));
+            try hover_array.append(a, try a.print("{s} {s}", .{ try std.mem.join(a, " ", kw.items), fun_sig }));
             var docs: std.ArrayList([]const u8) = .empty;
             try self.getDocsFull(a, &hover_array, &docs, long, drop_arg);
             if (proc.result_obj != null and long) {
                 const ro = proc.result_obj.?;
                 const h = try ro.getHover(a, false, null);
                 if (h.docs) |d| {
-                    try docs.append(a, try std.fmt.allocPrint(a, "\n**Return:**  \n`{s}`{s}", .{ ro.name, d }));
+                    try docs.append(a, try a.print("\n**Return:**  \n`{s}`{s}", .{ ro.name, d }));
                 }
                 try hover_array.append(a, h.msg orelse "None");
             } else if (proc.result_type != null and proc.result_type.?.len > 0 and long) {
-                hover_array.items[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ proc.result_type.?, hover_array.items[0] });
+                hover_array.items[0] = try a.print("{s} {s}", .{ proc.result_type.?, hover_array.items[0] });
             }
             return .{
                 .msg = try std.mem.join(a, "\n ", hover_array.items),
@@ -125,9 +125,9 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
             try parts.append(a, try self.getDesc(a));
             try parts.appendSlice(a, try self.getKeywordStrings(a));
             var hover = try std.mem.join(a, ", ", parts.items);
-            if (!std.mem.startsWith(u8, hover, "#")) hover = try std.fmt.allocPrint(a, "{s} :: {s}", .{ hover, self.name });
+            if (!std.mem.startsWith(u8, hover, "#")) hover = try a.print("{s} :: {s}", .{ hover, self.name });
             if (self.isParameter()) if (self.varDataConst().param_val) |pv| {
-                hover = try std.fmt.allocPrint(a, "{s} = {s}", .{ hover, pv });
+                hover = try a.print("{s} = {s}", .{ hover, pv });
             };
             return .{ .msg = hover, .docs = doc_str };
         },
@@ -147,7 +147,7 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
                 }
             } else {
                 const sig = try self.getSnippet(a, null, null);
-                hover_str = try std.fmt.allocPrint(a, "{s} {s}", .{ try self.getDesc(a), sig.call orelse "None" });
+                hover_str = try a.print("{s} {s}", .{ try self.getDesc(a), sig.call orelse "None" });
             }
             return .{ .msg = hover_str, .docs = docs };
         },
@@ -202,8 +202,8 @@ pub fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([
                 has_args = false;
             }
             // a list in the previous parameter's text would swallow this one
-            const entry = str.strip(try std.fmt.allocPrint(a, "`{s}` {s}", .{ arg_obj.name, d }));
-            try doc_strs.append(a, if (in_list) try std.fmt.allocPrint(a, "\n{s}", .{entry}) else entry);
+            const entry = str.strip(try a.print("`{s}` {s}", .{ arg_obj.name, d }));
+            try doc_strs.append(a, if (in_list) try a.print("\n{s}", .{entry}) else entry);
             in_list = endsInListItem(entry);
         };
     }
@@ -211,7 +211,7 @@ pub fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([
 
 /// Whether the last line of a Markdown text is a list item (`- x`, `* x`, `+ x`, `1. x`)
 pub fn endsInListItem(text: []const u8) bool {
-    const nl = std.mem.lastIndexOfScalar(u8, text, '\n');
+    const nl = std.mem.findScalarLast(u8, text, '\n');
     const line = std.mem.trimStart(u8, if (nl) |n| text[n + 1 ..] else text, " \t");
     if (line.len >= 2 and (line[0] == '-' or line[0] == '*' or line[0] == '+') and line[1] == ' ') return true;
     var i: usize = 0;
@@ -228,7 +228,7 @@ pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: ?usize) Allocator.
                 if (i == drop_arg) continue;
                 if (arg_obj_opt) |arg_obj| {
                     const lname = try std.ascii.allocLowerString(a, arg_obj.name);
-                    const label = if (arg_obj.isOptional()) try std.fmt.allocPrint(a, "{s}={s}", .{ lname, lname }) else lname;
+                    const label = if (arg_obj.isOptional()) try a.print("{s}={s}", .{ lname, lname }) else lname;
                     try arg_sigs.append(a, .{ .label = label, .doc_md = try arg_obj.getHoverMd(a, false, null) });
                 } else {
                     try arg_sigs.append(a, .{ .label = if (i < arg_list.len) arg_list[i] else "" });
@@ -270,11 +270,11 @@ pub fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []con
             }
         }
         // the hover of a variable ends with its name already
-        const named = try std.fmt.allocPrint(a, ":: {s}", .{arg_obj.name});
+        const named = try a.print(":: {s}", .{arg_obj.name});
         if (std.ascii.endsWithIgnoreCase(arg_doc, named)) {
             try arr.append(a, arg_doc);
         } else {
-            try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ arg_doc, arg_obj.name }));
+            try arr.append(a, try a.print("{s} :: {s}", .{ arg_doc, arg_obj.name }));
         }
     }
     return arr;
@@ -289,12 +289,12 @@ pub fn getInterface(self: *const Obj, a: Allocator, name_replace: ?[]const u8, d
             try kw.append(a, "SUBROUTINE ");
             var arr = (try self.getInterfaceArray(a, kw.items, sig, drop_arg, change_strings)) orelse return null;
             const name = name_replace orelse self.name;
-            try arr.append(a, try std.fmt.allocPrint(a, "END SUBROUTINE {s}", .{name}));
+            try arr.append(a, try a.print("END SUBROUTINE {s}", .{name}));
             return try std.mem.join(a, "\n", arr.items);
         },
         .function => {
             var sig = (try self.getSnippet(a, name_replace, null)).call.?;
-            sig = try std.fmt.allocPrint(a, "{s} RESULT({s})", .{ sig, self.procDataConst().result_name orelse self.name });
+            sig = try a.print("{s} RESULT({s})", .{ sig, self.procDataConst().result_name orelse self.name });
             var kw: std.ArrayList([]const u8) = .empty;
             if (self.procDataConst().result_type) |rt| if (rt.len > 0) try kw.append(a, rt);
             try kw.appendSlice(a, try helpers.getKeywords(a, self.keywords.items, .{}));
@@ -302,10 +302,10 @@ pub fn getInterface(self: *const Obj, a: Allocator, name_replace: ?[]const u8, d
             var arr = (try self.getInterfaceArray(a, kw.items, sig, drop_arg, change_strings)) orelse return null;
             if (self.procDataConst().result_obj) |ro| {
                 const h = try ro.getHover(a, false, null);
-                try arr.append(a, try std.fmt.allocPrint(a, "{s} :: {s}", .{ h.msg orelse "None", ro.name }));
+                try arr.append(a, try a.print("{s} :: {s}", .{ h.msg orelse "None", ro.name }));
             }
             const name = name_replace orelse self.name;
-            try arr.append(a, try std.fmt.allocPrint(a, "END FUNCTION {s}", .{name}));
+            try arr.append(a, try a.print("END FUNCTION {s}", .{name}));
             return try std.mem.join(a, "\n", arr.items);
         },
         .method => {

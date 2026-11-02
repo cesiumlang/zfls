@@ -121,7 +121,7 @@ const Tokenizer = struct {
     /// The object `name` stands for in `scope` (not intrinsics)
     fn lookup(t: *Tokenizer, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(t.a, name);
-        const key = try std.fmt.allocPrint(t.a, "{x}:{s}", .{ @intFromPtr(scope), lower });
+        const key = try t.a.print("{x}:{s}", .{ @intFromPtr(scope), lower });
         const gop = try t.cache.getOrPut(t.a, key);
         if (gop.found_existing) return gop.value_ptr.*;
         var found = try objects.findInScope(t.env, scope, lower, .{ .var_line_number = line_no });
@@ -183,7 +183,7 @@ const Tokenizer = struct {
             code = code[0..@min(n, code.len)];
             if (t.unknown == null) try t.add(ln, raw, n, raw.len, .{ .type = .comment });
         };
-        if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
         // fypp's inline expressions (`eg_${name}$_t`) are no Fortran: blank
         // them, and leave the pieces of a name around them alone
         code = try blankFyppInline(t.a, code);
@@ -514,11 +514,11 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
 /// `code` with each fypp inline expression `${...}$` written as `$` and
 /// spaces (same length), so that its words are not read as names
 fn blankFyppInline(a: Allocator, code: []const u8) ![]const u8 {
-    const first = std.mem.indexOf(u8, code, "${") orelse return code;
+    const first = std.mem.find(u8, code, "${") orelse return code;
     const out = try a.dupe(u8, code);
     var i = first;
-    while (std.mem.indexOfPos(u8, out, i, "${")) |s| {
-        const e = std.mem.indexOfPos(u8, out, s + 2, "}$") orelse break;
+    while (std.mem.findPos(u8, out, i, "${")) |s| {
+        const e = std.mem.findPos(u8, out, s + 2, "}$") orelse break;
         @memset(out[s + 1 .. e + 1], ' ');
         i = e + 2;
     }

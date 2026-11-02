@@ -174,7 +174,7 @@ pub fn serveOutgoing(self: *Server, a: Allocator, params: lsp.CallHierarchyCalls
         const raw = file.getLine(ln, false) orelse continue;
         if (helpers.isComment(file.fixed, raw)) continue;
         var code = try helpers.stripStrings(a, raw, true);
-        if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
         var it = helpers.words(code);
         while (it.next()) |w| {
             if (!isCall(code, w.start, w.end)) continue;

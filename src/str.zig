@@ -20,7 +20,7 @@ pub fn rstrip(s: []const u8) []const u8 {
 
 /// Python `s.split(sep)[0]`
 pub fn beforeFirst(s: []const u8, sep: []const u8) []const u8 {
-    const i = std.mem.indexOf(u8, s, sep) orelse return s;
+    const i = std.mem.find(u8, s, sep) orelse return s;
     return s[0..i];
 }
 
@@ -43,7 +43,7 @@ pub fn splitWhitespace(a: Allocator, s: []const u8) ![][]const u8 {
 /// Python `s.replace(old, new, 1)`
 pub fn replaceFirst(a: Allocator, s: []const u8, old: []const u8, new: []const u8) ![]u8 {
     if (old.len == 0) return std.mem.concat(a, u8, &.{ new, s });
-    const i = std.mem.indexOf(u8, s, old) orelse return a.dupe(u8, s);
+    const i = std.mem.find(u8, s, old) orelse return a.dupe(u8, s);
     return std.mem.concat(a, u8, &.{ s[0..i], new, s[i + old.len ..] });
 }
 

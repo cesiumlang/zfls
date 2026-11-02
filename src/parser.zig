@@ -58,7 +58,7 @@ pub const Trace = struct {
     pub fn print(t: ?Trace, comptime fmt: []const u8, args: anytype) void {
         const tr = t orelse return;
         var buf: [16384]u8 = undefined;
-        const s = std.fmt.bufPrint(&buf, fmt, args) catch buf[0..];
+        const s = std.mem.print(&buf, fmt, args) catch buf[0..];
         tr.writeFn(tr.ctx, s);
     }
 };
@@ -98,7 +98,7 @@ pub fn describeFileError(e: FileError) []const u8 {
 
 /// `os.path.normpath`
 pub fn normPath(a: Allocator, path: []const u8) ![]const u8 {
-    return std.fs.path.resolve(a, &.{path}) catch path;
+    return std.Io.Dir.path.resolveAlloc(a, &.{path}) catch path;
 }
 
 /// Split text into lines by \r\n, \n, or \r
@@ -136,8 +136,8 @@ pub const CodeLine = struct {
 /// Index of the `&` of a free-form line that continues on the next line: the
 /// first one, unless a comment starts before it
 fn continuationAmpersand(line: []const u8) ?usize {
-    const amper = std.mem.indexOfScalar(u8, line, '&') orelse return null;
-    const comment = std.mem.indexOfScalar(u8, line, '!') orelse return amper;
+    const amper = std.mem.findScalar(u8, line, '&') orelse return null;
+    const comment = std.mem.findScalar(u8, line, '!') orelse return amper;
     return if (amper < comment) amper else null;
 }
 
@@ -192,7 +192,7 @@ pub const FortranFile = struct {
             .path = try gpa.dupe(u8, path),
             .pp_arena = std.heap.ArenaAllocator.init(gpa),
         };
-        const ext = std.fs.path.extension(std.fs.path.basename(path));
+        const ext = std.Io.Dir.path.extension(std.Io.Dir.path.basename(path));
         if (pp_suffixes) |sfx| {
             self.preproc = false;
             for (sfx) |s| if (std.mem.eql(u8, s, ext)) {
@@ -378,7 +378,7 @@ pub const FortranFile = struct {
                 while (line_ind > 0) {
                     const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
                     var tmp_no_comm = str.beforeFirst(tmp_line, "!");
-                    const cont_ind = std.mem.lastIndexOfScalar(u8, tmp_no_comm, '&');
+                    const cont_ind = std.mem.findScalarLast(u8, tmp_no_comm, '&');
                     if (helpers.freeContEnd(tmp_no_comm)) |e| {
                         if (cont_ind == e - 1) break;
                         tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), tmp_no_comm[e..] });
@@ -586,8 +586,8 @@ pub const FortranFile = struct {
         full_line = lr.line;
         if (lr.label != null) return true;
         const line_stripped = try helpers.stripStrings(a, full_line, true);
-        if (std.mem.indexOfScalar(u8, line_stripped, ';') != null) return true;
-        const line_no_comment = if (std.mem.indexOfScalar(u8, line_stripped, '!')) |ci| full_line[0..ci] else full_line;
+        if (std.mem.findScalar(u8, line_stripped, ';') != null) return true;
+        const line_no_comment = if (std.mem.findScalar(u8, line_stripped, '!')) |ci| full_line[0..ci] else full_line;
         if (R().END_WORD.match(line_no_comment) != null) return true;
         if (R().IMPLICIT.match(line_no_comment) != null) return true;
         if (R().CONTAINS.match(line_no_comment) != null) return true;
@@ -624,8 +624,8 @@ pub const FortranFile = struct {
         const res = try ast.checkFile(env);
         try out.appendSlice(a, res.parse_errors);
         if (max_line_length > 0 or max_comment_line_length > 0) {
-            const msg_line = try std.fmt.allocPrint(a, "Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
-            const msg_comment = try std.fmt.allocPrint(a, "Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
+            const msg_line = try a.print("Line length exceeds \"max_line_length\" ({d})", .{max_line_length});
+            const msg_comment = try a.print("Comment line length exceeds \"max_comment_line_length\" ({d})", .{max_comment_line_length});
             // a limit that is not positive is off
             const max_code: usize = @intCast(@max(max_line_length, 0));
             const max_comment: usize = @intCast(@max(max_comment_line_length, 0));
@@ -636,7 +636,7 @@ pub const FortranFile = struct {
                     // held to max_comment_line_length, not to the code limit
                     // (upstream #489)
                     const stripped = try helpers.stripStrings(a, line, true);
-                    const has_comment = std.mem.indexOfScalar(u8, stripped, '!');
+                    const has_comment = std.mem.findScalar(u8, stripped, '!');
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
                     const code_len = str.codepointLen(code);
                     if (0 < max_code and max_code < code_len) {

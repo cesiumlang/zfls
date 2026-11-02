@@ -48,12 +48,12 @@ pub fn main(init: std.process.Init) !void {
     const out_path = argv[4];
     const cwd = Io.Dir.cwd();
 
-    const version = archiveVersion(std.fs.path.basename(archive)) orelse {
+    const version = archiveVersion(std.Io.Dir.path.basename(archive)) orelse {
         std.log.err("not a zfls source archive (zfls-vX.Y.Z-src.tar.gz): {s}", .{archive});
         std.process.exit(2);
     };
-    var values: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
-    try values.put(a, "version", try std.fmt.allocPrint(a, "\"{s}\"", .{version}));
+    var values: std.array_hash_map.String([]const u8) = .empty;
+    try values.put(a, "version", try a.print("\"{s}\"", .{version}));
     try values.put(a, "zfls_sha256", try sha256Hex(a, try cwd.readFileAlloc(io, archive, a, .limited(1 << 30))));
 
     var tdir = try cwd.openDir(io, template_dir, .{});
@@ -108,7 +108,7 @@ fn absolute(a: Allocator, io: Io, path: []const u8) ![]const u8 {
 /// `archive_path` as the first source in place of its `url` and `sha256`.
 /// On an error about a value, `name` is its name. The lines are written
 /// with `\n` (a checkout on Windows may give the template `\r\n`).
-fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMapUnmanaged([]const u8), archive_path: ?[]const u8, name: *[]const u8) ![]u8 {
+fn fill(a: Allocator, template: []const u8, values: *const std.array_hash_map.String([]const u8), archive_path: ?[]const u8, name: *[]const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     var used: std.StringHashMapUnmanaged(void) = .empty;
     var section: []const u8 = "";
@@ -126,7 +126,7 @@ fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMa
             if (std.mem.startsWith(u8, line, "  - ")) sources += 1;
             if (sources == 1 and std.mem.startsWith(u8, line, "  - url: ")) {
                 in_first_source = true;
-                try appendLine(a, &out, &first, try std.fmt.allocPrint(a, "  - path: {s}", .{path}));
+                try appendLine(a, &out, &first, try a.print("  - path: {s}", .{path}));
                 continue;
             }
             if (in_first_source) {
@@ -135,12 +135,12 @@ fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMa
             }
         };
         if (std.mem.eql(u8, section, "context:") and std.mem.startsWith(u8, line, "  ") and line.len > 2 and line[2] != ' ' and line[2] != '#') {
-            const colon = std.mem.indexOf(u8, line, ": ") orelse return error.MalformedContext;
+            const colon = std.mem.find(u8, line, ": ") orelse return error.MalformedContext;
             name.* = line[2..colon];
             if (std.mem.eql(u8, std.mem.trim(u8, line[colon + 2 ..], " "), "\"\"")) {
                 const value = values.get(name.*) orelse return error.UnfilledContextValue;
                 try used.put(a, name.*, {});
-                try appendLine(a, &out, &first, try std.fmt.allocPrint(a, "  {s}: {s}", .{ name.*, value }));
+                try appendLine(a, &out, &first, try a.print("  {s}: {s}", .{ name.*, value }));
                 continue;
             }
         }
@@ -170,7 +170,7 @@ test fill {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var values: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+    var values: std.array_hash_map.String([]const u8) = .empty;
     var name: []const u8 = "";
     try values.put(a, "version", "\"0.4.0\"");
     try values.put(a, "zfls_sha256", "abc");

@@ -41,7 +41,7 @@ pub fn add(b: *std.Build) *std.Build.Step {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/ifxkit/shim.zig"),
             .target = b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .windows, .abi = .msvc }),
-            .optimize = .ReleaseSmall,
+            .optimize = .small,
             .strip = true,
             .stack_protector = false,
             .stack_check = false,
@@ -61,17 +61,17 @@ pub fn add(b: *std.Build) *std.Build.Step {
             pp.addFileArg(std.Build.LazyPath.zig_exe);
             // `-w`: the files' `;` comments are not C (apostrophes)
             pp.addArgs(&.{ "cc", "-target", "x86_64-windows-gnu", "-E", "-P", "-w", "-x", "c" });
-            pp.addPrefixedDirectoryArg("-I", mingw.path(b, "def-include"));
+            pp.addDirectoryArg2(mingw.path(b, "def-include"), .{ .prefix = "-I" });
             pp.addFileArg(mingw.path(b, t));
             pp.addArg("-o");
-            break :def pp.addOutputFileArg(b.fmt("{s}.def", .{name}));
+            break :def pp.addOutputFileArg2(b.fmt("{s}.def", .{name}), .{});
         } else empty;
         const tool = std.Build.Step.Run.create(b, b.fmt("dlltool {s}.lib", .{name}));
         tool.addFileArg(std.Build.LazyPath.zig_exe);
         tool.addArgs(&.{ "dlltool", "-m", "i386:x86-64", "-d" });
         tool.addFileArg(def);
         tool.addArg("-l");
-        const out = tool.addOutputFileArg(b.fmt("{s}.lib", .{name}));
+        const out = tool.addOutputFileArg2(b.fmt("{s}.lib", .{name}), .{});
         step.dependOn(&b.addInstallFileWithDir(out, dir, b.fmt("{s}.lib", .{name})).step);
     }
     return step;

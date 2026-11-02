@@ -76,7 +76,7 @@ pub fn kindParameters(a: Allocator, line: []const u8) !?[]const u8 {
     var len_text: []const u8 = undefined;
     var end = k;
     if (k < line.len and line[k] == '(') {
-        end = (std.mem.indexOfScalarPos(u8, line, k, ')') orelse return null) + 1;
+        end = (std.mem.findScalarPos(u8, line, k, ')') orelse return null) + 1;
         len_text = std.mem.trim(u8, line[k + 1 .. end - 1], " ");
     } else {
         while (end < line.len and std.ascii.isDigit(line[end])) end += 1;
@@ -85,12 +85,12 @@ pub fn kindParameters(a: Allocator, line: []const u8) !?[]const u8 {
     }
     const word = line[at .. at + t.len];
     const param = if (std.ascii.eqlIgnoreCase(t, "character"))
-        try std.fmt.allocPrint(a, "(len={s})", .{len_text})
+        try a.print("(len={s})", .{len_text})
     else if (std.ascii.eqlIgnoreCase(t, "complex")) blk: {
         // complex*16 is two reals of kind 8
         const n = std.fmt.parseInt(u32, len_text, 10) catch return null;
-        break :blk try std.fmt.allocPrint(a, "({d})", .{n / 2});
-    } else try std.fmt.allocPrint(a, "({s})", .{len_text});
+        break :blk try a.print("({d})", .{n / 2});
+    } else try a.print("({s})", .{len_text});
     // `real*8 x` needs a space before the name
     const sep: []const u8 = if (end < line.len and (std.ascii.isAlphanumeric(line[end]) or line[end] == '_')) " " else "";
     return try std.mem.concat(a, u8, &.{ line[0..at], word, param, sep, line[end..] });

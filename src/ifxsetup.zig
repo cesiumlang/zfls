@@ -174,7 +174,7 @@ pub fn destination(a: Allocator, name: []const u8) !?[]const u8 {
     _ = parts.next() orelse return null; // its version
     const rest = parts.rest();
     if (rest.len == 0 or std.mem.startsWith(u8, rest, ".toolkit_linking_tool")) return null;
-    const rel = if (std.mem.eql(u8, product, "compiler")) try a.dupe(u8, rest) else try std.fmt.allocPrint(a, "{s}/{s}", .{ product, rest });
+    const rel = if (std.mem.eql(u8, product, "compiler")) try a.dupe(u8, rest) else try a.print("{s}/{s}", .{ product, rest });
     if (leftOut(rel)) return null;
     return rel;
 }
@@ -206,12 +206,12 @@ fn leftOut(rel: []const u8) bool {
         for (tool_prefixes) |t| if (std.mem.startsWith(u8, f, t)) return true;
         return false;
     }
-    if (std.mem.startsWith(u8, r, "bin/") and std.mem.indexOfScalar(u8, r["bin/".len..], '/') == null) {
+    if (std.mem.startsWith(u8, r, "bin/") and std.mem.findScalar(u8, r["bin/".len..], '/') == null) {
         const f = r["bin/".len..];
         for (bin_prefixes) |p| if (std.mem.startsWith(u8, f, p)) return true;
         return std.mem.endsWith(u8, f, "mdd.dll") or std.mem.endsWith(u8, f, ".pdb");
     }
-    if (std.mem.startsWith(u8, r, "lib/") and std.mem.indexOfScalar(u8, r["lib/".len..], '/') == null) {
+    if (std.mem.startsWith(u8, r, "lib/") and std.mem.findScalar(u8, r["lib/".len..], '/') == null) {
         const f = r["lib/".len..];
         if (std.mem.endsWith(u8, f, "mdd.lib")) return true;
         for ([_][]const u8{ "sycl", "omptarget", "ur_" }) |p| if (std.mem.startsWith(u8, f, p) and std.mem.endsWith(u8, f, ".lib")) return true;
@@ -223,15 +223,15 @@ fn leftOut(rel: []const u8) bool {
 /// The compiler's version from its package's name:
 /// `intel.oneapi.win.ifort-compiler,v=2026.2.0+864` -> `2026.2.0`
 pub fn versionOf(package: []const u8) ?[]const u8 {
-    const v = std.mem.indexOf(u8, package, ",v=") orelse return null;
+    const v = std.mem.find(u8, package, ",v=") orelse return null;
     const s = package[v + 3 ..];
-    return s[0 .. std.mem.indexOfScalar(u8, s, '+') orelse s.len];
+    return s[0 .. std.mem.findScalar(u8, s, '+') orelse s.len];
 }
 
 /// `bin/ifx.cfg`: the options of every ifx command, for the kit in `kit`
 /// and ifx's libraries in `lib`
 pub fn config(a: Allocator, lib: []const u8, kit: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a,
+    return a.print(
         \\/MD /fuse-ld=lld "/Qoption,link,/LIBPATH:{s}" "/Qoption,link,/LIBPATH:{s}" "/Qoption,link,{s}\zfls_ifx_shim.obj"
         \\
     , .{ lib, kit, kit });
@@ -291,7 +291,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
         try toStderr(io, usage);
         return 2;
     };
-    if (builtin.os.tag != .windows and !show_license) {
+    if (builtin.target.os.tag != .windows and !show_license) {
         try toStderr(io, "zfls setup-ifx: ifx without Visual Studio is for Windows\n");
         return 2;
     }
@@ -328,9 +328,9 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
     }
     if (version == null) return fail(io, a, "{s} has no Fortran compiler package: is it Intel's Fortran offline installer?", .{path});
 
-    const root = if (dest) |d| try std.fs.path.resolve(a, &.{d}) else blk: {
+    const root = if (dest) |d| try std.Io.Dir.path.resolveAlloc(a, &.{d}) else blk: {
         const base = env.get("LOCALAPPDATA") orelse return fail(io, a, "LOCALAPPDATA is not set: give --dest", .{});
-        break :blk try std.fs.path.join(a, &.{ base, "zfls", "ifx", version.? });
+        break :blk try std.Io.Dir.path.join(a, &.{ base, "zfls", "ifx", version.? });
     };
     const kit_dir = kit orelse try findKit(io, a) orelse
         return fail(io, a, "zfls's ifx kit is not next to zfls (ifx-kit, or ../lib/ifx): give --kit", .{});
@@ -344,18 +344,18 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
         const inner = try Zip.open(b, .{ .mem = try zip.read(b, p) });
         for (inner.entries) |e| {
             const rel = try destination(b, e.name) orelse continue;
-            const target = try std.fs.path.join(b, &.{ root, rel });
+            const target = try std.Io.Dir.path.join(b, &.{ root, rel });
             try writeFile(io, target, try inner.read(b, e));
             files += 1;
             bytes += e.size;
         }
     }
     // Intel's license and notices go with it
-    try writeFile(io, try std.fs.path.join(a, &.{ root, "license.txt" }), license);
-    if (zip.find("third-party-programs.txt")) |e| try writeFile(io, try std.fs.path.join(a, &.{ root, "third-party-programs.txt" }), try zip.read(a, e));
+    try writeFile(io, try std.Io.Dir.path.join(a, &.{ root, "license.txt" }), license);
+    if (zip.find("third-party-programs.txt")) |e| try writeFile(io, try std.Io.Dir.path.join(a, &.{ root, "third-party-programs.txt" }), try zip.read(a, e));
 
     // the kit, and ifx's configuration to use it
-    const kit_dest = try std.fs.path.join(a, &.{ root, "zfls" });
+    const kit_dest = try std.Io.Dir.path.join(a, &.{ root, "zfls" });
     var kit_files: usize = 0;
     var dir = Io.Dir.cwd().openDir(io, kit_dir, .{ .iterate = true }) catch |e| return fail(io, a, "cannot read the ifx kit {s}: {s}", .{ kit_dir, @errorName(e) });
     defer dir.close(io);
@@ -363,21 +363,21 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         const data = try dir.readFileAlloc(io, entry.name, a, .limited(64 << 20));
-        try writeFile(io, try std.fs.path.join(a, &.{ kit_dest, entry.name }), data);
+        try writeFile(io, try std.Io.Dir.path.join(a, &.{ kit_dest, entry.name }), data);
         kit_files += 1;
     }
     if (kit_files == 0) return fail(io, a, "the ifx kit {s} is empty", .{kit_dir});
-    const lib = try std.fs.path.join(a, &.{ root, "lib" });
-    try writeFile(io, try std.fs.path.join(a, &.{ root, "bin", "ifx.cfg" }), try config(a, lib, kit_dest));
+    const lib = try std.Io.Dir.path.join(a, &.{ root, "lib" });
+    try writeFile(io, try std.Io.Dir.path.join(a, &.{ root, "bin", "ifx.cfg" }), try config(a, lib, kit_dest));
 
-    const ifx = try std.fs.path.join(a, &.{ root, "bin", "ifx.exe" });
+    const ifx = try std.Io.Dir.path.join(a, &.{ root, "bin", "ifx.exe" });
     if (as_json) {
         var w: Io.Writer.Allocating = .init(a);
         try std.json.Stringify.value(.{ .ifx = ifx, .version = version.?, .dest = root, .files = files }, .{}, &w.writer);
         try w.writer.writeByte('\n');
         try toStdout(io, w.written());
     } else {
-        try toStdout(io, try std.fmt.allocPrint(a, "ifx {s} is ready: {s}\n({d} files, {d} MB; Intel's license is in {s})\n", .{
+        try toStdout(io, try a.print("ifx {s} is ready: {s}\n({d} files, {d} MB; Intel's license is in {s})\n", .{
             version.?, ifx, files, bytes >> 20, root,
         }));
     }
@@ -389,15 +389,15 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
 fn findKit(io: Io, a: Allocator) !?[]const u8 {
     const exe_dir = std.process.executableDirPathAlloc(io, a) catch return null;
     for ([_][]const []const u8{ &.{ exe_dir, "ifx-kit" }, &.{ exe_dir, "..", "lib", "ifx" } }) |parts| {
-        const dir = try std.fs.path.join(a, parts);
-        const shim = try std.fs.path.join(a, &.{ dir, "zfls_ifx_shim.obj" });
+        const dir = try std.Io.Dir.path.join(a, parts);
+        const shim = try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" });
         if (Io.Dir.cwd().access(io, shim, .{})) |_| return dir else |_| {}
     }
     return null;
 }
 
 fn writeFile(io: Io, path: []const u8, data: []const u8) !void {
-    if (std.fs.path.dirname(path)) |d| try Io.Dir.cwd().createDirPath(io, d);
+    if (std.Io.Dir.path.dirname(path)) |d| try Io.Dir.cwd().createDirPath(io, d);
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
 }
 
@@ -410,7 +410,7 @@ fn toStderr(io: Io, text: []const u8) !void {
 }
 
 fn fail(io: Io, a: Allocator, comptime fmt: []const u8, args: anytype) !u8 {
-    try toStderr(io, try std.fmt.allocPrint(a, "zfls setup-ifx: " ++ fmt ++ "\n", args));
+    try toStderr(io, try a.print("zfls setup-ifx: " ++ fmt ++ "\n", args));
     return 1;
 }
 
@@ -529,7 +529,7 @@ test "what a Fortran compiler needs" {
         "opt/compiler/include/intel64/omp_lib.mod",
     };
     for (kept) |k| {
-        const name = try std.fmt.allocPrint(a, "_installdir/compiler/2026.2/{s}", .{k});
+        const name = try a.print("_installdir/compiler/2026.2/{s}", .{k});
         try std.testing.expectEqualStrings(k, (try destination(a, name)) orelse return error.LeftOut);
     }
     const out_ = [_][]const u8{
@@ -538,11 +538,11 @@ test "what a Fortran compiler needs" {
         "lib/sycl9.lib",          "bin/libiomp5md.pdb",
     };
     for (out_) |o| {
-        const name = try std.fmt.allocPrint(a, "_installdir/compiler/2026.2/{s}", .{o});
+        const name = try a.print("_installdir/compiler/2026.2/{s}", .{o});
         try std.testing.expectEqual(@as(?[]const u8, null), try destination(a, name));
     }
     try std.testing.expectEqualStrings("tcm/bin/tcm.dll", (try destination(a, "_installdir/tcm/1.6/bin/tcm.dll")).?);
     const cfg = try config(a, "C:\\ifx\\lib", "C:\\ifx\\zfls");
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "/fuse-ld=lld") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"/Qoption,link,C:\\ifx\\zfls\\zfls_ifx_shim.obj\"") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "/fuse-ld=lld") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"/Qoption,link,C:\\ifx\\zfls\\zfls_ifx_shim.obj\"") != null);
 }

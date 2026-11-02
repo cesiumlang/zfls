@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init) !void {
         \\
     );
     for (names) |name| {
-        const file = try std.fmt.allocPrint(a, "{s}.md", .{name});
+        const file = try a.print("{s}.md", .{name});
         const text = try md_dir.readFileAlloc(io, file, a, .limited(1 << 20));
         try out_dir.writeFile(io, .{ .sub_path = file, .data = try fixLinks(a, text, &pages) });
         try w.print("    .{{ .name = \"{s}\", .markdown = @embedFile(\"{s}\") }},\n", .{ name, file });
@@ -123,7 +123,7 @@ fn fixLine(a: Allocator, out: *std.ArrayList(u8), line: []const u8, pages: *cons
             '`' => {
                 var n: usize = 0;
                 while (i + n < line.len and line[i + n] == '`') n += 1;
-                const end = if (std.mem.indexOf(u8, line[i + n ..], line[i .. i + n])) |e| i + n + e + n else i + n;
+                const end = if (std.mem.find(u8, line[i + n ..], line[i .. i + n])) |e| i + n + e + n else i + n;
                 try out.appendSlice(a, line[i..end]);
                 i = end;
             },
@@ -157,15 +157,15 @@ fn link(line: []const u8, start: usize) ?Link {
         if (line[i] == '\\') i += 1 else if (line[i] == '[') return null;
     }
     if (i + 1 >= line.len or line[i + 1] != '(') return null;
-    const close = std.mem.indexOfScalarPos(u8, line, i + 2, ')') orelse return null;
+    const close = std.mem.findScalarPos(u8, line, i + 2, ')') orelse return null;
     const target = line[i + 2 .. close];
-    if (target.len == 0 or std.mem.indexOfAny(u8, target, " \t") != null) return null;
+    if (target.len == 0 or std.mem.findAny(u8, target, " \t") != null) return null;
     return .{ .text = line[start + 1 .. i], .target = target, .end = close + 1 };
 }
 
 /// A link to another page by name (`#sign`, `cos`), not to a URL or file
 fn isPageRef(target: []const u8) bool {
-    return std.mem.indexOfAny(u8, target, ":/.") == null;
+    return std.mem.findAny(u8, target, ":/.") == null;
 }
 
 /// The published page of a link to another page: of the procedure its text

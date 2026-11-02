@@ -503,7 +503,7 @@ fn expectCuda(w: *h.Workspace) !void {
     try w.expectHoverContains("kern.cuf", w.pos("kern.cuf", "twice = 2", 0, 0), "twice");
     // signature help past the launch configuration
     const sig = (try w.signature("main.cuf", w.pos("main.cuf", "2.0, xd", 0, 5))) orelse return h.unmet("no signature help in the kernel launch", .{});
-    try h.expect(std.mem.indexOf(u8, sig.label, "saxpy") != null and sig.active == 2, "signature {s}, parameter {d}", .{ sig.label, sig.active });
+    try h.expect(std.mem.find(u8, sig.label, "saxpy") != null and sig.active == 2, "signature {s}, parameter {d}", .{ sig.label, sig.active });
     // cudafor is known, ATTRIBUTES is no name
     try w.expectNoDiagnostics("kern.cuf");
     try w.expectNoDiagnostics("main.cuf");

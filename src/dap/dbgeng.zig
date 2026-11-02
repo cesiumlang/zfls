@@ -241,7 +241,7 @@ pub const Engine = struct {
         try self.setup();
         // symbols from the program's own directory, where compilers put its
         // PDB: not a machine's symbol server (`srv*`), which then hides it
-        if (std.fs.path.dirname(program)) |dir| {
+        if (std.Io.Dir.path.dirname(program)) |dir| {
             const wdir = try std.unicode.utf8ToUtf16LeAllocZ(a, dir);
             _ = self.symbols.SetSymbolPathWide(wdir.ptr);
         }
@@ -341,7 +341,7 @@ pub const Engine = struct {
     /// The address of the code of `file`:`line` in the loaded modules
     fn lineOffset(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
         if (try self.lineFromRecords(a, file, line)) |at| return at;
-        for ([_][]const u8{ file, std.fs.path.basename(file) }) |name| {
+        for ([_][]const u8{ file, std.Io.Dir.path.basename(file) }) |name| {
             const w = try std.unicode.utf8ToUtf16LeAllocZ(a, name);
             var off: u64 = 0;
             const hr = self.symbols.GetOffsetByLineWide(line, w.ptr, &off);
@@ -357,7 +357,7 @@ pub const Engine = struct {
     /// on some Windows): the file by its path, else by its name; the line,
     /// else the next one with code
     fn lineFromRecords(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
-        var want: Lines = .{ .a = a, .line = line, .path = try normalized(a, file), .name = try normalized(a, std.fs.path.basename(file)) };
+        var want: Lines = .{ .a = a, .line = line, .path = try normalized(a, file), .name = try normalized(a, std.Io.Dir.path.basename(file)) };
         var loaded: u32 = 0;
         var unloaded: u32 = 0;
         if (!succeeded(self.symbols.GetNumberModules(&loaded, &unloaded))) return null;
@@ -383,7 +383,7 @@ pub const Engine = struct {
         fn onLine(info: *SrcCodeInfoW, raw: ?*anyopaque) callconv(.winapi) i32 {
             const w: *Lines = @ptrCast(@alignCast(raw.?));
             if (info.LineNumber < w.line) return 1;
-            const n = std.mem.indexOfScalar(u16, &info.FileName, 0) orelse info.FileName.len;
+            const n = std.mem.findScalar(u16, &info.FileName, 0) orelse info.FileName.len;
             const name = std.unicode.utf16LeToUtf8Alloc(w.a, info.FileName[0..n]) catch return 1;
             const path = normalized(w.a, name) catch return 1;
             if (std.mem.eql(u8, path, w.path)) {
@@ -677,7 +677,7 @@ pub const Engine = struct {
         var name: ?[*:0]u16 = null;
         if (SymGetTypeInfo(self.process, mod_base, type_index, @backingInt(TypeQuery.symname), @ptrCast(&name)) == 0) return null;
         const n = name orelse return null;
-        const s = n[0..std.mem.indexOfSentinel(u16, 0, n)];
+        const s = n[0..std.mem.findSentinel(u16, 0, n)];
         return std.unicode.utf16LeToUtf8Alloc(a, s) catch null;
     }
 
@@ -700,7 +700,7 @@ pub const Engine = struct {
                 const t = self.typeInfo(u32, mod_base, child, .type) orelse continue;
                 const full = self.typeName(a, mod_base, t) orelse continue;
                 try out.append(a, .{
-                    .name = if (std.mem.lastIndexOf(u8, full, "::")) |i| full[i + 2 ..] else full,
+                    .name = if (std.mem.findLast(u8, full, "::")) |i| full[i + 2 ..] else full,
                     .offset = self.typeInfo(u32, mod_base, child, .offset) orelse 0,
                     .type_index = t,
                 });
@@ -726,5 +726,5 @@ pub const Engine = struct {
 };
 
 comptime {
-    if (builtin.os.tag != .windows) @compileError("dbgeng is Windows's");
+    if (builtin.target.os.tag != .windows) @compileError("dbgeng is Windows's");
 }
