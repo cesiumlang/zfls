@@ -283,9 +283,9 @@ fn commentFolds(a: Allocator, file: *const FortranFile, out: *std.ArrayList(lsp.
 fn isPlainComment(file: *const FortranFile, text: []const u8) bool {
     if (!helpers.isComment(file.fixed, text)) return false;
     // the character after the comment mark: `$` for a directive sentinel
-    const mark = if (file.fixed and text.len > 0 and std.mem.indexOfScalar(u8, "!cCdD*", text[0]) != null)
+    const mark = if (file.fixed and text.len > 0 and std.mem.findScalar(u8, "!cCdD*", text[0]) != null)
         0
     else
-        std.mem.indexOfScalar(u8, text, '!') orelse return true;
+        std.mem.findScalar(u8, text, '!') orelse return true;
     return !(mark + 1 < text.len and text[mark + 1] == '$');
 }

@@ -186,7 +186,7 @@ pub fn resolveArgLink(self: *Obj) !void {
         }
         if (ind) |i| {
             proc.arg_objs.items[i] = child;
-            if (child.isOptional()) arg_list[i] = try std.fmt.allocPrint(t, "{s}={s}", .{ arg_list[i], arg_list[i] });
+            if (child.isOptional()) arg_list[i] = try t.print("{s}={s}", .{ arg_list[i], arg_list[i] });
         } else if (child.hasKeyword(KW.intent)) {
             try proc.missing_args.append(a, child);
         }

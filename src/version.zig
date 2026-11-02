@@ -17,11 +17,11 @@ pub var reported: []const u8 = @import("build_options").version;
 
 /// `base` as this build of zfls reports it.
 pub fn get(io: Io, comptime base: []const u8) []const u8 {
-    if (builtin.mode == .debug) return base ++ "-dev";
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (builtin.optimize == .debug) return base ++ "-dev";
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const n = std.process.executableDirPath(io, &buf) catch return base;
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{ buf[0..n], std.fs.path.sep, sentinel_name }) catch return base;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const path = std.mem.print(&path_buf, "{s}{c}{s}", .{ buf[0..n], std.Io.Dir.path.sep, sentinel_name }) catch return base;
     Io.Dir.accessAbsolute(io, path, .{}) catch return base;
     return base ++ "-rc";
 }

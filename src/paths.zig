@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 
-const is_windows = builtin.os.tag == .windows;
+const is_windows = builtin.target.os.tag == .windows;
 
 var cwd_buf: [4096]u8 = undefined;
 var cwd: []const u8 = "";
@@ -28,15 +28,15 @@ var cache_root: ?[]const u8 = null;
 /// on Windows, `~/Library/Caches/zfls` on macOS, else
 /// `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls`
 pub fn initCache(a: Allocator, env: *const std.process.Environ.Map) void {
-    const tag = builtin.os.tag;
+    const tag = builtin.target.os.tag;
     const base: ?[]const u8 = if (tag == .windows)
         env.get("LOCALAPPDATA")
     else if (tag == .macos)
-        (if (env.get("HOME")) |h| std.fs.path.join(a, &.{ h, "Library", "Caches" }) catch null else null)
-    else if (env.get("XDG_CACHE_HOME")) |x| (if (x.len > 0) x else null) else if (env.get("HOME")) |h| std.fs.path.join(a, &.{ h, ".cache" }) catch null else null;
+        (if (env.get("HOME")) |h| std.Io.Dir.path.join(a, &.{ h, "Library", "Caches" }) catch null else null)
+    else if (env.get("XDG_CACHE_HOME")) |x| (if (x.len > 0) x else null) else if (env.get("HOME")) |h| std.Io.Dir.path.join(a, &.{ h, ".cache" }) catch null else null;
     const b = base orelse return;
     if (b.len == 0) return;
-    cache_root = std.fs.path.join(a, &.{ b, "zfls" }) catch null;
+    cache_root = std.Io.Dir.path.join(a, &.{ b, "zfls" }) catch null;
 }
 
 /// zfls's cache directory, null when there is none (no home directory)
@@ -47,24 +47,24 @@ pub fn cacheDir() ?[]const u8 {
 /// `os.path.normpath`
 pub fn normpath(a: Allocator, p: []const u8) ![]u8 {
     if (p.len == 0) return a.dupe(u8, ".");
-    return std.fs.path.resolveAlloc(a, &.{p});
+    return std.Io.Dir.path.resolveAlloc(a, &.{p});
 }
 
 /// `os.path.abspath`
 pub fn abspath(a: Allocator, p: []const u8) ![]u8 {
-    if (std.fs.path.isAbsolute(p)) return normpath(a, p);
+    if (std.Io.Dir.path.isAbsolute(p)) return normpath(a, p);
     if (cwd.len == 0) return normpath(a, p);
-    return std.fs.path.resolveAlloc(a, &.{ cwd, p });
+    return std.Io.Dir.path.resolveAlloc(a, &.{ cwd, p });
 }
 
 /// `os.path.join`
 pub fn join(a: Allocator, parts: []const []const u8) ![]u8 {
     // Python discards everything before an absolute component
     var start: usize = 0;
-    for (parts, 0..) |p, i| if (std.fs.path.isAbsolute(p)) {
+    for (parts, 0..) |p, i| if (std.Io.Dir.path.isAbsolute(p)) {
         start = i;
     };
-    return std.fs.path.join(a, parts[start..]);
+    return std.Io.Dir.path.join(a, parts[start..]);
 }
 
 /// `pathlib.Path(p).resolve()`: absolute path with symlinks resolved when
@@ -92,7 +92,7 @@ pub fn exists(io: Io, p: []const u8) bool {
 
 /// `os.path.dirname`
 pub fn dirname(p: []const u8) []const u8 {
-    return std.fs.path.dirname(p) orelse "";
+    return std.Io.Dir.path.dirname(p) orelse "";
 }
 
 fn isUnreserved(c: u8) bool {
@@ -135,7 +135,7 @@ pub fn unquote(a: Allocator, s: []const u8) ![]u8 {
 /// which zfls uses as the document's path. A scheme has two or more
 /// characters, so a Windows path (`C:...`) is not one.
 pub fn isVirtualUri(s: []const u8) bool {
-    const colon = std.mem.indexOfScalar(u8, s, ':') orelse return false;
+    const colon = std.mem.findScalar(u8, s, ':') orelse return false;
     if (colon < 2 or !std.ascii.isAlphabetic(s[0])) return false;
     for (s[0..colon]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '+' or c == '-' or c == '.')) return false;
     return !std.mem.startsWith(u8, s, "file:");

@@ -23,7 +23,7 @@ pub const Found = struct {
 
     /// `NAME` or `NAME=VALUE`; the first definition of a name wins
     fn addDef(self: *Found, a: Allocator, def: []const u8) !void {
-        const eq = std.mem.indexOfScalar(u8, def, '=');
+        const eq = std.mem.findScalar(u8, def, '=');
         const name = str.strip(if (eq) |i| def[0..i] else def);
         if (name.len == 0) return;
         for (self.defs.items) |d| if (std.mem.eql(u8, d.name, name)) return;
@@ -37,7 +37,7 @@ pub const Found = struct {
 pub fn findCompileCommands(io: Io, a: Allocator, root: []const u8, setting: ?[]const u8) !?[]const u8 {
     if (setting) |s| {
         if (s.len == 0) return null;
-        const p = if (std.fs.path.isAbsolute(s)) s else try paths.join(a, &.{ root, s });
+        const p = if (std.Io.Dir.path.isAbsolute(s)) s else try paths.join(a, &.{ root, s });
         if (paths.isDir(io, p)) return try paths.join(a, &.{ p, "compile_commands.json" });
         return p;
     }
@@ -53,7 +53,7 @@ const fortran_extensions = [_][]const u8{
 };
 
 fn isFortran(file: []const u8) bool {
-    const ext = std.fs.path.extension(file);
+    const ext = std.Io.Dir.path.extension(file);
     for (fortran_extensions) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;
     return false;
 }
@@ -69,7 +69,7 @@ pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Fo
         const file = json.str(json.get(entry, "file")) orelse continue;
         if (!isFortran(file)) continue;
         const entry_dir = json.str(json.get(entry, "directory")) orelse ".";
-        const dir = if (std.fs.path.isAbsolute(entry_dir)) entry_dir else try paths.join(a, &.{ base, entry_dir });
+        const dir = if (std.Io.Dir.path.isAbsolute(entry_dir)) entry_dir else try paths.join(a, &.{ base, entry_dir });
         var args: std.ArrayList([]const u8) = .empty;
         if (json.get(entry, "arguments")) |arr| {
             for (json.items(arr)) |x| if (json.str(x)) |s| try args.append(a, s);
@@ -102,7 +102,7 @@ fn readFlags(a: Allocator, dir: []const u8, args: []const []const u8, found: *Fo
             }
             switch (f[1]) {
                 .include => {
-                    const p = if (std.fs.path.isAbsolute(value)) value else try paths.join(a, &.{ dir, value });
+                    const p = if (std.Io.Dir.path.isAbsolute(value)) value else try paths.join(a, &.{ dir, value });
                     try found.addDir(a, try paths.abspath(a, p));
                 },
                 .define => try found.addDef(a, value),
@@ -170,16 +170,16 @@ pub fn readFpm(io: Io, a: Allocator, root: []const u8, text: []const u8) !Found 
             section = str.strip(std.mem.trim(u8, line, "[]"));
             continue;
         }
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
         const key = str.strip(line[0..eq]);
         var value = str.strip(line[eq + 1 ..]);
         // an array that goes on over the next lines
-        if (std.mem.startsWith(u8, value, "[") and std.mem.indexOfScalar(u8, value, ']') == null) {
+        if (std.mem.startsWith(u8, value, "[") and std.mem.findScalar(u8, value, ']') == null) {
             var joined: std.ArrayList(u8) = .empty;
             try joined.appendSlice(a, value);
             while (lines.next()) |more| {
                 try joined.appendSlice(a, str.strip(stripTomlComment(more)));
-                if (std.mem.indexOfScalar(u8, more, ']') != null) break;
+                if (std.mem.findScalar(u8, more, ']') != null) break;
             }
             value = joined.items;
         }
@@ -217,7 +217,7 @@ fn tomlStrings(a: Allocator, value: []const u8, out: *std.ArrayList([]const u8))
     while (i < value.len) : (i += 1) {
         const q = value[i];
         if (q != '"' and q != '\'') continue;
-        const end = std.mem.indexOfScalarPos(u8, value, i + 1, q) orelse return;
+        const end = std.mem.findScalarPos(u8, value, i + 1, q) orelse return;
         try out.append(a, try a.dupe(u8, value[i + 1 .. end]));
         i = end;
     }
@@ -227,8 +227,8 @@ test "compile_commands.json: the flags of Fortran entries" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const root = if (@import("builtin").os.tag == .windows) "C:\\\\p" else "/p";
-    const text = try std.fmt.allocPrint(a,
+    const root = if (@import("builtin").target.os.tag == .windows) "C:\\\\p" else "/p";
+    const text = try a.print(
         \\[
         \\  {{"directory": "{s}", "file": "a.F90",
         \\   "command": "gfortran -I inc -Iinc2 -DFOO -D BAR=2 -c a.F90"}},

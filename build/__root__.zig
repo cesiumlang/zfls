@@ -171,7 +171,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         const run = b.addRunArtifact(tool);
         run.setCwd(b.path(""));
         run.addArg("--zfls");
-        run.addArtifactArg(exe);
+        run.addArtifactArg2(exe, .{});
         if (t.needs_fortls) if (fortls) |f| run.addArgs(&.{ "--fortls", f });
         if (t.needs_zig) run.addArgs(&.{ "--zig", b.graph.zig_exe });
         run.addPassthruArgs();
@@ -200,7 +200,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         const run = b.addSystemCommand(&.{python});
         run.addFileArg(b.path(s.script));
         run.addArg("--zfls");
-        run.addArtifactArg(exe);
+        run.addArtifactArg2(exe, .{});
         if (s.needs_fortls) if (fortls) |f| {
             run.addArg("--fortls");
             run.addArg(f);
@@ -224,7 +224,7 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     });
     const gen = b.addRunArtifact(b.addExecutable(.{ .name = "conda_recipe", .root_module = gen_mod }));
     gen.setCwd(b.path(""));
-    gen.addDirectoryArg(b.path("packaging/conda-forge"));
+    gen.addDirectoryArg2(b.path("packaging/conda-forge"), .{});
     gen.addPassthruArgs();
     // writes outside the cache
     gen.has_side_effects = true;
@@ -273,9 +273,9 @@ fn addIntrinsicDocs(b: *std.Build, mod: *std.Build.Module) *std.Build.Step.Compi
         .target = b.graph.host,
     });
     const gen = b.addRunArtifact(b.addExecutable(.{ .name = "intrinsic_docs", .root_module = gen_mod }));
-    gen.addDirectoryArg(b.path("vendor/M_intrinsics/md3"));
-    gen.addDirectoryArg(b.path("vendor/M_intrinsics/docs"));
-    const out = gen.addOutputDirectoryArg("intrinsic_docs");
+    gen.addDirectoryArg2(b.path("vendor/M_intrinsics/md3"), .{});
+    gen.addDirectoryArg2(b.path("vendor/M_intrinsics/docs"), .{});
+    const out = gen.addOutputDirectoryArg2("intrinsic_docs", .{});
     mod.addImport("intrinsic_docs", b.createModule(.{ .root_source_file = out.path(b, "intrinsic_docs.zig") }));
     return b.addTest(.{ .root_module = gen_mod });
 }

@@ -60,7 +60,7 @@ fn addItem(a: Allocator, out: *std.ArrayList(Rule), item_in: []const u8) !void {
         const l = std.mem.trim(u8, l_in, " \t");
         if (l.len == 0 or !std.ascii.isAlphabetic(l[0])) continue;
         var last = l[0];
-        if (std.mem.indexOfScalar(u8, l, '-')) |dash| {
+        if (std.mem.findScalar(u8, l, '-')) |dash| {
             const rest = std.mem.trim(u8, l[dash + 1 ..], " \t");
             if (rest.len == 0 or !std.ascii.isAlphabetic(rest[0])) continue;
             last = rest[0];

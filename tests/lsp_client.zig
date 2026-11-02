@@ -182,10 +182,10 @@ pub const Client = struct {
 /// A process's exit, as text
 pub fn termText(a: Allocator, term: std.process.Child.Term) ![]const u8 {
     return switch (term) {
-        .exited => |code| std.fmt.allocPrint(a, "exit code {d}", .{code}),
-        .signal => |s| std.fmt.allocPrint(a, "signal {d}", .{@backingInt(s)}),
-        .stopped => |s| std.fmt.allocPrint(a, "stopped by signal {d}", .{@backingInt(s)}),
-        .unknown => |code| std.fmt.allocPrint(a, "exit status {x}", .{code}),
+        .exited => |code| a.print("exit code {d}", .{code}),
+        .signal => |s| a.print("signal {d}", .{@backingInt(s)}),
+        .stopped => |s| a.print("stopped by signal {d}", .{@backingInt(s)}),
+        .unknown => |code| a.print("exit status {x}", .{code}),
     };
 }
 
@@ -193,7 +193,7 @@ pub fn termText(a: Allocator, term: std.process.Child.Term) ![]const u8 {
 /// `prefix` and a number
 pub fn tempDir(io: Io, a: Allocator, env: *const std.process.Environ.Map, prefix: []const u8) ![]const u8 {
     const tmp = env.get("TMPDIR") orelse env.get("TEMP") orelse env.get("TMP") orelse "/tmp";
-    const dir = try std.fmt.allocPrint(a, "{s}{c}{s}{d}", .{ tmp, std.fs.path.sep, prefix, Io.Clock.real.now(io).nanoseconds });
+    const dir = try a.print("{s}{c}{s}{d}", .{ tmp, std.Io.Dir.path.sep, prefix, Io.Clock.real.now(io).nanoseconds });
     try Io.Dir.cwd().createDirPath(io, dir);
     return dir;
 }

@@ -42,7 +42,7 @@ fn codeOf(a: Allocator, file: *const FortranFile, line: usize) !?[]const u8 {
     const text = file.getLine(line, false) orelse return null;
     if (helpers.isComment(file.fixed, text)) return null;
     var code = try helpers.stripStrings(a, text, true);
-    if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+    if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
     return code;
 }
 
@@ -68,9 +68,9 @@ fn assignedType(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
     if (col >= code.len or code[col] != '=') return null;
     // not `==`, `=>`, `<=`, `>=`, `/=`
     if (col + 1 < code.len and (code[col + 1] == '=' or code[col + 1] == '>')) return null;
-    if (col > 0 and std.mem.indexOfScalar(u8, "=<>/", code[col - 1]) != null) return null;
+    if (col > 0 and std.mem.findScalar(u8, "=<>/", code[col - 1]) != null) return null;
     // not a declaration's initializer, nor a keyword argument
-    if (std.mem.indexOf(u8, code[0..col], "::") != null) return null;
+    if (std.mem.find(u8, code[0..col], "::") != null) return null;
     var depth: i64 = 0;
     for (code[0..col]) |c| switch (c) {
         '(', '[' => depth += 1,
@@ -133,7 +133,7 @@ fn assignedType(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 /// The procedures named after `=>` on a GENERIC line of type `t`
 fn boundProcs(self: *Server, a: Allocator, t: *Obj, code: []const u8) ![]const *Obj {
     var out: std.ArrayList(*Obj) = .empty;
-    const arrow = std.mem.indexOf(u8, code, "=>") orelse return out.items;
+    const arrow = std.mem.find(u8, code, "=>") orelse return out.items;
     var it = std.mem.splitScalar(u8, code[arrow + 2 ..], ',');
     while (it.next()) |n| {
         const name = std.mem.trim(u8, n, " &");
@@ -243,7 +243,7 @@ pub fn references(self: *Server, a: Allocator, b: Binding) !Value {
         for (0..f.nLines()) |ln| {
             const code = (try codeOf(a, f, ln)) orelse continue;
             var from: usize = 0;
-            while (std.mem.indexOfScalarPos(u8, code, from, '=')) |eq| : (from = eq + 1) {
+            while (std.mem.findScalarPos(u8, code, from, '=')) |eq| : (from = eq + 1) {
                 const t = (try assignedType(self, a, f, ln, eq)) orelse continue;
                 const gop = try seen.getOrPut(a, t);
                 if (!gop.found_existing) {

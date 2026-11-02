@@ -89,18 +89,18 @@ pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!void {
     const cp = config_path orelse return;
     const sa = self.arena.allocator();
     const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
-        self.postMessage(a, try std.fmt.allocPrint(a, "Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
+        self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
         return;
     };
     var p: json5.Parser = .{ .a = sa, .src = data };
     const cfg = p.parseDocument() catch {
         const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        const msg = try std.fmt.allocPrint(a, "Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
+        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
         self.postMessage(a, msg, C.Severity.err);
         return;
     };
     if (cfg != .object) {
-        self.postMessage(a, try std.fmt.allocPrint(a, "Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
+        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
         return;
     }
     try settings_mod.applyConfig(sa, &self.s, cfg);
@@ -128,10 +128,10 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
                 self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
-                else => self.postMessage(a, try std.fmt.allocPrint(a, "Could not read \"{s}\": not a compilation database", .{p}), C.Severity.warn),
+                else => self.postMessage(a, try a.print("Could not read \"{s}\": not a compilation database", .{p}), C.Severity.warn),
             }
         } else |_| if (self.s.compile_commands != null) {
-            self.postMessage(a, try std.fmt.allocPrint(a, "Compilation database \"{s}\" not found", .{p}), C.Severity.warn);
+            self.postMessage(a, try a.print("Compilation database \"{s}\" not found", .{p}), C.Severity.warn);
         }
     }
     const fpm = try paths.join(a, &.{ self.root_path, "fpm.toml" });
@@ -312,7 +312,7 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
     const results = try a.alloc(Server.InitResult, files.len);
     @memset(results, .none);
     var job: Server.InitJob = .{ .server = self, .files = files, .results = results };
-    if (progress) |token| self.sendProgress(a, token, .{ .kind = "begin", .title = "Indexing", .message = try std.fmt.allocPrint(a, "{d} files", .{files.len}), .percentage = 0 });
+    if (progress) |token| self.sendProgress(a, token, .{ .kind = "begin", .title = "Indexing", .message = try a.print("{d} files", .{files.len}), .percentage = 0 });
     const nthreads: usize = @intCast(std.math.clamp(self.s.nthreads, 1, 64));
     var threads: std.ArrayList(std.Thread) = .empty;
     var t: usize = 1;
@@ -330,7 +330,7 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
         const pct = (i + 1) * 100 / files.len;
         if (pct >= reported + 5) {
             reported = pct;
-            self.sendProgress(a, token, .{ .kind = "report", .message = try std.fmt.allocPrint(a, "{d}/{d} files", .{ i + 1, files.len }), .percentage = @intCast(pct) });
+            self.sendProgress(a, token, .{ .kind = "report", .message = try a.print("{d}/{d} files", .{ i + 1, files.len }), .percentage = @intCast(pct) });
         }
     }
     for (threads.items) |th| th.join();
@@ -339,7 +339,7 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
     for (files, results) |path, res| {
         switch (res) {
             .none => {},
-            .err => |e| self.postMessage(a, try std.fmt.allocPrint(a, "Initialization failed for file {s}: {s}", .{ path, parser.describeFileError(e) }), C.Severity.err),
+            .err => |e| self.postMessage(a, try a.print("Initialization failed for file {s}: {s}", .{ path, parser.describeFileError(e) }), C.Severity.err),
             .ok => |f| {
                 if (self.workspace.get(f.path)) |old| {
                     // Duplicate path (overlapping source dirs): keep the newest
@@ -488,7 +488,7 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         return .null;
     }
     const file = self.workspace.get(path) orelse {
-        self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for unknown file '{s}'", .{path}), C.Severity.err);
+        self.postMessage(a, try a.print("Change request failed for unknown file '{s}'", .{path}), C.Severity.err);
         return .null;
     };
     const changes = params.contentChanges;
@@ -496,7 +496,7 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
     if (self.sync_type == 1) {
         if (changes.len > 0) {
             _ = file.applyChange(toChange(changes[0])) catch {
-                self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
+                self.postMessage(a, try a.print("Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
                 return .null;
             };
         }
@@ -504,7 +504,7 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         reparse_req = false;
         for (changes) |c| {
             const flag = file.applyChange(toChange(c)) catch {
-                self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
+                self.postMessage(a, try a.print("Change request failed for file '{s}': Could not apply change", .{path}), C.Severity.err);
                 return .null;
             };
             reparse_req = reparse_req or flag;
@@ -512,7 +512,7 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
     }
     if (reparse_req) {
         _ = updateWorkspaceFile(self, path, false, false, true) catch |e| {
-            self.postMessage(a, try std.fmt.allocPrint(a, "Change request failed for file '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
+            self.postMessage(a, try a.print("Change request failed for file '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
             return .null;
         };
         for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), path, a);
@@ -561,7 +561,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         return .null;
     }
     const changed = updateWorkspaceFile(self, filepath, true, did_open, false) catch |e| {
-        self.postMessage(a, try std.fmt.allocPrint(a, "Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
+        self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
         return .null;
     };
     if (changed) try fullRelink(self, a);
@@ -642,7 +642,7 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
 /// source directory (any directory under the root, without
 /// `source_dirs`) that no exclusion covers
 pub fn isSourceFile(self: *const Server, path: []const u8) bool {
-    const base = std.fs.path.basename(path);
+    const base = std.Io.Dir.path.basename(path);
     if (self.src_ext_regex.search(base) == null) return false;
     for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
     for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
@@ -668,7 +668,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
         };
         _ = try file.setText(text orelse "");
         const changed = updateWorkspaceFile(self, path, false, true, false) catch |e| {
-            self.postMessage(a, try std.fmt.allocPrint(a, "Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
+            self.postMessage(a, try a.print("Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
             return .null;
         };
         if (changed) try fullRelink(self, a);

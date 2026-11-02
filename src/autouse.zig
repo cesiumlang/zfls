@@ -97,5 +97,5 @@ fn leading(line: []const u8) []const u8 {
 
 /// The USE statement that brings `name` in from module `module`
 pub fn statement(a: Allocator, indent: []const u8, module: []const u8, name: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{s}use {s}, only: {s}\n", .{ indent, module, name });
+    return a.print("{s}use {s}, only: {s}\n", .{ indent, module, name });
 }

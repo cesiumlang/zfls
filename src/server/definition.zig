@@ -77,9 +77,9 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
         if (d.args) |args| {
             var parts: std.ArrayList([]const u8) = .empty;
             for (try str.split(a, args, ",")) |p| try parts.append(a, str.strip(p));
-            arg_str = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", parts.items)});
+            arg_str = try a.print("({s})", .{try std.mem.join(a, ", ", parts.items)});
         }
-        const desc = try std.fmt.allocPrint(a, "#define {s}{s} {s}", .{ def_name, arg_str, d.value });
+        const desc = try a.print("#define {s}{s} {s}", .{ def_name, arg_str, d.value });
         return try tempVariable(a, ast, def_line + 1, def_name, desc, &.{});
     }
     var curr_scope = ast.getInnerScope(def_line + 1);
@@ -109,7 +109,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     if (hover_req) if (curr_scope) |cs| {
         var var_type: ?[]const u8 = null;
         if (R().NUMBER.match(def_name) != null) {
-            if (std.mem.indexOfAny(u8, def_name, ".ed") != null) {
+            if (std.mem.findAny(u8, def_name, ".ed") != null) {
                 var_type = C.FORTRAN_LITERAL ++ "REAL";
             } else {
                 var_type = C.FORTRAN_LITERAL ++ "INTEGER";
@@ -174,7 +174,7 @@ pub fn useRenameTarget(self: *Server, a: Allocator, ast: *Ast, line: []const u8,
 /// to the workspace root)
 pub fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
     var dirs: std.ArrayList([]const u8) = .empty;
-    for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.fs.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
+    for (self.s.include_dirs.slice()) |d| try dirs.append(a, if (std.Io.Dir.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d }));
     return dirs.items;
 }
 
@@ -362,7 +362,7 @@ fn literalHover(self: *Server, a: Allocator, params: lsp.PositionParams) !?Value
     if (helpers.isComment(file.fixed, text)) return null;
     const lit = (try literals.at(a, text, Server.toByteCol(file, line, params.position.character))) orelse return null;
     const docs = if (lit.value) |v|
-        try std.fmt.allocPrint(a, "Literal constant (BOZ), value {d}", .{v})
+        try a.print("Literal constant (BOZ), value {d}", .{v})
     else if (std.mem.eql(u8, lit.type, "BOZ"))
         "Literal constant (BOZ)"
     else
@@ -379,7 +379,7 @@ fn implicitHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value
     for (try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, st.first, st.last, self.fixedLimit())) |u| {
         if (u.line != line or col < u.start or col > u.end) continue;
         const t = implicit.typeOf(u.scope, u.name) orelse return .null;
-        const msg = try std.fmt.allocPrint(a, "{s} :: {s}", .{ t, u.name });
+        const msg = try a.print("{s} :: {s}", .{ t, u.name });
         return json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, msg, "Implicitly typed (not declared)") } });
     }
     return keywordHover(self, a, file, line, col);
@@ -402,8 +402,8 @@ fn directiveHover(self: *Server, a: Allocator, text: []const u8, col: usize) !?V
     if (e == s) return null;
     const table: []const directives.Directive = if (omp) &directives.omp else &directives.acc;
     for (table) |d| if (std.ascii.eqlIgnoreCase(d.name, text[s..e])) {
-        const title = try std.fmt.allocPrint(a, "{s} {s}", .{ if (omp) "!$OMP" else "!$ACC", try std.ascii.allocUpperString(a, d.name) });
-        const docs = try std.fmt.allocPrint(a, "{s}\n\n{s} directive", .{ d.doc, if (omp) "OpenMP" else "OpenACC" });
+        const title = try a.print("{s} {s}", .{ if (omp) "!$OMP" else "!$ACC", try std.ascii.allocUpperString(a, d.name) });
+        const docs = try a.print("{s}\n\n{s} directive", .{ d.doc, if (omp) "OpenMP" else "OpenACC" });
         return try json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, title, docs) } });
     };
     return null;
@@ -417,7 +417,7 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
     if (helpers.isComment(file.fixed, text)) return .null;
     const code = try helpers.stripStrings(a, text, true);
     const c = @min(col, code.len);
-    if (std.mem.indexOfScalar(u8, code[0..c], '!') != null) return .null;
+    if (std.mem.findScalar(u8, code[0..c], '!') != null) return .null;
     var s = c;
     while (s > 0 and (std.ascii.isAlphanumeric(code[s - 1]) or code[s - 1] == '_')) s -= 1;
     var e = c;
@@ -426,11 +426,11 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
     var arg: ?[]const u8 = null;
     var k = e;
     while (k < code.len and code[k] == ' ') k += 1;
-    if (k < code.len and code[k] == '(') if (std.mem.indexOfScalarPos(u8, code, k, ')')) |close| {
+    if (k < code.len and code[k] == '(') if (std.mem.findScalarPos(u8, code, k, ')')) |close| {
         arg = code[k + 1 .. close];
     };
     const kw = (try self.intr.keywordDoc(a, code[s..e], arg)) orelse return .null;
-    const docs = try std.fmt.allocPrint(a, "{s}\n\nFortran keyword", .{kw.doc});
+    const docs = try a.print("{s}\n\nFortran keyword", .{kw.doc});
     return json.from(a, lsp.Hover{ .contents = .{ .value = try createHover(self, a, kw.name, docs) } });
 }
 
@@ -498,7 +498,7 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
         const bh = try body.getHover(a, true, null);
         if (bh.docs != null and bh.docs.?.len > 0) var_obj = body;
     }
-    const lang_fence = try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language});
+    const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     var hover_array: std.ArrayList([]const u8) = .empty;
     const vt = var_obj.getType(false);
     if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
@@ -519,7 +519,7 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
             try hover_array.append(a, try createHover(self, a, "LOGICAL", null));
         } else if (std.mem.endsWith(u8, var_obj.descOf(), "STRING")) {
             const n = str.codepointLen(var_obj.name);
-            try hover_array.append(a, try createHover(self, a, try std.fmt.allocPrint(a, "CHARACTER(LEN={d})", .{@as(i64, @intCast(n)) - 2}), null));
+            try hover_array.append(a, try createHover(self, a, try a.print("CHARACTER(LEN={d})", .{@as(i64, @intCast(n)) - 2}), null));
         }
     }
     if (hover_array.items.len == 0) return .null;

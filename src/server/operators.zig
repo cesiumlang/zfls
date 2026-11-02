@@ -47,7 +47,7 @@ fn defines(iface: *const Obj, name: []const u8) bool {
     const text = f.getLine(iface.sline - 1, false) orelse return false;
     const op = std.ascii.findIgnoreCase(text, "operator") orelse return false;
     var buf: [80]u8 = undefined;
-    const dotted = std.fmt.bufPrint(&buf, ".{s}.", .{name}) catch return false;
+    const dotted = std.mem.print(&buf, ".{s}.", .{name}) catch return false;
     return std.ascii.findIgnoreCase(text[op..], dotted) != null;
 }
 
@@ -66,7 +66,7 @@ fn find(a: Allocator, file: *const FortranFile, line: usize, name: []const u8, f
     const text = file.getLine(line, false) orelse return null;
     if (helpers.isComment(file.fixed, text)) return null;
     var code = try helpers.stripStrings(a, text, true);
-    if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+    if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
     var i = from;
     while (i < code.len) : (i += 1) {
         if (code[i] != '.' or i + name.len + 1 >= code.len) continue;

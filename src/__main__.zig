@@ -26,7 +26,7 @@ const Ctx = struct {
 fn stdoutSend(ctx: ?*anyopaque, body: []const u8) void {
     const io: *const Io = @ptrCast(@alignCast(ctx.?));
     var buf: [128]u8 = undefined;
-    const header = std.fmt.bufPrint(&buf, "Content-Length: {d}\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n", .{body.len}) catch return;
+    const header = std.mem.print(&buf, "Content-Length: {d}\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n", .{body.len}) catch return;
     const out = Io.File.stdout();
     out.writeStreamingAll(io.*, header) catch return;
     out.writeStreamingAll(io.*, body) catch return;
@@ -62,7 +62,7 @@ fn runServer(ctx: *Ctx) void {
         const a = arena.allocator();
         if (queue.items.len == 0) {
             readMessages(gpa, &reader.interface, &queue) catch |e| {
-                server.postMessage(a, std.fmt.allocPrint(a, "Unexpected error: {s}", .{@errorName(e)}) catch "Unexpected error", 1);
+                server.postMessage(a, a.print("Unexpected error: {s}", .{@errorName(e)}) catch "Unexpected error", 1);
                 break;
             };
             if (queue.items.len == 0) break;
@@ -97,7 +97,7 @@ fn readMessages(gpa: std.mem.Allocator, r: *Io.Reader, queue: *std.ArrayList([]u
 /// Whether one of the messages waiting cancels request `id`
 fn cancelledLater(a: std.mem.Allocator, waiting: []const []u8, id: json.Value) bool {
     for (waiting) |body| {
-        if (std.mem.indexOf(u8, body, "$/cancelRequest") == null) continue;
+        if (std.mem.find(u8, body, "$/cancelRequest") == null) continue;
         const msg = json.parse(a, body) catch continue;
         const method = json.str(json.get(msg, "method")) orelse continue;
         if (!std.mem.eql(u8, method, "$/cancelRequest")) continue;
@@ -134,7 +134,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // a debug adapter over Windows's Debugger Engine
-    if (builtin.os.tag == .windows and args.items.len > 0 and std.mem.eql(u8, args.items[0], "dap")) {
+    if (builtin.target.os.tag == .windows and args.items.len > 0 and std.mem.eql(u8, args.items[0], "dap")) {
         const code = try @import("dap/session.zig").run(gpa, io, args.items[1..]);
         if (code != 0) std.process.exit(code);
         return;
@@ -156,7 +156,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (s.debug_parser or s.debug_preproc or s.isDebugMode()) {
         const code = debug.run(gpa, io, s) catch |e| blk: {
-            const msg = try std.fmt.allocPrint(arena, "ERROR: {s}\n", .{@errorName(e)});
+            const msg = try arena.print("ERROR: {s}\n", .{@errorName(e)});
             try Io.File.stdout().writeStreamingAll(io, msg);
             break :blk 255;
         };
