@@ -255,21 +255,15 @@ jobs:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      # editors/vscode/schemas/fortls.schema.json is generated from
-      # src/settings.zig
-      - name: Configuration file schema is up to date
-        run: python3 tools/gen_config_schema.py --check
-
-      # the extension's strings are in package.nls.json, for translations
-      - name: Extension strings are in package.nls.json
-        run: python3 tools/package_nls.py --check
-
-      - name: Extension messages are in l10n/bundle.l10n.json
-        run: python3 tools/l10n_bundle.py --check
-
       - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
+
+      # the configuration file schema (from src/settings.zig), and the
+      # extension's strings in package.nls.json and l10n/bundle.l10n.json,
+      # for translations (build/generated.zig)
+      - name: Generated files are up to date
+        run: zig build check-generated
 
       - name: Source is formatted (zig fmt)
         run: zig fmt --check build.zig build.zig.zon src tests

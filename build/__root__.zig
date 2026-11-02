@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&b.addRunArtifact(intrinsic_docs_tests).step);
     test_step.dependOn(&b.addRunArtifact(addCondaRecipe(b)).step);
+    test_step.dependOn(&b.addRunArtifact(addGenerated(b)).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)
@@ -101,6 +102,26 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_fuzz_tests.step);
 
     addScriptTests(b, exe);
+    test_step.dependOn(&b.addRunArtifact(addBench(b, mod, exe)).step);
+}
+
+/// `zig build bench -- WORKSPACE [--fortls CMD] ...`: zfls, and fortls when
+/// CMD starts it, timed on a large workspace (tools/bench_workspace.zig;
+/// build with -Doptimize=ReleaseSafe). Returns the benchmark's unit tests.
+fn addBench(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile) *std.Build.Step.Compile {
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("tools/bench_workspace.zig"),
+        .target = mod.resolved_target,
+        .optimize = mod.optimize,
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const run = b.addRunArtifact(b.addExecutable(.{ .name = "bench_workspace", .root_module = bench_mod }));
+    run.addArg("--zfls");
+    run.addArtifactArg(exe);
+    run.addPassthruArgs();
+    run.has_side_effects = true;
+    b.step("bench", "Time zfls (and fortls, with -- --fortls CMD) on a workspace (-- WORKSPACE)").dependOn(&run.step);
+    return b.addTest(.{ .root_module = bench_mod });
 }
 
 /// Steps running the Python test drivers in tests/ against the built server
@@ -178,6 +199,36 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     // downloads, and writes outside the cache
     gen.has_side_effects = true;
     b.step("conda-recipe", "Write the conda-forge recipe for a zfls source archive (-- --release|--local ARCHIVE OUT_DIR)").dependOn(&gen.step);
+    return b.addTest(.{ .root_module = gen_mod });
+}
+
+/// `zig build generated` writes the files of the repository generated from
+/// others (the configuration file schema, the extension's package.nls.json
+/// and l10n bundle: build/generated.zig), and `zig build check-generated`
+/// fails when one is out of date. Returns the generator's unit tests.
+fn addGenerated(b: *std.Build) *std.Build.Step.Compile {
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("build/generated.zig"),
+        .target = b.graph.host,
+        .imports = &.{
+            .{ .name = "settings", .module = b.createModule(.{ .root_source_file = b.path("src/settings.zig") }) },
+            .{ .name = "constants", .module = b.createModule(.{ .root_source_file = b.path("src/constants.zig") }) },
+        },
+    });
+    const exe = b.addExecutable(.{ .name = "generated", .root_module = gen_mod });
+    const steps = .{
+        .{ "generated", "Write the files generated from others (configuration schema, extension strings)", false },
+        .{ "check-generated", "Fail when a file generated from others is out of date", true },
+    };
+    inline for (steps) |s| {
+        const run = b.addRunArtifact(exe);
+        run.setCwd(b.path(""));
+        run.addArg(".");
+        if (s[2]) run.addArg("--check");
+        // reads and writes the repository
+        run.has_side_effects = true;
+        b.step(s[0], s[1]).dependOn(&run.step);
+    }
     return b.addTest(.{ .root_module = gen_mod });
 }
 

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$comment": "Generated from src/settings.zig by tools/gen_config_schema.py; do not edit",
+  "$comment": "Generated from src/settings.zig by zig build generated (build/generated.zig); do not edit",
   "title": "zfls configuration",
   "description": "Options of the zfls (and fortls) Fortran language server; they override the command-line options",
   "type": "object",

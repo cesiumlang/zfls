@@ -361,13 +361,13 @@ default or `-Dfortls=PATH`, and Python 3 (`-Dpython=EXE`); no third-party
 Python packages are required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
 
-`tools/bench_workspace.py` compares zfls with fortls on a large workspace
-(workspace initialization, request latency, edits, memory), for example a
-checkout of [json-fortran](https://github.com/jacobwilliams/json-fortran):
+`zig build bench` times zfls on a large workspace (workspace
+initialization, request latency, edits, memory), and fortls too when
+`--fortls` gives the command that starts it, for example on a checkout of
+[json-fortran](https://github.com/jacobwilliams/json-fortran):
 
 ```sh
-zig build bin -Doptimize=ReleaseSafe
-python tools/bench_workspace.py ../json-fortran
+zig build bench -Doptimize=ReleaseSafe -- ../json-fortran --fortls fortls
 ```
 
 ## Releases

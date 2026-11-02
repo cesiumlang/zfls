@@ -171,7 +171,7 @@ const Opt = struct {
     group: []const u8 = "",
 };
 
-const opts = [_]Opt{
+pub const opts = [_]Opt{
     .{ .long = "help", .short = "-h", .kind = .help, .help = "show this help message and exit" },
     .{ .long = "version", .short = "-v", .kind = .version, .help = "Print server version number and exit" },
     .{ .long = "config", .short = "-c", .kind = .string, .metavar = "CONFIG", .help = "Configuration options file (default file name: .fortlsrc, other default supported names: .fortls.json, .fortls)" },
@@ -486,7 +486,7 @@ fn jsonInt(v: ?json.Value, default: i64) i64 {
 /// Port of `_load_config_file_dirs`, `_load_config_file_general` and
 /// `_load_config_file_preproc`. The keys read here, with their `opts` help
 /// and `Settings` defaults, make up editors/vscode/schemas/fortls.schema.json:
-/// run tools/gen_config_schema.py after changing them.
+/// run `zig build generated` after changing them.
 pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Include and Exclude directories
     if (json.get(cfg, "excl_paths")) |v| s.excl_paths = try jsonList(a, v);
