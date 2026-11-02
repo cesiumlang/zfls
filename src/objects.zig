@@ -351,7 +351,7 @@ pub const Obj = struct {
     }
 
     pub fn hasKeyword(self: *const Obj, id: C.Kw) bool {
-        return std.mem.indexOfScalar(C.Kw, self.keywords.items, id) != null;
+        return std.mem.findScalar(C.Kw, self.keywords.items, id) != null;
     }
 
     // ------------------------------------------------------------------

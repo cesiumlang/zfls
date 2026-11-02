@@ -81,7 +81,7 @@ fn cachePath(self: *Server, a: Allocator) !?[]const u8 {
     const base = paths.cacheDir() orelse return null;
     var h = std.hash.Wyhash.init(0);
     h.update(self.root_path);
-    return try paths.join(a, &.{ base, "index", try std.fmt.allocPrint(a, "{x:0>16}.zfc", .{h.final()}) });
+    return try paths.join(a, &.{ base, "index", try a.print("{x:0>16}.zfc", .{h.final()}) });
 }
 
 /// Reads the cache for initializing a workspace of `file_count` files (none
@@ -254,7 +254,7 @@ fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
     const file = (try cachePath(self, a)) orelse return;
     Io.Dir.cwd().createDirPath(self.io, paths.dirname(file)) catch {};
     // a new file, then renamed over the old one: a reader never sees half
-    const tmp = try std.fmt.allocPrint(a, "{s}.{d}.tmp", .{ file, std.Thread.getCurrentId() });
+    const tmp = try a.print("{s}.{d}.tmp", .{ file, std.Thread.getCurrentId() });
     const count = snap.next.count();
     {
         const f = try Io.Dir.cwd().createFile(self.io, tmp, .{});

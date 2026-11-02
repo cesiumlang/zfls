@@ -292,7 +292,7 @@ pub const Server = struct {
             self.writeResponse(a, id.?, res) catch |e| self.logSendFailure(e);
         } else |e| switch (e) {
             error.InvalidParams => self.writeError(a, id.?, -32602, "invalid params", null) catch |e2| self.logSendFailure(e2),
-            error.MethodNotFound => self.writeError(a, id.?, -32601, std.fmt.allocPrint(a, "method {s} not found", .{method}) catch "method not found", null) catch |e2| self.logSendFailure(e2),
+            error.MethodNotFound => self.writeError(a, id.?, -32601, a.print("method {s} not found", .{method}) catch "method not found", null) catch |e2| self.logSendFailure(e2),
             else => {
                 self.log.warn("error handling request {s}: {s}", .{ method, @errorName(e) });
                 self.writeError(a, id.?, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);

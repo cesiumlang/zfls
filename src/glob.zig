@@ -8,7 +8,7 @@ const Io = std.Io;
 const str = @import("str.zig");
 const paths = @import("paths.zig");
 
-const case_insensitive = builtin.os.tag == .windows or builtin.os.tag.isDarwin();
+const case_insensitive = builtin.target.os.tag == .windows or builtin.target.os.tag.isDarwin();
 
 pub const Entry = struct {
     name: []const u8,
@@ -83,7 +83,7 @@ fn walkInto(io: Io, a: Allocator, dir: []const u8, out: *std.ArrayList(WalkEntry
 }
 
 fn hasWildcard(s: []const u8) bool {
-    return std.mem.indexOfAny(u8, s, "*?[") != null;
+    return std.mem.findAny(u8, s, "*?[") != null;
 }
 
 fn chEq(x: u8, y: u8) bool {
@@ -214,14 +214,14 @@ fn globWalk(io: Io, a: Allocator, base: []const u8, parts: []const []const u8, o
 pub fn resolveGlobs(io: Io, a: Allocator, glob_path: []const u8, root_path: ?[]const u8) ![][]const u8 {
     var base: []const u8 = undefined;
     var pattern: []const u8 = undefined;
-    if (!std.fs.path.isAbsolute(glob_path) and root_path != null and root_path.?.len > 0) {
+    if (!std.Io.Dir.path.isAbsolute(glob_path) and root_path != null and root_path.?.len > 0) {
         base = try paths.realpath(io, a, root_path.?);
         pattern = glob_path;
     } else {
         const abs = try paths.abspath(a, glob_path);
         // anchor: drive + root separator, or "/"
         var anchor_len: usize = 0;
-        if (builtin.os.tag == .windows and abs.len >= 3 and abs[1] == ':') {
+        if (builtin.target.os.tag == .windows and abs.len >= 3 and abs[1] == ':') {
             anchor_len = 3;
         } else if (abs.len >= 2 and (abs[0] == '\\' or abs[0] == '/') and (abs[1] == '\\' or abs[1] == '/')) {
             // UNC: \\server\share\

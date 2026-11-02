@@ -106,9 +106,9 @@ fn wordCounts(a: Allocator, file: *const FortranFile, first: usize, last: usize)
         const raw = file.getLine(ln, false) orelse continue;
         if (helpers.isComment(file.fixed, raw)) continue;
         const t = std.mem.trimStart(u8, raw, " \t");
-        if (std.ascii.startsWithIgnoreCase(t, "include") or std.mem.startsWith(u8, t, "#") and std.mem.indexOf(u8, t, "include") != null) return null;
+        if (std.ascii.startsWithIgnoreCase(t, "include") or std.mem.startsWith(u8, t, "#") and std.mem.find(u8, t, "include") != null) return null;
         var code = try helpers.stripStrings(a, raw, true);
-        if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
         var it = helpers.words(code);
         while (it.next()) |w| {
             const gop = try counts.getOrPut(a, try std.ascii.allocLowerString(a, w.str));
@@ -140,7 +140,7 @@ fn singleDeclaration(file: *const FortranFile, line: usize) ?Lines {
     const st = selection.statementLines(file, line);
     if (st.first != st.last) return null;
     const text = file.getLine(st.first, false) orelse return null;
-    const sep = std.mem.indexOf(u8, text, "::") orelse return null;
+    const sep = std.mem.find(u8, text, "::") orelse return null;
     var depth: usize = 0;
     for (text[sep + 2 ..]) |ch| switch (ch) {
         '(', '[' => depth += 1,

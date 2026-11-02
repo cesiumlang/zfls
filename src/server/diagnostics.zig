@@ -90,7 +90,7 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
             .sch = u.start,
             .eln = u.line,
             .ech = u.end,
-            .message = try std.fmt.allocPrint(a, "Name \"{s}\" is not declared (IMPLICIT NONE)", .{u.name}),
+            .message = try a.print("Name \"{s}\" is not declared (IMPLICIT NONE)", .{u.name}),
             .severity = C.Severity.warn,
             .code = .undeclared_name,
             .subject = u.name,
@@ -143,8 +143,8 @@ pub fn addRewriteActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         if (sc.getImplicit() != null) continue;
         const at = try autouse.insertionPoint(a, file, sc);
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try std.fmt.allocPrint(a, "{s}implicit none\n", .{at.indent}) };
-        try out.append(a, try action(a, uri, try std.fmt.allocPrint(a, "Add IMPLICIT NONE to {s}", .{sc.name}), "quickfix", edits));
+        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}implicit none\n", .{at.indent}) };
+        try out.append(a, try action(a, uri, try a.print("Add IMPLICIT NONE to {s}", .{sc.name}), "quickfix", edits));
     }
     var op_edits: std.ArrayList(lsp.TextEdit) = .empty;
     var kind_edits: std.ArrayList(lsp.TextEdit) = .empty;
@@ -189,13 +189,13 @@ pub fn addStubActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast
         const raw = file.getLine(ln, false) orelse continue;
         if (helpers.isComment(file.fixed, raw)) continue;
         var code = try helpers.stripStrings(a, raw, true);
-        if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
         var it = helpers.words(code);
         var offered: std.ArrayList(*Obj) = .empty;
         while (it.next()) |w| {
             const o = (try definition.getDefinition(self, a, file, ln, w.start, false)) orelse continue;
             if ((o.kind != .subroutine and o.kind != .function) or o.file_ast.file == null) continue;
-            if (std.mem.indexOfScalar(*Obj, offered.items, o) != null) continue;
+            if (std.mem.findScalar(*Obj, offered.items, o) != null) continue;
             try offered.append(a, o);
             if (o.parent == null) {
                 // an external procedure, called from another unit
@@ -204,10 +204,10 @@ pub fn addStubActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast
                 const iface = (try o.getInterface(a, null, null, null)) orelse continue;
                 const at = try declarationPoint(a, file, unit);
                 const body = try indentBlock(a, iface, try std.mem.concat(a, u8, &.{ at.indent, "  " }));
-                const text = try std.fmt.allocPrint(a, "{s}interface\n{s}{s}end interface\n", .{ at.indent, body, at.indent });
+                const text = try a.print("{s}interface\n{s}{s}end interface\n", .{ at.indent, body, at.indent });
                 const edits = try a.alloc(lsp.TextEdit, 1);
                 edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text };
-                try out.append(a, try action(a, uri, try std.fmt.allocPrint(a, "Add an interface block for {s}", .{o.name}), "quickfix", edits));
+                try out.append(a, try action(a, uri, try a.print("Add an interface block for {s}", .{o.name}), "quickfix", edits));
             } else if (o.parent.?.kind == .interface and o.isModScope() and o.linkObj() == null and o.sline == ln + 1) {
                 try submoduleStub(self, a, file, o, out);
             }
@@ -228,8 +228,8 @@ fn submoduleStub(self: *Server, a: Allocator, file: *FortranFile, proto: *Obj, o
         const target = self.fileForPath(path) orelse continue;
         const line = u.eline - 1;
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(target, line, 0, line, 0), .newText = try std.fmt.allocPrint(a, "  module procedure {s}\n  end procedure {s}\n", .{ proto.name, proto.name }) };
-        try out.append(a, try action(a, try paths.pathToUri(a, path), try std.fmt.allocPrint(a, "Implement {s} in submodule {s}", .{ proto.name, u.name }), "quickfix", edits));
+        edits[0] = .{ .range = Server.rangeOf(target, line, 0, line, 0), .newText = try a.print("  module procedure {s}\n  end procedure {s}\n", .{ proto.name, proto.name }) };
+        try out.append(a, try action(a, try paths.pathToUri(a, path), try a.print("Implement {s} in submodule {s}", .{ proto.name, u.name }), "quickfix", edits));
         return;
     }
     // a new submodule after the module
@@ -237,9 +237,9 @@ fn submoduleStub(self: *Server, a: Allocator, file: *FortranFile, proto: *Obj, o
     const edits = try a.alloc(lsp.TextEdit, 1);
     edits[0] = .{
         .range = Server.rangeOf(file, end_line, 0, end_line, 0),
-        .newText = try std.fmt.allocPrint(a, "\nsubmodule ({s}) {s}_impl\ncontains\n  module procedure {s}\n  end procedure {s}\nend submodule {s}_impl\n", .{ module.name, module.name, proto.name, proto.name, module.name }),
+        .newText = try a.print("\nsubmodule ({s}) {s}_impl\ncontains\n  module procedure {s}\n  end procedure {s}\nend submodule {s}_impl\n", .{ module.name, module.name, proto.name, proto.name, module.name }),
     };
-    try out.append(a, try action(a, try paths.pathToUri(a, file.path), try std.fmt.allocPrint(a, "Implement {s} in a new submodule", .{proto.name}), "quickfix", edits));
+    try out.append(a, try action(a, try paths.pathToUri(a, file.path), try a.print("Implement {s} in a new submodule", .{proto.name}), "quickfix", edits));
 }
 
 /// The keywords of the file in upper, lower or title case (hansec #226,
@@ -262,7 +262,7 @@ pub fn addKeywordCaseActions(self: *Server, a: Allocator, file: *FortranFile, as
             const t = std.mem.trimStart(u8, raw, " \t");
             if (t.len > 0 and t[0] == '#') continue;
             var code = try helpers.stripStrings(a, raw, true);
-            if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+            if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
             var it = helpers.words(code);
             while (it.next()) |w| {
                 // `.and.`, `.true.`: their words are keywords too
@@ -374,7 +374,7 @@ pub fn circularUses(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) 
                 .sch = col,
                 .eln = line,
                 .ech = col + m.name.len,
-                .message = try std.fmt.allocPrint(a, "Circular USE: modules {s} use each other", .{names.items}),
+                .message = try a.print("Circular USE: modules {s} use each other", .{names.items}),
                 .severity = C.Severity.err,
                 .code = .circular_use,
                 .subject = m.name,
@@ -395,7 +395,7 @@ pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects
             .sch = u.start,
             .eln = u.line,
             .ech = u.end,
-            .message = try std.fmt.allocPrint(a, "{s} \"{s}\" is not used", .{ what, u.name }),
+            .message = try a.print("{s} \"{s}\" is not used", .{ what, u.name }),
             .severity = C.Severity.hint,
             .code = .unused_name,
             .subject = u.name,
@@ -419,7 +419,7 @@ pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, a
         const dv = try a.alloc(lsp.Diagnostic, 1);
         dv[0] = try self.diagnosticOf(a, file, d);
         try out.append(a, .{
-            .title = try std.fmt.allocPrint(a, "Remove unused {s}", .{u.name}),
+            .title = try a.print("Remove unused {s}", .{u.name}),
             .kind = "quickfix",
             .edit = .{ .changes = .{ .files = files } },
             .diagnostics = dv,
@@ -434,7 +434,7 @@ fn usesFypp(file: *const FortranFile) bool {
         const text = file.getLine(i, false) orelse continue;
         const t = std.mem.trimStart(u8, text, " \t");
         if (std.mem.startsWith(u8, t, "#:") or std.mem.startsWith(u8, t, "$:") or std.mem.startsWith(u8, t, "@:")) return true;
-        if (std.mem.indexOf(u8, text, "${") != null) return true;
+        if (std.mem.find(u8, text, "${") != null) return true;
     }
     return false;
 }
@@ -477,19 +477,19 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         if (d.sln < sline or d.sln > eline) continue;
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
-        const key = try std.fmt.allocPrint(a, "{x}:{s}", .{ @intFromPtr(unit), try std.ascii.allocLowerString(a, name) });
+        const key = try a.print("{x}:{s}", .{ @intFromPtr(unit), try std.ascii.allocLowerString(a, name) });
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         const at = try declarationPoint(a, file, unit);
         const letter = std.ascii.toLower(name[0]);
         const type_name: []const u8 = if (letter >= 'i' and letter <= 'n') "integer" else "real";
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try std.fmt.allocPrint(a, "{s}{s} :: {s}\n", .{ at.indent, type_name, name }) };
+        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}{s} :: {s}\n", .{ at.indent, type_name, name }) };
         const files = try a.alloc(lsp.Changes.File, 1);
         files[0] = .{ .uri = uri, .edits = edits };
         const dv = try a.alloc(lsp.Diagnostic, 1);
         dv[0] = try self.diagnosticOf(a, file, d);
         try out.append(a, .{
-            .title = try std.fmt.allocPrint(a, "Declare {s} as {s}", .{ name, type_name }),
+            .title = try a.print("Declare {s} as {s}", .{ name, type_name }),
             .kind = "quickfix",
             .edit = .{ .changes = .{ .files = files } },
             .diagnostics = dv,
@@ -539,7 +539,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
             const dv = try a.alloc(lsp.Diagnostic, 1);
             dv[0] = try self.diagnosticOf(a, file, d);
             try out.append(a, .{
-                .title = try std.fmt.allocPrint(a, "Add use {s}, only: {s}", .{ e.module.name, e.obj.name }),
+                .title = try a.print("Add use {s}, only: {s}", .{ e.module.name, e.obj.name }),
                 .kind = "quickfix",
                 .edit = .{ .changes = .{ .files = files } },
                 .diagnostics = dv,
@@ -598,9 +598,9 @@ pub fn isExternalModule(self: *const Server, name: []const u8) bool {
 pub fn checkDiagnosticSeverity(self: *Server, a: Allocator) !void {
     for (self.s.diagnostic_severity.items) |l| {
         if (C.DiagCode.fromName(l.code) == null) {
-            self.postMessage(a, try std.fmt.allocPrint(a, "diagnostic_severity: unknown diagnostic code \"{s}\"", .{l.code}), C.Severity.warn);
+            self.postMessage(a, try a.print("diagnostic_severity: unknown diagnostic code \"{s}\"", .{l.code}), C.Severity.warn);
         } else if (Server.severity_names.get(l.level) == null) {
-            self.postMessage(a, try std.fmt.allocPrint(a, "diagnostic_severity: \"{s}\" for \"{s}\" is not off, error, warning, information or hint", .{ l.level, l.code }), C.Severity.warn);
+            self.postMessage(a, try a.print("diagnostic_severity: \"{s}\" for \"{s}\" is not off, error, warning, information or hint", .{ l.level, l.code }), C.Severity.warn);
         }
     }
 }

@@ -45,7 +45,7 @@ pub const Parser = struct {
             } else if (c == '/' and p.pos + 1 < p.src.len and p.src[p.pos + 1] == '/') {
                 while (p.pos < p.src.len and p.src[p.pos] != '\n') p.pos += 1;
             } else if (c == '/' and p.pos + 1 < p.src.len and p.src[p.pos + 1] == '*') {
-                const end = std.mem.indexOfPos(u8, p.src, p.pos + 2, "*/") orelse return p.fail();
+                const end = std.mem.findPos(u8, p.src, p.pos + 2, "*/") orelse return p.fail();
                 p.pos = end + 2;
             } else break;
         }

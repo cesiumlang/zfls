@@ -39,7 +39,7 @@ fn note() []const u8 {
 
 /// Fail the current expectation with a message
 pub fn unmet(comptime fmt: []const u8, args: anytype) error{Unmet} {
-    note_len = if (std.fmt.bufPrint(&note_buf, fmt, args)) |s| s.len else |_| note_buf.len;
+    note_len = if (std.mem.print(&note_buf, fmt, args)) |s| s.len else |_| note_buf.len;
     return error.Unmet;
 }
 
@@ -169,12 +169,12 @@ pub const Workspace = struct {
         w.unreadable = &.{};
         w.sent = .empty;
         for (files) |f| {
-            if (std.fs.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
+            if (std.Io.Dir.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
         }
         for (opts.links) |l| w.tmp.dir.symLink(io, l.target, l.name, .{}) catch return error.SkipZigTest;
         for (opts.unreadable) |d| {
-            if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+            if (@import("builtin").target.os.tag == .windows) return error.SkipZigTest;
             try w.tmp.dir.createDirPath(io, d);
             w.tmp.dir.setFilePermissions(io, d, @fromBackingInt(@intCast(0)), .{}) catch return error.SkipZigTest;
             // root reads it anyway
@@ -219,7 +219,7 @@ pub const Workspace = struct {
     }
 
     pub fn path(w: *Workspace, name: []const u8) ![]const u8 {
-        return std.fs.path.join(w.a(), &.{ w.root, name });
+        return std.Io.Dir.path.join(w.a(), &.{ w.root, name });
     }
 
     pub fn uri(w: *Workspace, name: []const u8) ![]const u8 {
@@ -238,11 +238,11 @@ pub const Workspace = struct {
         const t = w.text(name);
         var from: usize = 0;
         var n: usize = 0;
-        while (std.mem.indexOfPos(u8, t, from, needle)) |i| : (from = i + 1) {
+        while (std.mem.findPos(u8, t, from, needle)) |i| : (from = i + 1) {
             if (n == nth) {
                 const before = t[0..i];
                 const line = std.mem.count(u8, before, "\n");
-                const bol = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |nl| nl + 1 else 0;
+                const bol = if (std.mem.findScalarLast(u8, before, '\n')) |nl| nl + 1 else 0;
                 return .{ .line = @intCast(line), .col = @intCast(i - bol + plus) };
             }
             n += 1;
@@ -623,7 +623,7 @@ pub const Workspace = struct {
     fn appendSymbolPaths(w: *Workspace, v: Value, prefix: []const u8, out: *std.ArrayList([]const u8)) !void {
         for (json.items(v)) |s| {
             const sym = json.str(json.get(s, "name")) orelse "";
-            const p = if (prefix.len == 0) sym else try std.fmt.allocPrint(w.a(), "{s}/{s}", .{ prefix, sym });
+            const p = if (prefix.len == 0) sym else try w.a().print("{s}/{s}", .{ prefix, sym });
             try out.append(w.a(), p);
             if (json.get(s, "children")) |c| try w.appendSymbolPaths(c, p, out);
         }
@@ -693,7 +693,7 @@ pub const Workspace = struct {
     /// No diagnostic in `name` whose message contains `fragment`
     pub fn expectNoDiagnosticLike(w: *Workspace, name: []const u8, fragment: []const u8) !void {
         for (try w.diagnostics(name)) |d| {
-            if (std.mem.indexOf(u8, d.message, fragment) != null)
+            if (std.mem.find(u8, d.message, fragment) != null)
                 return unmet("{s}: unexpected diagnostic at line {d}: {s}", .{ name, d.line + 1, d.message });
         }
     }
@@ -701,7 +701,7 @@ pub const Workspace = struct {
     /// The hover text at `p` contains `fragment`
     pub fn expectHoverContains(w: *Workspace, name: []const u8, p: Pos, fragment: []const u8) !void {
         const h = (try w.hover(name, p)) orelse return unmet("{s}:{d}:{d}: no hover, expected one containing '{s}'", .{ name, p.line + 1, p.col, fragment });
-        if (std.mem.indexOf(u8, h, fragment) == null)
+        if (std.mem.find(u8, h, fragment) == null)
             return unmet("{s}:{d}:{d}: hover does not contain '{s}': {s}", .{ name, p.line + 1, p.col, fragment, h });
     }
 };

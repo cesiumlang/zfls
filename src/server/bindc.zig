@@ -46,7 +46,7 @@ pub fn isCLanguage(language: ?[]const u8) bool {
 /// Whether `path` is a C (or C++) file, for the C search; a document's
 /// language decides whether it is one (`isCLanguage`)
 pub fn isCFile(path: []const u8) bool {
-    const ext = std.fs.path.extension(path);
+    const ext = std.Io.Dir.path.extension(path);
     for (c_extensions) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;
     return false;
 }
@@ -143,7 +143,7 @@ pub fn unique(a: Allocator, locations: []const lsp.Location) ![]const lsp.Locati
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     var out: std.ArrayList(lsp.Location) = .empty;
     for (locations) |l| {
-        const key = try std.fmt.allocPrint(a, "{s}\x00{d}:{d}", .{ l.uri, l.range.start.line, l.range.start.character });
+        const key = try a.print("{s}\x00{d}:{d}", .{ l.uri, l.range.start.line, l.range.start.character });
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         try out.append(a, l);
     }
@@ -319,7 +319,7 @@ const Calls = struct {
             const c = l[self.i];
             if (c == '/' and self.i + 1 < l.len and l[self.i + 1] == '/') return null;
             if (c == '/' and self.i + 1 < l.len and l[self.i + 1] == '*') {
-                self.i = if (std.mem.indexOfPos(u8, l, self.i + 2, "*/")) |e| e + 2 else l.len;
+                self.i = if (std.mem.findPos(u8, l, self.i + 2, "*/")) |e| e + 2 else l.len;
                 continue;
             }
             if (c == '"' or c == '\'') {
@@ -353,7 +353,7 @@ const statement_words = [_][]const u8{ "return", "if", "while", "for", "switch",
 fn declarationIn(line: []const u8) ?struct { start: usize, end: usize } {
     const t = std.mem.trimStart(u8, line, " \t");
     if (t.len == 0 or t[0] == '#' or std.mem.startsWith(u8, t, "//") or t[0] == '*') return null;
-    const paren = std.mem.indexOfScalar(u8, line, '(') orelse return null;
+    const paren = std.mem.findScalar(u8, line, '(') orelse return null;
     var e = paren;
     while (e > 0 and (line[e - 1] == ' ' or line[e - 1] == '\t')) e -= 1;
     var s = e;

@@ -38,7 +38,7 @@ pub const Intrinsics = struct {
         _ = self;
         const tables = .{ &statements.int_stmnts, &statements.var_def, &keywords.var_def, &keywords.arg, &keywords.type_mem, &keywords.vis, &keywords.param };
         if (arg) |x| {
-            const full = try std.fmt.allocPrint(a, "{s}({s})", .{ word, std.mem.trim(u8, x, " ") });
+            const full = try a.print("{s}({s})", .{ word, std.mem.trim(u8, x, " ") });
             inline for (tables) |t| for (t) |k| {
                 const doc = k.doc orelse continue;
                 if (std.ascii.eqlIgnoreCase(k.name, full)) return .{ .name = k.name, .doc = doc };
@@ -47,7 +47,7 @@ pub const Intrinsics = struct {
         inline for (tables) |t| for (t) |k| {
             const doc = k.doc orelse continue;
             // `DIMENSION(:)`, `INTENT(IN)`: the word before the parenthesis
-            const base = if (std.mem.indexOfScalar(u8, k.name, '(')) |p| k.name[0..p] else k.name;
+            const base = if (std.mem.findScalar(u8, k.name, '(')) |p| k.name[0..p] else k.name;
             if (std.ascii.eqlIgnoreCase(base, word)) return .{ .name = base, .doc = doc };
         };
         return null;

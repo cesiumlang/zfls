@@ -34,7 +34,7 @@ pub fn parseType(desc: []const u8) Type {
     if (std.mem.startsWith(u8, d, "LOGICAL")) return .{ .kind = .logical, .size = kind_value orelse 4 };
     if (std.mem.startsWith(u8, d, "CHARACTER")) return .{ .kind = .character, .size = charLen(d) orelse 0 };
     for ([_][]const u8{ "TYPE(", "CLASS(" }) |p| if (std.mem.startsWith(u8, d, p)) {
-        const close = std.mem.indexOfScalar(u8, desc, ')') orelse desc.len;
+        const close = std.mem.findScalar(u8, desc, ')') orelse desc.len;
         return .{ .kind = .derived, .name = std.mem.trim(u8, desc[p.len..close], " "), .polymorphic = p[0] == 'C' };
     };
     return .{ .kind = .unknown };
@@ -42,11 +42,11 @@ pub fn parseType(desc: []const u8) Type {
 
 /// `(8)`, `(KIND=8)`, `*8`: 8
 fn kindOf(d: []const u8) ?u32 {
-    if (std.mem.indexOfScalar(u8, d, '*')) |star| {
+    if (std.mem.findScalar(u8, d, '*')) |star| {
         return std.fmt.parseInt(u32, std.mem.trim(u8, d[star + 1 ..], " "), 10) catch null;
     }
-    const open = std.mem.indexOfScalar(u8, d, '(') orelse return null;
-    const close = std.mem.indexOfScalarPos(u8, d, open, ')') orelse return null;
+    const open = std.mem.findScalar(u8, d, '(') orelse return null;
+    const close = std.mem.findScalarPos(u8, d, open, ')') orelse return null;
     var inner = std.mem.trim(u8, d[open + 1 .. close], " ");
     if (std.mem.startsWith(u8, inner, "KIND=")) inner = std.mem.trim(u8, inner[5..], " ");
     return std.fmt.parseInt(u32, inner, 10) catch null;
@@ -54,16 +54,16 @@ fn kindOf(d: []const u8) ?u32 {
 
 /// `CHARACTER(LEN=10)`, `CHARACTER(10)`, `CHARACTER*10`: 10; `*`, `:`: null
 fn charLen(d: []const u8) ?u32 {
-    if (std.mem.indexOfScalar(u8, d, '*')) |star| {
+    if (std.mem.findScalar(u8, d, '*')) |star| {
         return std.fmt.parseInt(u32, std.mem.trim(u8, d[star + 1 ..], " ()"), 10) catch null;
     }
-    const open = std.mem.indexOfScalar(u8, d, '(') orelse return 1;
-    const close = std.mem.indexOfScalarPos(u8, d, open, ')') orelse return null;
+    const open = std.mem.findScalar(u8, d, '(') orelse return 1;
+    const close = std.mem.findScalarPos(u8, d, open, ')') orelse return null;
     var inner = std.mem.trim(u8, d[open + 1 .. close], " ");
-    if (std.mem.indexOf(u8, inner, "LEN=")) |l| {
+    if (std.mem.find(u8, inner, "LEN=")) |l| {
         inner = inner[l + 4 ..];
-        inner = inner[0 .. std.mem.indexOfScalar(u8, inner, ',') orelse inner.len];
-    } else if (std.mem.indexOfScalar(u8, inner, ',')) |comma| inner = inner[0..comma];
+        inner = inner[0 .. std.mem.findScalar(u8, inner, ',') orelse inner.len];
+    } else if (std.mem.findScalar(u8, inner, ',')) |comma| inner = inner[0..comma];
     return std.fmt.parseInt(u32, std.mem.trim(u8, inner, " "), 10) catch null;
 }
 
@@ -93,7 +93,7 @@ pub fn parseDims(a: Allocator, text: []const u8) ![]Dim {
 
 fn dim(t: []const u8) Dim {
     const s = std.mem.trim(u8, t, " ");
-    if (std.mem.indexOfScalar(u8, s, ':')) |c| {
+    if (std.mem.findScalar(u8, s, ':')) |c| {
         const lo = std.mem.trim(u8, s[0..c], " ");
         const hi = std.mem.trim(u8, s[c + 1 ..], " ");
         return .{

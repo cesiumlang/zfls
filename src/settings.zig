@@ -325,7 +325,7 @@ fn setValue(a: Allocator, s: *Settings, comptime field: []const u8, v: anytype) 
 pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !CliResult {
     var s: Settings = .{};
     var any_debug_arg = false;
-    for (args) |arg| if (std.mem.indexOf(u8, arg, "--debug_") != null) {
+    for (args) |arg| if (std.mem.find(u8, arg, "--debug_") != null) {
         any_debug_arg = true;
     };
     var i: usize = 0;
@@ -333,7 +333,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
         var arg = args[i];
         var inline_val: ?[]const u8 = null;
         if (std.mem.startsWith(u8, arg, "--")) {
-            if (std.mem.indexOfScalar(u8, arg, '=')) |eq| {
+            if (std.mem.findScalar(u8, arg, '=')) |eq| {
                 inline_val = arg[eq + 1 ..];
                 arg = arg[0..eq];
             }
@@ -345,15 +345,15 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
         const res = findOpt(arg);
         const o = switch (res) {
             .found => |o| o,
-            .ambiguous => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: ambiguous option: {s}\n", .{ usage, arg }) },
-            .none => return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
+            .ambiguous => return .{ .exit_err = try a.print("{s}zfls: error: ambiguous option: {s}\n", .{ usage, arg }) },
+            .none => return .{ .exit_err = try a.print("{s}zfls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
         };
         switch (o.kind) {
             .help => return .{ .exit_ok = try helpText(a, version, any_debug_arg) },
             .debug_help => return .{ .exit_ok = try helpText(a, version, true) },
-            .version => return .{ .exit_ok = try std.fmt.allocPrint(a, "{s}\n", .{version}) },
+            .version => return .{ .exit_ok = try a.print("{s}\n", .{version}) },
             .flag => {
-                if (inline_val != null) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
+                if (inline_val != null) return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
                 inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
                     if (std.mem.eql(u8, fname, o.long)) {
                         if (@TypeOf(@field(s, fname)) == bool) @field(s, fname) = true;
@@ -362,13 +362,13 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
             },
             .int, .string, .json => {
                 const val = inline_val orelse blk: {
-                    if (i + 1 >= args.len) return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
+                    if (i + 1 >= args.len) return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
                     i += 1;
                     break :blk args[i];
                 };
                 if (o.kind == .json) {
                     const v = json5.parse(a, val) catch {
-                        return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
+                        return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
                     };
                     if (std.mem.eql(u8, o.long, "pp_defs")) try applyPpDefs(a, &s, v);
                     if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
@@ -387,7 +387,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                         const FT = @TypeOf(@field(s, fname));
                         if (FT == i64 or FT == ?i64) {
                             @field(s, fname) = std.fmt.parseInt(i64, str.strip(val), 10) catch {
-                                return .{ .exit_err = try std.fmt.allocPrint(a, "{s}zfls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
+                                return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
                             };
                             handled = true;
                         } else if (FT == []const u8 or FT == ?[]const u8) {
@@ -445,8 +445,8 @@ pub fn applyDiagnosticSeverity(a: Allocator, s: *Settings, v: json.Value) !void 
 pub fn jsonScalarString(a: Allocator, v: json.Value) ![]const u8 {
     return switch (v) {
         .string => |x| x,
-        .integer => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
-        .float => |x| try std.fmt.allocPrint(a, "{d}", .{x}),
+        .integer => |x| try a.print("{d}", .{x}),
+        .float => |x| try a.print("{d}", .{x}),
         .bool => |x| if (x) "True" else "False",
         .null => "None",
         else => try json.stringify(a, v),
@@ -570,8 +570,8 @@ pub fn json5ErrorMessage(a: Allocator, src: []const u8, pos: usize) ![]const u8 
             col = 1;
         } else col += 1;
     }
-    if (pos >= src.len) return std.fmt.allocPrint(a, "<string>:{d} Unexpected end of input at column {d}", .{ line, col });
-    return std.fmt.allocPrint(a, "<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
+    if (pos >= src.len) return a.print("<string>:{d} Unexpected end of input at column {d}", .{ line, col });
+    return a.print("<string>:{d} Unexpected \"{c}\" at column {d}", .{ line, src[pos], col });
 }
 
 test "a config file only replaces the preprocessor options it sets" {

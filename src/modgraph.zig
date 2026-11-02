@@ -56,10 +56,10 @@ pub fn build(a: Allocator, units: []const *Obj) !Graph {
         var uses: std.ArrayList(Use) = .empty;
         try usedModules(a, u, &uses);
         for (uses.items) |m| if (by_name.get(m.name)) |j| {
-            if (std.mem.indexOfScalar(usize, list.items, j) == null) try list.append(a, j);
+            if (std.mem.findScalar(usize, list.items, j) == null) try list.append(a, j);
         };
         if (u.kind == .submodule) if (u.submodDataConst().ancestor_obj) |anc| {
-            for (units, 0..) |v, j| if (v == anc and std.mem.indexOfScalar(usize, list.items, j) == null) try list.append(a, j);
+            for (units, 0..) |v, j| if (v == anc and std.mem.findScalar(usize, list.items, j) == null) try list.append(a, j);
         };
         d.* = list.items;
     }

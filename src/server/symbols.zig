@@ -60,7 +60,7 @@ pub fn workspaceSymbolOf(a: Allocator, cand: *const Obj) !lsp.SymbolInformation 
         .method => 6,
         else => 1,
     };
-    const container: ?[]const u8 = if (std.mem.indexOf(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
+    const container: ?[]const u8 = if (std.mem.find(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
     return .{
         .name = cand.name,
         .kind = kind,
@@ -99,7 +99,7 @@ pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumen
         } else {
             scope_type = outline.flatKind(scope.getType(false), false);
         }
-        const container: ?[]const u8 = if (std.mem.indexOf(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
+        const container: ?[]const u8 = if (std.mem.find(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
         try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
         if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
             for (scope.childList()) |child| {

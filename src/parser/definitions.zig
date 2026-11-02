@@ -141,7 +141,7 @@ pub fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
     const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
     var kind_str: []const u8 = try std.mem.replaceOwned(u8, a, m.group(1).?, " ", "");
     var rest = line[m.end(0)..];
-    if (std.mem.indexOfScalar(u8, kind_str, '(') != null) {
+    if (std.mem.findScalar(u8, kind_str, '(') != null) {
         const mc = helpers.findParenMatch(rest);
         if (mc < 0) return null; // Incomplete kind specification
         const mcu: usize = @intCast(mc);
@@ -371,7 +371,7 @@ pub fn readGenericDef(a: Allocator, line: []const u8) E!?DefResult {
     if (m.group(2)) |v| {
         vis_flag = if (std.ascii.eqlIgnoreCase(v, "private")) .private else .public;
     }
-    const i_1 = std.mem.indexOf(u8, trailing, "=>") orelse return null;
+    const i_1 = std.mem.find(u8, trailing, "=>") orelse return null;
     const bound_name = str.strip(trailing[0..i_1]);
     if (R().GEN_ASSIGN.match(bound_name) != null) return null;
     var pro_out: std.ArrayList([]const u8) = .empty;
@@ -429,9 +429,9 @@ pub fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
     var parent_name: []const u8 = "";
     var name: []const u8 = "";
     const trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
-    const close = std.mem.indexOfScalar(u8, trailing, ')') orelse trailing.len;
+    const close = std.mem.findScalar(u8, trailing, ')') orelse trailing.len;
     const parents = trailing[0..close];
-    const colon = std.mem.indexOfScalar(u8, parents, ':') orelse parents.len;
+    const colon = std.mem.findScalar(u8, parents, ':') orelse parents.len;
     if (R().WORD.search(parents[0..colon])) |am| ancestor_name = try std.ascii.allocLowerString(a, am.str());
     if (colon < parents.len) if (R().WORD.search(parents[colon + 1 ..])) |pm| {
         parent_name = try std.ascii.allocLowerString(a, pm.str());
@@ -620,7 +620,7 @@ pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
     if (!std.ascii.startsWithIgnoreCase(t, "attributes")) return null;
     var rest = std.mem.trimStart(u8, t["attributes".len..], " \t");
     if (rest.len == 0 or rest[0] != '(') return null;
-    const close = std.mem.indexOfScalar(u8, rest, ')') orelse return null;
+    const close = std.mem.findScalar(u8, rest, ')') orelse return null;
     for (rest[1..close]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == ',' or c == ' ')) return null;
     rest = std.mem.trimStart(u8, rest[close + 1 ..], " \t");
     if (rest.len == 0 or !std.ascii.isAlphabetic(rest[0])) return null;
@@ -634,7 +634,7 @@ pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
     var buf: [32]u8 = undefined;
     const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
     const found = try runDefTests(a, line, word);
-    if (builtin.mode == .debug) {
+    if (builtin.optimize == .debug) {
         const all = try runDefTests(a, line, null);
         if (all.index != found.index) std.debug.panic("definition test {?d} matches \"{s}\" but the first-word dispatch chose {?d}", .{ all.index, line, found.index });
     }
@@ -677,7 +677,7 @@ pub fn getLineContext(a: Allocator, line: []const u8) E!struct { ctx: LineContex
         if (tm == .var_) {
             const v = tm.var_;
             if (v.var_names == null and lev1_end == line_len) return .{ .ctx = .var_key };
-            if (std.mem.eql(u8, v.var_type, "PROCEDURE") and (std.mem.indexOf(u8, line, "=>") orelse 0) > 0) return .{ .ctx = .pro_link };
+            if (std.mem.eql(u8, v.var_type, "PROCEDURE") and (std.mem.find(u8, line, "=>") orelse 0) > 0) return .{ .ctx = .pro_link };
             return .{ .ctx = .var_only };
         }
     }
