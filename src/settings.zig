@@ -109,6 +109,20 @@ pub const Settings = struct {
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
+    /// Further include directories, for the compiler only
+    compiler_include_dirs: StrList = .{},
+    /// Do not check a file when it is saved (only when it is opened)
+    compiler_no_save: bool = false,
+    /// Check a file while it is edited, its unsaved text, after
+    /// `compiler_change_delay` milliseconds without a change
+    compiler_on_change: bool = false,
+    compiler_change_delay: i64 = 1000,
+    /// Do not compile the workspace modules a file uses first
+    compiler_no_dependencies: bool = false,
+    /// fypp, run on each file before the compiler checks it; null: none
+    compiler_fypp: ?[]const u8 = null,
+    /// fypp's further arguments (-I, -D, ...)
+    compiler_fypp_args: StrList = .{},
     // Preprocessor options
     /// null: use the default rule (uppercase extensions are preprocessed)
     pp_suffixes: ?StrList = null,
@@ -219,6 +233,13 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_on_change", .kind = .flag, .help = "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
@@ -374,11 +395,11 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
                     continue;
                 }
-                if (std.mem.eql(u8, o.long, "compiler_args")) {
+                if (std.mem.eql(u8, o.long, "compiler_args") or std.mem.eql(u8, o.long, "compiler_fypp_args")) {
                     var list: StrList = .{};
                     var words = std.mem.tokenizeAny(u8, val, " \t");
                     while (words.next()) |w| try list.items.append(a, w);
-                    s.compiler_args = list;
+                    if (o.long.len == "compiler_args".len) s.compiler_args = list else s.compiler_fypp_args = list;
                     continue;
                 }
                 var handled = false;
@@ -412,6 +433,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                 if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
                 if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
                 if (std.mem.eql(u8, o.long, "external_modules")) s.external_modules = list;
+                if (std.mem.eql(u8, o.long, "compiler_include_dirs")) s.compiler_include_dirs = list;
             },
         }
     }
@@ -478,6 +500,21 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
     };
 }
 
+/// Arguments: a string split at spaces, or a list, which keeps repeated
+/// ones (-I a -I b); null for anything else
+fn argList(a: Allocator, v: json.Value) !?StrList {
+    var list: StrList = .{};
+    switch (v) {
+        .string => |x| {
+            var words = std.mem.tokenizeAny(u8, x, " \t");
+            while (words.next()) |w| try list.items.append(a, w);
+        },
+        .array => |arr| for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item)),
+        else => return null,
+    }
+    return list;
+}
+
 fn jsonInt(v: ?json.Value, default: i64) i64 {
     const x = v orelse return default;
     return json.int(x) orelse default;
@@ -525,23 +562,17 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Compiler diagnostics
     if (json.get(cfg, "compiler_diagnostics")) |v| s.compiler_diagnostics = json.str(v);
     if (json.get(cfg, "compiler_path")) |v| s.compiler_path = json.str(v);
-    if (json.get(cfg, "compiler_args")) |v| s.compiler_args = switch (v) {
-        .null => null,
-        .string => |x| blk: {
-            var list: StrList = .{};
-            var words = std.mem.tokenizeAny(u8, x, " \t");
-            while (words.next()) |w| try list.items.append(a, w);
-            break :blk list;
-        },
-        // a list keeps repeated arguments (-I a -I b)
-        .array => |arr| blk: {
-            var list: StrList = .{};
-            for (arr.items) |item| try list.items.append(a, try jsonScalarString(a, item));
-            break :blk list;
-        },
-        else => s.compiler_args,
-    };
+    if (json.get(cfg, "compiler_args")) |v| s.compiler_args = if (v == .null) null else try argList(a, v) orelse s.compiler_args;
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
+    if (json.get(cfg, "compiler_include_dirs")) |v| s.compiler_include_dirs = try jsonList(a, v);
+    s.compiler_no_save = jsonBool(json.get(cfg, "compiler_no_save"), s.compiler_no_save);
+    s.compiler_on_change = jsonBool(json.get(cfg, "compiler_on_change"), s.compiler_on_change);
+    s.compiler_change_delay = jsonInt(json.get(cfg, "compiler_change_delay"), s.compiler_change_delay);
+    s.compiler_no_dependencies = jsonBool(json.get(cfg, "compiler_no_dependencies"), s.compiler_no_dependencies);
+    if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
+    if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
+        s.compiler_fypp_args = l;
+    };
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
     s.disable_bind_c_search = jsonBool(json.get(cfg, "disable_bind_c_search"), s.disable_bind_c_search);

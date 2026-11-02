@@ -51,8 +51,6 @@ Not scheduled yet:
 
 - Code of the VS Code extension that other editors could use, moved into
   the server:
-  - compiler diagnostics only from the server (`src/compilers.zig`, which
-    already ports the extension's linter; `zfls.linter.runner`)
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
   - fortitude and Codee checks as the server's diagnostics
@@ -61,8 +59,6 @@ Not scheduled yet:
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
 - `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
   `zig build` steps
-- Source files over 1,000 lines split, as the others were
-  (`src/dap/session.zig`)
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
 
@@ -215,8 +211,10 @@ Diagnostics and code actions:
   (`tests/issues/corpus.zig`)
 - [x] Compiler diagnostics from the server, for every editor
   (`compiler_diagnostics`: gfortran, ifx, ifort, flang, nvfortran, nagfor,
-  lfortran), after compiling the modules a file uses; in VS Code with
-  `zfls.linter.runner` set to `server`. FL #85, HS #205
+  lfortran), after compiling the modules a file uses; also while a file is
+  edited, through fypp, and with further include directories. VS Code's
+  `zfls.linter` settings are its options: the extension has no linter of
+  its own. FL #85, HS #205
 - [x] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; the type, rank and kind of variables
   and literals (`argument-kind`), the type and rank of expressions
@@ -258,4 +256,5 @@ Server:
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
 - [x] Source files split into smaller modules (`src/server/`,
-  `src/objects/`, `src/parser/`, `src/regex/`); none over 900 lines
+  `src/objects/`, `src/parser/`, `src/regex/`, `src/dap/`); none over 900
+  lines
