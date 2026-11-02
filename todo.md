@@ -33,8 +33,6 @@ Not scheduled yet:
 
 - Code of the VS Code extension that other editors could use, moved into
   the server:
-  - compiler diagnostics only from the server (`src/compilers.zig`, which
-    already ports the extension's linter; `zfls.linter.runner`)
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
   - fortitude and Codee checks as the server's diagnostics
