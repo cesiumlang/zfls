@@ -10,7 +10,6 @@ import {
   Location as ProtocolLocation,
   ServerOptions,
 } from "vscode-languageclient/node";
-import { registerFormatting } from "./formatting";
 import { toggleComments } from "./comments";
 import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
@@ -47,7 +46,6 @@ let context: vscode.ExtensionContext;
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
-  registerFormatting(context, output);
   registerRunCommands(context, output);
   registerFpm(context, output);
   registerFpmTests(context, output);

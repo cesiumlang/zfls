@@ -98,6 +98,7 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
     }
   }
   args.push(...linterArguments(folder));
+  args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
   args.push(...config.get<string[]>("arguments", []));
@@ -214,6 +215,41 @@ function codeeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   return args;
 }
 
+/** The zfls options of the formatter (zfls.formatting.*), which zfls runs
+ * for Format Document and Format Selection. The formatter and its
+ * arguments can differ by language: free form's are zfls's `formatter`,
+ * fixed form's its `formatter_fixed`. None when neither has one. */
+export function formattingArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
+  const forms = [
+    { languageId: "FortranFreeForm", flag: "--formatter", argsFlag: "--formatter_args" },
+    { languageId: "FortranFixedForm", flag: "--formatter_fixed", argsFlag: "--formatter_fixed_args" },
+  ];
+  const args: string[] = [];
+  let any = false;
+  for (const { languageId, flag, argsFlag } of forms) {
+    const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
+    const formatter = config.get<string>("formatter", "Disabled");
+    if (formatter !== "findent" && formatter !== "fprettify") {
+      args.push(flag, "none");
+      continue;
+    }
+    any = true;
+    args.push(flag, formatter);
+    const extra = config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "");
+    if (extra.length) {
+      args.push(`${argsFlag}=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    }
+  }
+  if (!any) {
+    return [];
+  }
+  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  if (exe) {
+    args.push("--formatter_path", resolvePath(exe, folder));
+  }
+  return args;
+}
+
 /** Whether a configuration change needs the language servers restarted */
 export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
   return (
@@ -222,6 +258,7 @@ export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
     e.affectsConfiguration("zfls.linter") ||
     e.affectsConfiguration("zfls.fortitude") ||
     e.affectsConfiguration("zfls.codee") ||
+    e.affectsConfiguration("zfls.formatting") ||
     OPTIONS.some((o) => e.affectsConfiguration(`zfls.${o.setting}`))
   );
 }

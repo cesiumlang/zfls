@@ -35,7 +35,6 @@ Not scheduled yet:
   the server:
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
-  - formatting with findent or fprettify as the server's formatting
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
 - Scans of large Fortran corpora for false-positive diagnostics
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
@@ -72,6 +71,9 @@ Editor features:
   `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
+- [x] Formatting of documents and selections with findent or fprettify,
+  by the server (`textDocument/formatting` and `rangeFormatting`;
+  `formatter`, `zfls.formatting.*`), so every editor gets it
 - [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
   problem matchers, running and debugging their targets, Run and Debug
   Fortran File on a target's program, and the Testing view (each test
