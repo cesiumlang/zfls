@@ -706,20 +706,6 @@
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.fprettifyArgs.markdownDescription%"
         },
-        "zfls.linter.runner": {
-          "type": "string",
-          "enum": [
-            "extension",
-            "server"
-          ],
-          "enumDescriptions": [
-            "%config.zfls.linter.runner.enumDescriptions.0%",
-            "%config.zfls.linter.runner.enumDescriptions.1%"
-          ],
-          "default": "extension",
-          "scope": "resource",
-          "markdownDescription": "%config.zfls.linter.runner.markdownDescription%"
-        },
         "zfls.linter.compiler": {
           "type": "string",
           "enum": [

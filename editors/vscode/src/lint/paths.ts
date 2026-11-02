@@ -1,16 +1,9 @@
-// Variables and glob patterns in the linter's path settings. No VS Code
-// here, so that test/unit can run it with plain Node.js.
+// Glob patterns in the zfls.linter settings' include directories, expanded
+// for zfls's options (options.ts). No VS Code here, so that test/unit can
+// run it with plain Node.js.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { VariableContext, expandVariables } from "../tools";
-
-/** A path setting with its variables resolved, made absolute against `base`
- * (the workspace folder, or the file's directory) */
-export function resolvePath(value: string, ctx: VariableContext, base: string): string {
-  const resolved = expandVariables(value.trim(), ctx);
-  return path.resolve(base, resolved);
-}
 
 const GLOB_CHARS = /[*?[]/;
 /** Directories that a `**` does not descend into */
@@ -120,14 +113,4 @@ function isDirectory(p: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Whether two paths name the same file (case-insensitively on Windows
- * and macOS, whose file systems usually are) */
-export function samePath(a: string, b: string): boolean {
-  const na = path.resolve(a);
-  const nb = path.resolve(b);
-  return process.platform === "win32" || process.platform === "darwin"
-    ? na.toLowerCase() === nb.toLowerCase()
-    : na === nb;
 }

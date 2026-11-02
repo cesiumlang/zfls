@@ -1,6 +1,8 @@
 // The zfls command line from the zfls.* settings of a workspace folder.
 
+import * as path from "node:path";
 import * as vscode from "vscode";
+import { expandDirectoryGlob } from "./lint/paths";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -100,14 +102,25 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   return args;
 }
 
-/** With zfls.linter.runner set to `server`, the zfls options of the
- * compiler that checks files: `zfls.linter.compiler`, its path, its
- * arguments and its module directory. Its include directories are zfls's
- * (`zfls.includeDirs`). */
+/** Directories of a setting, with variables resolved and globs expanded */
+function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefined): string[] {
+  const base = folder?.uri.fsPath;
+  const dirs = patterns.filter((p) => p.trim()).map((p) => {
+    const dir = resolvePath(p, folder);
+    return base && !path.isAbsolute(dir) ? path.join(base, dir) : dir;
+  });
+  return [...new Set(dirs.flatMap(expandDirectoryGlob))];
+}
+
+/** The zfls options of the compiler that checks files (zfls's compiler
+ * diagnostics, src/server/compile.zig), from the zfls.linter settings: the
+ * compiler, its path, arguments, include and module directories, when it
+ * checks, and fypp. zfls's own include directories (`zfls.includeDirs`) are
+ * passed too. */
 export function linterArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
-  if (config.get<string>("runner", "extension") !== "server" || compiler === "Disabled") {
+  if (compiler === "Disabled") {
     return [];
   }
   const args = ["--compiler_diagnostics", compiler];
@@ -119,9 +132,35 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   if (extra.length) {
     args.push(`--compiler_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
   }
+  const includes = directories(config.get<string[]>("includePaths", []), folder);
+  if (includes.length) {
+    args.push("--compiler_include_dirs", ...includes);
+  }
   const modDir = config.get<string>("modOutput", "").trim();
   if (modDir) {
     args.push("--compiler_mod_dir", resolvePath(modDir, folder));
+  }
+  if (!config.get<boolean>("lintOnSave", true)) {
+    args.push("--compiler_no_save");
+  }
+  if (config.get<boolean>("lintOnType", false)) {
+    args.push("--compiler_on_change", "--compiler_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 1000))));
+  }
+  if (!config.get<boolean>("resolveModules", true)) {
+    args.push("--compiler_no_dependencies");
+  }
+  if (config.get<boolean>("fypp.enabled", false)) {
+    const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
+    // a name is looked for on the PATH; a path is resolved
+    args.push("--compiler_fypp", /[\\/]/.test(fypp) ? resolvePath(fypp, folder) : expandVariables(fypp, folderVariables(folder)));
+    const fyppArgs = [
+      ...directories(config.get<string[]>("fypp.includes", []), folder).map((d) => `-I${d}`),
+      ...Object.entries(config.get<Record<string, string>>("fypp.definitions", {})).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
+      ...config.get<string[]>("fypp.extraArgs", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)),
+    ];
+    if (fyppArgs.length) {
+      args.push(`--compiler_fypp_args=${fyppArgs.join(" ")}`);
+    }
   }
   return args;
 }
@@ -131,9 +170,7 @@ export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
   return (
     e.affectsConfiguration("zfls.path") ||
     e.affectsConfiguration("zfls.arguments") ||
-    e.affectsConfiguration("zfls.linter.runner") ||
-    (["compiler", "compilerPath", "extraArgs", "modOutput"].some((s) => e.affectsConfiguration(`zfls.linter.${s}`)) &&
-      vscode.workspace.getConfiguration("zfls.linter").get<string>("runner", "extension") === "server") ||
+    e.affectsConfiguration("zfls.linter") ||
     OPTIONS.some((o) => e.affectsConfiguration(`zfls.${o.setting}`))
   );
 }
