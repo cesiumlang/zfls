@@ -138,6 +138,19 @@ pub const Settings = struct {
     /// Codee's executable; null: `codee` on the PATH
     codee_path: ?[]const u8 = null,
     codee_args: StrList = .{},
+    // Formatting
+    /// The formatter of `textDocument/formatting` and `rangeFormatting`:
+    /// findent or fprettify; null or `none`: none
+    formatter: ?[]const u8 = null,
+    /// The formatter executable, or the directory that holds it; null: the
+    /// one on the PATH
+    formatter_path: ?[]const u8 = null,
+    /// The formatter's further arguments
+    formatter_args: StrList = .{},
+    /// The formatter of fixed-form files; null: `formatter`
+    formatter_fixed: ?[]const u8 = null,
+    /// The further arguments of `formatter_fixed`
+    formatter_fixed_args: StrList = .{},
     // Preprocessor options
     /// null: use the default rule (uppercase extensions are preprocessed)
     pp_suffixes: ?StrList = null,
@@ -264,6 +277,12 @@ pub const opts = [_]Opt{
     .{ .long = "codee", .kind = .flag, .help = "Check files with Codee (codee checks, a commercial tool) when they are opened and saved", .group = "Linter options" },
     .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
     .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
+
+    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
+    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
+    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
+    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
+    .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
@@ -529,7 +548,7 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
 /// The options that are arguments of another program: one string, split at
 /// spaces, on the command line, and a list or a string in a configuration
 /// file
-const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args" };
+const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
 
 fn isArgList(name: []const u8) bool {
     inline for (arg_lists) |n| if (std.mem.eql(u8, name, n)) return true;
@@ -622,6 +641,16 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "codee_args")) |v| if (try argList(a, v)) |l| {
         s.codee_args = l;
     };
+    // Formatting
+    if (json.get(cfg, "formatter")) |v| s.formatter = json.str(v);
+    if (json.get(cfg, "formatter_path")) |v| s.formatter_path = json.str(v);
+    if (json.get(cfg, "formatter_args")) |v| if (try argList(a, v)) |l| {
+        s.formatter_args = l;
+    };
+    if (json.get(cfg, "formatter_fixed")) |v| s.formatter_fixed = json.str(v);
+    if (json.get(cfg, "formatter_fixed_args")) |v| if (try argList(a, v)) |l| {
+        s.formatter_fixed_args = l;
+    };
     // Symbols options
     s.symbol_skip_mem = jsonBool(json.get(cfg, "symbol_skip_mem"), s.symbol_skip_mem);
     s.disable_bind_c_search = jsonBool(json.get(cfg, "disable_bind_c_search"), s.disable_bind_c_search);
@@ -669,6 +698,22 @@ test "a config file only replaces the preprocessor options it sets" {
     try std.testing.expectEqualStrings("FROM_FILE", s.pp_defs.items[0].name);
     try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
     try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());
+}
+
+test "formatter arguments: a string split at spaces, or a list" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = try parseArgs(a, &.{ "--formatter", "findent", "--formatter_args=-i4  -r1", "--formatter_fixed_args", "" }, "0.1.0");
+    var s = r.run;
+    try std.testing.expectEqualStrings("findent", s.formatter.?);
+    try std.testing.expectEqual(@as(usize, 2), s.formatter_args.len());
+    try std.testing.expectEqualStrings("-r1", s.formatter_args.slice()[1]);
+    try std.testing.expectEqual(@as(usize, 0), s.formatter_fixed_args.len());
+    try applyConfig(a, &s, try json5.parse(a, "{\"formatter\": \"fprettify\", \"formatter_args\": [\"-i\", \"4\", \"-i\", \"4\"], \"formatter_fixed_args\": \"-ifixed -i2\"}"));
+    try std.testing.expectEqualStrings("fprettify", s.formatter.?);
+    try std.testing.expectEqual(@as(usize, 4), s.formatter_args.len());
+    try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
 }
 
 test "cli parsing" {

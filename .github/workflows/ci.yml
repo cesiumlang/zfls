@@ -266,7 +266,7 @@ jobs:
         run: zig build check-generated
 
       - name: Source is formatted (zig fmt)
-        run: zig fmt --check build.zig build.zig.zon src tests
+        run: zig fmt --check build build.zig build.zig.zon src tests tools
 
       # Downloads (lazy ones too) are retried: a dropped connection to a
       # package host should not fail the run
@@ -320,7 +320,7 @@ jobs:
             esac
           done
           # the sources, rstd included, for building from source (conda-forge)
-          bash tools/make_source_archive.sh dist
+          zig build source-archive -- dist
           ls -l dist
 
       - uses: actions/setup-node@v7
@@ -330,9 +330,7 @@ jobs:
       # The VS Code extension, once per VS Code platform with the matching
       # zfls from dist/ in it, and once without one
       - name: Package the VS Code extension
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: bash tools/package_vscode.sh dist "$VERSION"
+        run: zig build package-vscode -- dist
 
       - uses: actions/upload-artifact@v7
         with:

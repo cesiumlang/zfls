@@ -175,6 +175,9 @@ pub const ServerCapabilities = struct {
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
     semanticTokensProvider: ?SemanticTokensOptions = null,
+    /// with a formatter (`formatter`)
+    documentFormattingProvider: ?bool = null,
+    documentRangeFormattingProvider: ?bool = null,
 };
 
 pub const InitializeResult = struct { capabilities: ServerCapabilities };
@@ -312,6 +315,15 @@ pub const InlayHint = struct {
     kind: i64,
     paddingLeft: ?bool = null,
     paddingRight: ?bool = null,
+};
+
+/// `textDocument/formatting`; its `options` (tab size, spaces) are left to
+/// the formatter's own settings
+pub const DocumentFormattingParams = struct { textDocument: TextDocumentIdentifier };
+
+pub const DocumentRangeFormattingParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
 };
 
 pub const OnTypeFormattingParams = struct {

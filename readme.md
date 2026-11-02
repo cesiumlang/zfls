@@ -44,6 +44,8 @@ command line options and configuration files.
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
   `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
   title case
+- Formatting of documents and selections with findent or fprettify (see
+  [Formatting](#formatting))
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
@@ -78,7 +80,7 @@ also generates the API documentation in `zig-out/docs`; `zig build bin`
 installs only the executable.
 
 Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
-its submodules included (`tools/make_source_archive.sh`), and
+its submodules included (`zig build source-archive -- [OUT_DIR]`), and
 `zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
 `zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
 from the template in `packaging/conda-forge` (`--local` instead builds from
@@ -90,9 +92,9 @@ for every change.
 `editors/vscode` is a VS Code extension that runs zfls for Fortran files and
 adds syntax highlighting. Each release publishes it as
 `zfls-vscode-v<version>-<platform>.vsix`, one per VS Code platform with that
-platform's zfls inside (`tools/package_vscode.sh`), plus a `universal` one
-that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
-from VSIX..." in VS Code. The release also publishes the platform packages,
+platform's zfls inside (`zig build package-vscode -- DIST`, from the
+release archives in DIST), plus a `universal` one that runs `zfls` from the
+`PATH`. To install one, use "Extensions: Install from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 (VSCodium and other VS Code derivatives), and the universal one to the
 Marketplace for the platforms without their own. Each registry has its own
@@ -465,6 +467,50 @@ Two requests act on the checks: `zfls/compilerCheck` (`{textDocument:
 {uri}}`) checks a file now, its text in the editor, and `zfls/compilerClear`
 drops the compiler's diagnostics and zfls's `.mod` files (not those of
 `compiler_mod_dir`).
+
+### Formatting
+
+With `formatter` set to `findent` or `fprettify`, zfls answers
+`textDocument/formatting` and `textDocument/rangeFormatting` (format
+document, format selection, format on save) by running that formatter,
+which is installed separately (`pip install findent`, `pip install
+fprettify`, or the same from conda-forge). This works in every editor, not
+only VS Code; zfls offers formatting only when a formatter is set.
+
+zfls gives the formatter the document's text, as the editor has it, on its
+standard input, reads the result from its standard output (no files are
+written), and answers with an edit for each block of lines the formatter
+changed (from a line diff), so the lines it left alone keep their exact
+text. The formatter runs in the file's directory, so fprettify finds the
+`.fprettify.rc` files there and above.
+
+```json
+{
+  "formatter": "fprettify",
+  "formatter_args": ["--indent", "4", "--enable-decl"],
+  "formatter_fixed": "findent",
+  "formatter_fixed_args": ["-i2"],
+  "formatter_path": "/opt/tools/bin"
+}
+```
+
+- `formatter_args`: the formatter's own options. findent gets `-ifree` or
+  `-ifixed` from the file's form (its extension, else what zfls detects)
+  unless these set the input form (`-i...`, `--input_format`), and for a
+  selection `-Ia`, which starts at the indentation of its first line. On
+  the command line it is one string, split at spaces:
+  `--formatter_args="-i4 -r1"`.
+- `formatter_fixed`, `formatter_fixed_args`: the formatter of fixed-form
+  files and its options, when they differ (by default `formatter`'s);
+  fprettify formats free form only, findent both. `none` formats no
+  fixed-form files.
+- `formatter_path`: the executable, or the directory that holds it (by
+  default the formatter on the `PATH`).
+
+A selection is formatted as whole lines, and the formatter sees only those
+lines: select whole constructs for the indentation inside them to come out
+right. When the formatter is missing or fails, the document is left as it
+is and zfls shows the error once (`window/showMessage`).
 
 ## Testing
 
