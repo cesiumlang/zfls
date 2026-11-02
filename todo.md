@@ -26,6 +26,24 @@ projects zfls replaces:
   `zfls-feedstock` exists, CI's `conda-forge` job (switched off for now)
   opens each release's pull request to it
 - [ ] Translations, as they are asked for (MF #616)
+- [ ] Files that `#include` and `INCLUDE` name but that are no source
+  files (json-fortran's `json_add_scalar_by_path.inc`, `.inc` not being
+  in `incl_suffixes`): read them for the declarations they hold. For now
+  `argument-not-declared` is not reported for a procedure with such an
+  include in it, and `undeclared-name` not in its file; hover, definition
+  and argument checks still miss those declarations
+- [ ] The specific intrinsic names that only the undeclared-name check
+  knows (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...,
+  `other_intrinsics` in `src/semantic.zig`) in the table of intrinsics
+  (`src/data/procedures.zig`), for hover, completion and signature help
+- [ ] A scan of the Fortran stdlib with its fypp sources generated
+  (`config/fypp_deployment.py`): the corpus scan read only its plain
+  `.f90` files, so 506 `module-not-found` diagnostics name modules that
+  fypp makes, and the code using them was checked only in part
+- [ ] The index cache keeps the ASTs of a parser of the same version:
+  a development build that changes the parser reads the old ones until a
+  file changes (`--disable_index_cache`); releases parse again, the
+  version being part of the key
 
 ## Proposed
 
@@ -35,7 +53,6 @@ Not scheduled yet:
   the server:
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
-- Scans of large Fortran corpora for false-positive diagnostics
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
 
@@ -178,6 +195,20 @@ Diagnostics and code actions:
 - [x] Unused local variables and `use` names (faded, with a quick fix)
 - [x] Workspace diagnostics: problems in files that are not open
   (`workspace_diagnostics`)
+- [x] Scans of large code bases for false-positive diagnostics, with
+  `workspace_diagnostics`: LAPACK (3,683 files, fixed form and
+  Fortran 90), the Fortran stdlib's plain sources (423), json-fortran and
+  fortls's test sources: 10,317 diagnostics before, 926 after, the rest
+  true (unused names, masked host names, the modules fypp generates). Fixed:
+  the statement after an IF condition on a continuation line (`IF (X)` /
+  `$ CALL F`), keyword arguments and character literals over continuation
+  lines, `.AND .` with blanks in fixed form, the specific intrinsic names
+  (`DSQRT`, `FLOAT`), `10 END DO` ending `DO 10`, a main program without
+  PROGRAM, `real(dp) module function`, `CLASS(*)` dummy arguments,
+  `a % f()` with blanks, names and kinds that may come from modules not in
+  the workspace (through a used module, or a submodule's ancestor), dummy
+  arguments declared in an include file that is no source file
+  (`tests/issues/corpus.zig`)
 - [x] Compiler diagnostics from the server, for every editor
   (`compiler_diagnostics`: gfortran, ifx, ifort, flang, nvfortran, nagfor,
   lfortran), after compiling the modules a file uses; also while a file is

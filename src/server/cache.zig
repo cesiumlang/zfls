@@ -27,6 +27,10 @@ const Server = srv.Server;
 
 /// The start of a cache file: the format, which a new one changes
 const magic = "ZFLSIDX2";
+/// What the parse of a file depends on besides its text: the layout of the
+/// objects kept, and the version of zfls, whose parser a new release may
+/// change (so that it parses the files again)
+const parse_salt = serial.schema ^ std.hash.Wyhash.hash(0, @import("build_options").version);
 /// A smaller workspace starts fast enough without a cache
 const min_files = 200;
 /// The caches of other workspaces not written for this long are deleted
@@ -186,7 +190,7 @@ pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: par
     const snap = self.index orelse return f.parsePrepared(prepared, opts);
     // a trace is of parsing
     if (opts.trace != null) return f.parsePrepared(prepared, opts);
-    const key = f.parseKey(prepared, opts, serial.schema);
+    const key = f.parseKey(prepared, opts, parse_salt);
     if (snap.entries.get(f.path)) |e| if (e.key == key and e.ast.len > 0) {
         const ast = try Ast.create(self.gpa, f);
         if (serial.load(self.gpa, ast, e.ast)) {

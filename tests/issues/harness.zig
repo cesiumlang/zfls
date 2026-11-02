@@ -37,6 +37,12 @@ fn note() []const u8 {
     return note_buf[0..note_len];
 }
 
+/// The reason of the last unmet expectation, for a test without an issue
+/// to report it
+pub fn lastNote() []const u8 {
+    return note();
+}
+
 /// Fail the current expectation with a message
 pub fn unmet(comptime fmt: []const u8, args: anytype) error{Unmet} {
     note_len = if (std.mem.print(&note_buf, fmt, args)) |s| s.len else |_| note_buf.len;

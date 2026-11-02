@@ -45,6 +45,11 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             }
             const implicit_flag = self.getImplicit();
             if (implicit_flag == null or implicit_flag.?) return errors.items;
+            // the arguments may be declared in an included file that zfls
+            // does not read (`#include "args.inc"`, not a source file)
+            for (self.file_ast.include_statements.items) |inc| {
+                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+            }
             const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.argList(), " ", ""), ",");
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                 if (arg_obj == null) {
@@ -92,12 +97,31 @@ pub fn checkDefinition(self: *Obj, env: Env, known_types: *Obj.KnownTypes, inter
         if (interface) {
             return Diagnostic.init(.not_imported, self.sline -| 1, try a.print("Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
         }
+        // it may come from a module zfls does not have
+        if (seesUnknownModule(env, self.parent)) return null;
         var d = Diagnostic.init(.object_not_found, self.sline -| 1, try a.print("Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
         d.subject = desc_obj_name;
         d.addRelated(ti.obj.file_ast.path, ti.obj.sline -| 1, "Possible object");
         return d;
     };
     return null;
+}
+
+/// Whether names of `scope` may come from a module that is not in the
+/// workspace: one that it or a scope around it uses, or the ancestor of a
+/// submodule
+fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
+    var cur = scope;
+    var depth: usize = 0;
+    while (cur) |s| : (cur = s.parent) {
+        depth += 1;
+        if (depth > 64 or s.data != .scope) break;
+        if (s.kind == .submodule and s.submodDataConst().ancestor_obj == null) return true;
+        for (s.scopeDataConst().use.items) |u| {
+            if (!u.is_import and !env.tree.contains(u.mod_name)) return true;
+        }
+    }
+    return false;
 }
 
 pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {

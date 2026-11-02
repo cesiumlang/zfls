@@ -5,6 +5,7 @@
 test {
     _ = @import("completion.zig");
     _ = @import("constructs.zig");
+    _ = @import("corpus.zig");
     _ = @import("diagnostics.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
