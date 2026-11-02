@@ -41,7 +41,7 @@ pub fn show(s: *Session, a: Allocator, name: []const u8, v: Val) !Value {
     var ref: i64 = 0;
     const type_name = try typeText(a, v);
     if (v.empty) {
-        text = if (v.decl != null and hasKeyword(v.decl.?, .allocatable)) "not allocated" else "not associated";
+        text = if (v.decl != null and hasKeyword(v.decl.?, .allocatable)) s.text.not_allocated else s.text.not_associated;
     } else if (v.rank > v.chosen.len) {
         ref = try addNode(s, .{ .value = try persist(s, v) });
         text = try arrayPreview(s, a, v);
@@ -128,7 +128,7 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
             for (try frameVariables(s, a, frame)) |fv| {
                 const name = try std.ascii.allocLowerString(a, fv.v.name);
                 const val = valueOf(s, a, fv.v, fv.decl, frame, name) catch {
-                    try out.append(a, try json.from(a, .{ .name = name, .value = "not available", .variablesReference = 0 }));
+                    try out.append(a, try json.from(a, .{ .name = name, .value = s.text.not_available, .variablesReference = 0 }));
                     continue;
                 };
                 try out.append(a, try show(s, a, name, val));
@@ -172,7 +172,7 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
                 const local = json.str(json.get(it, "local")) orelse name;
                 const label = if (std.ascii.eqlIgnoreCase(local, name)) try std.ascii.allocLowerString(a, local) else try a.print("{s} => {s}", .{ local, name });
                 const v = (try moduleGlobal(s, a, module, name)) orelse {
-                    try out.append(a, try json.from(a, .{ .name = label, .value = "not available", .variablesReference = 0 }));
+                    try out.append(a, try json.from(a, .{ .name = label, .value = s.text.not_available, .variablesReference = 0 }));
                     continue;
                 };
                 const decl: ?Decl = if (mod) |mo| blk: {

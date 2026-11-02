@@ -1,8 +1,8 @@
-//! zfls dap, the debug adapter over Windows's Debugger Engine, on a program
-//! of the MSVC ABI with a PDB (tests/dap/hello.c, built by `zig cc`): a
-//! breakpoint, the stack, the variables, stepping, an expression, the end
-//! (`zig build test-dap`). The Fortran values (of ifx's programs) need ifx,
-//! which CI has not.
+//! zfls dap, the debug adapter over Windows's Debugger Engine (the
+//! launch's `dbgeng`), on a program of the MSVC ABI with a PDB
+//! (tests/dap/hello.c, built by `zig cc`): a breakpoint, the stack, the
+//! variables, stepping, an expression, the end (`zig build test-dap`). The
+//! Fortran values (of ifx's programs) need ifx, which CI has not.
 //!
 //!     dap_windows --zfls ZFLS.EXE [--zig ZIG]
 
@@ -16,154 +16,14 @@ const lsp = @import("lsp_client");
 
 const source = "tests/dap/hello.c";
 
-/// The adapter's process: a thread reads its messages, keeping the
-/// responses by the request they answer and the events in order
-const Client = struct {
-    io: Io,
-    gpa: Allocator,
-    child: std.process.Child,
-    /// Messages received (under `mutex`)
-    arena: std.heap.ArenaAllocator,
-    mutex: Io.Mutex = .init,
-    cond: Io.Condition = .init,
-    responses: std.AutoHashMapUnmanaged(i64, Value) = .empty,
-    events: std.ArrayList(Value) = .empty,
-    /// The events `event` has gone past
-    seen: usize = 0,
-    closed: bool = false,
-    seq: i64 = 1,
-    thread: ?std.Thread = null,
-    timeout: Io.Duration = .fromSeconds(60),
-
-    fn start(io: Io, gpa: Allocator, argv: []const []const u8) !*Client {
-        const c = try gpa.create(Client);
-        c.* = .{
-            .io = io,
-            .gpa = gpa,
-            .arena = .init(gpa),
-            .child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe, .create_no_window = true }),
-        };
-        c.thread = try std.Thread.spawn(.{}, read, .{c});
-        return c;
-    }
-
-    fn deinit(c: *Client) void {
-        if (c.thread) |t| t.join();
-        c.responses.deinit(c.gpa);
-        c.events.deinit(c.gpa);
-        c.arena.deinit();
-        c.gpa.destroy(c);
-    }
-
-    fn read(c: *Client) void {
-        var buf: [64 * 1024]u8 = undefined;
-        var reader = c.child.stdout.?.reader(c.io, &buf);
-        while (true) {
-            const body = (zfls.jsonrpc.readMessage(&reader.interface, c.gpa) catch null) orelse break;
-            defer c.gpa.free(body);
-            c.mutex.lockUncancelable(c.io);
-            defer c.mutex.unlock(c.io);
-            c.keep(body) catch {};
-            c.cond.broadcast(c.io);
-        }
-        c.mutex.lockUncancelable(c.io);
-        defer c.mutex.unlock(c.io);
-        c.closed = true;
-        c.cond.broadcast(c.io);
-    }
-
-    fn keep(c: *Client, body: []const u8) !void {
-        const msg = try std.json.parseFromSliceLeaky(Value, c.arena.allocator(), body, .{});
-        const kind = str(msg, "type") orelse return;
-        if (std.mem.eql(u8, kind, "response")) {
-            const seq = get(msg, "request_seq") orelse return;
-            if (seq == .integer) try c.responses.put(c.gpa, seq.integer, msg);
-        } else if (std.mem.eql(u8, kind, "event")) try c.events.append(c.gpa, msg);
-    }
-
-    /// Waits on `cond` until `deadline` (under `mutex`)
-    fn wait(c: *Client, deadline: Io.Timestamp, what: []const u8) !void {
-        if (c.closed) {
-            std.debug.print("zfls dap ended while waiting for {s}\n", .{what});
-            return error.AdapterEnded;
-        }
-        c.cond.waitTimeout(c.io, &c.mutex, .{ .deadline = .{ .raw = deadline, .clock = .awake } }) catch |e| switch (e) {
-            error.Timeout => {
-                std.debug.print("timed out waiting for {s}\n", .{what});
-                return error.Timeout;
-            },
-            else => return e,
-        };
-    }
-
-    /// Sends a request and returns the body of its response, which must
-    /// succeed
-    fn request(c: *Client, command: []const u8, args: anytype) !Value {
-        const seq = c.seq;
-        c.seq += 1;
-        const body = try std.json.Stringify.valueAlloc(c.gpa, .{ .seq = seq, .type = "request", .command = command, .arguments = args }, .{});
-        defer c.gpa.free(body);
-        const framed = try c.gpa.print("Content-Length: {d}\r\n\r\n{s}", .{ body.len, body });
-        defer c.gpa.free(framed);
-        try c.child.stdin.?.writeStreamingAll(c.io, framed);
-        const deadline = Io.Clock.awake.now(c.io).addDuration(c.timeout);
-        c.mutex.lockUncancelable(c.io);
-        defer c.mutex.unlock(c.io);
-        const r = while (true) {
-            if (c.responses.fetchRemove(seq)) |kv| break kv.value;
-            try c.wait(deadline, command);
-        };
-        if (get(r, "success")) |ok| if (ok == .bool and ok.bool) return get(r, "body") orelse .{ .object = .empty };
-        std.debug.print("{s} failed: {s}\n", .{ command, str(r, "message") orelse "(no message)" });
-        return error.RequestFailed;
-    }
-
-    /// The next event named `name` (the events before it are dropped)
-    fn event(c: *Client, name: []const u8) !Value {
-        const deadline = Io.Clock.awake.now(c.io).addDuration(c.timeout);
-        c.mutex.lockUncancelable(c.io);
-        defer c.mutex.unlock(c.io);
-        while (true) {
-            while (c.seen < c.events.items.len) {
-                const e = c.events.items[c.seen];
-                c.seen += 1;
-                if (std.mem.eql(u8, str(e, "event") orelse "", name)) return e;
-            }
-            try c.wait(deadline, name);
-        }
-    }
-};
-
-fn get(v: Value, key: []const u8) ?Value {
-    return if (v == .object) v.object.get(key) else null;
-}
-
-fn str(v: Value, key: []const u8) ?[]const u8 {
-    const x = get(v, key) orelse return null;
-    return if (x == .string) x.string else null;
-}
-
-fn int(v: Value, key: []const u8) ?i64 {
-    const x = get(v, key) orelse return null;
-    return if (x == .integer) x.integer else null;
-}
-
-fn items(v: Value, key: []const u8) []Value {
-    const x = get(v, key) orelse return &.{};
-    return if (x == .array) x.array.items else &.{};
-}
-
-fn contains(s: ?[]const u8, part: []const u8) bool {
-    return std.mem.find(u8, s orelse return false, part) != null;
-}
-
-fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
-    if (!ok) {
-        std.debug.print("FAIL: " ++ what ++ "\n", args);
-        return error.CheckFailed;
-    }
-    std.debug.print("ok: " ++ what ++ "\n", args);
-}
+const dap = @import("dap_client.zig");
+const Client = dap.Client;
+const get = dap.get;
+const str = dap.str;
+const int = dap.int;
+const items = dap.items;
+const contains = dap.contains;
+const check = dap.check;
 
 pub fn main(init: std.process.Init) !u8 {
     const io = init.io;
@@ -227,7 +87,8 @@ fn run(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, src_dir: [
     var filter = false;
     for (items(caps, "exceptionBreakpointFilters")) |f| filter = filter or std.mem.eql(u8, str(f, "filter") orelse "", "fortranRuntimeErrors");
     try check(filter, "the filter of Fortran runtime errors", .{});
-    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .sourceRoot = src_dir });
+    // the engine, not gdb (which `initialize` may have started)
+    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .sourceRoot = src_dir, .dbgeng = true });
     _ = try c.event("initialized");
     const bps = items(try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = 8 }} }), "breakpoints");
     const verified = bps.len > 0 and (get(bps[0], "verified") orelse Value{ .bool = false }).bool;

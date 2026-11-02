@@ -175,21 +175,79 @@ runtime) does not link; CMake, which runs the linker itself, needs
 directories. The VS Code extension's **zfls: Set Up ifx** does the same,
 showing Intel's license first.
 
-### A debugger for Windows's programs (`zfls dap`)
+### A debugger (`zfls dap`)
 
 `zfls dap` is a debug adapter (the Debug Adapter Protocol on standard input
-and output) over Windows's own Debugger Engine (`dbgeng.dll` of System32,
-which every Windows 10 and later has), for the programs whose debug
-information is Microsoft's: those of ifx, ifort and LLVM Flang on Windows.
-The VS Code extension's `fortran` debug type uses it for them. It launches
-the program (in a console window of its own) or attaches to it, stops at
-breakpoints of source lines and at the Fortran runtime's errors (Intel's
-`for__issue_diagnostic`, ERROR STOP), steps by lines, and shows the
-variables as Fortran: dbghelp says where each is, and zfls, which indexes
-the program's sources (`sourceRoot` of the launch configuration), its
-declared type, kind and rank; arrays are read through Intel's descriptors,
-with their bounds, derived types by their components, and the module
-variables the frame's line sees are a scope of their own.
+and output) that shows a Fortran program as Fortran, for any editor with a
+client of the protocol (VS Code through the extension's `fortran` debug
+type, Neovim's nvim-dap, Emacs's dape, Helix). It debugs with one of two
+debuggers, chosen by the `launch` or `attach` configuration:
+
+- gdb, for the programs of gfortran, LLVM Flang and the others with DWARF
+  debug information: gdb 14 or later, built with Python (`gdb -i=dap`),
+  the configuration's `gdb`, else `--gdb PATH`, else the `PATH`'s. zfls
+  passes gdb's protocol through and reshapes its variables: arrays by their
+  subscripts and bounds (`(2,-1)`), large ones in sections (`(1:100)`),
+  previews of arrays and derived types (`[1.0, 2.0, …]`, `[2×3]`,
+  `point(x=9.0, id=7)`), "not allocated" and "not associated", pointers as
+  their targets, a polymorphic object with its dynamic type's components,
+  gfortran's hidden CHARACTER lengths left out, and a Fortran expression
+  for each (`a(2)`, `p%x`, `grid::cells`) for watches and setting values.
+  `console` (`integratedTerminal`, `externalTerminal`) runs the program in
+  a terminal for its input; `setupCommands` are gdb commands run first;
+  `stopAtEntry` stops at the main program; an `attach` takes a
+  `processId` or a gdbserver's `target`.
+- Windows's own Debugger Engine (`"dbgeng": true`, or `--dbgeng`;
+  `dbgeng.dll` of System32, which every Windows 10 and later has), for the
+  programs whose debug information is Microsoft's: those of ifx, ifort and
+  LLVM Flang on Windows. It launches the program (in a console window of
+  its own) or attaches to it, stops at breakpoints of source lines, steps
+  by lines, and shows the variables as Fortran: dbghelp says where each
+  is, and zfls's declarations its type, kind and rank; arrays are read
+  through Intel's descriptors.
+
+With both, the module variables that the frame's line sees are a scope of
+their own (zfls indexes the program's sources: `sourceRoot` of the
+configuration, else `cwd`), and the **Fortran runtime errors** exception
+filter stops the program where the Fortran runtime reports an error (an
+array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
+error without `iostat=`) or at ERROR STOP. `--text JSON` translates the
+words it shows (the VS Code extension passes them in VS Code's language).
+
+With nvim-dap, for instance:
+
+```lua
+local dap = require("dap")
+dap.adapters.zfls = { type = "executable", command = "zfls", args = { "dap" } }
+dap.configurations.fortran = {
+  {
+    type = "zfls",
+    request = "launch",
+    name = "Debug",
+    program = function() return vim.fn.input("Program: ", vim.fn.getcwd() .. "/", "file") end,
+    cwd = "${workspaceFolder}",
+    sourceRoot = "${workspaceFolder}",
+  },
+}
+```
+
+With dape (Emacs):
+
+```elisp
+(add-to-list 'dape-configs
+             '(zfls modes (f90-mode fortran-mode) command "zfls" command-args ("dap")
+                    :request "launch" :program "a.out" :cwd "." :sourceRoot "."))
+```
+
+With Helix, in `languages.toml`:
+
+```toml
+[[language]]
+name = "fortran"
+debugger = { name = "zfls", transport = "stdio", command = "zfls", args = ["dap"], templates = [
+  { name = "launch", request = "launch", completion = [{ name = "program", completion = "filename" }], args = { program = "{0}" } },
+] }
+```
 
 ### Build files
 
@@ -250,12 +308,9 @@ line sees: those of the module or submodule around it (private ones too,
 and a submodule's ancestors'), then those its USE statements, and its
 hosts', make visible, each with the module that declares it, its name
 there, its name at the line (a USE may rename it) and its type; named
-constants are left out. The VS Code extension shows them while debugging,
-with their values, which the C debuggers' variables view leaves out: as a
-scope of the Variables view in its own debugger (in front of gdb's Debug
-Adapter Protocol, `gdb -i=dap`, which also shows arrays by their Fortran
-subscripts, derived types, polymorphic objects by their dynamic type, and
-stops on Fortran runtime errors), else in a view of their own.
+constants are left out. `zfls dap` shows them, with their values, as a
+scope of the Variables view; with the C debuggers, whose variables view
+leaves them out, the VS Code extension shows them in a view of their own.
 
 ### Index cache
 
