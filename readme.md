@@ -78,9 +78,8 @@ Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
 its submodules included (`tools/make_source_archive.sh`), and
 `zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
 `zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
-from the template in `packaging/conda-forge`, pinning the Zig packages it
-provides as the `build.zig.zon` files do (`--local` instead builds from the
-archive itself). CI builds and tests the recipe on Linux, macOS and Windows
+from the template in `packaging/conda-forge` (`--local` instead builds from
+the archive itself). CI builds and tests the recipe on Linux, macOS and Windows
 for every change.
 
 ### VS Code extension
