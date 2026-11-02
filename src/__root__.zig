@@ -44,6 +44,7 @@ pub const server = @import("server.zig");
 pub const version_info = @import("version.zig");
 pub const debug = @import("debug.zig");
 pub const ifxsetup = @import("ifxsetup.zig");
+pub const dap_values = @import("dap/values.zig");
 
 test {
     std.testing.refAllDecls(@This());

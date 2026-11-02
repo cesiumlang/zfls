@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 
 const root = @import("root");
@@ -128,6 +129,13 @@ pub fn main(init: std.process.Init) !void {
     // ifx without Intel's installer or Visual Studio (Windows)
     if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "setup-ifx")) {
         const code = try @import("ifxsetup.zig").run(gpa, io, init.environ_map, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
+    // a debug adapter over Windows's Debugger Engine
+    if (builtin.os.tag == .windows and args.items.len > 0 and std.mem.eql(u8, args.items[0], "dap")) {
+        const code = try @import("dap/session.zig").run(gpa, io, args.items[1..]);
         if (code != 0) std.process.exit(code);
         return;
     }

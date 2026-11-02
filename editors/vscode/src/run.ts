@@ -119,16 +119,20 @@ export function chooseDebugger(
   installed: (extensionId: string) => boolean,
   msvc: boolean,
   gdbDap = false,
+  dbgeng = false,
 ): DebuggerChoice {
+  // zfls's own: in front of gdb, or for MSVC-ABI programs of Windows's
+  // Debugger Engine (zfls dap)
+  const own = msvc ? dbgeng : gdbDap;
   if (preference === "zfls") {
-    return gdbDap && !msvc ? { type: "zfls" } : { missing: "zfls", extensions: [] };
+    return own ? { type: "zfls" } : { missing: "zfls", extensions: [] };
   }
   if (preference in DEBUGGER_EXTENSIONS) {
     const type = preference as ExtensionDebugType;
     const ext = DEBUGGER_EXTENSIONS[type];
     return installed(ext.id) ? { type } : { missing: type, extensions: [ext.id] };
   }
-  if (gdbDap && !msvc) {
+  if (own) {
     return { type: "zfls" };
   }
   const candidates: ExtensionDebugType[] = msvc ? ["cppvsdbg"] : ["cppdbg", "lldb", "gdb"];
@@ -158,6 +162,10 @@ export interface LaunchSpec {
   /** Where the program's input and output go: the Debug Console (no
    * input), VS Code's terminal, or a terminal of its own */
   console?: "internalConsole" | "integratedTerminal" | "externalTerminal";
+  /** An MSVC-ABI program: zfls's debugger is Windows's Debugger Engine */
+  msvc?: boolean;
+  /** For zfls's debugger: the sources to index, for the declarations */
+  sourceRoot?: string;
 }
 
 /** A launch configuration for the debugger of `spec.type`: zfls's is the
@@ -174,8 +182,14 @@ export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
   switch (spec.type) {
     case "zfls":
       Object.assign(config, { args: spec.args, cwd: spec.cwd, debugger: "zfls" });
-      if (spec.gdbPath) {
+      if (spec.msvc) {
+        // Windows's Debugger Engine, through zfls dap
+        config.dbgeng = true;
+      } else if (spec.gdbPath) {
         config.gdb = spec.gdbPath;
+      }
+      if (spec.sourceRoot) {
+        config.sourceRoot = spec.sourceRoot;
       }
       if (envList.length) {
         config.env = spec.env;
@@ -348,6 +362,10 @@ export interface FortranResolution {
   type: DebugType;
   program: string;
   cwd: string;
+  /** An MSVC-ABI program (zfls's debugger: Windows's Debugger Engine) */
+  msvc?: boolean;
+  /** The sources zfls's debugger indexes, for the variables' declarations */
+  sourceRoot?: string;
   /** The compiler's runtime libraries on the PATH (Windows) */
   runtimeEnv: Record<string, string>;
   platform: NodeJS.Platform;
@@ -374,6 +392,8 @@ export function fortranLaunch(config: Record<string, unknown>, r: FortranResolut
     gdbPath: r.gdbPath,
     preLaunchTask: typeof config.preLaunchTask === "string" ? config.preLaunchTask : undefined,
     console: CONSOLES.find((c) => c === config.console),
+    msvc: r.msvc,
+    sourceRoot: typeof config.sourceRoot === "string" ? config.sourceRoot : r.sourceRoot,
   });
   // CodeLLDB's name for it; CDT GDB has none
   if (config.stopAtEntry === true && r.type !== "gdb") {
