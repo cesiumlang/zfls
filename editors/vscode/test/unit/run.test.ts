@@ -12,6 +12,7 @@ import {
   fortranLaunch,
   launchConfiguration,
   outputDirFor,
+  parseProcesses,
   programPath,
   runtimeEnv,
   upsertByKey,
@@ -95,6 +96,19 @@ test("the first installed debugger is used", () => {
   assert.deepEqual(chooseDebugger("lldb", has("ms-vscode.cpptools", "vadimcn.vscode-lldb"), false), { type: "lldb" });
 });
 
+test("zfls's debugger, when there is a gdb of the Debug Adapter Protocol", () => {
+  const cpptools = (id: string) => id === "ms-vscode.cpptools";
+  assert.deepEqual(chooseDebugger("auto", cpptools, false, true), { type: "zfls" });
+  assert.deepEqual(chooseDebugger("auto", cpptools, false, false), { type: "cppdbg" });
+  // gdb cannot read MSVC-ABI debug information
+  assert.deepEqual(chooseDebugger("auto", cpptools, true, true), { type: "cppvsdbg" });
+  assert.deepEqual(chooseDebugger("zfls", cpptools, false, true), { type: "zfls" });
+  assert.deepEqual(chooseDebugger("zfls", cpptools, false, false), { missing: "zfls", extensions: [] });
+  assert.deepEqual(chooseDebugger("zfls", cpptools, true, true), { missing: "zfls", extensions: [] });
+  // a debugger configured is used
+  assert.deepEqual(chooseDebugger("cppdbg", cpptools, false, true), { type: "cppdbg" });
+});
+
 test("a missing debugger names the extensions to install", () => {
   const none = () => false;
   const gnu = chooseDebugger("auto", none, false);
@@ -142,6 +156,28 @@ test("other launch configurations", () => {
   const gdb = launchConfiguration({ ...spec, type: "gdb", gdbPath: "/opt/gdb" });
   assert.equal(gdb.arguments, '"in put.txt" -v');
   assert.equal(gdb.gdb, "/opt/gdb");
+});
+
+test("zfls's launch configuration: the fortran type, resolved", () => {
+  const z = launchConfiguration({ ...spec, type: "zfls", gdbPath: "/opt/gdb", env: { A: "1" }, console: "integratedTerminal" });
+  assert.equal(z.type, "fortran");
+  assert.equal(z.debugger, "zfls");
+  assert.equal(z.gdb, "/opt/gdb");
+  assert.deepEqual(z.args, spec.args);
+  assert.deepEqual(z.env, { A: "1" });
+  assert.equal(z.console, "integratedTerminal");
+  // a terminal for the program, as each debugger names it
+  assert.equal(launchConfiguration({ ...spec, type: "cppdbg", console: "externalTerminal" }).externalConsole, true);
+  assert.equal(launchConfiguration({ ...spec, type: "cppdbg" }).externalConsole, false);
+  assert.equal(launchConfiguration({ ...spec, type: "lldb", console: "integratedTerminal" }).terminal, "integrated");
+  assert.equal(launchConfiguration({ ...spec, type: "cppvsdbg", console: "externalTerminal" }).console, "externalTerminal");
+});
+
+test("the processes to attach to", () => {
+  const win = parseProcesses('"System","4","Services","0","24 K"\r\n"prog.exe","1234","Console","1","3,000 K"\r\n', "win32");
+  assert.deepEqual(win[1], { pid: 1234, name: "prog.exe", command: "prog.exe" });
+  const ps = parseProcesses("    1 /sbin/init splash\n 4242 /home/me/solver -n 3\n", "linux");
+  assert.deepEqual(ps[1], { pid: 4242, name: "solver", command: "/home/me/solver -n 3" });
 });
 
 test("the compiler's directory goes on the PATH on Windows", () => {
@@ -196,4 +232,15 @@ test("a fortran configuration becomes the chosen debugger's", () => {
   // the compiler's runtime PATH first, the configuration's own over it
   const win = fortranLaunch({ ...config, env: { Path: "C:\mine" } }, { ...r, type: "cppvsdbg", platform: "win32", runtimeEnv: { Path: "C:\gcc\bin;C:\Windows" } });
   assert.deepEqual(win.environment, [{ name: "Path", value: "C:\mine" }]);
+  // zfls's: still the fortran type, with what its debugger takes
+  const z = fortranLaunch({ ...config, console: "integratedTerminal" }, { ...r, type: "zfls" });
+  assert.equal(z.type, "fortran");
+  assert.equal(z.debugger, "zfls");
+  assert.equal(z.gdb, "/usr/bin/gdb");
+  assert.equal(z.stopAtEntry, true);
+  assert.equal(z.console, "integratedTerminal");
+  assert.deepEqual(z.env, { OMP_NUM_THREADS: "2" });
+  assert.deepEqual(z.setupCommands, [{ text: "set print pretty on" }]);
+  // resolved again (Debug Fortran File starts a fortran configuration): the same
+  assert.deepEqual(fortranLaunch(z, { ...r, type: "zfls" }), z);
 });

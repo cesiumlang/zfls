@@ -388,10 +388,15 @@ jobs:
           zig build --fetch=all
 
       # gfortran is the oracle for symbol extraction; the oracle test is
-      # skipped where none is available (Windows on Arm)
-      - name: gfortran (Linux)
+      # skipped where none is available (Windows on Arm). gdb is the
+      # debugger of the extension's test of its debug adapter, skipped
+      # without one (macOS, Windows on Arm)
+      - name: gfortran and gdb (Linux)
         if: runner.os == 'Linux'
-        run: command -v gfortran || (sudo apt-get update && sudo apt-get install -y gfortran)
+        run: |
+          if ! command -v gfortran || ! command -v gdb; then
+            sudo apt-get update && sudo apt-get install -y gfortran gdb
+          fi
 
       - name: gfortran (macOS)
         if: runner.os == 'macOS'
@@ -405,24 +410,25 @@ jobs:
           ln -sf "$gf" "$RUNNER_TEMP/bin/gfortran"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      - name: gfortran (Windows x64)
+      - name: gfortran and gdb (Windows x64)
         if: matrix.target == 'x86_64-windows'
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-gcc-fortran
+          install: mingw-w64-ucrt-x86_64-gcc-fortran mingw-w64-ucrt-x86_64-gdb
           path-type: inherit
 
       # The image has other, older GCC toolchains on PATH: name MSYS2's
-      - name: Put gfortran on PATH (Windows x64)
+      - name: Put gfortran and gdb on PATH (Windows x64)
         if: matrix.target == 'x86_64-windows'
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           echo "$MSYS2_LOCATION\\ucrt64\\bin" >> "$GITHUB_PATH"
           echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
+          echo "GDB=$MSYS2_LOCATION\\ucrt64\\bin\\gdb.exe" >> "$GITHUB_ENV"
 
       - name: Unit tests
         run: zig build test --summary failures
