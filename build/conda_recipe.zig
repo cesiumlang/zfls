@@ -176,7 +176,8 @@ fn absolute(a: Allocator, io: Io, path: []const u8) ![]const u8 {
 /// The template with its empty `context:` values filled in from `values`
 /// (each of which it must use), and with `archive_path` as the first
 /// source in place of its `url` and `sha256`. On an error about a value,
-/// `name` is its name.
+/// `name` is its name. The lines are written with `\n` (a checkout on
+/// Windows may give the template `\r\n`).
 fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMapUnmanaged([]const u8), archive_path: ?[]const u8, name: *[]const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     var used: std.StringHashMapUnmanaged(void) = .empty;
@@ -185,7 +186,8 @@ fn fill(a: Allocator, template: []const u8, values: *const std.StringArrayHashMa
     var sources: usize = 0;
     var lines = std.mem.splitScalar(u8, template, '\n');
     var first = true;
-    while (lines.next()) |line| {
+    while (lines.next()) |crlf_line| {
+        const line = std.mem.trimEnd(u8, crlf_line, "\r");
         if (line.len > 0 and line[0] != ' ' and line[0] != '#') section = line;
         if (archive_path) |path| if (std.mem.eql(u8, section, "source:")) {
             if (std.mem.startsWith(u8, line, "  - ")) sources += 1;
@@ -296,6 +298,12 @@ test fill {
         \\    sha256: def
         \\
     , try fill(a, template, &values, "/tmp/zfls-v0.4.0-src.tar.gz", &name));
+    // a template checked out with CRLF line endings
+    const crlf = try std.mem.replaceOwned(u8, a, template, "\n", "\r\n");
+    try std.testing.expectEqualStrings(
+        try fill(a, template, &values, "/tmp/zfls-v0.4.0-src.tar.gz", &name),
+        try fill(a, crlf, &values, "/tmp/zfls-v0.4.0-src.tar.gz", &name),
+    );
     // every value is used, and every empty value filled
     try values.put(a, "extra", "x");
     try std.testing.expectError(error.UnusedValue, fill(a, template, &values, null, &name));
