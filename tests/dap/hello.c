@@ -1,4 +1,4 @@
-/* zfls dap's test program (tests/dap_windows.py): built for the MSVC ABI,
+/* zfls dap's test program (tests/dap_windows.zig): built for the MSVC ABI,
  * with a PDB */
 #include <stdio.h>
 

@@ -122,8 +122,8 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .root_source_file = b.path("tests/lsp_client.zig"),
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test)");
-    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool };
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap)");
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false };
     const tools = [_]Tool{
         .{
             .name = "gfortran_oracle",
@@ -138,6 +138,14 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .step = "test-stress",
             .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
             .needs_fortls = true,
+        },
+        .{
+            .name = "dap_windows",
+            .root = "tests/dap_windows.zig",
+            .step = "test-dap",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it)",
+            .needs_fortls = false,
+            .needs_zig = true,
         },
         .{
             .name = "bench_workspace",
@@ -165,6 +173,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         run.addArg("--zfls");
         run.addArtifactArg(exe);
         if (t.needs_fortls) if (fortls) |f| run.addArgs(&.{ "--fortls", f });
+        if (t.needs_zig) run.addArgs(&.{ "--zig", b.graph.zig_exe });
         run.addPassthruArgs();
         // They report their own results; always rerun them
         run.has_side_effects = true;

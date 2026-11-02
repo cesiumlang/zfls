@@ -473,11 +473,16 @@ jobs:
           done
           "$ZFLS" setup-ifx --help | head -1
 
+      # the Zig test drivers (tests/dap_windows.zig, tests/gfortran_oracle.zig,
+      # tests/stress_edit.zig)
+      - name: Build the test drivers
+        run: zig build test-tools
+
       # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
       # (with the runner's Visual Studio libraries): Fortran's need ifx
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
-        run: python tests/dap_windows.py --zfls "$ZFLS"
+        run: zig-out/bin/dap_windows --zfls "$ZFLS"
 
       - name: Version under test
         run: |
@@ -490,10 +495,6 @@ jobs:
 
       - name: fortls test suite
         run: python tests/fortls_parity.py --zfls "$ZFLS" --fortls "$FORTLS"
-
-      # the Zig test drivers (tests/gfortran_oracle.zig, tests/stress_edit.zig)
-      - name: Build the test drivers
-        run: zig build test-tools
 
       - name: gfortran oracle
         run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
