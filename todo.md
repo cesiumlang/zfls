@@ -41,8 +41,6 @@ Not scheduled yet:
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
 - `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
   `zig build` steps
-- Source files over 1,000 lines split, as the others were
-  (`src/dap/session.zig`)
 - Scans of large Fortran corpora for false-positive diagnostics
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
@@ -227,4 +225,5 @@ Server:
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
 - [x] Source files split into smaller modules (`src/server/`,
-  `src/objects/`, `src/parser/`, `src/regex/`); none over 900 lines
+  `src/objects/`, `src/parser/`, `src/regex/`, `src/dap/`); none over 900
+  lines
