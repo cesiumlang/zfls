@@ -1,24 +1,24 @@
 // The test explorer for pFUnit: a test item per test program that CMake's
 // `add_pfunit_ctest` makes, with the suite of each of its `.pf` files and
-// their `@test` procedures below. Running builds the program with CMake,
-// runs it with its results in an XML file (one test with `-f` when one is
-// picked), and reports each test, with the place of a failed assertion;
-// debugging runs the program under the `fortran` debug type. `.pf` files no
-// `add_pfunit_ctest` names are listed too, to say so when run.
+// their `@test` procedures below, as zfls finds them (`zfls/pfunitTests`).
+// Running builds the program with CMake, runs it with its results in an XML
+// file (one test with `-f` when one is picked), and reports each test, with
+// the place of a failed assertion; debugging runs the program under the
+// `fortran` debug type. `.pf` files no `add_pfunit_ctest` names are listed
+// too, to say so when run.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { sessionEnd } from "./fpmTests";
+import { Servers, asRange, sessionEnd } from "./fpmTests";
 import {
   CtestCommand,
   PfResult,
   PfSuite,
   PfTest,
-  parseAddPfunitCtest,
+  PfunitTests as Found,
   parseCtestJson,
-  parsePf,
   parsePfunitXml,
   pfunitArgs,
   resultOf,
@@ -28,7 +28,6 @@ import { expandVariables, findExecutable, runProcess } from "./tools";
 import { folderVariables } from "./variables";
 
 const PROBLEM_MATCHERS = ["$zfls-gfortran", "$zfls-intel"];
-const EXCLUDE = "**/{build,_deps,node_modules,.git}/**";
 
 interface Program {
   folder: vscode.WorkspaceFolder;
@@ -45,12 +44,12 @@ interface ItemData {
   test?: PfTest;
 }
 
-export function registerPfunitTests(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
+export function registerPfunitTests(context: vscode.ExtensionContext, log: vscode.LogOutputChannel, servers: Servers): void {
   let tests: PfunitTests | undefined;
   const update = (): void => {
     const enabled = vscode.workspace.getConfiguration("zfls.pfunit").get<boolean>("testExplorer", true);
     if (enabled && !tests) {
-      tests = new PfunitTests(log);
+      tests = new PfunitTests(log, servers);
     } else if (!enabled && tests) {
       tests.dispose();
       tests = undefined;
@@ -75,7 +74,10 @@ class PfunitTests implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private timer: NodeJS.Timeout | undefined;
 
-  constructor(private readonly log: vscode.LogOutputChannel) {
+  constructor(
+    private readonly log: vscode.LogOutputChannel,
+    private readonly servers: Servers,
+  ) {
     this.controller.resolveHandler = async (item) => {
       if (!item) {
         await this.discover();
@@ -124,51 +126,49 @@ class PfunitTests implements vscode.Disposable {
 
   /** The test programs of `add_pfunit_ctest`, and the `.pf` files of none */
   async discover(): Promise<void> {
-    const pfFiles = (await vscode.workspace.findFiles("**/*.pf", EXCLUDE)).map((u) => u.fsPath);
-    if (!pfFiles.length) {
-      this.controller.items.replace([]);
-      return;
-    }
     const top: vscode.TestItem[] = [];
-    const used = new Set<string>();
-    for (const cm of await vscode.workspace.findFiles("**/CMakeLists.txt", EXCLUDE)) {
-      const folder = vscode.workspace.getWorkspaceFolder(cm);
-      const text = readText(cm.fsPath);
-      if (!folder || !/add_pfunit_ctest/i.test(text)) {
+    for (const server of await this.servers()) {
+      let found: Found | null;
+      try {
+        found = await server.sendRequest<Found | null>("zfls/pfunitTests", {});
+      } catch (err) {
+        this.log.error(`[pfunit] finding the tests: ${String(err)}`);
         continue;
       }
-      for (const t of parseAddPfunitCtest(text)) {
-        const program: Program = { folder, cmakeLists: cm.fsPath, name: t.name };
-        const item = this.controller.createTestItem(`${cm.fsPath}::${t.name}`, t.name, cm);
+      for (const p of found?.programs ?? []) {
+        const cm = vscode.Uri.parse(p.uri);
+        const folder = vscode.workspace.getWorkspaceFolder(cm);
+        if (!folder) {
+          continue;
+        }
+        const program: Program = { folder, cmakeLists: cm.fsPath, name: p.name };
+        const item = this.controller.createTestItem(`${cm.fsPath}::${p.name}`, p.name, cm);
+        item.range = asRange(p.range);
         this.data.set(item, { program });
-        for (const src of t.sources) {
-          const file = path.resolve(path.dirname(cm.fsPath), src);
-          if (fs.existsSync(file)) {
-            used.add(path.normalize(file).toLowerCase());
-            item.children.add(this.suiteItem(item.id, program, file));
-          }
+        for (const s of p.suites) {
+          item.children.add(this.suiteItem(item.id, program, s));
         }
         top.push(item);
       }
-    }
-    for (const file of pfFiles) {
-      const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
-      if (folder && !used.has(path.normalize(file).toLowerCase())) {
-        top.push(this.suiteItem("pf", { folder, name: "" }, file));
+      for (const s of found?.unlisted ?? []) {
+        const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(s.uri));
+        if (folder) {
+          top.push(this.suiteItem("pf", { folder, name: "" }, s));
+        }
       }
     }
     this.controller.items.replace(top);
   }
 
-  private suiteItem(parent: string, program: Program, file: string): vscode.TestItem {
-    const suite = parsePf(readText(file), path.basename(file, path.extname(file)));
-    const uri = vscode.Uri.file(file);
+  private suiteItem(parent: string, program: Program, suite: PfSuite): vscode.TestItem {
+    const uri = vscode.Uri.parse(suite.uri);
+    const file = uri.fsPath;
     const item = this.controller.createTestItem(`${parent}::${file}`, suite.name, uri);
-    item.range = new vscode.Range(suite.line, 0, suite.line, 0);
+    item.range = asRange(suite.range);
     this.data.set(item, { program, file, suite });
     for (const t of suite.tests) {
-      const test = this.controller.createTestItem(`${item.id}::${t.name}`, t.name, uri);
-      test.range = new vscode.Range(t.line, 0, t.line, 0);
+      const test = this.controller.createTestItem(`${item.id}::${t.name}`, t.name, vscode.Uri.parse(t.uri));
+      test.range = asRange(t.range);
       this.data.set(test, { program, file, suite, test: t });
       item.children.add(test);
     }

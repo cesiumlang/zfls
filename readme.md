@@ -262,6 +262,44 @@ Adapter Protocol, `gdb -i=dap`, which also shows arrays by their Fortran
 subscripts, derived types, polymorphic objects by their dynamic type, and
 stops on Fortran runtime errors), else in a view of their own.
 
+### Tests, for a test explorer
+
+Two requests of zfls's own (no parameters) give the tests of the workspace,
+for an editor's test explorer to list, run and report (the VS Code
+extension's Testing view does):
+
+- `zfls/fpmTests`: each fpm project (a directory with an `fpm.toml`), with
+  its `name` (`fpm.toml`'s, else the directory's), its `uri` and its test
+  `targets`: the `[[test]]` tables of `fpm.toml`, and unless `auto-tests =
+  false` each program in `test/` and below, named after its file, as fpm
+  makes them. A target has the `uri`
+  and `range` of its main program (when the file is found), `selectsTests`
+  (the program takes a suite and a test on its command line, as
+  [test-drive](https://github.com/fortran-lang/test-drive)'s template does
+  with `select_suite` and `run_selected`), and the `suites` of test-drive
+  that the program makes (`new_testsuite("name", collect)`), each with the
+  `tests` that its collect procedure returns (`new_unittest("name", ...)`
+  in the sources next to the program).
+- `zfls/pfunitTests`: `programs`, the test programs of CMake's
+  `add_pfunit_ctest` in the workspace's `CMakeLists.txt` files (the `uri`
+  of the file and the `range` of the name), each with the `suites` of its
+  `TEST_SOURCES` (`${var}` of a `set()` in the same file expanded); and
+  `unlisted`, the suites of the `.pf` files that no `add_pfunit_ctest`
+  lists. A suite is named as [pFUnit](https://github.com/Goddard-Fortran-Ecosystem/pFUnit)
+  names it (`@suite(name=...)`, else the module's name, else the file's,
+  with `_suite`), at its module; its `tests` are the subroutines after its
+  `@test` (or `@mpitest`) annotations, at the annotation, `parameterized`
+  when they run once per parameter (`testParameters`, `cases`, `npes`, or
+  of a `@testCase` with parameters), so that their results come under
+  names of their own.
+
+Each item has a `name`, a `uri` and a `range`. zfls looks through the whole
+workspace but builds (`build/`, `_deps/`), `node_modules/` and hidden
+directories. The procedures and modules are those zfls parses, with the
+editor's text of the files open in it; `.pf` files are parsed as free-form
+Fortran. Running the tests, and reading their results, is left to the
+editor.
+
 ### Index cache
 
 A workspace of 200 files or more has its files' texts kept in one file of

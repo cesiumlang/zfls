@@ -102,6 +102,11 @@ export function projectOf(uri: vscode.Uri): FpmProject | undefined {
   }
 }
 
+/** The fpm project of a directory with an fpm.toml */
+export function projectAt(root: string): FpmProject | undefined {
+  return readProject(root, vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root)));
+}
+
 function readProject(root: string, folder: vscode.WorkspaceFolder | undefined): FpmProject | undefined {
   let text: string;
   try {

@@ -53,7 +53,6 @@ Not scheduled yet:
   the server:
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
-  - finding fpm and pFUnit tests (the test explorer stays in the extension)
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
 
@@ -94,10 +93,12 @@ Editor features:
 - [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
   problem matchers, running and debugging their targets, Run and Debug
   Fortran File on a target's program, and the Testing view (each test
-  target, and test-drive's suites and tests with their results)
+  target, and test-drive's suites and tests with their results); the
+  server finds the tests (`zfls/fpmTests`), for other editors too
 - [x] pFUnit's tests in the Testing view, in CMake projects
   (`add_pfunit_ctest`): each `@test` of a `.pf` file run and reported one by
-  one, a failed assertion at its line
+  one, a failed assertion at its line; the server finds the tests
+  (`zfls/pfunitTests`), for other editors too
 - [x] The `fortran` debug type: launch configurations of a program or an
   fpm target, resolved into the debugger installed (C/C++, CodeLLDB, CDT
   GDB); F5 debugs the current file; a configuration per fpm target.

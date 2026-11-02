@@ -48,8 +48,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("zfls", { log: true });
   registerRunCommands(context, output);
   registerFpm(context, output);
-  registerFpmTests(context, output);
-  registerPfunitTests(context, output);
+  registerFpmTests(context, output, folderClients);
+  registerPfunitTests(context, output, folderClients);
   registerIfxSetup(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
   registerDebugType(context, output, clientForUri, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
   registerModuleVariables(context, clientForUri);
@@ -458,13 +458,19 @@ async function ensureClient(doc: vscode.TextDocument): Promise<void> {
     return;
   }
   const { folder, root } = where;
+  // untitled files go to the server of the first workspace folder, or to
+  // one of their own
+  await startOnce(root, folder, folder ? undefined : doc.uri.scheme === "untitled");
+}
+
+/** Starts the server of `root`, unless it has one; `untitled`: whether it
+ * takes untitled files (by default, the first folder's server does) */
+async function startOnce(root: vscode.Uri, folder: vscode.WorkspaceFolder | undefined, untitled?: boolean): Promise<void> {
   const key = root.toString();
   if (clients.has(key)) {
     return;
   }
-  // untitled files go to the server of the first workspace folder, or to
-  // one of their own
-  const untitled = folder ? folder.uri.toString() === untitledFolder()?.uri.toString() : doc.uri.scheme === "untitled";
+  untitled ??= !!folder && folder.uri.toString() === untitledFolder()?.uri.toString();
   // the start in progress is recorded, so that files opened meanwhile share it
   const client = startClient(root, folder, untitled);
   clients.set(key, client);
@@ -472,6 +478,25 @@ async function ensureClient(doc: vscode.TextDocument): Promise<void> {
     clients.delete(key);
     disposeWatchers(key);
   }
+}
+
+/** The servers of the workspace folders (the outermost ones), started if
+ * need be, for what they find in the whole folder (its tests) */
+async function folderClients(): Promise<LanguageClient[]> {
+  const out: LanguageClient[] = [];
+  const roots = new Map<string, vscode.WorkspaceFolder>();
+  for (const f of vscode.workspace.workspaceFolders ?? []) {
+    const folder = outermost(f);
+    roots.set(folder.uri.toString(), folder);
+  }
+  for (const [key, folder] of roots) {
+    await startOnce(folder.uri, folder);
+    const client = await clients.get(key);
+    if (client) {
+      out.push(client);
+    }
+  }
+  return out;
 }
 
 interface CompileOrder {
