@@ -76,7 +76,7 @@ fn replaceInvalid(a: Allocator, text: []const u8) Allocator.Error!?[]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var changed = utf8.ptr != text.ptr;
     var i: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, utf8, i, '\\')) |bs| {
+    while (std.mem.findScalarPos(u8, utf8, i, '\\')) |bs| {
         try out.appendSlice(a, utf8[i..bs]);
         // length of the escape: 2, 6 for `\uXXXX`, 12 for a surrogate pair,
         // 0 for an unpaired surrogate

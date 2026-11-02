@@ -46,7 +46,7 @@ inline fn at(line: []const u8, i: usize, c: u8) bool {
 
 /// Whether `line[i]` exists and is one of `set`
 inline fn atAny(line: []const u8, i: usize, comptime set: []const u8) bool {
-    return i < line.len and std.mem.indexOfScalar(u8, set, line[i]) != null;
+    return i < line.len and std.mem.findScalar(u8, set, line[i]) != null;
 }
 
 /// Index just after the start of a fixed-form comment: C, D, * or ! in
@@ -148,7 +148,7 @@ pub fn isOpenMp(fixed: bool, line: []const u8) bool {
 /// whitespace in column 6 (FIXED_CONT)
 pub fn isFixedCont(line: []const u8) bool {
     return line.len >= 6 and std.mem.eql(u8, line[0..5], "     ") and
-        std.mem.indexOfScalar(u8, str.whitespace, line[5]) == null;
+        std.mem.findScalar(u8, str.whitespace, line[5]) == null;
 }
 
 /// Index just after the `&` of a free-form line that starts with spaces and
@@ -241,7 +241,7 @@ pub fn stripLineLabel(a: Allocator, line: []const u8) !LabelResult {
 /// what is left (SQ_STRING, DQ_STRING). `maintain_len` blanks their contents
 /// instead of removing them.
 pub fn stripStrings(a: Allocator, in_line: []const u8, maintain_len: bool) ![]const u8 {
-    if (std.mem.indexOfAny(u8, in_line, "'\"") == null) return in_line;
+    if (std.mem.findAny(u8, in_line, "'\"") == null) return in_line;
     if (maintain_len) {
         const out = try a.dupe(u8, in_line);
         blankQuoted(out, '\'');
@@ -254,8 +254,8 @@ pub fn stripStrings(a: Allocator, in_line: []const u8, maintain_len: bool) ![]co
 /// Blank the inside of each `q...q` in `s`, pairing quotes left to right
 fn blankQuoted(s: []u8, q: u8) void {
     var i: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, s, i, q)) |open| {
-        const close = std.mem.indexOfScalarPos(u8, s, open + 1, q) orelse return;
+    while (std.mem.findScalarPos(u8, s, i, q)) |open| {
+        const close = std.mem.findScalarPos(u8, s, open + 1, q) orelse return;
         @memset(s[open + 1 .. close], ' ');
         i = close + 1;
     }
@@ -265,8 +265,8 @@ fn blankQuoted(s: []u8, q: u8) void {
 fn removeQuoted(a: Allocator, s: []const u8, q: u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var last: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, s, last, q)) |open| {
-        const close = std.mem.indexOfScalarPos(u8, s, open + 1, q) orelse break;
+    while (std.mem.findScalarPos(u8, s, last, q)) |open| {
+        const close = std.mem.findScalarPos(u8, s, open + 1, q) orelse break;
         try out.appendSlice(a, s[last..open]);
         last = close + 1;
     }
@@ -413,7 +413,7 @@ pub fn getLinePrefix(a: Allocator, pre_lines: []const []const u8, curr_line_in: 
     const curr_line = try std.mem.concat(a, u8, &.{ prepend, curr });
     const col = col_in + prepend.len;
     const line_prefix = try std.ascii.allocLowerString(a, curr_line[0..col]);
-    if (qs and (std.mem.indexOfAny(u8, line_prefix, "'\"") != null)) {
+    if (qs and (std.mem.findAny(u8, line_prefix, "'\"") != null)) {
         var sq: usize = 0;
         var dq: usize = 0;
         for (line_prefix) |c| {
@@ -430,8 +430,8 @@ pub fn getLinePrefix(a: Allocator, pre_lines: []const []const u8, curr_line_in: 
 
 /// Get the contents enclosed by the first pair of parenthesis
 pub fn getParenSubstring(s: []const u8) ?[]const u8 {
-    const i_1 = std.mem.indexOfScalar(u8, s, '(') orelse return null;
-    const i_2 = std.mem.lastIndexOfScalar(u8, s, ')') orelse return null;
+    const i_1 = std.mem.findScalar(u8, s, '(') orelse return null;
+    const i_2 = std.mem.findScalarLast(u8, s, ')') orelse return null;
     if (i_1 < i_2) return s[i_1 + 1 .. i_2];
     return null;
 }
@@ -512,7 +512,7 @@ pub fn isComponentDot(text: []const u8, i: usize) bool {
 
 /// `text` with the dots that separate components written `%`
 pub fn dotComponents(a: Allocator, text: []const u8) ![]const u8 {
-    if (std.mem.indexOfScalar(u8, text, '.') == null) return text;
+    if (std.mem.findScalar(u8, text, '.') == null) return text;
     var out: ?[]u8 = null;
     // not in strings (`include "inc.f90"`)
     var quote: u8 = 0;
@@ -573,18 +573,18 @@ pub fn getVarStack(a: Allocator, line_in: []const u8) ![][]const u8 {
 pub fn getPlaceholders(a: Allocator, arg_list: []const []const u8) ![2][]const u8 {
     var holders: std.ArrayList([]const u8) = .empty;
     for (arg_list, 0..) |arg, i| {
-        const eq = std.mem.indexOfScalar(u8, arg, '=');
+        const eq = std.mem.findScalar(u8, arg, '=');
         if (eq) |e| {
             // opt_split[1] is the text between the first and second '='
             const rest = arg[e + 1 ..];
             const val = str.beforeFirst(rest, "=");
-            try holders.append(a, try std.fmt.allocPrint(a, "{s}=${{{d}:{s}}}", .{ arg[0..e], i + 1, val }));
+            try holders.append(a, try a.print("{s}=${{{d}:{s}}}", .{ arg[0..e], i + 1, val }));
         } else {
-            try holders.append(a, try std.fmt.allocPrint(a, "${{{d}:{s}}}", .{ i + 1, arg }));
+            try holders.append(a, try a.print("${{{d}:{s}}}", .{ i + 1, arg }));
         }
     }
-    const arg_str = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", arg_list)});
-    const arg_snip = try std.fmt.allocPrint(a, "({s})", .{try std.mem.join(a, ", ", holders.items)});
+    const arg_str = try a.print("({s})", .{try std.mem.join(a, ", ", arg_list)});
+    const arg_snip = try a.print("({s})", .{try std.mem.join(a, ", ", holders.items)});
     return .{ arg_str, arg_snip };
 }
 
@@ -646,7 +646,7 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
         const prefix = try std.ascii.allocLowerString(a, prefix_raw);
         const id = constants.Kw.fromName(prefix) orelse continue;
         try ids.append(a, id);
-        if (id == .codimension) if (std.mem.indexOfScalar(u8, kw, '[')) |o| if (std.mem.lastIndexOfScalar(u8, kw, ']')) |c| {
+        if (id == .codimension) if (std.mem.findScalar(u8, kw, '[')) |o| if (std.mem.findScalarLast(u8, kw, ']')) |c| {
             if (c > o) info.codimension = kw[o + 1 .. c];
         };
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
@@ -670,7 +670,7 @@ pub fn getKeywords(a: Allocator, ids: []const constants.Kw, info: KeywordInfo) !
             // cobounds go in brackets
             const fmt_open: []const u8 = if (id == .codimension) "[" else "(";
             const fmt_close: []const u8 = if (id == .codimension) "]" else ")";
-            try out.append(a, try std.fmt.allocPrint(a, "{s}{s}{s}{s}", .{ up, fmt_open, addl, fmt_close }));
+            try out.append(a, try a.print("{s}{s}{s}{s}", .{ up, fmt_open, addl, fmt_close }));
         } else {
             try out.append(a, up);
         }

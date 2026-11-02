@@ -42,7 +42,7 @@ test "#406 a real duplicate is still reported, an EXTERNAL before the type is no
     defer w.deinit();
     const ds = try w.diagnostics("t.f90");
     try h.expect(ds.len == 1, "expected the one duplicate, got {d} diagnostics", .{ds.len});
-    try h.expect(ds[0].line == 7 and std.mem.indexOf(u8, ds[0].message, "declared twice") != null, "unexpected: line {d}: {s}", .{ ds[0].line + 1, ds[0].message });
+    try h.expect(ds[0].line == 7 and std.mem.find(u8, ds[0].message, "declared twice") != null, "unexpected: line {d}: {s}", .{ ds[0].line + 1, ds[0].message });
 }
 
 test "#172 more coarray declarations (control)" {
@@ -430,7 +430,7 @@ test "a separate module procedure interface still sees its module (control for h
     defer w.deinit();
     const diags = try w.diagnostics("t.f90");
     var masks = false;
-    for (diags) |d| if (std.mem.indexOf(u8, d.message, "masks") != null) {
+    for (diags) |d| if (std.mem.find(u8, d.message, "masks") != null) {
         masks = true;
     };
     try h.expect(masks, "no masking warning in a module procedure interface", .{});
@@ -547,7 +547,7 @@ test "disable-next-line and disable-file comments" {
 
 fn expectNoMissingModule(w: *h.Workspace) !void {
     const diags = try w.diagnostics("p.f90");
-    for (diags) |d| try h.expect(!std.mem.eql(u8, d.code, "module-not-found") or std.mem.indexOf(u8, d.message, "mine") != null, "{s}", .{d.message});
+    for (diags) |d| try h.expect(!std.mem.eql(u8, d.code, "module-not-found") or std.mem.find(u8, d.message, "mine") != null, "{s}", .{d.message});
     try h.expect(hasCode(diags, "module-not-found"), "a module of the project that is missing is not reported", .{});
 }
 
@@ -630,8 +630,8 @@ fn expectUndeclared(w: *h.Workspace) !void {
     // arguments (also on a continuation line), components, construct names,
     // a subroutine called, kinds or exponents of literals, associate names
     try h.expect(found.items.len == 3, "undeclared: {any}", .{found.items});
-    try h.expect(std.mem.indexOf(u8, found.items[0], "\"kount\"") != null, "{s}", .{found.items[0]});
-    try h.expect(std.mem.indexOf(u8, found.items[2], "\"undefined_value\"") != null, "{s}", .{found.items[2]});
+    try h.expect(std.mem.find(u8, found.items[0], "\"kount\"") != null, "{s}", .{found.items[0]});
+    try h.expect(std.mem.find(u8, found.items[2], "\"undefined_value\"") != null, "{s}", .{found.items[2]});
     // not where a module is unknown, nor without IMPLICIT NONE
     for (try w.diagnostics("q.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "q.f90: {s}", .{d.message});
     for (try w.diagnostics("r.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "r.f90: {s}", .{d.message});
@@ -701,8 +701,8 @@ fn expectUnused(w: *h.Workspace) !void {
     // a contained procedure uses, one in an inactive #ifdef branch, n used
     // in m's declaration, or the module's names
     try h.expect(names.items.len == 2, "unused: {any}", .{names.items});
-    try h.expect(std.mem.indexOf(u8, names.items[0], "\"scratch\"") != null or std.mem.indexOf(u8, names.items[1], "\"scratch\"") != null, "{any}", .{names.items});
-    try h.expect(std.mem.indexOf(u8, names.items[0], "\"sp\"") != null or std.mem.indexOf(u8, names.items[1], "\"sp\"") != null, "{any}", .{names.items});
+    try h.expect(std.mem.find(u8, names.items[0], "\"scratch\"") != null or std.mem.find(u8, names.items[1], "\"scratch\"") != null, "{any}", .{names.items});
+    try h.expect(std.mem.find(u8, names.items[0], "\"sp\"") != null or std.mem.find(u8, names.items[1], "\"sp\"") != null, "{any}", .{names.items});
     // the quick fix removes a declaration of that name only
     const line = w.pos("u.F90", "real :: scratch", 0, 0).line;
     for (try w.codeActions("u.F90", line)) |act| {
@@ -964,7 +964,7 @@ test "stub actions: an interface block for an external procedure, submodule stub
     try std.testing.expect(std.mem.startsWith(u8, iface.new_text, "  interface\n    SUBROUTINE ext(a)\n      REAL, INTENT(IN) :: a\n    END SUBROUTINE ext\n  end interface\n"));
     try std.testing.expectEqual(@as(i64, 3), iface.line);
     const new_sub = actionNamed(try w.codeActions("m.f90", 2), "Implement foo in a new submodule") orelse return error.TestUnexpectedResult;
-    try std.testing.expect(std.mem.indexOf(u8, new_sub.new_text, "submodule (m) m_impl\ncontains\n  module procedure foo\n") != null);
+    try std.testing.expect(std.mem.find(u8, new_sub.new_text, "submodule (m) m_impl\ncontains\n  module procedure foo\n") != null);
     try std.testing.expect(actionNamed(try w.codeActions("n.f90", 2), "Implement bar in submodule n_sub") != null);
 }
 

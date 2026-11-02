@@ -94,15 +94,15 @@ pub const Parser = struct {
 
     fn tryParseBraces(p: *Parser) ?[2]?u32 {
         // p.src[p.pos] == '{'
-        const close = std.mem.indexOfScalarPos(u8, p.src, p.pos, '}') orelse return null;
+        const close = std.mem.findScalarPos(u8, p.src, p.pos, '}') orelse return null;
         const body = p.src[p.pos + 1 .. close];
         if (body.len == 0) return null;
         for (body) |ch| if (!std.ascii.isDigit(ch) and ch != ',') return null;
         var res: [2]?u32 = .{ 0, null };
-        if (std.mem.indexOfScalar(u8, body, ',')) |comma| {
+        if (std.mem.findScalar(u8, body, ',')) |comma| {
             const lo = body[0..comma];
             const hi = body[comma + 1 ..];
-            if (std.mem.indexOfScalar(u8, hi, ',') != null) return null;
+            if (std.mem.findScalar(u8, hi, ',') != null) return null;
             res[0] = if (lo.len == 0) 0 else std.fmt.parseInt(u32, lo, 10) catch return null;
             res[1] = if (hi.len == 0) null else std.fmt.parseInt(u32, hi, 10) catch return null;
         } else {
@@ -199,7 +199,7 @@ pub const Parser = struct {
     }
 
     fn parseNamedGroup(p: *Parser, term: u8) CompileError!*Node {
-        const close = std.mem.indexOfScalarPos(u8, p.src, p.pos, term) orelse return error.InvalidPattern;
+        const close = std.mem.findScalarPos(u8, p.src, p.pos, term) orelse return error.InvalidPattern;
         const name = p.src[p.pos..close];
         p.pos = close + 1;
         const idx = p.ngroups;

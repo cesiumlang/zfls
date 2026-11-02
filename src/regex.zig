@@ -601,7 +601,7 @@ pub const Match = struct {
                 },
                 'g' => {
                     if (i + 1 < template.len and template[i + 1] == '<') {
-                        const close = std.mem.indexOfScalarPos(u8, template, i + 2, '>') orelse {
+                        const close = std.mem.findScalarPos(u8, template, i + 2, '>') orelse {
                             try out.appendSlice(a, "\\g");
                             continue;
                         };

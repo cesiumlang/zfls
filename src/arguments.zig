@@ -46,7 +46,7 @@ fn collect(a: Allocator, obj: *const Obj, drop_arg: ?usize, out: *std.ArrayList(
         .method => if (obj.linkObj()) |l| try collect(a, l, obj.varDataConst().drop_arg, out, depth + 1),
         .interface => for (obj.memList()) |m| try collect(a, m, null, out, depth + 1),
         .intrinsic => for (try str.split(a, obj.argList(), ",")) |arg| {
-            const eq = std.mem.indexOfScalar(u8, arg, '=');
+            const eq = std.mem.findScalar(u8, arg, '=');
             try add(a, out, .{
                 .name = str.strip(if (eq) |e| arg[0..e] else arg),
                 .optional = eq != null,
@@ -76,7 +76,7 @@ fn isName(s: []const u8) bool {
 
 /// The keyword an argument of a call gives (`dx` of `dx = 1.0`), or null
 pub fn keywordOfArg(arg: []const u8) ?[]const u8 {
-    const eq = std.mem.indexOfScalar(u8, arg, '=') orelse return null;
+    const eq = std.mem.findScalar(u8, arg, '=') orelse return null;
     // `a == b` and `a => b` are values, not keywords
     if (eq + 1 < arg.len and (arg[eq + 1] == '=' or arg[eq + 1] == '>')) return null;
     if (eq > 0 and (arg[eq - 1] == '/' or arg[eq - 1] == '<' or arg[eq - 1] == '>')) return null;

@@ -89,7 +89,7 @@ pub fn syntaxOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
         .lfortran => &.{ "--semantics-only", "--error-format=short", "--no-color" },
         // no syntax-only mode: compile, with the object file next to the
         // .mod files rather than in the source tree
-        .nvfortran => try dupeArgs(a, &.{ "-c", "-o", try std.fs.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }) }),
+        .nvfortran => try dupeArgs(a, &.{ "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }) }),
         .flang => &.{ "-fsyntax-only", "-fno-color-diagnostics" },
     };
 }
@@ -142,8 +142,8 @@ pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
 /// Write .mod files to, and read them from, `dir`
 pub fn modOutput(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
     return switch (id) {
-        .gfortran => dupeArgs(a, &.{try std.fmt.allocPrint(a, "-J{s}", .{dir})}),
-        .ifx, .ifort => if (o.windows) dupeArgs(a, &.{try std.fmt.allocPrint(a, "/module:{s}", .{dir})}) else dupeArgs(a, &.{ "-module", dir }),
+        .gfortran => dupeArgs(a, &.{try a.print("-J{s}", .{dir})}),
+        .ifx, .ifort => if (o.windows) dupeArgs(a, &.{try a.print("/module:{s}", .{dir})}) else dupeArgs(a, &.{ "-module", dir }),
         // -mdir only writes there; -I also reads from there
         .nagfor => dupeArgs(a, &.{ "-mdir", dir, "-I", dir }),
         .lfortran => dupeArgs(a, &.{ "-J", dir, "-I", dir }),
@@ -155,16 +155,16 @@ pub fn modOutput(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []c
 pub fn include(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
     return switch (id) {
         .nagfor => dupeArgs(a, &.{ "-I", dir }),
-        .ifx, .ifort => dupeArgs(a, &.{try std.fmt.allocPrint(a, "{s}{s}", .{ if (o.windows) "/I" else "-I", dir })}),
-        else => dupeArgs(a, &.{try std.fmt.allocPrint(a, "-I{s}", .{dir})}),
+        .ifx, .ifort => dupeArgs(a, &.{try a.print("{s}{s}", .{ if (o.windows) "/I" else "-I", dir })}),
+        else => dupeArgs(a, &.{try a.print("-I{s}", .{dir})}),
     };
 }
 
 /// A preprocessor definition, `-DNAME=VALUE` (or `-DNAME`)
 pub fn define(a: Allocator, id: Id, name: []const u8, value: []const u8, o: Options) ![]const u8 {
     const flag = if ((id == .ifx or id == .ifort) and o.windows) "/D" else "-D";
-    if (value.len == 0) return std.fmt.allocPrint(a, "{s}{s}", .{ flag, name });
-    return std.fmt.allocPrint(a, "{s}{s}={s}", .{ flag, name, value });
+    if (value.len == 0) return a.print("{s}{s}", .{ flag, name });
+    return a.print("{s}{s}={s}", .{ flag, name, value });
 }
 
 /// The messages in a compiler's output
@@ -224,7 +224,7 @@ const Parser = struct {
         const r = try p.re("^(?P<bin>[\\w.+-]+(?:\\.exe)?): (?P<sev>fatal error|error|warning): (?P<msg>.+)$", regex.I);
         const m = r.match(line) orelse return false;
         const sev: Severity = if (std.ascii.eqlIgnoreCase(m.named(r, "sev").?, "warning")) .warning else .@"error";
-        try p.push(null, 0, null, sev, try std.fmt.allocPrint(p.a, "{s}: {s}", .{ m.named(r, "bin").?, m.named(r, "msg").? }), null);
+        try p.push(null, 0, null, sev, try p.a.print("{s}: {s}", .{ m.named(r, "bin").?, m.named(r, "msg").? }), null);
         return true;
     }
 
@@ -336,7 +336,7 @@ const Parser = struct {
             }
             if (detected.match(text)) |m| if (p.out.items.len > 0) {
                 const last = &p.out.items[p.out.items.len - 1];
-                last.message = try std.fmt.allocPrint(p.a, "{s} (detected at {s})", .{ last.message, m.group(1).? });
+                last.message = try p.a.print("{s} (detected at {s})", .{ last.message, m.group(1).? });
                 continue;
             };
             if (bare.match(text)) |m| try p.push(null, 0, null, nagSeverity(m.named(bare, "sev").?), m.named(bare, "msg").?, null);
@@ -400,7 +400,7 @@ const Parser = struct {
                 const cn = num(m.named(r, "cn"));
                 const msg = m.named(r, "msg").?;
                 if (sev) |s| {
-                    const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try std.fmt.allocPrint(p.a, "portability: {s}", .{msg}) else msg;
+                    const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try p.a.print("portability: {s}", .{msg}) else msg;
                     try p.push(m.named(r, "file"), ln, cn, s, text_msg, null);
                 } else if (p.out.items.len > 0) {
                     // a note, a "because" or a context line
@@ -437,9 +437,9 @@ fn numOpt(s: ?[]const u8) ?usize {
 fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     for (ms) |m| {
-        const col = if (m.column) |c| try std.fmt.allocPrint(a, "{d}", .{c}) else "-";
-        const code = if (m.code) |c| try std.fmt.allocPrint(a, " [{s}]", .{c}) else "";
-        try out.append(a, try std.fmt.allocPrint(a, "{s}:{d}:{s} {s}: {s}{s}", .{ m.file orelse "-", m.line, col, @tagName(m.severity), m.message, code }));
+        const col = if (m.column) |c| try a.print("{d}", .{c}) else "-";
+        const code = if (m.code) |c| try a.print(" [{s}]", .{c}) else "";
+        try out.append(a, try a.print("{s}:{d}:{s} {s}: {s}{s}", .{ m.file orelse "-", m.line, col, @tagName(m.severity), m.message, code }));
     }
     return out.items;
 }

@@ -90,7 +90,7 @@ pub fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, 
 /// The uses of a renamed import: of its local name, in the scope of the
 /// USE statement and the statement itself, not of the original name
 pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj: *Obj, ri: Server.RenamedImport) ![]Server.FileRefs {
-    var name_re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "(?:\\W|^)({s})(?:\\W|$)", .{ri.alias}), regex.I) catch return &.{};
+    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{ri.alias}), regex.I) catch return &.{};
     defer name_re.deinit();
     var refs: std.ArrayList(Server.Ref) = .empty;
     const first = ri.scope.sline -| 1;
@@ -124,7 +124,7 @@ pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj:
 pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile, for_rename: bool) ![]Server.FileRefs {
     const def_name = try std.ascii.allocLowerString(a, def_obj.name);
     const def_fqsn = def_obj.fqsn;
-    var name_re = regex.Regex.compile(a, try std.fmt.allocPrint(a, "(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
+    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
     defer name_re.deinit();
     var files: std.ArrayList(*FortranFile) = .empty;
     if (restrict) |f| try files.append(a, f) else try files.appendSlice(a, self.workspace.values());
@@ -293,11 +293,11 @@ pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, fi
             for (new) |ch| {
                 if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) break false;
             } else true,
-        .label => new.len > 0 and new.len <= 5 and std.mem.indexOfNone(u8, new, "0123456789") == null and
+        .label => new.len > 0 and new.len <= 5 and std.mem.findNone(u8, new, "0123456789") == null and
             (std.fmt.parseInt(u32, new, 10) catch 0) > 0,
     };
     if (!valid) {
-        self.postMessage(a, try std.fmt.allocPrint(a, "Rename failed: \"{s}\" is not a valid {s}", .{ new, if (t.kind == .construct) "construct name" else "statement label" }), C.Severity.warn);
+        self.postMessage(a, try a.print("Rename failed: \"{s}\" is not a valid {s}", .{ new, if (t.kind == .construct) "construct name" else "statement label" }), C.Severity.warn);
         return .null;
     }
     const edits = try a.alloc(lsp.TextEdit, t.spans.len);

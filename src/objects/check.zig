@@ -27,7 +27,7 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
         .type => {
             for (self.scopeDataConst().in_children.items) |in_child| {
                 if (!self.typeDataConst().abstract and in_child.hasKeyword(KW.deferred)) {
-                    var d = Diagnostic.init(.deferred_not_implemented, self.eline -| 1, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+                    var d = Diagnostic.init(.deferred_not_implemented, self.eline -| 1, try a.print("Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
                     d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
                     try errors.append(a, d);
                 }
@@ -38,7 +38,7 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
                 try errors.append(a, Diagnostic.init(
                     .intent_not_in_arguments,
                     m.sline -| 1,
-                    try std.fmt.allocPrint(a, "Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
+                    try a.print("Variable \"{s}\" with INTENT keyword not found in argument list", .{m.name}),
                     1,
                     m.name,
                 ));
@@ -52,7 +52,7 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
                     try errors.append(a, Diagnostic.init(
                         .argument_not_declared,
                         self.sline -| 1,
-                        try std.fmt.allocPrint(a, "No matching declaration found for argument \"{s}\"", .{arg_name}),
+                        try a.print("No matching declaration found for argument \"{s}\"", .{arg_name}),
                         1,
                         arg_name,
                     ));
@@ -90,9 +90,9 @@ pub fn checkDefinition(self: *Obj, env: Env, known_types: *Obj.KnownTypes, inter
     const info = known_types.get(desc_obj_name).?;
     if (info) |ti| if (ti.kind == 1) {
         if (interface) {
-            return Diagnostic.init(.not_imported, self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
+            return Diagnostic.init(.not_imported, self.sline -| 1, try a.print("Object \"{s}\" not imported in interface", .{desc_obj_name}), 1, desc_obj_name);
         }
-        var d = Diagnostic.init(.object_not_found, self.sline -| 1, try std.fmt.allocPrint(a, "Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
+        var d = Diagnostic.init(.object_not_found, self.sline -| 1, try a.print("Object \"{s}\" not found in scope", .{desc_obj_name}), 1, desc_obj_name);
         d.subject = desc_obj_name;
         d.addRelated(ti.obj.file_ast.path, ti.obj.sline -| 1, "Possible object");
         return d;
@@ -132,7 +132,7 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         }
         if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
         if (fqsn_dict.get(child.fqsn)) |first| if (line_number > first) {
-            var d = Diagnostic.init(.declared_twice, line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
+            var d = Diagnostic.init(.declared_twice, line_number, try a.print("Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
             d.addRelated(self.file_ast.path, first, "First declaration");
             try errors.append(a, d);
             continue;
@@ -142,7 +142,7 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         if (self.parent != null and !is_interface and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
             if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
-                var d = Diagnostic.init(.masks_parent, line_number, try std.fmt.allocPrint(a, "Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
+                var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
                 d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                 try errors.append(a, d);
             }
@@ -168,7 +168,7 @@ pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
             var d = Diagnostic.init(
                 .module_not_found,
                 u.line_number -| 1,
-                try std.fmt.allocPrint(a, "Module \"{s}\" not found in project", .{u.mod_name}),
+                try a.print("Module \"{s}\" not found in project", .{u.mod_name}),
                 3,
                 u.mod_name,
             );
@@ -212,8 +212,8 @@ pub fn getActions(self: *const Obj, a: Allocator, sline: usize, eline: usize) !?
         if (!in_child.hasKeyword(KW.deferred)) continue;
         const in_parent_name = if (in_child.parent) |p| p.name else "None";
         const iface = (try in_child.getInterface(a, in_child.name, null, .{
-            try std.fmt.allocPrint(a, "class({s})", .{in_parent_name}),
-            try std.fmt.allocPrint(a, "CLASS({s})", .{self.name}),
+            try a.print("class({s})", .{in_parent_name}),
+            try a.print("CLASS({s})", .{self.name}),
         })) orelse continue;
         const parent = self.parent orelse continue;
         const res = try parent.addSubroutine(a, iface, has_edits);
@@ -223,10 +223,10 @@ pub fn getActions(self: *const Obj, a: Allocator, sline: usize, eline: usize) !?
             .schar = 0,
             .eline = line_number,
             .echar = 0,
-            .new_text = try std.fmt.allocPrint(a, "  PROCEDURE :: {s} => {s}\n", .{ in_child.name, in_child.name }),
+            .new_text = try a.print("  PROCEDURE :: {s} => {s}\n", .{ in_child.name, in_child.name }),
         });
         try edits.appendSlice(a, res.edits);
-        var d = Diagnostic.init(.deferred_not_implemented, line_number, try std.fmt.allocPrint(a, "Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
+        var d = Diagnostic.init(.deferred_not_implemented, line_number, try a.print("Deferred procedure \"{s}\" not implemented", .{in_child.name}), 1, null);
         d.addRelated(in_child.file_ast.path, in_child.sline -| 1, "Inherited procedure declaration");
         try diagnostics.append(a, d);
         has_edits = true;

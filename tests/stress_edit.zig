@@ -97,7 +97,7 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, arg, "--source")) {
             args.source = v;
         } else if (std.mem.eql(u8, arg, "--fortls")) {
-            args.source = try std.fs.path.join(a, &.{ v, "test", "test_source" });
+            args.source = try std.Io.Dir.path.join(a, &.{ v, "test", "test_source" });
         } else if (std.mem.eql(u8, arg, "--seeds")) {
             args.seeds = try std.fmt.parseInt(u64, v, 10);
         } else if (std.mem.eql(u8, arg, "--first-seed")) {
@@ -170,11 +170,11 @@ fn sourceFiles(io: Io, a: Allocator, root: []const u8, preprocessor: bool) ![]co
     var out: std.ArrayList([]const u8) = .empty;
     while (try walker.next(io)) |e| {
         if (e.kind != .file) continue;
-        const ext = std.fs.path.extension(e.basename);
+        const ext = std.Io.Dir.path.extension(e.basename);
         for (fortran_exts) |x| {
             if (std.mem.eql(u8, ext, x)) break;
         } else continue;
-        const path = try std.fs.path.join(a, &.{ root, e.path });
+        const path = try std.Io.Dir.path.join(a, &.{ root, e.path });
         if (!preprocessor and usesPreprocessor(try readText(io, a, path))) continue;
         try out.append(a, path);
     }
@@ -434,7 +434,7 @@ const Session = struct {
         for (s.ever_opened.items) |p| {
             if (std.mem.eql(u8, p, path)) break;
         } else try s.ever_opened.append(s.a, path);
-        try s.ops.append(s.a, try std.fmt.allocPrint(s.a, "open {s}", .{path[s.work.len + 1 ..]}));
+        try s.ops.append(s.a, try s.a.print("open {s}", .{path[s.work.len + 1 ..]}));
         try s.server.send("textDocument/didOpen", .{ .textDocument = .{
             .uri = d.uri,
             .languageId = "fortran",
@@ -469,7 +469,7 @@ const Session = struct {
         };
         const where = try std.json.Stringify.valueAlloc(s.a, at, .{});
         const what = try std.json.Stringify.valueAlloc(s.a, err, .{});
-        try s.errors.append(s.a, try std.fmt.allocPrint(s.a, "{s} at {s} -> {s}", .{ r.method, where, what }));
+        try s.errors.append(s.a, try s.a.print("{s} at {s} -> {s}", .{ r.method, where, what }));
     }
 
     fn run(s: *Session) !void {
@@ -494,14 +494,14 @@ const Session = struct {
                 }
             }
             const d = s.pick(*Doc, s.open.items);
-            const name = std.fs.path.basename(d.path);
+            const name = std.Io.Dir.path.basename(d.path);
             if (s.chance(0.005) and s.open.items.len > 1) {
-                try s.ops.append(s.a, try std.fmt.allocPrint(s.a, "{d}: close {s}", .{ step, name }));
+                try s.ops.append(s.a, try s.a.print("{d}: close {s}", .{ step, name }));
                 try s.closeDoc(d);
                 continue;
             }
             const op: Op = @fromBackingInt(@intCast(s.rng.weightedIndex(u32, &weights)));
-            try s.ops.append(s.a, try std.fmt.allocPrint(s.a, "{d}: {s} {s}", .{ step, @tagName(op), name }));
+            try s.ops.append(s.a, try s.a.print("{d}: {s} {s}", .{ step, @tagName(op), name }));
             switch (op) {
                 .insert_lines => try s.insertLines(d),
                 .delete_lines => try s.deleteLines(d),
@@ -520,7 +520,7 @@ const Session = struct {
 };
 
 /// Symbols and diagnostics of documents, by path in the workspace
-const State = std.StringArrayHashMapUnmanaged(Value);
+const State = std.array_hash_map.String(Value);
 
 /// The symbols and diagnostics of `uri`, copied to `a` (the server's
 /// messages go with it)
@@ -536,7 +536,7 @@ fn docState(a: Allocator, server: *Client, uri: []const u8) !Value {
 /// The state of `docs` in a new server on the final text, after `closed`
 /// were opened and closed again as in the session
 fn freshState(io: Io, gpa: Allocator, a: Allocator, args: Args, tmp: []const u8, work: []const u8, docs: []const []const u8, closed: []const []const u8) !State {
-    const s = try Client.start(io, gpa, try serverArgv(a, args), try std.fs.path.join(a, &.{ tmp, "fresh_stream.bin" }));
+    const s = try Client.start(io, gpa, try serverArgv(a, args), try std.Io.Dir.path.join(a, &.{ tmp, "fresh_stream.bin" }));
     defer s.deinit();
     errdefer s.kill();
     _ = try s.request("initialize", .{ .rootUri = try zfls.paths.pathToUri(a, work), .rootPath = work, .capabilities = .{} });
@@ -583,7 +583,7 @@ fn normalize(state: *State) void {
 /// Where `x` and `y` first differ, null when they are equal
 fn firstDifference(a: Allocator, x: Value, y: Value, path: []const u8) !?[]const u8 {
     if (std.meta.activeTag(x) != std.meta.activeTag(y))
-        return try std.fmt.allocPrint(a, "{s}: {f} != {f}", .{ path, std.json.fmt(x, .{}), std.json.fmt(y, .{}) });
+        return try a.print("{s}: {f} != {f}", .{ path, std.json.fmt(x, .{}), std.json.fmt(y, .{}) });
     switch (x) {
         .object => |xo| {
             var keys: std.ArrayList([]const u8) = .empty;
@@ -591,18 +591,18 @@ fn firstDifference(a: Allocator, x: Value, y: Value, path: []const u8) !?[]const
             for (y.object.keys()) |k| if (!xo.contains(k)) try keys.append(a, k);
             std.mem.sort([]const u8, keys.items, {}, lessThan);
             for (keys.items) |k| {
-                const sub = try std.fmt.allocPrint(a, "{s}.{s}", .{ path, k });
-                const xv = xo.get(k) orelse return try std.fmt.allocPrint(a, "{s}: missing on one side", .{sub});
-                const yv = y.object.get(k) orelse return try std.fmt.allocPrint(a, "{s}: missing on one side", .{sub});
+                const sub = try a.print("{s}.{s}", .{ path, k });
+                const xv = xo.get(k) orelse return try a.print("{s}: missing on one side", .{sub});
+                const yv = y.object.get(k) orelse return try a.print("{s}: missing on one side", .{sub});
                 if (try firstDifference(a, xv, yv, sub)) |d| return d;
             }
             return null;
         },
         .array => |xa| {
             if (xa.items.len != y.array.items.len)
-                return try std.fmt.allocPrint(a, "{s}: length {d} != {d}", .{ path, xa.items.len, y.array.items.len });
+                return try a.print("{s}: length {d} != {d}", .{ path, xa.items.len, y.array.items.len });
             for (xa.items, y.array.items, 0..) |xv, yv, i| {
-                if (try firstDifference(a, xv, yv, try std.fmt.allocPrint(a, "{s}[{d}]", .{ path, i }))) |d| return d;
+                if (try firstDifference(a, xv, yv, try a.print("{s}[{d}]", .{ path, i }))) |d| return d;
             }
             return null;
         },
@@ -610,23 +610,23 @@ fn firstDifference(a: Allocator, x: Value, y: Value, path: []const u8) !?[]const
             const xs = try std.json.Stringify.valueAlloc(a, x, .{});
             const ys = try std.json.Stringify.valueAlloc(a, y, .{});
             if (std.mem.eql(u8, xs, ys)) return null;
-            return try std.fmt.allocPrint(a, "{s}: {s} != {s}", .{ path, xs, ys });
+            return try a.print("{s}: {s} != {s}", .{ path, xs, ys });
         },
     }
 }
 
 fn hasAllocatorReport(a: Allocator, stderr: []const u8) !bool {
     const lower = try std.ascii.allocLowerString(a, stderr);
-    for (allocator_reports) |r| if (std.mem.indexOf(u8, lower, r) != null) return true;
+    for (allocator_reports) |r| if (std.mem.find(u8, lower, r) != null) return true;
     return false;
 }
 
 /// One session; returns whether it failed
 fn runSeed(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map, args: Args, seed: u64, src: []const u8) !bool {
-    const tmp = try lsp.tempDir(io, a, env, try std.fmt.allocPrint(a, "zfls_stress_{d}_", .{seed}));
-    const work = try std.fs.path.join(a, &.{ tmp, "ws" });
+    const tmp = try lsp.tempDir(io, a, env, try a.print("zfls_stress_{d}_", .{seed}));
+    const work = try std.Io.Dir.path.join(a, &.{ tmp, "ws" });
     try lsp.copyTree(io, a, src, work);
-    try lsp.copyTree(io, a, src, try std.fs.path.join(a, &.{ tmp, "initial" }));
+    try lsp.copyTree(io, a, src, try std.Io.Dir.path.join(a, &.{ tmp, "initial" }));
     var problems: std.ArrayList([]const u8) = .empty;
 
     var prng: std.Random.DefaultPrng = .init(seed);
@@ -641,7 +641,7 @@ fn runSeed(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ
         .work = work,
         .corpus = try corpusLines(io, a, try sourceFiles(io, a, src, args.preprocessor)),
         .files = files,
-        .server = try Client.start(io, gpa, try serverArgv(a, args), try std.fs.path.join(a, &.{ tmp, "stream.bin" })),
+        .server = try Client.start(io, gpa, try serverArgv(a, args), try std.Io.Dir.path.join(a, &.{ tmp, "stream.bin" })),
     };
     defer s.server.deinit();
     defer for (s.open.items) |d| d.text.deinit(gpa);
@@ -654,16 +654,16 @@ fn runSeed(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ
             if (!term.success()) try problems.append(a, try lsp.termText(a, term));
         } else |e| {
             s.server.kill();
-            try problems.append(a, try std.fmt.allocPrint(a, "{s} at exit", .{@errorName(e)}));
+            try problems.append(a, try a.print("{s} at exit", .{@errorName(e)}));
         }
     } else |e| {
         s.server.kill();
-        try problems.append(a, try std.fmt.allocPrint(a, "{s}", .{@errorName(e)}));
+        try problems.append(a, try a.print("{s}", .{@errorName(e)}));
     }
     const stderr = s.server.stderr.items;
     const reported = try hasAllocatorReport(a, stderr);
-    if (reported) try problems.append(a, try std.fmt.allocPrint(a, "stderr: {s}", .{tail(std.mem.trim(u8, stderr, " \r\n"), 3000)}));
-    for (s.errors.items[0..@min(10, s.errors.items.len)]) |e| try problems.append(a, try std.fmt.allocPrint(a, "error response: {s}", .{e}));
+    if (reported) try problems.append(a, try a.print("stderr: {s}", .{tail(std.mem.trim(u8, stderr, " \r\n"), 3000)}));
+    for (s.errors.items[0..@min(10, s.errors.items.len)]) |e| try problems.append(a, try a.print("error response: {s}", .{e}));
     if (session_state) |*session| if (!args.preprocessor and !reported) {
         var docs: std.ArrayList([]const u8) = .empty;
         for (s.open.items) |d| try docs.append(a, d.path);
@@ -676,11 +676,11 @@ fn runSeed(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ
         std.mem.sort([]const u8, names, {}, lessThan);
         for (names) |name| {
             const other = fresh.get(name) orelse {
-                try problems.append(a, try std.fmt.allocPrint(a, "{s}: no state from the fresh server", .{name}));
+                try problems.append(a, try a.print("{s}: no state from the fresh server", .{name}));
                 continue;
             };
             if (try firstDifference(a, session.get(name).?, other, name)) |d|
-                try problems.append(a, try std.fmt.allocPrint(a, "stale state vs fresh server: {s}", .{d}));
+                try problems.append(a, try a.print("stale state vs fresh server: {s}", .{d}));
         }
     };
 
@@ -695,8 +695,8 @@ fn runSeed(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ
     }
     var ops: std.ArrayList(u8) = .empty;
     for (s.ops.items) |op| try ops.print(a, "{s}\n", .{op});
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ tmp, "ops.txt" }), .data = ops.items });
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ tmp, "stderr.txt" }), .data = stderr });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ tmp, "ops.txt" }), .data = ops.items });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ tmp, "stderr.txt" }), .data = stderr });
     for (problems.items) |p| std.debug.print("    {s}\n", .{p[0..@min(p.len, 2000)]});
     std.debug.print("    last ops:\n", .{});
     for (s.ops.items[s.ops.items.len -| 5..]) |op| std.debug.print("      {s}\n", .{op});

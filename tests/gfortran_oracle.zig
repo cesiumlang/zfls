@@ -52,7 +52,7 @@ fn sameKind(gfortran: Kind, zfls: Kind) bool {
     return gfortran == zfls or (gfortran == .variable and zfls == .procedure);
 }
 
-const Entities = std.StringArrayHashMapUnmanaged(Kind);
+const Entities = std.array_hash_map.String(Kind);
 const Names = std.StringHashMapUnmanaged(void);
 
 fn has(set: []const []const u8, tokens: *const Names) bool {
@@ -80,11 +80,11 @@ fn procName(line: []const u8) ?struct { indent: usize, name: []const u8 } {
 fn symtree(line: []const u8) ?struct { name: []const u8, rest: []const u8 } {
     const rest = std.mem.trimStart(u8, line, " \t");
     if (!std.mem.startsWith(u8, rest, "symtree: '")) return null;
-    const close = std.mem.indexOfScalarPos(u8, rest, "symtree: '".len, '\'') orelse return null;
+    const close = std.mem.findScalarPos(u8, rest, "symtree: '".len, '\'') orelse return null;
     var after = std.mem.trimStart(u8, rest[close + 1 ..], " \t");
     if (!std.mem.startsWith(u8, after, "|| symbol: '")) return null;
     after = after["|| symbol: '".len..];
-    const end = std.mem.indexOfScalar(u8, after, '\'') orelse return null;
+    const end = std.mem.findScalar(u8, after, '\'') orelse return null;
     return .{ .name = after[0..end], .rest = after[end + 1 ..] };
 }
 
@@ -96,8 +96,8 @@ fn trimmed(line: []const u8) []const u8 {
 fn bindingName(line: []const u8, prefix: []const u8) ?[]const u8 {
     const rest = std.mem.trimStart(u8, line, " \t");
     if (!std.mem.startsWith(u8, rest, prefix)) return null;
-    const colons = std.mem.indexOf(u8, rest, ":: ") orelse return null;
-    if (std.mem.indexOfScalar(u8, rest[prefix.len..colons], ':') != null) return null;
+    const colons = std.mem.find(u8, rest, ":: ") orelse return null;
+    if (std.mem.findScalar(u8, rest[prefix.len..colons], ':') != null) return null;
     const name = rest[colons + 3 ..];
     var n: usize = 0;
     while (n < name.len and (std.ascii.isAlphanumeric(name[n]) or name[n] == '_')) n += 1;
@@ -119,7 +119,7 @@ fn lower(a: Allocator, s: []const u8) ![]const u8 {
 }
 
 fn lastPart(s: []const u8, sep: []const u8) []const u8 {
-    const i = std.mem.lastIndexOf(u8, s, sep) orelse return s;
+    const i = std.mem.findLast(u8, s, sep) orelse return s;
     return s[i + sep.len ..];
 }
 
@@ -145,12 +145,12 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             while (stack.items.len > 0 and stack.items[stack.items.len - 1].indent >= p.indent) _ = stack.pop();
             var name = try lower(a, p.name);
             // submodules are named "ancestor.submodule"
-            if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| if (stack.items.len == 0) {
+            if (std.mem.findScalarLast(u8, name, '.')) |dot| if (stack.items.len == 0) {
                 try parents.put(a, name[dot + 1 ..], lastPart(name[0..dot], "."));
             };
             name = lastPart(name, ".");
             const path = if (stack.items.len > 0)
-                try std.fmt.allocPrint(a, "{s}::{s}", .{ stack.items[stack.items.len - 1].path, name })
+                try a.print("{s}::{s}", .{ stack.items[stack.items.len - 1].path, name })
             else
                 name;
             try stack.append(a, .{ .indent = p.indent, .path = path });
@@ -166,22 +166,22 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             continue;
         }
         const name = try lower(a, sym.name);
-        const from_host = std.mem.indexOf(u8, sym.rest, "from namespace") != null;
+        const from_host = std.mem.find(u8, sym.rest, "from namespace") != null;
         // this symbol's detail lines
         i += 1;
         const block_start = i;
         while (i < lines.items.len and symtree(lines.items[i]) == null and procName(lines.items[i]) == null and
-            std.mem.indexOf(u8, lines.items[i], "Namespace:") == null) i += 1;
+            std.mem.find(u8, lines.items[i], "Namespace:") == null) i += 1;
         const block = lines.items[block_start..i];
         var tokens: Names = .empty;
         for (block) |b| {
             const rest = std.mem.trimStart(u8, b, " \t");
             if (!std.mem.startsWith(u8, rest, "attributes: (")) continue;
-            const close = std.mem.lastIndexOfScalar(u8, rest, ')') orelse continue;
+            const close = std.mem.findScalarLast(u8, rest, ')') orelse continue;
             if (close < "attributes: (".len) continue;
             var words = std.mem.tokenizeAny(u8, rest["attributes: (".len..close], " \t");
             // e.g. "USE-ASSOC(shapes)" -> "USE-ASSOC"
-            while (words.next()) |w| try tokens.put(a, w[0 .. std.mem.indexOfScalar(u8, w, '(') orelse w.len], {});
+            while (words.next()) |w| try tokens.put(a, w[0 .. std.mem.findScalar(u8, w, '(') orelse w.len], {});
             break;
         }
         const ns = stack.items[stack.items.len - 1].path;
@@ -196,7 +196,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
         if (tokens.contains("MODULE-PROCEDURE") and tokens.contains("EXTERNAL") and !tokens.contains("CONTAINED"))
             try tokens.put(a, "IFSRC-IFBODY", {});
         if (parents.get(ns)) |parent| {
-            const in_parent = try std.fmt.allocPrint(a, "{s}::{s}", .{ parent, name });
+            const in_parent = try a.print("{s}::{s}", .{ parent, name });
             if (out.entities.contains(in_parent) and !tokens.contains("CONTAINED")) try tokens.put(a, "USED-IN-SUBMODULE", {});
         }
         const skip = from_host or
@@ -206,7 +206,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             // parent-module entities seen from a submodule
             (tokens.contains("USED-IN-SUBMODULE") and !tokens.contains("MODULE-PROCEDURE"));
         if (skip) continue;
-        const fq = try std.fmt.allocPrint(a, "{s}::{s}", .{ ns, name });
+        const fq = try a.print("{s}::{s}", .{ ns, name });
         if (tokens.contains("DERIVED")) {
             try out.entities.put(a, fq, .type);
             var in_components = false;
@@ -219,12 +219,12 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
                 if (std.mem.startsWith(u8, t, "hash:") or std.mem.startsWith(u8, t, "Procedure bindings")) in_components = false;
                 if (if (in_components) componentName(b) else null) |c| {
                     // the parent type of an extension is a component too
-                    const parent_type = try std.fmt.allocPrint(a, "(derived {s})", .{try lower(a, c)});
-                    if (std.mem.indexOf(u8, try lower(a, b), parent_type) == null)
-                        try out.entities.put(a, try std.fmt.allocPrint(a, "{s}::{s}", .{ fq, try lower(a, c) }), .variable);
+                    const parent_type = try a.print("(derived {s})", .{try lower(a, c)});
+                    if (std.mem.find(u8, try lower(a, b), parent_type) == null)
+                        try out.entities.put(a, try a.print("{s}::{s}", .{ fq, try lower(a, c) }), .variable);
                 }
                 if (bindingName(b, "PROCEDURE") orelse bindingName(b, "GENERIC")) |m|
-                    try out.entities.put(a, try std.fmt.allocPrint(a, "{s}::{s}", .{ fq, try lower(a, m) }), .procedure);
+                    try out.entities.put(a, try a.print("{s}::{s}", .{ fq, try lower(a, m) }), .procedure);
             }
         } else if (tokens.contains("PROCEDURE")) {
             if (tokens.contains("ABSTRACT")) continue; // abstract interface
@@ -249,18 +249,18 @@ const Zfls = struct {
 /// The entities of zfls's object tree (`--debug_parser` output), null when
 /// it printed none
 fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
-    const start = std.mem.indexOf(u8, out, "Object Tree") orelse return null;
+    const start = std.mem.find(u8, out, "Object Tree") orelse return null;
     var tree = out[start + "Object Tree".len ..];
-    if (std.mem.indexOf(u8, tree, "Exportable Objects")) |end| tree = tree[0..end];
+    if (std.mem.find(u8, tree, "Exportable Objects")) |end| tree = tree[0..end];
     const Row = struct { kind: i64, fqsn: []const u8 };
     var rows: std.ArrayList(Row) = .empty;
     var it = std.mem.splitScalar(u8, tree, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
-        const colon = std.mem.indexOf(u8, line, ": ") orelse continue;
+        const colon = std.mem.find(u8, line, ": ") orelse continue;
         const kind = std.fmt.parseInt(i64, line[0..colon], 10) catch continue;
         const fqsn = line[colon + 2 ..];
-        if (fqsn.len == 0 or std.mem.indexOfAny(u8, fqsn, " \t") != null) continue;
+        if (fqsn.len == 0 or std.mem.findAny(u8, fqsn, " \t") != null) continue;
         try rows.append(a, .{ .kind = kind, .fqsn = fqsn });
     }
     // block, select, do, where, if, associate and enum scopes
@@ -268,7 +268,7 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
     for (rows.items) |r| if (r.kind >= 9 and r.kind <= 15) try constructs.put(a, r.fqsn, {});
     var res: Zfls = .{};
     for (rows.items) |r| {
-        if (std.mem.indexOf(u8, try lower(a, r.fqsn), "#gen_int") != null) continue; // interface bodies (not listed by the oracle)
+        if (std.mem.find(u8, try lower(a, r.fqsn), "#gen_int") != null) continue; // interface bodies (not listed by the oracle)
         if (constructs.contains(r.fqsn)) continue;
         // entities of construct scopes belong to the enclosing procedure in
         // gfortran
@@ -289,7 +289,7 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
     // scopes found by gfortran as namespaces, not entities
     var i: usize = 0;
     while (i < res.entities.count()) {
-        if (std.mem.indexOf(u8, res.entities.keys()[i], "::") == null) {
+        if (std.mem.find(u8, res.entities.keys()[i], "::") == null) {
             res.entities.swapRemoveAt(i);
         } else i += 1;
     }
@@ -298,16 +298,16 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
 
 /// zfls lists a function's implicit result variable as a child
 fn isFunctionResult(fq: []const u8) bool {
-    const sep = std.mem.lastIndexOf(u8, fq, "::") orelse return false;
+    const sep = std.mem.findLast(u8, fq, "::") orelse return false;
     return std.mem.eql(u8, lastPart(fq[0..sep], "::"), fq[sep + 2 ..]);
 }
 
 fn findOnPath(io: Io, a: Allocator, env: *const std.process.Environ.Map, name: []const u8) !?[]const u8 {
     const path = env.get("PATH") orelse env.get("Path") orelse return null;
-    const exe = if (builtin.os.tag == .windows) try std.fmt.allocPrint(a, "{s}.exe", .{name}) else name;
-    var dirs = std.mem.tokenizeScalar(u8, path, if (builtin.os.tag == .windows) ';' else ':');
+    const exe = if (builtin.target.os.tag == .windows) try a.print("{s}.exe", .{name}) else name;
+    var dirs = std.mem.tokenizeScalar(u8, path, if (builtin.target.os.tag == .windows) ';' else ':');
     while (dirs.next()) |d| {
-        const candidate = try std.fs.path.join(a, &.{ d, exe });
+        const candidate = try std.Io.Dir.path.join(a, &.{ d, exe });
         if (Io.Dir.cwd().access(io, candidate, .{})) |_| return candidate else |_| {}
     }
     return null;
@@ -316,7 +316,7 @@ fn findOnPath(io: Io, a: Allocator, env: *const std.process.Environ.Map, name: [
 fn findGfortran(io: Io, a: Allocator, env: *const std.process.Environ.Map) !?[]const u8 {
     if (env.get("GFORTRAN")) |g| return g;
     if (try findOnPath(io, a, env, "gfortran")) |g| return g;
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         const msys = "C:\\msys64\\ucrt64\\bin\\gfortran.exe";
         if (Io.Dir.cwd().access(io, msys, .{})) |_| return msys else |_| {}
     }
@@ -350,11 +350,11 @@ fn collect(io: Io, a: Allocator, paths: []const []const u8) ![]const []const u8 
             defer walker.deinit();
             while (try walker.next(io)) |e| {
                 if (e.kind != .file) continue;
-                const ext = std.fs.path.extension(e.basename);
+                const ext = std.Io.Dir.path.extension(e.basename);
                 for (fortran_exts) |x| {
                     if (std.ascii.eqlIgnoreCase(ext, x)) break;
                 } else continue;
-                try found.append(a, try std.fs.path.join(a, &.{ p, e.path }));
+                try found.append(a, try std.Io.Dir.path.join(a, &.{ p, e.path }));
             }
             std.mem.sort([]const u8, found.items, {}, lessThan);
             try files.appendSlice(a, found.items);
@@ -393,11 +393,11 @@ pub fn main(init: std.process.Init) !u8 {
     // compiler loads the DLLs it was built with rather than other copies
     // (Git for Windows' bash puts its own first)
     var gf_env = try env.clone(a);
-    const gf_exe = if (std.fs.path.dirname(gfortran) == null) (try findOnPath(io, a, env, gfortran)) orelse gfortran else gfortran;
-    if (std.fs.path.dirname(gf_exe)) |dir| {
+    const gf_exe = if (std.Io.Dir.path.dirname(gfortran) == null) (try findOnPath(io, a, env, gfortran)) orelse gfortran else gfortran;
+    if (std.Io.Dir.path.dirname(gf_exe)) |dir| {
         const key = if (env.get("PATH") == null and env.get("Path") != null) "Path" else "PATH";
         const old = env.get(key) orelse "";
-        try gf_env.put(key, try std.fmt.allocPrint(a, "{s}{c}{s}", .{ dir, if (builtin.os.tag == .windows) @as(u8, ';') else ':', old }));
+        try gf_env.put(key, try a.print("{s}{c}{s}", .{ dir, if (builtin.target.os.tag == .windows) @as(u8, ';') else ':', old }));
     }
     const version = try run(io, a, &.{ gfortran, "--version" }, null, &gf_env);
     var first = std.mem.splitScalar(u8, version.stdout, '\n');
@@ -415,7 +415,7 @@ pub fn main(init: std.process.Init) !u8 {
         const abs = try Io.Dir.cwd().realPathFileAlloc(io, src, a);
         var cmd: std.ArrayList([]const u8) = .empty;
         try cmd.appendSlice(a, &.{ gfortran, "-fsyntax-only", "-fdump-fortran-original", "-J", workdir, "-I", workdir });
-        const ext = std.fs.path.extension(src);
+        const ext = std.Io.Dir.path.extension(src);
         const ext_lower = try lower(a, ext);
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, "-cpp");
         if (std.mem.eql(u8, ext_lower, ".f") or std.mem.eql(u8, ext_lower, ".for")) try cmd.append(a, "-ffixed-form");
@@ -429,7 +429,7 @@ pub fn main(init: std.process.Init) !u8 {
                 const t = std.mem.trim(u8, l, " \r\t");
                 if (t.len == 0) continue;
                 if (first_line == null) first_line = t;
-                if (std.mem.indexOf(u8, t, "rror") != null) {
+                if (std.mem.find(u8, t, "rror") != null) {
                     why = t;
                     break;
                 }
@@ -456,7 +456,7 @@ pub fn main(init: std.process.Init) !u8 {
         // linking a workspace, which --debug_parser does not do
         var dummies = ref.dummies.keyIterator();
         while (dummies.next()) |d| {
-            const scope = d.*[0 .. std.mem.lastIndexOf(u8, d.*, "::") orelse d.len];
+            const scope = d.*[0 .. std.mem.findLast(u8, d.*, "::") orelse d.len];
             if (got.bodies.contains(scope)) _ = ref.entities.swapRemove(d.*);
         }
         checked += 1;

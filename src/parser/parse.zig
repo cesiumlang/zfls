@@ -126,7 +126,7 @@ pub const Parser = struct {
             if (line.len == 0) continue;
             // a fixed-form comment line (C, D or * in column 1) has no code,
             // whatever it contains, even a semicolon (#411)
-            if (get_full and f.fixed and std.mem.indexOfScalar(u8, "cCdD*", line[0]) != null) continue;
+            if (get_full and f.fixed and std.mem.findScalar(u8, "cCdD*", line[0]) != null) continue;
 
             p.cur_line = line_no;
             if (try p.parseDocs(line, line_no)) |idx| {
@@ -160,12 +160,12 @@ pub const Parser = struct {
             const line_label = lr.label;
             var line_stripped = try helpers.stripStrings(a, line, true);
             var line_no_comment = line;
-            if (std.mem.indexOfScalar(u8, line_stripped, '!')) |ci| {
+            if (std.mem.findScalar(u8, line_stripped, '!')) |ci| {
                 line_no_comment = line[0..ci];
                 line_stripped = line_stripped[0..ci];
                 try p.setSingleLineDocstring(line[ci..]);
             }
-            if (std.mem.indexOfScalar(u8, line_stripped, ';') != null) {
+            if (std.mem.findScalar(u8, line_stripped, ';') != null) {
                 const pieces = try str.split(sa, line_stripped, ";");
                 // extendleft + pop: process pieces in order
                 var k: usize = pieces.len;
@@ -252,7 +252,7 @@ pub const Parser = struct {
                     var desc: []const u8 = info.var_type;
                     var link_name: ?[]const u8 = null;
                     var name: []const u8 = undefined;
-                    if (std.mem.indexOf(u8, var_name, "=>")) |_| {
+                    if (std.mem.find(u8, var_name, "=>")) |_| {
                         const parts = try str.split(a, var_name, "=>");
                         name = parts[0];
                         const ln = str.strip(str.beforeFirst(parts[1], "("));
@@ -270,9 +270,9 @@ pub const Parser = struct {
                     if (dim.extra) |d| try var_keywords.append(a, d);
                     if (chr.extra) |c| desc = try std.mem.concat(a, u8, &.{ desc, c });
                     // the codimensions of a coarray, x[:], are not part of its name (upstream #172)
-                    if (std.mem.indexOfScalar(u8, name, '[')) |bracket| {
-                        if (std.mem.lastIndexOfScalar(u8, name, ']')) |close| if (close > bracket) {
-                            try var_keywords.append(a, try std.fmt.allocPrint(a, "CODIMENSION{s}", .{name[bracket .. close + 1]}));
+                    if (std.mem.findScalar(u8, name, '[')) |bracket| {
+                        if (std.mem.findScalarLast(u8, name, ']')) |close| if (close > bracket) {
+                            try var_keywords.append(a, try a.print("CODIMENSION{s}", .{name[bracket .. close + 1]}));
                         };
                         name = name[0..bracket];
                     }
@@ -347,7 +347,7 @@ pub const Parser = struct {
                 var name = name_opt orelse "";
                 if (name_opt == null) {
                     counters.block += 1;
-                    name = try std.fmt.allocPrint(a, "#BLOCK{d}", .{counters.block});
+                    name = try a.print("#BLOCK{d}", .{counters.block});
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK, true, true);
@@ -357,7 +357,7 @@ pub const Parser = struct {
                 var name = name_opt orelse "";
                 if (name_opt == null) {
                     counters.block += 1;
-                    name = try std.fmt.allocPrint(a, "#BLOCKDATA{d}", .{counters.block});
+                    name = try a.print("#BLOCKDATA{d}", .{counters.block});
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
                 try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
@@ -365,7 +365,7 @@ pub const Parser = struct {
             },
             .do_ => |label| {
                 counters.do_ += 1;
-                const name = try std.fmt.allocPrint(a, "#DO{d}", .{counters.do_});
+                const name = try a.print("#DO{d}", .{counters.do_});
                 if (label.len > 0) try block_id_stack.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, label));
                 const o = try Obj.newScope(ast, .do_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_DO, true, true);
@@ -374,7 +374,7 @@ pub const Parser = struct {
             .where => |single| {
                 if (!single) {
                     counters.do_ += 1;
-                    const name = try std.fmt.allocPrint(a, "#WHERE{d}", .{counters.do_});
+                    const name = try a.print("#WHERE{d}", .{counters.do_});
                     const o = try Obj.newScope(ast, .where, line_no, name, &.{});
                     try ast.addScope(o, &R().END_WHERE, true, true);
                 }
@@ -382,7 +382,7 @@ pub const Parser = struct {
             },
             .assoc => |bound| {
                 counters.block += 1;
-                const name = try std.fmt.allocPrint(a, "#ASSOC{d}", .{counters.block});
+                const name = try a.print("#ASSOC{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .associate, line_no, name, &.{});
                 try ast.addScope(o, &R().END_ASSOCIATE, true, true);
                 for (bound) |bv| {
@@ -394,7 +394,7 @@ pub const Parser = struct {
                     if (helpers.getParenSubstring(link)) |subscripts| {
                         var rank: i32 = 0;
                         for (try helpers.splitArgs(a, subscripts)) |sub| {
-                            if (std.mem.indexOfScalar(u8, sub, ':') != null) rank += 1;
+                            if (std.mem.findScalar(u8, sub, ':') != null) rank += 1;
                         }
                         v.varData().slice_rank = rank;
                     }
@@ -405,17 +405,17 @@ pub const Parser = struct {
             },
             .if_ => {
                 counters.if_ += 1;
-                const name = try std.fmt.allocPrint(a, "#IF{d}", .{counters.if_});
+                const name = try a.print("#IF{d}", .{counters.if_});
                 const o = try Obj.newScope(ast, .if_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_IF, true, true);
                 p.dbg("{s} !!! IF - Ln:{d}", .{ line, line_no });
             },
             .select => |info| {
                 counters.select += 1;
-                const name = try std.fmt.allocPrint(a, "#SELECT{d}", .{counters.select});
+                const name = try a.print("#SELECT{d}", .{counters.select});
                 const o = try Obj.newSelect(ast, line_no, name, info);
                 try ast.addScope(o, &R().END_SELECT, true, true);
-                const var_desc = try std.fmt.allocPrint(a, "{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
+                const var_desc = try a.print("{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
                 if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.type)) |v| try ast.addVariable(v);
                 p.dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
             },
@@ -428,7 +428,7 @@ pub const Parser = struct {
             },
             .enum_ => {
                 counters.block += 1;
-                const name = try std.fmt.allocPrint(a, "#ENUM{d}", .{counters.block});
+                const name = try a.print("#ENUM{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .enum_, line_no, name, &.{});
                 try ast.addScope(o, &R().END_ENUMD, true, true);
                 p.dbg("{s} !!! ENUM - Ln:{d}", .{ line, line_no });
@@ -437,7 +437,7 @@ pub const Parser = struct {
                 var name = info.name orelse "";
                 if (info.name == null) {
                     counters.interface += 1;
-                    name = try std.fmt.allocPrint(a, "#GEN_INT{d}", .{counters.interface});
+                    name = try a.print("#GEN_INT{d}", .{counters.interface});
                 }
                 const o = try Obj.newInterface(ast, line_no, name, info.abstract);
                 try ast.addScope(o, &R().END_INT, true, true);
@@ -552,7 +552,7 @@ pub const Parser = struct {
         const ast = p.file_ast;
         const in_type = if (ast.current_scope) |cs| cs.kind == .type else false;
         if (R().RECORD_STMT.match(line)) |m| {
-            const decl = try std.fmt.allocPrint(a, "TYPE({s}) :: {s}", .{ m.group(1).?, m.group(2) orelse "" });
+            const decl = try a.print("TYPE({s}) :: {s}", .{ m.group(1).?, m.group(2) orelse "" });
             if (try getFortranDefinition(a, decl)) |def| try p.handleDef(a, def, decl, ln, counters, block_id_stack);
             p.dbg("{s} !!! RECORD - Ln:{d}", .{ line, ln });
             return true;
@@ -563,11 +563,11 @@ pub const Parser = struct {
         var name = m.group(1) orelse "";
         if (name.len == 0) {
             counters.block += 1;
-            name = try std.fmt.allocPrint(a, "#STRUCT{d}", .{counters.block});
+            name = try a.print("#STRUCT{d}", .{counters.block});
         }
         const fields = str.strip(m.group(2) orelse "");
         if (fields.len > 0) {
-            const decl = try std.fmt.allocPrint(a, "TYPE({s}) :: {s}", .{ name, fields });
+            const decl = try a.print("TYPE({s}) :: {s}", .{ name, fields });
             if (try getFortranDefinition(a, decl)) |def| try p.handleDef(a, def, decl, ln, counters, block_id_stack);
         }
         const o = try Obj.newScope(ast, .type, ln, name, &.{});
@@ -583,7 +583,7 @@ pub const Parser = struct {
         const cs = ast.current_scope orelse return false;
         const pa = ast.allocator();
         for (try helpers.splitArgs(a, m.group(1) orelse "")) |item| {
-            const eq = std.mem.indexOfScalar(u8, item, '=') orelse continue;
+            const eq = std.mem.findScalar(u8, item, '=') orelse continue;
             const name = str.strip(item[0..eq]);
             for (cs.childList()) |child| {
                 if (child.kind != .variable or !std.ascii.eqlIgnoreCase(child.name, name)) continue;
@@ -606,7 +606,7 @@ pub const Parser = struct {
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
             // the types of the letters, for names that are not declared
             var spec = line[m.start(1)..];
-            if (std.mem.indexOfScalar(u8, spec, '!')) |c| spec = spec[0..c];
+            if (std.mem.findScalar(u8, spec, '!')) |c| spec = spec[0..c];
             const pa = ast.allocator();
             const rules = try implicit.parseRules(pa, spec);
             if (rules.len > 0 and cs.data == .scope) {

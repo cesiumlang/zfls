@@ -73,7 +73,7 @@ pub fn of(a: Allocator, file: *const FortranFile) !Suppressions {
 fn commentOf(a: Allocator, fixed: bool, raw: []const u8) !?[]const u8 {
     if (helpers.isComment(fixed, raw)) return raw;
     const code = try helpers.stripStrings(a, raw, true);
-    const i = std.mem.indexOfScalar(u8, code, '!') orelse return null;
+    const i = std.mem.findScalar(u8, code, '!') orelse return null;
     return raw[i + 1 ..];
 }
 
