@@ -459,15 +459,29 @@ fn usesKnownModules(self: *Server, a: Allocator, ast: *Ast, scope: *Obj) !bool {
         try scopes.append(a, s);
         try scopes.appendSlice(a, try s.getAncestors(a));
     }
+    var seen: std.AutoHashMapUnmanaged(*Obj, void) = .empty;
     for (scopes.items) |s| {
         if (s.data != .scope) continue;
         if (s.kind == .submodule and s.submodDataConst().ancestor_obj == null) return false;
         if (s.isModScope() and s.linkObj() == null) return false;
         for (s.scopeDataConst().use.items) |u| {
             if (u.is_import) continue;
-            if (isExternalModule(self, u.mod_name)) return false;
-            if (self.env(a).global(ast, u.mod_name) == null) return false;
+            if (!try moduleKnown(self, a, ast, u.mod_name, &seen)) return false;
         }
+    }
+    return true;
+}
+
+/// Whether module `name` is known, and the modules it uses, which it may
+/// make names of public (`use stats_impl, only: mean` / `public :: mean`),
+/// are too
+fn moduleKnown(self: *Server, a: Allocator, ast: *Ast, name: []const u8, seen: *std.AutoHashMapUnmanaged(*Obj, void)) !bool {
+    if (isExternalModule(self, name)) return false;
+    const m = self.env(a).global(ast, name) orelse return false;
+    if ((try seen.getOrPut(a, m)).found_existing or m.data != .scope) return true;
+    for (m.scopeDataConst().use.items) |u| {
+        if (u.is_import) continue;
+        if (!try moduleKnown(self, a, ast, u.mod_name, seen)) return false;
     }
     return true;
 }

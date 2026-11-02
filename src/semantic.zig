@@ -85,6 +85,13 @@ const Tokenizer = struct {
     /// the depth of parentheses at the end of the last line, for the line
     /// that continues it
     depth: usize = 0,
+    /// the last line ended inside the condition of an IF, WHERE or FORALL
+    cond_stmt: bool = false,
+    /// a statement starts at the first word of the line that continues the
+    /// last one (its IF condition closed at its end: `if (x)` / `& return`)
+    stmt_next: bool = false,
+    /// the quote of a character literal the last line left open
+    quote: ?u8 = null,
     /// the columns of code in a fixed-form line; the rest is a comment
     fixed_limit: ?usize = null,
     /// When set, the uses of named constants are collected here (not
@@ -104,6 +111,7 @@ const Tokenizer = struct {
         };
         for (inner_keywords) |k| if (std.ascii.eqlIgnoreCase(w.str, k)) return;
         for (t.intrinsics) |f| if (std.ascii.eqlIgnoreCase(f.name, w.str)) return;
+        for (other_intrinsics) |f| if (std.ascii.eqlIgnoreCase(f, w.str)) return;
         try list.append(t.a, .{ .line = ln, .start = w.start, .end = w.end, .name = w.str, .scope = scope });
     }
 
@@ -177,96 +185,94 @@ const Tokenizer = struct {
         if (trimmed.len > 0 and trimmed[0] == '#') return;
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
         if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
-        var code = try helpers.stripStrings(t.a, raw, true);
         // the columns past the code of a fixed-form line are a comment
+        var line = raw;
         if (t.fixed_limit) |n| if (t.file.fixed and raw.len > n) {
-            code = code[0..@min(n, code.len)];
+            line = raw[0..n];
             if (t.unknown == null) try t.add(ln, raw, n, raw.len, .{ .type = .comment });
         };
-        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
+        // a statement starts the line unless the line continues one
+        var stmt_start = !t.continued;
+        if (t.file.fixed) {
+            // the label and continuation columns
+            if (line.len > 5 and line[5] != ' ' and line[5] != '0') stmt_start = false;
+        } else if (std.mem.startsWith(u8, trimmed, "&")) stmt_start = false;
+        const continues = !stmt_start;
+        // a character literal the line before left open goes on after the
+        // `&` that starts this one (free form), or in column 7 (fixed form)
+        const quote = if (continues) t.quote else null;
+        const from = if (t.file.fixed) @min(line.len, 6) else if (quote != null and trimmed.len > 0 and trimmed[0] == '&') raw.len - trimmed.len + 1 else 0;
+        const lit = try blankLiterals(t.a, line, from, quote);
+        var code = lit.code[0 .. lit.comment orelse lit.code.len];
+        t.quote = lit.open;
+        if (!t.file.fixed) {
+            // a literal left open goes on only on a line that ends with `&`
+            t.continued = std.mem.endsWith(u8, std.mem.trimEnd(u8, if (lit.open != null) line else code, " \t\r"), "&");
+            if (!t.continued) t.quote = null;
+        }
         // fypp's inline expressions (`eg_${name}$_t`) are no Fortran: blank
         // them, and leave the pieces of a name around them alone
         code = try blankFyppInline(t.a, code);
         const scope = t.ast.getInnerScope(ln + 1);
         var it = helpers.words(code);
-        // a statement starts the line unless the line continues one
-        var stmt_start = !t.continued;
-        if (t.file.fixed) {
-            // the label and continuation columns
-            it.pos = @min(code.len, 6);
-            if (code.len > 5 and code[5] != ' ' and code[5] != '0') stmt_start = false;
-        } else {
-            t.continued = std.mem.endsWith(u8, std.mem.trimEnd(u8, code, " \t"), "&");
-            if (std.mem.startsWith(u8, trimmed, "&")) stmt_start = false;
+        if (t.file.fixed) it.pos = @min(code.len, 6);
+        var st: Stmt = .{
+            .start = stmt_start or t.stmt_next,
+            .depth = if (continues) t.depth else 0,
+            .cond = continues and t.cond_stmt,
+        };
+        defer {
+            t.depth = st.depth;
+            t.cond_stmt = st.cond;
+            t.stmt_next = st.start;
         }
-        var depth: usize = if (stmt_start) 0 else t.depth;
-        defer t.depth = depth;
         var scanned: usize = it.pos;
         // a lexical token split over two lines (`inte&` / `&ger`): its
         // pieces are no names
         const split_line = !t.file.fixed and trimmed.len > 1 and trimmed[0] == '&' and trimmed[1] != ' ' and trimmed[1] != '\t';
-        // IF, WHERE and FORALL with a condition: a statement follows the
-        // condition (`if (x) print *, y`)
-        var cond_stmt = false;
         // the keyword a statement started with, for the one after it
         // (`else if`, `end do`, `select case`)
         var keyword: ?[]const u8 = null;
-        // an END statement names the unit it ends
-        var in_end = false;
-        // the word before, on this line
-        var prev: ?[]const u8 = null;
+        // the parentheses and semicolons after the last word
+        defer st.punctuation(code[@min(scanned, code.len)..]);
         while (it.next()) |w| {
-            for (code[scanned..w.start]) |c| switch (c) {
-                '(' => depth += 1,
-                ')' => {
-                    depth -|= 1;
-                    if (depth == 0 and cond_stmt) {
-                        cond_stmt = false;
-                        stmt_start = true;
-                    }
-                },
-                ';' => {
-                    stmt_start = true;
-                    depth = 0;
-                    in_end = false;
-                    prev = null;
-                },
-                else => {},
-            };
+            st.punctuation(code[scanned..w.start]);
             scanned = w.end;
-            const prev_word = prev;
-            prev = w.str;
+            const prev_word = st.prev;
+            st.prev = w.str;
             // a component after a dot (`rec.field`, DEC) is one after `%`
             const component_dot = w.start > 0 and code[w.start - 1] == '.' and helpers.isComponentDot(code, w.start - 1);
             const before: u8 = if (component_dot) '%' else prevChar(code, w.start);
             const after = nextChar(code, w.end);
             const follows = keyword;
             keyword = null;
-            if (stmt_start) {
-                stmt_start = false;
+            if (st.start) {
+                st.start = false;
                 // a construct name, `outer: do`
                 if (after == ':' and !startsWithOp(code, w.end, "::")) {
-                    stmt_start = true;
+                    st.start = true;
                     continue;
                 }
                 if (isStatementKeyword(w.str) and !isAssignment(code, w.end)) {
                     keyword = w.str;
-                    in_end = isEndKeyword(w.str);
+                    st.in_end = isEndKeyword(w.str);
                     t.spec_stmt = isSpecKeyword(w.str);
-                    cond_stmt = isConditionKeyword(w.str);
+                    st.cond = isConditionKeyword(w.str);
                     continue;
                 }
                 t.spec_stmt = false;
             } else if (follows) |k| {
                 if (isSecondKeyword(k, w.str)) {
                     // `else if (x) then`
-                    if (std.ascii.eqlIgnoreCase(w.str, "if")) cond_stmt = true;
+                    if (std.ascii.eqlIgnoreCase(w.str, "if")) st.cond = true;
                     continue;
                 }
             }
             // `.and.`, `.true.`, user operators
             // (written against the dots: `.and. len.ge.2` has the name len)
             if (w.start > 0 and code[w.start - 1] == '.' and w.end < code.len and code[w.end] == '.' and !component_dot) continue;
+            // blanks do not count in fixed form: `.AND .(`, `. NOT.`
+            if (t.file.fixed and before == '.' and after == '.' and isDotOperator(w.str)) continue;
             // after the digits of a literal, or after its decimal point
             // (`0._dp`, `1.d0`)
             const after_point = w.start > 1 and code[w.start - 1] == '.' and std.ascii.isDigit(code[w.start - 2]);
@@ -283,7 +289,7 @@ const Tokenizer = struct {
             // is called, not a name of this scope (also first on a line
             // that continues the call)
             const in_list = before == '(' or before == ',' or before == '&' or before == 0;
-            if (depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and in_list) continue;
+            if (st.depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and in_list) continue;
             if (t.file.pp_defs.contains(w.str)) {
                 try t.add(ln, raw, w.start, w.end, .{ .type = .macro });
                 continue;
@@ -300,16 +306,16 @@ const Tokenizer = struct {
             const o = obj orelse {
                 // a name that ASSOCIATE or SELECT TYPE defines (`this =>
                 // self`), or a piece of a token split over two lines
-                const defines = depth > 0 and startsWithOp(code, w.end, "=>") and in_list;
+                const defines = st.depth > 0 and startsWithOp(code, w.end, "=>") and in_list;
                 const split = split_line or w.end < code.len and (code[w.end] == '&' or code[w.end] == '$') or
                     w.start > 0 and code[w.start - 1] == '$';
                 // the kind of a character literal, `ck_'text'`
                 const kind_prefix = w.str[w.str.len - 1] == '_' and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"');
-                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, in_end);
+                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, st.in_end);
                 continue;
             };
             // elsewhere in a function, its name is its result
-            if (o.kind == .function and o == scope and o.sline != ln + 1 and !in_end) {
+            if (o.kind == .function and o == scope and o.sline != ln + 1 and !st.in_end) {
                 try t.add(ln, raw, w.start, w.end, .{ .type = .variable });
                 continue;
             }
@@ -348,6 +354,73 @@ const Tokenizer = struct {
         }
     }
 };
+
+/// Where the statement being read is, as the punctuation between its words
+/// moves it (carried over continuation lines by the tokenizer)
+const Stmt = struct {
+    /// the next word starts a statement
+    start: bool,
+    /// the depth of parentheses
+    depth: usize,
+    /// IF, WHERE and FORALL with a condition: a statement follows the
+    /// condition (`if (x) print *, y`)
+    cond: bool,
+    /// an END statement names the unit it ends
+    in_end: bool = false,
+    /// the word before, on this line
+    prev: ?[]const u8 = null,
+
+    fn punctuation(s: *Stmt, chars: []const u8) void {
+        for (chars) |c| switch (c) {
+            '(' => s.depth += 1,
+            ')' => {
+                s.depth -|= 1;
+                if (s.depth == 0 and s.cond) {
+                    s.cond = false;
+                    s.start = true;
+                }
+            },
+            ';' => {
+                s.start = true;
+                s.depth = 0;
+                s.in_end = false;
+                s.prev = null;
+            },
+            else => {},
+        };
+    }
+};
+
+/// The text of a line with the insides of its character literals blanked
+/// (their quotes kept, the length the same), from byte `from` on, a literal
+/// left open by the line before (`open`) going on there; where a comment
+/// starts, and the quote of a literal the line leaves open
+const Literals = struct { code: []const u8, comment: ?usize, open: ?u8 };
+
+fn blankLiterals(a: Allocator, line: []const u8, from: usize, open: ?u8) !Literals {
+    if (open == null and std.mem.findAny(u8, line[from..], "'\"!") == null) return .{ .code = line, .comment = null, .open = null };
+    const out = try a.dupe(u8, line);
+    var quote = open;
+    var i = from;
+    while (i < out.len) : (i += 1) {
+        const c = out[i];
+        if (quote) |q| {
+            if (c != q) {
+                out[i] = ' ';
+            } else if (i + 1 < out.len and out[i + 1] == q) {
+                // a doubled quote, `'it''s'`
+                out[i] = ' ';
+                out[i + 1] = ' ';
+                i += 1;
+            } else quote = null;
+        } else switch (c) {
+            '\'', '"' => quote = c,
+            '!' => return .{ .code = out, .comment = i, .open = null },
+            else => {},
+        }
+    }
+    return .{ .code = out, .comment = null, .open = quote };
+}
 
 /// The words that start a statement (when it does not assign to a variable
 /// of that name)
@@ -423,6 +496,31 @@ const other_keywords = [_][]const u8{
     "errmsg",      "source",       "mold",          "while",
 };
 
+/// Intrinsic procedures that the table of intrinsics (data/procedures.zig,
+/// fortls's) leaves out: the specific names of the standard (F2018, table
+/// 16.3: `dsqrt`, `float`, `idnint`, ...), the compilers' common specific
+/// names of double complex (`dcmplx`, `zabs`, `cdsqrt`, ...), and the
+/// generic procedures of Fortran 2018 and 2023
+const other_intrinsics = [_][]const u8{
+    // F2018 16.8, specific names
+    "alog",     "alog10",      "amax0",    "amax1",        "amin0",      "amin1",                 "amod",           "cabs",
+    "ccos",     "cexp",        "clog",     "csin",         "csqrt",      "dabs",                  "dacos",          "dasin",
+    "datan",    "datan2",      "dcos",     "dcosh",        "ddim",       "dexp",                  "dint",           "dlog",
+    "dlog10",   "dmax1",       "dmin1",    "dmod",         "dnint",      "dsign",                 "dsin",           "dsinh",
+    "dsqrt",    "dtan",        "dtanh",    "float",        "iabs",       "idim",                  "idint",          "idnint",
+    "ifix",     "isign",       "max0",     "max1",         "min0",       "min1",                  "sngl",
+    // double complex and other specific names of gfortran, ifx and others
+              "dcmplx",
+    "dconjg",   "dimag",       "dreal",    "dfloat",       "cdabs",      "cdcos",                 "cdexp",          "cdlog",
+    "cdsin",    "cdsqrt",      "zabs",     "zcos",         "zexp",       "zlog",                  "zsin",           "zsqrt",
+    "dacosh",   "dasinh",      "datanh",   "derf",         "derfc",      "dgamma",                "dlgama",         "algama",
+    "lgamma",   "imag",        "imagpart", "realpart",
+    // F2018 and F2023 generic procedures
+        "num_images", "failed_images",         "stopped_images", "image_status",
+    "get_team", "team_number", "coshape",  "out_of_range", "reduce",     "selected_logical_kind", "split",          "tokenize",
+    "acospi",   "asinpi",      "atanpi",   "atan2pi",      "cospi",      "sinpi",                 "tanpi",
+};
+
 /// Whether `word` is a Fortran keyword
 pub fn isKeyword(word: []const u8) bool {
     return isStatementKeyword(word) or isSpecKeyword(word) or isEndKeyword(word) or
@@ -475,6 +573,14 @@ pub fn unknownNames(a: Allocator, env: objects.Env, file: *const FortranFile, as
     var ln = first;
     while (ln <= @min(last, n - 1)) : (ln += 1) if (!inactive[ln]) try t.tokenizeLine(ln);
     return list.items;
+}
+
+/// Whether `word` is the name of an intrinsic operator or logical literal
+/// written between dots (`.and.`, `.eq.`, `.true.`)
+fn isDotOperator(word: []const u8) bool {
+    const ops = [_][]const u8{ "and", "or", "not", "eqv", "neqv", "xor", "eq", "ne", "lt", "le", "gt", "ge", "true", "false" };
+    for (ops) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
+    return false;
 }
 
 fn isStatementKeyword(word: []const u8) bool {

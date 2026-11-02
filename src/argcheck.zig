@@ -129,7 +129,8 @@ const Checker = struct {
             const close = matching(text, k) orelse continue;
             // `x(1)%f(2)`, `.and.`, a literal's kind: not calls of a name
             if (w.start > 0 and (text[w.start - 1] == '.' or std.ascii.isDigit(text[w.start - 1]))) continue;
-            const is_member = w.start > 0 and text[w.start - 1] == '%';
+            // `a%f(x)`, also written `a % f(x)`
+            const is_member = std.mem.endsWith(u8, std.mem.trimEnd(u8, text[0..w.start], " "), "%");
             const callee_obj = if (is_member)
                 try c.member(scope, text[0..w.end], w.str)
             else
@@ -233,7 +234,7 @@ const Checker = struct {
     /// array (not for an elemental procedure)
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, scope: ?*Obj, line_no: usize) !void {
         if (dummy.kind != .variable or actual.len == 0) return;
-        const want = category(dummy.descOf());
+        const want = varCategory(dummy);
         const typed = (try c.exprType(actual, scope, line_no, 0)) orelse return;
         const have = typed.cat;
         const have_array = typed.array;
@@ -397,7 +398,7 @@ const Checker = struct {
                     if (try c.isSection(e[i + 1 .. close], scope, line_no, depth)) |sec| {
                         if (sec) array = true;
                     } else return null;
-                } else if (category(obj.descOf()) != .character) return null;
+                } else if (varCategory(obj) != .character) return null;
                 i = close + 1;
                 while (i < e.len and e[i] == ' ') i += 1;
             }
@@ -412,7 +413,7 @@ const Checker = struct {
         }
         if (i != e.len) return null;
         const obj = v.?;
-        return .{ .cat = category(obj.descOf()), .array = array, .designator = true, .obj = obj };
+        return .{ .cat = varCategory(obj), .array = array, .designator = true, .obj = obj };
     }
 
     /// A component of a variable of derived type, in its type or a type
@@ -717,6 +718,14 @@ fn operandEnd(e: []const u8, start: usize) ?usize {
         }
         return i;
     }
+}
+
+/// The kind of type of variable `v`: unknown for `TYPE(*)` and `CLASS(*)`,
+/// whose `*` the parser keeps apart from the type (`CLASS` and `(*)`)
+fn varCategory(v: *const Obj) Category {
+    const cat = category(v.descOf());
+    if (cat == .derived and v.data == .variable) if (v.data.variable.vkind) |k| if (std.mem.findScalar(u8, k, '*') != null) return .unknown;
+    return cat;
 }
 
 /// The kind of type a declared type is (`REAL(8)`, `DOUBLE PRECISION`,
