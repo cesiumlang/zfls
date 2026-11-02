@@ -60,6 +60,16 @@ const EnumCallback = *const fn (*SymbolInfo, u32, ?*anyopaque) callconv(.winapi)
 extern "dbghelp" fn SymSetContext(h: usize, frame: *ImagehlpStackFrame, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymEnumSymbols(h: usize, base: u64, mask: ?[*:0]const u8, cb: EnumCallback, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymGetTypeInfo(h: usize, base: u64, type_id: u32, kind: u32, out: *anyopaque) callconv(.winapi) i32;
+const SrcCodeInfoW = extern struct {
+    SizeOfStruct: u32,
+    Key: ?*anyopaque,
+    ModBase: u64,
+    Obj: [261]u16,
+    FileName: [261]u16,
+    LineNumber: u32,
+    Address: u64,
+};
+extern "dbghelp" fn SymEnumLinesW(h: usize, base: u64, obj: ?[*:0]const u16, file: ?[*:0]const u16, cb: *const fn (*SrcCodeInfoW, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymFromName(h: usize, name: [*:0]const u8, info: *SymbolInfo) callconv(.winapi) i32;
 
 const SYMFLAG_REGISTER = 0x8;
@@ -330,6 +340,7 @@ pub const Engine = struct {
 
     /// The address of the code of `file`:`line` in the loaded modules
     fn lineOffset(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
+        if (try self.lineFromRecords(a, file, line)) |at| return at;
         for ([_][]const u8{ file, std.fs.path.basename(file) }) |name| {
             const w = try std.unicode.utf8ToUtf16LeAllocZ(a, name);
             var off: u64 = 0;
@@ -339,6 +350,65 @@ pub const Engine = struct {
             line_lookups[if (std.mem.eql(u8, name, file)) 0 else 1] = @bitCast(hr);
         }
         return null;
+    }
+
+    /// The address of `file`:`line` from the line records of the loaded
+    /// modules, matched here (dbghelp's own lookup by a file's name fails
+    /// on some Windows): the file by its path, else by its name; the line,
+    /// else the next one with code
+    fn lineFromRecords(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
+        var want: Lines = .{ .a = a, .line = line, .path = try normalized(a, file), .name = try normalized(a, std.fs.path.basename(file)) };
+        var loaded: u32 = 0;
+        var unloaded: u32 = 0;
+        if (!succeeded(self.symbols.GetNumberModules(&loaded, &unloaded))) return null;
+        for (0..loaded) |i| {
+            var base: u64 = 0;
+            if (!succeeded(self.symbols.GetModuleByIndex(@intCast(i), &base))) continue;
+            _ = SymEnumLinesW(self.process, base, null, null, &Lines.onLine, &want);
+        }
+        const best = if (want.by_path.found) want.by_path else want.by_name;
+        return if (best.found) best.address else null;
+    }
+
+    const Pick = struct { found: bool = false, line: u32 = 0, address: u64 = 0 };
+
+    const Lines = struct {
+        a: Allocator,
+        line: u32,
+        path: []const u8,
+        name: []const u8,
+        by_path: Pick = .{},
+        by_name: Pick = .{},
+
+        fn onLine(info: *SrcCodeInfoW, raw: ?*anyopaque) callconv(.winapi) i32 {
+            const w: *Lines = @ptrCast(@alignCast(raw.?));
+            if (info.LineNumber < w.line) return 1;
+            const n = std.mem.indexOfScalar(u16, &info.FileName, 0) orelse info.FileName.len;
+            const name = std.unicode.utf16LeToUtf8Alloc(w.a, info.FileName[0..n]) catch return 1;
+            const path = normalized(w.a, name) catch return 1;
+            if (std.mem.eql(u8, path, w.path)) {
+                keep(&w.by_path, info);
+            } else if (std.mem.endsWith(u8, path, w.name) and (path.len == w.name.len or path[path.len - w.name.len - 1] == '\\')) {
+                keep(&w.by_name, info);
+            }
+            return 1;
+        }
+
+        /// The line asked for, else the nearest after it; its lowest address
+        fn keep(p: *Pick, info: *const SrcCodeInfoW) void {
+            if (!p.found or info.LineNumber < p.line or (info.LineNumber == p.line and info.Address < p.address)) {
+                p.* = .{ .found = true, .line = info.LineNumber, .address = info.Address };
+            }
+        }
+    };
+
+    /// A path for comparing: lowercase, backslashes
+    fn normalized(a: Allocator, p: []const u8) ![]const u8 {
+        const out = try std.ascii.allocLowerString(a, p);
+        for (out) |*c| if (c.* == '/') {
+            c.* = '\\';
+        };
+        return out;
     }
 
     /// A breakpoint at a symbol (`MAIN__`, a runtime's function), maybe once
