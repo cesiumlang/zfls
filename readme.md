@@ -144,7 +144,8 @@ with `-c`/`--config`). The option names are those of the
 The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
---debug_line 10 --debug_char 5` runs a single hover request.
+--debug_line 10 --debug_char 5` runs a single hover request. Their output
+is meant for testing zfls and may differ from fortls's.
 
 ### ifx without Visual Studio (Windows x64)
 

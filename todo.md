@@ -47,10 +47,7 @@ projects zfls replaces:
 
 ## Proposed
 
-Not scheduled yet:
-
-- Debug output (`--debug_*`) in Python's format, as fortls prints it, or
-  zfls's own
+Ideas not scheduled yet go here; there are none at the moment.
 
 ## Watching upstream
 
