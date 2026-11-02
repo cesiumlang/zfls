@@ -33,13 +33,18 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const completion = @import("completion.zig");
 const compile = @import("compile.zig");
+const linters = @import("linters.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
+    var out: std.ArrayList(lsp.CodeAction) = .empty;
+    // fortitude's fixes; when they are why actions are offered (fortitude
+    // on, enable_code_actions off), only them
+    try linters.addActions(self, a, params.textDocument.uri, params.range, params.context.only, &out);
+    if (self.s.fortitude and !self.s.enable_code_actions) return if (out.items.len > 0) json.from(a, out.items) else .null;
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;
     const sline = params.range.start.line;
     const eline = params.range.end.line;
-    var out: std.ArrayList(lsp.CodeAction) = .empty;
     try addUseActions(self, a, file, ast, sline, eline, &out);
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
     try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);

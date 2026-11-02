@@ -37,6 +37,7 @@ pub const argcheck = @import("argcheck.zig");
 pub const literals = @import("literals.zig");
 pub const rewrite = @import("rewrite.zig");
 pub const outline = @import("outline.zig");
+pub const namelist = @import("namelist.zig");
 pub const project = @import("project.zig");
 pub const fpm = @import("fpm.zig");
 pub const pfunit = @import("pfunit.zig");

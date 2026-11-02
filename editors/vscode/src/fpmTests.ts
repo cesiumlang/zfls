@@ -10,8 +10,7 @@ import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 import { FpmTestProject, FpmTestTarget, Located, Target, parseTestDrive, passed, runArgs } from "./fpm";
 import { FpmProject, buildOptions, debugTarget, fpmExecutable, projectAt } from "./fpmCommands";
-import { FORTRAN_FILES } from "./linter";
-import { runProcess } from "./tools";
+import { FORTRAN_FILES, runProcess } from "./tools";
 
 /** The servers of the workspace folders, started if need be */
 export type Servers = () => Promise<LanguageClient[]>;

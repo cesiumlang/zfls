@@ -33,17 +33,11 @@ Not scheduled yet:
 
 - Code of the VS Code extension that other editors could use, moved into
   the server:
-  - compiler diagnostics only from the server (`src/compilers.zig`, which
-    already ports the extension's linter; `zfls.linter.runner`)
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
-  - fortitude and Codee checks as the server's diagnostics
   - formatting with findent or fprettify as the server's formatting
-  - the outline of namelist files (`.nml`) as the server's document symbols
 - `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
   `zig build` steps
-- Source files over 1,000 lines split, as the others were
-  (`src/dap/session.zig`)
 - Scans of large Fortran corpora for false-positive diagnostics
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
@@ -130,7 +124,8 @@ Editor features:
   `zig build ifx-kit`) instead of Visual Studio's
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
-- [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
+- [x] Namelist files (`.nml`): highlighting, folding, outline (from the
+  server, for every editor). MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195
 - [x] Untitled files
@@ -185,8 +180,10 @@ Diagnostics and code actions:
   (`workspace_diagnostics`)
 - [x] Compiler diagnostics from the server, for every editor
   (`compiler_diagnostics`: gfortran, ifx, ifort, flang, nvfortran, nagfor,
-  lfortran), after compiling the modules a file uses; in VS Code with
-  `zfls.linter.runner` set to `server`. FL #85, HS #205
+  lfortran), after compiling the modules a file uses; also while a file is
+  edited, through fypp, and with further include directories. VS Code's
+  `zfls.linter` settings are its options: the extension has no linter of
+  its own. FL #85, HS #205
 - [x] Argument checking: count, unknown keywords, missing required arguments,
   assigning an `intent(in)` argument; the type, rank and kind of variables
   and literals (`argument-kind`), the type and rank of expressions
@@ -228,4 +225,5 @@ Server:
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
 - [x] Source files split into smaller modules (`src/server/`,
-  `src/objects/`, `src/parser/`, `src/regex/`); none over 900 lines
+  `src/objects/`, `src/parser/`, `src/regex/`, `src/dap/`); none over 900
+  lines
