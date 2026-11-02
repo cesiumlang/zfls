@@ -125,6 +125,13 @@ pub fn main(init: std.process.Init) !void {
     var args: std.ArrayList([]const u8) = .empty;
     for (argv[1..]) |arg| try args.append(arena, arg);
 
+    // ifx without Intel's installer or Visual Studio (Windows)
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "setup-ifx")) {
+        const code = try @import("ifxsetup.zig").run(gpa, io, init.environ_map, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
     version_info.reported = version_info.get(io, version);
     const parsed = try settings.parseArgs(arena, args.items, version_info.reported);
     const s = switch (parsed) {

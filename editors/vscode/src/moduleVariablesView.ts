@@ -1,7 +1,8 @@
 // The Fortran Module Variables view of Run and Debug: while a program is
 // stopped in a Fortran file, the module variables that the selected
 // frame's line sees (`zfls/moduleVariables`), with their values, which the
-// C debuggers' Variables view leaves out (FortranBreaker #10). The debugger
+// C debuggers' Variables view leaves out (FortranBreaker #10); zfls's own
+// debugger shows them as a scope of the Variables view instead. The debugger
 // is asked for each by the names that the compilers give module variables,
 // until one has a value; the form that worked is tried first after.
 
@@ -131,7 +132,8 @@ class ModuleVariablesView implements vscode.TreeDataProvider<Node>, vscode.Dispo
   private async selectedFrame(): Promise<Frame | undefined> {
     const item = vscode.debug.activeStackItem;
     const fortran = async (): Promise<Frame | undefined> => {
-      if (!(item instanceof vscode.DebugStackFrame)) {
+      // zfls's debugger shows them in the Variables view
+      if (!(item instanceof vscode.DebugStackFrame) || item.session.type === "fortran") {
         return undefined;
       }
       let frames: { id: number; line: number; source?: { path?: string } }[];

@@ -56,6 +56,9 @@ pub fn build(b: *std.Build) !void {
     bin_step.dependOn(&install_exe.step);
     bin_step.dependOn(&install_sentinel.step);
 
+    // What ifx needs to link without Visual Studio (Windows x64 packages)
+    _ = @import("ifxkit.zig").add(b);
+
     const run_cmd = b.addRunArtifact(exe);
     const run_cmd_step = &run_cmd.step;
     run_cmd_step.dependOn(b.getInstallStep());

@@ -18,9 +18,6 @@ Nothing left: 0.4.0 is ready for its release.
 
 ## After 0.4.0
 
-- [ ] Debugging: Fortran values in the Variables view itself (arrays of
-  assumed shape, derived types; FB #10), then a Fortran debug adapter of
-  zfls's own behind the `fortran` debug type
 - [ ] Translations, as they are asked for (MF #616)
 
 ## Watching upstream
@@ -68,6 +65,17 @@ Editor features:
   USE statements, under their local names; `zfls/moduleVariables`), with
   their values from the debugger, which lists only a procedure's own.
   FB #10
+- [x] A debugger of zfls's own behind the `fortran` debug type, in front of
+  gdb's Debug Adapter Protocol (`gdb -i=dap`, gdb 14+ with Python), the
+  default when there is one: Fortran values in the Variables view itself
+  (array elements by their subscripts and bounds, large arrays in
+  sections, previews of arrays and derived types, unallocated arrays,
+  polymorphic objects by their dynamic type, hidden CHARACTER lengths left
+  out), the module variables as a scope, Fortran expressions for watches
+  and setting values, a stop at Fortran runtime errors and ERROR STOP,
+  the program in a terminal for its input, attaching to a process or a
+  gdbserver. FB #10. lldb has no Fortran (no type system for it), so
+  macOS on Arm and MSVC-ABI programs keep the debugger extensions
 - [x] Hooks for translations (every string of `package.json` in
   `package.nls.json`, `tools/package_nls.py`; the messages shown while the
   extension runs through `vscode.l10n`, in `l10n/bundle.l10n.json`,
@@ -76,6 +84,12 @@ Editor features:
   Welcome): opening a project, configuring it, compiler diagnostics,
   running and debugging, fpm and pFUnit tests, formatting, the output.
   MF #472
+- [x] ifx without Visual Studio (Windows x64): `zfls setup-ifx` and **zfls:
+  Set Up ifx** unpack ifx from Intel's offline installer (downloaded from
+  Intel) without running it, once Intel's license is accepted, and set it
+  up to link with its own lld-link and zfls's ifx kit (a startup object,
+  MIT-0, and import libraries from MinGW-w64's definition files, made by
+  `zig build ifx-kit`) instead of Visual Studio's
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
 - [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,

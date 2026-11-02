@@ -45,6 +45,8 @@ for pair in "${targets[@]}"; do
         *windows)
             unzip -q "$dist/$name.zip" -d "$tmp"
             cp "$tmp/$name/zfls.exe" bin/
+            # zfls setup-ifx finds it next to zfls (x86_64 only)
+            if [ -d "$tmp/$name/ifx-kit" ]; then cp -r "$tmp/$name/ifx-kit" bin/; fi
             ;;
         *)
             tar -xzf "$dist/$name.tar.gz" -C "$tmp"
