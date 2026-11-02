@@ -41,8 +41,6 @@ Not scheduled yet:
   - formatting with findent or fprettify as the server's formatting
   - the outline of namelist files (`.nml`) as the server's document symbols
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
-- `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
-  `zig build` steps
 - Source files over 1,000 lines split, as the others were
   (`src/dap/session.zig`)
 - Scans of large Fortran corpora for false-positive diagnostics
@@ -226,5 +224,8 @@ Server:
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
+- [x] The release tools as `zig build` steps: `source-archive` (the source
+  archive, submodules included) and `package-vscode` (the VSIXes), in place
+  of shell scripts
 - [x] Source files split into smaller modules (`src/server/`,
   `src/objects/`, `src/parser/`, `src/regex/`); none over 900 lines
