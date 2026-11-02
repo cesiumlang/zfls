@@ -110,6 +110,8 @@ pub const Error = error{ Engine, NoDbgeng, OutOfMemory };
 
 /// The HRESULT of the engine's last failed call, for messages
 pub var last_failure: u32 = 0;
+/// The errors of the last lookups of a line's address, by path and by name
+pub var line_lookups: [2]u32 = .{ 0, 0 };
 /// What it was doing
 pub var last_step: []const u8 = "";
 
@@ -334,6 +336,7 @@ pub const Engine = struct {
             const hr = self.symbols.GetOffsetByLineWide(line, w.ptr, &off);
             if (succeeded(hr) and off != 0) return off;
             last_failure = @bitCast(hr);
+            line_lookups[if (std.mem.eql(u8, name, file)) 0 else 1] = @bitCast(hr);
         }
         return null;
     }
@@ -378,7 +381,7 @@ pub const Engine = struct {
             "(none)";
         // where the PDB puts the main program: its lines read, and its files' names
         var where: []const u8 = "no main";
-        for ([_][]const u8{ "main", "MAIN__", "_QQmain" }) |m| {
+        for ([_][]const u8{ "twice", "main", "MAIN__", "_QQmain" }) |m| {
             const full = a.print("{s}!{s}", .{ mod_name, m }) catch break;
             const wfull = std.unicode.utf8ToUtf16LeAllocZ(a, full) catch break;
             var off: u64 = 0;
@@ -393,7 +396,7 @@ pub const Engine = struct {
                 a.print("{s} at 0x{x}, no line (0x{x})", .{ m, off, @as(u32, @bitCast(hr)) }) catch "";
             break;
         }
-        return a.print("module {s}: symbols {d}, file {s}, path {s}, {s}", .{ mod_name, kind, pdb, sym_path, where }) catch "";
+        return a.print("module {s}: symbols {d}, file {s}, path {s}, {s}; by line 0x{x} 0x{x}", .{ mod_name, kind, pdb, sym_path, where, line_lookups[0], line_lookups[1] }) catch "";
     }
 
     pub fn breakpointOffset(self: *Engine, id: u32) ?u64 {
