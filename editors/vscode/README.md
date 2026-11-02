@@ -115,7 +115,7 @@ other options.
 VS Code opens these files as JSON with comments and checks them against a
 schema of the options zfls reads from them, with their descriptions and
 defaults in completion and hover. The schema is generated from zfls's option
-table (`tools/gen_config_schema.py`).
+table (`zig build generated`).
 
 With a TOML extension that supports `tomlValidation`, such as
 [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),

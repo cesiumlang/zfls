@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&b.addRunArtifact(intrinsic_docs_tests).step);
     test_step.dependOn(&b.addRunArtifact(addCondaRecipe(b)).step);
+    test_step.dependOn(&b.addRunArtifact(addGenerated(b)).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)
@@ -100,13 +101,85 @@ pub fn build(b: *std.Build) !void {
     fuzz_step.dependOn(&run_fuzz_tests.step);
     test_step.dependOn(&run_fuzz_tests.step);
 
-    addScriptTests(b, exe);
+    addScriptTests(b, mod, exe, test_step);
 }
 
-/// Steps running the Python test drivers in tests/ against the built server
-fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
+/// Steps running the test drivers in tests/ against the built server: the
+/// Zig ones, which `zig build test-tools` installs (for a server built
+/// elsewhere: `zig-out/bin/stress_edit --zfls EXE`), and the Python ones,
+/// which run fortls; and `zig build bench -- WORKSPACE [--fortls CMD] ...`,
+/// zfls (and fortls when CMD starts it) timed on a large workspace
+/// (tools/bench_workspace.zig; build with -Doptimize=ReleaseSafe). Their
+/// unit tests are part of `test_step`.
+fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
+    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
+    all.dependOn(b.getInstallStep());
+    all.dependOn(test_step);
+
+    const client = b.createModule(.{
+        .root_source_file = b.path("tests/lsp_client.zig"),
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap)");
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false };
+    const tools = [_]Tool{
+        .{
+            .name = "gfortran_oracle",
+            .root = "tests/gfortran_oracle.zig",
+            .step = "test-oracle",
+            .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "stress_edit",
+            .root = "tests/stress_edit.zig",
+            .step = "test-stress",
+            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
+            .needs_fortls = true,
+        },
+        .{
+            .name = "dap_windows",
+            .root = "tests/dap_windows.zig",
+            .step = "test-dap",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it)",
+            .needs_fortls = false,
+            .needs_zig = true,
+        },
+        .{
+            .name = "bench_workspace",
+            .root = "tools/bench_workspace.zig",
+            .step = null,
+            .desc = "Time zfls (and fortls, with -- --fortls CMD) on a workspace (-- WORKSPACE)",
+            .needs_fortls = false,
+        },
+    };
+    for (tools) |t| {
+        const tool_mod = b.createModule(.{
+            .root_source_file = b.path(t.root),
+            .target = mod.resolved_target,
+            .optimize = mod.optimize,
+            .imports = &.{
+                .{ .name = "zfls", .module = mod },
+                .{ .name = "lsp_client", .module = client },
+            },
+        });
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tool_mod })).step);
+        const tool = b.addExecutable(.{ .name = t.name, .root_module = tool_mod });
+        if (t.step != null) tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
+        const run = b.addRunArtifact(tool);
+        run.setCwd(b.path(""));
+        run.addArg("--zfls");
+        run.addArtifactArg(exe);
+        if (t.needs_fortls) if (fortls) |f| run.addArgs(&.{ "--fortls", f });
+        if (t.needs_zig) run.addArgs(&.{ "--zig", b.graph.zig_exe });
+        run.addPassthruArgs();
+        // They report their own results; always rerun them
+        run.has_side_effects = true;
+        b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
+        if (t.step != null) all.dependOn(&run.step);
+    }
 
     const Script = struct { step: []const u8, desc: []const u8, script: []const u8, needs_fortls: bool };
     const scripts = [_]Script{
@@ -117,27 +190,12 @@ fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
             .needs_fortls = true,
         },
         .{
-            .step = "test-oracle",
-            .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
-            .script = "tests/gfortran_oracle.py",
-            .needs_fortls = false,
-        },
-        .{
-            .step = "test-stress",
-            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
-            .script = "tests/stress_edit.py",
-            .needs_fortls = true,
-        },
-        .{
             .step = "test-differential",
             .desc = "Compare zfls responses with Python fortls over its corpus (slow)",
             .script = "tests/differential.py",
             .needs_fortls = true,
         },
     };
-    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
-    all.dependOn(b.getInstallStep());
-    if (b.top_level_steps.get("test")) |t| all.dependOn(&t.step);
     for (scripts) |s| {
         const run = b.addSystemCommand(&.{python});
         run.addFileArg(b.path(s.script));
@@ -176,6 +234,36 @@ fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
     // downloads, and writes outside the cache
     gen.has_side_effects = true;
     b.step("conda-recipe", "Write the conda-forge recipe for a zfls source archive (-- --release|--local ARCHIVE OUT_DIR)").dependOn(&gen.step);
+    return b.addTest(.{ .root_module = gen_mod });
+}
+
+/// `zig build generated` writes the files of the repository generated from
+/// others (the configuration file schema, the extension's package.nls.json
+/// and l10n bundle: build/generated.zig), and `zig build check-generated`
+/// fails when one is out of date. Returns the generator's unit tests.
+fn addGenerated(b: *std.Build) *std.Build.Step.Compile {
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("build/generated.zig"),
+        .target = b.graph.host,
+        .imports = &.{
+            .{ .name = "settings", .module = b.createModule(.{ .root_source_file = b.path("src/settings.zig") }) },
+            .{ .name = "constants", .module = b.createModule(.{ .root_source_file = b.path("src/constants.zig") }) },
+        },
+    });
+    const exe = b.addExecutable(.{ .name = "generated", .root_module = gen_mod });
+    const steps = .{
+        .{ "generated", "Write the files generated from others (configuration schema, extension strings)", false },
+        .{ "check-generated", "Fail when a file generated from others is out of date", true },
+    };
+    inline for (steps) |s| {
+        const run = b.addRunArtifact(exe);
+        run.setCwd(b.path(""));
+        run.addArg(".");
+        if (s[2]) run.addArg("--check");
+        // reads and writes the repository
+        run.has_side_effects = true;
+        b.step(s[0], s[1]).dependOn(&run.step);
+    }
     return b.addTest(.{ .root_module = gen_mod });
 }
 

@@ -1,8 +1,8 @@
 // Plain Node.js tests (no VS Code) of the extension's strings: each %key%
 // of package.json is in package.nls.json (English), and a translation,
 // package.nls.<language>.json, has only keys of it (`npm run unit`).
-// tools/package_nls.py moves new strings there. The same for the messages
-// shown while the extension runs, in l10n/ (tools/l10n_bundle.py).
+// `zig build generated` moves new strings there, and collects the messages
+// shown while the extension runs into l10n/ (build/generated.zig).
 
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

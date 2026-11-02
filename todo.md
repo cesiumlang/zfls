@@ -79,9 +79,9 @@ Editor features:
   gdbserver. FB #10. lldb has no Fortran (no type system for it), so
   macOS on Arm and MSVC-ABI programs keep the debugger extensions
 - [x] Hooks for translations (every string of `package.json` in
-  `package.nls.json`, `tools/package_nls.py`; the messages shown while the
-  extension runs through `vscode.l10n`, in `l10n/bundle.l10n.json`,
-  `tools/l10n_bundle.py`) and walkthroughs; English only
+  `package.nls.json`; the messages shown while the extension runs through
+  `vscode.l10n`, in `l10n/bundle.l10n.json`; both kept by `zig build
+  generated`) and walkthroughs; English only
 - [x] A Getting Started walkthrough (**zfls: Get Started**, and Help >
   Welcome): opening a project, configuring it, compiler diagnostics,
   running and debugging, fpm and pFUnit tests, formatting, the output.
