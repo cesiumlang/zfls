@@ -208,6 +208,8 @@ export class GdbAdapter {
   private lastError?: string;
   private terminalPid?: number;
   private stderr = "";
+  /** Why gdb is gone: its exit code and the end of what it wrote to stderr */
+  private exitMessage?: string;
   private ended = false;
   private exited!: () => void;
   /** Resolved when gdb has exited, or did not start */
@@ -292,8 +294,8 @@ export class GdbAdapter {
   /** Sends a request to gdb: its answer */
   private request(command: string, args?: any): Promise<Response> {
     return new Promise((resolve) => {
-      if (!this.gdb?.stdin?.writable) {
-        resolve({ seq: 0, type: "response", request_seq: 0, command, success: false, message: this.text.gdbExited });
+      if (!this.gdb?.stdin?.writable || this.exitMessage) {
+        resolve({ seq: 0, type: "response", request_seq: 0, command, success: false, message: this.exitMessage ?? this.text.gdbExited });
         return;
       }
       const seq = this.gdbSeq++;
@@ -341,16 +343,18 @@ export class GdbAdapter {
       this.stderr += e.message;
       this.exited();
     });
-    this.gdb.on("exit", (code) => {
+    // `close`: after its output is read, for what it said before it ended
+    this.gdb.on("close", (code) => {
       this.exited();
+      this.exitMessage = `${this.text.gdbExited} (${code ?? "?"})${this.stderr.trim() ? `: ${this.stderr.trim().slice(-1000)}` : ""}`;
       for (const [, done] of this.pending) {
-        done({ seq: 0, type: "response", request_seq: 0, command: "", success: false, message: this.text.gdbExited });
+        done({ seq: 0, type: "response", request_seq: 0, command: "", success: false, message: this.exitMessage });
       }
       this.pending.clear();
       if (!this.ended) {
         this.ended = true;
-        if (code !== 0 && this.stderr.trim()) {
-          this.event("output", { category: "stderr", output: `${this.text.gdbExited} (${code}): ${this.stderr.trim()}\n` });
+        if (code !== 0) {
+          this.event("output", { category: "stderr", output: `${this.exitMessage}\n` });
         }
         this.event("terminated");
       }
