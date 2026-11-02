@@ -52,6 +52,9 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
 - **The roadmap is [todo.md](todo.md).** Mark an item `[~]` when work on it
   starts and `[x]` in the pull request that finishes it; ideas not
   scheduled yet are under "Proposed".
+- **The debug options' output is ours.** What `--debug_*` prints serves
+  zfls's own testing; it need not match fortls's, so change it as tests
+  need.
 - **Generated files.** After changing the options in `src/settings.zig` or
   the extension's user-visible strings, run `zig build generated` (CI runs
   `zig build check-generated`).

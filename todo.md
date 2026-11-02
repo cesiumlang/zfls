@@ -54,8 +54,6 @@ Not scheduled yet:
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
-- Debug output (`--debug_*`) in Python's format, as fortls prints it, or
-  zfls's own
 
 ## Watching upstream
 
