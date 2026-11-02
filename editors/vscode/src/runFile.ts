@@ -20,7 +20,7 @@ import {
   upsertByKey,
   workspaceRelative,
 } from "./run";
-import { gdbHasDap } from "./gdbAdapter";
+import { gdbHasDap } from "./debugSupport";
 import { expandVariables, findExecutable } from "./tools";
 import { documentVariables } from "./variables";
 

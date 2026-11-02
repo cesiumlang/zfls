@@ -453,11 +453,13 @@ the component, not the variable of that name.
 
 ### zfls's debugger
 
-zfls's debugger runs gdb (`zfls.run.gdbPath`) in its Debug Adapter
-Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), or, for
-the programs of `ifx`, `ifort` and LLVM Flang on Windows, Windows's own
-Debugger Engine (`dbgeng.dll`, which every Windows 10 and later has; `zfls
-dap`), and shows the program as Fortran:
+zfls's debugger is `zfls dap`, the debug adapter of the zfls executable
+(the extension's own, or `zfls.path`), which other editors use too. It
+runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb
+-i=dap`: gdb 14 or later, built with Python), or, for the programs of
+`ifx`, `ifort` and LLVM Flang on Windows, Windows's own Debugger Engine
+(`dbgeng.dll`, which every Windows 10 and later has), and shows the program
+as Fortran:
 
 - arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a
   large one in sections (`(1:100)`, ...), with a preview of their first
@@ -470,7 +472,8 @@ dap`), and shows the program as Fortran:
 - the module variables that the frame's line sees, as the **Module
   variables** scope of the Variables view: those of its module, private
   ones too, and those its USE statements bring in, under their names there
-  (`local => name` when renamed);
+  (`local => name` when renamed), as zfls's index of the sources (the
+  workspace folder) finds them;
 - each variable with its Fortran expression, for **Add to Watch**, **Copy
   as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
 - gfortran's hidden lengths of CHARACTER arguments left out;

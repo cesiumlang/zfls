@@ -88,8 +88,9 @@ function stem(file: string, platform: NodeJS.Platform): string {
 /** The debuggers of other extensions */
 export type ExtensionDebugType = "cppdbg" | "cppvsdbg" | "lldb" | "gdb";
 
-/** `zfls`: zfls's own debug adapter, of gdb's Debug Adapter Protocol
- * (gdbAdapter.ts), behind the `fortran` debug type */
+/** `zfls`: zfls's own debug adapter (`zfls dap`, in front of gdb's Debug
+ * Adapter Protocol or Windows's Debugger Engine), behind the `fortran`
+ * debug type */
 export type DebugType = ExtensionDebugType | "zfls";
 
 export const DEBUGGER_EXTENSIONS: Record<ExtensionDebugType, { id: string; name: string }> = {

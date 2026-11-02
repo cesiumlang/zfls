@@ -49,10 +49,6 @@ projects zfls replaces:
 
 Not scheduled yet:
 
-- Code of the VS Code extension that other editors could use, moved into
-  the server:
-  - `zfls dap` debugging with gdb as well, in place of the extension's
-    adapter between VS Code and gdb's (`gdbAdapter.ts`)
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
 
@@ -108,17 +104,19 @@ Editor features:
   USE statements, under their local names; `zfls/moduleVariables`), with
   their values from the debugger, which lists only a procedure's own.
   FB #10
-- [x] A debugger of zfls's own behind the `fortran` debug type, in front of
-  gdb's Debug Adapter Protocol (`gdb -i=dap`, gdb 14+ with Python), the
-  default when there is one: Fortran values in the Variables view itself
-  (array elements by their subscripts and bounds, large arrays in
-  sections, previews of arrays and derived types, unallocated arrays,
-  polymorphic objects by their dynamic type, hidden CHARACTER lengths left
-  out), the module variables as a scope, Fortran expressions for watches
-  and setting values, a stop at Fortran runtime errors and ERROR STOP,
-  the program in a terminal for its input, attaching to a process or a
-  gdbserver. FB #10. lldb has no Fortran (no type system for it), so
-  macOS on Arm and MSVC-ABI programs keep the debugger extensions
+- [x] A debugger of zfls's own behind the `fortran` debug type, `zfls dap`,
+  in front of gdb's Debug Adapter Protocol (`gdb -i=dap`, gdb 14+ with
+  Python), the default when there is one, and for any editor with a client
+  of the Debug Adapter Protocol (nvim-dap, dape, Helix): Fortran values in
+  the Variables view itself (array elements by their subscripts and bounds,
+  large arrays in sections, previews of arrays and derived types,
+  unallocated arrays, polymorphic objects by their dynamic type, hidden
+  CHARACTER lengths left out), the module variables as a scope, Fortran
+  expressions for watches and setting values, a stop at Fortran runtime
+  errors and ERROR STOP, the program in a terminal for its input, attaching
+  to a process or a gdbserver. FB #10. lldb has no Fortran (no type system
+  for it), so macOS on Arm and MSVC-ABI programs keep the debugger
+  extensions
 - [x] Hooks for translations (every string of `package.json` in
   `package.nls.json`; the messages shown while the extension runs through
   `vscode.l10n`, in `l10n/bundle.l10n.json`; both kept by `zig build
@@ -128,8 +126,8 @@ Editor features:
   running and debugging, fpm and pFUnit tests, formatting, the output.
   MF #472
 - [x] zfls's debugger on Windows for the programs of ifx, ifort and LLVM
-  Flang (Microsoft's debug information, which gdb cannot read): `zfls dap`,
-  a debug adapter over Windows's Debugger Engine, with the variables as
+  Flang (Microsoft's debug information, which gdb cannot read): `zfls dap`
+  over Windows's Debugger Engine (`dbgeng`), with the variables as
   Fortran (zfls's declarations, Intel's descriptors), module variables,
   stops at Fortran runtime errors; the `fortran` debug type's choice for
   them on Windows
