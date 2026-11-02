@@ -1,6 +1,6 @@
 //! Types of the intrinsic tables in this directory. The tables are plain
-//! constants maintained here (the `NAME.md` documentation in `intrinsics/`
-//! is embedded separately, see `build/__root__.zig`).
+//! constants maintained here (the M_intrinsics documentation pages are
+//! embedded separately, see `build/intrinsic_docs.zig`).
 
 /// A statement or attribute keyword, as offered by completion.
 pub const Keyword = struct {
@@ -17,7 +17,7 @@ pub const Procedure = struct {
     kind: enum { subroutine, function },
     /// Comma separated, e.g. `NAME,MODE`
     args: []const u8 = "",
-    /// One line summary, used when there is no `intrinsics/NAME.md`
+    /// One line summary, used when there is no M_intrinsics page
     doc: []const u8,
 };
 

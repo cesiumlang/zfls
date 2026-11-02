@@ -14,6 +14,7 @@ import argparse
 import importlib
 import inspect
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -49,8 +50,9 @@ class Skip(Exception):
 
 def intrinsic_hover_replacement(mod):
     """`test_server_hover::test_intrinsics` compares the hover text with
-    fortls's intrinsic docs; zfls ships them reformatted for markdownlint
-    (src/data/intrinsics/*.md), so compare with those instead."""
+    fortls's intrinsic docs; zfls ships a newer M_intrinsics, its links
+    pointed at the published pages (build/intrinsic_docs.zig), so compare
+    with that package's page, links aside."""
 
     def test():
         test_dir = mod.test_dir
@@ -61,11 +63,27 @@ def intrinsic_hover_replacement(mod):
         string += mod.hover_req(file_path, 39, 23)
         errcode, results = mod.run_request(string, fortls_args=["-n", "1"])
         assert errcode == 0
-        doc = REPO / "src" / "data" / "intrinsics" / "SIZE.md"
+        doc = m_intrinsics_dir() / "md3" / "SIZE.md"
         expected = "\n-----\n" + doc.read_text(encoding="utf-8")
-        mod.validate_hover(results, [expected])
+        assert len(results) == 2
+        value = results[1]["contents"]["value"]
+        assert LINK.sub(r"\1", value) == LINK.sub(r"\1", expected)
 
     return test
+
+
+# A Markdown link; group 1 is its text
+LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def m_intrinsics_dir() -> Path:
+    """The M_intrinsics package build.zig.zon pins, where Zig fetched it"""
+    zon = (REPO / "build.zig.zon").read_text(encoding="utf-8")
+    m = re.search(r'\.m_intrinsics = \.\{[^}]*\.hash = "([^"]+)"', zon)
+    assert m, "no m_intrinsics dependency in build.zig.zon"
+    path = REPO / "zig-pkg" / m.group(1)
+    assert path.is_dir(), f"{path} is missing: run `zig build --fetch` first"
+    return path
 
 
 def substring_symbols_replacement(mod):

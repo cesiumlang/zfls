@@ -1,5 +1,5 @@
 //! Intrinsic procedures, sorted by name. `doc` is the one-line fallback for
-//! procedures without a `NAME.md` in `intrinsics/`.
+//! procedures without an M_intrinsics page (`md3/NAME.md`).
 
 const Procedure = @import("schema.zig").Procedure;
 
