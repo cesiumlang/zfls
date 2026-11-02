@@ -280,7 +280,7 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
-        # zfls reformats the intrinsic manual pages for markdownlint
+        # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
             return f"<intrinsic manual page {m.group(1)}>"

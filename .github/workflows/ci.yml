@@ -193,7 +193,12 @@ jobs:
 
   version-check:
     name: Version is unreleased
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    # also on a branch's run started by hand or by a workflow (pull requests
+    # a workflow opens get no pull_request runs; m-intrinsics.yml starts
+    # these for its pull requests to main)
+    if: >-
+      ${{ (github.event_name == 'pull_request' && github.base_ref == 'main')
+      || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -207,6 +212,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          [ -n "$BASE_SHA" ] || BASE_SHA=$(git rev-parse origin/main)
           mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
           needs_version=false
           while IFS= read -r f; do
@@ -679,9 +685,29 @@ jobs:
             git fetch -q origin dev
             git checkout -q -B dev origin/dev
             if ! git merge -q -m "Merge v$VERSION into dev [skip ci]" "$SHA"; then
-              git merge --abort
-              echo "::error::v$VERSION conflicts with dev; merge main into dev by hand and set the next version"
-              exit 1
+              # A patch release from main (m-intrinsics.yml) against a
+              # version set on dev by hand: when build.zig.zon's .version
+              # is all that conflicts, dev keeps its own
+              if [ "$(git diff --name-only --diff-filter=U)" = build.zig.zon ]; then
+                git show :1:build.zig.zon > "$RUNNER_TEMP/base.zon"
+                git show :2:build.zig.zon > "$RUNNER_TEMP/dev.zon"
+                git show :3:build.zig.zon > "$RUNNER_TEMP/release.zon"
+                # (exits with the number of conflicts)
+                git merge-file -p "$RUNNER_TEMP/dev.zon" "$RUNNER_TEMP/base.zon" "$RUNNER_TEMP/release.zon" \
+                    > "$RUNNER_TEMP/marked.zon" || true
+                if awk '/^<<<<<<< /{c=1;next} /^=======$/{next} /^>>>>>>> /{c=0;next} c && !/^\s*\.version = /{bad=1} END{exit bad}' \
+                    "$RUNNER_TEMP/marked.zon"; then
+                  git merge-file --ours "$RUNNER_TEMP/dev.zon" "$RUNNER_TEMP/base.zon" "$RUNNER_TEMP/release.zon"
+                  cp "$RUNNER_TEMP/dev.zon" build.zig.zon
+                  git add build.zig.zon
+                  git commit -q --no-edit
+                fi
+              fi
+              if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+                git merge --abort
+                echo "::error::v$VERSION conflicts with dev; merge main into dev by hand and set the next version"
+                exit 1
+              fi
             fi
             version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)
             if tagged "$version"; then

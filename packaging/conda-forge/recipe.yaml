@@ -5,6 +5,12 @@ context:
   # its commit, and the Zig package hash naming its directory in zig-pkg/
   zigwin32_commit: 65cb93421729e89c0acc99f90550e8ad0e6ceb87
   zigwin32_hash: win32-32.0.17-preview-mX5pFV2k5QN3LlWB1QQWEJv6wltK3Eq5Nn-ZDa_2_Na6
+  # The M_intrinsics package build.zig.zon pins (the intrinsic procedure
+  # documentation): its commit, archive checksum and Zig package hash;
+  # .github/workflows/m-intrinsics.yml keeps them in step with build.zig.zon
+  m_intrinsics_commit: fc14233036d910e3678d350efc24609e11475067
+  m_intrinsics_sha256: f7312d8fb3428bbc5d2eed3c0f775addf430e1da4073ff730cd59acf6c621596
+  m_intrinsics_hash: N-V-__8AAI66bgG_VvNv_AuQWE5cmXjI4WPplnwamTROarDS
 
 package:
   name: ${{ name }}
@@ -22,6 +28,9 @@ source:
       url: https://github.com/marlersoft/zigwin32/archive/${{ zigwin32_commit }}.tar.gz
       sha256: 430b1ba180c033d92f2b9a8070d288cc2394948a64867e1f05ec5e5f32d22edb
       target_directory: zig-pkg/${{ zigwin32_hash }}
+  - url: https://github.com/urbanjost/M_intrinsics/archive/${{ m_intrinsics_commit }}.tar.gz
+    sha256: ${{ m_intrinsics_sha256 }}
+    target_directory: zig-pkg/${{ m_intrinsics_hash }}
 
 build:
   number: 0
@@ -55,6 +64,7 @@ about:
   license_file:
     - LICENSE
     - vendor/rstd/LICENSE
+    - zig-pkg/${{ m_intrinsics_hash }}/LICENSE
     - if: win
       then: zig-pkg/${{ zigwin32_hash }}/LICENSE
 

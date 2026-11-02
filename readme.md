@@ -537,8 +537,9 @@ zfls deliberately differs from fortls in a few places:
   and suppressed by code (see [Diagnostics](#diagnostics)).
 - There is no automatic update from PyPI; `--disable_autoupdate` is accepted
   and ignored.
-- The intrinsic documentation in `src/data/intrinsics` is formatted to pass
-  markdownlint, so hover texts differ slightly in whitespace.
+- The intrinsic procedure documentation is a newer M_intrinsics than
+  fortls's, and its links to other procedures open the pages M_intrinsics
+  publishes.
 - `--recursion_limit` limits the nesting depth of scopes, emulating the
   recursion error fortls reports for deeply nested code.
 - When several files define the same module, program or procedure name,
@@ -603,5 +604,7 @@ zfls deliberately differs from fortls in a few places:
 zfls is distributed under the MIT license, see `LICENSE`. It is derived from
 fortls and its predecessor fortran-language-server, also MIT licensed, whose
 copyright notices `LICENSE` includes. The intrinsic procedure documentation
-comes from the
-[M_intrinsics](https://github.com/urbanjost/M_intrinsics) project via fortls.
+comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
+project, also MIT licensed, whose notice `LICENSE` includes too. The build
+fetches the version `build.zig.zon` pins; a scheduled workflow moves the pin
+to upstream's latest commit.
