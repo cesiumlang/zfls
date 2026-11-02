@@ -37,8 +37,6 @@ Not scheduled yet:
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
   - formatting with findent or fprettify as the server's formatting
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
-- `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
-  `zig build` steps
 - Scans of large Fortran corpora for false-positive diagnostics
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
@@ -223,6 +221,9 @@ Server:
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
+- [x] The release tools as `zig build` steps: `source-archive` (the source
+  archive, submodules included) and `package-vscode` (the VSIXes), in place
+  of shell scripts
 - [x] Source files split into smaller modules (`src/server/`,
   `src/objects/`, `src/parser/`, `src/regex/`, `src/dap/`); none over 900
   lines

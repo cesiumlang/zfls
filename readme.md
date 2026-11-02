@@ -78,7 +78,7 @@ also generates the API documentation in `zig-out/docs`; `zig build bin`
 installs only the executable.
 
 Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
-its submodules included (`tools/make_source_archive.sh`), and
+its submodules included (`zig build source-archive -- [OUT_DIR]`), and
 `zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
 `zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
 from the template in `packaging/conda-forge` (`--local` instead builds from
@@ -90,9 +90,9 @@ for every change.
 `editors/vscode` is a VS Code extension that runs zfls for Fortran files and
 adds syntax highlighting. Each release publishes it as
 `zfls-vscode-v<version>-<platform>.vsix`, one per VS Code platform with that
-platform's zfls inside (`tools/package_vscode.sh`), plus a `universal` one
-that runs `zfls` from the `PATH`. To install one, use "Extensions: Install
-from VSIX..." in VS Code. The release also publishes the platform packages,
+platform's zfls inside (`zig build package-vscode -- DIST`, from the
+release archives in DIST), plus a `universal` one that runs `zfls` from the
+`PATH`. To install one, use "Extensions: Install from VSIX..." in VS Code. The release also publishes the platform packages,
 as `cesiumlang.zfls`, to the Visual Studio Marketplace and to Open VSX
 (VSCodium and other VS Code derivatives), and the universal one to the
 Marketplace for the platforms without their own. Each registry has its own
