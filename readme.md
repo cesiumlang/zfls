@@ -675,6 +675,6 @@ copyright notices `LICENSE` includes. The intrinsic procedure documentation
 comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
 project, also MIT licensed, whose notice `LICENSE` includes too: the
 `vendor/M_intrinsics` submodule, which a scheduled workflow moves to
-upstream's latest commit. The Windows builds include the Win32 API bindings
+upstream latest commit. The Windows builds include the Win32 API bindings
 of [zigwin32](https://github.com/marlersoft/zigwin32), which rstd vendors,
 also MIT licensed, whose notice `LICENSE` includes as well.
