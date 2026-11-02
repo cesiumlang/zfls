@@ -313,6 +313,27 @@ pub const Engine = struct {
         return .{ .id = id, .offset = if (succeeded(b.GetOffset(&offset))) offset else null };
     }
 
+    /// Why breakpoints of the program's lines may not resolve: its module's
+    /// symbols (0 none, 1 COFF, 2 CodeView, 3 PDB, 4 export, 5 deferred, 6
+    /// SYM) and the symbol path
+    pub fn symbolState(self: *Engine, a: Allocator) []const u8 {
+        var params: [1]dbg.DEBUG_MODULE_PARAMETERS = undefined;
+        const kind: i64 = if (succeeded(self.symbols.GetModuleParameters(1, null, 0, &params))) params[0].SymbolType else -1;
+        var path: [1024:0]u16 = undefined;
+        var len: u32 = 0;
+        const sym_path = if (succeeded(self.symbols.GetSymbolPathWide(&path, path.len, &len)) and len > 0)
+            std.unicode.utf16LeToUtf8Alloc(a, path[0 .. len - 1]) catch "?"
+        else
+            "";
+        var file: [1024:0]u16 = undefined;
+        var flen: u32 = 0;
+        const pdb = if (succeeded(self.symbols.GetModuleNameStringWide(4, 0, 0, &file, file.len, &flen)) and flen > 0) // DEBUG_MODNAME_SYMBOL_FILE
+            std.unicode.utf16LeToUtf8Alloc(a, file[0 .. flen - 1]) catch "?"
+        else
+            "";
+        return a.print("symbols {d}, file {s}, path {s}", .{ kind, pdb, sym_path }) catch "";
+    }
+
     pub fn breakpointOffset(self: *Engine, id: u32) ?u64 {
         var bp: ?*dbg.IDebugBreakpoint2 = null;
         if (!succeeded(self.control.GetBreakpointById2(id, &bp))) return null;

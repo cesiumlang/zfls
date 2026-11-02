@@ -89,6 +89,7 @@ def main() -> int:
     try:
         exe = tmp / "hello.exe"
         subprocess.run([a.zig, "cc", "-target", "x86_64-windows-msvc", "-g", "-O0", str(SOURCE), "-o", str(exe)], check=True, cwd=tmp)
+        print(f"built: {sorted(p.name for p in tmp.iterdir())}; _NT_SYMBOL_PATH={os.environ.get('_NT_SYMBOL_PATH')!r}")
         c = Client([a.zfls, "dap"])
         caps = c.request("initialize", {"adapterID": "fortran", "pathFormat": "path", "linesStartAt1": True})
         check(any(f["filter"] == "fortranRuntimeErrors" for f in caps.get("exceptionBreakpointFilters", [])), "the filter of Fortran runtime errors")

@@ -298,7 +298,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
                     try out.append(a, try json.from(a, .{ .id = bp.id, .verified = true, .line = line }));
                 } else {
                     try s.unverified.put(s.gpa, bp.id, line);
-                    try out.append(a, try json.from(a, .{ .id = bp.id, .verified = false, .line = line, .message = try a.print("not resolved yet (0x{x})", .{dbgeng.last_failure}) }));
+                    try out.append(a, try json.from(a, .{ .id = bp.id, .verified = false, .line = line, .message = try a.print("not resolved yet (0x{x}; {s})", .{ dbgeng.last_failure, s.engine.symbolState(a) }) }));
                 }
             }
             s.respond(a, req, .{ .breakpoints = out.items });
