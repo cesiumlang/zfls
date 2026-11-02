@@ -55,7 +55,7 @@ pub fn frameVariables(s: *Session, a: Allocator, frame: Frame) ![]FrameVariable 
     var next_length: usize = 0;
     var out: std.ArrayList(FrameVariable) = .empty;
     for (vars) |v| {
-        if (std.mem.indexOfScalar(u8, v.name, '.') != null or std.mem.startsWith(u8, v.name, "_")) continue;
+        if (std.mem.findScalar(u8, v.name, '.') != null or std.mem.startsWith(u8, v.name, "_")) continue;
         var decl: ?Decl = if (where) |w| if (declaration(w.scope, v.name)) |o| declOf(a, o) else null else null;
         // a module's variable seen by a USE statement
         if (decl == null and !v.parameter) if (where) |w| if (useDeclaration(s, a, w.file, w.line, v.name)) |o| {

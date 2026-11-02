@@ -395,7 +395,7 @@ test "hansec #115: references across Fortran and C" {
     const places = struct {
         fn of(al: std.mem.Allocator, locs: []const h.Location) ![]const Place {
             var out: std.ArrayList(Place) = .empty;
-            for (locs) |l| try out.append(al, .{ .file = std.fs.path.basename(l.uri), .line = l.line });
+            for (locs) |l| try out.append(al, .{ .file = std.Io.Dir.path.basename(l.uri), .line = l.line });
             std.mem.sort(Place, out.items, {}, struct {
                 fn lt(_: void, x: Place, y: Place) bool {
                     const o = std.mem.order(u8, x.file, y.file);
@@ -501,7 +501,7 @@ test "FortranBreaker #10: the module variables a line sees, for the debugger" {
     const names = struct {
         fn of(al: std.mem.Allocator, v: h.json.Value) ![]const []const u8 {
             var out: std.ArrayList([]const u8) = .empty;
-            for (h.json.items(v)) |item| try out.append(al, try std.fmt.allocPrint(al, "{s}:{s}:{s}", .{
+            for (h.json.items(v)) |item| try out.append(al, try al.print("{s}:{s}:{s}", .{
                 h.json.str(h.json.get(item, "module")).?,
                 h.json.str(h.json.get(item, "name")).?,
                 h.json.str(h.json.get(item, "local")).?,

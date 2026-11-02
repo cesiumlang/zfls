@@ -114,7 +114,7 @@ fn derivedPreview(s: *Session, a: Allocator, v: Val) ![]const u8 {
     for (comps[0..@min(comps.len, 4)], 0..) |c, i| {
         if (i > 0) try out.appendSlice(a, ", ");
         const text = if (c.rank > 0 or c.t.kind == .derived or c.empty) "…" else try scalarText(s, a, c);
-        try out.print(a, "{s}={s}", .{ c.expr[std.mem.lastIndexOfScalar(u8, c.expr, '%').? + 1 ..], text });
+        try out.print(a, "{s}={s}", .{ c.expr[std.mem.findScalarLast(u8, c.expr, '%').? + 1 ..], text });
     }
     if (comps.len > 4) try out.appendSlice(a, ", …");
     try out.append(a, ')');
@@ -186,7 +186,7 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
         },
         .value => |v| {
             if (v.t.kind == .derived and v.rank == v.chosen.len) {
-                for (try components(s, a, v)) |c| try out.append(a, try show(s, a, c.expr[std.mem.lastIndexOfScalar(u8, c.expr, '%').? + 1 ..], c));
+                for (try components(s, a, v)) |c| try out.append(a, try show(s, a, c.expr[std.mem.findScalarLast(u8, c.expr, '%').? + 1 ..], c));
                 return out.items;
             }
             const left = v.rank - v.chosen.len;

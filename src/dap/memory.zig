@@ -172,10 +172,10 @@ pub fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val
     const text = std.mem.trim(u8, expr, " ");
     var parts = std.mem.splitScalar(u8, text, '%');
     const head = parts.first();
-    const name_end = std.mem.indexOfScalar(u8, head, '(') orelse head.len;
+    const name_end = std.mem.findScalar(u8, head, '(') orelse head.len;
     const name = std.mem.trim(u8, head[0..name_end], " ");
     var v: Val = undefined;
-    if (std.mem.indexOf(u8, name, "::")) |sep| {
+    if (std.mem.find(u8, name, "::")) |sep| {
         const g = (try moduleGlobal(s, a, name[0..sep], name[sep + 2 ..])) orelse return null;
         v = try valueOf(s, a, g, null, frame, try std.ascii.allocLowerString(a, name));
     } else {
@@ -186,11 +186,11 @@ pub fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val
     }
     v = (try subscript(a, v, head[name_end..])) orelse return null;
     while (parts.next()) |p| {
-        const pe = std.mem.indexOfScalar(u8, p, '(') orelse p.len;
+        const pe = std.mem.findScalar(u8, p, '(') orelse p.len;
         const comp = std.mem.trim(u8, p[0..pe], " ");
         const comps = try components(s, a, v);
         v = for (comps) |c| {
-            if (std.ascii.eqlIgnoreCase(c.expr[std.mem.lastIndexOfScalar(u8, c.expr, '%').? + 1 ..], comp)) break c;
+            if (std.ascii.eqlIgnoreCase(c.expr[std.mem.findScalarLast(u8, c.expr, '%').? + 1 ..], comp)) break c;
         } else return null;
         v = (try subscript(a, v, p[pe..])) orelse return null;
     }

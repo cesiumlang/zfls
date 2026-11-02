@@ -14,22 +14,49 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-- [ ] Before the release, after the rest: a pass over all the Zig code
-  (zfls, build, tools) replacing what Zig 0.17 deprecates
-  (`std.fmt.allocPrint` for `Allocator.print`, and the like)
+- [x] Before the release, after the rest: a pass over all the Zig code
+  (zfls, build, tools, tests) replacing what Zig 0.17 deprecates
+  (`std.fmt.allocPrint` for `Allocator.print`, and the like), found by
+  ZLS: 585 uses, none left
 
 ## After 0.4.0
 
+- [ ] conda-forge: the staged-recipes pull request takes the recipe the
+  release attaches (`zfls-v0.4.0-conda-recipe.yaml`); once the
+  `zfls-feedstock` exists, CI's `conda-forge` job (switched off for now)
+  opens each release's pull request to it
 - [ ] Translations, as they are asked for (MF #616)
+
+## Proposed
+
+Not scheduled yet:
+
+- Code of the VS Code extension that other editors could use, moved into
+  the server:
+  - compiler diagnostics only from the server (`src/compilers.zig`, which
+    already ports the extension's linter; `zfls.linter.runner`)
+  - `zfls dap` debugging with gdb as well, in place of the extension's
+    adapter between VS Code and gdb's (`gdbAdapter.ts`)
+  - fortitude and Codee checks as the server's diagnostics
+  - formatting with findent or fprettify as the server's formatting
+  - the outline of namelist files (`.nml`) as the server's document symbols
+  - finding fpm and pFUnit tests (the test explorer stays in the extension)
+- `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
+  `zig build` steps
+- Scans of large Fortran corpora for false-positive diagnostics
+- Debug output (`--debug_*`) in Python's format, as fortls prints it, or
+  zfls's own
 
 ## Watching upstream
 
 - FL #438: fortls plans an option listing diagnostics to suppress. When it
   lands, zfls will accept its name alongside `diagnostic_severity`.
 - FL PR #504: telling modules with the same name apart by their `-J`
-  directory.
+  directory; with it, perhaps a recursive search for
+  `compile_commands.json`.
 - FL PRs #570 and #571 (fixes zfls already has): when they merge, zfls's
-  tests will move to the new fortls.
+  tests will move to the new fortls (`FORTLS_REF` in CI, the issue table in
+  the README, the differential test).
 
 ## Done in 0.4.0
 
@@ -198,4 +225,5 @@ Server:
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
 - [x] Source files split into smaller modules (`src/server/`,
-  `src/objects/`, `src/parser/`, `src/regex/`); none over 900 lines
+  `src/objects/`, `src/parser/`, `src/regex/`, `src/dap/`); none over 900
+  lines

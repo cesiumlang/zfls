@@ -116,7 +116,7 @@ pub fn main(init: std.process.Init) !u8 {
 /// Peak resident memory of the process, in bytes
 fn peakMemory(server: *lsp.Client, io: Io, a: Allocator) ?u64 {
     const id = server.child.id orelse return null;
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .windows => {
             var c: ProcessMemoryCounters = undefined;
             c.cb = @sizeOf(ProcessMemoryCounters);
@@ -124,7 +124,7 @@ fn peakMemory(server: *lsp.Client, io: Io, a: Allocator) ?u64 {
             return c.PeakWorkingSetSize;
         },
         .linux => {
-            const path = std.fmt.allocPrint(a, "/proc/{d}/status", .{id}) catch return null;
+            const path = a.print("/proc/{d}/status", .{id}) catch return null;
             const status = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch return null;
             var lines = std.mem.splitScalar(u8, status, '\n');
             while (lines.next()) |line| {
@@ -178,7 +178,7 @@ fn now(io: Io) i96 {
 }
 
 fn isFortran(name: []const u8) bool {
-    const ext = std.fs.path.extension(name);
+    const ext = std.Io.Dir.path.extension(name);
     for (fortran_exts) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;
     return false;
 }
@@ -237,7 +237,7 @@ fn positions(a: Allocator, text: []const u8, count: usize) ![]Pos {
     var lines = std.mem.splitScalar(u8, text, '\n');
     var ln: usize = 0;
     while (lines.next()) |line| : (ln += 1) {
-        const code = line[0 .. std.mem.indexOfScalar(u8, line, '!') orelse line.len];
+        const code = line[0 .. std.mem.findScalar(u8, line, '!') orelse line.len];
         var i: usize = 0;
         while (i < code.len) {
             if (!isWord(code[i])) {
@@ -276,11 +276,11 @@ fn positions(a: Allocator, text: []const u8, count: usize) ![]Pos {
 }
 
 fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map, name: []const u8, cmd: []const []const u8, src: []const u8, args: Args) !Result {
-    const dir = try lsp.tempDir(io, a, env, try std.fmt.allocPrint(a, "zfls_bench_{s}_", .{name}));
+    const dir = try lsp.tempDir(io, a, env, try a.print("zfls_bench_{s}_", .{name}));
     defer Io.Dir.cwd().deleteTree(io, dir) catch {};
-    const work = try std.fs.path.join(a, &.{ dir, "ws" });
+    const work = try std.Io.Dir.path.join(a, &.{ dir, "ws" });
     const rel = try copyWorkspace(io, a, src, work);
-    const big = try std.fs.path.join(a, &.{ work, rel });
+    const big = try std.Io.Dir.path.join(a, &.{ work, rel });
     const uri = try zfls.paths.pathToUri(a, big);
     const text = try Io.Dir.cwd().readFileAlloc(io, big, a, .unlimited);
     const file = try a.dupe(u8, rel);
@@ -359,7 +359,7 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
             .textDocument = .{ .uri = uri, .version = version },
             .contentChanges = .{.{
                 .range = .{ .start = at, .end = at },
-                .text = try std.fmt.allocPrint(a, "    integer :: zz_bench_{d}\n", .{n}),
+                .text = try a.print("    integer :: zz_bench_{d}\n", .{n}),
             }},
         }, null);
         _ = try server.request("textDocument/hover", .{

@@ -24,7 +24,7 @@ pub fn readMessage(r: *Io.Reader, a: Allocator) ReadError!?[]u8 {
         first = false;
         const trimmed = str.rstrip(line);
         if (trimmed.len == 0) break;
-        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
         const key = str.strip(trimmed[0..colon]);
         if (std.ascii.eqlIgnoreCase(key, "Content-Length")) {
             content_length = std.fmt.parseInt(usize, str.strip(trimmed[colon + 1 ..]), 10) catch return error.ProtocolError;
@@ -44,11 +44,11 @@ pub fn hasWholeMessage(data: []const u8) bool {
     var content_length: ?usize = null;
     var pos: usize = 0;
     while (true) {
-        const nl = std.mem.indexOfScalarPos(u8, data, pos, '\n') orelse return false;
+        const nl = std.mem.findScalarPos(u8, data, pos, '\n') orelse return false;
         const line = str.rstrip(data[pos..nl]);
         pos = nl + 1;
         if (line.len == 0) break;
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
         if (std.ascii.eqlIgnoreCase(str.strip(line[0..colon]), "Content-Length")) {
             content_length = std.fmt.parseInt(usize, str.strip(line[colon + 1 ..]), 10) catch return false;
         }
@@ -67,7 +67,7 @@ test "hasWholeMessage" {
 
 /// Frame a JSON body with the LSP headers
 pub fn frame(a: Allocator, body: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "Content-Length: {d}\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n{s}", .{ body.len, body });
+    return a.print("Content-Length: {d}\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n{s}", .{ body.len, body });
 }
 
 test "read framed message" {

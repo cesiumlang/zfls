@@ -36,7 +36,7 @@ fn join(a: Allocator, file: *const FortranFile, first: usize, last: usize) !Join
         const raw = file.getLine(ln, false) orelse continue;
         if (helpers.isComment(file.fixed, raw)) continue;
         var code = try helpers.stripStrings(a, raw, true);
-        if (std.mem.indexOfScalar(u8, code, '!')) |i| code = code[0..i];
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
         var s: usize = 0;
         var e = code.len;
         if (file.fixed) {
@@ -90,7 +90,7 @@ const Checker = struct {
 
     fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
-        const key = try std.fmt.allocPrint(c.a, "{x}:{s}", .{ @intFromPtr(scope), lower });
+        const key = try c.a.print("{x}:{s}", .{ @intFromPtr(scope), lower });
         const gop = try c.cache.getOrPut(c.a, key);
         if (gop.found_existing) return gop.value_ptr.*;
         var found = try objects.findInScope(c.env, scope, lower, .{ .var_line_number = line_no });
@@ -102,7 +102,7 @@ const Checker = struct {
     fn report(c: *Checker, j: Joined, start: usize, end: usize, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
         const line = j.lines[start];
         const e = if (end > start and j.lines[end - 1] == line) j.cols[end - 1] + 1 else j.cols[start] + 1;
-        try c.out.append(c.a, .{ .line = line, .start = j.cols[start], .end = e, .message = try std.fmt.allocPrint(c.a, fmt, args), .kind = kind });
+        try c.out.append(c.a, .{ .line = line, .start = j.cols[start], .end = e, .message = try c.a.print(fmt, args), .kind = kind });
     }
 
     fn statement(c: *Checker, j: Joined, s: usize, e: usize) !void {
@@ -121,7 +121,7 @@ const Checker = struct {
             var k = w.end;
             while (k < text.len and text[k] == ' ') k += 1;
             if (std.mem.startsWith(u8, text[k..], "<<<")) {
-                const close = std.mem.indexOfPos(u8, text, k, ">>>") orelse continue;
+                const close = std.mem.findPos(u8, text, k, ">>>") orelse continue;
                 k = close + 3;
                 while (k < text.len and text[k] == ' ') k += 1;
             }
@@ -205,7 +205,7 @@ const Checker = struct {
                 };
                 if (given[idx]) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s} is given twice", .{ dummies.items[idx].name, proc.name });
                 given[idx] = true;
-                const eq = std.mem.indexOfScalar(u8, arg, '=').?;
+                const eq = std.mem.findScalar(u8, arg, '=').?;
                 if (dummies.items[idx].obj) |d| try c.argType(j, s, w, proc, d, std.mem.trim(u8, arg[eq + 1 ..], " "), elemental, scope, line_no);
             } else {
                 // a positional argument after a keyword one is invalid: the
@@ -297,7 +297,7 @@ const Checker = struct {
         if ((e[0] == '[' and e[e.len - 1] == ']') or (e.len >= 4 and std.mem.startsWith(u8, e, "(/") and std.mem.endsWith(u8, e, "/)"))) {
             const inner = if (e[0] == '[') e[1 .. e.len - 1] else e[2 .. e.len - 2];
             // a type spec (`[real :: ...]`) or an implied DO
-            if (std.mem.indexOf(u8, inner, "::") != null or std.mem.indexOfScalar(u8, inner, '=') != null) return null;
+            if (std.mem.find(u8, inner, "::") != null or std.mem.findScalar(u8, inner, '=') != null) return null;
             const first = inner[0 .. topLevel(inner, ',') orelse inner.len];
             const t = (try c.exprType(first, scope, line_no, depth + 1)) orelse return null;
             return .{ .cat = t.cat, .array = true };
@@ -336,7 +336,7 @@ const Checker = struct {
             // an operator
             const rest = e[i..];
             if (rest[0] == '.') {
-                const close = std.mem.indexOfScalarPos(u8, e, i + 1, '.') orelse return null;
+                const close = std.mem.findScalarPos(u8, e, i + 1, '.') orelse return null;
                 const word = e[i + 1 .. close];
                 if (oneOf(word, &.{ "eq", "ne", "lt", "le", "gt", "ge" })) {
                     relational = true;
@@ -355,7 +355,7 @@ const Checker = struct {
             } else if (rest[0] == '<' or rest[0] == '>') {
                 relational = true;
                 i += 1;
-            } else if (std.mem.indexOfScalar(u8, "+-*/", rest[0]) != null) {
+            } else if (std.mem.findScalar(u8, "+-*/", rest[0]) != null) {
                 i += 1;
             } else return null;
             want_operand = true;
@@ -463,7 +463,7 @@ const Checker = struct {
         }
         if (spec[0] != '(' or spec[spec.len - 1] != ')') return null;
         var inner = std.mem.trim(u8, spec[1 .. spec.len - 1], " ");
-        if (std.mem.indexOfScalar(u8, inner, '=')) |eq| {
+        if (std.mem.findScalar(u8, inner, '=')) |eq| {
             if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, inner[0..eq], " "), "kind")) return null;
             inner = std.mem.trim(u8, inner[eq + 1 ..], " ");
         }
@@ -474,7 +474,7 @@ const Checker = struct {
     /// `dp`)
     fn literalKind(c: *Checker, lit: []const u8, scope: ?*Obj, line_no: usize) !?i64 {
         if (lit[0] == '.') if (std.ascii.startsWithIgnoreCase(lit, ".true.") or std.ascii.startsWithIgnoreCase(lit, ".false.")) return 4;
-        if (std.mem.lastIndexOfScalar(u8, lit, '_')) |u| return c.kindValue(lit[u + 1 ..], scope, line_no, 0);
+        if (std.mem.findScalarLast(u8, lit, '_')) |u| return c.kindValue(lit[u + 1 ..], scope, line_no, 0);
         for (lit) |ch| switch (ch) {
             'd', 'D' => return 8,
             'q', 'Q' => return 16,
@@ -502,7 +502,7 @@ const Checker = struct {
             return c.kindValue(v.varDataConst().param_val orelse return null, v.parent, v.sline, depth + 1);
         }
         // a call of an inquiry function
-        const open = std.mem.indexOfScalar(u8, expr, '(') orelse return null;
+        const open = std.mem.findScalar(u8, expr, '(') orelse return null;
         if (expr[expr.len - 1] != ')' or matching(expr, open) != expr.len - 1) return null;
         const fun = std.mem.trim(u8, expr[0..open], " ");
         const args = expr[open + 1 .. expr.len - 1];
@@ -524,7 +524,7 @@ const Checker = struct {
             var which: u8 = if (pos == 0) 'p' else 'r';
             if (keywordOf(arg)) |kw| {
                 which = std.ascii.toLower(kw[0]);
-                arg = std.mem.trim(u8, arg[std.mem.indexOfScalar(u8, arg, '=').? + 1 ..], " ");
+                arg = std.mem.trim(u8, arg[std.mem.findScalar(u8, arg, '=').? + 1 ..], " ");
             }
             const n = (try c.kindValue(arg, scope, line_no, depth + 1)) orelse return null;
             if (which == 'p') p = n else if (which == 'r') r = n else return null;
@@ -582,7 +582,7 @@ fn headerHasDirective(proc: *const Obj) bool {
         const text = f.getLine(ln, false) orelse return false;
         const t = std.mem.trimStart(u8, text, " \t");
         if (t.len > 0 and t[0] == '#') return true;
-        const code = if (std.mem.indexOfScalar(u8, text, '!')) |i| text[0..i] else text;
+        const code = if (std.mem.findScalar(u8, text, '!')) |i| text[0..i] else text;
         for (code) |ch| switch (ch) {
             '(' => {
                 depth += 1;
@@ -647,7 +647,7 @@ fn operandEnd(e: []const u8, start: usize) ?usize {
     var i = start;
     const c0 = e[i];
     if (c0 == '\'' or c0 == '"') {
-        const close = std.mem.indexOfScalarPos(u8, e, i + 1, c0) orelse return null;
+        const close = std.mem.findScalarPos(u8, e, i + 1, c0) orelse return null;
         return close + 1;
     }
     if (c0 == '(') return (matching(e, i) orelse return null) + 1;
@@ -686,7 +686,7 @@ fn operandEnd(e: []const u8, start: usize) ?usize {
                 while (i < e.len and std.ascii.isDigit(e[i])) i += 1;
             }
         }
-        if (i + 1 < e.len and std.mem.indexOfScalar(u8, "eEdDqQ", e[i]) != null) {
+        if (i + 1 < e.len and std.mem.findScalar(u8, "eEdDqQ", e[i]) != null) {
             var k = i + 1;
             if (e[k] == '+' or e[k] == '-') k += 1;
             if (k < e.len and std.ascii.isDigit(e[k])) {
@@ -729,7 +729,7 @@ fn category(desc_in: []const u8) Category {
     if (std.ascii.startsWithIgnoreCase(desc, "logical")) return .logical;
     if (std.ascii.startsWithIgnoreCase(desc, "character")) return .character;
     if (std.ascii.startsWithIgnoreCase(desc, "type") or std.ascii.startsWithIgnoreCase(desc, "class")) {
-        if (std.mem.indexOf(u8, desc, "*") != null) return .unknown;
+        if (std.mem.find(u8, desc, "*") != null) return .unknown;
         return .derived;
     }
     return .unknown;
@@ -756,7 +756,7 @@ fn literalCategory(arg: []const u8) ?Category {
     var t = arg;
     if (t[0] == '-' or t[0] == '+') t = t[1..];
     // a kind suffix
-    if (std.mem.indexOfScalar(u8, t, '_')) |u| t = t[0..u];
+    if (std.mem.findScalar(u8, t, '_')) |u| t = t[0..u];
     if (t.len == 0 or !(std.ascii.isDigit(t[0]) or t[0] == '.')) return null;
     var real = false;
     for (t, 0..) |ch, i| {
@@ -854,7 +854,7 @@ fn splitArgs(a: Allocator, s: []const u8) ![]const []const u8 {
 }
 
 fn keywordOf(arg: []const u8) ?[]const u8 {
-    const eq = std.mem.indexOfScalar(u8, arg, '=') orelse return null;
+    const eq = std.mem.findScalar(u8, arg, '=') orelse return null;
     if (eq + 1 < arg.len and (arg[eq + 1] == '=' or arg[eq + 1] == '>')) return null;
     if (eq > 0 and (arg[eq - 1] == '/' or arg[eq - 1] == '<' or arg[eq - 1] == '>')) return null;
     const name = std.mem.trim(u8, arg[0..eq], " ");

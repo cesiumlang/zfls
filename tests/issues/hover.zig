@@ -97,7 +97,7 @@ test "#237 a Doxygen comment above an expression is not the documentation of a l
 
 fn notContains(w: *h.Workspace, name: []const u8, p: h.Pos, fragment: []const u8) !void {
     const text = (try w.hover(name, p)) orelse return;
-    if (std.mem.indexOf(u8, text, fragment) != null) return h.unmet("hover contains '{s}': {s}", .{ fragment, text });
+    if (std.mem.find(u8, text, fragment) != null) return h.unmet("hover contains '{s}': {s}", .{ fragment, text });
 }
 
 test "#237 documentation still attaches to a variable and to a procedure (control)" {
@@ -293,7 +293,7 @@ test "#108 an ASSOCIATE name bound to an element or a 2-D section (control)" {
     }}, .{});
     defer w.deinit();
     const elem = (try w.hover("t.f90", w.pos("t.f90", "ELEM = PLANE", 0, 1))) orelse return h.check(108, .fixed, h.unmet("no hover for ELEM", .{}));
-    try h.expect(std.mem.indexOf(u8, elem, "DIMENSION") == null, "an element is a scalar: {s}", .{elem});
+    try h.expect(std.mem.find(u8, elem, "DIMENSION") == null, "an element is a scalar: {s}", .{elem});
     try w.expectHoverContains("t.f90", w.pos("t.f90", "PLANE(1,1)", 0, 1), "DIMENSION(:,:)");
     try w.expectHoverContains("t.f90", w.pos("t.f90", "WHOLE(1,1)", 0, 1), "DIMENSION(5,5)");
 }
@@ -549,11 +549,11 @@ fn expectImplementation(w: *h.Workspace, docs: bool) !void {
             "Prints x, from the submodule"
         else
             "Reset (interface)"; // the body has no documentation
-        try h.expect(std.mem.indexOf(u8, hv, want) != null, "hover on {s} lacks {s}: {s}", .{ name, want, hv });
+        try h.expect(std.mem.find(u8, hv, want) != null, "hover on {s} lacks {s}: {s}", .{ name, want, hv });
     }
     // the signature of a MODULE PROCEDURE body comes from its interface
     const hv = (try w.hover("main.f90", w.pos("main.f90", "report", 0, 1))).?;
-    try h.expect(std.mem.indexOf(u8, hv, "report(x)") != null, "hover on report: {s}", .{hv});
+    try h.expect(std.mem.find(u8, hv, "report(x)") != null, "hover on report: {s}", .{hv});
 }
 
 test "#501 prefer_implementation: hover shows the documentation of the body in the submodule" {
@@ -628,9 +628,9 @@ test "#534 fixed-form documentation comments do not keep the indentation of the 
         // `!>` documents the next object, PARAM1; its continuation lines are
         // not indented by the six columns of fixed form (a Markdown code block)
         const param = (try w.hover("t.f", w.pos("t.f", "PARAM1", 1, 1))) orelse break :blk h.unmet("no hover on PARAM1", .{});
-        const docs = param[(std.mem.indexOf(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
-        if (std.mem.indexOf(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
-        break :blk h.expect(std.mem.indexOf(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
+        const docs = param[(std.mem.find(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
+        if (std.mem.find(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
+        break :blk h.expect(std.mem.find(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
     };
     try h.check(534, .fixed, outcome);
 }
@@ -755,7 +755,7 @@ test "hansec #203 preprocessor directives inside a continued declaration" {
             defer w.deinit();
             const text = (try w.hover("t.F90", w.pos("t.F90", "print *, v", 0, 9))) orelse
                 break :blk h.unmet("no hover on v (X defined: {})", .{c.defs.len > 0});
-            if (std.mem.indexOf(u8, text, c.want) == null or std.mem.indexOf(u8, text, c.not) != null)
+            if (std.mem.find(u8, text, c.want) == null or std.mem.find(u8, text, c.not) != null)
                 break :blk h.unmet("hover of v (X defined: {}): {s}", .{ c.defs.len > 0, text });
         }
     };

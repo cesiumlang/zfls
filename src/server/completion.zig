@@ -153,7 +153,7 @@ pub fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, 
         if (snippet) |s0| {
             var s = s0;
             if (self.s.use_signature_help and !is_interface) {
-                if (std.mem.indexOfScalar(u8, s, '(')) |arg_open| if (arg_open > 0) {
+                if (std.mem.findScalar(u8, s, '(')) |arg_open| if (arg_open > 0) {
                     s = s[0..arg_open];
                 };
             }
@@ -163,11 +163,11 @@ pub fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, 
     var kind = mapCompletionKind(candidate.getType(false));
     if (is_member and kind == 3) kind = 2;
     var detail = try candidate.getDesc(a);
-    if (call_sig) |cs| detail = try std.fmt.allocPrint(a, "{s} {s}", .{ detail, cs });
+    if (call_sig) |cs| detail = try a.print("{s} {s}", .{ detail, cs });
     var documentation: ?lsp.MarkupContent = null;
     const hover_msg = try candidate.getHoverMd(a, true, null);
     if (hover_msg.len > 0) {
-        documentation = .{ .value = try str.replaceFirst(a, hover_msg, "```{langid}", try std.fmt.allocPrint(a, "```{s}", .{self.s.hover_language})) };
+        documentation = .{ .value = try str.replaceFirst(a, hover_msg, "```{langid}", try a.print("```{s}", .{self.s.hover_language})) };
     }
     return .{
         .label = label,
@@ -246,7 +246,7 @@ fn parentComponentItems(a: Allocator, type_scope: *Obj, prefix: []const u8, item
         if (std.ascii.startsWithIgnoreCase(p.name, prefix)) try items.append(a, .{
             .label = p.name,
             .kind = 5,
-            .detail = try std.fmt.allocPrint(a, "TYPE({s})", .{p.name}),
+            .detail = try a.print("TYPE({s})", .{p.name}),
             .labelDetails = .{ .description = "parent" },
         });
         cur = p.typeDataConst().inherit_var;
@@ -438,7 +438,7 @@ pub fn autoUseItems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, 
         if (type_mask.contains(e.obj.getType(false))) continue;
         if (req_callable and !e.obj.isCallable()) continue;
         var item = try buildComp(self, a, e.obj, self.s.autocomplete_name_only, null, false, false);
-        item.detail = try std.fmt.allocPrint(a, "{s} (use {s})", .{ item.detail, e.module.name });
+        item.detail = try a.print("{s} (use {s})", .{ item.detail, e.module.name });
         item.sortText = try std.mem.concat(a, u8, &.{ "~", e.obj.name });
         const edits = try a.alloc(lsp.TextEdit, 1);
         edits[0] = .{ .range = range, .newText = try autouse.statement(a, at.indent, e.module.name, e.obj.name) };

@@ -217,7 +217,7 @@ fn readRequests(s: *Session) void {
     while (true) {
         const body = (jsonrpc.readMessage(&reader.interface, s.gpa) catch null) orelse break;
         // a pause cannot wait for the engine's thread, which waits for the program
-        if (std.mem.indexOf(u8, body, "\"pause\"") != null) s.engine.interrupt();
+        if (std.mem.find(u8, body, "\"pause\"") != null) s.engine.interrupt();
         s.queue.mutex.lockUncancelable(s.io);
         s.queue.items.append(s.gpa, body) catch {};
         s.queue.cond.broadcast(s.io);
@@ -274,7 +274,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             s.engine.launch(a, program, cmdline.items, cwd, window) catch |e| return s.fail(a, req, try a.print("could not start the program: {s} at {s} (0x{x})", .{ @errorName(e), dbgeng.last_step, dbgeng.last_failure }));
             s.stop_at_entry = flag(args, "stopAtEntry");
             s.launched = true;
-            index(s, a, json.str(json.get(args, "sourceRoot")) orelse cwd orelse std.fs.path.dirname(program) orelse ".");
+            index(s, a, json.str(json.get(args, "sourceRoot")) orelse cwd orelse std.Io.Dir.path.dirname(program) orelse ".");
             s.respond(a, req, null);
             s.event(a, "initialized", null);
         },
@@ -292,7 +292,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
         .setFunctionBreakpoints => s.respond(a, req, .{ .breakpoints = &[_]u8{} }),
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
-            .description = if (std.mem.indexOf(u8, s.last_error, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
+            .description = if (std.mem.find(u8, s.last_error, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
             .breakMode = "always",
         }),
         .configurationDone => {
@@ -406,7 +406,7 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
                 .reason = "exception",
                 .threadId = b.thread,
                 .allThreadsStopped = true,
-                .description = if (std.mem.indexOf(u8, f, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
+                .description = if (std.mem.find(u8, f, "error_stop") != null) "ERROR STOP" else "Fortran runtime error",
             });
         } else if (isUserBreakpoint(s, b.id))
             s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} })
@@ -449,12 +449,12 @@ pub fn addNode(s: *Session, n: Node) !i64 {
 
 /// `min1!GRID::WORK` -> `grid::work`
 fn displayName(name: []const u8) []const u8 {
-    return if (std.mem.indexOfScalar(u8, name, '!')) |i| name[i + 1 ..] else name;
+    return if (std.mem.findScalar(u8, name, '!')) |i| name[i + 1 ..] else name;
 }
 
 /// A command line's argument, quoted as Windows's programs read them
 fn quoteArg(a: Allocator, out: *std.ArrayList(u8), arg: []const u8) !void {
-    if (arg.len > 0 and std.mem.indexOfAny(u8, arg, " \t\"") == null) return out.appendSlice(a, arg);
+    if (arg.len > 0 and std.mem.findAny(u8, arg, " \t\"") == null) return out.appendSlice(a, arg);
     try out.append(a, '"');
     var slashes: usize = 0;
     for (arg) |c| {
