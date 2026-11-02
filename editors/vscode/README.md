@@ -27,7 +27,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   OpenACC directives, and Fortran code in documentation comments (a block
   from `` !> ```fortran `` to `` !> ``` ``)
 - namelist files (`.nml`, `.namelist`): highlighting, folding of each group,
-  and an outline of the groups and the variables they set
+  and an outline of the groups and the variables they set (from zfls, which
+  does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))
@@ -241,7 +242,8 @@ fortitude Problems** applies every safe fix; for fixes on save, add
 `"source.fixAll.fortitude": "explicit"` to `editor.codeActionsOnSave`.
 fortitude reads the unsaved text, and its rules from `fpm.toml` or
 `fortitude.toml` above the file. Install it with `pip install
-fortitude-lint`.
+fortitude-lint`. The zfls language server runs it (its `fortitude` options,
+which other editors use too); these settings become those options.
 
 | Setting | Default | Description |
 | --- | --- | --- |
@@ -267,9 +269,9 @@ its remarks (`RMK...`) hints, as in Codee's own editor integrations.
 | `zfls.codee.path` | empty | The codee executable, or its directory |
 | `zfls.codee.args` | `[]` | More arguments, before the file: `["-p", "build/compile_commands.json"]`, or with `${file}` where the file goes, `["${file}", "--", "gfortran", "-O2", "${file}"]` |
 
-This support follows Codee's documentation of its output: zfls has not been
-tested with Codee itself. For other editors, Codee documents its own
-integrations (Neovim, Vim, Emacs).
+The zfls language server runs it (its `codee` options, which other editors
+use too); these settings become those options. This support follows Codee's
+documentation of its output: zfls has not been tested with Codee itself.
 
 ## Formatting
 
@@ -294,16 +296,19 @@ fprettify for free form and findent for fixed form:
 }
 ```
 
-The extension sends the text to the formatter on its standard input and
-reads the result from its standard output, so no files are written, and
-changes only the lines the formatter changed. findent is told the source
-form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs`
-sets one. fprettify reads `.fprettify.rc` files from the directory of the
-file and its parents, as when it formats the file itself. Changes to these
-settings apply to the next formatting, without a restart. In
-`zfls.formatting.path` and the argument settings, `${workspaceFolder}`,
-`${workspaceFolder:name}`, `${userHome}`, `${env:NAME}`, `${file}`,
-`${fileDirname}` and a leading `~` are expanded.
+The zfls server runs the formatter (its `formatter` options, which these
+settings set; other editors set them in a configuration file, see the
+[zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the
+text to the formatter on its standard input and reads the result from its
+standard output, so no files are written, and changes only the lines the
+formatter changed. findent is told the source form of the file (`-ifree` or
+`-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads
+`.fprettify.rc` files from the directory of the file and its parents, as
+when it formats the file itself. Changing these settings restarts the
+server. In `zfls.formatting.path` and the argument settings,
+`${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
+`${env:NAME}` and a leading `~` are expanded; an argument with a space in
+it becomes two.
 
 **Format Selection** formats the whole lines the selection touches. The
 formatter sees only those lines, not the surrounding code: findent starts

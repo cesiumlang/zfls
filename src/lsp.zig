@@ -33,6 +33,8 @@ pub const Diagnostic = struct {
     severity: i64,
     relatedInformation: ?[]const DiagnosticRelatedInformation = null,
     code: ?[]const u8 = null,
+    /// A page about the code
+    codeDescription: ?struct { href: []const u8 } = null,
     source: ?[]const u8 = null,
     /// 1: unnecessary (shown faded), 2: deprecated
     tags: ?[]const i64 = null,
@@ -124,6 +126,7 @@ pub const CodeAction = struct {
     kind: []const u8,
     edit: WorkspaceEdit,
     diagnostics: []const Diagnostic,
+    isPreferred: ?bool = null,
 };
 
 pub const PublishDiagnosticsParams = struct {
@@ -172,6 +175,9 @@ pub const ServerCapabilities = struct {
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
     semanticTokensProvider: ?SemanticTokensOptions = null,
+    /// with a formatter (`formatter`)
+    documentFormattingProvider: ?bool = null,
+    documentRangeFormattingProvider: ?bool = null,
 };
 
 pub const InitializeResult = struct { capabilities: ServerCapabilities };
@@ -309,6 +315,15 @@ pub const InlayHint = struct {
     kind: i64,
     paddingLeft: ?bool = null,
     paddingRight: ?bool = null,
+};
+
+/// `textDocument/formatting`; its `options` (tab size, spaces) are left to
+/// the formatter's own settings
+pub const DocumentFormattingParams = struct { textDocument: TextDocumentIdentifier };
+
+pub const DocumentRangeFormattingParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
 };
 
 pub const OnTypeFormattingParams = struct {

@@ -53,12 +53,7 @@ Not scheduled yet:
   the server:
   - `zfls dap` debugging with gdb as well, in place of the extension's
     adapter between VS Code and gdb's (`gdbAdapter.ts`)
-  - fortitude and Codee checks as the server's diagnostics
-  - formatting with findent or fprettify as the server's formatting
-  - the outline of namelist files (`.nml`) as the server's document symbols
   - finding fpm and pFUnit tests (the test explorer stays in the extension)
-- `tools/make_source_archive.sh` and `tools/package_vscode.sh` as
-  `zig build` steps
 - Debug output (`--debug_*`) in Python's format, as fortls prints it, or
   zfls's own
 
@@ -93,6 +88,9 @@ Editor features:
   `;*`): read as comments by zfls and highlighted as comments. MF #197
 - [x] fortitude linting, with its fixes as quick fixes and a fix-all source
   action. MF #1165
+- [x] Formatting of documents and selections with findent or fprettify,
+  by the server (`textDocument/formatting` and `rangeFormatting`;
+  `formatter`, `zfls.formatting.*`), so every editor gets it
 - [x] fpm projects: tasks (`build`, `run`, `test`, `install`, `clean`) with
   problem matchers, running and debugging their targets, Run and Debug
   Fortran File on a target's program, and the Testing view (each test
@@ -142,7 +140,8 @@ Editor features:
   `zig build ifx-kit`) instead of Visual Studio's
 - [x] Codee's checks (`zfls.codee.*`), best-effort: from its documented JSON
   output, not tested until a license is available
-- [x] Namelist files (`.nml`): highlighting, folding, outline. MF #1296,
+- [x] Namelist files (`.nml`): highlighting, folding, outline (from the
+  server, for every editor). MF #1296,
   MF #153; pFUnit `.pf` files are free-form Fortran. MF #185
 - [x] Fuzzy workspace symbol search. HS #195
 - [x] Untitled files
@@ -255,6 +254,9 @@ Server:
 - [x] Benchmark on json-fortran (61 files, 12k-line `json_value_module.F90`,
   ReleaseSafe): references median 1.5 ms, p95 12 ms; initialization 58 ms;
   55 MiB. `completionItem/resolve` not needed (completion 0.3 ms)
+- [x] The release tools as `zig build` steps: `source-archive` (the source
+  archive, submodules included) and `package-vscode` (the VSIXes), in place
+  of shell scripts
 - [x] Source files split into smaller modules (`src/server/`,
   `src/objects/`, `src/parser/`, `src/regex/`, `src/dap/`); none over 900
   lines
