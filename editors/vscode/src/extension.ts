@@ -1,5 +1,5 @@
-// zfls for VS Code: starts the zfls language server for Fortran files, and
-// lints them with a compiler (linter.ts).
+// zfls for VS Code: starts the zfls language server for Fortran files, which
+// also checks them with a compiler (the zfls.linter settings, options.ts).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -10,7 +10,6 @@ import {
   Location as ProtocolLocation,
   ServerOptions,
 } from "vscode-languageclient/node";
-import { FORTRAN_FILES, Linter } from "./linter";
 import { registerFormatting } from "./formatting";
 import { Fortitude } from "./fortitude";
 import { Codee } from "./codee";
@@ -27,6 +26,7 @@ import { registerDebugType } from "./debugType";
 import { registerModuleVariables } from "./moduleVariablesView";
 
 import { affectsServer, serverArguments } from "./options";
+import { FORTRAN_FILES } from "./tools";
 
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
@@ -48,7 +48,6 @@ let context: vscode.ExtensionContext;
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
-  const linter = new Linter(context, output);
   const fortitude = new Fortitude(output);
   const codee = new Codee(output);
   registerFormatting(context, output);
@@ -61,9 +60,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerModuleVariables(context, clientForUri);
   context.subscriptions.push(
     output,
-    linter,
     fortitude,
     codee,
+    vscode.commands.registerCommand("zfls.linter.lint", () => lintActive()),
+    vscode.commands.registerCommand("zfls.linter.clear", () => clearCompilerDiagnostics()),
     vscode.commands.registerCommand("zfls.fortitude.fixAll", (uri?: vscode.Uri) => fortitude.fixAll(uri)),
     vscode.commands.registerCommand("zfls.gettingStarted", () =>
       vscode.commands.executeCommand("workbench.action.openWalkthrough", `${context.extension.id}#gettingStarted`, false),
@@ -99,8 +99,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
   void updateMarkerGrammar(false);
-  // compiler diagnostics do not wait for the language server
-  linter.activate();
   fortitude.activate();
   codee.activate();
   for (const doc of vscode.workspace.textDocuments) {
@@ -392,6 +390,33 @@ async function restartAll(): Promise<void> {
   await deactivate();
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
+  }
+}
+
+/** zfls.linter.lint: the server checks the active file with the compiler
+ * now (its text in the editor) */
+async function lintActive(): Promise<void> {
+  const doc = vscode.window.activeTextEditor?.document;
+  if (!doc || doc.uri.scheme !== "file" || !["FortranFreeForm", "FortranFixedForm"].includes(doc.languageId)) {
+    void vscode.window.showInformationMessage(vscode.l10n.t("zfls: open a Fortran file to lint it."));
+    return;
+  }
+  if (vscode.workspace.getConfiguration("zfls.linter", doc.uri).get<string>("compiler", "gfortran") === "Disabled") {
+    void vscode.window.showInformationMessage(
+      vscode.l10n.t("zfls: compiler diagnostics are off; choose a compiler in zfls.linter.compiler."),
+    );
+    return;
+  }
+  const client = await clientForUri(doc.uri);
+  await client?.sendRequest("zfls/compilerCheck", { textDocument: { uri: doc.uri.toString() } });
+}
+
+/** zfls.linter.clear: every server drops its compiler diagnostics and its
+ * .mod files, so that the next checks compile the modules again */
+async function clearCompilerDiagnostics(): Promise<void> {
+  for (const pending of clients.values()) {
+    const client = await pending;
+    await client?.sendRequest("zfls/compilerClear");
   }
 }
 

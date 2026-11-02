@@ -1,7 +1,10 @@
 //! Compiler diagnostics (`compiler_diagnostics`): when a file is opened or
 //! saved, a compiler checks it (syntax only) on a thread of its own, after
 //! compiling the workspace modules it uses whose .mod files are missing or
-//! older than their sources. Its errors and warnings are published with
+//! older than their sources; saving a module's file checks again the open
+//! files that use it. With `compiler_on_change`, the unsaved text is checked
+//! too, from a copy, after a pause in the edits; with `compiler_fypp`, fypp
+//! runs on each file first. Its errors and warnings are published with
 //! zfls's own diagnostics of the file: each publication of either sends
 //! both, the latest of each.
 //! Part of `Server` (server.zig): each function takes it as `self`.
@@ -46,6 +49,19 @@ pub fn checkSetting(self: *Server, a: Allocator) !void {
     self.postMessage(a, try a.print("compiler_diagnostics: unknown compiler \"{s}\"; it is one of gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran", .{name}), 2);
 }
 
+/// What asks for a check
+pub const Trigger = enum {
+    /// The file was opened
+    open,
+    /// Saved (unless `compiler_no_save`)
+    save,
+    /// Edited: its unsaved text, after `compiler_change_delay` (with
+    /// `compiler_on_change`)
+    change,
+    /// `zfls/compilerCheck`, or a module the file uses was saved
+    now,
+};
+
 /// One compiler run: the modules the file uses first, then the file
 const Job = struct {
     arena: std.heap.ArenaAllocator,
@@ -55,9 +71,22 @@ const Job = struct {
     /// The executables to try, in order
     exes: []const []const u8,
     cwd: []const u8,
-    /// The arguments of each module's file, in compile order
+    /// The files of the modules it uses, in compile order: each one's
+    /// arguments (the file last), and whether it is in fixed form
     deps: []const []const []const u8,
+    deps_fixed: []const bool,
+    /// The arguments, the file last
     args: []const []const u8,
+    fixed: bool,
+    /// The unsaved text, checked from a copy; null: the file as saved
+    text: ?[]const u8 = null,
+    /// Not run before this time (the awake clock): a check of edits waits
+    /// for a pause in them
+    not_before: i96 = 0,
+    /// fypp's executable and arguments, when the files go through it first
+    fypp: ?[]const []const u8 = null,
+    /// Where the copies and fypp's output go
+    work_dir: []const u8,
 };
 
 /// The thread that runs the compiler, and its queue of jobs
@@ -68,19 +97,31 @@ pub const Worker = struct {
     queue: std.ArrayList(*Job) = .empty,
     stopping: bool = false,
     thread: ?std.Thread = null,
-    /// A missing compiler is reported once
+    /// A missing compiler, or fypp, is reported once
     reported_missing: bool = false,
+    reported_missing_fypp: bool = false,
 
     fn run(w: *Worker) void {
         const io = w.server.io;
         while (true) {
             w.mutex.lockUncancelable(io);
-            while (w.queue.items.len == 0 and !w.stopping) w.cond.waitUncancelable(io, &w.mutex);
-            if (w.stopping) {
-                w.mutex.unlock(io);
-                return;
-            }
-            const job = w.queue.orderedRemove(0);
+            // the first job whose time has come, else a wait for one
+            const job = while (true) {
+                if (w.stopping) {
+                    w.mutex.unlock(io);
+                    return;
+                }
+                const now = Io.Clock.awake.now(io).nanoseconds;
+                var wake: ?i96 = null;
+                const due = for (w.queue.items, 0..) |j, i| {
+                    if (j.not_before <= now) break i;
+                    wake = if (wake) |t| @min(t, j.not_before) else j.not_before;
+                } else null;
+                if (due) |i| break w.queue.orderedRemove(i);
+                if (wake) |t| {
+                    w.cond.waitTimeout(io, &w.mutex, .{ .deadline = .{ .raw = .{ .nanoseconds = t }, .clock = .awake } }) catch {};
+                } else w.cond.waitUncancelable(io, &w.mutex);
+            };
             w.mutex.unlock(io);
             runJob(w, job) catch |e| w.server.log.err("compiler diagnostics of {s}: {s}", .{ job.path, @errorName(e) });
             freeJob(w.server.gpa, job);
@@ -175,15 +216,63 @@ fn send(self: *Server, a: Allocator, uri: []const u8, own: []const u8, compiled:
     self.sendRaw(body);
 }
 
-/// Queues a compiler run of a workspace file (on opening and saving it),
-/// replacing one of the same file that has not started
-pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8) !void {
+/// `compiler_fypp`, null when it is not set
+fn fyppExe(self: *const Server) ?[]const u8 {
+    const f = std.mem.trim(u8, self.s.compiler_fypp orelse return null, " ");
+    return if (f.len > 0) f else null;
+}
+
+/// Queues a compiler run of a workspace file, replacing one of the same
+/// file that has not started
+pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8, trigger: Trigger) anyerror!void {
     const id = compilerOf(self) orelse return;
+    switch (trigger) {
+        .save => if (self.s.compiler_no_save) return,
+        .change => if (!self.s.compiler_on_change) return,
+        .open, .now => {},
+    }
     const file = self.workspace.get(path) orelse return;
-    // no compiler reads fypp's directives
-    if (std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(path), ".fypp")) return;
-    const job = try makeJob(self, a, id, uri, file);
+    // no compiler reads fypp's directives: fypp has to run first
+    if (fyppExe(self) == null and std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(path), ".fypp")) return;
+    // the editor's text of an open file (a check of edits, or one asked
+    // for); a check of edits waits for the modules to compile on saving
+    const unsaved = (trigger == .change or trigger == .now) and self.open_docs.contains(path);
+    const job = try makeJob(self, a, id, uri, file, unsaved, trigger != .change);
     errdefer freeJob(self.gpa, job);
+    if (trigger == .change) job.not_before = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, @max(0, self.s.compiler_change_delay)) * std.time.ns_per_ms;
+    try enqueue(self, job);
+    // the open files that use its modules: they have changed
+    if (trigger == .save and !self.s.compiler_no_dependencies) try checkUsers(self, a, file);
+}
+
+/// Checks again the open files that use a module `file` defines
+fn checkUsers(self: *Server, a: Allocator, file: *const FortranFile) !void {
+    const ast = file.ast orelse return;
+    var defined: std.ArrayList([]const u8) = .empty;
+    for (ast.scope_list.items) |sc| if (sc.kind == .module) try defined.append(a, sc.name);
+    if (defined.items.len == 0) return;
+    var it = self.open_docs.keyIterator();
+    while (it.next()) |p| {
+        if (std.mem.eql(u8, p.*, file.path)) continue;
+        const other = self.workspace.get(p.*) orelse continue;
+        if (usesAny(other, defined.items)) try check(self, a, try paths.pathToUri(a, other.path), other.path, .now);
+    }
+}
+
+/// Whether `file` uses one of the modules `names`
+fn usesAny(file: *const FortranFile, names: []const []const u8) bool {
+    const ast = file.ast orelse return false;
+    for (ast.scope_list.items) |sc| {
+        if (sc.data != .scope) continue;
+        for (sc.scopeDataConst().use.items) |u| {
+            if (u.is_import) continue;
+            for (names) |n| if (std.ascii.eqlIgnoreCase(n, u.mod_name)) return true;
+        }
+    }
+    return false;
+}
+
+fn enqueue(self: *Server, job: *Job) !void {
     const w = self.compiler orelse blk: {
         const w = try self.gpa.create(Worker);
         w.* = .{ .server = self };
@@ -198,7 +287,7 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8) !vo
     defer w.mutex.unlock(io);
     var i: usize = 0;
     while (i < w.queue.items.len) {
-        if (std.mem.eql(u8, w.queue.items[i].path, path)) {
+        if (std.mem.eql(u8, w.queue.items[i].path, job.path)) {
             freeJob(self.gpa, w.queue.orderedRemove(i));
         } else i += 1;
     }
@@ -212,11 +301,20 @@ fn modDir(self: *Server, a: Allocator, id: compilers.Id) ![]const u8 {
     if (self.s.compiler_mod_dir) |d| {
         if (d.len > 0) return if (std.Io.Dir.path.isAbsolute(d)) d else paths.join(a, &.{ self.root_path, d });
     }
+    return paths.join(a, &.{ try cacheDir(self, a, "mod"), @tagName(id) });
+}
+
+/// zfls's directory `kind` (`mod`, `work`) for the root
+fn cacheDir(self: *Server, a: Allocator, kind: []const u8) ![]const u8 {
+    const base = paths.cacheDir() orelse return paths.join(a, &.{ self.root_path, ".zfls", kind });
+    return paths.join(a, &.{ base, kind, try pathKey(a, self.root_path) });
+}
+
+/// A short name for a path
+fn pathKey(a: Allocator, path: []const u8) ![]const u8 {
     var h = std.hash.Wyhash.init(0);
-    h.update(self.root_path);
-    const key = try a.print("{x:0>16}", .{h.final()});
-    const base = paths.cacheDir() orelse return paths.join(a, &.{ self.root_path, ".zfls", "mod", @tagName(id) });
-    return paths.join(a, &.{ base, "mod", key, @tagName(id) });
+    h.update(path);
+    return a.print("{x:0>16}", .{h.final()});
 }
 
 /// The executables to try: those of `compiler_path` (a file, or a directory
@@ -232,7 +330,9 @@ fn executables(self: *Server, a: Allocator, id: compilers.Id) ![]const []const u
     return out.items;
 }
 
-fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file: *FortranFile) !*Job {
+/// A job for `file`: of the editor's text (`unsaved`) or the file as
+/// saved, and compiling the modules it uses first (`with_deps`)
+fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file: *FortranFile, unsaved: bool, with_deps: bool) !*Job {
     const job = try self.gpa.create(Job);
     job.arena = .init(self.gpa);
     errdefer freeJob(self.gpa, job);
@@ -240,9 +340,21 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id));
     Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir };
-    const deps = try dependencies(self, a, file);
     var dep_args: std.ArrayList([]const []const u8) = .empty;
-    for (deps) |d| if (stale(self, a, d, mod_dir)) try dep_args.append(ja, try argsOf(self, ja, id, d, o));
+    var dep_fixed: std.ArrayList(bool) = .empty;
+    if (with_deps and !self.s.compiler_no_dependencies) for (try dependencies(self, a, file)) |d| if (stale(self, a, d, mod_dir)) {
+        try dep_args.append(ja, try argsOf(self, ja, id, d, o));
+        try dep_fixed.append(ja, d.fixed);
+    };
+    var fypp: ?[]const []const u8 = null;
+    if (fyppExe(self)) |exe| {
+        var argv: std.ArrayList([]const u8) = .empty;
+        // a path relative to the root; a name is looked for on the PATH
+        const has_dir = std.mem.findAny(u8, exe, "/\\") != null;
+        try argv.append(ja, try ja.dupe(u8, if (has_dir and !std.Io.Dir.path.isAbsolute(exe)) try paths.join(a, &.{ self.root_path, exe }) else exe));
+        for (self.s.compiler_fypp_args.slice()) |x| try argv.append(ja, try ja.dupe(u8, x));
+        fypp = argv.items;
+    }
     job.* = .{
         .arena = job.arena,
         .uri = try ja.dupe(u8, uri),
@@ -251,9 +363,20 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .exes = try dupeAll(ja, try executables(self, a, id)),
         .cwd = try ja.dupe(u8, paths.dirname(file.path)),
         .deps = dep_args.items,
+        .deps_fixed = dep_fixed.items,
         .args = try argsOf(self, ja, id, file, o),
+        .fixed = file.fixed,
+        .text = if (unsaved) try editorText(ja, file) else null,
+        .fypp = fypp,
+        .work_dir = try ja.dupe(u8, try cacheDir(self, a, "work")),
     };
     return job;
+}
+
+/// The text as the editor has it
+fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
+    const lines = if (file.comment_markers.len > 0) file.raw_lines.items else file.lines.items;
+    return std.mem.join(a, "\n", lines);
 }
 
 fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
@@ -277,6 +400,10 @@ fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFil
     try args.appendSlice(a, try compilers.modOutput(a, id, o.mod_dir, o));
     try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, paths.dirname(file.path)), o));
     for (try definition.includeDirs(self, a)) |d| try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, d), o));
+    for (self.s.compiler_include_dirs.slice()) |d| {
+        const dir = if (std.Io.Dir.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d });
+        try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, dir), o));
+    }
     if (self.s.compiler_args) |user| {
         for (user.slice()) |x| try args.append(a, try a.dupe(u8, x));
     } else try args.appendSlice(a, compilers.defaultArgs(id, o));
@@ -364,21 +491,127 @@ fn runCompiler(w: *Worker, a: Allocator, job: *const Job, args: []const []const 
     return .missing;
 }
 
+/// `args` with its last one, the file, replaced by `file`
+fn withFile(a: Allocator, args: []const []const u8, file: []const u8) ![]const []const u8 {
+    const out = try a.dupe([]const u8, args);
+    out[out.len - 1] = file;
+    return out;
+}
+
+/// Runs fypp on `input` (`origin` or a copy of it) with line markers naming
+/// it; returns its output file, or null when fypp failed (its message then
+/// published for `origin` when `report`) or is missing (reported once)
+fn runFypp(w: *Worker, a: Allocator, job: *const Job, origin: []const u8, input: []const u8, fixed: bool, report: bool) !?[]const u8 {
+    const self = w.server;
+    const io = self.io;
+    const fypp = job.fypp.?;
+    const stem = std.Io.Dir.path.stem(origin);
+    const out = try paths.join(a, &.{ job.work_dir, "fypp", try pathKey(a, origin), try a.print("{s}{s}", .{ stem, if (fixed) ".f" else ".f90" }) });
+    try Io.Dir.cwd().createDirPath(io, paths.dirname(out));
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(a, &.{ fypp[0], "--line-numbering", "--line-marker-format=cpp" });
+    if (fixed) try argv.append(a, "--fixed-format");
+    try argv.appendSlice(a, fypp[1..]);
+    // forward slashes: the path goes into the line markers, where a
+    // backslash would be an escape
+    const fwd = try a.dupe(u8, input);
+    std.mem.replaceScalar(u8, fwd, '\\', '/');
+    try argv.appendSlice(a, &.{ fwd, out });
+    const r = std.process.run(a, io, .{
+        .argv = argv.items,
+        .cwd = .{ .path = paths.dirname(origin) },
+        .timeout = .{ .duration = .{ .raw = .fromSeconds(timeout_s), .clock = .awake } },
+    }) catch |e| switch (e) {
+        error.FileNotFound => {
+            if (!w.reported_missing_fypp) {
+                w.reported_missing_fypp = true;
+                self.postMessage(a, try a.print("compiler_fypp: {s} was not found", .{fypp[0]}), 2);
+            }
+            return null;
+        },
+        else => return e,
+    };
+    if (r.term.success()) return out;
+    const output = try std.mem.concat(a, u8, &.{ r.stdout, "\n", r.stderr });
+    self.log.debug("compiler_fypp {s}: {s}", .{ origin, output });
+    if (report) {
+        const m = fyppMessage(output);
+        const lines = try splitLines(a, job.text orelse Io.Dir.cwd().readFileAlloc(io, origin, a, .limited(64 * 1024 * 1024)) catch "");
+        try publishCompiler(self, a, job.uri, &.{.{
+            .range = rangeAt(lines, m.line, null, null, null),
+            .message = m.text,
+            .severity = compilers.Severity.@"error".lsp(),
+            .source = "fypp",
+        }});
+    }
+    return null;
+}
+
+/// The line (1-based, 0 when none) and text of fypp's error message
+/// (`FILE:LINE[-LINE]: [error: ]TEXT`), else its last line
+fn fyppMessage(output: []const u8) struct { line: usize, text: []const u8 } {
+    var last: []const u8 = "fypp failed";
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r\t");
+        if (line.len == 0) continue;
+        last = line;
+        // the first `:DIGITS[-DIGITS]: ` (not a drive letter's colon)
+        var i: usize = 0;
+        while (std.mem.findScalarPos(u8, line, i, ':')) |c| : (i = c + 1) {
+            var j = c + 1;
+            while (j < line.len and std.ascii.isDigit(line[j])) j += 1;
+            if (j == c + 1) continue;
+            const n = std.fmt.parseInt(usize, line[c + 1 .. j], 10) catch continue;
+            if (j < line.len and line[j] == '-') {
+                j += 1;
+                while (j < line.len and std.ascii.isDigit(line[j])) j += 1;
+            }
+            if (!std.mem.startsWith(u8, line[j..], ": ")) continue;
+            var text = line[j + 2 ..];
+            if (std.mem.startsWith(u8, text, "error: ")) text = text["error: ".len..];
+            return .{ .line = n, .text = text };
+        }
+    }
+    return .{ .line = 0, .text = last };
+}
+
 fn runJob(w: *Worker, job: *Job) !void {
     const self = w.server;
+    const io = self.io;
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    for (job.deps) |args| {
+    for (job.deps, job.deps_fixed) |args, fixed| {
         if (w.stopped()) return;
-        switch (runCompiler(w, a, job, args)) {
+        var dep_args = args;
+        if (job.fypp != null) {
+            const src = args[args.len - 1];
+            dep_args = try withFile(a, args, (try runFypp(w, a, job, src, src, fixed, false)) orelse continue);
+        }
+        switch (runCompiler(w, a, job, dep_args)) {
             .ran => {},
             .missing => break,
             .failed => |e| self.log.warn("compiler_diagnostics: compiling {s}: {s}", .{ args[args.len - 1], @errorName(e) }),
         }
     }
     if (w.stopped()) return;
-    const output = switch (runCompiler(w, a, job, job.args)) {
+    // the file the compiler reads: the file, a copy of the unsaved text,
+    // and either one through fypp; its messages may name any of them
+    var aliases: std.ArrayList([]const u8) = .empty;
+    try aliases.append(a, job.path);
+    var target = job.path;
+    if (job.text) |text| {
+        target = try paths.join(a, &.{ job.work_dir, "unsaved", try pathKey(a, job.path), std.Io.Dir.path.basename(job.path) });
+        try Io.Dir.cwd().createDirPath(io, paths.dirname(target));
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = text });
+        try aliases.append(a, target);
+    }
+    if (job.fypp != null) {
+        target = (try runFypp(w, a, job, job.path, target, job.fixed, true)) orelse return;
+        try aliases.append(a, target);
+    }
+    const output = switch (runCompiler(w, a, job, try withFile(a, job.args, target))) {
         .ran => |out| out,
         .missing => {
             if (!w.reported_missing) {
@@ -398,8 +631,8 @@ fn runJob(w: *Worker, job: *Job) !void {
     };
     self.log.debug("compiler_diagnostics {s}: {s}", .{ job.path, output });
     const msgs = try compilers.parse(a, job.id, output);
-    const text = Io.Dir.cwd().readFileAlloc(self.io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
-    const diags = try toDiagnostics(a, job, text, msgs);
+    const text = job.text orelse Io.Dir.cwd().readFileAlloc(io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
+    const diags = try toDiagnostics(a, job, text, msgs, aliases.items);
     try publishCompiler(self, a, job.uri, diags);
 }
 
@@ -444,12 +677,19 @@ fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line: ?us
     return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
 }
 
-fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const compilers.Message) ![]const lsp.Diagnostic {
+/// The compiler's messages as diagnostics of the file, which they may name
+/// as any of `aliases` (the file, its copy, fypp's output)
+fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const compilers.Message, aliases: []const []const u8) ![]const lsp.Diagnostic {
     const lines = try splitLines(a, text);
-    const here = try comparable(a, job.cwd, job.path);
+    var here: std.ArrayList([]const u8) = .empty;
+    for (aliases) |p| try here.append(a, try comparable(a, job.cwd, p));
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (msgs) |m| {
-        const ours = if (m.file) |f| std.mem.eql(u8, try comparable(a, job.cwd, f), here) else true;
+        const ours = if (m.file) |f| blk: {
+            const named = try comparable(a, job.cwd, f);
+            for (here.items) |h| if (std.mem.eql(u8, named, h)) break :blk true;
+            break :blk false;
+        } else true;
         var related: std.ArrayList(lsp.DiagnosticRelatedInformation) = .empty;
         for (m.related.items) |r| {
             const rpath = if (r.file) |f| (if (std.Io.Dir.path.isAbsolute(f)) f else try paths.join(a, &.{ job.cwd, f })) else job.path;
@@ -473,6 +713,53 @@ fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const 
         });
     }
     return out.items;
+}
+
+// --------------------------------------------------------------------------
+// Requests
+
+/// `zfls/compilerCheck` `{textDocument: {uri}}`: checks the file now
+pub fn serveCheck(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
+    const uri = params.textDocument.uri;
+    try check(self, a, uri, try self.pathFromUri(a, uri), .now);
+    return .null;
+}
+
+/// `zfls/compilerClear`: drops the compiler's diagnostics, the checks not
+/// started, and zfls's .mod files (not those of `compiler_mod_dir`) and
+/// copies, so that the next checks compile every module again
+pub fn serveClear(self: *Server, a: Allocator) !Value {
+    if (self.compiler) |w| {
+        w.mutex.lockUncancelable(self.io);
+        for (w.queue.items) |job| freeJob(self.gpa, job);
+        w.queue.clearRetainingCapacity();
+        w.mutex.unlock(self.io);
+    }
+    var uris: std.ArrayList([]const u8) = .empty;
+    {
+        self.diag_lock.lockUncancelable(self.io);
+        defer self.diag_lock.unlock(self.io);
+        var it = self.compiler_diags.keyIterator();
+        while (it.next()) |k| try uris.append(a, try a.dupe(u8, k.*));
+    }
+    for (uris.items) |uri| try publishCompiler(self, a, uri, &.{});
+    const mod = if (self.s.compiler_mod_dir == null) try cacheDir(self, a, "mod") else null;
+    for ([_]?[]const u8{ mod, try cacheDir(self, a, "work") }) |dir| if (dir) |d| {
+        Io.Dir.cwd().deleteTree(self.io, d) catch |e| self.log.warn("zfls/compilerClear: could not remove {s}: {s}", .{ d, @errorName(e) });
+    };
+    return .null;
+}
+
+test "fypp's message: its line and text" {
+    const m = fyppMessage("C:/w/a.fypp:12: error: unknown directive\n");
+    try std.testing.expectEqual(@as(usize, 12), m.line);
+    try std.testing.expectEqualStrings("unknown directive", m.text);
+    const range = fyppMessage("Traceback\n/w/b.fypp:3-5: macro failed\n");
+    try std.testing.expectEqual(@as(usize, 3), range.line);
+    try std.testing.expectEqualStrings("macro failed", range.text);
+    const none = fyppMessage("something went wrong\n");
+    try std.testing.expectEqual(@as(usize, 0), none.line);
+    try std.testing.expectEqualStrings("something went wrong", none.text);
 }
 
 test "ranges: the name at the column, the whole line, a span" {

@@ -176,12 +176,11 @@ Whether a file is free or fixed form follows its language in VS Code
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `zfls.linter.runner` | `extension` | Who runs the compiler: this extension, or `server`, the zfls language server (see below) |
 | `zfls.linter.compiler` | `gfortran` | The compiler, or `Disabled` |
 | `zfls.linter.compilerPath` | empty | The compiler executable, when it is not the one on the `PATH` |
 | `zfls.linter.extraArgs` | `[]` | Further options, such as `-std=f2018`; when set, they replace the default warning options |
 | `zfls.linter.includePaths` | `[]` | Directories for `INCLUDE` and `.mod` files (`-I`); glob patterns such as `${workspaceFolder}/build/**/include` |
-| `zfls.linter.modOutput` | empty | Where the compiler writes `.mod` files; empty means a directory in VS Code's storage for the workspace, never the source tree |
+| `zfls.linter.modOutput` | empty | Where the compiler writes `.mod` files; empty means a directory in zfls's cache for the workspace, never the source tree |
 | `zfls.linter.lintOnSave` | `true` | Check files when they are saved |
 | `zfls.linter.lintOnType` | `false` | Check files while they are edited (a copy of the unsaved text is compiled) |
 | `zfls.linter.lintOnTypeDelay` | `1000` | Milliseconds after the last change before such a check |
@@ -211,34 +210,25 @@ How it behaves:
 - **Included files.** An error in a file brought in by `INCLUDE` or
   `#include` shows at that `INCLUDE` line, prefixed with the included
   file's name and line, with a link to the place in the included file.
-- **One compiler at a time.** Checks run one after another; a check is
-  started a moment after the last open, save or edit of a file, and a newer
-  check of a file stops the older one and its compiler, so that autosave
-  does not pile up compiler processes.
+- **One compiler at a time.** Checks run one after another, and a newer
+  check of a file replaces one that has not started, so that autosave does
+  not pile up compiler processes. A check of edits waits for
+  `zfls.linter.lintOnTypeDelay` milliseconds without a change.
 - **No duplicates.** Each message shows once, even if the compiler prints
   it twice.
 - **Clearing.** **zfls: Clear Compiler Diagnostics** clears the messages
-  and the `.mod` files in VS Code's storage (not those in a configured
-  `zfls.linter.modOutput`), and lists `zfls.linter.includePaths` glob
-  matches afresh. **zfls: Lint Current File with Compiler** checks the
-  active file now.
+  and the `.mod` files in zfls's cache (not those in a configured
+  `zfls.linter.modOutput`). **zfls: Lint Current File with Compiler**
+  checks the active file now, its text in the editor.
 
-The command lines and the compiler output are logged in the `zfls` output
-channel at the Debug log level (**Developer: Set Log Level...**).
-
-### Compiler diagnostics from the language server
-
-With `zfls.linter.runner` set to `server`, zfls itself runs the compiler
-(its `compiler_diagnostics` option, which editors other than VS Code use
-too), with `zfls.linter.compiler`, `compilerPath`, `extraArgs` and
-`modOutput`. It checks a file when it is opened and saved, after compiling
-the workspace modules the file uses whose `.mod` files are missing or out
-of date, in an order it takes from its own index of the project. Its include
-directories are zfls's (`zfls.includeDirs`, and those of
-`compile_commands.json` and `fpm.toml`), and its preprocessor definitions
-zfls's too. The extension's lint while typing, glob patterns and fypp are
-not there: `.fypp` files are still checked by the extension when
-`zfls.linter.fypp.enabled` is on.
+The zfls language server runs the compiler (its `compiler_diagnostics`
+options, which other editors use too); these settings become those options,
+and changing one restarts it. Besides `zfls.linter.includePaths`, the
+compiler gets zfls's include directories (`zfls.includeDirs`, and those of
+`compile_commands.json` and `fpm.toml`) and its preprocessor definitions.
+Glob patterns in the include paths are expanded when zfls starts. The
+compiler's output is in zfls's log (its `debug_log` option) in the `zfls`
+output channel.
 
 ## Linting with fortitude
 

@@ -331,6 +331,8 @@ pub const Server = struct {
         supertypes,
         subtypes,
         compile_order,
+        compiler_check,
+        compiler_clear,
         bind_c,
         bind_c_targets,
         bind_c_references,
@@ -377,6 +379,8 @@ pub const Server = struct {
         .{ "zfls/bindCTargets", .bind_c_targets },
         .{ "zfls/bindCReferences", .bind_c_references },
         .{ "zfls/moduleVariables", .module_variables },
+        .{ "zfls/compilerCheck", .compiler_check },
+        .{ "zfls/compilerClear", .compiler_clear },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -422,6 +426,8 @@ pub const Server = struct {
             .bind_c_targets => bindc.serveBindCTargets(self, a, params),
             .bind_c_references => bindc.serveBindCReferences(self, a, params),
             .module_variables => modvars.serveModuleVariables(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .compiler_check => compile.serveCheck(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .compiler_clear => compile.serveClear(self, a),
             .initialized => blk: {
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
                 break :blk .null;
