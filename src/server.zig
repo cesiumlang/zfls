@@ -125,6 +125,9 @@ pub const Server = struct {
     /// too), for going to the Fortran procedures they call: their text
     /// only, never parsed (keys owned by `gpa`)
     c_docs: std.StringHashMapUnmanaged(*FortranFile) = .empty,
+    /// Namelist documents opened in zfls (namelist.zig): their text only,
+    /// for their outline, never parsed as Fortran (keys owned by `gpa`)
+    nml_docs: std.StringHashMapUnmanaged(*FortranFile) = .empty,
     /// The declarations of the workspace's C names in its C files, found
     /// when go to definition first needed them
     c_index: ?*bindc.CIndex = null,
@@ -171,6 +174,12 @@ pub const Server = struct {
             e.value_ptr.*.destroy();
         }
         self.c_docs.deinit(self.gpa);
+        var nml_it = self.nml_docs.iterator();
+        while (nml_it.next()) |e| {
+            self.gpa.free(e.key_ptr.*);
+            e.value_ptr.*.destroy();
+        }
+        self.nml_docs.deinit(self.gpa);
         cache.wait(self);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();

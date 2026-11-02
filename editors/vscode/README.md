@@ -27,7 +27,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   OpenACC directives, and Fortran code in documentation comments (a block
   from `` !> ```fortran `` to `` !> ``` ``)
 - namelist files (`.nml`, `.namelist`): highlighting, folding of each group,
-  and an outline of the groups and the variables they set
+  and an outline of the groups and the variables they set (from zfls, which
+  does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))

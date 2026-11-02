@@ -19,6 +19,7 @@ const settings_mod = @import("../settings.zig");
 const glob = @import("../glob.zig");
 const project = @import("../project.zig");
 const semantic = @import("../semantic.zig");
+const namelist = @import("../namelist.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -482,7 +483,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
 
 pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
     const path = try self.pathFromUri(a, params.textDocument.uri);
-    if (self.c_docs.get(path)) |doc| {
+    if (self.c_docs.get(path) orelse self.nml_docs.get(path)) |doc| {
         for (params.contentChanges) |c| _ = doc.applyChange(toChange(c)) catch {};
         return .null;
     }
@@ -540,9 +541,16 @@ pub fn toChange(c: lsp.ContentChange) parser.Change {
 pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
     const uri = params.textDocument.uri;
     const filepath = try self.pathFromUri(a, uri);
+    // a namelist document: opened as one or named like one, and then known
+    if (self.nml_docs.contains(filepath) or namelist.isNamelist(if (did_open) params.textDocument.languageId else null, filepath))
+        return textDocument(self, &self.nml_docs, filepath, params.textDocument.text, did_close);
     // a C document: opened as one (a `.h` may be Fortran's), and then known
     const c_doc = if (did_open) bindc.isCLanguage(params.textDocument.languageId) else self.c_docs.contains(filepath);
-    if (c_doc) return cDocument(self, filepath, params.textDocument.text, did_close);
+    if (c_doc) {
+        // its declarations may have changed, so the C search is done again
+        bindc.deinitIndex(self);
+        return textDocument(self, &self.c_docs, filepath, params.textDocument.text, did_close);
+    }
     if (did_open and !self.open_docs.contains(filepath)) {
         const key = try self.gpa.dupe(u8, filepath);
         errdefer self.gpa.free(key);
@@ -570,13 +578,13 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     return .null;
 }
 
-/// A C document opened in zfls, by an editor that attaches it to C files
-/// (bindc.zig): its text, for go to definition; it is not parsed. Its
-/// declarations may have changed, so the C search is done again.
-fn cDocument(self: *Server, path: []const u8, text: ?[]const u8, did_close: bool) !Value {
-    bindc.deinitIndex(self);
+/// A document zfls holds the text of but does not parse as Fortran: a C
+/// document (`c_docs`, opened by an editor that attaches zfls to C files,
+/// for go to definition: bindc.zig) or a namelist file (`nml_docs`, for its
+/// outline: namelist.zig)
+fn textDocument(self: *Server, docs: *std.StringHashMapUnmanaged(*FortranFile), path: []const u8, text: ?[]const u8, did_close: bool) !Value {
     if (did_close) {
-        if (self.c_docs.fetchRemove(path)) |kv| {
+        if (docs.fetchRemove(path)) |kv| {
             self.gpa.free(kv.key);
             kv.value.destroy();
         }
@@ -584,7 +592,7 @@ fn cDocument(self: *Server, path: []const u8, text: ?[]const u8, did_close: bool
     }
     // didSave without its text: the one from didOpen and the changes
     const t = text orelse return .null;
-    if (self.c_docs.get(path)) |doc| {
+    if (docs.get(path)) |doc| {
         _ = try doc.setText(t);
         return .null;
     }
@@ -593,7 +601,7 @@ fn cDocument(self: *Server, path: []const u8, text: ?[]const u8, did_close: bool
     _ = try doc.setText(t);
     const key = try self.gpa.dupe(u8, path);
     errdefer self.gpa.free(key);
-    try self.c_docs.put(self.gpa, key, doc);
+    try docs.put(self.gpa, key, doc);
     return .null;
 }
 
