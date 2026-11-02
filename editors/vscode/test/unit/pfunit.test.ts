@@ -1,79 +1,9 @@
-// Plain Node.js tests (no VS Code) of reading pFUnit projects (`npm run unit`)
+// Plain Node.js tests (no VS Code) of running pFUnit's test programs
+// (`npm run unit`). zfls finds the tests (src/pfunit.zig).
 
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAddPfunitCtest, parseCtestJson, parsePf, parsePfunitXml, pfunitArgs, resultOf } from "../../src/pfunit";
-
-const PF = `module test_vectors
-   use funit
-   use vectors
-   implicit none
-contains
-
-   @test
-   subroutine test_norm()
-      @assertEqual(5.0, norm([3.0, 4.0]))
-   end subroutine test_norm
-
-   ! @test in a comment does not count
-   @test(testParameters={[1, 2]})
-   subroutine test_cases(this)
-      class (MyCase), intent(inout) :: this
-   end subroutine test_cases
-
-   @Test
-   subroutine Test_Dot
-   end subroutine Test_Dot
-
-   subroutine helper()
-   end subroutine helper
-end module test_vectors
-`;
-
-test("a .pf file: its suite (the module's name) and @test procedures", () => {
-  const s = parsePf(PF, "test_vectors");
-  assert.equal(s.name, "test_vectors_suite");
-  assert.equal(s.line, 0);
-  assert.deepEqual(
-    s.tests.map((t) => [t.name, t.line, t.parameterized]),
-    [
-      ["test_norm", 6, false],
-      ["test_cases", 12, true],
-      ["Test_Dot", 17, false],
-    ],
-  );
-});
-
-test("a .pf file: @suite names the suite; without a module, the file does", () => {
-  assert.equal(parsePf(`@suite(name='vec_tests')\nmodule m\nend module m\n`, "x").name, "vec_tests");
-  assert.equal(parsePf(`@test\nsubroutine t()\nend subroutine t\n`, "loose").name, "loose_suite");
-});
-
-test("a .pf file: the tests of a @testCase with parameters are parameterized", () => {
-  const s = parsePf(
-    `module m\n@testParameter\ntype, extends(AbstractTestParameter) :: P\nend type\n@testCase(testParameters={getParameters()})\n` +
-      `type, extends(ParameterizedTestCase) :: C\nend type\ncontains\n@test\nsubroutine t(this)\nend subroutine t\nend module m\n`,
-    "m",
-  );
-  assert.deepEqual(s.tests.map((t) => [t.name, t.parameterized]), [["t", true]]);
-});
-
-test("add_pfunit_ctest: the test's name and its .pf files, with set() variables", () => {
-  const cmake = `
-set(pf_files test_a.pf \${CMAKE_CURRENT_SOURCE_DIR}/sub/test_b.pf)
-add_pfunit_ctest (vector_tests
-  TEST_SOURCES \${pf_files} "test c.pf"
-  LINK_LIBRARIES vectors  # not a test
-  OTHER_SOURCES helper.F90
-  )
-# add_pfunit_ctest(commented TEST_SOURCES x.pf)
-add_pfunit_ctest(other TEST_SOURCES other.pf MAX_PES 4)
-`;
-  assert.deepEqual(parseAddPfunitCtest(cmake), [
-    { name: "vector_tests", sources: ["test_a.pf", "sub/test_b.pf", "test c.pf"] },
-    { name: "other", sources: ["other.pf"] },
-  ]);
-});
+import { parseCtestJson, parsePfunitXml, pfunitArgs, resultOf } from "../../src/pfunit";
 
 test("ctest --show-only=json-v1: each test's command and working directory", () => {
   const json = JSON.stringify({

@@ -750,6 +750,17 @@ test "read definitions" {
 
     const ctx = try getLineContext(a, "call foo");
     try std.testing.expectEqual(LineContext.call, ctx.ctx);
+
+    // MODULE after the type (stdlib): a separate module procedure, not a
+    // variable named `module`
+    for ([_][]const u8{ "real(RTICKS) module function lifetime(p) result(t)", "pure real(dp) module function lifetime(p)" }) |line| {
+        const m = (try getFortranDefinition(a, line)).?;
+        try std.testing.expectEqualStrings("lifetime", m.fun.name);
+        try std.testing.expect(m.fun.mod_flag);
+    }
+    // a variable of that name stays one
+    const v = (try getFortranDefinition(a, "      REAL MODULE")).?;
+    try std.testing.expectEqualStrings("MODULE", v.var_.var_names.?[0]);
 }
 
 test "the definition tests are chosen by the first word, labels fall back to all" {
