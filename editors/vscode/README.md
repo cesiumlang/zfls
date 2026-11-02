@@ -352,7 +352,7 @@ its runtime libraries.
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |
-| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it, else an installed one |
+| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it, and for the programs of ifx, ifort and LLVM Flang on Windows, else an installed one |
 | `zfls.run.gdbPath` | empty | The `gdb` for `zfls`, `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH` |
 
 `${workspaceFolder}`, `${env:NAME}`, `${userHome}`, `${file}`,
@@ -360,20 +360,23 @@ its runtime libraries.
 
 With `zfls.run.debugger` set to `auto`, debugging uses zfls's own debugger
 when there is a gdb for it (gdb 14 or later, built with Python, as MSYS2's,
-Ubuntu's since 24.04 and most others are; see [zfls's
-debugger](#zflss-debugger)), else the first installed of these extensions:
+Ubuntu's since 24.04 and most others are), and on Windows for the programs
+of `ifx`, `ifort` and LLVM Flang, with Windows's own Debugger Engine (see
+[zfls's debugger](#zflss-debugger)); else the first installed of these
+extensions:
 
 | Extension | Debugger | For |
 | --- | --- | --- |
 | [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) | `cppdbg` | gdb (lldb on macOS): gfortran, Intel on Linux, flang, ... |
-| [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) | `cppvsdbg` | The Visual Studio debugger: `ifx`, `ifort` and LLVM Flang on Windows, whose programs only it can debug |
+| [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) | `cppvsdbg` | The Visual Studio debugger: `ifx`, `ifort` and LLVM Flang on Windows |
 | [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) | `lldb` | lldb |
 | [CDT GDB Debug Adapter](https://marketplace.visualstudio.com/items?itemName=eclipse-cdt.cdt-gdb-vscode) | `gdb` | gdb |
 
 If there is none, **Debug Fortran File** says which to install. gdb cannot
 debug the programs of `ifx`, `ifort` and LLVM Flang on Windows (their debug
-information is Microsoft's), nor run on macOS on Arm, where lldb, which
-knows no Fortran, is the debugger. With Intel's compilers on Windows,
+information is Microsoft's: zfls's debugger then uses Windows's Debugger
+Engine), nor run on macOS on Arm, where lldb, which knows no Fortran, is
+the debugger. With Intel's compilers on Windows,
 start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
 that the compiler finds the linker and libraries, or set up ifx without
 Visual Studio:
@@ -391,9 +394,8 @@ and, once you accept it, unpacks the compiler without running the installer
 and zfls's ifx kit instead of Visual Studio's linker and libraries. It then
 offers to set `zfls.run.compiler`, `zfls.run.compilerPath` and
 `zfls.fpm.compiler` to it. Programs are built with `/MD` (the C runtime of
-Windows); debugging them needs the C/C++ extension's Visual Studio debugger
-(`cppvsdbg`), as for any ifx program. The same is `zfls setup-ifx` on the
-command line (see zfls's readme).
+Windows), and zfls's debugger debugs them. The same is `zfls setup-ifx` on
+the command line (see zfls's readme).
 
 ### The `fortran` debug type
 
@@ -457,8 +459,10 @@ the component, not the variable of that name.
 ### zfls's debugger
 
 zfls's debugger runs gdb (`zfls.run.gdbPath`) in its Debug Adapter
-Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), and
-shows the program as Fortran:
+Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), or, for
+the programs of `ifx`, `ifort` and LLVM Flang on Windows, Windows's own
+Debugger Engine (`dbgeng.dll`, which every Windows 10 and later has; `zfls
+dap`), and shows the program as Fortran:
 
 - arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a
   large one in sections (`(1:100)`, ...), with a preview of their first
@@ -484,6 +488,15 @@ shows the program as Fortran:
 The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`).
 `setupCommands` (gdb commands, such as `set print elements 0`) run before
 the program starts.
+
+With Windows's Debugger Engine, zfls reads the variables itself: dbghelp
+(of the engine) says where each is, zfls's index of the sources (the
+workspace folder) its type, kind and rank, and Intel's array descriptors
+their bounds; a polymorphic object shows its declared type's components.
+The program runs in a console window of its own (`"console":
+"internalConsole"`: none, its output is then lost). Hovers, watches and
+the Debug Console take a variable, its components and elements (`p%x`,
+`a(2,-1)`, `grid::cells`).
 
 **zfls: Add Build Task and Debug Configuration for Fortran File** writes
 the same build as a task in `.vscode/tasks.json` and a debug configuration

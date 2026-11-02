@@ -14,7 +14,9 @@ projects zfls replaces:
 
 ## Now (0.4.0)
 
-Nothing left: 0.4.0 is ready for its release.
+- [ ] Before the release, after the rest: a pass over all the Zig code
+  (zfls, build, tools) replacing what Zig 0.17 deprecates
+  (`std.fmt.allocPrint` for `Allocator.print`, and the like)
 
 ## After 0.4.0
 
@@ -84,6 +86,12 @@ Editor features:
   Welcome): opening a project, configuring it, compiler diagnostics,
   running and debugging, fpm and pFUnit tests, formatting, the output.
   MF #472
+- [x] zfls's debugger on Windows for the programs of ifx, ifort and LLVM
+  Flang (Microsoft's debug information, which gdb cannot read): `zfls dap`,
+  a debug adapter over Windows's Debugger Engine, with the variables as
+  Fortran (zfls's declarations, Intel's descriptors), module variables,
+  stops at Fortran runtime errors; the `fortran` debug type's choice for
+  them on Windows
 - [x] ifx without Visual Studio (Windows x64): `zfls setup-ifx` and **zfls:
   Set Up ifx** unpack ifx from Intel's offline installer (downloaded from
   Intel) without running it, once Intel's license is accepted, and set it
@@ -125,8 +133,8 @@ Navigation and hover:
   directories and of names a macro makes
 - [x] User-defined operators (`.ord.`) and defined assignment
   (`assignment(=)`): definition, hover, references. HS #95
-- [x] Intrinsic procedure documentation: the latest M_intrinsics, fetched
-  by the build as upstream wrote it, its links to other procedures opening
+- [x] Intrinsic procedure documentation: the latest M_intrinsics, a
+  submodule read by the build as upstream wrote it, its links to other procedures opening
   the pages M_intrinsics publishes; a weekly workflow proposes each upstream
   update as a patch release
 

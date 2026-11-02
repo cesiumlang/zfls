@@ -473,6 +473,12 @@ jobs:
           done
           "$ZFLS" setup-ifx --help | head -1
 
+      # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
+      # (with the runner's Visual Studio libraries): Fortran's need ifx
+      - name: zfls dap, the debugger of Windows's programs (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: python tests/dap_windows.py --zfls "$ZFLS"
+
       - name: Version under test
         run: |
           got=$("$ZFLS" --version | tr -d '\r')

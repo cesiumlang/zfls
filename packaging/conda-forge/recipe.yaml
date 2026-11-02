@@ -1,8 +1,8 @@
 # Written by zfls's `zig build conda-recipe` (build/conda_recipe.zig) from
 # its packaging/conda-forge/recipe.yaml, where the values of this context
 # that come from elsewhere are left empty (""): those of the zfls source
-# archive, and the Zig packages zfls's build.zig.zon files pin, which the
-# build would otherwise download
+# archive, and the Zig packages rstd's build.zig.zon pins, which the build
+# would otherwise download
 context:
   name: zfls
   version: ""
@@ -14,19 +14,15 @@ context:
   zigwin32_commit: ""
   zigwin32_sha256: ""
   zigwin32_hash: ""
-  # M_intrinsics, the intrinsic procedure documentation zfls embeds, likewise
-  m_intrinsics_repo: ""
-  m_intrinsics_commit: ""
-  m_intrinsics_sha256: ""
-  m_intrinsics_hash: ""
 
 package:
   name: ${{ name }}
   version: ${{ version }}
 
 source:
-  # zfls with its vendor/rstd submodule (GitHub's own archives leave
-  # submodules out), attached to every release
+  # zfls with its submodules, vendor/rstd and vendor/M_intrinsics (the
+  # intrinsic procedure documentation zfls embeds; GitHub's own archives
+  # leave submodules out), attached to every release
   - url: https://github.com/cesiumlang/zfls/releases/download/v${{ version }}/zfls-v${{ version }}-src.tar.gz
     sha256: ${{ zfls_sha256 }}
   # unpacked where Zig looks for a project's packages
@@ -35,9 +31,6 @@ source:
       url: https://github.com/${{ zigwin32_repo }}/archive/${{ zigwin32_commit }}.tar.gz
       sha256: ${{ zigwin32_sha256 }}
       target_directory: zig-pkg/${{ zigwin32_hash }}
-  - url: https://github.com/${{ m_intrinsics_repo }}/archive/${{ m_intrinsics_commit }}.tar.gz
-    sha256: ${{ m_intrinsics_sha256 }}
-    target_directory: zig-pkg/${{ m_intrinsics_hash }}
 
 build:
   number: 0
@@ -75,7 +68,7 @@ about:
   license_file:
     - LICENSE
     - vendor/rstd/LICENSE
-    - zig-pkg/${{ m_intrinsics_hash }}/LICENSE
+    - vendor/M_intrinsics/LICENSE
     - if: win
       then: zig-pkg/${{ zigwin32_hash }}/LICENSE
 

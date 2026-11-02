@@ -73,7 +73,7 @@ also generates the API documentation in `zig-out/docs`; `zig build bin`
 installs only the executable.
 
 Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with
-the `vendor/rstd` submodule included (`tools/make_source_archive.sh`), and
+its submodules included (`tools/make_source_archive.sh`), and
 `zfls-v<version>-conda-recipe.yaml`, the conda-forge recipe that builds it.
 `zig build conda-recipe -- --release ARCHIVE OUT_DIR` writes that recipe
 from the template in `packaging/conda-forge`, pinning the Zig packages it
@@ -173,6 +173,22 @@ runtime) does not link; CMake, which runs the linker itself, needs
 `CMAKE_LINKER` set to ifx's `lld-link` and `LIB` to ifx's `lib` and `zfls`
 directories. The VS Code extension's **zfls: Set Up ifx** does the same,
 showing Intel's license first.
+
+### A debugger for Windows's programs (`zfls dap`)
+
+`zfls dap` is a debug adapter (the Debug Adapter Protocol on standard input
+and output) over Windows's own Debugger Engine (`dbgeng.dll` of System32,
+which every Windows 10 and later has), for the programs whose debug
+information is Microsoft's: those of ifx, ifort and LLVM Flang on Windows.
+The VS Code extension's `fortran` debug type uses it for them. It launches
+the program (in a console window of its own) or attaches to it, stops at
+breakpoints of source lines and at the Fortran runtime's errors (Intel's
+`for__issue_diagnostic`, ERROR STOP), steps by lines, and shows the
+variables as Fortran: dbghelp says where each is, and zfls, which indexes
+the program's sources (`sourceRoot` of the launch configuration), its
+declared type, kind and rank; arrays are read through Intel's descriptors,
+with their bounds, derived types by their components, and the module
+variables the frame's line sees are a scope of their own.
 
 ### Build files
 
@@ -656,6 +672,6 @@ definition files. ifx itself is Intel's, under Intel's license, which
 fortls and its predecessor fortran-language-server, also MIT licensed, whose
 copyright notices `LICENSE` includes. The intrinsic procedure documentation
 comes from the [M_intrinsics](https://github.com/urbanjost/M_intrinsics)
-project, also MIT licensed, whose notice `LICENSE` includes too. The build
-fetches the version `build.zig.zon` pins; a scheduled workflow moves the pin
-to upstream's latest commit.
+project, also MIT licensed, whose notice `LICENSE` includes too: the
+`vendor/M_intrinsics` submodule, which a scheduled workflow moves to
+upstream's latest commit.

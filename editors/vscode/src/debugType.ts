@@ -31,18 +31,28 @@ export function registerDebugType(
   context: vscode.ExtensionContext,
   log: vscode.LogOutputChannel,
   clientFor: (uri: vscode.Uri) => Promise<LanguageClient | undefined>,
+  zfls: () => string | undefined,
 ): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, {
-      createDebugAdapterDescriptor: (session) =>
-        new vscode.DebugAdapterInlineImplementation(
+      createDebugAdapterDescriptor: (session) => {
+        // MSVC-ABI programs: Windows's Debugger Engine, by zfls dap
+        if (session.configuration.dbgeng === true) {
+          const exe = zfls();
+          if (!exe) {
+            throw new Error(vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."));
+          }
+          return new vscode.DebugAdapterExecutable(exe, ["dap"]);
+        }
+        return new vscode.DebugAdapterInlineImplementation(
           new GdbAdapter({
             gdb: typeof session.configuration.gdb === "string" && session.configuration.gdb ? session.configuration.gdb : "gdb",
             moduleVariables: (file, line) => moduleVariables(clientFor, file, line),
             text: adapterText(),
             log: (line) => log.info(line),
           }),
-        ),
+        );
+      },
     }),
     vscode.languages.registerEvaluatableExpressionProvider(
       LANGUAGES.map((language) => ({ language })),
@@ -137,7 +147,7 @@ async function resolve(
     if (!program) {
       return undefined;
     }
-    return finish(config, debugType, program, cwd, compilerExe, scope, log);
+    return finish(config, debugType, program, cwd, compilerExe, scope, log, compilerKind(compilerExe ?? compilerName, process.platform).msvc);
   }
   if (typeof config.program !== "string" || !config.program) {
     void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran launch configuration needs a program or an fpmTarget."));
@@ -152,7 +162,7 @@ async function resolve(
   if (!debugType) {
     return undefined;
   }
-  return finish(config, debugType, program, cwd, compilerExe, scope, log);
+  return finish(config, debugType, program, cwd, compilerExe, scope, log, compilerKind(compilerExe ?? compilerName, process.platform).msvc);
 }
 
 /** An attach configuration: zfls's debugger, attached to a process
@@ -298,6 +308,7 @@ function finish(
   compilerExe: string | undefined,
   scope: vscode.Uri | undefined,
   log: vscode.LogOutputChannel,
+  msvc: boolean,
 ): vscode.DebugConfiguration {
   const resolved = fortranLaunch(config, {
     type,
@@ -306,6 +317,8 @@ function finish(
     runtimeEnv: compilerExe ? runtimeEnv(compilerExe, process.platform, process.env) : {},
     platform: process.platform,
     gdbPath: gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe),
+    msvc,
+    sourceRoot: scope?.fsPath,
   }) as vscode.DebugConfiguration;
   log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
   return resolved;
