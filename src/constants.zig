@@ -24,6 +24,7 @@ pub const Kw = enum(u8) {
     recursive,
     abstract,
     external,
+    codimension,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {
@@ -31,7 +32,7 @@ pub const Kw = enum(u8) {
     }
 
     pub fn lessThan(_: void, x: Kw, y: Kw) bool {
-        return @intFromEnum(x) < @intFromEnum(y);
+        return @backingInt(x) < @backingInt(y);
     }
 };
 
@@ -58,7 +59,7 @@ pub const TypeId = enum(i32) {
 
     /// Scopes that sit inside other scopes (BLOCK, SELECT, DO, ...)
     pub fn isInnerScope(self: TypeId) bool {
-        return @intFromEnum(self) >= @intFromEnum(TypeId.block);
+        return @backingInt(self) >= @backingInt(TypeId.block);
     }
 };
 
@@ -71,6 +72,59 @@ pub const Severity = struct {
     pub const err: i32 = 1;
     pub const warn: i32 = 2;
     pub const info: i32 = 3;
+    pub const hint: i32 = 4;
+};
+
+/// The kinds of diagnostics zfls reports. Their names, with `-` for `_`, are
+/// the LSP `code` of each diagnostic, and what `diagnostic_severity` and
+/// `! zfls: disable=` comments name.
+pub const DiagCode = enum {
+    line_too_long,
+    comment_too_long,
+    statement_without_scope,
+    multiple_contains,
+    unexpected_end,
+    invalid_parent,
+    procedure_before_contains,
+    declared_twice,
+    masks_parent,
+    import_outside_interface,
+    module_not_found,
+    use_after_implicit,
+    deferred_not_implemented,
+    intent_not_in_arguments,
+    argument_not_declared,
+    not_imported,
+    object_not_found,
+    undeclared_name,
+    unused_name,
+    circular_use,
+    argument_mismatch,
+    argument_kind,
+    intent_in_assigned,
+
+    /// The name of the code, `masks-parent`
+    pub fn name(self: DiagCode) []const u8 {
+        return names[@backingInt(self)];
+    }
+
+    pub fn fromName(s: []const u8) ?DiagCode {
+        for (names, 0..) |n, i| if (std.mem.eql(u8, n, s)) return @fromBackingInt(@intCast(i));
+        return null;
+    }
+
+    const names = blk: {
+        const fields = std.meta.fieldNames(DiagCode);
+        var out: [fields.len][]const u8 = undefined;
+        for (fields, 0..) |f, i| {
+            var buf: [f.len]u8 = undefined;
+            for (f, 0..) |c, j| buf[j] = if (c == '_') '-' else c;
+            const final = buf;
+            out[i] = &final;
+        }
+        const final = out;
+        break :blk final;
+    };
 };
 
 /// A string used to mark literals e.g. 10, 3.14, "words", etc.

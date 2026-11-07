@@ -1,0 +1,74 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Fortran Namelist",
+  "scopeName": "source.fortran.namelist",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#group-end" },
+    { "include": "#group-start" },
+    { "include": "#assignment" },
+    { "include": "#values" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "!.*$",
+      "name": "comment.line.exclamation.namelist"
+    },
+    "group-start": {
+      "match": "^\\s*([&$])(?![eE][nN][dD]\\b)([A-Za-z]\\w*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.namelist" },
+        "2": { "name": "entity.name.type.namelist" }
+      }
+    },
+    "group-end": {
+      "match": "^\\s*[&$][eE][nN][dD]\\b|/",
+      "name": "keyword.control.end.namelist"
+    },
+    "assignment": {
+      "match": "\\b([A-Za-z]\\w*(?:\\s*%\\s*[A-Za-z]\\w*)*)\\s*(\\([^)=]*\\))?\\s*(=)",
+      "captures": {
+        "1": { "name": "variable.other.namelist" },
+        "2": { "patterns": [{ "include": "#values" }] },
+        "3": { "name": "keyword.operator.assignment.namelist" }
+      }
+    },
+    "values": {
+      "patterns": [
+        { "include": "#string-single" },
+        { "include": "#string-double" },
+        {
+          "match": "\\.(?:[tT][rR][uU][eE]|[fF][aA][lL][sS][eE]|[tTfF])\\.",
+          "name": "constant.language.logical.namelist"
+        },
+        {
+          "match": "\\b(\\d+)(\\*)",
+          "captures": {
+            "1": { "name": "constant.numeric.namelist" },
+            "2": { "name": "keyword.operator.repeat.namelist" }
+          }
+        },
+        {
+          "match": "[+-]?(?:\\b\\d+\\.?\\d*|\\.\\d+)(?:[eEdDqQ][+-]?\\d+)?(?:_\\w+)?",
+          "name": "constant.numeric.namelist"
+        },
+        {
+          "match": ":",
+          "name": "punctuation.separator.range.namelist"
+        }
+      ]
+    },
+    "string-single": {
+      "begin": "'",
+      "end": "'(?!')",
+      "name": "string.quoted.single.namelist",
+      "patterns": [{ "match": "''", "name": "constant.character.escape.namelist" }]
+    },
+    "string-double": {
+      "begin": "\"",
+      "end": "\"(?!\")",
+      "name": "string.quoted.double.namelist",
+      "patterns": [{ "match": "\"\"", "name": "constant.character.escape.namelist" }]
+    }
+  }
+}

@@ -53,6 +53,11 @@ test("executables are found in a directory, by path, or on the PATH", () => {
     assert.equal(findExecutable("fmt", "", undefined, env), exe);
     assert.equal(findExecutable("fmt", "", undefined, { PATH: os.tmpdir() }), undefined);
     assert.equal(findExecutable("fmt", path.join(dir, "missing"), undefined, env), undefined);
+    // a bare name that is not in baseDir: on the PATH
+    assert.equal(findExecutable("other", "fmt", os.tmpdir(), env), exe);
+    assert.equal(findExecutable("other", "missing", os.tmpdir(), env), undefined);
+    assert.equal(findExecutable("zfls-no-such-program-xyz"), undefined);
+    assert.ok(findExecutable(process.execPath));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -18,7 +18,7 @@ pub fn build(b: *std.Build) !void {
         // .link_libc = true,
     });
 
-    addIntrinsicDocs(b, mod);
+    const intrinsic_docs_tests = addIntrinsicDocs(b, mod);
 
     const rstd_mod = try rstdbuild.addRstd(b, target, docs, false, .{});
     rstd_mod.addImportToModule(mod);
@@ -56,6 +56,9 @@ pub fn build(b: *std.Build) !void {
     bin_step.dependOn(&install_exe.step);
     bin_step.dependOn(&install_sentinel.step);
 
+    // What ifx needs to link without Visual Studio (Windows x64 packages)
+    _ = @import("ifxkit.zig").add(b);
+
     const run_cmd = b.addRunArtifact(exe);
     const run_cmd_step = &run_cmd.step;
     run_cmd_step.dependOn(b.getInstallStep());
@@ -68,6 +71,11 @@ pub fn build(b: *std.Build) !void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run zfls's unit tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&b.addRunArtifact(intrinsic_docs_tests).step);
+    test_step.dependOn(&b.addRunArtifact(addCondaRecipe(b)).step);
+    test_step.dependOn(&b.addRunArtifact(addGenerated(b)).step);
+    test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "source_archive", "source-archive", "Write the source archive zfls-v<version>-src.tar.gz, submodules included (-- [OUT_DIR], default dist)")).step);
+    test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "package_vscode", "package-vscode", "Package the VS Code extension per platform from the release archives (-- DIST)")).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)
@@ -95,13 +103,92 @@ pub fn build(b: *std.Build) !void {
     fuzz_step.dependOn(&run_fuzz_tests.step);
     test_step.dependOn(&run_fuzz_tests.step);
 
-    addScriptTests(b, exe);
+    addScriptTests(b, mod, exe, test_step);
 }
 
-/// Steps running the Python test drivers in tests/ against the built server
-fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
+/// Steps running the test drivers in tests/ against the built server: the
+/// Zig ones, which `zig build test-tools` installs (for a server built
+/// elsewhere: `zig-out/bin/stress_edit --zfls EXE`), and the Python ones,
+/// which run fortls; and `zig build bench -- WORKSPACE [--fortls CMD] ...`,
+/// zfls (and fortls when CMD starts it) timed on a large workspace
+/// (tools/bench_workspace.zig; build with -Doptimize=ReleaseSafe). Their
+/// unit tests are part of `test_step`.
+fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
+    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
+    all.dependOn(b.getInstallStep());
+    all.dependOn(test_step);
+
+    const client = b.createModule(.{
+        .root_source_file = b.path("tests/lsp_client.zig"),
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap with the engine and gdb)");
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false };
+    const tools = [_]Tool{
+        .{
+            .name = "gfortran_oracle",
+            .root = "tests/gfortran_oracle.zig",
+            .step = "test-oracle",
+            .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "stress_edit",
+            .root = "tests/stress_edit.zig",
+            .step = "test-stress",
+            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
+            .needs_fortls = true,
+        },
+        .{
+            .name = "dap_windows",
+            .root = "tests/dap_windows.zig",
+            .step = "test-dap",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it)",
+            .needs_fortls = false,
+            .needs_zig = true,
+        },
+        .{
+            .name = "dap_gdb",
+            .root = "tests/dap_gdb.zig",
+            .step = "test-dap-gdb",
+            .desc = "Debug a gfortran program with zfls dap and gdb (skipped without gfortran or gdb 14+)",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "bench_workspace",
+            .root = "tools/bench_workspace.zig",
+            .step = null,
+            .desc = "Time zfls (and fortls, with -- --fortls CMD) on a workspace (-- WORKSPACE)",
+            .needs_fortls = false,
+        },
+    };
+    for (tools) |t| {
+        const tool_mod = b.createModule(.{
+            .root_source_file = b.path(t.root),
+            .target = mod.resolved_target,
+            .optimize = mod.optimize,
+            .imports = &.{
+                .{ .name = "zfls", .module = mod },
+                .{ .name = "lsp_client", .module = client },
+            },
+        });
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tool_mod })).step);
+        const tool = b.addExecutable(.{ .name = t.name, .root_module = tool_mod });
+        if (t.step != null) tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
+        const run = b.addRunArtifact(tool);
+        run.setCwd(b.path(""));
+        run.addArg("--zfls");
+        run.addArtifactArg2(exe, .{});
+        if (t.needs_fortls) if (fortls) |f| run.addArgs(&.{ "--fortls", f });
+        if (t.needs_zig) run.addArgs(&.{ "--zig", b.graph.zig_exe });
+        run.addPassthruArgs();
+        // They report their own results; always rerun them
+        run.has_side_effects = true;
+        b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
+        if (t.step != null) all.dependOn(&run.step);
+    }
 
     const Script = struct { step: []const u8, desc: []const u8, script: []const u8, needs_fortls: bool };
     const scripts = [_]Script{
@@ -112,32 +199,17 @@ fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
             .needs_fortls = true,
         },
         .{
-            .step = "test-oracle",
-            .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
-            .script = "tests/gfortran_oracle.py",
-            .needs_fortls = false,
-        },
-        .{
-            .step = "test-stress",
-            .desc = "Run randomized long editing sessions against zfls (use a Debug build)",
-            .script = "tests/stress_edit.py",
-            .needs_fortls = true,
-        },
-        .{
             .step = "test-differential",
             .desc = "Compare zfls responses with Python fortls over its corpus (slow)",
             .script = "tests/differential.py",
             .needs_fortls = true,
         },
     };
-    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
-    all.dependOn(b.getInstallStep());
-    if (b.top_level_steps.get("test")) |t| all.dependOn(&t.step);
     for (scripts) |s| {
         const run = b.addSystemCommand(&.{python});
         run.addFileArg(b.path(s.script));
         run.addArg("--zfls");
-        run.addArtifactArg(exe);
+        run.addArtifactArg2(exe, .{});
         if (s.needs_fortls) if (fortls) |f| {
             run.addArg("--fortls");
             run.addArg(f);
@@ -150,48 +222,91 @@ fn addScriptTests(b: *std.Build, exe: *std.Build.Step.Compile) void {
     }
 }
 
-/// Directory of Markdown documentation for intrinsic procedures, one
-/// `NAME.md` file per procedure (from the M_intrinsics project).
-const intrinsic_docs_dir = "src/data/intrinsics";
+/// `zig build conda-recipe -- (--release | --local) ARCHIVE OUT_DIR`: the
+/// conda-forge recipe of packaging/conda-forge, for the zfls source archive
+/// ARCHIVE (build/conda_recipe.zig). Paths are relative to the repository.
+/// Returns the generator's unit tests.
+fn addCondaRecipe(b: *std.Build) *std.Build.Step.Compile {
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("build/conda_recipe.zig"),
+        .target = b.graph.host,
+    });
+    const gen = b.addRunArtifact(b.addExecutable(.{ .name = "conda_recipe", .root_module = gen_mod }));
+    gen.setCwd(b.path(""));
+    gen.addDirectoryArg2(b.path("packaging/conda-forge"), .{});
+    gen.addPassthruArgs();
+    // writes outside the cache
+    gen.has_side_effects = true;
+    b.step("conda-recipe", "Write the conda-forge recipe for a zfls source archive (-- --release|--local ARCHIVE OUT_DIR)").dependOn(&gen.step);
+    return b.addTest(.{ .root_module = gen_mod });
+}
 
-/// Embed every `NAME.md` file of `intrinsic_docs_dir` into a generated
-/// module `intrinsic_docs` exposing `docs: []const struct { name, markdown }`.
-fn addIntrinsicDocs(b: *std.Build, mod: *std.Build.Module) void {
-    const io = b.graph.io;
-    // Re-run configuration when files are added, removed or renamed
-    b.dependOnDirectoryContents(b.path(intrinsic_docs_dir));
+/// `zig build STEP -- ARGS...`: the release packaging program
+/// build/NAME.zig, run at the root of the repository with build.zig.zon's
+/// version as its first argument: `source-archive` (build/source_archive.zig)
+/// and `package-vscode` (build/package_vscode.zig). Paths are relative to
+/// the repository. Returns its unit tests.
+fn addReleaseTool(b: *std.Build, name: []const u8, step: []const u8, desc: []const u8) *std.Build.Step.Compile {
+    const tool_mod = b.createModule(.{
+        .root_source_file = b.path(b.fmt("build/{s}.zig", .{name})),
+        .target = b.graph.host,
+        // compressing the source archive takes minutes in Debug
+        .optimize = .safe,
+    });
+    const run = b.addRunArtifact(b.addExecutable(.{ .name = name, .root_module = tool_mod }));
+    run.setCwd(b.path(""));
+    run.addArg(zon.version);
+    run.addPassthruArgs();
+    // writes outside the cache
+    run.has_side_effects = true;
+    b.step(step, desc).dependOn(&run.step);
+    return b.addTest(.{ .root_module = tool_mod });
+}
 
-    const dir_path = b.pathJoin(&.{ b.root.sub_path, intrinsic_docs_dir });
-    var dir = b.root.root_dir.handle.openDir(io, if (dir_path.len == 0) "." else dir_path, .{ .iterate = true }) catch |e|
-        std.debug.panic("cannot open {s}: {s}", .{ intrinsic_docs_dir, @errorName(e) });
-    defer dir.close(io);
-
-    var names: std.ArrayList([]const u8) = .empty;
-    var it = dir.iterate();
-    while (it.next(io) catch |e| std.debug.panic("cannot list {s}: {s}", .{ intrinsic_docs_dir, @errorName(e) })) |entry| {
-        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
-        names.append(b.allocator, b.dupe(entry.name[0 .. entry.name.len - 3])) catch @panic("OOM");
+/// `zig build generated` writes the files of the repository generated from
+/// others (the configuration file schema, the extension's package.nls.json
+/// and l10n bundle: build/generated.zig), and `zig build check-generated`
+/// fails when one is out of date. Returns the generator's unit tests.
+fn addGenerated(b: *std.Build) *std.Build.Step.Compile {
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("build/generated.zig"),
+        .target = b.graph.host,
+        .imports = &.{
+            .{ .name = "settings", .module = b.createModule(.{ .root_source_file = b.path("src/settings.zig") }) },
+            .{ .name = "constants", .module = b.createModule(.{ .root_source_file = b.path("src/constants.zig") }) },
+        },
+    });
+    const exe = b.addExecutable(.{ .name = "generated", .root_module = gen_mod });
+    const steps = .{
+        .{ "generated", "Write the files generated from others (configuration schema, extension strings)", false },
+        .{ "check-generated", "Fail when a file generated from others is out of date", true },
+    };
+    inline for (steps) |s| {
+        const run = b.addRunArtifact(exe);
+        run.setCwd(b.path(""));
+        run.addArg(".");
+        if (s[2]) run.addArg("--check");
+        // reads and writes the repository
+        run.has_side_effects = true;
+        b.step(s[0], s[1]).dependOn(&run.step);
     }
-    std.mem.sort([]const u8, names.items, {}, struct {
-        fn lt(_: void, x: []const u8, y: []const u8) bool {
-            return std.mem.order(u8, x, y) == .lt;
-        }
-    }.lt);
+    return b.addTest(.{ .root_module = gen_mod });
+}
 
-    const wf = b.addWriteFiles();
-    var src: std.ArrayList(u8) = .empty;
-    src.appendSlice(b.allocator,
-        \\//! Generated by build.zig from src/data/intrinsics/*.md
-        \\pub const Doc = struct { name: []const u8, markdown: []const u8 };
-        \\pub const docs = [_]Doc{
-        \\
-    ) catch @panic("OOM");
-    for (names.items) |name| {
-        const file = b.fmt("{s}.md", .{name});
-        _ = wf.addCopyFile(b.path(b.pathJoin(&.{ intrinsic_docs_dir, file })), file);
-        src.print(b.allocator, "    .{{ .name = \"{s}\", .markdown = @embedFile(\"{s}\") }},\n", .{ name, file }) catch @panic("OOM");
-    }
-    src.appendSlice(b.allocator, "};\n") catch @panic("OOM");
-    const index = wf.add("intrinsic_docs.zig", src.items);
-    mod.addImport("intrinsic_docs", b.createModule(.{ .root_source_file = index }));
+/// Generate the module `intrinsic_docs` (`docs: []const struct { name,
+/// markdown }`) from the Markdown pages of M_intrinsics (the vendor/
+/// submodule), one `md3/NAME.md` per intrinsic procedure
+/// (build/intrinsic_docs.zig). Returns
+/// the generator's unit tests.
+fn addIntrinsicDocs(b: *std.Build, mod: *std.Build.Module) *std.Build.Step.Compile {
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("build/intrinsic_docs.zig"),
+        .target = b.graph.host,
+    });
+    const gen = b.addRunArtifact(b.addExecutable(.{ .name = "intrinsic_docs", .root_module = gen_mod }));
+    gen.addDirectoryArg2(b.path("vendor/M_intrinsics/md3"), .{});
+    gen.addDirectoryArg2(b.path("vendor/M_intrinsics/docs"), .{});
+    const out = gen.addOutputDirectoryArg2("intrinsic_docs", .{});
+    mod.addImport("intrinsic_docs", b.createModule(.{ .root_source_file = out.path(b, "intrinsic_docs.zig") }));
+    return b.addTest(.{ .root_module = gen_mod });
 }

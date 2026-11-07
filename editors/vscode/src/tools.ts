@@ -8,6 +8,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+/** Every Fortran extension of package.json, both cases */
+export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+
 /** What `${...}` variables in a setting stand for. */
 export interface VariableContext {
   /** The workspace folder of the file, or the first one */
@@ -94,14 +97,15 @@ function lookupEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
  * The executable to run for `name`.
  *
  * `configured`, when not empty, is the executable itself or a directory that
- * holds it; a relative one is taken relative to `baseDir`. Otherwise `name` is
- * looked up on the PATH. On Windows the PATHEXT extensions (`.exe`, ...) are
- * tried too. Undefined when there is no such file.
+ * holds it; a relative one is taken relative to `baseDir`, and a bare name
+ * not found there is looked up on the PATH. Otherwise `name` is looked up on
+ * the PATH. On Windows the PATHEXT extensions (`.exe`, ...) are tried too.
+ * Undefined when there is no such file.
  */
 export function findExecutable(
   name: string,
-  configured: string,
-  baseDir: string | undefined,
+  configured = "",
+  baseDir?: string,
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string | undefined {
@@ -125,7 +129,11 @@ export function findExecutable(
     if (isDirectory(full)) {
       return tryFile(pathMod.join(full, name));
     }
-    return tryFile(full);
+    const found = tryFile(full);
+    if (found || /[\/]/.test(configured)) {
+      return found;
+    }
+    name = configured;
   }
   if (pathMod.isAbsolute(name)) {
     return tryFile(name);
