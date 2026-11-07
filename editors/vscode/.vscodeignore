@@ -1,5 +1,5 @@
-# Only dist/, bin/, syntaxes/, snippets/, icons/, schemas/, the language
-# configuration, the README and the licenses go into the VSIX
+# Only dist/, bin/, syntaxes/, snippets/, icons/, schemas/, media/, the language
+# configurations, the README and the licenses go into the VSIX
 src/**
 node_modules/**
 tsconfig.json
@@ -9,3 +9,4 @@ package-lock.json
 test/**
 out/**
 .vscode-test/**
+CONTRIBUTING.md

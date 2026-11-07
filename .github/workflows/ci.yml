@@ -42,7 +42,7 @@ env:
   ZIG_VERSION: 0.17.0
   # The fortls commit the parity, differential and stress tests run against
   FORTLS_REPO: fortran-lang/fortls
-  FORTLS_REF: 0392beb64fb93c1e8d35fe5aebfa3e160117651c
+  FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
 
@@ -193,7 +193,12 @@ jobs:
 
   version-check:
     name: Version is unreleased
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    # also on a branch's run started by hand or by a workflow (pull requests
+    # a workflow opens get no pull_request runs; m-intrinsics.yml starts
+    # these for its pull requests to main)
+    if: >-
+      ${{ (github.event_name == 'pull_request' && github.base_ref == 'main')
+      || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -207,6 +212,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          [ -n "$BASE_SHA" ] || BASE_SHA=$(git rev-parse origin/main)
           mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
           needs_version=false
           while IFS= read -r f; do
@@ -249,14 +255,18 @@ jobs:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      # editors/vscode/schemas/fortls.schema.json is generated from
-      # src/settings.zig
-      - name: Configuration file schema is up to date
-        run: python3 tools/gen_config_schema.py --check
-
       - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
+
+      # the configuration file schema (from src/settings.zig), and the
+      # extension's strings in package.nls.json and l10n/bundle.l10n.json,
+      # for translations (build/generated.zig)
+      - name: Generated files are up to date
+        run: zig build check-generated
+
+      - name: Source is formatted (zig fmt)
+        run: zig fmt --check build build.zig build.zig.zon src tests tools
 
       # Downloads (lazy ones too) are retried: a dropped connection to a
       # package host should not fail the run
@@ -298,13 +308,19 @@ jobs:
             done
             cp LICENSE "$pkg/"
             cp readme.md "$pkg/README.md"
+            # x86_64 Windows: what ifx needs to link without Visual Studio
+            # (zfls setup-ifx), next to zfls
+            if [ "$target" = x86_64-windows ]; then
+              zig build ifx-kit --prefix "out/$target"
+              cp -r "out/$target/lib/ifx" "$pkg/ifx-kit"
+            fi
             case "$target" in
               *windows) (cd pkg && zip -qr "../dist/$name.zip" "$name") ;;
               *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
             esac
           done
           # the sources, rstd included, for building from source (conda-forge)
-          bash tools/make_source_archive.sh dist
+          zig build source-archive -- dist
           ls -l dist
 
       - uses: actions/setup-node@v7
@@ -314,9 +330,7 @@ jobs:
       # The VS Code extension, once per VS Code platform with the matching
       # zfls from dist/ in it, and once without one
       - name: Package the VS Code extension
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: bash tools/package_vscode.sh dist "$VERSION"
+        run: zig build package-vscode -- dist
 
       - uses: actions/upload-artifact@v7
         with:
@@ -378,10 +392,15 @@ jobs:
           zig build --fetch=all
 
       # gfortran is the oracle for symbol extraction; the oracle test is
-      # skipped where none is available (Windows on Arm)
-      - name: gfortran (Linux)
+      # skipped where none is available (Windows on Arm). gdb is the
+      # debugger of the test of zfls dap with gdb, run where both are
+      # (Linux, Windows x64)
+      - name: gfortran and gdb (Linux)
         if: runner.os == 'Linux'
-        run: command -v gfortran || (sudo apt-get update && sudo apt-get install -y gfortran)
+        run: |
+          if ! command -v gfortran || ! command -v gdb; then
+            sudo apt-get update && sudo apt-get install -y gfortran gdb
+          fi
 
       - name: gfortran (macOS)
         if: runner.os == 'macOS'
@@ -395,24 +414,25 @@ jobs:
           ln -sf "$gf" "$RUNNER_TEMP/bin/gfortran"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      - name: gfortran (Windows x64)
+      - name: gfortran and gdb (Windows x64)
         if: matrix.target == 'x86_64-windows'
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-gcc-fortran
+          install: mingw-w64-ucrt-x86_64-gcc-fortran mingw-w64-ucrt-x86_64-gdb
           path-type: inherit
 
       # The image has other, older GCC toolchains on PATH: name MSYS2's
-      - name: Put gfortran on PATH (Windows x64)
+      - name: Put gfortran and gdb on PATH (Windows x64)
         if: matrix.target == 'x86_64-windows'
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           echo "$MSYS2_LOCATION\\ucrt64\\bin" >> "$GITHUB_PATH"
           echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
+          echo "GDB=$MSYS2_LOCATION\\ucrt64\\bin\\gdb.exe" >> "$GITHUB_ENV"
 
       - name: Unit tests
         run: zig build test --summary failures
@@ -439,6 +459,40 @@ jobs:
           case "$TARGET" in *windows) exe=zfls.exe ;; esac
           echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
 
+      - name: The ifx kit in the package (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          kit="$(dirname "$ZFLS")/ifx-kit"
+          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib; do
+            if [ ! -s "$kit/$f" ]; then
+              echo "::error::the Windows x64 package has no ifx-kit/$f"
+              exit 1
+            fi
+          done
+          "$ZFLS" setup-ifx --help | head -1
+
+      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig,
+      # tests/gfortran_oracle.zig, tests/stress_edit.zig)
+      - name: Build the test drivers
+        run: zig build test-tools
+
+      # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
+      # (with the runner's Visual Studio libraries): Fortran's need ifx
+      - name: zfls dap, the debugger of Windows's programs (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: zig-out/bin/dap_windows --zfls "$ZFLS"
+
+      # zfls dap with gdb on a gfortran program: the variables as Fortran,
+      # the module variables, a runtime error (GFORTRAN and GDB name
+      # MSYS2's on Windows x64)
+      - name: zfls dap with gdb (Linux, Windows x64)
+        if: runner.os == 'Linux' || matrix.target == 'x86_64-windows'
+        # setup-python's library directory, on the library path for the
+        # fortls tests, would give Ubuntu's gdb another Python than its own
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS"
+
       - name: Version under test
         run: |
           got=$("$ZFLS" --version | tr -d '\r')
@@ -452,13 +506,13 @@ jobs:
         run: python tests/fortls_parity.py --zfls "$ZFLS" --fortls "$FORTLS"
 
       - name: gfortran oracle
-        run: python tests/gfortran_oracle.py --zfls "$ZFLS"
+        run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
 
       - name: Stress sessions
         run: |
-          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --seeds 10 --steps 3000
-          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 200 --seeds 4 --steps 3000 --no-incremental
-          python tests/stress_edit.py --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 300 --seeds 4 --steps 3000 --preprocessor
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --seeds 10 --steps 3000
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 200 --seeds 4 --steps 3000 --no-incremental
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 300 --seeds 4 --steps 3000 --preprocessor
 
       - name: Differential test against Python fortls
         run: python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS"
@@ -533,10 +587,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.sha }}
+          submodules: recursive
 
-      - uses: actions/setup-python@v7
+      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          version: ${{ env.ZIG_VERSION }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -556,10 +611,16 @@ jobs:
           echo "$dir" >> "$GITHUB_PATH"
 
       # The conda-forge recipe, built from this run's source archive with
-      # conda-forge's zig; its tests check the installed zfls
+      # conda-forge's zig; its tests check the installed zfls. Writing it
+      # downloads the packages it pins (retried, like the fetches)
       - name: Build and test the conda package
         run: |
-          python packaging/conda-forge/local_recipe.py "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/recipe"
+          for wait in 15 30 60 0; do
+            zig build conda-recipe -- --local "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/recipe" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::writing the recipe failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
           rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
 
   release:
@@ -584,6 +645,7 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
+          submodules: recursive
 
       - uses: actions/download-artifact@v8
         with:
@@ -591,6 +653,10 @@ jobs:
           path: dist
           run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
+
+      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+        with:
+          version: ${{ env.ZIG_VERSION }}
 
       - name: Check the archives
         run: |
@@ -611,6 +677,18 @@ jobs:
               exit 1
             fi
           done
+
+      # The conda-forge recipe of this release, published with it (the
+      # feedstock job below proposes it to conda-forge)
+      - name: Write the conda-forge recipe
+        run: |
+          for wait in 15 30 60 0; do
+            zig build conda-recipe -- --release "dist/zfls-v$VERSION-src.tar.gz" "$RUNNER_TEMP/conda-recipe" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::writing the recipe failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          cp "$RUNNER_TEMP/conda-recipe/recipe.yaml" "dist/zfls-v$VERSION-conda-recipe.yaml"
 
       - name: Tag the tested commit
         run: |
@@ -669,9 +747,29 @@ jobs:
             git fetch -q origin dev
             git checkout -q -B dev origin/dev
             if ! git merge -q -m "Merge v$VERSION into dev [skip ci]" "$SHA"; then
-              git merge --abort
-              echo "::error::v$VERSION conflicts with dev; merge main into dev by hand and set the next version"
-              exit 1
+              # A patch release from main (m-intrinsics.yml) against a
+              # version set on dev by hand: when build.zig.zon's .version
+              # is all that conflicts, dev keeps its own
+              if [ "$(git diff --name-only --diff-filter=U)" = build.zig.zon ]; then
+                git show :1:build.zig.zon > "$RUNNER_TEMP/base.zon"
+                git show :2:build.zig.zon > "$RUNNER_TEMP/dev.zon"
+                git show :3:build.zig.zon > "$RUNNER_TEMP/release.zon"
+                # (exits with the number of conflicts)
+                git merge-file -p "$RUNNER_TEMP/dev.zon" "$RUNNER_TEMP/base.zon" "$RUNNER_TEMP/release.zon" \
+                    > "$RUNNER_TEMP/marked.zon" || true
+                if awk '/^<<<<<<< /{c=1;next} /^=======$/{next} /^>>>>>>> /{c=0;next} c && !/^\s*\.version = /{bad=1} END{exit bad}' \
+                    "$RUNNER_TEMP/marked.zon"; then
+                  git merge-file --ours "$RUNNER_TEMP/dev.zon" "$RUNNER_TEMP/base.zon" "$RUNNER_TEMP/release.zon"
+                  cp "$RUNNER_TEMP/dev.zon" build.zig.zon
+                  git add build.zig.zon
+                  git commit -q --no-edit
+                fi
+              fi
+              if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+                git merge --abort
+                echo "::error::v$VERSION conflicts with dev; merge main into dev by hand and set the next version"
+                exit 1
+              fi
             fi
             version=$(sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon)
             if tagged "$version"; then
@@ -710,3 +808,82 @@ jobs:
           for wf in open-vsx.yml marketplace.yml; do
             gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$VERSION"
           done
+
+  # Proposes the release's conda-forge recipe (zfls-vX.Y.Z-conda-recipe.yaml)
+  # to conda-forge's zfls feedstock, as a pull request from FORK.
+  #
+  # OFF until the feedstock exists (conda-forge/staged-recipes merged the
+  # recipe) and the secret CONDA_FORGE_TOKEN holds a token that may push to
+  # FORK and open pull requests on FEEDSTOCK; then remove `false &&` from
+  # `if:`, and turn off the version updates of conda-forge's bot in the
+  # feedstock's conda-forge.yml.
+  #
+  # When the feedstock's recipe is not the one of the previous release (a
+  # change made in the feedstock), it stops: carry the change over into
+  # packaging/conda-forge, then run the job again.
+  conda-forge:
+    name: Propose v${{ needs.version.outputs.version }} to conda-forge
+    needs: [version, release]
+    if: ${{ false && !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      FEEDSTOCK: conda-forge/zfls-feedstock
+      FORK: emanspeaks/zfls-feedstock
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+          path: zfls
+
+      - name: Fetch this release's recipe and the previous one's
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -p "zfls-v$VERSION-conda-recipe.yaml" -D new
+          prev=$(git -C zfls tag --list 'v[0-9]*' --sort=-version:refname | grep -A1 -x "v$VERSION" | sed -n 2p)
+          echo "previous release: ${prev:-none}"
+          echo "PREV=$prev" >> "$GITHUB_ENV"
+          if [ -n "$prev" ]; then
+            gh release download "$prev" -R "$GITHUB_REPOSITORY" -p "zfls-${prev}-conda-recipe.yaml" -D old || true
+          fi
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.CONDA_FORGE_TOKEN }}
+        run: |
+          git clone -q "https://x-access-token:$GH_TOKEN@github.com/$FORK.git" feedstock
+          cd feedstock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/$FEEDSTOCK.git"
+          git fetch -q upstream main
+          git checkout -q -B "v$VERSION" upstream/main
+
+          # the feedstock's own changes (its build number aside) are not lost
+          old=$(ls ../old/*.yaml 2>/dev/null | head -1)
+          if [ -z "$old" ]; then
+            echo "::warning::the previous release has no recipe to compare the feedstock's with"
+          else
+            changed=false
+            diff -u <(grep -v '^  number: ' "$old") <(grep -v '^  number: ' recipe/recipe.yaml) || changed=true
+            for f in build.sh build.bat; do
+              diff -u <(git -C ../zfls show "$PREV:packaging/conda-forge/$f") "recipe/$f" || changed=true
+            done
+            if [ "$changed" = true ]; then
+              echo "::error::$FEEDSTOCK changed its recipe since $PREV (above); carry the change over into packaging/conda-forge, then run this job again"
+              exit 1
+            fi
+          fi
+
+          cp "../new/zfls-v$VERSION-conda-recipe.yaml" recipe/recipe.yaml
+          cp ../zfls/packaging/conda-forge/build.sh ../zfls/packaging/conda-forge/build.bat recipe/
+          git add recipe
+          git commit -qm "zfls v$VERSION"
+          git push -q --force origin "v$VERSION"
+          gh pr create -R "$FEEDSTOCK" --base main --head "${FORK%%/*}:v$VERSION" \
+            --title "zfls v$VERSION" \
+            --body "The recipe of [zfls v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION), written by its release (zig build conda-recipe)."

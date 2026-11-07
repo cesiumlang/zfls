@@ -96,16 +96,16 @@ const seeds = [_][]const u8{
 
 /// Fragments that make the mutated text look like Fortran
 const vocabulary = [_][]const u8{
-    "module ",         "end module ",       "program ",       "end program ",    "subroutine ",   "end subroutine ",
-    "function ",       "end function ",     "type ",          "end type ",       "contains\n",    "interface\n",
-    "end interface\n", "use ",              "only: ",         "implicit none\n", "integer ",      "real(8) ",
-    "character(len=*) ", "class(",          "procedure ",     "::",              "=>",            "(",
-    ")",               ",",                 "\n",             "&\n",             "!> doc\n",      "! comment\n",
-    "#if ",            "#endif\n",          "#define X 1\n", "#include \"a\"\n", "associate (a => b)\n", "end associate\n",
-    "block\n",         "end block\n",       "select type (",  "end select\n",    "do 10 i=1,2\n", "10 continue\n",
-    "x",               "foo",               "%",              "'",               "\"",            "[1, 2]",
-    "result(r)",       "intent(in) ",       "dimension(:) ",  "pointer ",        "abstract ",     "enum\n",
-    "end enum\n",      "where (x > 0)\n",   "end where\n",    "\t",              "\r\n",          "\xc3\xa9",
+    "module ",           "end module ",     "program ",      "end program ",     "subroutine ",          "end subroutine ",
+    "function ",         "end function ",   "type ",         "end type ",        "contains\n",           "interface\n",
+    "end interface\n",   "use ",            "only: ",        "implicit none\n",  "integer ",             "real(8) ",
+    "character(len=*) ", "class(",          "procedure ",    "::",               "=>",                   "(",
+    ")",                 ",",               "\n",            "&\n",              "!> doc\n",             "! comment\n",
+    "#if ",              "#endif\n",        "#define X 1\n", "#include \"a\"\n", "associate (a => b)\n", "end associate\n",
+    "block\n",           "end block\n",     "select type (", "end select\n",     "do 10 i=1,2\n",        "10 continue\n",
+    "x",                 "foo",             "%",             "'",                "\"",                   "[1, 2]",
+    "result(r)",         "intent(in) ",     "dimension(:) ", "pointer ",         "abstract ",            "enum\n",
+    "end enum\n",        "where (x > 0)\n", "end where\n",   "\t",               "\r\n",                 "\xc3\xa9",
 };
 
 fn mutate(rng: std.Random, a: std.mem.Allocator, text: []const u8) ![]const u8 {
@@ -162,11 +162,16 @@ fn tolerate(r: anytype) !void {
 }
 
 fn exercise(rng: std.Random, text: []const u8, name: []const u8) !void {
-    const w = try h.Workspace.init(&.{.{ .name = name, .text = "" }}, .{ .settings = .{ .incremental_sync = true } });
+    const w = try h.Workspace.init(&.{.{ .name = name, .text = "" }}, .{
+        .settings = .{ .incremental_sync = true },
+        .hierarchical_symbols = rng.boolean(),
+    });
     defer w.deinit();
     try tolerate(w.replaceText(name, text));
     try tolerate(w.diagnostics(name));
     try tolerate(w.documentSymbols(name));
+    try tolerate(w.foldingRanges(name));
+    try tolerate(w.semanticTokens(name));
     try tolerate(w.workspaceSymbols("a"));
     var n_lines: usize = 1;
     for (text) |c| n_lines += @intFromBool(c == '\n');

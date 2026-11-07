@@ -42,7 +42,7 @@ test "#406 a real duplicate is still reported, an EXTERNAL before the type is no
     defer w.deinit();
     const ds = try w.diagnostics("t.f90");
     try h.expect(ds.len == 1, "expected the one duplicate, got {d} diagnostics", .{ds.len});
-    try h.expect(ds[0].line == 7 and std.mem.indexOf(u8, ds[0].message, "declared twice") != null, "unexpected: line {d}: {s}", .{ ds[0].line + 1, ds[0].message });
+    try h.expect(ds[0].line == 7 and std.mem.find(u8, ds[0].message, "declared twice") != null, "unexpected: line {d}: {s}", .{ ds[0].line + 1, ds[0].message });
 }
 
 test "#172 more coarray declarations (control)" {
@@ -153,8 +153,11 @@ test "#568 USE ONLY still limits what is visible (control)" {
         },
     }, .{});
     defer w.deinit();
-    const ds = try w.diagnostics("user.f90");
-    try h.expect(ds.len == 1 and ds[0].line == 5, "expected only b_t (line 6) to be unknown, got {d} diagnostics", .{ds.len});
+    var ds: std.ArrayList(h.Diagnostic) = .empty;
+    defer ds.deinit(std.testing.allocator);
+    // the variables are not used: those hints are not what this is about
+    for (try w.diagnostics("user.f90")) |d| if (!std.mem.eql(u8, d.code, "unused-name")) try ds.append(std.testing.allocator, d);
+    try h.expect(ds.items.len == 1 and ds.items[0].line == 5, "expected only b_t (line 6) to be unknown, got {d} diagnostics", .{ds.items.len});
 }
 
 test "#519 IMPORT in an abstract interface, in each of its forms" {
@@ -427,7 +430,7 @@ test "a separate module procedure interface still sees its module (control for h
     defer w.deinit();
     const diags = try w.diagnostics("t.f90");
     var masks = false;
-    for (diags) |d| if (std.mem.indexOf(u8, d.message, "masks") != null) {
+    for (diags) |d| if (std.mem.find(u8, d.message, "masks") != null) {
         masks = true;
     };
     try h.expect(masks, "no masking warning in a module procedure interface", .{});
@@ -450,4 +453,269 @@ test "hansec #229 DO and ASSOCIATE opened and closed on single lines with ;" {
     }}, .{});
     defer w.deinit();
     try h.checkIn(.hansec, 229, .fixed, w.expectNoDiagnostics("t.f90"));
+}
+
+const masking =
+    \\module m
+    \\  integer :: n
+    \\contains
+    \\  subroutine s()
+    \\    integer :: n
+    \\    integer :: k
+    \\    integer :: k
+    \\  end subroutine s
+    \\end module m
+    \\
+;
+
+fn hasCode(diags: []const h.Diagnostic, code: []const u8) bool {
+    for (diags) |d| if (std.mem.eql(u8, d.code, code)) return true;
+    return false;
+}
+
+fn severityOf(diags: []const h.Diagnostic, code: []const u8) i64 {
+    for (diags) |d| if (std.mem.eql(u8, d.code, code)) return d.severity;
+    return 0;
+}
+
+fn expectSeverities(w: *h.Workspace) !void {
+    const diags = try w.diagnostics("m.f90");
+    try h.expect(!hasCode(diags, "masks-parent"), "masks-parent is reported though it is off", .{});
+    try h.expect(severityOf(diags, "declared-twice") == 2, "declared-twice has severity {d}, not 2 (warning)", .{severityOf(diags, "declared-twice")});
+}
+
+test "#438 diagnostics have codes, which diagnostic_severity can turn off or change" {
+    {
+        // the codes, by default
+        const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = masking }}, .{});
+        defer w.deinit();
+        const diags = try w.diagnostics("m.f90");
+        try std.testing.expect(hasCode(diags, "masks-parent"));
+        try std.testing.expectEqual(@as(i64, 1), severityOf(diags, "declared-twice"));
+    }
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = masking }}, .{ .diagnostic_severity = &.{
+        .{ .code = "masks-parent", .level = "off" },
+        .{ .code = "declared-twice", .level = "warning" },
+    } });
+    defer w.deinit();
+    try h.check(438, .fixed, expectSeverities(w));
+}
+
+fn expectSuppressed(w: *h.Workspace) !void {
+    const diags = try w.diagnostics("m.f90");
+    try h.expect(!hasCode(diags, "masks-parent"), "the comment does not hide masks-parent", .{});
+    try h.expect(hasCode(diags, "declared-twice"), "the comment hides more than masks-parent", .{});
+}
+
+test "Modern Fortran #981 a comment hides a masks-parent warning" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text =
+        \\module m
+        \\  integer :: n
+        \\contains
+        \\  subroutine s()
+        \\    integer :: n ! zfls: disable=masks-parent
+        \\    integer :: k
+        \\    integer :: k
+        \\  end subroutine s
+        \\end module m
+        \\
+    }}, .{});
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 981, .fixed, expectSuppressed(w));
+}
+
+test "disable-next-line and disable-file comments" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text =
+        \\! zfls: disable-file=declared-twice
+        \\module m
+        \\  integer :: n
+        \\contains
+        \\  subroutine s()
+        \\    ! zfls: disable-next-line
+        \\    integer :: n
+        \\    integer :: k
+        \\    integer :: k
+        \\  end subroutine s
+        \\end module m
+        \\
+    }}, .{});
+    defer w.deinit();
+    const diags = try w.diagnostics("m.f90");
+    try std.testing.expect(!hasCode(diags, "masks-parent"));
+    try std.testing.expect(!hasCode(diags, "declared-twice"));
+}
+
+fn expectNoMissingModule(w: *h.Workspace) !void {
+    const diags = try w.diagnostics("p.f90");
+    for (diags) |d| try h.expect(!std.mem.eql(u8, d.code, "module-not-found") or std.mem.find(u8, d.message, "mine") != null, "{s}", .{d.message});
+    try h.expect(hasCode(diags, "module-not-found"), "a module of the project that is missing is not reported", .{});
+}
+
+test "Modern Fortran #1306 external_modules names the modules of libraries such as MPI" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text =
+        \\program p
+        \\  use mpi
+        \\  use petsc_sys
+        \\  use mine
+        \\  implicit none
+        \\end program p
+        \\
+    }}, .{ .external_modules = &.{ "MPI", "petsc*" } });
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 1306, .fixed, expectNoMissingModule(w));
+}
+
+const undeclared = [_]h.File{
+    .{ .name = "consts.f90", .text =
+    \\module consts
+    \\  implicit none
+    \\  integer, parameter :: dp = kind(1.d0)
+    \\  type :: pt
+    \\    real(dp) :: x
+    \\  end type pt
+    \\end module consts
+    \\
+    },
+    .{ .name = "p.f90", .text =
+    \\program p
+    \\  use consts
+    \\  implicit none
+    \\  integer :: i, n
+    \\  real(dp) :: total
+    \\  type(pt) :: a
+    \\  n = 3
+    \\  total = 0.0_dp
+    \\  outer: do i = 1, n
+    \\    if (i > 2) exit outer
+    \\    if (i == 1) print *, sqrt(real(i, kind=dp))
+    \\    total = total + a%x + 1.d0
+    \\    call external_sub(i)
+    \\    kount = kount + 1
+    \\  end do outer
+    \\  do while (n > 0)
+    \\    n = n - 1
+    \\  end do
+    \\  open(newunit=n, &
+    \\       file='x.txt', status='old')
+    \\  associate (y => total)
+    \\    print *, y
+    \\  end associate
+    \\  print *, undefined_value
+    \\end program p
+    \\
+    },
+    .{ .name = "q.f90", .text =
+    \\program q
+    \\  use mpi
+    \\  implicit none
+    \\  call mpi_init(ierr)
+    \\end program q
+    \\
+    },
+    .{ .name = "r.f90", .text =
+    \\program r
+    \\  k = 1
+    \\end program r
+    \\
+    },
+};
+
+fn expectUndeclared(w: *h.Workspace) !void {
+    var found: std.ArrayList([]const u8) = .empty;
+    for (try w.diagnostics("p.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "undeclared-name")) try found.append(std.testing.allocator, d.message);
+    }
+    defer found.deinit(std.testing.allocator);
+    // kount and undefined_value only: not keywords, intrinsics, keyword
+    // arguments (also on a continuation line), components, construct names,
+    // a subroutine called, kinds or exponents of literals, associate names
+    try h.expect(found.items.len == 3, "undeclared: {any}", .{found.items});
+    try h.expect(std.mem.find(u8, found.items[0], "\"kount\"") != null, "{s}", .{found.items[0]});
+    try h.expect(std.mem.find(u8, found.items[2], "\"undefined_value\"") != null, "{s}", .{found.items[2]});
+    // not where a module is unknown, nor without IMPLICIT NONE
+    for (try w.diagnostics("q.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "q.f90: {s}", .{d.message});
+    for (try w.diagnostics("r.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "r.f90: {s}", .{d.message});
+    // the quick fix declares it after the last declaration
+    const line = w.pos("p.f90", "kount = kount", 0, 0).line;
+    const decl = w.pos("p.f90", "type(pt) :: a", 0, 0).line;
+    for (try w.codeActions("p.f90", line)) |act| {
+        if (std.mem.eql(u8, act.title, "Declare kount as integer")) {
+            try h.expect(std.mem.eql(u8, act.new_text, "  integer :: kount\n") and act.line == decl + 1, "declares with {s} before line {d}", .{ act.new_text, act.line });
+            return;
+        }
+    }
+    return h.unmet("no quick fix declaring kount", .{});
+}
+
+test "hansec #129 names that are not declared under IMPLICIT NONE" {
+    const w = try h.Workspace.init(&undeclared, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 129, .fixed, expectUndeclared(w));
+}
+
+const unused_names = [_]h.File{
+    .{ .name = "consts.f90", .text =
+    \\module consts
+    \\  implicit none
+    \\  integer, parameter :: sp = kind(1.0), dp = kind(1.d0)
+    \\  integer :: shared_count
+    \\end module consts
+    \\
+    },
+    .{ .name = "u.F90", .text =
+    \\module work
+    \\  implicit none
+    \\  integer :: module_level
+    \\contains
+    \\  real function area(r) result(res)
+    \\    use consts, only: sp, dp
+    \\    real(dp), intent(in) :: r
+    \\    real :: scratch
+    \\    integer :: used_inside, only_in_ifdef
+    \\    integer :: n = 2, m
+    \\    m = n * 2
+    \\    used_inside = 1
+    \\#ifdef DEBUG
+    \\    only_in_ifdef = 1
+    \\#endif
+    \\    res = r * r * helper()
+    \\  contains
+    \\    real function helper()
+    \\      helper = real(used_inside)
+    \\    end function helper
+    \\  end function area
+    \\end module work
+    \\
+    },
+};
+
+fn expectUnused(w: *h.Workspace) !void {
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(std.testing.allocator);
+    for (try w.diagnostics("u.F90")) |d| {
+        if (!std.mem.eql(u8, d.code, "unused-name")) continue;
+        try h.expect(d.severity == 4, "severity {d}", .{d.severity});
+        try names.append(std.testing.allocator, d.message);
+    }
+    // sp (USE ONLY) and scratch only: not the argument, the result, a name
+    // a contained procedure uses, one in an inactive #ifdef branch, n used
+    // in m's declaration, or the module's names
+    try h.expect(names.items.len == 2, "unused: {any}", .{names.items});
+    try h.expect(std.mem.find(u8, names.items[0], "\"scratch\"") != null or std.mem.find(u8, names.items[1], "\"scratch\"") != null, "{any}", .{names.items});
+    try h.expect(std.mem.find(u8, names.items[0], "\"sp\"") != null or std.mem.find(u8, names.items[1], "\"sp\"") != null, "{any}", .{names.items});
+    // the quick fix removes a declaration of that name only
+    const line = w.pos("u.F90", "real :: scratch", 0, 0).line;
+    for (try w.codeActions("u.F90", line)) |act| {
+        if (std.mem.eql(u8, act.title, "Remove unused scratch")) {
+            try h.expect(act.line == line and act.new_text.len == 0, "removes line {d}", .{act.line});
+            return;
+        }
+    }
+    return h.unmet("no quick fix removing scratch", .{});
+}
+
+test "unused local variables and USE ONLY names are shown faded, with a quick fix" {
+    const w = try h.Workspace.init(&unused_names, .{});
+    defer w.deinit();
+    try expectUnused(w);
 }

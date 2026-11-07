@@ -1,16 +1,15 @@
 # Publishes a release's VS Code extension packages to the Visual Studio
 # Marketplace.
 #
-# No stored token: it signs in with this workflow's OIDC token as the
-# Microsoft Entra managed identity in the AZURE_* repository variables, a
-# member of the `cesiumlang` publisher (--azure-credential); the identity's
-# federated credential trusts this repository's main branch, so run it on
-# main. (No personal access token: the Marketplace retires them on
-# 2026-12-01. vsce's own --oidc is left out too: the Marketplace rejected its
-# token exchange with a 400 in October 2026.) The CI workflow starts it after
-# publishing a release; it can also be run by hand (Actions > Publish to the
-# Marketplace > Run workflow) to publish, or finish publishing, any released
-# version.
+# No stored token: Marketplace Trusted Publishing. The `cesiumlang`
+# publisher has a Trusted Publishing policy for this repository and this
+# workflow file (marketplace.yml), so `vsce publish --oidc` exchanges the
+# workflow's GitHub OIDC token for a short-lived Marketplace credential.
+# Should that be refused, it falls back, with a warning, to the Microsoft
+# Entra managed identity in the AZURE_* repository variables, a member of the
+# publisher (--azure-credential). The CI workflow starts it after publishing a
+# release; it can also be run by hand (Actions > Publish to the Marketplace >
+# Run workflow) to publish, or finish publishing, any released version.
 name: Publish to the Marketplace
 
 on:
@@ -31,7 +30,8 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
-  VSCE_VERSION: 4.0.0
+  # 4.1.0: the first release with --oidc
+  VSCE_VERSION: 4.1.0
 
 jobs:
   publish:
@@ -55,21 +55,38 @@ jobs:
             --dir dist --pattern "zfls-vscode-v$VERSION-*.vsix"
           ls dist
 
+      # --skip-duplicate: a version already published counts as published,
+      # so a re-run completes what a failed one left out
+      - name: Publish (Trusted Publishing)
+        id: oidc
+        run: |
+          vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
+          : > failed.txt
+          for vsix in dist/*.vsix; do
+            vsce publish --oidc --skip-duplicate --packagePath "$vsix" || echo "$vsix" >> failed.txt
+          done
+          if [ -s failed.txt ]; then
+            echo "::warning::Trusted Publishing failed for $(wc -l < failed.txt) package(s); trying the managed identity"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # the fallback: the managed identity (its federated credential trusts
+      # this repository's main branch)
       - name: Sign in to Azure as the Marketplace publishing identity
+        if: steps.oidc.outputs.fallback == 'true'
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # --skip-duplicate: a version already published counts as published,
-      # so a re-run completes what a failed one left out
-      - name: Publish
+      - name: Publish (managed identity)
+        if: steps.oidc.outputs.fallback == 'true'
         run: |
           vsce() { npx --yes "@vscode/vsce@$VSCE_VERSION" "$@"; }
           failed=0
-          for vsix in dist/*.vsix; do
+          while read -r vsix; do
             vsce publish --azure-credential --skip-duplicate --packagePath "$vsix" \
               || { echo "::error::publishing $vsix failed"; failed=1; }
-          done
+          done < failed.txt
           exit "$failed"

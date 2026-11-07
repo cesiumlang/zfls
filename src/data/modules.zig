@@ -3,7 +3,11 @@
 const schema = @import("schema.zig");
 const Module = schema.Module;
 
-pub const all = [_]Module{
+/// The intrinsic modules of the standard and of OpenMP and OpenACC, and
+/// stubs of the MPI modules
+pub const all = standard ++ @import("mpi.zig").modules;
+
+const standard = [_]Module{
     .{ .name = "omp_lib", .members = &.{
         .{ .name = "openmp_version", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "omp_alloctrait", .kind = .type },

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "source.fortran.doc-code.injection",
+  "injectionSelector": "L:source.fortran.free -string -comment",
+  "patterns": [
+    {
+      "include": "#doc-code-block"
+    }
+  ],
+  "repository": {
+    "doc-code-block": {
+      "comment": "A fenced Fortran code block in documentation comments (!> ```fortran ... !> ```): the rest of each of its lines is highlighted as Fortran. A while rule, so that a construct begun in the block (subroutine, do) ends with it. The language is needed, or the closing fence would open a block",
+      "begin": "^\\s*(![>!<])\\s*(```|~~~)\\s*([Ff]ortran\\w*|[Ff]\\d\\d)\\s*$",
+      "beginCaptures": {
+        "0": { "name": "comment.line.fortran" },
+        "1": { "name": "punctuation.definition.comment.fortran" },
+        "2": { "name": "punctuation.definition.markdown" },
+        "3": { "name": "fenced_code.block.language" }
+      },
+      "while": "^\\s*(![>!<])(?!\\s*(?:```|~~~)\\s*$)",
+      "whileCaptures": {
+        "1": { "name": "comment.line.fortran punctuation.definition.comment.fortran" }
+      },
+      "contentName": "meta.embedded.block.fortran",
+      "patterns": [
+        {
+          "include": "source.fortran.free"
+        }
+      ]
+    }
+  }
+}

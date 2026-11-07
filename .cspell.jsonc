@@ -24,6 +24,7 @@
     "win32",
     "scientific-terms-us",
     "zig",
+    "fortran",
     "project-words"
   ],
   "allowCompoundWords": true,

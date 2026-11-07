@@ -97,7 +97,7 @@ test "#237 a Doxygen comment above an expression is not the documentation of a l
 
 fn notContains(w: *h.Workspace, name: []const u8, p: h.Pos, fragment: []const u8) !void {
     const text = (try w.hover(name, p)) orelse return;
-    if (std.mem.indexOf(u8, text, fragment) != null) return h.unmet("hover contains '{s}': {s}", .{ fragment, text });
+    if (std.mem.find(u8, text, fragment) != null) return h.unmet("hover contains '{s}': {s}", .{ fragment, text });
 }
 
 test "#237 documentation still attaches to a variable and to a procedure (control)" {
@@ -293,7 +293,7 @@ test "#108 an ASSOCIATE name bound to an element or a 2-D section (control)" {
     }}, .{});
     defer w.deinit();
     const elem = (try w.hover("t.f90", w.pos("t.f90", "ELEM = PLANE", 0, 1))) orelse return h.check(108, .fixed, h.unmet("no hover for ELEM", .{}));
-    try h.expect(std.mem.indexOf(u8, elem, "DIMENSION") == null, "an element is a scalar: {s}", .{elem});
+    try h.expect(std.mem.find(u8, elem, "DIMENSION") == null, "an element is a scalar: {s}", .{elem});
     try w.expectHoverContains("t.f90", w.pos("t.f90", "PLANE(1,1)", 0, 1), "DIMENSION(:,:)");
     try w.expectHoverContains("t.f90", w.pos("t.f90", "WHOLE(1,1)", 0, 1), "DIMENSION(5,5)");
 }
@@ -477,6 +477,97 @@ test "hansec #168 references to a separate module procedure include its implemen
     try h.checkIn(.hansec, 168, .fixed, outcome);
 }
 
+const separate_procedures = [_]h.File{
+    .{ .name = "shapes.f90", .text =
+    \\module shapes
+    \\  implicit none
+    \\  interface
+    \\    module function area(r) result(a)
+    \\      !! Area (interface)
+    \\      real, intent(in) :: r
+    \\      real :: a
+    \\    end function area
+    \\    module subroutine report(x)
+    \\      !! Report (interface)
+    \\      integer, intent(in) :: x
+    \\    end subroutine report
+    \\    module subroutine reset()
+    \\      !! Reset (interface)
+    \\    end subroutine reset
+    \\  end interface
+    \\end module shapes
+    \\
+    },
+    .{ .name = "shapes_impl.f90", .text =
+    \\submodule (shapes) shapes_impl
+    \\contains
+    \\  module function area(r) result(a)
+    \\    !! Area of a circle, computed in the submodule
+    \\    real, intent(in) :: r
+    \\    real :: a
+    \\    a = 3.14159 * r * r
+    \\  end function area
+    \\  module procedure report
+    \\    !! Prints x, from the submodule
+    \\    print *, x
+    \\  end procedure report
+    \\  module subroutine reset()
+    \\  end subroutine reset
+    \\end submodule shapes_impl
+    \\
+    },
+    .{ .name = "main.f90", .text =
+    \\program main
+    \\  use shapes
+    \\  print *, area(1.0)
+    \\  call report(1)
+    \\  call reset()
+    \\end program main
+    \\
+    },
+};
+
+test "separate module procedures: hover and definition stay on the interface by default (fortls)" {
+    const w = try h.Workspace.init(&separate_procedures, .{});
+    defer w.deinit();
+    const d = (try w.definition("main.f90", w.pos("main.f90", "area(1.0)", 0, 1))).?;
+    try std.testing.expect(std.mem.endsWith(u8, d.uri, "/shapes.f90"));
+    try w.expectHoverContains("main.f90", w.pos("main.f90", "area(1.0)", 0, 1), "Area (interface)");
+}
+
+fn expectImplementation(w: *h.Workspace, docs: bool) !void {
+    for ([_][]const u8{ "area", "report", "reset" }) |name| {
+        const call = w.pos("main.f90", name, 0, 1);
+        const d = (try w.definition("main.f90", call)) orelse return h.unmet("no definition of {s}", .{name});
+        const body = w.pos("shapes_impl.f90", name, 0, 0);
+        try h.expect(std.mem.endsWith(u8, d.uri, "/shapes_impl.f90") and d.line == body.line, "definition of {s}: {s}:{d}", .{ name, d.uri, d.line });
+        if (!docs) continue;
+        const hv = (try w.hover("main.f90", call)) orelse return h.unmet("no hover on {s}", .{name});
+        const want: []const u8 = if (std.mem.eql(u8, name, "area"))
+            "computed in the submodule"
+        else if (std.mem.eql(u8, name, "report"))
+            "Prints x, from the submodule"
+        else
+            "Reset (interface)"; // the body has no documentation
+        try h.expect(std.mem.find(u8, hv, want) != null, "hover on {s} lacks {s}: {s}", .{ name, want, hv });
+    }
+    // the signature of a MODULE PROCEDURE body comes from its interface
+    const hv = (try w.hover("main.f90", w.pos("main.f90", "report", 0, 1))).?;
+    try h.expect(std.mem.find(u8, hv, "report(x)") != null, "hover on report: {s}", .{hv});
+}
+
+test "#501 prefer_implementation: hover shows the documentation of the body in the submodule" {
+    const w = try h.Workspace.init(&separate_procedures, .{ .settings = .{ .prefer_implementation = true } });
+    defer w.deinit();
+    try h.check(501, .fixed, expectImplementation(w, true));
+}
+
+test "#502 prefer_implementation: go to definition goes to the body in the submodule" {
+    const w = try h.Workspace.init(&separate_procedures, .{ .settings = .{ .prefer_implementation = true } });
+    defer w.deinit();
+    try h.check(502, .fixed, expectImplementation(w, false));
+}
+
 const rename_fixture = [_]h.File{.{
     .name = "t.f90",
     .text =
@@ -537,9 +628,9 @@ test "#534 fixed-form documentation comments do not keep the indentation of the 
         // `!>` documents the next object, PARAM1; its continuation lines are
         // not indented by the six columns of fixed form (a Markdown code block)
         const param = (try w.hover("t.f", w.pos("t.f", "PARAM1", 1, 1))) orelse break :blk h.unmet("no hover on PARAM1", .{});
-        const docs = param[(std.mem.indexOf(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
-        if (std.mem.indexOf(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
-        break :blk h.expect(std.mem.indexOf(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
+        const docs = param[(std.mem.find(u8, param, "-----") orelse break :blk h.unmet("no documentation: {s}", .{param}))..];
+        if (std.mem.find(u8, docs, "\n ") != null) break :blk h.unmet("an indented line in the documentation: {s}", .{docs});
+        break :blk h.expect(std.mem.find(u8, docs, "DEMONSTRATE\nTHE BROKEN PARSING OF\nDOCSTRINGS FOR FIXED FORMAT CODE") != null, "hover of PARAM1: {s}", .{param});
     };
     try h.check(534, .fixed, outcome);
 }
@@ -664,9 +755,66 @@ test "hansec #203 preprocessor directives inside a continued declaration" {
             defer w.deinit();
             const text = (try w.hover("t.F90", w.pos("t.F90", "print *, v", 0, 9))) orelse
                 break :blk h.unmet("no hover on v (X defined: {})", .{c.defs.len > 0});
-            if (std.mem.indexOf(u8, text, c.want) == null or std.mem.indexOf(u8, text, c.not) != null)
+            if (std.mem.find(u8, text, c.want) == null or std.mem.find(u8, text, c.not) != null)
                 break :blk h.unmet("hover of v (X defined: {}): {s}", .{ c.defs.len > 0, text });
         }
     };
     try h.checkIn(.hansec, 203, .fixed, outcome);
+}
+
+const integrate =
+    \\MODULE myMOD
+    \\  IMPLICIT NONE
+    \\  PRIVATE
+    \\  PUBLIC :: integrate
+    \\  INTERFACE integrate
+    \\    MODULE PROCEDURE int_2D
+    \\    MODULE PROCEDURE int_3D
+    \\  END INTERFACE integrate
+    \\CONTAINS
+    \\  SUBROUTINE int_2D(x, y)
+    \\    REAL, INTENT(IN) :: x, y
+    \\  END SUBROUTINE int_2D
+    \\  SUBROUTINE int_3D(x, y, z)
+    \\    REAL, INTENT(IN) :: x, y, z
+    \\  END SUBROUTINE int_3D
+    \\END MODULE myMOD
+    \\PROGRAM main
+    \\  USE myMOD
+    \\  CALL integrate(1.0, 2.0)
+    \\  CALL integrate(1.0, 2.0, 3.0)
+    \\  CALL integrate(1.0, 2.0, z=3.0)
+    \\END PROGRAM main
+    \\
+;
+
+fn expectGenericSignatures(w: *h.Workspace) !void {
+    // after the first argument both procedures take the call: the smaller
+    const one = (try w.signature("m.f90", w.pos("m.f90", "integrate(1.0, 2.0)\n", 0, 10))) orelse return h.unmet("no signature help", .{});
+    try h.expect(one.count == 2, "{d} signatures, not 2", .{one.count});
+    try h.expect(std.mem.startsWith(u8, one.label, "int_2D"), "active signature {s}, not int_2D", .{one.label});
+    // a third argument: only int_3D
+    const three = (try w.signature("m.f90", w.pos("m.f90", "integrate(1.0, 2.0, 3.0)", 0, 20))) orelse return h.unmet("no signature help", .{});
+    try h.expect(std.mem.startsWith(u8, three.label, "int_3D") and three.active == 2, "active {s} parameter {d}, not int_3D 2", .{ three.label, three.active });
+}
+
+test "#6 signature help shows each procedure of a generic interface, the one the arguments fit active" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = integrate }}, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    try h.check(6, .fixed, expectGenericSignatures(w));
+}
+
+fn expectSpecificDefinition(w: *h.Workspace) !void {
+    const two = (try w.definition("m.f90", w.pos("m.f90", "integrate(1.0, 2.0)\n", 0, 2))) orelse return h.unmet("no definition", .{});
+    try h.expect(two.line == 9, "the 2-argument call goes to line {d}, not 10 (int_2D)", .{two.line + 1});
+    const three = (try w.definition("m.f90", w.pos("m.f90", "integrate(1.0, 2.0, 3.0)", 0, 2))) orelse return h.unmet("no definition", .{});
+    try h.expect(three.line == 12, "the 3-argument call goes to line {d}, not 13 (int_3D)", .{three.line + 1});
+    const kw = (try w.definition("m.f90", w.pos("m.f90", "integrate(1.0, 2.0, z=3.0)", 0, 2))) orelse return h.unmet("no definition", .{});
+    try h.expect(kw.line == 12, "the call with z= goes to line {d}, not 13 (int_3D)", .{kw.line + 1});
+}
+
+test "hansec #135 go to definition on a call of a generic interface goes to the procedure the arguments fit" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = integrate }}, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 135, .fixed, expectSpecificDefinition(w));
 }

@@ -9,10 +9,10 @@ formatting settings (`zfls.formatting.*`) follow its `fortran.formatting.*`
 settings, the **Run Fortran File** and **Debug Fortran File** commands and
 their editor title buttons its `fortran.build.run` and
 `fortran.build.debug`, the choice among debugger extensions its
-`src/debug/configuration.ts`, and the compiler linting in `src/linter.ts`
-and `src/lint/` the design of its `src/lint/` (settings, compiler options,
-and the message formats of gfortran, Intel, NAG and LFortran). These are
-used under its MIT license:
+`src/debug/configuration.ts`, and the compiler linting (the
+`zfls.linter.*` settings, and the compiler options and message formats of
+gfortran, Intel, NAG and LFortran in zfls's `src/compilers.zig`) the design
+of its `src/lint/`. These are used under its MIT license:
 
 ```text
 MIT License

@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import importlib
 import inspect
+import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -49,8 +51,9 @@ class Skip(Exception):
 
 def intrinsic_hover_replacement(mod):
     """`test_server_hover::test_intrinsics` compares the hover text with
-    fortls's intrinsic docs; zfls ships them reformatted for markdownlint
-    (src/data/intrinsics/*.md), so compare with those instead."""
+    fortls's intrinsic docs; zfls ships a newer M_intrinsics, its links
+    pointed at the published pages (build/intrinsic_docs.zig), so compare
+    with its page, links aside."""
 
     def test():
         test_dir = mod.test_dir
@@ -61,9 +64,42 @@ def intrinsic_hover_replacement(mod):
         string += mod.hover_req(file_path, 39, 23)
         errcode, results = mod.run_request(string, fortls_args=["-n", "1"])
         assert errcode == 0
-        doc = REPO / "src" / "data" / "intrinsics" / "SIZE.md"
+        doc = REPO / "vendor" / "M_intrinsics" / "md3" / "SIZE.md"
         expected = "\n-----\n" + doc.read_text(encoding="utf-8")
-        mod.validate_hover(results, [expected])
+        assert len(results) == 2
+        value = results[1]["contents"]["value"]
+        assert LINK.sub(r"\1", value) == LINK.sub(r"\1", expected)
+
+    return test
+
+
+# A Markdown link; group 1 is its text
+LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def substring_symbols_replacement(mod):
+    """`test_server::test_workspace_symbols` expects only the symbols whose
+    names contain the query; zfls appends those the query matches fuzzily
+    (hansec #195), which are left out here."""
+    original = getattr(mod, "test_workspace_symbols")
+
+    def test():
+        run = mod.run_request
+
+        def substring_only(request, fortls_args=None):
+            errcode, results = run(request, fortls_args)
+            out = []
+            for r in results:
+                if isinstance(r, list) and r and isinstance(r[0], dict) and "location" in r[0]:
+                    r = [s for s in r if "test" in s["name"].lower()]
+                out.append(r)
+            return errcode, out
+
+        mod.run_request = substring_only
+        try:
+            original()
+        finally:
+            mod.run_request = run
 
     return test
 
@@ -72,7 +108,37 @@ def intrinsic_hover_replacement(mod):
 # replacement test implementing the zfls expectation.
 KNOWN_DEVIATIONS = {
     "test_server_hover::test_intrinsics": intrinsic_hover_replacement,
+    "test_server::test_workspace_symbols": substring_symbols_replacement,
 }
+
+
+# The intrinsic procedures of zfls's table that fortls's lacks (the
+# specific names, `DSQRT`, and newer generics, `REDUCE`): set by main
+ZFLS_ONLY_INTRINSICS: set = set()
+
+
+def zfls_only_intrinsics(fortls_root: Path) -> set:
+    table = REPO / "src" / "data" / "procedures.zig"
+    ours = set(re.findall(r'\.name = "([^"]+)"', table.read_text("utf-8")))
+    internal = fortls_root / "fortls" / "parsers" / "internal"
+    theirs_text = (internal / "intrinsic.procedures.json").read_text("utf-8")
+    theirs = set(json.loads(theirs_text))
+    return ours - theirs
+
+
+def zfls_only_item(x) -> bool:
+    """A completion item fortls never gives: `name=` (a keyword argument),
+    one that adds a USE statement, or an intrinsic fortls does not know."""
+    if not isinstance(x, dict):
+        return False
+    if str(x.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
+        return True
+    # the parent components of an extended type (hansec #121)
+    if "labelDetails" in x:
+        return True
+    if "additionalTextEdits" in x:
+        return True
+    return str(x.get("label", "")).endswith("=") and "filterText" in x
 
 
 def install_stubs():
@@ -209,6 +275,7 @@ def main() -> int:
         print(f"zfls executable not found: {zfls}")
         return 2
 
+    ZFLS_ONLY_INTRINSICS.update(zfls_only_intrinsics(fortls_root))
     install_stubs()
     sys.path.insert(0, str(test_dir))
     sys.path.insert(0, str(fortls_root))
@@ -221,7 +288,7 @@ def main() -> int:
         import subprocess
         from io import StringIO
 
-        command = [zfls, "--incremental_sync"]
+        command = [zfls, "--incremental_sync", "--disable_index_cache"]
         if fortls_args:
             for i in fortls_args:
                 command.extend(shlex.split(i, posix=False))
@@ -236,9 +303,34 @@ def main() -> int:
         parsed = []
         for result in results:
             if "result" in result:
-                parsed.append(result["result"])
+                r = result["result"]
+                # zfls shows the implicit type of a name that is not
+                # declared (hansec #201); fortls has no hover there
+                if isinstance(r, dict) and any(m in str(r.get("contents", "")) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
+                    r = None
+                # zfls marks the type of a literal (fortls #125), which
+                # fortls shows bare
+                if isinstance(r, dict) and isinstance(r.get("contents"), dict) and "\n-----\nLiteral constant" in r["contents"].get("value", ""):
+                    r = {**r, "contents": {**r["contents"], "value": r["contents"]["value"].split("\n-----\nLiteral constant")[0]}}
+                # zfls offers the keyword arguments of the call a completion
+                # is in (hansec #133) and names of modules not used yet
+                # (hansec #62); fortls's expected lists do not have them
+                if isinstance(r, list):
+                    r = [x for x in r if not zfls_only_item(x)]
+                parsed.append(r)
             elif "params" in result:
-                parsed.append(result["params"])
+                params = result["params"]
+                # zfls adds a code and source to each diagnostic (fortls
+                # #438); fortls's expected diagnostics have neither
+                if isinstance(params, dict):
+                    # names not declared under IMPLICIT NONE (hansec #129)
+                    # are diagnosed by zfls only
+                    if "diagnostics" in params:
+                        params["diagnostics"] = [d for d in params["diagnostics"] if d.get("code") not in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned")]
+                    for d in params.get("diagnostics", []):
+                        d.pop("code", None)
+                        d.pop("source", None)
+                parsed.append(params)
             else:
                 raise RuntimeError(f"unexpected message: {result}")
         return pid.poll(), parsed

@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { findExecutable } from "../src/lint/paths";
+import { findExecutable } from "../src/tools";
 
 const TIMEOUT_MS = 60_000;
 
