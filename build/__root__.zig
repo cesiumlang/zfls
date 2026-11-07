@@ -111,7 +111,7 @@ pub fn build(b: *std.Build) !void {
 /// elsewhere: `zig-out/bin/stress_edit --zfls EXE`), and the Python ones,
 /// which run fortls; and `zig build bench -- WORKSPACE [--fortls CMD] ...`,
 /// zfls (and fortls when CMD starts it) timed on a large workspace
-/// (tools/bench_workspace.zig; build with -Doptimize=ReleaseSafe). Their
+/// (tools/bench_workspace.zig; build with -Doptimize=safe). Their
 /// unit tests are part of `test_step`.
 fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";

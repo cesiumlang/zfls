@@ -12,7 +12,7 @@
 //!   each followed by a request (a save re-links the workspace);
 //! - peak memory of the server process (Windows and Linux).
 //!
-//!     zig build bench -Doptimize=ReleaseSafe -- PATH/TO/json-fortran \
+//!     zig build bench -Doptimize=safe -- PATH/TO/json-fortran \
 //!         [--fortls fortls] [--requests 200] [--edits 20] [--saves 5]
 //!
 //! `--fortls CMD` also runs fortls, started by CMD (split at spaces, such as
@@ -49,7 +49,7 @@ const Args = struct {
 };
 
 const usage =
-    \\usage: zig build bench [-Doptimize=ReleaseSafe] -- WORKSPACE [--fortls CMD]
+    \\usage: zig build bench [-Doptimize=safe] -- WORKSPACE [--fortls CMD]
     \\       [--requests N (200)] [--edits N (20)] [--saves N (5)]
     \\
 ;

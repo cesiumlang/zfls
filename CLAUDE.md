@@ -30,6 +30,7 @@ about them, so they creep back in. Use the replacement:
 | `builtin.os`, `builtin.cpu`, `builtin.abi`, `builtin.object_format` | `builtin.target.os`, `.cpu`, `.abi`, `.ofmt` |
 | `builtin.mode` | `builtin.optimize` |
 | `.Debug`, `.ReleaseSafe`, `.ReleaseFast`, `.ReleaseSmall` (`std.lang.Optimize`) | `.debug`, `.safe`, `.fast`, `.small` |
+| `-Doptimize=Debug`, `ReleaseSafe`, `ReleaseFast`, `ReleaseSmall` (build scripts, CI, docs) | `-Doptimize=debug`, `safe`, `fast`, `small` |
 | `OptimizeMode` | `std.lang.Optimize` |
 | `Build.Step.Run.addArtifactArg(x)`, `addDirectoryArg(x)`, `addOutputFileArg(x)`, `addOutputDirectoryArg(x)` | the `...Arg2(x, .{})` ones |
 | `Build.Step.Run.addPrefixedDirectoryArg(p, x)` | `addDirectoryArg2(x, .{ .prefix = p })` |
