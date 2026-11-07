@@ -40,10 +40,10 @@ projects zfls replaces:
   (`config/fypp_deployment.py`): the corpus scan read only its plain
   `.f90` files, so 506 `module-not-found` diagnostics name modules that
   fypp makes, and the code using them was checked only in part
-- [ ] The index cache keeps the ASTs of a parser of the same version:
-  a development build that changes the parser reads the old ones until a
-  file changes (`--disable_index_cache`); releases parse again, the
-  version being part of the key
+- [x] The index cache keeps the ASTs of a parser of the same version:
+  a development build that changes the parser read the old ones until a
+  file changed. The executable's size and time are now part of the key,
+  so a new build parses again
 
 ## Proposed
 
