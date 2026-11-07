@@ -28,9 +28,20 @@ const Server = srv.Server;
 /// The start of a cache file: the format, which a new one changes
 const magic = "ZFLSIDX2";
 /// What the parse of a file depends on besides its text: the layout of the
-/// objects kept, and the version of zfls, whose parser a new release may
-/// change (so that it parses the files again)
-const parse_salt = serial.schema ^ std.hash.Wyhash.hash(0, @import("build_options").version);
+/// objects kept, the version of zfls, whose parser a new release may
+/// change, and the executable's size and time, which a new build changes
+/// (a development build's parser too, at the same version)
+fn parseSalt(io: Io) u64 {
+    var h = std.hash.Wyhash.init(serial.schema);
+    h.update(@import("build_options").version);
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const n = std.process.executablePath(io, &buf) catch return h.final();
+    const st = Io.Dir.cwd().statFile(io, buf[0..n], .{}) catch return h.final();
+    const mtime: i128 = st.mtime.nanoseconds;
+    h.update(std.mem.asBytes(&st.size));
+    h.update(std.mem.asBytes(&mtime));
+    return h.final();
+}
 /// A smaller workspace starts fast enough without a cache
 const min_files = 200;
 /// The caches of other workspaces not written for this long are deleted
@@ -64,6 +75,8 @@ pub const Snapshot = struct {
     next: std.StringHashMapUnmanaged(Next) = .empty,
     /// Whether a text or an AST of `next` is not in `data`
     changed: bool = false,
+    /// `parseSalt`
+    salt: u64 = 0,
 
     fn deinit(s: *Snapshot, gpa: Allocator) void {
         var it = s.next.iterator();
@@ -93,7 +106,7 @@ fn cachePath(self: *Server, a: Allocator) !?[]const u8 {
 pub fn begin(self: *Server, a: Allocator, file_count: usize) void {
     if (self.s.disable_index_cache or file_count < min_files) return;
     const snap = self.gpa.create(Snapshot) catch return;
-    snap.* = .{};
+    snap.* = .{ .salt = parseSalt(self.io) };
     self.index = snap;
     const file = (cachePath(self, a) catch null) orelse return;
     snap.data = Io.Dir.cwd().readFileAlloc(self.io, file, self.gpa, .limited(1 << 34)) catch return;
@@ -190,7 +203,7 @@ pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: par
     const snap = self.index orelse return f.parsePrepared(prepared, opts);
     // a trace is of parsing
     if (opts.trace != null) return f.parsePrepared(prepared, opts);
-    const key = f.parseKey(prepared, opts, parse_salt);
+    const key = f.parseKey(prepared, opts, snap.salt);
     if (snap.entries.get(f.path)) |e| if (e.key == key and e.ast.len > 0) {
         const ast = try Ast.create(self.gpa, f);
         if (serial.load(self.gpa, ast, e.ast)) {
@@ -340,6 +353,12 @@ const Writer = struct {
         try w.bytes(e.ast);
     }
 };
+
+test "the parse salt has the executable's size and time" {
+    var h = std.hash.Wyhash.init(serial.schema);
+    h.update(@import("build_options").version);
+    try std.testing.expect(parseSalt(std.testing.io) != h.final());
+}
 
 test "a cache's entries read back" {
     const gpa = std.testing.allocator;
