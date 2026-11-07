@@ -25,6 +25,10 @@ fn R() *const patterns.Patterns {
 const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
 
+/// The suffixes of free-form source, in either case (CUDA Fortran's `.cuf`
+/// too)
+const free_form_suffixes = [_][]const u8{ ".f90", ".f95", ".f03", ".f08", ".f18", ".f23", ".cuf" };
+
 pub const ResultSig = parser_definitions.ResultSig;
 pub const VarInfo = parser_definitions.VarInfo;
 pub const SubInfo = parser_definitions.SubInfo;
@@ -227,6 +231,17 @@ pub const FortranFile = struct {
         return self.lines.items.len;
     }
 
+    /// Whether the file is in fixed form. A file named as free-form source
+    /// (`.f90`, `.F08`, ...) is not, as compilers decide: its text cannot
+    /// tell when no line is indented 1 to 4 columns nor ends with `&` (the
+    /// Fortran stdlib's, indented 5). Others by their text, as fortls
+    /// decides (`detect_fixed_format`).
+    fn detectFixed(self: *const FortranFile) bool {
+        const ext = std.Io.Dir.path.extension(self.path);
+        for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
+        return helpers.detectFixedFormat(self.lines.items);
+    }
+
     fn resetPp(self: *FortranFile) void {
         self.pp_lines = null;
         self.pp_skips = &.{};
@@ -249,7 +264,7 @@ pub const FortranFile = struct {
             at += l.len;
         }
         self.replaceText(buf, fresh);
-        if (detect_format) self.fixed = helpers.detectFixedFormat(self.lines.items);
+        if (detect_format) self.fixed = self.detectFixed();
     }
 
     /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
@@ -332,7 +347,7 @@ pub const FortranFile = struct {
         try fresh.append(self.gpa, text[start..]);
         self.hash = h;
         self.replaceText(text, fresh);
-        self.fixed = helpers.detectFixedFormat(self.lines.items);
+        self.fixed = self.detectFixed();
         return true;
     }
 

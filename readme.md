@@ -867,6 +867,15 @@ zfls deliberately differs from fortls in a few places:
 - The lines of an inactive preprocessor branch inside a continued statement
   (`REAL &` / `#ifdef X` / `, POINTER &` / `#endif`) are left out of it; fortls
   joins them, so the declaration gets the attributes of every branch.
+- A file named as free-form source (`.f90`, `.F90`, `.f08`, ...) is read as
+  free form, as compilers read it. fortls decides from the text alone, and
+  takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
+  indented 5) for fixed form. Other files are still told by their text.
+- The enumerators of an ENUM are named integer constants of the scope around
+  it, with hover, definition and completion, PUBLIC or PRIVATE by name;
+  fortls does not read them.
+- In each block of a SELECT RANK, its associate name (`select rank (v => a)`)
+  is the selector; fortls does not read SELECT RANK.
 
 ## Licenses
 

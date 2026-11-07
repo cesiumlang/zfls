@@ -114,6 +114,13 @@ pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_pu
         if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
             if (try checkScope(env, child, name_lower, filter_public, null)) |v| return v;
         }
+        // the enumerators of an ENUM are names of this scope, public or
+        // not as its own
+        if (child.kind == .enum_) for (child.childList()) |e| {
+            const e_private = e.vis == .private or (local_scope.def_vis == .private and e.vis != .public);
+            if (filter_public and e_private) continue;
+            if (std.ascii.eqlIgnoreCase(e.name, name_lower)) return e;
+        };
         const is_private = child.vis == .private or (local_scope.def_vis == .private and child.vis != .public);
         if (filter_public and is_private) continue;
         if (std.ascii.eqlIgnoreCase(child.name, name_lower)) {

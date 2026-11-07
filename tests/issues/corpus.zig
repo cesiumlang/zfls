@@ -448,3 +448,116 @@ test "control: a kind from a module that is not used, all modules known" {
     }
     try h.expect(n == 1, "{d} not found in scope", .{n});
 }
+
+// The Fortran stdlib with its fypp sources generated
+// (`config/fypp_deployment.py --deploy_stdlib_fpm`)
+
+test "stdlib: a .F90 file whose lines are indented 5 columns is free form" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "kinds.f90", .text =
+        \\module kinds
+        \\  implicit none
+        \\  integer, parameter :: sp = selected_real_kind(6)
+        \\end module kinds
+        \\
+        },
+        // no line indented 1 to 4 columns, nor one that ends with `&`:
+        // read as fixed form, `use` was a continuation of `module`
+        .{ .name = "consts.F90", .text =
+        \\module consts
+        \\     use kinds, only: sp
+        \\     implicit none
+        \\     public
+        \\end module consts
+        \\
+        },
+        .{ .name = "p.f90", .text =
+        \\program p
+        \\  use consts, only: sp
+        \\  implicit none
+        \\  real(sp) :: a
+        \\  a = 1.0_sp
+        \\  print *, a
+        \\end program p
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    try expectClean(w, "p.f90");
+}
+
+test "stdlib: enumerators are names of the scope around the ENUM, PUBLIC by name" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "solvers.f90", .text =
+        \\module solvers
+        \\  implicit none
+        \\  private
+        \\  enum, bind(c)
+        \\    enumerator :: pc_none = 0
+        \\    enumerator :: pc_jacobi
+        \\  end enum
+        \\  enum, bind(c)
+        \\    enumerator comma, colon
+        \\  end enum
+        \\  public :: pc_none, pc_jacobi, kind_of
+        \\contains
+        \\  integer function kind_of(k)
+        \\    integer, intent(in) :: k
+        \\    kind_of = merge(comma, colon, k == pc_none)
+        \\  end function kind_of
+        \\end module solvers
+        \\
+        },
+        .{ .name = "p.f90", .text =
+        \\program p
+        \\  use solvers, only: pc_jacobi, kind_of
+        \\  implicit none
+        \\  print *, kind_of(pc_jacobi)
+        \\end program p
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    try expectClean(w, "solvers.f90");
+    try expectClean(w, "p.f90");
+    const hover = (try w.hover("p.f90", w.pos("p.f90", "pc_jacobi)", 0, 1))) orelse return h.unmet("no hover on pc_jacobi", .{});
+    try h.expect(std.mem.find(u8, hover, "PARAMETER") != null, "{s}", .{hover});
+}
+
+test "stdlib: BOZ literals, a logical literal's kind, SELECT RANK, an OPEN statement beside a function open" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "io.f90", .text =
+        \\module io
+        \\  use iso_fortran_env, only: int8, int32
+        \\  implicit none
+        \\contains
+        \\  integer function open(filename)
+        \\    character(*), intent(in) :: filename
+        \\    open(newunit=open, file=filename, status='old', action='read')
+        \\  end function open
+        \\  subroutine show(a)
+        \\    class(*), intent(in) :: a(..)
+        \\    integer(int32) :: h
+        \\    logical(int8) :: flag
+        \\    h = int(z'7F', int32) + int(Z'1F', int32) + int(b"101", int32)
+        \\    flag = .false._int8
+        \\    select rank (v => a)
+        \\    rank (0)
+        \\      call put(v)
+        \\    rank (1)
+        \\      print *, size(v)
+        \\    rank default
+        \\      print *, rank(v)
+        \\    end select
+        \\    print *, h, flag
+        \\  end subroutine show
+        \\  subroutine put(x)
+        \\    class(*), intent(in) :: x
+        \\  end subroutine put
+        \\end module io
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    try expectClean(w, "io.f90");
+}

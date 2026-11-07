@@ -485,6 +485,14 @@ def on_assignment(lines: list, line: int, char: int) -> bool:
     return False
 
 
+def on_enumerator_statement(lines: list, line: int) -> bool:
+    """Whether the line is an ENUMERATOR statement, whose names zfls reads
+    (named constants of the scope around the ENUM) and fortls does not."""
+    if not (0 <= line < len(lines)):
+        return False
+    return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
+
+
 def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     """Whether (line, char) is on a statement label or on a construct name
     that the file defines (`name: do`); zfls answers definition, references
@@ -685,6 +693,13 @@ def main() -> int:
                 and on_construct_name_or_label(src_lines, pos.get("line", -1), pos.get("character", 0))
             ):
                 # construct names and statement labels (fortls #424)
+                continue
+            if (
+                kind in ("hover", "definition", "references", "completion")
+                and not a
+                and on_enumerator_statement(src_lines, pos.get("line", -1))
+            ):
+                # the enumerators of an ENUM, which fortls does not read
                 continue
             if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                 # the implicit type of a name that is not declared (hansec

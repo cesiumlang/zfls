@@ -237,7 +237,8 @@ pub const Ast = struct {
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
         for (parent.childList()) |child| {
             if (std.mem.eql(u8, child.name, name)) return child;
-            if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
+            // the enumerators of an ENUM are names of the scope around it
+            if (std.mem.startsWith(u8, child.name, "#GEN_INT") or child.kind == .enum_) {
                 for (child.childList()) |ic| if (std.mem.eql(u8, ic.name, name)) return ic;
             }
         }

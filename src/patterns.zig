@@ -49,9 +49,12 @@ const defs = [_]Def{
     .{ "ASSOCIATE", "[ ]*ASSOCIATE[ ]*\\(", true },
     .{ "END_ASSOCIATE", "ASSOCIATE", true },
     .{ "END_FIXED", "[ ]*([0-9]*)[ ]*CONTINUE", true },
-    .{ "SELECT", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?SELECT[ ]*(CASE|TYPE)[ ]*\\(([\\w=> ]*)", true },
+    .{ "SELECT", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?SELECT[ ]*(CASE|TYPE|RANK)[ ]*\\(([\\w=> ]*)", true },
     .{ "SELECT_TYPE", "[ ]*(TYPE|CLASS)[ ]+IS[ ]*\\(([\\w ]*)", true },
     .{ "SELECT_DEFAULT", "[ ]*CLASS[ ]+DEFAULT", true },
+    // a case of SELECT RANK, `rank (1)`, `rank (*)`, `rank default` (not
+    // an assignment to an element of an array named rank)
+    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([ ]*[\\w*]*[ ]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
     .{ "END_SELECT", "SELECT", true },
     .{ "PROG", "[ ]*PROGRAM[ ]+(\\w+)", true },
     .{ "END_PROG", "PROGRAM", true },

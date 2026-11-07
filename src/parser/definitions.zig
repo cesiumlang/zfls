@@ -329,7 +329,7 @@ pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
         var st: i32 = -1;
         if (std.ascii.startsWithIgnoreCase(word, "case")) {
             st = 1;
-        } else if (std.ascii.startsWithIgnoreCase(word, "type")) {
+        } else if (std.ascii.startsWithIgnoreCase(word, "type") or std.ascii.startsWithIgnoreCase(word, "rank")) {
             st = 2;
         }
         return .{ .select = .{ .type = st, .binding = m.group(2), .desc = null } };
@@ -342,6 +342,8 @@ pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
         return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = desc } };
     }
     if (R().SELECT_DEFAULT.match(line) != null) return .{ .select = .{ .type = 4, .binding = null, .desc = null } };
+    // a case of SELECT RANK: its associate name is the selector
+    if (R().SELECT_RANK.match(line) != null) return .{ .select = .{ .type = 5, .binding = null, .desc = null } };
     return null;
 }
 
@@ -564,6 +566,20 @@ pub const DefTestEntry = struct { read: DefTest, starts: []const []const u8 };
 /// tested for a procedure (`splitSubMod`), so they can come first
 pub const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive" };
 
+/// `ENUMERATOR [::] a = 1, b`: the enumerators of an ENUM, named integer
+/// constants (fortls reads none)
+pub fn readEnumeratorDef(a: Allocator, line: []const u8) E!?DefResult {
+    const word = "enumerator";
+    const t = std.mem.trimStart(u8, line, " ");
+    if (t.len <= word.len or !std.ascii.startsWithIgnoreCase(t, word)) return null;
+    var rest = t[word.len..];
+    if (rest[0] != ' ' and rest[0] != ':') return null;
+    rest = str.strip(str.beforeFirst(rest, "!"));
+    if (std.mem.startsWith(u8, rest, "::")) rest = str.strip(rest[2..]);
+    const names = (try helpers.separateDefList(a, rest)) orelse return null;
+    return .{ .var_ = .{ .var_type = "INTEGER", .keywords = &.{"PARAMETER"}, .var_names = names, .var_kind = null } };
+}
+
 pub fn readVarDef1(a: Allocator, line: []const u8) E!?DefResult {
     return readVarDef(a, line, null, false);
 }
@@ -589,8 +605,9 @@ pub const def_tests = [_]DefTestEntry{
     .{ .read = readDoDef, .starts = &.{"do"} },
     .{ .read = readIfDef, .starts = &.{"if"} },
     .{ .read = readAssociateDef, .starts = &.{"associate"} },
-    .{ .read = readSelectDef, .starts = &.{ "select", "type", "class" } },
+    .{ .read = readSelectDef, .starts = &.{ "select", "type", "class", "rank" } },
     .{ .read = readTypeDef, .starts = &.{"type"} },
+    .{ .read = readEnumeratorDef, .starts = &.{"enumerator"} },
     .{ .read = readEnumDef, .starts = &.{"enum"} },
     .{ .read = readUseStmt, .starts = &.{"use"} },
     .{ .read = readImpStmt, .starts = &.{"import"} },
