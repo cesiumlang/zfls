@@ -111,7 +111,6 @@ const Tokenizer = struct {
         };
         for (inner_keywords) |k| if (std.ascii.eqlIgnoreCase(w.str, k)) return;
         for (t.intrinsics) |f| if (std.ascii.eqlIgnoreCase(f.name, w.str)) return;
-        for (other_intrinsics) |f| if (std.ascii.eqlIgnoreCase(f, w.str)) return;
         try list.append(t.a, .{ .line = ln, .start = w.start, .end = w.end, .name = w.str, .scope = scope });
     }
 
@@ -499,31 +498,6 @@ const other_keywords = [_][]const u8{
     "endfunction", "endinterface", "non_recursive", "simple",    "unit",    "fmt",       "iostat",     "iomsg",
     "file",        "status",       "action",        "position",  "access",  "form",      "advance",    "stat",
     "errmsg",      "source",       "mold",          "while",
-};
-
-/// Intrinsic procedures that the table of intrinsics (data/procedures.zig,
-/// fortls's) leaves out: the specific names of the standard (F2018, table
-/// 16.3: `dsqrt`, `float`, `idnint`, ...), the compilers' common specific
-/// names of double complex (`dcmplx`, `zabs`, `cdsqrt`, ...), and the
-/// generic procedures of Fortran 2018 and 2023
-const other_intrinsics = [_][]const u8{
-    // F2018 16.8, specific names
-    "alog",     "alog10",      "amax0",    "amax1",        "amin0",      "amin1",                 "amod",           "cabs",
-    "ccos",     "cexp",        "clog",     "csin",         "csqrt",      "dabs",                  "dacos",          "dasin",
-    "datan",    "datan2",      "dcos",     "dcosh",        "ddim",       "dexp",                  "dint",           "dlog",
-    "dlog10",   "dmax1",       "dmin1",    "dmod",         "dnint",      "dsign",                 "dsin",           "dsinh",
-    "dsqrt",    "dtan",        "dtanh",    "float",        "iabs",       "idim",                  "idint",          "idnint",
-    "ifix",     "isign",       "max0",     "max1",         "min0",       "min1",                  "sngl",
-    // double complex and other specific names of gfortran, ifx and others
-              "dcmplx",
-    "dconjg",   "dimag",       "dreal",    "dfloat",       "cdabs",      "cdcos",                 "cdexp",          "cdlog",
-    "cdsin",    "cdsqrt",      "zabs",     "zcos",         "zexp",       "zlog",                  "zsin",           "zsqrt",
-    "dacosh",   "dasinh",      "datanh",   "derf",         "derfc",      "dgamma",                "dlgama",         "algama",
-    "lgamma",   "imag",        "imagpart", "realpart",
-    // F2018 and F2023 generic procedures
-        "num_images", "failed_images",         "stopped_images", "image_status",
-    "get_team", "team_number", "coshape",  "out_of_range", "reduce",     "selected_logical_kind", "split",          "tokenize",
-    "acospi",   "asinpi",      "atanpi",   "atan2pi",      "cospi",      "sinpi",                 "tanpi",
 };
 
 /// Whether `word` is a Fortran keyword

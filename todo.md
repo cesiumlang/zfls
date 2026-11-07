@@ -32,10 +32,10 @@ projects zfls replaces:
   `argument-not-declared` is not reported for a procedure with such an
   include in it, and `undeclared-name` not in its file; hover, definition
   and argument checks still miss those declarations
-- [ ] The specific intrinsic names that only the undeclared-name check
-  knows (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...,
-  `other_intrinsics` in `src/semantic.zig`) in the table of intrinsics
-  (`src/data/procedures.zig`), for hover, completion and signature help
+- [x] The specific intrinsic names that only the undeclared-name check
+  knew (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...) in the
+  table of intrinsics (`src/data/procedures.zig`), for hover, completion
+  and signature help; a specific name's hover is its generic's page
 - [x] A scan of the Fortran stdlib with its fypp sources generated
   (`config/fypp_deployment.py --deploy_stdlib_fpm`, 646 files): 2,131
   diagnostics, then 1,992 (unused names of `USE ONLY` lists, and dummy
@@ -43,10 +43,10 @@ projects zfls replaces:
   positives were `.F90` files read as fixed form, enumerators, BOZ
   literals, `.false._int8`, SELECT RANK, and OPEN statements checked as
   calls of the stdlib's function `open`
-- [ ] The index cache keeps the ASTs of a parser of the same version:
-  a development build that changes the parser reads the old ones until a
-  file changes (`--disable_index_cache`); releases parse again, the
-  version being part of the key
+- [x] The index cache keeps the ASTs of a parser of the same version:
+  a development build that changes the parser read the old ones until a
+  file changed. The executable's size and time are now part of the key,
+  so a new build parses again
 
 ## Proposed
 
