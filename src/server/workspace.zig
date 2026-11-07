@@ -297,6 +297,43 @@ pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFi
     return f;
 }
 
+/// The files that INCLUDE lines and `#include` name but that are none of
+/// the workspace's sources (json-fortran's `json_add_scalar_by_path.inc`,
+/// `.inc` being no source suffix): read and parsed too, and the files they
+/// include, so that the including scopes see their declarations. `of`: the
+/// file whose includes to follow, else every file's. Whether one was added
+/// (which a relink then links in).
+pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
+    var todo: std.ArrayList(*FortranFile) = .empty;
+    if (of) |f| try todo.append(a, f) else try todo.appendSlice(a, self.workspace.values());
+    var added = false;
+    while (todo.pop()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.include_statements.items) |inc| {
+            if (f.continuesInto(inc.line_number -| 1)) continue;
+            const found = if (std.Io.Dir.path.isAbsolute(inc.path))
+                if (paths.isFile(self.io, inc.path)) inc.path else continue
+            else
+                (try definition.resolveInclude(self, a, f, inc.path)) orelse continue;
+            const path = try parser.normPath(a, found);
+            if (self.workspace.contains(path)) continue;
+            const nf = loadFile(self, path) catch |e| {
+                self.log.info("{s}, included by {s}: {s}", .{ path, f.path, parser.describeFileError(e) });
+                continue;
+            };
+            nf.included = true;
+            {
+                errdefer nf.destroy();
+                try self.workspace.put(self.gpa, nf.path, nf);
+            }
+            try addToTree(self, nf);
+            try todo.append(a, nf);
+            added = true;
+        }
+    }
+    return added;
+}
+
 pub fn maxScopeDepth(ast: *Ast) i64 {
     var max: i64 = 0;
     for (ast.scope_list.items) |s| {
@@ -360,6 +397,7 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
             },
         }
     }
+    _ = try addIncludedFiles(self, a, null);
     try fullRelink(self, a);
 }
 
@@ -522,8 +560,9 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         };
         for (self.workspace.values()) |f| if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), path, a);
         if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
-        // Periodically reclaim memory of replaced ASTs
-        if (self.retired.items.len >= 16) try fullRelink(self, a);
+        // a file not read yet that a new INCLUDE names is linked in by a
+        // full relink, as is the memory of replaced ASTs reclaimed
+        if (try addIncludedFiles(self, a, file) or self.retired.items.len >= 16) try fullRelink(self, a);
     } else if (file.preproc) {
         const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
         try self.mergePpDefs(&out.defs);
@@ -574,7 +613,10 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
         return .null;
     };
-    if (changed) try fullRelink(self, a);
+    if (changed) {
+        _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
+        try fullRelink(self, a);
+    }
     // the compiler checks the file as saved, on its own thread
     if (!did_close and !self.s.disable_diagnostics) {
         const trigger: compile.Trigger = if (did_open) .open else .save;
@@ -640,14 +682,18 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
             if (self.s.workspace_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = ev.uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
             continue;
         }
-        if (!isSourceFile(self, path)) continue;
+        const included = if (self.workspace.get(path)) |f| f.included else false;
+        if (!isSourceFile(self, path) and !included) continue;
         const updated = updateWorkspaceFile(self, path, true, false, false) catch |e| {
             self.log.err("{s} : {s}", .{ parser.describeFileError(e), path });
             continue;
         };
         changed = changed or updated;
     }
-    if (changed) try fullRelink(self, a);
+    if (changed) {
+        _ = try addIncludedFiles(self, a, null);
+        try fullRelink(self, a);
+    }
     if (changed and self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
     return .null;
 }

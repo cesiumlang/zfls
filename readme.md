@@ -670,8 +670,9 @@ zfls deliberately differs from fortls in a few places:
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
   fortls only checks the types named in declarations. It is left out where
-  a USE statement names a module that is not in the workspace or an
-  INCLUDE file is not found, as the name could come from those.
+  a USE statement names a module that is not in the workspace, or in a
+  scope with an INCLUDE whose file is not found or that continues a
+  statement, as the name could come from those.
 - `fixed_line_length` (as gfortran's `-ffixed-line-length-n`: 72, 80, 132)
   makes the columns past it of a fixed-form line a comment: a `comment`
   semantic token, and no names there. The VS Code extension passes 72 by
@@ -822,6 +823,12 @@ zfls deliberately differs from fortls in a few places:
 - A file that another file `#include`s into a scope sees the names of that scope
   (as for `INCLUDE` statements, but also for files that hold whole procedures);
   fortls reports them as unknown in the included file.
+- A file that an `INCLUDE` or `#include` names is read for its declarations
+  even when it is no source file of the workspace (`.inc`, not in
+  `incl_suffixes`), and so are the files it includes; its own diagnostics
+  are published only while it is open. fortls only links files of the
+  workspace. An include that a statement continues into (the rest of an
+  argument list) is text of that statement, and is not linked.
 - Hover shows the whole value of a parameter. fortls cuts it at the first
   parenthesis or bracket, so `selected_real_kind(6)` shows as
   `selected_real_kind`.
