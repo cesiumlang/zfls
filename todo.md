@@ -26,12 +26,12 @@ projects zfls replaces:
   `zfls-feedstock` exists, CI's `conda-forge` job (switched off for now)
   opens each release's pull request to it
 - [ ] Translations, as they are asked for (MF #616)
-- [ ] Files that `#include` and `INCLUDE` name but that are no source
+- [x] Files that `#include` and `INCLUDE` name but that are no source
   files (json-fortran's `json_add_scalar_by_path.inc`, `.inc` not being
-  in `incl_suffixes`): read them for the declarations they hold. For now
-  `argument-not-declared` is not reported for a procedure with such an
-  include in it, and `undeclared-name` not in its file; hover, definition
-  and argument checks still miss those declarations
+  in `incl_suffixes`): read for the declarations they hold, so hover,
+  definition and the checks see them. An include that a statement
+  continues into (json-fortran's argument lists) is not linked; the
+  argument checks and `undeclared-name` leave out the scopes with one
 - [ ] The specific intrinsic names that only the undeclared-name check
   knows (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...,
   `other_intrinsics` in `src/semantic.zig`) in the table of intrinsics

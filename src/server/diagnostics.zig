@@ -70,12 +70,18 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
 
 /// The names of `file` that stand for nothing found where IMPLICIT NONE
 /// applies (hansec #129). Only in scopes whose USE statements (and those of
-/// the scopes around them) all name modules zfls knows, and in files whose
-/// INCLUDE files are all found, since a name could come from those.
+/// the scopes around them) all name modules zfls knows, and that no
+/// INCLUDE zfls does not read is in (not found, or a part of a statement),
+/// since a name could come from those.
 pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
     if (file.nLines() == 0) return out.items;
-    for (ast.include_statements.items) |inc| if (inc.file == null) return out.items;
+    var unread: std.ArrayList(usize) = .empty;
+    for (ast.include_statements.items) |inc| if (inc.file == null) {
+        // outside every scope: any name of the file could come from it
+        if (ast.getInnerScope(inc.line_number) == null) return out.items;
+        try unread.append(a, inc.line_number);
+    };
     // fypp's loops, macros and variables make names zfls cannot see
     if (usesFypp(file)) return out.items;
     const names = try semantic.unknownNames(a, self.env(a), file, ast, self.intr.funs, 0, file.nLines() - 1, self.fixedLimit());
@@ -85,6 +91,7 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
     const renamed = try reexportedRenames(self, a);
     for (names) |u| {
         const scope = u.scope orelse continue;
+        if (hasUnreadInclude(scope, unread.items)) continue;
         if (implicit.typeOf(scope, u.name) != null) continue;
         if (renamed.contains(try std.ascii.allocLowerString(a, u.name))) continue;
         const gop = try known.getOrPut(a, scope);
@@ -102,6 +109,16 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
         });
     }
     return out.items;
+}
+
+/// Whether one of the (1-based) `lines` of unread includes is in `scope`
+/// or a scope around it
+fn hasUnreadInclude(scope: *Obj, lines: []const usize) bool {
+    var s: ?*Obj = scope;
+    while (s) |o| : (s = o.parent) {
+        for (lines) |l| if (l >= o.sline and l <= o.eline) return true;
+    }
+    return false;
 }
 
 /// The local names of the renames in the USE statements of the workspace's
@@ -636,6 +653,9 @@ pub fn publishWorkspace(self: *Server, a: Allocator) void {
     if (self.s.disable_diagnostics) return;
     for (self.workspace.values()) |f| {
         if (f.ast == null) continue;
+        // an included file is a part of others', and diagnosed as a
+        // document only when it is open
+        if (f.included and !self.open_docs.contains(f.path)) continue;
         const uri = paths.pathToUri(a, f.path) catch continue;
         sendDiagnostics(self, a, uri);
     }

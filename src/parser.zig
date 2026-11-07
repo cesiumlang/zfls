@@ -176,6 +176,10 @@ pub const FortranFile = struct {
     preproc: bool = false,
     ast: ?*Ast = null,
     hash: ?u64 = null,
+    /// Read only because a file of the workspace includes it (INCLUDE,
+    /// `#include`), being none of its sources (`.inc`): for the
+    /// declarations it holds, which the including scopes see
+    included: bool = false,
     /// Further markers that start a comment as `!` does (`comment_markers`,
     /// such as `;*`): outside strings, the first byte of one is `!` in
     /// `lines`, the text zfls reads, so that it is a comment there
@@ -462,6 +466,32 @@ pub const FortranFile = struct {
             if (!helpers.isOpenMp(false, line)) return str.beforeFirst(line, "!");
         }
         return line;
+    }
+
+    /// Whether a statement continues into line `line_no` (0-based): the
+    /// code line before it ends with `&` (free form), or the next one is a
+    /// continuation line (fixed form). An INCLUDE or `#include` there is a
+    /// part of the statement's text (json-fortran's `subroutine s(me, &`
+    /// then an `#include` of the rest of the argument list), not a file of
+    /// declarations.
+    pub fn continuesInto(self: *const FortranFile, line_no: usize) bool {
+        if (self.fixed) {
+            var i = line_no + 1;
+            while (self.getLine(i, false)) |l| : (i += 1) {
+                if (std.mem.trim(u8, l, " \t\r").len == 0 or helpers.isFixedComment(l) or l[0] == '#') continue;
+                return l.len > 5 and l[5] != ' ' and l[5] != '0';
+            }
+            return false;
+        }
+        var i = line_no;
+        while (i > 0) {
+            i -= 1;
+            const l = self.getLine(i, false) orelse return false;
+            const code = std.mem.trim(u8, self.stripComment(l), " \t\r");
+            if (code.len == 0 or code[0] == '#') continue;
+            return code[code.len - 1] == '&';
+        }
+        return false;
     }
 
     pub fn findWordInCodeLine(self: *const FortranFile, a: Allocator, line_no_in: usize, word: []const u8, forward: bool, backward: bool, pp_content: bool) !struct { line: usize, range: Range } {
