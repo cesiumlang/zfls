@@ -22,6 +22,11 @@ about them, so they creep back in. Use the replacement:
 | `std.fs.path.resolve` | `std.Io.Dir.path.resolveAlloc` |
 | `std.fs.max_path_bytes`, `max_name_bytes` | `std.Io.Dir.max_path_bytes`, `max_name_bytes` |
 | `std.StringArrayHashMapUnmanaged` | `std.array_hash_map.String` |
+| a hash map or `EnumMap` initialized with `.{}` | `.empty` |
+| `std.ArrayList(T).getLast()` | `items[items.len - 1]` |
+| `std.mem.copyForwards`, `copyBackwards` | `@memmove` |
+| `std.meta.fieldNames(T)` | `@typeInfo(T).@"enum".field_names` (or `.@"struct"`, `.@"union"`) |
+| `std.builtin` | `std.lang` |
 | `builtin.os`, `builtin.cpu`, `builtin.abi`, `builtin.object_format` | `builtin.target.os`, `.cpu`, `.abi`, `.ofmt` |
 | `builtin.mode` | `builtin.optimize` |
 | `.Debug`, `.ReleaseSafe`, `.ReleaseFast`, `.ReleaseSmall` (`std.lang.Optimize`) | `.debug`, `.safe`, `.fast`, `.small` |
@@ -30,8 +35,9 @@ about them, so they creep back in. Use the replacement:
 | `Build.Step.Run.addPrefixedDirectoryArg(p, x)` | `addDirectoryArg2(x, .{ .prefix = p })` |
 
 When in doubt, read the declaration in the Zig installation's `lib/std`: a
-deprecated one has a doc comment starting with "Deprecated". The list is
-not complete; the standard library is the reference.
+deprecated one has a doc comment starting with "Deprecated" (or saying
+that its default initialization is). The list is not complete; the
+standard library is the reference.
 
 To check a change, ask ZLS: hovering a name shows its declaration's doc
 comment, so a "Deprecated" there is a deprecated use. (`std.Io.Dir.path`

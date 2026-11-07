@@ -42,7 +42,7 @@ pub const legend: lsp.SemanticTokensLegend = .{
 };
 
 fn names(comptime E: type) []const []const u8 {
-    const fields = std.meta.fieldNames(E);
+    const fields = @typeInfo(E).@"enum".field_names;
     var out: [fields.len][]const u8 = undefined;
     for (fields, 0..) |f, i| out[i] = f;
     const final = out;
