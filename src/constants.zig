@@ -114,7 +114,7 @@ pub const DiagCode = enum {
     }
 
     const names = blk: {
-        const fields = std.meta.fieldNames(DiagCode);
+        const fields = @typeInfo(DiagCode).@"enum".field_names;
         var out: [fields.len][]const u8 = undefined;
         for (fields, 0..) |f, i| {
             var buf: [f.len]u8 = undefined;
