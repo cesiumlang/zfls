@@ -230,7 +230,7 @@ fn readErrors(s: *Session, file: Io.File, gen: u32) void {
         // its end only
         if (s.g.stderr.items.len > 4000) {
             const drop = s.g.stderr.items.len - 4000;
-            std.mem.copyForwards(u8, s.g.stderr.items, s.g.stderr.items[drop..]);
+            @memmove(s.g.stderr.items[0..4000], s.g.stderr.items[drop..]);
             s.g.stderr.shrinkRetainingCapacity(4000);
         }
     }

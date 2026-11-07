@@ -133,7 +133,7 @@ const defs = [_]Def{
 fn makeStruct() type {
     var names: [defs.len][]const u8 = undefined;
     var types: [defs.len]type = undefined;
-    var attrs: [defs.len]std.builtin.Type.Struct.FieldAttributes = undefined;
+    var attrs: [defs.len]std.lang.Type.Struct.FieldAttributes = undefined;
     for (defs, 0..) |d, i| {
         names[i] = d[0];
         types[i] = Regex;
