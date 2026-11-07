@@ -32,10 +32,10 @@ projects zfls replaces:
   `argument-not-declared` is not reported for a procedure with such an
   include in it, and `undeclared-name` not in its file; hover, definition
   and argument checks still miss those declarations
-- [ ] The specific intrinsic names that only the undeclared-name check
-  knows (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...,
-  `other_intrinsics` in `src/semantic.zig`) in the table of intrinsics
-  (`src/data/procedures.zig`), for hover, completion and signature help
+- [x] The specific intrinsic names that only the undeclared-name check
+  knew (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...) in the
+  table of intrinsics (`src/data/procedures.zig`), for hover, completion
+  and signature help; a specific name's hover is its generic's page
 - [ ] A scan of the Fortran stdlib with its fypp sources generated
   (`config/fypp_deployment.py`): the corpus scan read only its plain
   `.f90` files, so 506 `module-not-found` diagnostics name modules that

@@ -125,7 +125,10 @@ const Loader = struct {
                 .subroutine => C.TypeId.subroutine,
                 .function => C.TypeId.function,
             };
-            const doc = markdownDoc(e.name) orelse e.doc;
+            const doc = if (e.generic) |g|
+                if (markdownDoc(g)) |page| try l.a.print("{s}\n\n{s}", .{ e.doc, page }) else e.doc
+            else
+                markdownDoc(e.name) orelse e.doc;
             o.* = try Obj.newIntrinsic(l.ast, try l.case(e.name), itype, doc, try l.case(e.args));
         }
         return out;
@@ -211,4 +214,16 @@ test "load intrinsics" {
     try std.testing.expect(intr.funs.len > 100);
     try std.testing.expectEqualStrings("ABORT", intr.funs[0].name);
     try std.testing.expect(intr.mods.len > 3);
+}
+
+test "a specific name: its line, then its generic's page" {
+    @import("patterns.zig").init();
+    var intr = try load(std.testing.allocator, false);
+    defer intr.deinit();
+    const f = for (intr.funs) |f| {
+        if (std.mem.eql(u8, f.name, "DSQRT")) break f;
+    } else return error.TestUnexpectedResult;
+    const doc = f.doc_str.?;
+    try std.testing.expect(std.mem.startsWith(u8, doc, "DSQRT(X) is SQRT for a double precision X"));
+    try std.testing.expect(std.mem.find(u8, doc, "## sqrt") != null);
 }

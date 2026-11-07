@@ -61,8 +61,9 @@ command line options and configuration files.
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
-- Documentation for intrinsic procedures, statements, keywords and the
-  intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
+- Documentation for intrinsic procedures (with the specific names, such as
+  `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
+  keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
   MPI modules `mpi` and `mpi_f08`
 
 ## Building
