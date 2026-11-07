@@ -31,19 +31,20 @@ projects zfls replaces:
   in `incl_suffixes`): read for the declarations they hold, so hover,
   definition and the checks see them. An include that a statement
   continues into (json-fortran's argument lists) is not linked; the
-  argument checks and `undeclared-name` leave out the scopes with one
-- [ ] The specific intrinsic names that only the undeclared-name check
-  knows (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...,
-  `other_intrinsics` in `src/semantic.zig`) in the table of intrinsics
-  (`src/data/procedures.zig`), for hover, completion and signature help
+  argument checks and `undeclared-name` leave out only the scopes with
+  an include that cannot be read
+- [x] The specific intrinsic names that only the undeclared-name check
+  knew (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...) in the
+  table of intrinsics (`src/data/procedures.zig`), for hover, completion
+  and signature help; a specific name's hover is its generic's page
 - [ ] A scan of the Fortran stdlib with its fypp sources generated
   (`config/fypp_deployment.py`): the corpus scan read only its plain
   `.f90` files, so 506 `module-not-found` diagnostics name modules that
   fypp makes, and the code using them was checked only in part
-- [ ] The index cache keeps the ASTs of a parser of the same version:
-  a development build that changes the parser reads the old ones until a
-  file changes (`--disable_index_cache`); releases parse again, the
-  version being part of the key
+- [x] The index cache keeps the ASTs of a parser of the same version:
+  a development build that changes the parser read the old ones until a
+  file changed. The executable's size and time are now part of the key,
+  so a new build parses again
 
 ## Proposed
 

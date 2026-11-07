@@ -61,8 +61,9 @@ command line options and configuration files.
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`)
-- Documentation for intrinsic procedures, statements, keywords and the
-  intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
+- Documentation for intrinsic procedures (with the specific names, such as
+  `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
+  keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
   MPI modules `mpi` and `mpi_f08`
 
 ## Building
@@ -369,7 +370,8 @@ above all, where an antivirus scans each file opened. It takes the file's
 symbols from there too, instead of parsing it, when all that parsing reads
 is what it was: the text, and for a preprocessed file the preprocessor's
 output, which changes with the macros, the include directories and the
-headers (the preprocessor runs at each start). On OpenBLAS (3,936 files) a
+headers (the preprocessor runs at each start); a new version or build of
+zfls parses every file again. On OpenBLAS (3,936 files) a
 start takes 0.3 s instead of 0.65 s. The cache is written again, on a
 thread of its own, when files were added, changed or removed, or parsed
 again; those of other workspaces are deleted after 60 days without use.

@@ -247,12 +247,39 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
     return out
 
 
+# The intrinsic procedures of zfls's table that fortls's lacks (the
+# specific names, `DSQRT`, and newer generics, `REDUCE`): set by main
+ZFLS_ONLY_INTRINSICS: set = set()
+
+
+def zfls_only_intrinsics(fortls_root: Path) -> set:
+    table = REPO / "src" / "data" / "procedures.zig"
+    ours = set(re.findall(r'\.name = "([^"]+)"', table.read_text("utf-8")))
+    internal = fortls_root / "fortls" / "parsers" / "internal"
+    theirs_text = (internal / "intrinsic.procedures.json").read_text("utf-8")
+    return ours - set(json.loads(theirs_text))
+
+
+def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
+    """Whether the position is on the name of an intrinsic that only zfls
+    knows (`ZFLS_ONLY_INTRINSICS`), which zfls answers on and fortls does
+    not."""
+    if not (0 <= line < len(lines)):
+        return False
+    for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", lines[line]):
+        if m.start() <= char <= m.end():
+            return m.group(0).upper() in ZFLS_ONLY_INTRINSICS
+    return False
+
+
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
-    (hansec #133), or a name of a module not used yet that adds the USE
-    statement (hansec #62)."""
+    (hansec #133), a name of a module not used yet that adds the USE
+    statement (hansec #62), or an intrinsic that fortls does not know."""
     if not isinstance(item, dict):
         return False
+    if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
+        return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in item:
         return True
@@ -565,6 +592,7 @@ def parse_args():
 def main() -> int:
     args = parse_args()
     fortls_root = Path(args.fortls).resolve()
+    ZFLS_ONLY_INTRINSICS.update(zfls_only_intrinsics(fortls_root))
     if args.root:
         root = Path(args.root).resolve()
     else:
@@ -679,6 +707,14 @@ def main() -> int:
                 and on_assignment(src_lines, pos.get("line", -1), pos.get("character", 0))
             ):
                 # defined assignment (hansec #95)
+                continue
+            if (
+                kind in ("hover", "signature")
+                and a is None
+                and on_zfls_only_intrinsic(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # the intrinsics fortls's table lacks: specific names
+                # (`DSQRT`) and newer generic ones (`REDUCE`)
                 continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
