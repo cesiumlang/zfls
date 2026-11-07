@@ -36,10 +36,13 @@ projects zfls replaces:
   knows (`dsqrt`, `float`, `idnint`, `dcmplx`, `num_images`, ...,
   `other_intrinsics` in `src/semantic.zig`) in the table of intrinsics
   (`src/data/procedures.zig`), for hover, completion and signature help
-- [ ] A scan of the Fortran stdlib with its fypp sources generated
-  (`config/fypp_deployment.py`): the corpus scan read only its plain
-  `.f90` files, so 506 `module-not-found` diagnostics name modules that
-  fypp makes, and the code using them was checked only in part
+- [x] A scan of the Fortran stdlib with its fypp sources generated
+  (`config/fypp_deployment.py --deploy_stdlib_fpm`, 646 files): 2,131
+  diagnostics, then 1,992 (unused names of `USE ONLY` lists, and dummy
+  arguments of internal procedures masking their host's). The false
+  positives were `.F90` files read as fixed form, enumerators, BOZ
+  literals, `.false._int8`, SELECT RANK, and OPEN statements checked as
+  calls of the stdlib's function `open`
 - [ ] The index cache keeps the ASTs of a parser of the same version:
   a development build that changes the parser reads the old ones until a
   file changes (`--disable_index_cache`); releases parse again, the

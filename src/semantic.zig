@@ -276,7 +276,10 @@ const Tokenizer = struct {
             // after the digits of a literal, or after its decimal point
             // (`0._dp`, `1.d0`)
             const after_point = w.start > 1 and code[w.start - 1] == '.' and std.ascii.isDigit(code[w.start - 2]);
-            if (after_point or w.start > 0 and (std.ascii.isDigit(code[w.start - 1]) or code[w.start - 1] == '\'' or code[w.start - 1] == '"')) {
+            // or after `.true.` and `.false.` (`.false._int8`): no name
+            // starts with `_`
+            const after_logical = w.str[0] == '_' and w.start > 0 and code[w.start - 1] == '.';
+            if (after_point or after_logical or (w.start > 0 and (std.ascii.isDigit(code[w.start - 1]) or code[w.start - 1] == '\'' or code[w.start - 1] == '"'))) {
                 // the kind of a literal: `1.0_dp`, `'text'_ck`; not the
                 // exponent of `1.0d0`
                 if (w.str[0] != '_' or w.str.len < 2) continue;
@@ -290,6 +293,8 @@ const Tokenizer = struct {
             // that continues the call)
             const in_list = before == '(' or before == ',' or before == '&' or before == 0;
             if (st.depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and in_list) continue;
+            // a BOZ literal, `z'7F'`, `b"101"`
+            if (w.str.len == 1 and std.mem.findScalar(u8, "bBoOzZ", w.str[0]) != null and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"')) continue;
             if (t.file.pp_defs.contains(w.str)) {
                 try t.add(ln, raw, w.start, w.end, .{ .type = .macro });
                 continue;

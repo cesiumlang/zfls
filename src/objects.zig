@@ -696,7 +696,9 @@ pub const Obj = struct {
     }
 
     pub fn isTypeRegion(self: *const Obj) bool {
-        return self.kind == .select and (self.selectDataConst().select_type == 3 or self.selectDataConst().select_type == 4);
+        const t = if (self.kind == .select) self.selectDataConst().select_type else return false;
+        // TYPE IS, CLASS IS, CLASS DEFAULT; a case of SELECT RANK
+        return t == 3 or t == 4 or t == 5;
     }
 
     pub fn isTypeBinding(self: *const Obj) bool {

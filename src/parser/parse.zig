@@ -744,9 +744,14 @@ pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, va
         binding_name = parent.selectData().binding_name;
         bound_var = parent.selectData().bound_var;
     }
-    if (binding_name != null and case_type != 4) bound_var = null;
+    // CLASS DEFAULT and a case of SELECT RANK: the associate name is the
+    // selector
+    if (binding_name != null and case_type != 4 and case_type != 5) bound_var = null;
     if (binding_name) |bn| {
         return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .link_obj = bound_var });
+    } else if (case_type == 5) {
+        // `select rank (a)`: a is the selector itself
+        return null;
     } else if (bound_var) |bv| {
         return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{});
     }

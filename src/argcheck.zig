@@ -76,6 +76,14 @@ const spec_words = [_][]const u8{
     "abstract",    "codimension", "block",      "blockdata",   "select",    "case",         "rank",
 };
 
+/// The statements whose first word has parentheses after it that are no
+/// call, though the workspace has a procedure of that name (stdlib_io's
+/// function `open`): a statement cannot start with a function reference
+const statement_words = [_][]const u8{
+    "open",  "close", "read",     "write",      "inquire", "rewind", "backspace", "endfile",
+    "flush", "wait",  "allocate", "deallocate", "nullify", "if",     "where",     "forall",
+};
+
 fn isSpec(word: []const u8) bool {
     for (spec_words) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
     return std.ascii.startsWithIgnoreCase(word, "end");
@@ -126,6 +134,7 @@ const Checker = struct {
                 while (k < text.len and text[k] == ' ') k += 1;
             }
             if (k >= text.len or text[k] != '(') continue;
+            if (w.start == first.start and oneOf(w.str, &statement_words)) continue;
             const close = matching(text, k) orelse continue;
             // `x(1)%f(2)`, `.and.`, a literal's kind: not calls of a name
             if (w.start > 0 and (text[w.start - 1] == '.' or std.ascii.isDigit(text[w.start - 1]))) continue;
