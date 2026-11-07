@@ -34,6 +34,12 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             }
         },
         .subroutine, .function => {
+            // the arguments, or their declarations, may be in an included
+            // file that zfls does not read: not found, or a part of a
+            // statement's text (json-fortran's argument lists)
+            for (self.file_ast.include_statements.items) |inc| {
+                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+            }
             for (self.procDataConst().missing_args.items) |m| {
                 try errors.append(a, Diagnostic.init(
                     .intent_not_in_arguments,
@@ -45,11 +51,6 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             }
             const implicit_flag = self.getImplicit();
             if (implicit_flag == null or implicit_flag.?) return errors.items;
-            // the arguments may be declared in an included file that zfls
-            // does not read (`#include "args.inc"`, not a source file)
-            for (self.file_ast.include_statements.items) |inc| {
-                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
-            }
             const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.argList(), " ", ""), ",");
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                 if (arg_obj == null) {

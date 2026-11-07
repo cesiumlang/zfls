@@ -306,6 +306,8 @@ pub const Ast = struct {
         const path = self.path orelse return;
         const file_dir = std.Io.Dir.path.dirname(path) orelse "";
         for (self.include_statements.items) |inc| {
+            // a part of a statement's text: no declarations to link
+            if (self.file) |f| if (f.continuesInto(inc.line_number -| 1)) continue;
             const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse continue;
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
             const parent_scope = self.getInnerScope(inc.line_number);

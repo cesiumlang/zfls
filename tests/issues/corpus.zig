@@ -187,6 +187,101 @@ test "json-fortran: dummy arguments declared in an #include file that is no sour
     try h.expect(n == 1, "{d} argument-not-declared", .{n});
 }
 
+test "json-fortran: the declarations of an #include or INCLUDE file that is no source file" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text =
+        \\{"include_dirs": ["inc"]}
+        \\
+        },
+        .{ .name = "m.F90", .text =
+        \\module m
+        \\  implicit none
+        \\contains
+        \\  subroutine add(json, value)
+        \\    integer, intent(in) :: value
+        \\#include "decl.inc"
+        \\    json = value
+        \\  end subroutine add
+        \\  subroutine other(x)
+        \\    integer, intent(in) :: x
+        \\    integer :: y
+        \\    y = x + zz
+        \\  end subroutine other
+        \\end module m
+        \\
+        },
+        .{ .name = "decl.inc", .text =
+        \\    integer, intent(inout) :: json
+        \\
+        },
+        .{ .name = "p.f90", .text =
+        \\program p
+        \\  implicit none
+        \\  include 'consts.inc'
+        \\  print *, two_pi
+        \\end program p
+        \\
+        },
+        .{ .name = "inc/consts.inc", .text =
+        \\  real, parameter :: two_pi = 6.2831853
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const hover = (try w.hover("m.F90", w.pos("m.F90", "json = value", 0, 1))) orelse return h.unmet("no hover on json", .{});
+    try h.expect(std.mem.find(u8, hover, "INTENT(INOUT)") != null, "{s}", .{hover});
+    // the file is checked: the name not declared in the other procedure
+    var undeclared = false;
+    for (try w.diagnostics("m.F90")) |d| {
+        try h.expect(!std.mem.eql(u8, d.code, "argument-not-declared"), "{s}", .{d.message});
+        if (std.mem.eql(u8, d.code, "undeclared-name") and std.mem.find(u8, d.message, "zz") != null) undeclared = true;
+    }
+    try h.expect(undeclared, "zz is not reported", .{});
+    // INCLUDE, found in an include directory
+    try w.expectNoDiagnostics("p.f90");
+    const def = (try w.definition("p.f90", w.pos("p.f90", "two_pi", 0, 1))) orelse return h.unmet("no definition of two_pi", .{});
+    try h.expect(std.mem.endsWith(u8, def.uri, "consts.inc"), "{s}", .{def.uri});
+}
+
+test "json-fortran: an #include that continues an argument list, and one of their declarations" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "m.F90", .text =
+        \\module m
+        \\  implicit none
+        \\contains
+        \\  subroutine init(me,&
+        \\#include "dummy_args.inc"
+        \\                 )
+        \\    integer, intent(inout) :: me
+        \\#include "args.inc"
+        \\    call other(&
+        \\#include "dummy_args.inc"
+        \\              )
+        \\  end subroutine init
+        \\  subroutine other(verbose, tab)
+        \\    logical, intent(in), optional :: verbose
+        \\    integer, intent(in), optional :: tab
+        \\  end subroutine other
+        \\end module m
+        \\
+        },
+        .{ .name = "dummy_args.inc", .text =
+        \\verbose,&
+        \\tab &
+        \\
+        },
+        .{ .name = "args.inc", .text =
+        \\    logical, intent(in), optional :: verbose
+        \\    integer, intent(in), optional :: tab
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    for (try w.diagnostics("m.F90")) |d| {
+        try h.expect(!std.mem.eql(u8, d.code, "intent-not-in-arguments") and !std.mem.eql(u8, d.code, "argument-not-declared"), "{s}", .{d.message});
+    }
+}
+
 test "stdlib: names a used module makes public from a module zfls does not have" {
     const w = try h.Workspace.init(&.{
         .{ .name = "stats.f90", .text =
