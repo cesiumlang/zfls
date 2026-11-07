@@ -73,7 +73,7 @@ zfls needs Zig 0.17.0.
 ```sh
 git clone --recurse-submodules <repository>
 cd zfls
-zig build -Doptimize=ReleaseFast
+zig build -Doptimize=fast
 ```
 
 The executable is `zig-out/bin/zfls` (`zfls.exe` on Windows). `zig build`
@@ -587,7 +587,7 @@ initialization, request latency, edits, memory), and fortls too when
 [json-fortran](https://github.com/jacobwilliams/json-fortran):
 
 ```sh
-zig build bench -Doptimize=ReleaseSafe -- ../json-fortran --fortls fortls
+zig build bench -Doptimize=safe -- ../json-fortran --fortls fortls
 ```
 
 ## Releases

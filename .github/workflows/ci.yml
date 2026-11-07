@@ -298,7 +298,7 @@ jobs:
               *) zig_target=$target ;;
             esac
             # the binary only (`bin`), without the API documentation
-            zig build bin -Dtarget="$zig_target" -Doptimize=ReleaseSafe --prefix "out/$target"
+            zig build bin -Dtarget="$zig_target" -Doptimize=safe --prefix "out/$target"
             name="zfls-v$VERSION-$target"
             pkg="pkg/$name"
             mkdir -p "$pkg"
