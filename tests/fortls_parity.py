@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import inspect
+import json
 import os
 import re
 import shutil
@@ -111,11 +112,27 @@ KNOWN_DEVIATIONS = {
 }
 
 
+# The intrinsic procedures of zfls's table that fortls's lacks (the
+# specific names, `DSQRT`, and newer generics, `REDUCE`): set by main
+ZFLS_ONLY_INTRINSICS: set = set()
+
+
+def zfls_only_intrinsics(fortls_root: Path) -> set:
+    table = REPO / "src" / "data" / "procedures.zig"
+    ours = set(re.findall(r'\.name = "([^"]+)"', table.read_text("utf-8")))
+    internal = fortls_root / "fortls" / "parsers" / "internal"
+    theirs_text = (internal / "intrinsic.procedures.json").read_text("utf-8")
+    theirs = set(json.loads(theirs_text))
+    return ours - theirs
+
+
 def zfls_only_item(x) -> bool:
-    """A completion item fortls never gives: `name=` (a keyword argument) or
-    one that adds a USE statement."""
+    """A completion item fortls never gives: `name=` (a keyword argument),
+    one that adds a USE statement, or an intrinsic fortls does not know."""
     if not isinstance(x, dict):
         return False
+    if str(x.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
+        return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in x:
         return True
@@ -258,6 +275,7 @@ def main() -> int:
         print(f"zfls executable not found: {zfls}")
         return 2
 
+    ZFLS_ONLY_INTRINSICS.update(zfls_only_intrinsics(fortls_root))
     install_stubs()
     sys.path.insert(0, str(test_dir))
     sys.path.insert(0, str(fortls_root))

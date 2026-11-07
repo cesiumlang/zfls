@@ -19,6 +19,9 @@ pub const Procedure = struct {
     args: []const u8 = "",
     /// One line summary, used when there is no M_intrinsics page
     doc: []const u8,
+    /// Of a specific name (`DSQRT`): the generic procedure it is one of,
+    /// whose page follows `doc`
+    generic: ?[]const u8 = null,
 };
 
 /// A member of an intrinsic module, or a component or argument of such a
