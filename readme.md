@@ -647,7 +647,12 @@ released binary reports the plain version.
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
 every pull request and every push to `main` or `dev` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test.
+suites above, longer stress runs and the differential test. A pull request
+or a push to `dev` that only changes files listed in
+`.github/workflows/no-ci.txt` (documentation, editor settings) skips the
+build and the tests. The "CI" check sums up a run, passing when nothing
+failed, so also when the build and the tests were skipped; it is the check
+the rulesets of `main` and `dev` require, with "Version".
 
 Changes are collected on the `dev` branch, which pull requests target, and
 released together by merging `dev` into `main`. Both branches take a change
@@ -667,11 +672,13 @@ When a push to `main` passes on every platform, the same archives are
 published on the GitHub releases page and the tested commit is tagged. CI
 then merges `main` back into `dev` and commits the next patch version to
 `build.zig.zon` there. For a minor or major release, set the version in
-`build.zig.zon` on `dev` by hand. A pull request to `main` fails its "Version is unreleased" check when it changes anything
-beyond the exempt files while `build.zig.zon` holds an already released (or
-older) version. Pushes that only change
-files listed in `.github/workflows/exempt.txt` (documentation, tests,
-editor settings) are tested but not released.
+`build.zig.zon` on `dev` by hand. A pull request to `main` fails its
+"Version is unreleased" check when it changes anything beyond the files of
+`no-ci.txt` and `ci-only.txt` while `build.zig.zon` holds an already
+released (or older) version. Pushes to `main` that only change those files
+are tested but not released: `ci-only.txt` lists the files that CI builds
+or runs but that do not change the shipped binaries (tests, tools, the
+conda-forge recipe).
 
 A merged pull request is not built again: when a passed run of the pull
 request built exactly the code that lands on `main` (the same git tree and
