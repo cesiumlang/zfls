@@ -2,6 +2,9 @@ name: CI
 
 # Every pull request and every push to main or dev is built and tested on all
 # supported platforms, and the tests run on the release binaries themselves.
+# A pull request or a push to dev that only changes the files listed in
+# no-ci.txt (documentation, editor settings) skips the build and the tests;
+# the "CI" job, the check the rulesets require, passes then too.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
 # release binaries are built once and packaged without the
@@ -61,6 +64,7 @@ jobs:
       release: ${{ steps.ver.outputs.release }}
       sha: ${{ steps.ver.outputs.sha }}
       tree: ${{ steps.ver.outputs.tree }}
+      ci: ${{ steps.ver.outputs.ci }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,7 +75,37 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
+          # the globs of the lists named, and whether a path matches one
+          patterns() { cat "$@" | grep -v '^\s*#' | grep -v '^\s*$'; }
+          # shellcheck disable=SC2254
+          matches() { local f=$1 pat; shift; for pat in "$@"; do case "$f" in $pat) return 0 ;; esac; done; return 1; }
+          mapfile -t no_ci < <(patterns .github/workflows/no-ci.txt)
+          mapfile -t exempt < <(patterns .github/workflows/no-ci.txt .github/workflows/ci-only.txt)
+
+          # A pull request, or a push to dev, that only changes files of
+          # no-ci.txt skips CI; main and runs started by hand never do
+          range=
+          if [ "$EVENT" = pull_request ]; then
+            range="$BASE_SHA...HEAD"
+          elif [ "$EVENT" = push ] && [ "$REF" = refs/heads/dev ] && [ -n "$BEFORE" ] && ! [[ "$BEFORE" =~ ^0+$ ]]; then
+            range="$BEFORE..HEAD"
+          fi
+          ci=true
+          if [ -n "$range" ]; then
+            ci=false
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              if ! matches "$f" "${no_ci[@]}"; then ci=true; echo "changed: $f"; break; fi
+            done <<< "$(git diff --name-only "$range")"
+          fi
+          echo "ci=$ci" >> "$GITHUB_OUTPUT"
+          if [ "$ci" = false ]; then
+            echo "Only files of no-ci.txt changed; skipping the build and the tests." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
           read_version() { sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon; }
           version=$(read_version)
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -92,7 +126,7 @@ jobs:
             fi
           fi
 
-          # Only changes outside .github/workflows/exempt.txt make a release;
+          # Only changes outside no-ci.txt and ci-only.txt make a release;
           # CI's own commits (version bumps, marked [skip ci]) do not count
           base=$(git tag --sort=-version:refname | head -1)
           if [ -n "$base" ]; then
@@ -100,16 +134,10 @@ jobs:
           else
             changed=$(git ls-files)
           fi
-          mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
           releasable=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            exempt=false
-            for pat in "${patterns[@]}"; do
-              # shellcheck disable=SC2254
-              case "$f" in $pat) exempt=true; break ;; esac
-            done
-            if [ "$exempt" = false ]; then releasable=true; break; fi
+            if ! matches "$f" "${exempt[@]}"; then releasable=true; break; fi
           done <<< "$changed"
 
           release=false
@@ -137,7 +165,8 @@ jobs:
             echo "sha=$sha"
             echo "tree=$tree"
           } >> "$GITHUB_OUTPUT"
-          if [ "$as_checked_out" = true ]; then
+          # (not when the build and the tests are skipped)
+          if [ "$as_checked_out" = true ] && [ "$ci" = true ]; then
             echo "$tree $version" > tested-tree.txt
           fi
           echo "version $version at $sha (tree $tree); release: $release" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -205,15 +234,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      # A pull request that changes anything outside exempt.txt must carry a
-      # version newer than the latest release (CI bumps dev after each
-      # release; for a minor or major release, set it by hand)
+      # A pull request that changes anything outside no-ci.txt and
+      # ci-only.txt must carry a version newer than the latest release (CI
+      # bumps dev after each release; for a minor or major release, set it
+      # by hand)
       - name: Check build.zig.zon's version against the latest tag
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           [ -n "$BASE_SHA" ] || BASE_SHA=$(git rev-parse origin/main)
-          mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
+          mapfile -t patterns < <(cat .github/workflows/no-ci.txt .github/workflows/ci-only.txt | grep -v '^\s*#' | grep -v '^\s*$')
           needs_version=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
@@ -246,8 +276,12 @@ jobs:
   build:
     name: Build release binaries
     needs: [version, reuse]
-    # reuse is skipped unless releasing, and its failure only means building
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.reuse.outputs.run_id == '' }}
+    # reuse is skipped unless releasing, and its failure only means building;
+    # skipped (with the tests and packages after it) when only files of
+    # no-ci.txt changed
+    if: >-
+      ${{ !cancelled() && needs.version.result == 'success' && needs.reuse.outputs.run_id == ''
+      && needs.version.outputs.ci == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -622,6 +656,28 @@ jobs:
             sleep "$wait"
           done
           rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
+
+  # The check the rulesets of main and dev require: passes when no job
+  # before it failed or was cancelled, so also when the build and the tests
+  # were skipped (only files of no-ci.txt changed, or a release reuses a
+  # pull request's tested archives). A matrix job that is skipped reports
+  # no check under its legs' names, so those cannot be required themselves.
+  ci-result:
+    name: CI
+    needs: [version, version-check, reuse, build, test, conda]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Results of the jobs before
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "$GITHUB_STEP_SUMMARY"
+          bad=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::failed or cancelled: $bad"
+            exit 1
+          fi
 
   release:
     name: Release v${{ needs.version.outputs.version }}

@@ -58,7 +58,9 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
   a pull request. `main` only takes releases, from `dev`.
 - **The roadmap is [todo.md](todo.md).** Mark an item `[~]` when work on it
   starts and `[x]` in the pull request that finishes it; ideas not
-  scheduled yet are under "Proposed".
+  scheduled yet are under "Proposed", work waiting on something under
+  "On hold". After a release, remove the `[x]` items it shipped: the
+  release notes on GitHub and the git history record them.
 - **The debug options' output is ours.** What `--debug_*` prints serves
   zfls's own testing; it need not match fortls's, so change it as tests
   need.
