@@ -7,6 +7,8 @@
 # Note: src/data/** is embedded in the binary, so it is not listed here.
 
 readme.md
+todo.md
+CLAUDE.md
 LICENSE
 tests/*
 tools/*
