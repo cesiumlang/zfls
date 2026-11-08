@@ -623,6 +623,60 @@ jobs:
           done
           rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
 
+  # packaging/install.sh and install.ps1 install published releases (not
+  # this run's binaries), the way their users run them: piped from curl
+  # into sh, and from Invoke-RestMethod into Invoke-Expression
+  install-script:
+    name: Install script (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: packaging
+
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck --shell=sh packaging/install.sh
+
+      - name: Install the latest release into the current directory
+        run: |
+          mkdir "$RUNNER_TEMP/here"
+          cd "$RUNNER_TEMP/here"
+          sh -s < "$GITHUB_WORKSPACE/packaging/install.sh"
+          ./zfls-v*/zfls --version
+
+      - name: Install a given release into a given directory
+        run: |
+          sh -s -- --dir "$RUNNER_TEMP/there/zfls" --version 0.4.0 < packaging/install.sh
+          "$RUNNER_TEMP"/there/zfls/zfls-v0.4.0-*/zfls --version
+
+      # Alpine has busybox's wget, sha256sum and tar, and no curl
+      - name: Install with wget (Alpine)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD/packaging:/packaging:ro" alpine:3 \
+            sh -c 'sh /packaging/install.sh --dir /opt && /opt/zfls-v*/zfls --version'
+
+      - name: install.ps1, latest release, current directory (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory "$env:RUNNER_TEMP\ps7" | Out-Null
+          Set-Location "$env:RUNNER_TEMP\ps7"
+          Get-Content -Raw "$env:GITHUB_WORKSPACE\packaging\install.ps1" | Invoke-Expression
+          & (Get-ChildItem zfls-v*\zfls.exe).FullName --version
+
+      - name: install.ps1, given release and directory (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & ([scriptblock]::Create((Get-Content -Raw packaging\install.ps1))) -Dir "$env:RUNNER_TEMP\ps5\zfls" -Version 0.4.0
+          & "$env:RUNNER_TEMP\ps5\zfls\zfls-v0.4.0-x86_64-windows\zfls.exe" --version
+
   release:
     name: Release v${{ needs.version.outputs.version }}
     needs: [version, reuse, build, test, conda]

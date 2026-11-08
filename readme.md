@@ -66,6 +66,52 @@ command line options and configuration files.
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
   MPI modules `mpi` and `mpi_f08`
 
+## Installing
+
+Each [release](https://github.com/cesiumlang/zfls/releases) publishes the
+`zfls` executable for Linux, macOS and Windows, each on x86_64 and ARM64, as
+`zfls-v<version>-<target>.tar.gz` (`.zip` on Windows), with `SHA256SUMS`.
+The executable needs nothing else: it can be run from wherever it is
+unpacked.
+
+The install scripts in `packaging` download the archive for the computer
+they run on, check it against `SHA256SUMS` and unpack it, by default into
+the current directory, as `zfls-v<version>-<target>/zfls` (`zfls.exe` on
+Windows). They change nothing else, the `PATH` included. On macOS and Linux,
+or in Git Bash, MSYS2 or Cygwin on Windows:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh
+```
+
+`--dir DIR` unpacks it into DIR instead, and `--version VERSION` installs
+that release rather than the latest:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh -s -- --dir ~/tools --version 0.4.0
+```
+
+In PowerShell on Windows (Windows PowerShell 5.1 or PowerShell 7):
+
+```powershell
+irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1))) -Dir C:\tools -Version 0.4.0
+```
+
+zfls is not signed. On macOS, an archive downloaded in a web browser is
+quarantined, and since zfls is not notarized by Apple, macOS then refuses to
+run it ("Apple could not verify "zfls" is free of malware"); Windows can
+likewise question an unsigned program downloaded in a browser (SmartScreen,
+Smart App Control). What the scripts download is not marked like that. For
+an archive downloaded in a browser on macOS, remove the quarantine before
+unpacking it (`xattr -d com.apple.quarantine zfls-v<version>-<target>.tar.gz`),
+or from `zfls` itself if it is already unpacked, or allow it once in System
+Settings, Privacy & Security, "Open Anyway". On Windows, unblock the zip
+before unpacking it (`Unblock-File`, or "Unblock" in its Properties).
+
+The [VS Code extension](#vs-code-extension) includes `zfls`, and is not
+affected.
+
 ## Building
 
 zfls needs Zig 0.17.0.
