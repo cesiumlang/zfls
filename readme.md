@@ -645,10 +645,13 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` or `dev` once, and tests them as release
+every pull request and every push to `main` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test. A pull request
-or a push to `dev` that only changes files listed in
+suites above, longer stress runs and the differential test. Pushes to `dev`
+are not run on their own: what reaches `dev` is tested by its pull request,
+and `dev` as a whole by the pull request that releases it, so each tree is
+tested once (start the workflow by hand on `dev` to test it in between). A
+pull request that only changes files listed in
 `.github/workflows/no-ci.txt` (documentation, editor settings) skips the
 build and the tests. The "CI" check sums up a run, passing when nothing
 failed, so also when the build and the tests were skipped; it is the check

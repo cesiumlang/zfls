@@ -1,10 +1,14 @@
 name: CI
 
-# Every pull request and every push to main or dev is built and tested on all
+# Every pull request and every push to main is built and tested on all
 # supported platforms, and the tests run on the release binaries themselves.
-# A pull request or a push to dev that only changes the files listed in
-# no-ci.txt (documentation, editor settings) skips the build and the tests;
-# the "CI" job, the check the rulesets require, passes then too.
+# Pushes to dev are not run: what reaches dev is tested by its pull request,
+# and dev as a whole by the pull request that releases it (to main), so
+# running pushes to dev too would test the same trees twice (start the
+# workflow by hand on dev to test it in between). A pull request that only
+# changes the files listed in no-ci.txt (documentation, editor settings)
+# skips the build and the tests; the "CI" job, the check the rulesets
+# require, passes then too.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
 # release binaries are built once and packaged without the
@@ -28,9 +32,8 @@ name: CI
 
 on:
   push:
-    # dev is tested too, so a bad combination of merged pull requests shows
-    # up at once (it is never released from there)
-    branches: [main, dev]
+    # (not dev: see the top)
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -76,26 +79,19 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
         run: |
           # matches, no_ci, keeps_binaries
           source .github/workflows/changes.sh
 
-          # A pull request, or a push to dev, that only changes files of
-          # no-ci.txt skips CI; main and runs started by hand never do
-          range=
-          if [ "$EVENT" = pull_request ]; then
-            range="$BASE_SHA...HEAD"
-          elif [ "$EVENT" = push ] && [ "$REF" = refs/heads/dev ] && [ -n "$BEFORE" ] && ! [[ "$BEFORE" =~ ^0+$ ]]; then
-            range="$BEFORE..HEAD"
-          fi
+          # A pull request that only changes files of no-ci.txt skips CI;
+          # pushes to main and runs started by hand never do
           ci=true
-          if [ -n "$range" ]; then
+          if [ "$EVENT" = pull_request ]; then
             ci=false
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               if ! matches "$f" "${no_ci[@]}"; then ci=true; echo "changed: $f"; break; fi
-            done <<< "$(git diff --name-only "$range")"
+            done <<< "$(git diff --name-only "$BASE_SHA...HEAD")"
           fi
           echo "ci=$ci" >> "$GITHUB_OUTPUT"
           if [ "$ci" = false ]; then

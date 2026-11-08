@@ -1,7 +1,7 @@
-# Files that neither CI nor the shipped binaries use: a pull request or a
-# push to dev that only touches these skips CI (its jobs report as
-# skipped, and the "CI" check passes), and a push to main that only
-# touches these and the files of ci-only.txt is tested but not released.
+# Files that neither CI nor the shipped binaries use: a pull request that
+# only touches these skips CI (its jobs report as skipped, and the "CI"
+# check passes), and a push to main that only touches these and the files
+# of ci-only.txt is tested but not released.
 # One bash `case` glob per line, matched against the path from the repo
 # root (`*` also matches `/`). Lines starting with # and blank lines are
 # ignored.
