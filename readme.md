@@ -66,6 +66,52 @@ command line options and configuration files.
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
   MPI modules `mpi` and `mpi_f08`
 
+## Installing
+
+Each [release](https://github.com/cesiumlang/zfls/releases) publishes the
+`zfls` executable for Linux, macOS and Windows, each on x86_64 and ARM64, as
+`zfls-v<version>-<target>.tar.gz` (`.zip` on Windows), with `SHA256SUMS`.
+The executable needs nothing else: it can be run from wherever it is
+unpacked.
+
+The install scripts in `packaging` download the archive for the computer
+they run on, check it against `SHA256SUMS` and unpack it, by default into
+the current directory, as `zfls-v<version>-<target>/zfls` (`zfls.exe` on
+Windows). They change nothing else, the `PATH` included. On macOS and Linux,
+or in Git Bash, MSYS2 or Cygwin on Windows:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh
+```
+
+`--dir DIR` unpacks it into DIR instead, and `--version VERSION` installs
+that release rather than the latest:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh -s -- --dir ~/tools --version 0.4.0
+```
+
+In PowerShell on Windows (Windows PowerShell 5.1 or PowerShell 7):
+
+```powershell
+irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1))) -Dir C:\tools -Version 0.4.0
+```
+
+zfls is not signed. On macOS, an archive downloaded in a web browser is
+quarantined, and since zfls is not notarized by Apple, macOS then refuses to
+run it ("Apple could not verify "zfls" is free of malware"); Windows can
+likewise question an unsigned program downloaded in a browser (SmartScreen,
+Smart App Control). What the scripts download is not marked like that. For
+an archive downloaded in a browser on macOS, remove the quarantine before
+unpacking it (`xattr -d com.apple.quarantine zfls-v<version>-<target>.tar.gz`),
+or from `zfls` itself if it is already unpacked, or allow it once in System
+Settings, Privacy & Security, "Open Anyway". On Windows, unblock the zip
+before unpacking it (`Unblock-File`, or "Unblock" in its Properties).
+
+The [VS Code extension](#vs-code-extension) includes `zfls`, and is not
+affected.
+
 ## Building
 
 zfls needs Zig 0.17.0.
@@ -73,7 +119,7 @@ zfls needs Zig 0.17.0.
 ```sh
 git clone --recurse-submodules <repository>
 cd zfls
-zig build -Doptimize=ReleaseFast
+zig build -Doptimize=fast
 ```
 
 The executable is `zig-out/bin/zfls` (`zfls.exe` on Windows). `zig build`
@@ -587,7 +633,7 @@ initialization, request latency, edits, memory), and fortls too when
 [json-fortran](https://github.com/jacobwilliams/json-fortran):
 
 ```sh
-zig build bench -Doptimize=ReleaseSafe -- ../json-fortran --fortls fortls
+zig build bench -Doptimize=safe -- ../json-fortran --fortls fortls
 ```
 
 ## Releases
@@ -599,9 +645,17 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` or `dev` once, and tests them as release
+every pull request and every push to `main` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test.
+suites above, longer stress runs and the differential test. Pushes to `dev`
+are not run on their own: what reaches `dev` is tested by its pull request,
+and `dev` as a whole by the pull request that releases it, so each tree is
+tested once (start the workflow by hand on `dev` to test it in between). A
+pull request that only changes files listed in
+`.github/workflows/no-ci.txt` (documentation, editor settings) skips the
+build and the tests. The "CI" check sums up a run, passing when nothing
+failed, so also when the build and the tests were skipped; it is the check
+the rulesets of `main` and `dev` require, with "Version".
 
 Changes are collected on the `dev` branch, which pull requests target, and
 released together by merging `dev` into `main`. Both branches take a change
@@ -621,11 +675,17 @@ When a push to `main` passes on every platform, the same archives are
 published on the GitHub releases page and the tested commit is tagged. CI
 then merges `main` back into `dev` and commits the next patch version to
 `build.zig.zon` there. For a minor or major release, set the version in
-`build.zig.zon` on `dev` by hand. A pull request to `main` fails its "Version is unreleased" check when it changes anything
-beyond the exempt files while `build.zig.zon` holds an already released (or
-older) version. Pushes that only change
-files listed in `.github/workflows/exempt.txt` (documentation, tests,
-editor settings) are tested but not released.
+`build.zig.zon` on `dev` by hand. A pull request to `main` fails its
+"Version is unreleased" check when it can change the shipped binaries while
+`build.zig.zon` holds an already released (or older) version. Pushes to
+`main` that cannot change them are tested but not released. Changes that
+cannot (`.github/workflows/changes.sh` decides, for both) are those to the
+files of `no-ci.txt` and of `ci-only.txt`, which lists the files that CI
+builds or runs but that do not ship (tests, tools, the conda-forge recipe,
+the workflows themselves); changes to Zig source that only touch whole-line
+comments and blank lines; and changes undone since (such as a version set
+back). A change to how `ci.yml` builds the binaries is released with the
+next change to the binaries themselves.
 
 A merged pull request is not built again: when a passed run of the pull
 request built exactly the code that lands on `main` (the same git tree and

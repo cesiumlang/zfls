@@ -1,0 +1,20 @@
+# Files that CI builds or runs but that do not change the shipped binaries:
+# a change to them is tested, and a push to main that only touches these
+# and the files of no-ci.txt is tested but not released.
+# One bash `case` glob per line, matched against the path from the repo
+# root (`*` also matches `/`). Lines starting with # and blank lines are
+# ignored.
+#
+# Note: src/data/** is embedded in the binary, so it is not listed here.
+
+# test drivers and tools, built by `zig build` and run in CI
+tests/*
+tools/*
+# the conda-forge recipe, built by the conda package jobs
+packaging/*
+# line endings at checkout, which the tests can see
+.gitattributes
+# CI's workflows, lists and scripts, and the release notes' sections. A
+# change to how ci.yml builds the binaries (optimize mode, minimum macOS)
+# is released with the next change to the binaries themselves.
+.github/*

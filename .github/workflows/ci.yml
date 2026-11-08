@@ -1,7 +1,14 @@
 name: CI
 
-# Every pull request and every push to main or dev is built and tested on all
+# Every pull request and every push to main is built and tested on all
 # supported platforms, and the tests run on the release binaries themselves.
+# Pushes to dev are not run: what reaches dev is tested by its pull request,
+# and dev as a whole by the pull request that releases it (to main), so
+# running pushes to dev too would test the same trees twice (start the
+# workflow by hand on dev to test it in between). A pull request that only
+# changes the files listed in no-ci.txt (documentation, editor settings)
+# skips the build and the tests; the "CI" job, the check the rulesets
+# require, passes then too.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
 # release binaries are built once and packaged without the
@@ -25,9 +32,8 @@ name: CI
 
 on:
   push:
-    # dev is tested too, so a bad combination of merged pull requests shows
-    # up at once (it is never released from there)
-    branches: [main, dev]
+    # (not dev: see the top)
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -61,6 +67,7 @@ jobs:
       release: ${{ steps.ver.outputs.release }}
       sha: ${{ steps.ver.outputs.sha }}
       tree: ${{ steps.ver.outputs.tree }}
+      ci: ${{ steps.ver.outputs.ci }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,7 +78,26 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # matches, no_ci, keeps_binaries
+          source .github/workflows/changes.sh
+
+          # A pull request that only changes files of no-ci.txt skips CI;
+          # pushes to main and runs started by hand never do
+          ci=true
+          if [ "$EVENT" = pull_request ]; then
+            ci=false
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              if ! matches "$f" "${no_ci[@]}"; then ci=true; echo "changed: $f"; break; fi
+            done <<< "$(git diff --name-only "$BASE_SHA...HEAD")"
+          fi
+          echo "ci=$ci" >> "$GITHUB_OUTPUT"
+          if [ "$ci" = false ]; then
+            echo "Only files of no-ci.txt changed; skipping the build and the tests." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
           read_version() { sed -nE 's/^\s*\.version = "([^"]+)",/\1/p' build.zig.zon; }
           version=$(read_version)
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -92,24 +118,26 @@ jobs:
             fi
           fi
 
-          # Only changes outside .github/workflows/exempt.txt make a release;
-          # CI's own commits (version bumps, marked [skip ci]) do not count
+          # Only changes that can change the shipped binaries make a release
+          # (see changes.sh); CI's own commits (version bumps, marked
+          # [skip ci]) do not count
           base=$(git tag --sort=-version:refname | head -1)
           if [ -n "$base" ]; then
             changed=$(git log --format= --name-only --invert-grep --grep='\[skip ci\]' "$base..HEAD" | sort -u)
           else
             changed=$(git ls-files)
           fi
-          mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
           releasable=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            exempt=false
-            for pat in "${patterns[@]}"; do
-              # shellcheck disable=SC2254
-              case "$f" in $pat) exempt=true; break ;; esac
-            done
-            if [ "$exempt" = false ]; then releasable=true; break; fi
+            if [ -n "$base" ]; then
+              keeps_binaries "$f" "$base" && continue
+            else
+              matches "$f" "${exempt[@]}" && continue
+            fi
+            releasable=true
+            echo "changes the binaries: $f"
+            break
           done <<< "$changed"
 
           release=false
@@ -137,7 +165,8 @@ jobs:
             echo "sha=$sha"
             echo "tree=$tree"
           } >> "$GITHUB_OUTPUT"
-          if [ "$as_checked_out" = true ]; then
+          # (not when the build and the tests are skipped)
+          if [ "$as_checked_out" = true ] && [ "$ci" = true ]; then
             echo "$tree $version" > tested-tree.txt
           fi
           echo "version $version at $sha (tree $tree); release: $release" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -205,27 +234,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      # A pull request that changes anything outside exempt.txt must carry a
-      # version newer than the latest release (CI bumps dev after each
-      # release; for a minor or major release, set it by hand)
+      # A pull request that can change the shipped binaries (see
+      # changes.sh) must carry a version newer than the latest release (CI
+      # bumps dev after each release; for a minor or major release, set it
+      # by hand)
       - name: Check build.zig.zon's version against the latest tag
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           [ -n "$BASE_SHA" ] || BASE_SHA=$(git rev-parse origin/main)
-          mapfile -t patterns < <(grep -v '^\s*#' .github/workflows/exempt.txt | grep -v '^\s*$')
+          # keeps_binaries
+          source .github/workflows/changes.sh
+          fork=$(git merge-base "$BASE_SHA" HEAD)
           needs_version=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            exempt=false
-            for pat in "${patterns[@]}"; do
-              # shellcheck disable=SC2254
-              case "$f" in $pat) exempt=true; break ;; esac
-            done
-            if [ "$exempt" = false ]; then needs_version=true; echo "changed: $f"; break; fi
-          done <<< "$(git diff --name-only "$BASE_SHA...HEAD")"
+            if ! keeps_binaries "$f" "$fork"; then needs_version=true; echo "changes the binaries: $f"; break; fi
+          done <<< "$(git diff --name-only "$fork" HEAD)"
           if [ "$needs_version" = false ]; then
-            echo "Only exempt files changed; no version needed." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Nothing that changes the shipped binaries changed; no version needed." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -246,8 +273,12 @@ jobs:
   build:
     name: Build release binaries
     needs: [version, reuse]
-    # reuse is skipped unless releasing, and its failure only means building
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.reuse.outputs.run_id == '' }}
+    # reuse is skipped unless releasing, and its failure only means building;
+    # skipped (with the tests and packages after it) when only files of
+    # no-ci.txt changed
+    if: >-
+      ${{ !cancelled() && needs.version.result == 'success' && needs.reuse.outputs.run_id == ''
+      && needs.version.outputs.ci == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -298,7 +329,7 @@ jobs:
               *) zig_target=$target ;;
             esac
             # the binary only (`bin`), without the API documentation
-            zig build bin -Dtarget="$zig_target" -Doptimize=ReleaseSafe --prefix "out/$target"
+            zig build bin -Dtarget="$zig_target" -Doptimize=safe --prefix "out/$target"
             name="zfls-v$VERSION-$target"
             pkg="pkg/$name"
             mkdir -p "$pkg"
@@ -622,6 +653,86 @@ jobs:
             sleep "$wait"
           done
           rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
+
+  # packaging/install.sh and install.ps1 install published releases (not
+  # this run's binaries), the way their users run them: piped from curl
+  # into sh, and from Invoke-RestMethod into Invoke-Expression
+  install-script:
+    name: Install script (${{ matrix.os }})
+    needs: version
+    # skipped, like the build and the tests, when only files of no-ci.txt
+    # changed
+    if: ${{ needs.version.outputs.ci == 'true' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: packaging
+
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck --shell=sh packaging/install.sh
+
+      - name: Install the latest release into the current directory
+        run: |
+          mkdir "$RUNNER_TEMP/here"
+          cd "$RUNNER_TEMP/here"
+          sh -s < "$GITHUB_WORKSPACE/packaging/install.sh"
+          ./zfls-v*/zfls --version
+
+      - name: Install a given release into a given directory
+        run: |
+          sh -s -- --dir "$RUNNER_TEMP/there/zfls" --version 0.4.0 < packaging/install.sh
+          "$RUNNER_TEMP"/there/zfls/zfls-v0.4.0-*/zfls --version
+
+      # Alpine has busybox's wget, sha256sum and tar, and no curl
+      - name: Install with wget (Alpine)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD/packaging:/packaging:ro" alpine:3 \
+            sh -c 'sh /packaging/install.sh --dir /opt && /opt/zfls-v*/zfls --version'
+
+      - name: install.ps1, latest release, current directory (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory "$env:RUNNER_TEMP\ps7" | Out-Null
+          Set-Location "$env:RUNNER_TEMP\ps7"
+          Get-Content -Raw "$env:GITHUB_WORKSPACE\packaging\install.ps1" | Invoke-Expression
+          & (Get-ChildItem zfls-v*\zfls.exe).FullName --version
+
+      - name: install.ps1, given release and directory (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & ([scriptblock]::Create((Get-Content -Raw packaging\install.ps1))) -Dir "$env:RUNNER_TEMP\ps5\zfls" -Version 0.4.0
+          & "$env:RUNNER_TEMP\ps5\zfls\zfls-v0.4.0-x86_64-windows\zfls.exe" --version
+
+  # The check the rulesets of main and dev require: passes when no job
+  # before it failed or was cancelled, so also when the build and the tests
+  # were skipped (only files of no-ci.txt changed, or a release reuses a
+  # pull request's tested archives). A matrix job that is skipped reports
+  # no check under its legs' names, so those cannot be required themselves.
+  ci-result:
+    name: CI
+    needs: [version, version-check, reuse, build, test, conda, install-script]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Results of the jobs before
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "$GITHUB_STEP_SUMMARY"
+          bad=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::failed or cancelled: $bad"
+            exit 1
+          fi
 
   release:
     name: Release v${{ needs.version.outputs.version }}
