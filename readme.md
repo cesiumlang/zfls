@@ -673,12 +673,16 @@ published on the GitHub releases page and the tested commit is tagged. CI
 then merges `main` back into `dev` and commits the next patch version to
 `build.zig.zon` there. For a minor or major release, set the version in
 `build.zig.zon` on `dev` by hand. A pull request to `main` fails its
-"Version is unreleased" check when it changes anything beyond the files of
-`no-ci.txt` and `ci-only.txt` while `build.zig.zon` holds an already
-released (or older) version. Pushes to `main` that only change those files
-are tested but not released: `ci-only.txt` lists the files that CI builds
-or runs but that do not change the shipped binaries (tests, tools, the
-conda-forge recipe).
+"Version is unreleased" check when it can change the shipped binaries while
+`build.zig.zon` holds an already released (or older) version. Pushes to
+`main` that cannot change them are tested but not released. Changes that
+cannot (`.github/workflows/changes.sh` decides, for both) are those to the
+files of `no-ci.txt` and of `ci-only.txt`, which lists the files that CI
+builds or runs but that do not ship (tests, tools, the conda-forge recipe,
+the workflows themselves); changes to Zig source that only touch whole-line
+comments and blank lines; and changes undone since (such as a version set
+back). A change to how `ci.yml` builds the binaries is released with the
+next change to the binaries themselves.
 
 A merged pull request is not built again: when a passed run of the pull
 request built exactly the code that lands on `main` (the same git tree and

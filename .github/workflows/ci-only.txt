@@ -14,6 +14,7 @@ tools/*
 packaging/*
 # line endings at checkout, which the tests can see
 .gitattributes
-# CI's own lists
-.github/workflows/ci-only.txt
-.github/workflows/no-ci.txt
+# CI's workflows, lists and scripts, and the release notes' sections. A
+# change to how ci.yml builds the binaries (optimize mode, minimum macOS)
+# is released with the next change to the binaries themselves.
+.github/*

@@ -78,12 +78,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
         run: |
-          # the globs of the lists named, and whether a path matches one
-          patterns() { cat "$@" | grep -v '^\s*#' | grep -v '^\s*$'; }
-          # shellcheck disable=SC2254
-          matches() { local f=$1 pat; shift; for pat in "$@"; do case "$f" in $pat) return 0 ;; esac; done; return 1; }
-          mapfile -t no_ci < <(patterns .github/workflows/no-ci.txt)
-          mapfile -t exempt < <(patterns .github/workflows/no-ci.txt .github/workflows/ci-only.txt)
+          # matches, no_ci, keeps_binaries
+          source .github/workflows/changes.sh
 
           # A pull request, or a push to dev, that only changes files of
           # no-ci.txt skips CI; main and runs started by hand never do
@@ -126,8 +122,9 @@ jobs:
             fi
           fi
 
-          # Only changes outside no-ci.txt and ci-only.txt make a release;
-          # CI's own commits (version bumps, marked [skip ci]) do not count
+          # Only changes that can change the shipped binaries make a release
+          # (see changes.sh); CI's own commits (version bumps, marked
+          # [skip ci]) do not count
           base=$(git tag --sort=-version:refname | head -1)
           if [ -n "$base" ]; then
             changed=$(git log --format= --name-only --invert-grep --grep='\[skip ci\]' "$base..HEAD" | sort -u)
@@ -137,7 +134,14 @@ jobs:
           releasable=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            if ! matches "$f" "${exempt[@]}"; then releasable=true; break; fi
+            if [ -n "$base" ]; then
+              keeps_binaries "$f" "$base" && continue
+            else
+              matches "$f" "${exempt[@]}" && continue
+            fi
+            releasable=true
+            echo "changes the binaries: $f"
+            break
           done <<< "$changed"
 
           release=false
@@ -234,8 +238,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      # A pull request that changes anything outside no-ci.txt and
-      # ci-only.txt must carry a version newer than the latest release (CI
+      # A pull request that can change the shipped binaries (see
+      # changes.sh) must carry a version newer than the latest release (CI
       # bumps dev after each release; for a minor or major release, set it
       # by hand)
       - name: Check build.zig.zon's version against the latest tag
@@ -243,19 +247,16 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           [ -n "$BASE_SHA" ] || BASE_SHA=$(git rev-parse origin/main)
-          mapfile -t patterns < <(cat .github/workflows/no-ci.txt .github/workflows/ci-only.txt | grep -v '^\s*#' | grep -v '^\s*$')
+          # keeps_binaries
+          source .github/workflows/changes.sh
+          fork=$(git merge-base "$BASE_SHA" HEAD)
           needs_version=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            exempt=false
-            for pat in "${patterns[@]}"; do
-              # shellcheck disable=SC2254
-              case "$f" in $pat) exempt=true; break ;; esac
-            done
-            if [ "$exempt" = false ]; then needs_version=true; echo "changed: $f"; break; fi
-          done <<< "$(git diff --name-only "$BASE_SHA...HEAD")"
+            if ! keeps_binaries "$f" "$fork"; then needs_version=true; echo "changes the binaries: $f"; break; fi
+          done <<< "$(git diff --name-only "$fork" HEAD)"
           if [ "$needs_version" = false ]; then
-            echo "Only exempt files changed; no version needed." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Nothing that changes the shipped binaries changed; no version needed." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
