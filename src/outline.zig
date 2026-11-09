@@ -90,7 +90,11 @@ const Outline = struct {
     fn childrenOf(o: Outline, scope: *Obj) Allocator.Error![]const lsp.DocumentSymbol {
         if (scope.kind == .type and o.skip_members) return &.{};
         var out: std.ArrayList(lsp.DocumentSymbol) = .empty;
-        for (scope.childList()) |child| try o.append(child, scope, &out);
+        for (scope.childList()) |child| {
+            // what an include links in from another file is that file's
+            if (child.file_ast != scope.file_ast) continue;
+            try o.append(child, scope, &out);
+        }
         return out.items;
     }
 
