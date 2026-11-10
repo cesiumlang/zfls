@@ -273,3 +273,49 @@ test "without workspace_diagnostics, nothing is published at start" {
     _ = try w.server.dispatchPublic(w.arena.allocator(), "initialized", .{ .object = .empty });
     try std.testing.expect(!publishedFor(w, "bad.f90"));
 }
+
+test "workspace symbols include type-bound procedures and interface bodies" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "mesh.f90", .text =
+        \\module mesh_mod
+        \\  implicit none
+        \\  integer :: mod_var
+        \\  type :: mesh_t
+        \\    integer :: field_n
+        \\  contains
+        \\    procedure, public, pass(obj) :: get_nne => obj_get_nne
+        \\  end type mesh_t
+        \\  interface
+        \\    module function obj_get_nne(obj) result(ans)
+        \\      class(mesh_t), intent(in) :: obj
+        \\      integer :: ans
+        \\    end function obj_get_nne
+        \\  end interface
+        \\contains
+        \\  subroutine helper()
+        \\    integer :: local_var
+        \\    local_var = 1
+        \\  end subroutine helper
+        \\end module mesh_mod
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const named = struct {
+        fn has(syms: []const []const u8, name: []const u8) bool {
+            for (syms) |s| if (std.mem.eql(u8, s, name)) return true;
+            return false;
+        }
+    };
+    const syms = try w.workspaceSymbols("get_nne");
+    try h.expect(named.has(syms, "get_nne"), "no type-bound procedure get_nne: {any}", .{syms});
+    try h.expect(named.has(syms, "obj_get_nne"), "no interface body obj_get_nne: {any}", .{syms});
+    // what the first level always offered is still there
+    const vars = try w.workspaceSymbols("mod_var");
+    try h.expect(named.has(vars, "mod_var"), "no module variable mod_var: {any}", .{vars});
+    // locals and type components stay out of the results
+    const locals = try w.workspaceSymbols("local_var");
+    try h.expect(locals.len == 0, "local variable offered: {any}", .{locals});
+    const fields = try w.workspaceSymbols("field_n");
+    try h.expect(fields.len == 0, "type component offered: {any}", .{fields});
+}
