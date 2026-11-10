@@ -2,7 +2,7 @@
     .name = .zfls,
     .fingerprint = 0x69d82c5be37a0c07,
     .version = "0.4.1",
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .rstd = .{ .path = "vendor/rstd" },
         // .rgui = .{ .path = "vendor/rgui" },
