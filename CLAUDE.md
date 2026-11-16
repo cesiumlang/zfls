@@ -1,8 +1,9 @@
 # Notes for coding agents
 
 What a coding agent working on zfls needs to know besides the code, the
-[readme](readme.md) and the [roadmap](todo.md). Mistakes that have been made
-more than once are written down here so that they are not made again.
+[readme](readme.md) and the [issues](https://github.com/cesiumlang/zfls/issues).
+Mistakes that have been made more than once are written down here so that
+they are not made again.
 
 ## Zig 0.17: what not to use
 
@@ -56,11 +57,22 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
 - **Branches.** Work goes on a branch, in its own git worktree when other
   sessions may be working in the main checkout, and reaches `dev` through
   a pull request. `main` only takes releases, from `dev`.
-- **The roadmap is [todo.md](todo.md).** Mark an item `[~]` when work on it
-  starts and `[x]` in the pull request that finishes it; ideas not
-  scheduled yet are under "Proposed", work waiting on something under
-  "On hold". After a release, remove the `[x]` items it shipped: the
-  release notes on GitHub and the git history record them.
+- **The backlog is the [issues](https://github.com/cesiumlang/zfls/issues).**
+  Each issue is one task, landed in one pull request; split a larger plan
+  into one issue per step. The current milestone is the task list in the
+  description of the open `dev` to `main` pull request, in work order:
+  check an issue off there when it lands on `dev`, and close the issue
+  with a comment naming the pull request (or let the pull request close it
+  with `Closes #N`). Labels: `backlog` for what is outside the milestone,
+  `blocked` with a `**Blocked:**` line naming the outside cause,
+  `upstream: <project>` for work waiting on or following another project,
+  `awaiting input` for a decision the user makes, `housekeeping` for
+  readability and structure work. `**Needs:**` links the issues that must
+  land first. Upstream issues are cited as in the readme (`FL #438`), ours
+  as `#N`. Don't open issues for follow-ups on your own; report them.
+  Pull requests take the release-note labels of `.github/release.yml`
+  (`fix`, `feature`, `performance`, `tests`, `refactor`, `ci`,
+  `skip-changelog`); their titles are the release notes.
 - **The debug options' output is ours.** What `--debug_*` prints serves
   zfls's own testing; it need not match fortls's, so change it as tests
   need.
