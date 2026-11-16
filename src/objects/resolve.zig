@@ -228,36 +228,40 @@ pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_m
     return matching.items;
 }
 
-/// The symbols `workspace/symbol` offers for `query`: the objects
-/// `findInWorkspace` sees, plus the type-bound procedures and the bodies in
-/// submodules, which sit below the first level. Local variables are left out.
-pub fn findSymbolsInWorkspace(env: Env, query: []const u8) ![]*Obj {
-    const a = env.tmp;
-    var matching: std.ArrayList(*Obj) = .empty;
-    var it = env.tree.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.path == null) continue;
-        try collectSymbols(a, entry.value_ptr.obj, query, &matching);
+/// The symbols `workspace/symbol` offers: the global objects of every file
+/// (modules, submodules, programs, top-level procedures), and below
+/// modules, submodules and interfaces their declarations, procedures and
+/// interface bodies, and the type-bound procedures of their types. Local
+/// variables and type components are left out. Each object is offered once:
+/// a file's procedures that an include links into other scopes are its own,
+/// and of two files that define the same global name, both are offered.
+/// `files` is the workspace's map of paths to `FortranFile`s.
+pub fn findSymbolsInWorkspace(a: Allocator, files: anytype) ![]*Obj {
+    var out: std.ArrayList(*Obj) = .empty;
+    var seen: std.AutoHashMapUnmanaged(*Obj, void) = .empty;
+    for (files.values()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.global_dict.values()) |obj| try collectSymbols(a, obj, &out, &seen);
     }
-    return matching.items;
+    return out.items;
 }
 
-fn collectSymbols(a: Allocator, obj: *Obj, query: []const u8, out: *std.ArrayList(*Obj)) !void {
-    const kind = obj.getType(false);
-    if (obj.name.len > 0 and obj.name[0] != '#' and std.ascii.findIgnoreCase(obj.name, query) != null)
-        try out.append(a, obj);
-    switch (kind) {
+fn collectSymbols(a: Allocator, obj: *Obj, out: *std.ArrayList(*Obj), seen: *std.AutoHashMapUnmanaged(*Obj, void)) !void {
+    if ((try seen.getOrPut(a, obj)).found_existing) return;
+    if (obj.name.len > 0 and obj.name[0] != '#') try out.append(a, obj);
+    switch (obj.getType(false)) {
         .module, .submodule, .interface => {},
         .class => {
             for (obj.childList()) |child| {
-                if (child.getType(true) == C.TypeId.method and std.ascii.findIgnoreCase(child.name, query) != null)
-                    try out.append(a, child);
+                if (child.getType(true) != C.TypeId.method) continue;
+                if ((try seen.getOrPut(a, child)).found_existing) continue;
+                try out.append(a, child);
             }
             return;
         },
         else => return,
     }
-    for (obj.childList()) |child| try collectSymbols(a, child, query, out);
+    for (obj.childList()) |child| try collectSymbols(a, child, out, seen);
 }
 
 /// Walk up user-defined type sequence to determine final field type

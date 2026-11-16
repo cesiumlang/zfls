@@ -28,7 +28,7 @@ pub fn serveWorkspaceSymbol(self: *Server, a: Allocator, params: lsp.WorkspaceSy
     var items: std.ArrayList(lsp.SymbolInformation) = .empty;
     const Fuzzy = struct { obj: *Obj, score: u32 };
     var fuzzy_matches: std.ArrayList(Fuzzy) = .empty;
-    for (try objects.findSymbolsInWorkspace(self.env(a), "")) |cand| {
+    for (try objects.findSymbolsInWorkspace(a, &self.workspace)) |cand| {
         if (std.ascii.findIgnoreCase(cand.name, params.query) != null) {
             try items.append(a, try workspaceSymbolOf(a, cand));
         } else if (fuzzy.score(cand.name, params.query)) |s| {
@@ -62,7 +62,10 @@ pub fn workspaceSymbolOf(a: Allocator, cand: *const Obj) !lsp.SymbolInformation 
         .method => 6,
         else => 1,
     };
-    const container: ?[]const u8 = if (std.mem.find(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
+    // a file's procedure that an include links into another file's scope
+    // is in no scope of its own file (and maybe in several of others)
+    const linked = if (cand.parent) |p| p.file_ast != cand.file_ast and cand.kind.isSubroutine() else false;
+    const container: ?[]const u8 = if (linked) null else if (std.mem.find(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
     return .{
         .name = cand.name,
         .kind = kind,

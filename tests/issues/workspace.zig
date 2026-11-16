@@ -319,3 +319,42 @@ test "workspace symbols include type-bound procedures and interface bodies" {
     const fields = try w.workspaceSymbols("field_n");
     try h.expect(fields.len == 0, "type component offered: {any}", .{fields});
 }
+
+test "workspace symbols offer each object once, in its own file" {
+    // one errors.F90 #included into two submodules, and a second library's
+    // errors.F90 of the same procedure name; and declarations that an
+    // INCLUDE puts into a module
+    const errors = "subroutine assert_error(a)\n  logical, intent(in) :: a\nend subroutine assert_error\n";
+    const submodule = struct {
+        fn text(comptime name: []const u8) []const u8 {
+            return "submodule(m) " ++ name ++ "\n  implicit none\ncontains\n  subroutine " ++ name ++ "_t()\n    call assert_error(.true.)\n  end subroutine " ++ name ++ "_t\n\n#include \"../inc/errors.F90\"\n\nend submodule " ++ name ++ "\n";
+        }
+    };
+    const w = try h.Workspace.init(&.{
+        .{ .name = "a/inc/errors.F90", .text = errors },
+        .{ .name = "a/m.F90", .text = "module m\n  implicit none\n  include 'decls.inc'\nend module m\n" },
+        .{ .name = "a/decls.inc", .text = "integer :: shared_count\n" },
+        .{ .name = "a/src/sa.F90", .text = submodule.text("sa") },
+        .{ .name = "a/src/sb.F90", .text = submodule.text("sb") },
+        .{ .name = "b/inc/errors.F90", .text = errors },
+        .{ .name = "b/src/sc.F90", .text = submodule.text("sc") },
+    }, .{});
+    defer w.deinit();
+    const syms = try w.workspaceSymbolInfos("assert_error");
+    try h.expect(syms.len == 2, "{d} symbols for assert_error, not one per errors.F90: {any}", .{ syms.len, syms });
+    var lib_a = false;
+    var lib_b = false;
+    for (syms) |s| {
+        lib_a = lib_a or std.mem.endsWith(u8, s.uri, "a/inc/errors.F90");
+        lib_b = lib_b or std.mem.endsWith(u8, s.uri, "b/inc/errors.F90");
+        // in no scope of its own file, whichever submodule includes it
+        try h.expect(s.container == null, "assert_error is in {?s}", .{s.container});
+    }
+    try h.expect(lib_a and lib_b, "assert_error not offered in both errors.F90: {any}", .{syms});
+    const decls = try w.workspaceSymbolInfos("shared_count");
+    try h.expect(decls.len == 1, "{d} symbols for shared_count: {any}", .{ decls.len, decls });
+    try h.expect(std.mem.endsWith(u8, decls[0].uri, "a/decls.inc"), "shared_count is in {s}", .{decls[0].uri});
+    // still once each after an including file is edited and linked again
+    try w.replaceText("a/src/sa.F90", submodule.text("sa"));
+    try h.expect((try w.workspaceSymbolInfos("assert_error")).len == 2, "assert_error offered again after an edit", .{});
+}

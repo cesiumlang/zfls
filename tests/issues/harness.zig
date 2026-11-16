@@ -679,9 +679,22 @@ pub const Workspace = struct {
 
     /// Names of the workspace symbols matching `query`
     pub fn workspaceSymbols(w: *Workspace, query: []const u8) ![]const []const u8 {
-        const v = try w.request("workspace/symbol", .{ .query = query });
         var out: std.ArrayList([]const u8) = .empty;
-        for (json.items(v)) |s| try out.append(w.a(), json.str(json.get(s, "name")) orelse "");
+        for (try w.workspaceSymbolInfos(query)) |s| try out.append(w.a(), s.name);
+        return out.items;
+    }
+
+    pub const WorkspaceSymbol = struct { name: []const u8, uri: []const u8, container: ?[]const u8 };
+
+    /// The workspace symbols matching `query`: names, files and containers
+    pub fn workspaceSymbolInfos(w: *Workspace, query: []const u8) ![]const WorkspaceSymbol {
+        const v = try w.request("workspace/symbol", .{ .query = query });
+        var out: std.ArrayList(WorkspaceSymbol) = .empty;
+        for (json.items(v)) |s| try out.append(w.a(), .{
+            .name = json.str(json.get(s, "name")) orelse "",
+            .uri = json.str(json.get(json.get(s, "location"), "uri")) orelse "",
+            .container = json.str(json.get(s, "containerName")),
+        });
         return out.items;
     }
 
