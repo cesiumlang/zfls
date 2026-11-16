@@ -1,6 +1,6 @@
 [submodule "vendor/rstd"]
 	path = vendor/rstd
-	url = https://codeberg.org/randyos/rstd.git
+	url = https://github.com/randyos-org/rstd.git
 [submodule "vendor/M_intrinsics"]
 	path = vendor/M_intrinsics
 	url = https://github.com/urbanjost/M_intrinsics

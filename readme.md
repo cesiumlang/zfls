@@ -114,7 +114,7 @@ affected.
 
 ## Building
 
-zfls needs Zig 0.17.0.
+zfls needs Zig 0.17.1.
 
 ```sh
 git clone --recurse-submodules <repository>

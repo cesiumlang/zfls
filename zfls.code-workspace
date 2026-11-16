@@ -71,7 +71,7 @@
     // "zig.debugAdapter": "lldb",
 
     // "zig.path": "C:/scratch/git/zig-build/bin/stage4/bin/zig.exe",
-    "zig.zls.path": "C:/scratch/git/zig-build/bin/zls/bin/zls.exe",
+    // "zig.zls.path": "C:/scratch/git/zig-build/bin/zls/bin/zls.exe",
     "cSpell.words": [
       "fortls",
       "rstd",

@@ -6,7 +6,7 @@ more than once are written down here so that they are not made again.
 
 ## Zig 0.17: what not to use
 
-zfls builds with Zig 0.17.0, whose standard library marks many older
+zfls builds with Zig 0.17.1, whose standard library marks many older
 declarations deprecated in their doc comments. The compiler does not warn
 about them, so they creep back in. Use the replacement:
 
