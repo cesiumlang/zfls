@@ -478,6 +478,12 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             v.varData().link_obj = null;
         }
         for (ast.scope_list.items) |s| {
+            // a procedure of a file of whole procedures, linked by an
+            // include into another file's scope, is the file's own again
+            if (s.parent) |p| if (p.file_ast != ast) {
+                s.setParent(null);
+                try s.updateFqsn(null);
+            };
             if (s.kind.isSubroutine()) s.procData().link_obj = null;
             if (s.procDataOpt()) |p| if (p.linked_from_interface) s.resetInterfaceCopy();
             if (s.kind == .interface) s.ifaceData().mems.clearRetainingCapacity();

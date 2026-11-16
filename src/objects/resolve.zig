@@ -228,6 +228,38 @@ pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_m
     return matching.items;
 }
 
+/// The symbols `workspace/symbol` offers for `query`: the objects
+/// `findInWorkspace` sees, plus the type-bound procedures and the bodies in
+/// submodules, which sit below the first level. Local variables are left out.
+pub fn findSymbolsInWorkspace(env: Env, query: []const u8) ![]*Obj {
+    const a = env.tmp;
+    var matching: std.ArrayList(*Obj) = .empty;
+    var it = env.tree.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.path == null) continue;
+        try collectSymbols(a, entry.value_ptr.obj, query, &matching);
+    }
+    return matching.items;
+}
+
+fn collectSymbols(a: Allocator, obj: *Obj, query: []const u8, out: *std.ArrayList(*Obj)) !void {
+    const kind = obj.getType(false);
+    if (obj.name.len > 0 and obj.name[0] != '#' and std.ascii.findIgnoreCase(obj.name, query) != null)
+        try out.append(a, obj);
+    switch (kind) {
+        .module, .submodule, .interface => {},
+        .class => {
+            for (obj.childList()) |child| {
+                if (child.getType(true) == C.TypeId.method and std.ascii.findIgnoreCase(child.name, query) != null)
+                    try out.append(a, child);
+            }
+            return;
+        },
+        else => return,
+    }
+    for (obj.childList()) |child| try collectSymbols(a, child, query, out);
+}
+
 /// Walk up user-defined type sequence to determine final field type
 pub fn climbTypeTree(env: Env, var_stack: []const []const u8, curr_scope: ?*Obj) !?*Obj {
     var i_var: usize = 0;

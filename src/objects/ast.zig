@@ -316,8 +316,13 @@ pub const Ast = struct {
             inc.file = include_file;
             inc.inc_obj = null;
             include_ast.included_in = parent_scope;
-            if (include_ast.none_scope == null) continue;
-            if (include_ast.inc_scope == null) include_ast.inc_scope = include_ast.none_scope;
+            // what the file declares: the children of its unnamed scope, or,
+            // for a file of whole procedures (which has none), those
+            // procedures, as the procedures of the including scope
+            const units: []const *Obj = if (include_ast.inc_scope orelse include_ast.none_scope) |ns| blk: {
+                include_ast.inc_scope = ns;
+                break :blk ns.childList();
+            } else try include_ast.topProcedures(tmp);
             // Remove old objects
             if (parent_scope) |ps| {
                 for (inc.scope_objs.items) |obj| {
@@ -328,15 +333,27 @@ pub const Ast = struct {
                 }
             }
             inc.scope_objs.clearRetainingCapacity();
-            for (include_ast.inc_scope.?.childList()) |child| {
+            for (units) |child| {
                 try inc.scope_objs.append(self.allocator(), child);
                 if (parent_scope) |ps| {
                     try ps.addChild(child);
                     try child.updateFqsn(ps.fqsn);
                 }
             }
-            include_ast.none_scope = parent_scope;
+            if (include_ast.inc_scope != null) include_ast.none_scope = parent_scope;
         }
+    }
+
+    /// The procedures of the file outside any other scope (those another
+    /// file's include has linked into a scope of its own included)
+    fn topProcedures(self: *Ast, tmp: Allocator) ![]const *Obj {
+        var out: std.ArrayList(*Obj) = .empty;
+        for (self.scope_list.items) |s| {
+            if (!s.kind.isSubroutine()) continue;
+            if (s.parent) |p| if (p.file_ast == self) continue;
+            try out.append(tmp, s);
+        }
+        return out.items;
     }
 
     pub fn checkFile(self: *Ast, env: Env) !struct { errors: []Diagnostic, parse_errors: []BuiltDiag } {

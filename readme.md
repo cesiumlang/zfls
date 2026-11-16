@@ -882,7 +882,9 @@ zfls deliberately differs from fortls in a few places:
   `#include` is; fortls only looks next to the including file.
 - A file that another file `#include`s into a scope sees the names of that scope
   (as for `INCLUDE` statements, but also for files that hold whole procedures);
-  fortls reports them as unknown in the included file.
+  fortls reports them as unknown in the included file. The procedures of such
+  a file are the including scope's, found there before another file's
+  procedure of the same name.
 - A file that an `INCLUDE` or `#include` names is read for its declarations
   even when it is no source file of the workspace (`.inc`, not in
   `incl_suffixes`), and so are the files it includes; its own diagnostics

@@ -149,6 +149,9 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
 
     for (self.childList()) |child| {
         if (std.mem.startsWith(u8, child.name, "#")) continue;
+        // a procedure an include links in is checked in its own file, at its
+        // own lines, which are none of this scope's
+        if (child.file_ast != self.file_ast and child.kind.isSubroutine()) continue;
         const line_number = child.sline -| 1;
         if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
         const ct = child.getType(true);

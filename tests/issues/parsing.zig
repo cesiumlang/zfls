@@ -250,6 +250,49 @@ test "#495 hover and definition inside a file that is #included into a module" {
     });
 }
 
+test "a procedure #included into a submodule is found before another file's of the same name" {
+    // two libraries each #include their own errors.F90 into their
+    // submodules; each submodule calls the one it includes, not the one
+    // whose path sorts first
+    const t = struct {
+        fn errors(comptime args: []const u8) []const u8 {
+            return "subroutine assert_error(" ++ args ++ ")\n  logical, intent(in) :: a\nend subroutine assert_error\n";
+        }
+        fn module(comptime lib: []const u8) []const u8 {
+            return "module " ++ lib ++ "_m\n  implicit none\n  interface\n    module subroutine " ++ lib ++ "_s()\n    end subroutine " ++ lib ++ "_s\n  end interface\nend module " ++ lib ++ "_m\n";
+        }
+        fn submodule(comptime lib: []const u8, comptime call_args: []const u8) []const u8 {
+            return "submodule(" ++ lib ++ "_m) s\n  implicit none\ncontains\n  module procedure " ++ lib ++ "_s\n    call assert_error(" ++ call_args ++ ")\n  end procedure " ++ lib ++ "_s\n\n#include \"../../include/errors.F90\"\n\nend submodule s\n";
+        }
+    };
+    const w = try h.Workspace.init(&.{
+        .{ .name = "base/src/submodules/include/errors.F90", .text = t.errors("a, lineno") },
+        .{ .name = "base/src/modules/m.F90", .text = t.module("base") },
+        .{ .name = "base/src/submodules/m/src/m@s.F90", .text = t.submodule("base", ".true., 1") },
+        .{ .name = "classes/src/submodules/include/errors.F90", .text = t.errors("a") },
+        .{ .name = "classes/src/modules/m.F90", .text = t.module("classes") },
+        .{ .name = "classes/src/submodules/m/src/m@s.F90", .text = t.submodule("classes", ".true.") },
+    }, .{});
+    defer w.deinit();
+    inline for (.{ "base", "classes" }, .{ "lineno", "assert_error(a)" }) |lib, signature| {
+        const file = lib ++ "/src/submodules/m/src/m@s.F90";
+        const call = w.pos(file, "assert_error", 0, 2);
+        const def = (try w.definition(file, call)) orelse return h.unmet("no definition of assert_error in {s}", .{file});
+        try h.expect(std.mem.endsWith(u8, def.uri, lib ++ "/src/submodules/include/errors.F90"), "assert_error in {s} is {s}", .{ file, def.uri });
+        try w.expectHoverContains(file, call, signature);
+        // the included procedures are checked and outlined in their own file,
+        // at their own lines, not as the submodule's: no "definition before
+        // CONTAINS", and no symbol at their lines in the submodule
+        try w.expectNoDiagnostics(file);
+        for (try w.documentSymbols(file)) |name|
+            try h.expect(!std.mem.eql(u8, name, "assert_error"), "{s} outlines the included assert_error", .{file});
+    }
+    // still so once the included file has been edited and linked again
+    try w.replaceText("classes/src/submodules/include/errors.F90", t.errors("a, msg"));
+    const file = "classes/src/submodules/m/src/m@s.F90";
+    try w.expectHoverContains(file, w.pos(file, "assert_error", 0, 2), "assert_error(a, msg)");
+}
+
 test "hansec #202 a comment inside a continued fixed-form declaration does not end it" {
     const w = try h.Workspace.init(&.{.{
         .name = "t.f",

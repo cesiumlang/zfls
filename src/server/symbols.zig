@@ -28,7 +28,7 @@ pub fn serveWorkspaceSymbol(self: *Server, a: Allocator, params: lsp.WorkspaceSy
     var items: std.ArrayList(lsp.SymbolInformation) = .empty;
     const Fuzzy = struct { obj: *Obj, score: u32 };
     var fuzzy_matches: std.ArrayList(Fuzzy) = .empty;
-    for (try objects.findInWorkspace(self.env(a), "", false, false)) |cand| {
+    for (try objects.findSymbolsInWorkspace(self.env(a), "")) |cand| {
         if (std.ascii.findIgnoreCase(cand.name, params.query) != null) {
             try items.append(a, try workspaceSymbolOf(a, cand));
         } else if (fuzzy.score(cand.name, params.query)) |s| {
