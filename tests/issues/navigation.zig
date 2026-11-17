@@ -1,5 +1,6 @@
 //! Navigation requests zfls answers beyond fortls: prepareRename,
-//! selection ranges, document links, type definitions and declarations.
+//! selection ranges, document links, type definitions, declarations and
+//! linked editing.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -643,5 +644,58 @@ test "go to declaration: a separate module procedure's interface (#192)" {
                 return h.unmet("no declaration at '{s}' (prefer_implementation {})", .{ c.needle, prefer });
             try h.expect(std.mem.endsWith(u8, l.uri, "/solver.f90") and l.line == c.line, "declaration at '{s}' (prefer_implementation {}) is {s}:{d}, not line {d}", .{ c.needle, prefer, l.uri, l.line, c.line });
         }
+    }
+}
+
+test "linked editing of a name and its END statement (#193)" {
+    const w = try h.Workspace.init(&.{.{ .name = "units.f90", .text =
+        \\module units
+        \\  implicit none
+        \\  type :: cell_t
+        \\    integer :: n
+        \\  end type cell_t
+        \\  interface norm
+        \\    module procedure norm_cell
+        \\  end interface norm
+        \\contains
+        \\  integer function norm_cell(c)
+        \\    type(cell_t), intent(in) :: c
+        \\    norm_cell = c%n
+        \\  end function norm_cell
+        \\  subroutine sweep(m)
+        \\    integer, intent(in) :: m
+        \\    integer :: i
+        \\    outer: do i = 1, m
+        \\      if (i > 2) cycle outer
+        \\    end do outer
+        \\    call bare()
+        \\  end subroutine sweep
+        \\  subroutine bare()
+        \\  end subroutine
+        \\end module units
+        \\
+    }}, .{});
+    defer w.deinit();
+    const Case = struct { needle: []const u8, nth: usize, want: []const h.Pos };
+    const cases = [_]Case{
+        // a module, from its END statement
+        .{ .needle = "units\n", .nth = 1, .want = &.{ .{ .line = 0, .col = 7 }, .{ .line = 23, .col = 11 } } },
+        // a derived type, a named interface, a function, a subroutine
+        .{ .needle = "cell_t\n    integer", .nth = 0, .want = &.{ .{ .line = 2, .col = 10 }, .{ .line = 4, .col = 11 } } },
+        .{ .needle = "norm\n", .nth = 0, .want = &.{ .{ .line = 5, .col = 12 }, .{ .line = 7, .col = 16 } } },
+        .{ .needle = "norm_cell\n  sub", .nth = 0, .want = &.{ .{ .line = 9, .col = 19 }, .{ .line = 12, .col = 15 } } },
+        .{ .needle = "sweep(m)", .nth = 0, .want = &.{ .{ .line = 13, .col = 13 }, .{ .line = 20, .col = 17 } } },
+        // a construct name, with its CYCLE
+        .{ .needle = "outer: do", .nth = 0, .want = &.{ .{ .line = 16, .col = 4 }, .{ .line = 17, .col = 23 }, .{ .line = 18, .col = 11 } } },
+        // an END without the name, a use of the name, a variable: none
+        .{ .needle = "bare()\n  end", .nth = 0, .want = &.{} },
+        .{ .needle = "bare()\n  end subroutine sweep", .nth = 0, .want = &.{} },
+        .{ .needle = "cell_t), intent", .nth = 0, .want = &.{} },
+        .{ .needle = "m)\n    integer, intent", .nth = 0, .want = &.{} },
+    };
+    for (cases) |c| {
+        const got = try w.linkedEditing("units.f90", w.pos("units.f90", c.needle, c.nth, 0));
+        try h.expect(got.len == c.want.len, "{d} linked ranges at '{s}', not {d}: {any}", .{ got.len, c.needle, c.want.len, got });
+        for (got, c.want) |g, want| try h.expect(g.line == want.line and g.col == want.col, "a linked range at '{s}' is {d}:{d}, not {d}:{d}", .{ c.needle, g.line, g.col, want.line, want.col });
     }
 }
