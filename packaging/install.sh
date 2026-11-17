@@ -52,22 +52,16 @@ download() {
     fi
 }
 
-# The version of the latest release, without the leading v
+# The version of the latest release that has an archive for TARGET, without
+# the leading v. It is read from the names in the release's SHA256SUMS,
+# which releases/latest/download/ serves without GitHub's API and its rate
+# limit (60 requests an hour from one address, which CI runners share).
 latest_version() {
-    if have curl; then
-        # releases/latest redirects to releases/tag/v<version>
-        url=$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
-            die "cannot reach github.com"
-        tag=${url##*/}
-    else
-        download "https://api.github.com/repos/$repo/releases/latest" "$tmp/latest.json" ||
-            die "cannot reach api.github.com"
-        tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$tmp/latest.json" | head -n 1)
-    fi
-    case "$tag" in
-        v[0-9]*) echo "${tag#v}" ;;
-        *) die "cannot find the latest release of $repo" ;;
-    esac
+    download "https://github.com/$repo/releases/latest/download/SHA256SUMS" "$tmp/latest" ||
+        die "cannot reach github.com"
+    v=$(sed -n "s/.*zfls-v\(.*\)-$1\..*/\1/p" "$tmp/latest" | head -n 1)
+    [ -n "$v" ] || die "the latest release of $repo has no archive for $1"
+    echo "$v"
 }
 
 # The release target of this computer, such as aarch64-macos
@@ -158,7 +152,7 @@ main() {
     trap 'rm -rf "$tmp"' EXIT
 
     target=$(detect_target)
-    [ -n "$version" ] || version=$(latest_version)
+    [ -n "$version" ] || version=$(latest_version "$target")
     version=${version#v}
     name="zfls-v$version-$target"
     case "$target" in
