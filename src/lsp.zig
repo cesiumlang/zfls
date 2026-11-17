@@ -151,7 +151,10 @@ pub const SemanticTokensLegend = struct {
 pub const SemanticTokensOptions = struct {
     legend: SemanticTokensLegend,
     full: bool = true,
+    range: bool = true,
 };
+
+pub const SemanticTokensRangeParams = struct { textDocument: TextDocumentIdentifier, range: Range };
 
 pub const ServerCapabilities = struct {
     completionProvider: CompletionOptions,

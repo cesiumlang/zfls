@@ -226,3 +226,60 @@ test "Modern Fortran #177 typing # first on an indented line moves it to the fir
     // not on a line where # is not first
     try std.testing.expectEqual(@as(usize, 0), (try w.onTypeFormatting("p.F90", w.pos("p.F90", "v = TEMP", 0, 1), "#")).len);
 }
+
+test "semantic tokens of a range are those of the whole file there (#194)" {
+    inline for (.{
+        .{
+            "free.f90",
+            \\module m
+            \\  implicit none
+            \\  integer :: total
+            \\contains
+            \\  subroutine s(a, &
+            \\               b, &
+            \\               c)
+            \\    real, intent(in) :: a, b, &
+            \\      c
+            \\    total = int(a + &   ! a comment
+            \\      ! a comment line between
+            \\      b + c)
+            \\    print *, 'the total of a, b &
+            \\      &and c is ', total
+            \\  end subroutine s
+            \\end module m
+            \\
+        },
+        .{
+            "fixed.f",
+            \\      SUBROUTINE S(A,
+            \\     &             B)
+            \\      REAL A, B
+            \\      A = A +
+            \\C     a comment line between
+            \\     &    B
+            \\      PRINT *, 'A AND
+            \\     &B ARE', A
+            \\      END
+            \\
+        },
+    }) |f| {
+        const w = try h.Workspace.init(&.{.{ .name = f[0], .text = f[1] }}, .{});
+        defer w.deinit();
+        const all = try w.semanticTokens(f[0]);
+        const n: i64 = @intCast(std.mem.count(u8, f[1], "\n"));
+        // every range, also those that start on a continuation line
+        var want: std.ArrayList(h.Token) = .empty;
+        defer want.deinit(std.testing.allocator);
+        var first: i64 = 0;
+        while (first < n) : (first += 1) {
+            var last = first;
+            while (last < n) : (last += 1) {
+                want.clearRetainingCapacity();
+                for (all) |t| if (t.line >= first and t.line <= last) try want.append(std.testing.allocator, t);
+                const got = try w.semanticTokensRange(f[0], first, last);
+                try h.expect(got.len == want.items.len, "{s} lines {d}-{d}: {d} tokens, not {d}: {any}", .{ f[0], first, last, got.len, want.items.len, got });
+                for (got, want.items) |g, x| try h.expect(g.line == x.line and std.mem.eql(u8, g.text, x.text) and std.mem.eql(u8, g.type, x.type), "{s} lines {d}-{d}: {d} {s} {s}, not {d} {s} {s}", .{ f[0], first, last, g.line, g.text, g.type, x.line, x.text, x.type });
+            }
+        }
+    }
+}

@@ -648,7 +648,19 @@ pub const Workspace = struct {
 
     /// The semantic tokens of a file, decoded
     pub fn semanticTokens(w: *Workspace, name: []const u8) ![]const Token {
-        const v = try w.server.dispatchPublic(w.a(), "textDocument/semanticTokens/full", try w.docParams(name));
+        return w.decodeTokens(name, try w.server.dispatchPublic(w.a(), "textDocument/semanticTokens/full", try w.docParams(name)));
+    }
+
+    /// The semantic tokens of lines `first` to `last` (0-based) of a file,
+    /// decoded (`semanticTokens/range`)
+    pub fn semanticTokensRange(w: *Workspace, name: []const u8, first: i64, last: i64) ![]const Token {
+        return w.decodeTokens(name, try w.request("textDocument/semanticTokens/range", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = first, .character = 0 }, .end = .{ .line = last, .character = 0 } },
+        }));
+    }
+
+    fn decodeTokens(w: *Workspace, name: []const u8, v: Value) ![]const Token {
         const data = json.items(json.get(v, "data"));
         var lines = std.mem.splitScalar(u8, w.text(name), '\n');
         var line_texts: std.ArrayList([]const u8) = .empty;
