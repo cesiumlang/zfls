@@ -34,6 +34,7 @@ const completion = @import("server/completion.zig");
 const definition = @import("server/definition.zig");
 const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
+const renames = @import("server/renames.zig");
 const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
@@ -336,6 +337,8 @@ pub const Server = struct {
         document_highlight,
         hover,
         implementation,
+        type_definition,
+        declaration,
         rename,
         prepare_rename,
         linked_editing,
@@ -368,6 +371,7 @@ pub const Server = struct {
         code_action,
         workspace_symbol,
         watched_files,
+        will_rename_files,
         /// accepted and ignored
         ignored,
         exit,
@@ -385,6 +389,8 @@ pub const Server = struct {
         .{ "textDocument/documentHighlight", .document_highlight },
         .{ "textDocument/hover", .hover },
         .{ "textDocument/implementation", .implementation },
+        .{ "textDocument/typeDefinition", .type_definition },
+        .{ "textDocument/declaration", .declaration },
         .{ "textDocument/rename", .rename },
         .{ "textDocument/prepareRename", .prepare_rename },
         .{ "textDocument/linkedEditingRange", .linked_editing },
@@ -417,6 +423,7 @@ pub const Server = struct {
         .{ "workspace/symbol", .workspace_symbol },
         .{ "initialized", .initialized },
         .{ "workspace/didChangeWatchedFiles", .watched_files },
+        .{ "workspace/willRenameFiles", .will_rename_files },
         .{ "workspace/didChangeConfiguration", .ignored },
         .{ "$/cancelRequest", .ignored },
         .{ "$/setTrace", .ignored },
@@ -437,6 +444,8 @@ pub const Server = struct {
             .document_highlight => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), false),
             .hover => definition.serveHover(self, a, try json.decode(lsp.PositionParams, a, params)),
             .implementation => definition.serveImplementation(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .type_definition => definition.serveTypeDefinition(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .declaration => definition.serveDeclaration(self, a, try json.decode(lsp.PositionParams, a, params)),
             .rename => references.serveRename(self, a, try json.decode(lsp.RenameParams, a, params)),
             .prepare_rename => references.servePrepareRename(self, a, try json.decode(lsp.PositionParams, a, params)),
             .linked_editing => references.serveLinkedEditing(self, a, try json.decode(lsp.PositionParams, a, params)),
@@ -472,6 +481,7 @@ pub const Server = struct {
             .code_action => diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
             .workspace_symbol => symbols.serveWorkspaceSymbol(self, a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
             .watched_files => workspace.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
+            .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
             .ignored => .null,
             .exit => blk: {
                 self.serveExit();

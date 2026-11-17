@@ -532,6 +532,71 @@ pub fn createHover(self: *Server, a: Allocator, msg: ?[]const u8, docs: ?[]const
     return srv.pyFormatLangid(a, md, self.s.hover_language);
 }
 
+/// The derived type of the name at the position (#191): of a variable or
+/// component, of a function's result, or a type name itself. Nothing for
+/// intrinsic types and unlimited polymorphism (`class(*)`).
+pub fn serveTypeDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const d = (try definitionAt(self, a, params, false)) orelse return .null;
+    const t = (try derivedTypeOf(self, a, d.obj)) orelse return .null;
+    if (t.file_ast.file == null) return .null;
+    return createRefLink(self, a, t);
+}
+
+fn derivedTypeOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
+    const e = self.env(a);
+    const found: ?*Obj = switch (obj.kind) {
+        .type => obj,
+        .variable, .method => try obj.getTypeObj(e),
+        .function => blk: {
+            const proc = obj.procData();
+            if (proc.result_obj) |ro| break :blk try ro.getTypeObj(e);
+            // the type in the prefix, `type(mesh_t) function f()`
+            const rt = proc.result_type orelse break :blk null;
+            const tn = helpers.getParenSubstring(rt) orelse break :blk null;
+            const scope = obj.parent orelse obj;
+            break :blk try objects.findInScope(e, scope, try std.ascii.allocLowerString(a, str.strip(tn)), .{});
+        },
+        else => null,
+    };
+    const t = found orelse return null;
+    return if (t.kind == .type) t else null;
+}
+
+/// The declaration of the name at the position (#192): for a separate
+/// module procedure, its interface in the module (or parent submodule),
+/// also from its body and whatever `prefer_implementation` says; for
+/// anything else, its definition.
+pub fn serveDeclaration(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const d = (try definitionAt(self, a, params, false)) orelse return .null;
+    if (d.obj.kind == .intrinsic) return .null;
+    const target = (try interfaceOf(self, a, d.obj)) orelse d.obj;
+    if (target.file_ast.file == null) return .null;
+    return createRefLink(self, a, target);
+}
+
+/// The interface body that declares procedure `obj`: itself when it is
+/// one, or the prototype in the ancestors of its submodule that it
+/// implements
+fn interfaceOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
+    if (!obj.kind.isSubroutine()) return null;
+    const parent = obj.parent orelse return null;
+    if (parent.getType(false) == C.TypeId.interface) return obj;
+    if (parent.kind != .submodule) return null;
+    const e = self.env(a);
+    var cur: *const Obj = parent;
+    // an ancestor chain ends at the module; the bound guards a loop
+    var hops: usize = 0;
+    while (cur.kind == .submodule and hops < 64) : (hops += 1) {
+        const anc = cur.findSubmoduleParent(e) orelse break;
+        for (anc.childList()) |child| {
+            if (child.getType(false) != C.TypeId.interface) continue;
+            for (child.childList()) |proto| if (proto.linkObj() == obj) return proto;
+        }
+        cur = anc;
+    }
+    return null;
+}
+
 pub fn serveImplementation(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const d = (try definitionAt(self, a, params, false)) orelse return .null;
     const var_obj = d.obj;

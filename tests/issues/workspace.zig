@@ -295,8 +295,30 @@ test "workspace symbols include type-bound procedures and interface bodies" {
         \\  subroutine helper()
         \\    integer :: local_var
         \\    local_var = 1
+        \\  contains
+        \\    subroutine helper_inner()
+        \\      integer :: inner_local
+        \\      inner_local = 2
+        \\    end subroutine helper_inner
         \\  end subroutine helper
         \\end module mesh_mod
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main_prog
+        \\  implicit none
+        \\  call prog_inner()
+        \\contains
+        \\  subroutine prog_inner()
+        \\  end subroutine prog_inner
+        \\end program main_prog
+        \\
+        \\subroutine top_level()
+        \\  call top_inner()
+        \\contains
+        \\  subroutine top_inner()
+        \\  end subroutine top_inner
+        \\end subroutine top_level
         \\
         },
     }, .{});
@@ -318,6 +340,17 @@ test "workspace symbols include type-bound procedures and interface bodies" {
     try h.expect(locals.len == 0, "local variable offered: {any}", .{locals});
     const fields = try w.workspaceSymbols("field_n");
     try h.expect(fields.len == 0, "type component offered: {any}", .{fields});
+    // the internal procedures of a module procedure, a program and a
+    // top-level procedure, with their hosts as containers (#197); still
+    // not their locals
+    inline for (.{ .{ "helper_inner", "mesh_mod::helper" }, .{ "prog_inner", "main_prog" }, .{ "top_inner", "top_level" } }) |c| {
+        const found = try w.workspaceSymbolInfos(c[0]);
+        try h.expect(found.len == 1, "{d} symbols for {s}: {any}", .{ found.len, c[0], found });
+        const container = found[0].container orelse "";
+        try h.expect(std.mem.eql(u8, container, c[1]), "{s} is in '{s}', not {s}", .{ c[0], container, c[1] });
+    }
+    const inner_locals = try w.workspaceSymbols("inner_local");
+    try h.expect(inner_locals.len == 0, "local variable of an internal procedure offered: {any}", .{inner_locals});
 }
 
 test "workspace symbols offer each object once, in its own file" {
@@ -357,4 +390,52 @@ test "workspace symbols offer each object once, in its own file" {
     // still once each after an including file is edited and linked again
     try w.replaceText("a/src/sa.F90", submodule.text("sa"));
     try h.expect((try w.workspaceSymbolInfos("assert_error")).len == 2, "assert_error offered again after an edit", .{});
+}
+
+test "renaming a file rewrites the includes that name it (#198)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text = "{\"include_dirs\": [\"inc\"]}\n" },
+        .{ .name = "inc/errors.inc", .text = "integer :: nerr\n" },
+        .{ .name = "inc/consts.h", .text = "#define N 4\n" },
+        .{ .name = "src/a.F90", .text =
+        \\subroutine a()
+        \\  include '../inc/errors.inc'
+        \\#include "consts.h"
+        \\end subroutine a
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const Want = struct { line: i64, start: i64, text: []const u8 };
+    const Case = struct { what: []const u8, moves: []const [2][]const u8, want: []const Want };
+    const cases = [_]Case{
+        // found next to the including file: relative to it
+        .{ .what = "the included file moves", .moves = &.{.{ "inc/errors.inc", "inc/common/errors.inc" }}, .want = &.{
+            .{ .line = 1, .start = 11, .text = "../inc/common/errors.inc" },
+        } },
+        // the including file moves: its relative INCLUDE follows; what an
+        // include directory gives does not change
+        .{ .what = "the including file moves", .moves = &.{.{ "src/a.F90", "src/sub/a.F90" }}, .want = &.{
+            .{ .line = 1, .start = 11, .text = "../../inc/errors.inc" },
+        } },
+        // found in an include directory: relative to it while it stays there
+        .{ .what = "a file of an include directory moves", .moves = &.{.{ "inc/consts.h", "inc/c/consts.h" }}, .want = &.{
+            .{ .line = 2, .start = 10, .text = "c/consts.h" },
+        } },
+        // a directory moves: both, the one leaving its include directory
+        // relative to the including file
+        .{ .what = "the directory moves", .moves = &.{.{ "inc", "include" }}, .want = &.{
+            .{ .line = 1, .start = 11, .text = "../include/errors.inc" },
+            .{ .line = 2, .start = 10, .text = "../include/consts.h" },
+        } },
+        .{ .what = "an unrelated file moves", .moves = &.{.{ "src/b.f90", "src/c.f90" }}, .want = &.{} },
+    };
+    for (cases) |c| {
+        const edits = try w.willRenameFiles(c.moves);
+        try h.expect(edits.len == c.want.len, "{s}: {d} edits, not {d}: {any}", .{ c.what, edits.len, c.want.len, edits });
+        for (edits, c.want) |e, want| {
+            try h.expect(std.mem.endsWith(u8, e.uri, "src/a.F90"), "{s}: an edit of {s}", .{ c.what, e.uri });
+            try h.expect(e.line == want.line and e.start == want.start and std.mem.eql(u8, e.new_text, want.text), "{s}: {d}:{d} '{s}', not {d}:{d} '{s}'", .{ c.what, e.line, e.start, e.new_text, want.line, want.start, want.text });
+        }
+    }
 }

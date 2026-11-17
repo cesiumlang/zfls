@@ -375,6 +375,14 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    pub fn typeDefinition(w: *Workspace, name: []const u8, p: Pos) !?Location {
+        return location(try w.server.dispatchPublic(w.a(), "textDocument/typeDefinition", try w.posParams(name, p)));
+    }
+
+    pub fn declaration(w: *Workspace, name: []const u8, p: Pos) !?Location {
+        return location(try w.server.dispatchPublic(w.a(), "textDocument/declaration", try w.posParams(name, p)));
+    }
+
     pub fn references(w: *Workspace, name: []const u8, p: Pos) ![]const Location {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/references", try w.posParams(name, p));
         var out: std.ArrayList(Location) = .empty;
@@ -389,7 +397,19 @@ pub const Workspace = struct {
             .position = .{ .line = p.line, .character = p.col },
             .newName = new_name,
         });
-        const v = try w.server.dispatchPublic(w.a(), "textDocument/rename", params);
+        return w.editsOf(try w.server.dispatchPublic(w.a(), "textDocument/rename", params));
+    }
+
+    /// The edits `workspace/willRenameFiles` asks for before files (or
+    /// directories) named as in the workspace move: `.{ old, new }`
+    pub fn willRenameFiles(w: *Workspace, moves: []const [2][]const u8) ![]const Edit {
+        var files: std.ArrayList(struct { oldUri: []const u8, newUri: []const u8 }) = .empty;
+        for (moves) |m| try files.append(w.a(), .{ .oldUri = try w.uri(m[0]), .newUri = try w.uri(m[1]) });
+        return w.editsOf(try w.server.dispatchPublic(w.a(), "workspace/willRenameFiles", try json.from(w.a(), .{ .files = files.items })));
+    }
+
+    /// The edits of a `WorkspaceEdit`
+    fn editsOf(w: *Workspace, v: Value) ![]const Edit {
         var out: std.ArrayList(Edit) = .empty;
         const changes = json.get(v, "changes") orelse return &.{};
         if (changes != .object) return &.{};
