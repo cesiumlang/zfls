@@ -17,7 +17,8 @@ command line options and configuration files.
   and their branches, preprocessor conditionals and comment blocks; semantic
   highlighting of modules, types, procedures, dummy arguments, components
   and variables by what they are (a variable named `if` is a variable), with
-  the lines that preprocessor conditionals leave out shown inactive
+  the lines that preprocessor conditionals leave out shown inactive, for the
+  whole file or the lines on screen
 - Diagnostics: declarations, scopes, `CONTAINS`, `IMPLICIT`, `USE`/`IMPORT`
   checks, line length limits; each with a code that settings and comments
   can turn off (see [Diagnostics](#diagnostics))

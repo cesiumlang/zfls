@@ -109,8 +109,14 @@ pub const FindOpts = struct {
 };
 
 pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!?*Obj {
-    const children = try local_scope.getChildren(env.tmp, false);
-    for (children) |child| {
+    // the children `getChildren` lists, without copying them: a procedure's
+    // and a type's own, then those inherited (`in_children`)
+    const inherited: []const *Obj = switch (local_scope.kind) {
+        .type, .subroutine, .function => local_scope.scopeDataConst().in_children.items,
+        .variable, .method, .intrinsic => return null,
+        else => &.{},
+    };
+    for ([_][]const *Obj{ local_scope.childList(), inherited }) |list| for (list) |child| {
         if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
             if (try checkScope(env, child, name_lower, filter_public, null)) |v| return v;
         }
@@ -129,7 +135,7 @@ pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_pu
             }
             return child;
         }
-    }
+    };
     return null;
 }
 
