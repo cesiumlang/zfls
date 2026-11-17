@@ -162,6 +162,8 @@ pub const ServerCapabilities = struct {
     referencesProvider: bool = true,
     hoverProvider: bool = true,
     implementationProvider: bool = true,
+    typeDefinitionProvider: bool = true,
+    declarationProvider: bool = true,
     /// `true`, or `{"prepareProvider": true}` for clients with prepareSupport
     renameProvider: json.Value = .{ .bool = true },
     selectionRangeProvider: bool = true,
@@ -172,6 +174,7 @@ pub const ServerCapabilities = struct {
     typeHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
     inlineValueProvider: bool = true,
+    workspace: WorkspaceCapabilities = .{},
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
@@ -228,6 +231,21 @@ pub const InlineValueVariableLookup = struct {
     range: Range,
     variableName: []const u8,
     caseSensitiveLookup: bool = false,
+};
+
+/// `workspace/willRenameFiles`
+pub const RenameFilesParams = struct {
+    files: []const struct { oldUri: []const u8, newUri: []const u8 },
+};
+
+/// The files whose renames the server is told of first: every file and
+/// directory (`workspace/willRenameFiles`)
+pub const WorkspaceCapabilities = struct {
+    fileOperations: struct {
+        willRename: struct {
+            filters: []const struct { pattern: struct { glob: []const u8 } } = &.{.{ .pattern = .{ .glob = "**" } }},
+        } = .{},
+    } = .{},
 };
 
 pub const RenameParams = struct {
