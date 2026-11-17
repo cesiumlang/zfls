@@ -66,6 +66,8 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
   with `Closes #N`). Labels: `backlog` for what is outside the milestone,
   `blocked` with a `**Blocked:**` line naming the outside cause,
   `upstream: <project>` for work waiting on or following another project,
+  `compiler: <name>` (`gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`,
+  `nagfor`, `lfortran`) for work specific to one compiler,
   `awaiting input` for a decision the user makes, `housekeeping` for
   readability and structure work. `**Needs:**` links the issues that must
   land first. Upstream issues are cited as in the readme (`FL #438`), ours
