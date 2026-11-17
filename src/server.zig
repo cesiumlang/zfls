@@ -482,6 +482,7 @@ pub const Server = struct {
             .compiler_check => compile.serveCheck(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .compiler_clear => compile.serveClear(self, a),
             .initialized => blk: {
+                configuration.watchConfigFiles(self, a);
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
                 break :blk .null;
             },

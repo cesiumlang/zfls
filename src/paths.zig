@@ -3,6 +3,12 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+
+/// Whether two paths name the same file, as the file system compares them
+/// (without case on Windows)
+pub fn eql(x: []const u8, y: []const u8) bool {
+    return if (builtin.target.os.tag == .windows) std.ascii.eqlIgnoreCase(x, y) else std.mem.eql(u8, x, y);
+}
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");

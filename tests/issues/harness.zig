@@ -141,6 +141,9 @@ pub const Options = struct {
     /// the client registers signature help, code actions and formatting
     /// when the server asks (`client/registerCapability`)
     dynamic_registration: bool = false,
+    /// the client watches the files the server asks it to
+    /// (`workspace/didChangeWatchedFiles`)
+    watch_registration: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -215,6 +218,8 @@ pub const Workspace = struct {
                 .codeAction = dynamic,
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
+            }, .workspace = .{
+                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
             } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
@@ -294,6 +299,19 @@ pub const Workspace = struct {
     /// `workspace/didChangeConfiguration` with `settings` (JSON)
     pub fn changeConfiguration(w: *Workspace, settings: []const u8) !void {
         _ = try w.server.dispatchPublic(w.a(), "workspace/didChangeConfiguration", try json.from(w.a(), .{ .settings = try zfls.json5.parse(w.a(), settings) }));
+    }
+
+    /// Write a file on disk only, as a program other than the editor would,
+    /// and tell the server (`workspace/didChangeWatchedFiles`); null text:
+    /// delete it
+    pub fn changeOnDisk(w: *Workspace, name: []const u8, new_text: ?[]const u8) !void {
+        if (std.Io.Dir.path.dirname(name)) |d| try w.tmp.dir.createDirPath(io, d);
+        if (new_text) |t| {
+            try w.tmp.dir.writeFile(io, .{ .sub_path = name, .data = t });
+        } else try w.tmp.dir.deleteFile(io, name);
+        _ = try w.server.dispatchPublic(w.a(), "workspace/didChangeWatchedFiles", try json.from(w.a(), .{
+            .changes = &[_]struct { uri: []const u8, type: i64 }{.{ .uri = try w.uri(name), .type = if (new_text == null) 3 else 2 }},
+        }));
     }
 
     /// The messages the server sent with `method`, as JSON texts
