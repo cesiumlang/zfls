@@ -21,7 +21,8 @@ import { registerIfxSetup } from "./ifxSetup";
 import { registerDebugType } from "./debugType";
 import { registerModuleVariables } from "./moduleVariablesView";
 
-import { affectsServer, serverArguments } from "./options";
+import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
+import { appliesLive, ServerSettings } from "./settingsSync";
 import { FORTRAN_FILES } from "./tools";
 
 const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
@@ -35,6 +36,10 @@ const SERVED_LANGUAGES = [...LANGUAGES, "FortranNamelist"];
 const clients = new Map<string, Promise<LanguageClient | undefined>>();
 /** The file watchers of each client, disposed when it stops */
 const watchers = new Map<string, vscode.Disposable[]>();
+/** The workspace folder of each running client (none for a directory's) and
+ * the settings its server has: those of its command line, or those sent
+ * since */
+const serverState = new Map<string, { folder: vscode.WorkspaceFolder | undefined; settings: ServerSettings }>();
 /** The files whose change restarts the server that reads them */
 const SERVER_CONFIG_FILES = "{.fortlsrc,.fortls.json,.fortls,fpm.toml,compile_commands.json,build/compile_commands.json}";
 /** Restarts after configuration files change, waiting for them to settle */
@@ -75,7 +80,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     ),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (affectsServer(e)) {
-        void restartAll();
+        void updateServers(e);
       }
       if (e.affectsConfiguration("zfls.commentMarkers")) {
         void updateMarkerGrammar(true);
@@ -352,8 +357,35 @@ export async function deactivate(): Promise<void> {
 async function stopClient(key: string): Promise<void> {
   const client = clients.get(key);
   clients.delete(key);
+  serverState.delete(key);
   disposeWatchers(key);
   await (await client)?.stop();
+}
+
+/** After a change of the zfls settings: each running server whose folder it
+ * concerns is sent its new settings (workspace/didChangeConfiguration), which
+ * it applies at once, or, when it cannot take them so, every server is
+ * restarted */
+async function updateServers(e: vscode.ConfigurationChangeEvent): Promise<void> {
+  const sends: { client: LanguageClient; settings: ServerSettings }[] = [];
+  for (const [key, pending] of clients) {
+    const client = await pending;
+    const state = serverState.get(key);
+    if (!client || !state || !e.affectsConfiguration("zfls", state.folder?.uri)) {
+      continue;
+    }
+    const settings = serverSettings(state.folder);
+    if (restartsServer(e, state.folder?.uri) || !appliesLive(state.settings, settings)) {
+      output?.info("A setting changed that zfls takes at start-up: restarting zfls");
+      await restartAll();
+      return;
+    }
+    state.settings = settings;
+    sends.push({ client, settings });
+  }
+  for (const { client, settings } of sends) {
+    await client.sendNotification("workspace/didChangeConfiguration", { settings: { zfls: settings } });
+  }
 }
 
 async function restartAll(): Promise<void> {
@@ -560,6 +592,7 @@ async function startClient(
     return undefined;
   }
   const args = serverArguments(folder);
+  const settings = serverSettings(folder);
   output?.info(`Starting ${command} ${args.join(" ")} for ${root.fsPath}`);
 
   // no `transport`: stdio is the default, and TransportKind.stdio would
@@ -614,6 +647,13 @@ async function startClient(
   } catch (err) {
     void vscode.window.showErrorMessage(vscode.l10n.t("zfls failed to start: {0}", String(err)));
     return undefined;
+  }
+  serverState.set(root.toString(), { folder, settings });
+  // a setting changed while it started
+  const now = serverSettings(folder);
+  if (JSON.stringify(now) !== JSON.stringify(settings) && appliesLive(settings, now)) {
+    serverState.set(root.toString(), { folder, settings: now });
+    await client.sendNotification("workspace/didChangeConfiguration", { settings: { zfls: now } });
   }
   return client;
 }
