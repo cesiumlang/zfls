@@ -70,6 +70,8 @@ const Job = struct {
     id: compilers.Id,
     /// The executables to try, in order
     exes: []const []const u8,
+    /// `compiler_path` (settings can change while the job runs)
+    compiler_path: ?[]const u8,
     cwd: []const u8,
     /// The files of the modules it uses, in compile order: each one's
     /// arguments (the file last), and whether it is in fixed form
@@ -378,6 +380,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .path = try ja.dupe(u8, file.path),
         .id = id,
         .exes = try dupeAll(ja, try executables(self, a, id)),
+        .compiler_path = if (self.s.compiler_path) |p| try ja.dupe(u8, p) else null,
         .cwd = try ja.dupe(u8, paths.dirname(file.path)),
         .deps = dep_args.items,
         .deps_fixed = dep_fixed.items,
@@ -635,8 +638,8 @@ fn runJob(w: *Worker, job: *Job) !void {
                 w.reported_missing = true;
                 self.postMessage(a, try a.print("compiler_diagnostics: {s} was not found{s}{s}", .{
                     @tagName(job.id),
-                    if (self.s.compiler_path != null) " at " else " on the PATH",
-                    self.s.compiler_path orelse "",
+                    if (job.compiler_path != null) " at " else " on the PATH",
+                    job.compiler_path orelse "",
                 }), 2);
             }
             return;
