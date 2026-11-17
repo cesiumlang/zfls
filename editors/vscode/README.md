@@ -109,8 +109,15 @@ disable Modern Fortran when you install zfls (see
 Each setting becomes the fortls option of the same meaning (the settings'
 descriptions name them). Path settings expand `${workspaceFolder}`,
 `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~`,
-and every setting can differ per workspace folder. Changing one restarts the
-language server.
+and every setting can differ per workspace folder. A running language server
+takes a changed setting at once (sent with `workspace/didChangeConfiguration`):
+one that decides what is indexed (`zfls.sourceDirs`, `zfls.includeDirs`,
+`zfls.ppDefs`, ...) has it index the workspace again. The server restarts
+instead when `zfls.path`, `zfls.arguments`, `zfls.incrementalSync` or
+`zfls.configFile` changes, when `zfls.arguments` holds any options (they may
+set what a setting does), when a setting goes back to empty where zfls's
+default cannot be sent (`zfls.sourceDirs`), and when signature help, code
+actions or formatting are turned off.
 
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
 workspace root configures source directories, preprocessor definitions and
@@ -226,10 +233,11 @@ How it behaves:
 
 The zfls language server runs the compiler (its `compiler_diagnostics`
 options, which other editors use too); these settings become those options,
-and changing one restarts it. Besides `zfls.linter.includePaths`, the
+and a change applies to the next check. Besides `zfls.linter.includePaths`, the
 compiler gets zfls's include directories (`zfls.includeDirs`, and those of
 `compile_commands.json` and `fpm.toml`) and its preprocessor definitions.
-Glob patterns in the include paths are expanded when zfls starts. The
+Glob patterns in the include paths are expanded when zfls starts and when
+the settings change. The
 compiler's output is in zfls's log (its `debug_log` option) in the `zfls`
 output channel.
 
@@ -306,8 +314,9 @@ standard output, so no files are written, and changes only the lines the
 formatter changed. findent is told the source form of the file (`-ifree` or
 `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads
 `.fprettify.rc` files from the directory of the file and its parents, as
-when it formats the file itself. Changing these settings restarts the
-server. In `zfls.formatting.path` and the argument settings,
+when it formats the file itself. A change of these settings applies to the
+next formatting; turning formatting off restarts the server, so that
+VS Code stops offering it. In `zfls.formatting.path` and the argument settings,
 `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
 `${env:NAME}` and a leading `~` are expanded; an argument with a space in
 it becomes two.
