@@ -1,5 +1,5 @@
 //! Navigation requests zfls answers beyond fortls: prepareRename,
-//! selection ranges and document links.
+//! selection ranges, document links and type definitions.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -524,4 +524,70 @@ test "FortranBreaker #10: the module variables a line sees, for the debugger" {
     // the type, for the view
     const one = h.json.items(try w.zflsRequest("zfls/moduleVariables", try w.positionOf("grid.f90", w.pos("grid.f90", "local_i = counter", 0, 0))))[0];
     try std.testing.expectEqualStrings("REAL", h.json.str(h.json.get(one, "type")).?);
+}
+
+test "go to type definition (#191)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "shapes.f90", .text =
+        \\module shapes
+        \\  implicit none
+        \\  type :: point_t
+        \\    real :: x, y
+        \\  end type point_t
+        \\  type :: mesh_t
+        \\    type(point_t), allocatable :: nodes(:)
+        \\  contains
+        \\    procedure :: first => mesh_first
+        \\  end type mesh_t
+        \\contains
+        \\  function mesh_first(self) result(p)
+        \\    class(mesh_t), intent(in) :: self
+        \\    type(point_t) :: p
+        \\    p = self%nodes(1)
+        \\  end function mesh_first
+        \\  type(mesh_t) function new_mesh()
+        \\  end function new_mesh
+        \\end module shapes
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main
+        \\  use shapes
+        \\  implicit none
+        \\  type(mesh_t) :: m
+        \\  type(point_t) :: q
+        \\  class(*), allocatable :: any
+        \\  integer :: n
+        \\  m = new_mesh()
+        \\  q = m%nodes(1)
+        \\  q = mesh_first(m)
+        \\  n = 1
+        \\end program main
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const Case = struct { needle: []const u8, nth: usize, type_line: ?i64 };
+    const cases = [_]Case{
+        // a variable, at its declaration and at a use
+        .{ .needle = "m = new_mesh", .nth = 0, .type_line = 5 },
+        .{ .needle = "q = m%", .nth = 0, .type_line = 2 },
+        // a component
+        .{ .needle = "nodes(1)\n  q", .nth = 0, .type_line = 2 },
+        // a function with RESULT, and one with the type in its prefix
+        .{ .needle = "mesh_first(m)", .nth = 0, .type_line = 2 },
+        .{ .needle = "new_mesh()", .nth = 0, .type_line = 5 },
+        // a type name is its own type
+        .{ .needle = "point_t) :: q", .nth = 0, .type_line = 2 },
+        // intrinsic types and class(*): nothing
+        .{ .needle = "n = 1", .nth = 0, .type_line = null },
+        .{ .needle = "any", .nth = 0, .type_line = null },
+    };
+    for (cases) |c| {
+        const loc = try w.typeDefinition("main.f90", w.pos("main.f90", c.needle, c.nth, 0));
+        if (c.type_line) |line| {
+            const l = loc orelse return h.unmet("no type definition at '{s}'", .{c.needle});
+            try h.expect(std.mem.endsWith(u8, l.uri, "shapes.f90") and l.line == line, "type definition at '{s}' is {s}:{d}, not line {d}", .{ c.needle, l.uri, l.line, line });
+        } else try h.expect(loc == null, "a type definition at '{s}': {any}", .{ c.needle, loc });
+    }
 }
