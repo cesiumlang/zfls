@@ -45,11 +45,21 @@ param(
 
     $ver = $Version
     if (-not $ver) {
+        # Read from the names in the latest release's SHA256SUMS, which
+        # releases/latest/download/ serves without GitHub's API and its rate
+        # limit (60 requests an hour from one address, which CI runners share)
+        $latest = [IO.Path]::GetTempFileName()
         try {
-            $ver = (Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases/latest").tag_name
+            Invoke-WebRequest -UseBasicParsing "https://github.com/$repo/releases/latest/download/SHA256SUMS" -OutFile $latest
+            foreach ($line in Get-Content $latest) {
+                if ($line -match "zfls-v(.+)-$arch-windows\.zip$") { $ver = $Matches[1]; break }
+            }
         } catch {
             throw "install.ps1: cannot find the latest release of ${repo}: $_"
+        } finally {
+            Remove-Item -Force $latest -ErrorAction SilentlyContinue
         }
+        if (-not $ver) { throw "install.ps1: the latest release of $repo has no archive for $arch-windows" }
     }
     $ver = $ver -replace '^v', ''
     $name = "zfls-v$ver-$arch-windows"
