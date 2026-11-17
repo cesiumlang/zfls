@@ -1,5 +1,5 @@
 //! Navigation requests zfls answers beyond fortls: prepareRename,
-//! selection ranges, document links and type definitions.
+//! selection ranges, document links, type definitions and declarations.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -589,5 +589,59 @@ test "go to type definition (#191)" {
             const l = loc orelse return h.unmet("no type definition at '{s}'", .{c.needle});
             try h.expect(std.mem.endsWith(u8, l.uri, "shapes.f90") and l.line == line, "type definition at '{s}' is {s}:{d}, not line {d}", .{ c.needle, l.uri, l.line, line });
         } else try h.expect(loc == null, "a type definition at '{s}': {any}", .{ c.needle, loc });
+    }
+}
+
+const separate = [_]h.File{
+    .{ .name = "solver.f90", .text =
+    \\module solver
+    \\  implicit none
+    \\  integer :: tolerance
+    \\  interface
+    \\    module subroutine solve(n)
+    \\      integer, intent(in) :: n
+    \\    end subroutine solve
+    \\  end interface
+    \\end module solver
+    \\
+    },
+    .{ .name = "solver_impl.f90", .text =
+    \\submodule (solver) solver_impl
+    \\  implicit none
+    \\contains
+    \\  module procedure solve
+    \\    tolerance = n
+    \\  end procedure solve
+    \\end submodule solver_impl
+    \\
+    },
+    .{ .name = "main.f90", .text =
+    \\program main
+    \\  use solver
+    \\  implicit none
+    \\  call solve(3)
+    \\  tolerance = 1
+    \\end program main
+    \\
+    },
+};
+
+test "go to declaration: a separate module procedure's interface (#192)" {
+    inline for (.{ false, true }) |prefer| {
+        const w = try h.Workspace.init(&separate, .{ .settings = .{ .prefer_implementation = prefer } });
+        defer w.deinit();
+        const Case = struct { file: []const u8, needle: []const u8, line: i64 };
+        const cases = [_]Case{
+            // from a call and from the body, whatever prefer_implementation says
+            .{ .file = "main.f90", .needle = "solve(3)", .line = 4 },
+            .{ .file = "solver_impl.f90", .needle = "solve\n    tolerance", .line = 4 },
+            // anything else: its definition
+            .{ .file = "main.f90", .needle = "tolerance = 1", .line = 2 },
+        };
+        for (cases) |c| {
+            const l = (try w.declaration(c.file, w.pos(c.file, c.needle, 0, 0))) orelse
+                return h.unmet("no declaration at '{s}' (prefer_implementation {})", .{ c.needle, prefer });
+            try h.expect(std.mem.endsWith(u8, l.uri, "/solver.f90") and l.line == c.line, "declaration at '{s}' (prefer_implementation {}) is {s}:{d}, not line {d}", .{ c.needle, prefer, l.uri, l.line, c.line });
+        }
     }
 }

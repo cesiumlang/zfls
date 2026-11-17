@@ -562,6 +562,41 @@ fn derivedTypeOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
     return if (t.kind == .type) t else null;
 }
 
+/// The declaration of the name at the position (#192): for a separate
+/// module procedure, its interface in the module (or parent submodule),
+/// also from its body and whatever `prefer_implementation` says; for
+/// anything else, its definition.
+pub fn serveDeclaration(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const d = (try definitionAt(self, a, params, false)) orelse return .null;
+    if (d.obj.kind == .intrinsic) return .null;
+    const target = (try interfaceOf(self, a, d.obj)) orelse d.obj;
+    if (target.file_ast.file == null) return .null;
+    return createRefLink(self, a, target);
+}
+
+/// The interface body that declares procedure `obj`: itself when it is
+/// one, or the prototype in the ancestors of its submodule that it
+/// implements
+fn interfaceOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
+    if (!obj.kind.isSubroutine()) return null;
+    const parent = obj.parent orelse return null;
+    if (parent.getType(false) == C.TypeId.interface) return obj;
+    if (parent.kind != .submodule) return null;
+    const e = self.env(a);
+    var cur: *const Obj = parent;
+    // an ancestor chain ends at the module; the bound guards a loop
+    var hops: usize = 0;
+    while (cur.kind == .submodule and hops < 64) : (hops += 1) {
+        const anc = cur.findSubmoduleParent(e) orelse break;
+        for (anc.childList()) |child| {
+            if (child.getType(false) != C.TypeId.interface) continue;
+            for (child.childList()) |proto| if (proto.linkObj() == obj) return proto;
+        }
+        cur = anc;
+    }
+    return null;
+}
+
 pub fn serveImplementation(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const d = (try definitionAt(self, a, params, false)) orelse return .null;
     const var_obj = d.obj;

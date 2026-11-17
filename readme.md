@@ -928,7 +928,9 @@ zfls deliberately differs from fortls in a few places:
   relate the two. With the `prefer_implementation` option, hover shows the
   documentation of that implementation (the interface's when it has none)
   and go to definition goes to it (fortls #501, #502); fortls always uses the
-  interface.
+  interface. Go to declaration (`textDocument/declaration`, which fortls
+  does not answer) always goes to the interface, also from the body; for
+  other names it is go to definition.
 - With the `lowercase_hover` option, the keywords of hover are in lowercase
   (`real, intent(in) :: x`), names and strings as written (fortls #28);
   fortls's are always uppercase.
