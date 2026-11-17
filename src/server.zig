@@ -35,6 +35,7 @@ const definition = @import("server/definition.zig");
 const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
 const renames = @import("server/renames.zig");
+const configuration = @import("server/configuration.zig");
 const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
@@ -146,6 +147,9 @@ pub const Server = struct {
     /// The thread writing the index cache after initialization
     index_writer: ?std.Thread = null,
     next_id: i64 = 1,
+    /// Where the settings come from, and the providers announced to the
+    /// client (configuration.zig)
+    config: configuration.State = .{},
     log: *Logger,
 
     pub fn create(gpa: Allocator, io: Io, s: Settings, log: *Logger) !*Server {
@@ -266,6 +270,13 @@ pub const Server = struct {
         self.writeError(a, id, -32800, "request cancelled", null) catch |e| self.logSendFailure(e);
     }
 
+    /// Sends a request to the client, whose answer is not waited for
+    pub fn sendRequest(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
+        const id = self.next_id;
+        self.next_id += 1;
+        try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .id = id, .method = method, .params = params }));
+    }
+
     pub fn sendNotification(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
         try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .method = method, .params = params }));
     }
@@ -298,8 +309,10 @@ pub const Server = struct {
 
     /// Handle one decoded JSON-RPC message
     pub fn handle(self: *Server, a: Allocator, request: Value) void {
-        const method = json.str(json.get(request, "method")) orelse "";
         const id = json.get(request, "id");
+        // the client's answer to a request of the server's (sendRequest)
+        if (json.get(request, "method") == null and id != null) return;
+        const method = json.str(json.get(request, "method")) orelse "";
         self.log.debug("REQUEST {s} {s}", .{ if (id) |i| (json.stringify(a, i) catch "?") else "None", method });
         const params = json.get(request, "params") orelse .null;
         const result = self.dispatch(a, method, params);
@@ -368,6 +381,7 @@ pub const Server = struct {
         did_close,
         did_change,
         code_action,
+        did_change_configuration,
         workspace_symbol,
         watched_files,
         will_rename_files,
@@ -422,7 +436,7 @@ pub const Server = struct {
         .{ "initialized", .initialized },
         .{ "workspace/didChangeWatchedFiles", .watched_files },
         .{ "workspace/willRenameFiles", .will_rename_files },
-        .{ "workspace/didChangeConfiguration", .ignored },
+        .{ "workspace/didChangeConfiguration", .did_change_configuration },
         .{ "$/cancelRequest", .ignored },
         .{ "$/setTrace", .ignored },
         .{ "shutdown", .ignored },
@@ -436,7 +450,7 @@ pub const Server = struct {
             .folding_range => symbols.serveFoldingRanges(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .semantic_tokens => symbols.serveSemanticTokens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .completion => completion.serveAutocomplete(self, a, try json.decode(lsp.PositionParams, a, params)),
-            .signature_help => signature.serveSignature(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .signature_help => if (configuration.withdrawn(self, .signature_help)) .null else signature.serveSignature(self, a, try json.decode(lsp.PositionParams, a, params)),
             .definition => definition.serveDefinition(self, a, try json.decode(lsp.PositionParams, a, params)),
             .references => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), true),
             .document_highlight => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), false),
@@ -449,8 +463,8 @@ pub const Server = struct {
             .selection_range => definition.serveSelectionRanges(self, a, try json.decode(lsp.SelectionRangeParams, a, params)),
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
-            .formatting => format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
-            .range_formatting => format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
+            .formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
+            .range_formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
             .inlay_hint => hints.serveInlayHints(self, a, try json.decode(lsp.InlayHintParams, a, params)),
             .prepare_call_hierarchy => calls.servePrepare(self, a, try json.decode(lsp.PositionParams, a, params)),
             .incoming_calls => calls.serveIncoming(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
@@ -475,10 +489,11 @@ pub const Server = struct {
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
             .did_change => workspace.serveOnChange(self, a, try json.decode(lsp.DidChangeParams, a, params)),
-            .code_action => diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
+            .code_action => if (configuration.withdrawn(self, .code_actions)) .null else diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
             .workspace_symbol => symbols.serveWorkspaceSymbol(self, a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
             .watched_files => workspace.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
             .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
+            .did_change_configuration => configuration.serveDidChange(self, a, params),
             .ignored => .null,
             .exit => blk: {
                 self.serveExit();

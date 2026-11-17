@@ -37,6 +37,7 @@ const linters = @import("linters.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
+const configuration = @import("configuration.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -51,8 +52,9 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.hierarchical_symbols = params.capabilities.textDocument.documentSymbol.hierarchicalDocumentSymbolSupport;
     self.prepare_rename = params.capabilities.textDocument.rename.prepareSupport;
     try self.s.source_dirs.add(sa, self.root_path);
+    self.config.client = params.capabilities;
 
-    try loadConfigFile(self, a);
+    try configuration.load(self, a, params.initializationOptions);
     try loadProjectFiles(self, a);
     try diagnostics.checkDiagnosticSeverity(self, a);
     try compile.checkSetting(self, a);
@@ -67,21 +69,24 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
+    const on = configuration.wanted(self);
+    self.config.announced = on;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
         .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
         .textDocumentSync = self.sync_type,
-        .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
-        .codeActionProvider = if (self.s.enable_code_actions or self.s.fortitude) true else null,
+        .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
+        .codeActionProvider = if (on.code_actions) true else null,
         .semanticTokensProvider = .{ .legend = semantic.legend },
         .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
-        .documentFormattingProvider = if (format.enabled(self)) true else null,
-        .documentRangeFormattingProvider = if (format.enabled(self)) true else null,
+        .documentFormattingProvider = if (on.formatting) true else null,
+        .documentRangeFormattingProvider = if (on.formatting) true else null,
     } });
 }
 
-/// Problems with the user's configuration file are posted to the client;
-/// only allocation failures are errors
-pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!void {
+/// Reads the configuration file and applies its settings; its JSON object
+/// (owned by the server's arena), null without one. Problems with it are
+/// posted to the client; only allocation failures are errors.
+pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
     const candidates = [_][]const u8{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
     var config_path: ?[]const u8 = null;
     for (candidates) |f| {
@@ -91,34 +96,25 @@ pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!void {
             break;
         }
     }
-    const cp = config_path orelse return;
+    const cp = config_path orelse return null;
     const sa = self.arena.allocator();
     const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
         self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
-        return;
+        return null;
     };
     var p: json5.Parser = .{ .a = sa, .src = data };
     const cfg = p.parseDocument() catch {
         const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
         const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
         self.postMessage(a, msg, C.Severity.err);
-        return;
+        return null;
     };
     if (cfg != .object) {
         self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
-        return;
+        return null;
     }
     try settings_mod.applyConfig(sa, &self.s, cfg);
-    self.sync_type = if (self.s.incremental_sync) 2 else 1;
-    if (cfg.object.get("incl_suffixes") != null) {
-        if (patterns.createSrcFileExtsStr(sa, self.s.incl_suffixes.slice())) |re| {
-            self.src_ext_regex = re;
-        } else |e| switch (e) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => self.postMessage(a, "Invalid 'incl_suffixes' in the configuration file; keeping the default source file extensions", C.Severity.warn),
-        }
-    }
-    try self.syncPpDefsFromSettings();
+    return cfg;
 }
 
 /// Adds the include directories and preprocessor definitions of the

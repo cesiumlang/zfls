@@ -136,6 +136,11 @@ pub const Options = struct {
     hierarchical_symbols: bool = false,
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
+    /// the `initializationOptions` of the initialize request (JSON)
+    init_options: ?[]const u8 = null,
+    /// the client registers signature help, code actions and formatting
+    /// when the server asks (`client/registerCapability`)
+    dynamic_registration: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -201,12 +206,18 @@ pub const Workspace = struct {
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
         w.server.sink = .{ .ctx = w, .sendFn = collect };
+        const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
         _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
             .rootPath = w.root,
-            .capabilities = .{ .textDocument = .{ .documentSymbol = .{
-                .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols,
-            } } },
+            .capabilities = .{ .textDocument = .{
+                .documentSymbol = .{ .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols },
+                .signatureHelp = dynamic,
+                .codeAction = dynamic,
+                .formatting = dynamic,
+                .rangeFormatting = dynamic,
+            } },
             .workDoneToken = opts.progress_token,
+            .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
         }));
         return w;
     }
@@ -277,6 +288,19 @@ pub const Workspace = struct {
     pub fn messages(w: *Workspace) ![]const []const u8 {
         var out: std.ArrayList([]const u8) = .empty;
         for (w.server.post_messages.items) |m| try out.append(w.a(), m.message);
+        return out.items;
+    }
+
+    /// `workspace/didChangeConfiguration` with `settings` (JSON)
+    pub fn changeConfiguration(w: *Workspace, settings: []const u8) !void {
+        _ = try w.server.dispatchPublic(w.a(), "workspace/didChangeConfiguration", try json.from(w.a(), .{ .settings = try zfls.json5.parse(w.a(), settings) }));
+    }
+
+    /// The messages the server sent with `method`, as JSON texts
+    pub fn sentWith(w: *Workspace, method: []const u8) ![]const []const u8 {
+        const needle = try std.mem.concat(w.a(), u8, &.{ "\"method\":\"", method, "\"" });
+        var out: std.ArrayList([]const u8) = .empty;
+        for (w.sent.items) |m| if (std.mem.find(u8, m, needle) != null) try out.append(w.a(), m);
         return out.items;
     }
 

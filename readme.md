@@ -189,6 +189,35 @@ root, `.fortlsrc`, `.fortls.json` or `.fortls` by default (or the file named
 with `-c`/`--config`). The option names are those of the
 [fortls documentation](https://fortls.fortran-lang.org/options.html).
 
+The editor can also send them over LSP, under the same names, as one
+object or in its `zfls` member: in the `initializationOptions` of the
+`initialize` request, and in `workspace/didChangeConfiguration` when they
+change. In Neovim, for instance:
+
+```lua
+vim.lsp.config("zfls", {
+  cmd = { "zfls" },
+  filetypes = { "fortran" },
+  init_options = { use_signature_help = true, source_dirs = { "src" } },
+  settings = { zfls = { max_line_length = 132 } },
+})
+vim.lsp.enable("zfls")
+```
+
+Each source takes over from the one before: the command line, the editor's
+settings, the configuration file. A change applies at once:
+
+- One of the options that decide what is indexed (`source_dirs`,
+  `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`,
+  `pp_defs`, `pp_suffixes`, `comment_markers`, `compile_commands`, ...)
+  indexes the workspace again, keeping the unsaved text of the open
+  documents. Set those in `initializationOptions` (Neovim's
+  `init_options`) to index once at start-up.
+- Turning on signature help, code actions or formatting registers them
+  with an editor that allows that (`client/registerCapability`); others are
+  told to restart zfls. Turning one off makes it answer nothing.
+- The diagnostics of the open documents are published again.
+
 The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
@@ -861,6 +890,11 @@ zfls deliberately differs from fortls in a few places:
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
+- Settings are taken over LSP as well, under the names of the
+  configuration file: in `initializationOptions` and in
+  `workspace/didChangeConfiguration`, which applies them at once (see
+  [Usage](#usage)); fortls reads them only from its command line and
+  configuration file.
 - Renaming or moving a file or directory in the editor
   (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and
   `#include` directives that name a file that moves, and the relative ones

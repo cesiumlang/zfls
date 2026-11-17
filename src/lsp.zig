@@ -272,6 +272,8 @@ pub const InitializeParams = struct {
     capabilities: ClientCapabilities = .{},
     /// to report the progress of indexing with
     workDoneToken: ?json.Value = null,
+    /// settings, under the config file's names (configuration.zig)
+    initializationOptions: ?json.Value = null,
 };
 
 /// The `value` of a `$/progress` notification
@@ -291,7 +293,21 @@ pub const ClientCapabilities = struct {
         rename: struct {
             prepareSupport: bool = false,
         } = .{},
+        signatureHelp: Dynamic = .{},
+        codeAction: Dynamic = .{},
+        formatting: Dynamic = .{},
+        rangeFormatting: Dynamic = .{},
     } = .{},
+
+    /// Whether the client takes `client/registerCapability` for a method
+    pub const Dynamic = struct { dynamicRegistration: bool = false };
+};
+
+/// A `client/registerCapability` registration
+pub const Registration = struct {
+    id: []const u8,
+    method: []const u8,
+    registerOptions: ?json.Value = null,
 };
 
 pub const SelectionRangeParams = struct {

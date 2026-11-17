@@ -669,6 +669,50 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (jsonBool(json.get(cfg, "debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
 }
 
+/// A copy of `s` whose lists are its own, so that adding to them leaves
+/// `s` alone. The strings are shared: settings never change one in place.
+pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
+    var out = s;
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| {
+        const v = @field(s, name);
+        switch (@FieldType(Settings, name)) {
+            StrList => @field(out, name) = .{ .items = try v.items.clone(a) },
+            ?StrList => if (v) |l| {
+                @field(out, name) = StrList{ .items = try l.items.clone(a) };
+            },
+            std.ArrayList(PpDef), std.ArrayList(DiagLevel) => @field(out, name) = try v.clone(a),
+            else => {},
+        }
+    }
+    return out;
+}
+
+/// Whether option `name` has the same value in `x` and `y`
+pub fn sameValue(x: *const Settings, y: *const Settings, comptime name: []const u8) bool {
+    return eqlValue(@FieldType(Settings, name), @field(x, name), @field(y, name));
+}
+
+fn eqlValue(comptime T: type, x: T, y: T) bool {
+    switch (@typeInfo(T)) {
+        .optional => |o| return if (x) |xv| (if (y) |yv| eqlValue(o.child, xv, yv) else false) else y == null,
+        .bool, .int => return x == y,
+        .pointer => |p| {
+            if (p.child == u8) return std.mem.eql(u8, x, y);
+            if (x.len != y.len) return false;
+            for (x, y) |xi, yi| if (!eqlValue(p.child, xi, yi)) return false;
+            return true;
+        },
+        .@"struct" => |st| {
+            if (T == StrList) return eqlValue([]const []const u8, x.slice(), y.slice());
+            // an ArrayList: its items, whatever its capacity
+            if (@hasField(T, "capacity")) return eqlValue(@FieldType(T, "items"), x.items, y.items);
+            inline for (st.field_names) |name| if (!eqlValue(@FieldType(T, name), @field(x, name), @field(y, name))) return false;
+            return true;
+        },
+        else => @compileError("no comparison of " ++ @typeName(T)),
+    }
+}
+
 /// Format a JSON5 parse error like the Python json5 library
 pub fn json5ErrorMessage(a: Allocator, src: []const u8, pos: usize) ![]const u8 {
     var line: usize = 1;
@@ -698,6 +742,25 @@ test "a config file only replaces the preprocessor options it sets" {
     try std.testing.expectEqualStrings("FROM_FILE", s.pp_defs.items[0].name);
     try std.testing.expectEqual(@as(usize, 1), s.pp_defs.items.len);
     try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());
+}
+
+test "a clone's lists are its own, and compare equal until changed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{};
+    try s.source_dirs.add(a, "src");
+    try s.setPpDef(a, "A", "1");
+    var c = try clone(a, s);
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| try std.testing.expect(sameValue(&s, &c, name));
+    try c.source_dirs.add(a, "lib");
+    try c.setPpDef(a, "A", "2");
+    try std.testing.expectEqual(@as(usize, 1), s.source_dirs.len());
+    try std.testing.expectEqualStrings("1", s.pp_defs.items[0].value);
+    try std.testing.expect(!sameValue(&s, &c, "source_dirs"));
+    try std.testing.expect(!sameValue(&s, &c, "pp_defs"));
+    c.compiler_args = .{};
+    try std.testing.expect(!sameValue(&s, &c, "compiler_args"));
 }
 
 test "formatter arguments: a string split at spaces, or a list" {
