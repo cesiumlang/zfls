@@ -73,7 +73,7 @@ pub fn serveWillRenameFiles(self: *Server, a: Allocator, params: lsp.RenameFiles
 /// directory it is in
 fn movedTo(a: Allocator, moves: []const Move, path: []const u8) !?[]const u8 {
     for (moves) |mv| {
-        if (pathEql(path, mv.old)) return mv.new;
+        if (paths.eql(path, mv.old)) return mv.new;
         // the rest after the directory, with its separator
         if (isUnder(path, mv.old)) return try std.mem.concat(a, u8, &.{ mv.new, path[mv.old.len..] });
     }
@@ -100,13 +100,9 @@ fn relative(a: Allocator, from: []const u8, to: []const u8) ![]const u8 {
     return rel;
 }
 
-fn pathEql(x: []const u8, y: []const u8) bool {
-    return if (builtin.target.os.tag == .windows) std.ascii.eqlIgnoreCase(x, y) else std.mem.eql(u8, x, y);
-}
-
 /// Whether `path` is inside directory `dir`
 fn isUnder(path: []const u8, dir: []const u8) bool {
     if (path.len <= dir.len + 1) return false;
-    if (!pathEql(path[0..dir.len], dir)) return false;
+    if (!paths.eql(path[0..dir.len], dir)) return false;
     return std.Io.Dir.path.isSep(path[dir.len]);
 }

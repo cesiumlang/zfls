@@ -306,3 +306,44 @@ pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, fi
     files[0] = .{ .uri = try paths.pathToUri(a, file.path), .edits = edits };
     return json.from(a, lsp.WorkspaceEdit{ .changes = .{ .files = files } });
 }
+
+/// Linked editing (#193): the name of a program unit, derived type or named
+/// interface in its first statement and in its END statement, edited
+/// together; and a construct name at all its places (`outer: do`,
+/// `end do outer`, `cycle outer`), as rename finds them. Only when the
+/// cursor is on one of them and the END statement repeats the name.
+pub fn serveLinkedEditing(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const word_pattern = "[A-Za-z][A-Za-z0-9_]*";
+    if (try definition.constructAt(self, a, params)) |c| {
+        if (c.target.kind != .construct or c.target.spans.len < 2) return .null;
+        const ranges = try a.alloc(lsp.Range, c.target.spans.len);
+        for (c.target.spans, ranges) |s, *r| r.* = Server.rangeOf(c.file, s.line, s.start, s.line, s.end);
+        return json.from(a, lsp.LinkedEditingRanges{ .ranges = ranges, .wordPattern = word_pattern });
+    }
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+    const ast = file.ast orelse return .null;
+    const line = params.position.line;
+    const text = file.getLine(line, false) orelse return .null;
+    const col = Server.toByteCol(file, line, params.position.character);
+    var start = @min(col, text.len);
+    while (start > 0 and regex.isWordChar(text[start - 1])) start -= 1;
+    var end = @min(col, text.len);
+    while (end < text.len and regex.isWordChar(text[end])) end += 1;
+    if (start == end) return .null;
+    const word = text[start..end];
+    for (ast.scope_list.items) |s| {
+        if (s.name.len == 0 or s.name[0] == '#' or !std.ascii.eqlIgnoreCase(s.name, word)) continue;
+        if (s.eline <= s.sline) continue;
+        const first = try file.findWordInCodeLine(a, s.sline -| 1, s.name, true, false, false);
+        const last = try file.findWordInCodeLine(a, s.eline -| 1, s.name, false, true, false);
+        if (first.range.start < 0 or last.range.start < 0 or first.line == last.line) continue;
+        const on_first = first.line == line and first.range.start == start;
+        const on_last = last.line == line and last.range.start == start;
+        if (!on_first and !on_last) continue;
+        const ranges = try a.alloc(lsp.Range, 2);
+        for ([_]@TypeOf(first){ first, last }, ranges) |w, *r|
+            r.* = Server.rangeOf(file, w.line, @intCast(w.range.start), w.line, @intCast(w.range.end));
+        return json.from(a, lsp.LinkedEditingRanges{ .ranges = ranges, .wordPattern = word_pattern });
+    }
+    return .null;
+}

@@ -141,6 +141,9 @@ pub const Options = struct {
     /// the client registers signature help, code actions and formatting
     /// when the server asks (`client/registerCapability`)
     dynamic_registration: bool = false,
+    /// the client watches the files the server asks it to
+    /// (`workspace/didChangeWatchedFiles`)
+    watch_registration: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -215,6 +218,8 @@ pub const Workspace = struct {
                 .codeAction = dynamic,
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
+            }, .workspace = .{
+                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
             } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
@@ -294,6 +299,19 @@ pub const Workspace = struct {
     /// `workspace/didChangeConfiguration` with `settings` (JSON)
     pub fn changeConfiguration(w: *Workspace, settings: []const u8) !void {
         _ = try w.server.dispatchPublic(w.a(), "workspace/didChangeConfiguration", try json.from(w.a(), .{ .settings = try zfls.json5.parse(w.a(), settings) }));
+    }
+
+    /// Write a file on disk only, as a program other than the editor would,
+    /// and tell the server (`workspace/didChangeWatchedFiles`); null text:
+    /// delete it
+    pub fn changeOnDisk(w: *Workspace, name: []const u8, new_text: ?[]const u8) !void {
+        if (std.Io.Dir.path.dirname(name)) |d| try w.tmp.dir.createDirPath(io, d);
+        if (new_text) |t| {
+            try w.tmp.dir.writeFile(io, .{ .sub_path = name, .data = t });
+        } else try w.tmp.dir.deleteFile(io, name);
+        _ = try w.server.dispatchPublic(w.a(), "workspace/didChangeWatchedFiles", try json.from(w.a(), .{
+            .changes = &[_]struct { uri: []const u8, type: i64 }{.{ .uri = try w.uri(name), .type = if (new_text == null) 3 else 2 }},
+        }));
     }
 
     /// The messages the server sent with `method`, as JSON texts
@@ -385,6 +403,18 @@ pub const Workspace = struct {
 
     pub fn implementation(w: *Workspace, name: []const u8, p: Pos) !?Location {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/implementation", try w.posParams(name, p)));
+    }
+
+    /// The linked editing ranges at `p` (0-based lines and start columns),
+    /// none when there are none
+    pub fn linkedEditing(w: *Workspace, name: []const u8, p: Pos) ![]const Pos {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/linkedEditingRange", try w.posParams(name, p));
+        var out: std.ArrayList(Pos) = .empty;
+        for (json.items(json.get(v, "ranges"))) |r| try out.append(w.a(), .{
+            .line = json.int(json.path(r, &.{ "start", "line" })) orelse -1,
+            .col = json.int(json.path(r, &.{ "start", "character" })) orelse -1,
+        });
+        return out.items;
     }
 
     pub fn typeDefinition(w: *Workspace, name: []const u8, p: Pos) !?Location {
@@ -622,6 +652,24 @@ pub const Workspace = struct {
     /// An inlay hint: its 0-based line and column, and label
     pub const Hint = struct { line: i64, col: i64, label: []const u8 };
 
+    pub const InlineValue = struct { line: i64, col: i64, name: []const u8 };
+
+    /// The inline values of the whole of `name` while stopped at `stop_line`
+    pub fn inlineValues(w: *Workspace, name: []const u8, stop_line: i64) ![]const InlineValue {
+        const v = try w.request("textDocument/inlineValue", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 10000, .character = 0 } },
+            .context = .{ .frameId = 1, .stoppedLocation = .{ .start = .{ .line = stop_line, .character = 0 }, .end = .{ .line = stop_line, .character = 0 } } },
+        });
+        var out: std.ArrayList(InlineValue) = .empty;
+        for (json.items(v)) |item| try out.append(w.a(), .{
+            .line = json.int(json.path(item, &.{ "range", "start", "line" })) orelse -1,
+            .col = json.int(json.path(item, &.{ "range", "start", "character" })) orelse -1,
+            .name = json.str(json.get(item, "variableName")) orelse "",
+        });
+        return out.items;
+    }
+
     pub fn inlayHints(w: *Workspace, name: []const u8) ![]const Hint {
         const v = try w.request("textDocument/inlayHint", .{
             .textDocument = .{ .uri = try w.uri(name) },
@@ -692,7 +740,19 @@ pub const Workspace = struct {
 
     /// The semantic tokens of a file, decoded
     pub fn semanticTokens(w: *Workspace, name: []const u8) ![]const Token {
-        const v = try w.server.dispatchPublic(w.a(), "textDocument/semanticTokens/full", try w.docParams(name));
+        return w.decodeTokens(name, try w.server.dispatchPublic(w.a(), "textDocument/semanticTokens/full", try w.docParams(name)));
+    }
+
+    /// The semantic tokens of lines `first` to `last` (0-based) of a file,
+    /// decoded (`semanticTokens/range`)
+    pub fn semanticTokensRange(w: *Workspace, name: []const u8, first: i64, last: i64) ![]const Token {
+        return w.decodeTokens(name, try w.request("textDocument/semanticTokens/range", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = first, .character = 0 }, .end = .{ .line = last, .character = 0 } },
+        }));
+    }
+
+    fn decodeTokens(w: *Workspace, name: []const u8, v: Value) ![]const Token {
         const data = json.items(json.get(v, "data"));
         var lines = std.mem.splitScalar(u8, w.text(name), '\n');
         var line_texts: std.ArrayList([]const u8) = .empty;

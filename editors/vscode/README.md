@@ -18,8 +18,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - untitled (new, unsaved) Fortran files too, served by the first folder's
   server
 - Fortran files changed outside VS Code (a checkout, generated code) are
-  indexed again; the server restarts when `.fortlsrc`, `.fortls.json`,
-  `.fortls`, `fpm.toml` or `compile_commands.json` changes
+  indexed again, and the settings read again when `.fortlsrc`,
+  `.fortls.json`, `.fortls`, `fpm.toml` or `compile_commands.json`
+  changes, without a restart
 - diagnostics, a compiler's errors and warnings (see
   [Compiler diagnostics](#compiler-diagnostics)), fortitude's problems
   with its fixes (see [Linting with fortitude](#linting-with-fortitude)),
