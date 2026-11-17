@@ -10,7 +10,6 @@
 # ship in its package, so they are not listed here.
 
 readme.md
-todo.md
 CLAUDE.md
 LICENSE
 .vscode/*
