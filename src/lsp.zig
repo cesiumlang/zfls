@@ -171,6 +171,7 @@ pub const ServerCapabilities = struct {
     callHierarchyProvider: bool = true,
     typeHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
+    workspace: WorkspaceCapabilities = .{},
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
@@ -213,6 +214,21 @@ pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 pub const PositionParams = struct {
     textDocument: TextDocumentIdentifier,
     position: Position,
+};
+
+/// `workspace/willRenameFiles`
+pub const RenameFilesParams = struct {
+    files: []const struct { oldUri: []const u8, newUri: []const u8 },
+};
+
+/// The files whose renames the server is told of first: every file and
+/// directory (`workspace/willRenameFiles`)
+pub const WorkspaceCapabilities = struct {
+    fileOperations: struct {
+        willRename: struct {
+            filters: []const struct { pattern: struct { glob: []const u8 } } = &.{.{ .pattern = .{ .glob = "**" } }},
+        } = .{},
+    } = .{},
 };
 
 pub const RenameParams = struct {

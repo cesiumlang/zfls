@@ -851,6 +851,12 @@ zfls deliberately differs from fortls in a few places:
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
+- Renaming or moving a file or directory in the editor
+  (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and
+  `#include` directives that name a file that moves, and the relative ones
+  of a file that moves: relative to the including file's directory when
+  the file was found there, to the include directory it was found in while
+  it stays in it; fortls has none.
 - A document that is not a file (an untitled one, `untitled:Untitled-1`) is
   served from the text the client sends with `didOpen` and its changes;
   fortls reads every document from disk.

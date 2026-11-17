@@ -377,7 +377,19 @@ pub const Workspace = struct {
             .position = .{ .line = p.line, .character = p.col },
             .newName = new_name,
         });
-        const v = try w.server.dispatchPublic(w.a(), "textDocument/rename", params);
+        return w.editsOf(try w.server.dispatchPublic(w.a(), "textDocument/rename", params));
+    }
+
+    /// The edits `workspace/willRenameFiles` asks for before files (or
+    /// directories) named as in the workspace move: `.{ old, new }`
+    pub fn willRenameFiles(w: *Workspace, moves: []const [2][]const u8) ![]const Edit {
+        var files: std.ArrayList(struct { oldUri: []const u8, newUri: []const u8 }) = .empty;
+        for (moves) |m| try files.append(w.a(), .{ .oldUri = try w.uri(m[0]), .newUri = try w.uri(m[1]) });
+        return w.editsOf(try w.server.dispatchPublic(w.a(), "workspace/willRenameFiles", try json.from(w.a(), .{ .files = files.items })));
+    }
+
+    /// The edits of a `WorkspaceEdit`
+    fn editsOf(w: *Workspace, v: Value) ![]const Edit {
         var out: std.ArrayList(Edit) = .empty;
         const changes = json.get(v, "changes") orelse return &.{};
         if (changes != .object) return &.{};
