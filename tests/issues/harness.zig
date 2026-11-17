@@ -363,6 +363,10 @@ pub const Workspace = struct {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/implementation", try w.posParams(name, p)));
     }
 
+    pub fn typeDefinition(w: *Workspace, name: []const u8, p: Pos) !?Location {
+        return location(try w.server.dispatchPublic(w.a(), "textDocument/typeDefinition", try w.posParams(name, p)));
+    }
+
     pub fn declaration(w: *Workspace, name: []const u8, p: Pos) !?Location {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/declaration", try w.posParams(name, p)));
     }

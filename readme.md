@@ -9,8 +9,9 @@ command line options and configuration files.
 
 ## Features
 
-- Completion, hover, signature help, go to definition and implementation,
-  references, document highlights, rename, document and workspace symbols
+- Completion, hover, signature help, go to definition, implementation and
+  type definition, references, document highlights, rename, document and
+  workspace symbols
 - Beyond fortls: an outline tree of document symbols (for clients that take
   one: breadcrumbs, sticky scroll); folding of program units, constructs
   and their branches, preprocessor conditionals and comment blocks; semantic
@@ -785,6 +786,12 @@ zfls deliberately differs from fortls in a few places:
 - Workspace symbol search also finds the names the query matches fuzzily
   (`tar` finds `this_amazing_routine`), after those that contain it
   (hansec #195); fortls finds only the latter.
+- Workspace symbols include the type-bound procedures of derived types, the
+  procedures declared in interface blocks, what submodules declare and
+  contain, and the internal procedures of every procedure, each with its
+  host as the container (`mesh_mod::mesh_t`); fortls offers only the
+  top-level units and what modules declare, with the module as the
+  container.
 - A request that the client cancels (`$/cancelRequest`) while it waits
   behind others is answered with `RequestCancelled` instead of being worked
   on; fortls ignores cancellations.
@@ -845,6 +852,9 @@ zfls deliberately differs from fortls in a few places:
 - `textDocument/selectionRange`, `textDocument/documentLink` and
   `textDocument/prepareRename` (for clients that announce `prepareSupport`)
   are answered; fortls has none of them.
+- `textDocument/typeDefinition` goes to the derived type of a variable or
+  component, of a function's result, or of a type name itself; nothing
+  for intrinsic types and `class(*)`. fortls has none.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.

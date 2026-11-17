@@ -532,6 +532,36 @@ pub fn createHover(self: *Server, a: Allocator, msg: ?[]const u8, docs: ?[]const
     return srv.pyFormatLangid(a, md, self.s.hover_language);
 }
 
+/// The derived type of the name at the position (#191): of a variable or
+/// component, of a function's result, or a type name itself. Nothing for
+/// intrinsic types and unlimited polymorphism (`class(*)`).
+pub fn serveTypeDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const d = (try definitionAt(self, a, params, false)) orelse return .null;
+    const t = (try derivedTypeOf(self, a, d.obj)) orelse return .null;
+    if (t.file_ast.file == null) return .null;
+    return createRefLink(self, a, t);
+}
+
+fn derivedTypeOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
+    const e = self.env(a);
+    const found: ?*Obj = switch (obj.kind) {
+        .type => obj,
+        .variable, .method => try obj.getTypeObj(e),
+        .function => blk: {
+            const proc = obj.procData();
+            if (proc.result_obj) |ro| break :blk try ro.getTypeObj(e);
+            // the type in the prefix, `type(mesh_t) function f()`
+            const rt = proc.result_type orelse break :blk null;
+            const tn = helpers.getParenSubstring(rt) orelse break :blk null;
+            const scope = obj.parent orelse obj;
+            break :blk try objects.findInScope(e, scope, try std.ascii.allocLowerString(a, str.strip(tn)), .{});
+        },
+        else => null,
+    };
+    const t = found orelse return null;
+    return if (t.kind == .type) t else null;
+}
+
 /// The declaration of the name at the position (#192): for a separate
 /// module procedure, its interface in the module (or parent submodule),
 /// also from its body and whatever `prefer_implementation` says; for
