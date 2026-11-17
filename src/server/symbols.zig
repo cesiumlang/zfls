@@ -127,6 +127,14 @@ pub fn serveSemanticTokens(self: *Server, a: Allocator, params: lsp.TextDocument
     return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokens(a, self.env(a), file, ast, self.fixedLimit()) });
 }
 
+/// The semantic tokens of a range of lines (#194): what the editor shows
+/// first of a long file, before it asks for all of it
+pub fn serveSemanticTokensRange(self: *Server, a: Allocator, params: lsp.SemanticTokensRangeParams) !Value {
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+    const ast = file.ast orelse return .null;
+    return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokensIn(a, self.env(a), file, ast, self.fixedLimit(), params.range.start.line, params.range.end.line) });
+}
+
 pub fn serveFoldingRanges(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;

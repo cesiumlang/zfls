@@ -97,6 +97,34 @@ const Tokenizer = struct {
     /// When set, the uses of named constants are collected here (not
     /// their declarations)
     constants: ?*std.ArrayList(ConstantUse) = null,
+    /// the innermost scope of each line, found once (see `innerScope`)
+    inner: ?[]const ?*Obj = null,
+
+    /// The scope `Ast.getInnerScope` gives line `ln` (0-based). That looks
+    /// at every scope of the file, which for every line of a long file of
+    /// many procedures made the tokens quadratic in its length; this finds
+    /// the scope of every line in one pass over the scopes, by the same
+    /// rule: of the scopes around the line, the last listed of those that
+    /// open last.
+    fn innerScope(t: *Tokenizer, ln: usize) !?*Obj {
+        const inner = t.inner orelse blk: {
+            const n = t.file.nLines();
+            const scopes = try t.a.alloc(?*Obj, n);
+            @memset(scopes, null);
+            for (t.ast.scope_list.items) |s| {
+                // scopes count lines from 1
+                var l = @max(s.sline, 1);
+                while (l <= s.eline and l <= n) : (l += 1) {
+                    if (scopes[l - 1]) |prev| if (s.sline < prev.sline) continue;
+                    scopes[l - 1] = s;
+                }
+            }
+            t.inner = scopes;
+            break :blk scopes;
+        };
+        if (ln < inner.len) if (inner[ln]) |s| return s;
+        return t.ast.none_scope;
+    }
 
     /// Collect a name that stands for nothing found, unless it is a word
     /// that is no name: in a specification or END statement, after CALL
@@ -212,7 +240,7 @@ const Tokenizer = struct {
         // fypp's inline expressions (`eg_${name}$_t`) are no Fortran: blank
         // them, and leave the pieces of a name around them alone
         code = try blankFyppInline(t.a, code);
-        const scope = t.ast.getInnerScope(ln + 1);
+        const scope = try t.innerScope(ln);
         var it = helpers.words(code);
         if (t.file.fixed) it.pos = @min(code.len, 6);
         var st: Stmt = .{
@@ -658,13 +686,32 @@ fn nextChar(code: []const u8, i: usize) u8 {
 /// line and start relative to the previous token, its length, type and
 /// modifiers
 pub fn tokens(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, fixed_limit: ?usize) ![]const u32 {
+    return tokensIn(a, env, file, ast, fixed_limit, 0, file.nLines() -| 1);
+}
+
+/// The semantic tokens of lines `first` to `last` (0-based, inclusive), as
+/// `tokens` encodes them (`semanticTokens/range`). The lines are read from
+/// the start of the statement `first` is in, as the tokens of a line
+/// depend on the lines it continues.
+pub fn tokensIn(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, fixed_limit: ?usize, first: usize, last_in: usize) ![]const u32 {
     var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .fixed_limit = fixed_limit };
     const n = file.nLines();
+    if (n == 0) return &.{};
+    const last = @min(last_in, n - 1);
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);
     try t.inactiveLines(inactive);
-    for (0..n) |ln| if (!inactive[ln]) try t.tokenizeLine(ln);
-    const toks = t.tokens.items;
+    var ln = statementStart(file, @min(first, last));
+    while (ln <= last) : (ln += 1) if (!inactive[ln]) try t.tokenizeLine(ln);
+    var toks = t.tokens.items;
+    if (first > 0) {
+        var kept: usize = 0;
+        for (toks) |tok| if (tok.line >= first) {
+            toks[kept] = tok;
+            kept += 1;
+        };
+        toks = toks[0..kept];
+    }
     std.mem.sort(Token, toks, {}, struct {
         fn lt(_: void, x: Token, y: Token) bool {
             return x.line < y.line or (x.line == y.line and x.start < y.start);
@@ -684,6 +731,36 @@ pub fn tokens(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *As
         prev_start = tok.start;
     }
     return data;
+}
+
+/// The first line of the statement that line `ln` is a part of: back over
+/// the lines it continues (free form: code lines that end with `&`; fixed
+/// form: lines with a mark in column 6), past blank, comment and
+/// preprocessor lines
+fn statementStart(file: *const FortranFile, ln: usize) usize {
+    var start = ln;
+    while (true) {
+        if (file.fixed) {
+            const l = file.getLine(start, false) orelse return start;
+            const continuation = l.len > 5 and !helpers.isFixedComment(l) and l[0] != '#' and l[5] != ' ' and l[5] != '0';
+            if (!continuation) return start;
+        }
+        // the code line before
+        var prev = start;
+        const found = while (prev > 0) {
+            prev -= 1;
+            const l = file.getLine(prev, false) orelse break false;
+            const code = std.mem.trim(u8, file.stripComment(l), " \t\r");
+            if (code.len == 0 or code[0] == '#') continue;
+            break true;
+        } else false;
+        if (!found) return start;
+        if (!file.fixed) {
+            const code = std.mem.trim(u8, file.stripComment(file.getLine(prev, false).?), " \t\r");
+            if (code[code.len - 1] != '&') return start;
+        }
+        start = prev;
+    }
 }
 
 test "the legend lists the token types in the order of their numbers" {

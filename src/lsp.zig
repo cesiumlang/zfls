@@ -18,6 +18,9 @@ pub const Range = struct { start: Position, end: Position };
 
 pub const Location = struct { uri: []const u8, range: Range };
 
+/// The answer to `textDocument/linkedEditingRange`
+pub const LinkedEditingRanges = struct { ranges: []const Range, wordPattern: ?[]const u8 = null };
+
 pub const MarkupContent = struct {
     kind: []const u8 = "markdown",
     value: []const u8,
@@ -151,7 +154,10 @@ pub const SemanticTokensLegend = struct {
 pub const SemanticTokensOptions = struct {
     legend: SemanticTokensLegend,
     full: bool = true,
+    range: bool = true,
 };
+
+pub const SemanticTokensRangeParams = struct { textDocument: TextDocumentIdentifier, range: Range };
 
 pub const ServerCapabilities = struct {
     completionProvider: CompletionOptions,
@@ -167,12 +173,14 @@ pub const ServerCapabilities = struct {
     /// `true`, or `{"prepareProvider": true}` for clients with prepareSupport
     renameProvider: json.Value = .{ .bool = true },
     selectionRangeProvider: bool = true,
+    linkedEditingRangeProvider: bool = true,
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
     documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
     inlayHintProvider: bool = true,
     callHierarchyProvider: bool = true,
     typeHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
+    inlineValueProvider: bool = true,
     workspace: WorkspaceCapabilities = .{},
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
@@ -216,6 +224,20 @@ pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 pub const PositionParams = struct {
     textDocument: TextDocumentIdentifier,
     position: Position,
+};
+
+/// `textDocument/inlineValue`
+pub const InlineValueParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
+    context: struct { frameId: i64 = 0, stoppedLocation: Range },
+};
+
+/// A value the editor asks the debug adapter for by name
+pub const InlineValueVariableLookup = struct {
+    range: Range,
+    variableName: []const u8,
+    caseSensitiveLookup: bool = false,
 };
 
 /// `workspace/willRenameFiles`

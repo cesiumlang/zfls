@@ -17,7 +17,8 @@ command line options and configuration files.
   and their branches, preprocessor conditionals and comment blocks; semantic
   highlighting of modules, types, procedures, dummy arguments, components
   and variables by what they are (a variable named `if` is a variable), with
-  the lines that preprocessor conditionals leave out shown inactive
+  the lines that preprocessor conditionals leave out shown inactive, for the
+  whole file or the lines on screen
 - Diagnostics: declarations, scopes, `CONTAINS`, `IMPLICIT`, `USE`/`IMPORT`
   checks, line length limits; each with a code that settings and comments
   can turn off (see [Diagnostics](#diagnostics))
@@ -400,6 +401,16 @@ there, its name at the line (a USE may rename it) and its type; named
 constants are left out. `zfls dap` shows them, with their values, as a
 scope of the Variables view; with the C debuggers, whose variables view
 leaves them out, the VS Code extension shows them in a view of their own.
+
+### Inline values, while debugging
+
+`textDocument/inlineValue` gives, while a debugger is stopped, the places
+from the first line of the procedure (or program) that holds the stop down
+to the stop where its variables are used: its locals and dummy arguments,
+its host procedures', and the module variables the line sees, under the
+names `zfls dap` lists them by. The editor then shows each one's value at
+the end of its line (VS Code: `debug.inlineValues`). Named constants,
+components, procedures, types, strings and comments are left out.
 
 ### Tests, for a test explorer
 
@@ -893,6 +904,10 @@ zfls deliberately differs from fortls in a few places:
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.
+- `textDocument/linkedEditingRange` is answered: typing in the name of a
+  program unit, derived type or named interface changes it in its END
+  statement too, and the other way round (when the END statement has the
+  name), and a construct name changes at all its places; fortls has none.
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
