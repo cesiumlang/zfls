@@ -5,7 +5,8 @@ Fortran language support powered by
 of the [fortls](https://github.com/fortran-lang/fortls) language server:
 
 - completion, hover, signature help
-- go to definition and implementation, find references, rename
+- go to definition, implementation and type definition, find references,
+  rename
 - document and workspace symbols, with an outline tree for breadcrumbs and
   sticky scroll
 - folding of program units, constructs (each `IF`, `SELECT` and `WHERE`
