@@ -610,6 +610,24 @@ pub const Workspace = struct {
     /// An inlay hint: its 0-based line and column, and label
     pub const Hint = struct { line: i64, col: i64, label: []const u8 };
 
+    pub const InlineValue = struct { line: i64, col: i64, name: []const u8 };
+
+    /// The inline values of the whole of `name` while stopped at `stop_line`
+    pub fn inlineValues(w: *Workspace, name: []const u8, stop_line: i64) ![]const InlineValue {
+        const v = try w.request("textDocument/inlineValue", .{
+            .textDocument = .{ .uri = try w.uri(name) },
+            .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 10000, .character = 0 } },
+            .context = .{ .frameId = 1, .stoppedLocation = .{ .start = .{ .line = stop_line, .character = 0 }, .end = .{ .line = stop_line, .character = 0 } } },
+        });
+        var out: std.ArrayList(InlineValue) = .empty;
+        for (json.items(v)) |item| try out.append(w.a(), .{
+            .line = json.int(json.path(item, &.{ "range", "start", "line" })) orelse -1,
+            .col = json.int(json.path(item, &.{ "range", "start", "character" })) orelse -1,
+            .name = json.str(json.get(item, "variableName")) orelse "",
+        });
+        return out.items;
+    }
+
     pub fn inlayHints(w: *Workspace, name: []const u8) ![]const Hint {
         const v = try w.request("textDocument/inlayHint", .{
             .textDocument = .{ .uri = try w.uri(name) },
