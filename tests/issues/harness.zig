@@ -363,6 +363,18 @@ pub const Workspace = struct {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/implementation", try w.posParams(name, p)));
     }
 
+    /// The linked editing ranges at `p` (0-based lines and start columns),
+    /// none when there are none
+    pub fn linkedEditing(w: *Workspace, name: []const u8, p: Pos) ![]const Pos {
+        const v = try w.server.dispatchPublic(w.a(), "textDocument/linkedEditingRange", try w.posParams(name, p));
+        var out: std.ArrayList(Pos) = .empty;
+        for (json.items(json.get(v, "ranges"))) |r| try out.append(w.a(), .{
+            .line = json.int(json.path(r, &.{ "start", "line" })) orelse -1,
+            .col = json.int(json.path(r, &.{ "start", "character" })) orelse -1,
+        });
+        return out.items;
+    }
+
     pub fn references(w: *Workspace, name: []const u8, p: Pos) ![]const Location {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/references", try w.posParams(name, p));
         var out: std.ArrayList(Location) = .empty;
