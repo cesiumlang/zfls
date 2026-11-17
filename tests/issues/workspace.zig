@@ -295,8 +295,30 @@ test "workspace symbols include type-bound procedures and interface bodies" {
         \\  subroutine helper()
         \\    integer :: local_var
         \\    local_var = 1
+        \\  contains
+        \\    subroutine helper_inner()
+        \\      integer :: inner_local
+        \\      inner_local = 2
+        \\    end subroutine helper_inner
         \\  end subroutine helper
         \\end module mesh_mod
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main_prog
+        \\  implicit none
+        \\  call prog_inner()
+        \\contains
+        \\  subroutine prog_inner()
+        \\  end subroutine prog_inner
+        \\end program main_prog
+        \\
+        \\subroutine top_level()
+        \\  call top_inner()
+        \\contains
+        \\  subroutine top_inner()
+        \\  end subroutine top_inner
+        \\end subroutine top_level
         \\
         },
     }, .{});
@@ -318,6 +340,17 @@ test "workspace symbols include type-bound procedures and interface bodies" {
     try h.expect(locals.len == 0, "local variable offered: {any}", .{locals});
     const fields = try w.workspaceSymbols("field_n");
     try h.expect(fields.len == 0, "type component offered: {any}", .{fields});
+    // the internal procedures of a module procedure, a program and a
+    // top-level procedure, with their hosts as containers (#197); still
+    // not their locals
+    inline for (.{ .{ "helper_inner", "mesh_mod::helper" }, .{ "prog_inner", "main_prog" }, .{ "top_inner", "top_level" } }) |c| {
+        const found = try w.workspaceSymbolInfos(c[0]);
+        try h.expect(found.len == 1, "{d} symbols for {s}: {any}", .{ found.len, c[0], found });
+        const container = found[0].container orelse "";
+        try h.expect(std.mem.eql(u8, container, c[1]), "{s} is in '{s}', not {s}", .{ c[0], container, c[1] });
+    }
+    const inner_locals = try w.workspaceSymbols("inner_local");
+    try h.expect(inner_locals.len == 0, "local variable of an internal procedure offered: {any}", .{inner_locals});
 }
 
 test "workspace symbols offer each object once, in its own file" {
