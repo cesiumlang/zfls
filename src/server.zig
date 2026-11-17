@@ -34,6 +34,7 @@ const completion = @import("server/completion.zig");
 const definition = @import("server/definition.zig");
 const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
+const inline_values = @import("server/inline_values.zig");
 const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
@@ -344,6 +345,7 @@ pub const Server = struct {
         formatting,
         range_formatting,
         inlay_hint,
+        inline_value,
         prepare_call_hierarchy,
         incoming_calls,
         outgoing_calls,
@@ -392,6 +394,7 @@ pub const Server = struct {
         .{ "textDocument/formatting", .formatting },
         .{ "textDocument/rangeFormatting", .range_formatting },
         .{ "textDocument/inlayHint", .inlay_hint },
+        .{ "textDocument/inlineValue", .inline_value },
         .{ "textDocument/prepareCallHierarchy", .prepare_call_hierarchy },
         .{ "callHierarchy/incomingCalls", .incoming_calls },
         .{ "callHierarchy/outgoingCalls", .outgoing_calls },
@@ -443,6 +446,7 @@ pub const Server = struct {
             .formatting => format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
             .range_formatting => format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
             .inlay_hint => hints.serveInlayHints(self, a, try json.decode(lsp.InlayHintParams, a, params)),
+            .inline_value => inline_values.serveInlineValues(self, a, try json.decode(lsp.InlineValueParams, a, params)),
             .prepare_call_hierarchy => calls.servePrepare(self, a, try json.decode(lsp.PositionParams, a, params)),
             .incoming_calls => calls.serveIncoming(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .outgoing_calls => calls.serveOutgoing(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),

@@ -365,6 +365,16 @@ constants are left out. `zfls dap` shows them, with their values, as a
 scope of the Variables view; with the C debuggers, whose variables view
 leaves them out, the VS Code extension shows them in a view of their own.
 
+### Inline values, while debugging
+
+`textDocument/inlineValue` gives, while a debugger is stopped, the places
+from the first line of the procedure (or program) that holds the stop down
+to the stop where its variables are used: its locals and dummy arguments,
+its host procedures', and the module variables the line sees, under the
+names `zfls dap` lists them by. The editor then shows each one's value at
+the end of its line (VS Code: `debug.inlineValues`). Named constants,
+components, procedures, types, strings and comments are left out.
+
 ### Tests, for a test explorer
 
 Two requests of zfls's own (no parameters) give the tests of the workspace,
