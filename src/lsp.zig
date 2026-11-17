@@ -162,6 +162,7 @@ pub const ServerCapabilities = struct {
     referencesProvider: bool = true,
     hoverProvider: bool = true,
     implementationProvider: bool = true,
+    typeDefinitionProvider: bool = true,
     /// `true`, or `{"prepareProvider": true}` for clients with prepareSupport
     renameProvider: json.Value = .{ .bool = true },
     selectionRangeProvider: bool = true,
