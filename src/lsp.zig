@@ -320,6 +320,9 @@ pub const ClientCapabilities = struct {
         formatting: Dynamic = .{},
         rangeFormatting: Dynamic = .{},
     } = .{},
+    workspace: struct {
+        didChangeWatchedFiles: Dynamic = .{},
+    } = .{},
 
     /// Whether the client takes `client/registerCapability` for a method
     pub const Dynamic = struct { dynamicRegistration: bool = false };

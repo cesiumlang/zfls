@@ -182,3 +182,60 @@ test "a provider turned off answers nothing (#196)" {
     try w.changeConfiguration("{\"use_signature_help\": false}");
     try std.testing.expect(try signatureHelp(w) == .null);
 }
+
+test "a configuration file written on disk is read again, and its removal too (#196)" {
+    const w = try h.Workspace.init(&long_line, .{});
+    defer w.deinit();
+    try expectLongLines(w, 0);
+    try w.changeOnDisk(".fortlsrc", "{\"max_line_length\": 30}");
+    try expectLongLines(w, 2);
+    try w.changeOnDisk(".fortlsrc", null);
+    try expectLongLines(w, 0);
+}
+
+test "a configuration file changed on disk keeps taking over from the editor's settings (#196)" {
+    const w = try h.Workspace.init(&long_line, .{ .init_options = "{\"max_line_length\": 30}" });
+    defer w.deinit();
+    try expectLongLines(w, 2);
+    try w.changeOnDisk(".fortls.json", "{\"max_line_length\": 100}");
+    try expectLongLines(w, 0);
+    try w.changeOnDisk(".fortls.json", "{}");
+    try expectLongLines(w, 2);
+}
+
+const guarded = [_]h.File{.{ .name = "m.F90", .text =
+    \\module m
+    \\contains
+    \\#ifdef FEATURE
+    \\  subroutine guarded()
+    \\  end subroutine guarded
+    \\#endif
+    \\end module m
+    \\
+}};
+
+test "a compile_commands.json written on disk indexes the workspace again (#196)" {
+    const w = try h.Workspace.init(&guarded, .{});
+    defer w.deinit();
+    try std.testing.expect(!try hasSymbol(w, "guarded"));
+    try w.changeOnDisk("build/compile_commands.json",
+        \\[{"directory": "..", "file": "m.F90", "arguments": ["gfortran", "-DFEATURE", "-c", "m.F90"]}]
+    );
+    try std.testing.expect(try hasSymbol(w, "guarded"));
+}
+
+test "the server asks a client that allows it to watch the configuration files (#196)" {
+    const w = try h.Workspace.init(&long_line, .{ .watch_registration = true });
+    defer w.deinit();
+    _ = try w.zflsRequest("initialized", .{});
+    const regs = try w.sentWith("client/registerCapability");
+    try std.testing.expectEqual(@as(usize, 1), regs.len);
+    try std.testing.expect(std.mem.find(u8, regs[0], "**/{.fortlsrc,.fortls.json,.fortls,fpm.toml,compile_commands.json}") != null);
+}
+
+test "a client that cannot is asked nothing (#196)" {
+    const w = try h.Workspace.init(&long_line, .{});
+    defer w.deinit();
+    _ = try w.zflsRequest("initialized", .{});
+    try std.testing.expectEqual(@as(usize, 0), (try w.sentWith("client/registerCapability")).len);
+}

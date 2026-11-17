@@ -83,13 +83,17 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     } });
 }
 
-/// Reads the configuration file and applies its settings; its JSON object
-/// (owned by the server's arena), null without one. Problems with it are
-/// posted to the client; only allocation failures are errors.
-pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
-    const candidates = [_][]const u8{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
+/// The names of the configuration file, the first found being read
+pub fn configFileNames(self: *const Server) [4][]const u8 {
+    return .{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
+}
+
+/// Reads the configuration file: its JSON object (owned by the server's
+/// arena), null without one. Problems with it are posted to the client;
+/// only allocation failures are errors.
+pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
     var config_path: ?[]const u8 = null;
-    for (candidates) |f| {
+    for (configFileNames(self)) |f| {
         const p = try paths.join(a, &.{ self.root_path, f });
         if (paths.isFile(self.io, p)) {
             config_path = p;
@@ -113,7 +117,6 @@ pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
         self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
         return null;
     }
-    try settings_mod.applyConfig(sa, &self.s, cfg);
     return cfg;
 }
 
@@ -666,8 +669,14 @@ fn textDocument(self: *Server, docs: *std.StringHashMapUnmanaged(*FortranFile), 
 /// are left alone, their text being the editor's.
 pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatchedFilesParams) !Value {
     var changed = false;
+    // a file the settings are read from, which are read again after
+    var settings_file: ?configuration.Watched = null;
     for (params.changes) |ev| {
         const path = try self.pathFromUri(a, ev.uri);
+        if (try configuration.watched(self, a, path)) |kind| {
+            if (settings_file != .project) settings_file = kind;
+            continue;
+        }
         // the C search again; a `.h` may be a Fortran include too, which
         // the rest follows
         if (bindc.isCFile(path)) bindc.deinitIndex(self);
@@ -695,6 +704,11 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
     if (changed) {
         _ = try addIncludedFiles(self, a, null);
         try fullRelink(self, a);
+    }
+    if (settings_file) |kind| {
+        // which publishes the diagnostics again
+        try configuration.reload(self, a, kind == .project);
+        return .null;
     }
     if (changed and self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
     return .null;

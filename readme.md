@@ -219,6 +219,12 @@ settings, the configuration file. A change applies at once:
   told to restart zfls. Turning one off makes it answer nothing.
 - The diagnostics of the open documents are published again.
 
+The configuration file, `fpm.toml` and `compile_commands.json` are read
+again when they change on disk, with the same effects (a change of
+`fpm.toml` or `compile_commands.json` indexes the workspace again): zfls
+asks the editor to watch them where it allows that
+(`workspace/didChangeWatchedFiles`); other editors restart zfls.
+
 The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
@@ -907,9 +913,10 @@ zfls deliberately differs from fortls in a few places:
   again or dropped, except those open in the editor; fortls ignores it.
 - Settings are taken over LSP as well, under the names of the
   configuration file: in `initializationOptions` and in
-  `workspace/didChangeConfiguration`, which applies them at once (see
-  [Usage](#usage)); fortls reads them only from its command line and
-  configuration file.
+  `workspace/didChangeConfiguration`, which applies them at once, and the
+  configuration file, `fpm.toml` and `compile_commands.json` are read again
+  when they change (see [Usage](#usage)); fortls reads its settings once,
+  from its command line and configuration file.
 - Renaming or moving a file or directory in the editor
   (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and
   `#include` directives that name a file that moves, and the relative ones

@@ -15,6 +15,11 @@
 //! when the server did not announce them registers them with the client
 //! where it allows that (`client/registerCapability`); others tell the user
 //! to restart the server.
+//!
+//! The configuration file, fpm.toml and compile_commands.json are read
+//! again when they change on disk: the server asks the client to watch
+//! them (`workspace/didChangeWatchedFiles`) where it allows that. A change
+//! of fpm.toml or compile_commands.json re-indexes the workspace.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -39,6 +44,7 @@ const format = @import("format.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
+const project = @import("../project.zig");
 
 pub const signature_triggers: []const []const u8 = &.{ "(", "," };
 
@@ -107,7 +113,8 @@ pub fn load(self: *Server, a: Allocator, init_options: ?Value) !void {
         self.config.editor = try keep(self, a, v);
         try settings_mod.applyConfig(sa, &self.s, self.config.editor.?);
     }
-    self.config.file = try workspace.loadConfigFile(self, a);
+    self.config.file = try workspace.readConfigFile(self, a);
+    if (self.config.file) |f| try settings_mod.applyConfig(sa, &self.s, f);
     self.config.configured = try settings_mod.clone(sa, self.s);
     self.sync_type = if (self.s.incremental_sync) 2 else 1;
     // else the command line's, made when the server was created
@@ -142,17 +149,81 @@ pub fn withdrawn(self: *const Server, comptime p: std.meta.FieldEnum(Providers))
 
 pub fn serveDidChange(self: *Server, a: Allocator, params: Value) !Value {
     const v = section(json.get(params, "settings")) orelse return .null;
-    const sa = self.arena.allocator();
     self.config.editor = try keep(self, a, v);
-    var next = try settings_mod.clone(sa, self.config.cli);
-    try settings_mod.applyConfig(sa, &next, self.config.editor.?);
-    if (self.config.file) |f| try settings_mod.applyConfig(sa, &next, f);
-    try apply(self, a, next);
+    try apply(self, a, try configured(self), false);
     return .null;
 }
 
-/// Puts the settings `next` (as configured) in effect
-fn apply(self: *Server, a: Allocator, next: Settings) !void {
+/// The settings as configured: the command line's, the editor's over them,
+/// the config file's over those
+fn configured(self: *Server) !Settings {
+    const sa = self.arena.allocator();
+    var next = try settings_mod.clone(sa, self.config.cli);
+    if (self.config.editor) |e| try settings_mod.applyConfig(sa, &next, e);
+    if (self.config.file) |f| try settings_mod.applyConfig(sa, &next, f);
+    return next;
+}
+
+/// What a file the server watches is to it
+pub const Watched = enum {
+    /// the configuration file
+    config,
+    /// fpm.toml or compile_commands.json, read when indexing
+    project,
+};
+
+/// Whether `path` is one of the files the settings are read from
+pub fn watched(self: *const Server, a: Allocator, path: []const u8) !?Watched {
+    for (workspace.configFileNames(self)) |name| {
+        if (paths.eql(path, try paths.join(a, &.{ self.root_path, name }))) return .config;
+    }
+    if (paths.eql(path, try paths.join(a, &.{ self.root_path, "fpm.toml" }))) return .project;
+    if (self.s.compile_commands) |cc| {
+        if (cc.len == 0) return null;
+        const p = if (std.Io.Dir.path.isAbsolute(cc)) cc else try paths.join(a, &.{ self.root_path, cc });
+        if (paths.eql(path, p) or paths.eql(path, try paths.join(a, &.{ p, "compile_commands.json" }))) return .project;
+        return null;
+    }
+    // where project.findCompileCommands looks
+    if (paths.eql(path, try paths.join(a, &.{ self.root_path, "compile_commands.json" }))) return .project;
+    for ([_][]const u8{ "build", "builddir" }) |sub| {
+        if (paths.eql(path, try paths.join(a, &.{ self.root_path, sub, "compile_commands.json" }))) return .project;
+    }
+    return null;
+}
+
+/// After one of the `watched` files changed on disk: the settings read
+/// again, and with fpm.toml or compile_commands.json, the workspace indexed
+/// again
+pub fn reload(self: *Server, a: Allocator, project_files: bool) !void {
+    self.log.info("a configuration file changed: reading the settings again", .{});
+    self.config.file = try workspace.readConfigFile(self, a);
+    try apply(self, a, try configured(self), project_files);
+}
+
+/// At `initialized`: asks the client to watch the `watched` files, where it
+/// allows that
+pub fn watchConfigFiles(self: *Server, a: Allocator) void {
+    if (!self.config.client.workspace.didChangeWatchedFiles.dynamicRegistration) return;
+    var names: std.ArrayList([]const u8) = .empty;
+    for (workspace.configFileNames(self) ++ [_][]const u8{ "fpm.toml", "compile_commands.json" }) |n| {
+        const base = std.Io.Dir.path.basename(n);
+        for (names.items) |x| {
+            if (std.mem.eql(u8, x, base)) break;
+        } else names.append(a, base) catch return;
+    }
+    const pattern = std.mem.concat(a, u8, &.{ "**/{", std.mem.join(a, ",", names.items) catch return, "}" }) catch return;
+    const params = json.from(a, .{ .registrations = &[_]lsp.Registration{.{
+        .id = "zfls-config-files",
+        .method = "workspace/didChangeWatchedFiles",
+        .registerOptions = json.from(a, .{ .watchers = &[_]struct { globPattern: []const u8 }{.{ .globPattern = pattern }} }) catch return,
+    }} }) catch return;
+    self.sendRequest(a, "client/registerCapability", params) catch |e| self.logSendFailure(e);
+}
+
+/// Puts the settings `next` (as configured) in effect; `force_reindex`:
+/// index the workspace again whatever the settings
+fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void {
     const prev = self.config.configured;
     self.config.configured = next;
     const same = struct {
@@ -160,7 +231,7 @@ fn apply(self: *Server, a: Allocator, next: Settings) !void {
             return settings_mod.sameValue(x, y, name);
         }
     }.of;
-    var reindex = false;
+    var reindex = force_reindex;
     inline for (index_settings) |name| if (!same(&prev, &next, name)) {
         reindex = true;
     };
