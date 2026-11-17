@@ -868,6 +868,10 @@ zfls deliberately differs from fortls in a few places:
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
   constructs (hansec #157); fortls has no answer on them.
+- `textDocument/linkedEditingRange` is answered: typing in the name of a
+  program unit, derived type or named interface changes it in its END
+  statement too, and the other way round (when the END statement has the
+  name), and a construct name changes at all its places; fortls has none.
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
