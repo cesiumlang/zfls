@@ -231,8 +231,9 @@ pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_m
 /// The symbols `workspace/symbol` offers: the global objects of every file
 /// (modules, submodules, programs, top-level procedures), and below
 /// modules, submodules and interfaces their declarations, procedures and
-/// interface bodies, and the type-bound procedures of their types. Local
-/// variables and type components are left out. Each object is offered once:
+/// interface bodies, the type-bound procedures of their types, and the
+/// internal procedures of every procedure. Local variables and type
+/// components are left out. Each object is offered once:
 /// a file's procedures that an include links into other scopes are its own,
 /// and of two files that define the same global name, both are offered.
 /// `files` is the workspace's map of paths to `FortranFile`s.
@@ -251,6 +252,11 @@ fn collectSymbols(a: Allocator, obj: *Obj, out: *std.ArrayList(*Obj), seen: *std
     if (obj.name.len > 0 and obj.name[0] != '#') try out.append(a, obj);
     switch (obj.getType(false)) {
         .module, .submodule, .interface => {},
+        // the internal procedures after CONTAINS, but no local variables
+        .subroutine, .function => {
+            for (obj.childList()) |child| if (child.kind.isSubroutine()) try collectSymbols(a, child, out, seen);
+            return;
+        },
         .class => {
             for (obj.childList()) |child| {
                 if (child.getType(true) != C.TypeId.method) continue;

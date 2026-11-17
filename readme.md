@@ -785,6 +785,12 @@ zfls deliberately differs from fortls in a few places:
 - Workspace symbol search also finds the names the query matches fuzzily
   (`tar` finds `this_amazing_routine`), after those that contain it
   (hansec #195); fortls finds only the latter.
+- Workspace symbols include the type-bound procedures of derived types, the
+  procedures declared in interface blocks, what submodules declare and
+  contain, and the internal procedures of every procedure, each with its
+  host as the container (`mesh_mod::mesh_t`); fortls offers only the
+  top-level units and what modules declare, with the module as the
+  container.
 - A request that the client cancels (`$/cancelRequest`) while it waits
   behind others is answered with `RequestCancelled` instead of being worked
   on; fortls ignores cancellations.
