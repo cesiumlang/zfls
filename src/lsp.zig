@@ -180,6 +180,7 @@ pub const ServerCapabilities = struct {
     callHierarchyProvider: bool = true,
     typeHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
+    inlineValueProvider: bool = true,
     workspace: WorkspaceCapabilities = .{},
     textDocumentSync: i64,
     signatureHelpProvider: ?SignatureHelpOptions = null,
@@ -223,6 +224,20 @@ pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 pub const PositionParams = struct {
     textDocument: TextDocumentIdentifier,
     position: Position,
+};
+
+/// `textDocument/inlineValue`
+pub const InlineValueParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
+    context: struct { frameId: i64 = 0, stoppedLocation: Range },
+};
+
+/// A value the editor asks the debug adapter for by name
+pub const InlineValueVariableLookup = struct {
+    range: Range,
+    variableName: []const u8,
+    caseSensitiveLookup: bool = false,
 };
 
 /// `workspace/willRenameFiles`
