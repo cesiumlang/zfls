@@ -71,6 +71,8 @@ disable Modern Fortran when you install zfls (see
 | `zfls.docMath` | `plain` | Formulas of documentation comments (`\f$ x \f$`) in backticks without their markers; `dollar` writes `$x$` for a renderer with math, `keep` leaves them |
 | `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
+| `zfls.hoverNoTypeComponents` | `false` | Hover on a derived type or a variable of one does not list the type's components and type-bound procedures |
+| `zfls.hoverPlainComments` | `false` | Plain `!` comments above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no `!>`, `!<` or `!!` comment |
 | `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
 | `zfls.autocompleteNameOnly` | `false` | Complete procedure names without their arguments |

@@ -278,6 +278,18 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.lowercaseHover.markdownDescription%"
         },
+        "zfls.hoverNoTypeComponents": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverNoTypeComponents.markdownDescription%"
+        },
+        "zfls.hoverPlainComments": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverPlainComments.markdownDescription%"
+        },
         "zfls.lowercaseIntrinsics": {
           "type": "boolean",
           "default": true,

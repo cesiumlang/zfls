@@ -71,6 +71,9 @@ pub const Trace = struct {
 pub const Options = struct {
     /// Order the keywords of a definition by id (`--sort_keywords`)
     sort_keywords: bool = false,
+    /// Plain comments above or after a declaration are its documentation
+    /// (`--hover_plain_comments`)
+    plain_comments: bool = false,
     trace: ?Trace = null,
 };
 
@@ -734,7 +737,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(opts.plain_comments) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
