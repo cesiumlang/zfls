@@ -272,6 +272,35 @@ def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
     return False
 
 
+def declared_word(lines: list, line: int, char: int):
+    """The name (lowercase) that ends at the position when it is in the
+    entity list of a declaration (after `::`, or in the old form after the
+    type), not an initialization, else None."""
+    if not (0 <= line < len(lines)):
+        return None
+    code = lines[line].split("!")[0][:char]
+    if "::" not in code and not DECL_START.match(code):
+        return None
+    depth = 0
+    for c in reversed(code.split("::")[-1]):
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            depth -= 1
+        elif depth == 0 and c == ",":
+            break
+        elif depth == 0 and c == "=":
+            return None
+    m = re.search(r"[A-Za-z_][A-Za-z0-9_]*$", code)
+    return m.group(0).lower() if m else None
+
+
+DECL_START = re.compile(
+    r"\s*(integer|real|complex|logical|character|double(\s*)precision|double(\s*)complex|external|type(\s*)\(|class(\s*)\(|procedure(\s*)\().*[\s,)*]\w*$",
+    re.I,
+)
+
+
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
     (hansec #133), a name of a module not used yet that adds the USE
@@ -660,6 +689,16 @@ def main() -> int:
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls does not
                 b = [x for x in b if not zfls_only_item(x)]
+            if kind == "completion":
+                # in the entity list of a declaration zfls offers the dummy
+                # arguments not declared yet, and not the name being
+                # declared (#270)
+                p = params.get("position") or {}
+                word = declared_word(src_lines, p.get("line", -1), p.get("character", 0))
+                if word and isinstance(a, list):
+                    a = [x for x in a if str(x.get("label", "")).lower() != word]
+                if isinstance(b, list):
+                    b = [x for x in b if x.get("detail") != "argument not declared" and (not word or str(x.get("label", "")).lower() != word)]
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway

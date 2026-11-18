@@ -420,8 +420,8 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     next: for (cands.objs, cands.renames) |cand, rename| {
         const ctype = cand.getType(false);
         if (type_mask.contains(ctype)) continue;
-        // the name this declaration declares
-        if (entity and cand.kind == .variable and cand.file_ast == ast and cand.sline == ac_line + 1) continue;
+        // the name being typed, which this declaration declares
+        if (entity and cand.kind == .variable and cand.file_ast == ast and cand.sline == ac_line + 1 and std.ascii.eqlIgnoreCase(cand.name, typed_prefix)) continue;
         for (listed) |l| if (std.ascii.eqlIgnoreCase(l, cand.name)) continue :next;
         if (req_callable and !cand.isCallable()) continue;
         var name_replace = rename;
