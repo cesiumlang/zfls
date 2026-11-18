@@ -46,7 +46,7 @@ const defs = [_]Def{
     .{ "IF", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?IF[ ]*\\(", true },
     .{ "THEN", "\\)[ ]*THEN$", true },
     .{ "END_IF", "IF", true },
-    .{ "ASSOCIATE", "[ ]*ASSOCIATE[ ]*\\(", true },
+    .{ "ASSOCIATE", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?ASSOCIATE[ ]*\\(", true },
     .{ "END_ASSOCIATE", "ASSOCIATE", true },
     .{ "END_FIXED", "[ ]*([0-9]*)[ ]*CONTINUE", true },
     .{ "SELECT", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?SELECT[ ]*(CASE|TYPE|RANK)[ ]*\\(([\\w=> ]*)", true },

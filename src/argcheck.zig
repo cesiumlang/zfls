@@ -631,6 +631,14 @@ fn headerHasDirective(proc: *const Obj) bool {
     return false;
 }
 
+/// The type of expression `expr` in `scope` (1-based `line_no`), as the
+/// checks tell types apart; null when it cannot be told (for the type of an
+/// ASSOCIATE name bound to an expression)
+pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, expr: []const u8, line_no: usize) !?Typed {
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .inner = .{ .lines = &.{}, .none_scope = null } };
+    return c.exprType(expr, scope, line_no, 0);
+}
+
 pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) ![]const Problem {
     const n = file.nLines();
     var c: Checker = .{ .a = a, .env = env, .ast = ast, .inner = try ast.innerScopes(a, n) };

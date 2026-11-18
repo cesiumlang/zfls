@@ -983,6 +983,13 @@ zfls deliberately differs from fortls in a few places:
 - An `ASSOCIATE` name bound to an array element or section shows the
   dimensions of that element or section; fortls shows those of the whole
   array.
+- An `ASSOCIATE` selector names what the scope around the construct has:
+  in `associate (x => x%field)` the name `x` gets the type of `x%field`,
+  and the selector's `x` is the outer variable in references and rename.
+  A name bound to a literal, an expression of variables and literals or a
+  call of an intrinsic function gets that type (`r => 1.0` is `REAL`)
+  where fortls shows `UNKNOWN`, and a named construct (`outer: associate
+  (...)`) defines its names, which fortls does not see.
 - A variable that is declared with a type and then called, `real fff` and
   `fff(1.2, 3.3)`, shows the signature of the global function of that name in
   hover, and an `EXTERNAL` name shows the interface of its procedure and
