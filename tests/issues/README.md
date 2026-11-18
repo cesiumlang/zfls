@@ -107,6 +107,7 @@ some of its bugs were never reported again to fortls. Their tests use
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
+| [#123](https://github.com/hansec/fortran-language-server/issues/123) | a document opened with a text that is not its file's (unsaved changes restored, a file not saved yet) is served from the file | documents | fixed (patched) | fails, same cause |
 | [#202](https://github.com/hansec/fortran-language-server/issues/202) | `!` comment inside a continued fixed-form declaration hides the names after it | parsing | fixed (patched) | fails, same cause |
 | [#155](https://github.com/hansec/fortran-language-server/issues/155) | `!` comment inside a continued fixed-form `IF` loses its `THEN` | parsing | fixed (patched) | fails, same cause |
 | [#200](https://github.com/hansec/fortran-language-server/issues/200) | "masks variable" warning for a variable of a dummy procedure's interface body | diagnostics | fixed (patched) | fails, same cause |
