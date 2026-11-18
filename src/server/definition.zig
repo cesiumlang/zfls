@@ -103,8 +103,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     const key = try std.ascii.allocLowerString(a, def_name);
     // the file's own global definition before another file's of the
     // same name (fortls gets this from parsing the open file last)
-    if (ast.global_dict.get(key)) |o| return o;
-    if (self.obj_tree.get(key)) |e| return e.obj;
+    if (self.env(a).global(ast, key)) |o| return o;
     for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) return f;
     if (hover_req) if (curr_scope) |cs| {
         var var_type: ?[]const u8 = null;
@@ -315,7 +314,7 @@ pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) 
 pub fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
     if (v.kind != .variable or !v.varDataConst().is_external) return null;
     const key = try std.ascii.allocLowerString(a, v.name);
-    const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
+    const cand = self.env(a).global(ast, key) orelse return null;
     return switch (cand.kind) {
         .subroutine, .function => cand,
         else => null,
@@ -334,7 +333,7 @@ pub fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj
     while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
     if (!std.mem.startsWith(u8, str.lstrip(text[end..]), "(")) return null;
     const key = try std.ascii.allocLowerString(a, v.name);
-    const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
+    const cand = self.env(a).global(ast, key) orelse return null;
     return if (cand.kind == .function) cand else null;
 }
 

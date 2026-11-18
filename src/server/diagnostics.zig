@@ -565,7 +565,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
         const at = try autouse.insertionPoint(a, file, unit);
-        for (try autouse.exports(a, try completion.usableModules(self, a), .{ .exact = name }, 10)) |e| {
+        for (try autouse.exports(a, try completion.usableModules(self, a, ast), .{ .exact = name }, 10)) |e| {
             if (autouse.isWithin(unit, e.module)) continue;
             const text = try autouse.statement(a, at.indent, e.module.name, e.obj.name);
             const edits = try a.alloc(lsp.TextEdit, 1);

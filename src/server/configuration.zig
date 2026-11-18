@@ -280,6 +280,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
     }
     self.workspace.clearRetainingCapacity();
     self.obj_tree.clearRetainingCapacity();
+    self.same_names.clear(self.gpa);
     for (self.retired.items) |ast| ast.destroy();
     self.retired.clearRetainingCapacity();
 

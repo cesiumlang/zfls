@@ -425,11 +425,15 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     return json.from(a, item_list.items);
 }
 
-/// The modules a USE statement can bring names in from: those of the
-/// workspace and the intrinsic ones
-pub fn usableModules(self: *Server, a: Allocator) ![]const *Obj {
+/// The modules a USE statement in `ast` can bring names in from: those of
+/// the workspace (of a name that several files define, the one `ast` sees)
+/// and the intrinsic ones
+pub fn usableModules(self: *Server, a: Allocator, ast: *const Ast) ![]const *Obj {
     var out: std.ArrayList(*Obj) = .empty;
-    for (self.obj_tree.values()) |e| if (e.obj.kind == .module) try out.append(a, e.obj);
+    for (self.obj_tree.keys(), self.obj_tree.values()) |k, e| if (e.obj.kind == .module) {
+        const seen = self.env(a).global(ast, k) orelse e.obj;
+        try out.append(a, if (seen.kind == .module) seen else e.obj);
+    };
     try out.appendSlice(a, self.intr.mods);
     return out.items;
 }
@@ -443,7 +447,7 @@ pub fn autoUseItems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, 
     for (items.items) |it| try seen.put(a, try std.ascii.allocLowerString(a, it.label), {});
     const at = try autouse.insertionPoint(a, file, unit);
     const range = Server.rangeOf(file, at.line, 0, at.line, 0);
-    for (try autouse.exports(a, try usableModules(self, a), .{ .prefix = prefix }, 50)) |e| {
+    for (try autouse.exports(a, try usableModules(self, a, ast), .{ .prefix = prefix }, 50)) |e| {
         if (autouse.isWithin(unit, e.module)) continue;
         if (seen.contains(try std.ascii.allocLowerString(a, e.obj.name))) continue;
         if (type_mask.contains(e.obj.getType(false))) continue;

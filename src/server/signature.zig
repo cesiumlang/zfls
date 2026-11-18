@@ -91,10 +91,8 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
     if (curr_scope) |cs| var_obj = try objects.findInScope(self.env(a), cs, sub_name, .{});
     if (var_obj == null) {
         const key = try std.ascii.allocLowerString(a, sub_name);
-        if (ast.global_dict.get(key)) |o| {
+        if (self.env(a).global(ast, key)) |o| {
             var_obj = o;
-        } else if (self.obj_tree.get(key)) |e| {
-            var_obj = e.obj;
         } else {
             for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) {
                 var_obj = f;

@@ -125,11 +125,13 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
     self.outside_sources = .empty;
+    self.module_dirs = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
+                self.module_dirs = found.module_dirs;
                 // those under the root are the scan's
                 for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
                 self.log.info("{s}: {d} include directories, {d} definitions, {d} files outside the root", .{ p, found.include_dirs.items.len, found.defs.items.len, self.outside_sources.items.len });
@@ -433,6 +435,10 @@ pub fn addToTree(self: *Server, f: *FortranFile) !void {
     var it = ast.global_dict.iterator();
     while (it.next()) |e| {
         const gop = try self.obj_tree.getOrPut(self.gpa, e.key_ptr.*);
+        // another file's of the same name: both kept (#187)
+        if (gop.found_existing) if (gop.value_ptr.path) |held| if (!std.mem.eql(u8, held, f.path)) {
+            try self.same_names.add(self.gpa, e.key_ptr.*, gop.value_ptr.*, .{ .obj = e.value_ptr.*, .path = f.path });
+        };
         if (gop.found_existing and !treeOwnerBeats(f.path, gop.value_ptr.path)) continue;
         // the key is the owner's (it lives as long as the owner's AST)
         gop.key_ptr.* = e.key_ptr.*;
@@ -443,6 +449,7 @@ pub fn addToTree(self: *Server, f: *FortranFile) !void {
 /// Drops the names `ast` owns, handing each to the next file (or
 /// intrinsic module) that defines it.
 pub fn removeFromTree(self: *Server, ast: *Ast) void {
+    self.same_names.remove(self.gpa, ast);
     for (ast.global_dict.keys()) |key| {
         const held = self.obj_tree.getEntry(key) orelse continue;
         if (held.value_ptr.obj.file_ast != ast) continue;
