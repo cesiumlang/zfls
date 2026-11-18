@@ -43,6 +43,7 @@ pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
 pub const findThroughUse = objects_resolve.findThroughUse;
 pub const findInWorkspace = objects_resolve.findInWorkspace;
+pub const declaredProcedure = objects_resolve.declaredProcedure;
 pub const findSymbolsInWorkspace = objects_resolve.findSymbolsInWorkspace;
 pub const climbTypeTree = objects_resolve.climbTypeTree;
 
