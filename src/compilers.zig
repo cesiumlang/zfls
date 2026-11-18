@@ -129,6 +129,51 @@ pub fn fixedForm(id: Id, o: Options) []const []const u8 {
     };
 }
 
+/// Whether the compiler writes files into its working directory even when
+/// it only checks the source: Intel's write their preprocessor's output
+/// (`file.i90`, `file.i`) there, so they run in a directory of zfls's
+/// rather than beside the sources
+pub fn writesToWorkDir(id: Id) bool {
+    return id == .ifx or id == .ifort;
+}
+
+/// `args` with the relative directories of its include and module options
+/// made absolute against `base`, for a compiler run in another directory
+/// (`writesToWorkDir`): `-Idir`, `-I dir`, `-module dir` and, on Windows,
+/// `/Idir`, `/I dir`, `/module:dir`
+pub fn absoluteDirs(a: Allocator, id: Id, args: []const []const u8, base: []const u8, o: Options) ![]const []const u8 {
+    if (!writesToWorkDir(id)) return args;
+    const out = try a.dupe([]const u8, args);
+    const joined = struct {
+        fn f(al: Allocator, b: []const u8, prefix: []const u8, dir: []const u8) ![]const u8 {
+            if (dir.len == 0 or std.Io.Dir.path.isAbsolute(dir)) return std.mem.concat(al, u8, &.{ prefix, dir });
+            return std.mem.concat(al, u8, &.{ prefix, try std.Io.Dir.path.join(al, &.{ b, dir }) });
+        }
+    }.f;
+    // the options whose value is the next argument, and those with it
+    // attached
+    const separate: []const []const u8 = if (o.windows) &.{ "-I", "/I", "-module", "/module" } else &.{ "-I", "-module" };
+    const attached: []const []const u8 = if (o.windows) &.{ "/module:", "-I", "/I" } else &.{"-I"};
+    var i: usize = 0;
+    while (i < out.len) : (i += 1) {
+        const x = out[i];
+        if (for (separate) |s| {
+            if (std.mem.eql(u8, x, s)) break true;
+        } else false) {
+            if (i + 1 < out.len) {
+                out[i + 1] = try joined(a, base, "", out[i + 1]);
+                i += 1;
+            }
+            continue;
+        }
+        for (attached) |p| if (std.mem.startsWith(u8, x, p)) {
+            out[i] = try joined(a, base, p, x[p.len..]);
+            break;
+        };
+    }
+    return out;
+}
+
 /// The arguments when `compiler_args` is not set
 pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
     return switch (id) {
@@ -593,6 +638,25 @@ test "flang messages and their context lines" {
     try std.testing.expectEqual(@as(usize, 1), ms[1].related.items.len);
     try std.testing.expectEqualStrings("Previous declaration of 'y'", ms[1].related.items[0].message);
     try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
+}
+
+fn expectAbsoluteDirs(id: Id, windows: bool, args: []const []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const base = if (windows) "C:\\src" else "/src";
+    const got = try absoluteDirs(arena.allocator(), id, args, base, .{ .windows = windows, .mod_dir = "m" });
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "Intel's relative include and module directories, made absolute for a run elsewhere" {
+    if (@import("builtin").target.os.tag == .windows) {
+        try expectAbsoluteDirs(.ifx, true, &.{ "/warn:all", "/Iinc", "/I", "more", "-Iother", "/module:mods", "/IC:\\abs" }, &.{ "/warn:all", "/IC:\\src\\inc", "/I", "C:\\src\\more", "-IC:\\src\\other", "/module:C:\\src\\mods", "/IC:\\abs" });
+    } else {
+        try expectAbsoluteDirs(.ifort, false, &.{ "-warn", "all", "-Iinc", "-I", "more", "-module", "mods", "-I/abs" }, &.{ "-warn", "all", "-I/src/inc", "-I", "/src/more", "-module", "/src/mods", "-I/abs" });
+    }
+    // the other compilers run beside the file: unchanged
+    try expectAbsoluteDirs(.gfortran, false, &.{"-Iinc"}, &.{"-Iinc"});
 }
 
 test "repeated messages are dropped" {
