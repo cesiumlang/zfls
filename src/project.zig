@@ -13,6 +13,8 @@ const str = @import("str.zig");
 pub const Def = struct { name: []const u8, value: []const u8 };
 
 pub const Found = struct {
+    /// The Fortran files a compilation database compiles (absolute)
+    files: std.ArrayList([]const u8) = .empty,
     include_dirs: std.ArrayList([]const u8) = .empty,
     defs: std.ArrayList(Def) = .empty,
 
@@ -59,9 +61,10 @@ pub fn isFortran(file: []const u8) bool {
     return false;
 }
 
-/// The include directories and definitions of the Fortran entries of a
-/// compilation database; a relative `directory` is relative to `base`, the
-/// directory of the database
+/// The files, include directories and definitions of the Fortran entries
+/// of a compilation database; a relative `directory` is relative to
+/// `base`, the directory of the database, and a relative `file` to its
+/// `directory`
 pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Found {
     var found: Found = .{};
     const v = std.json.parseFromSliceLeaky(json.Value, a, text, .{}) catch return error.InvalidJson;
@@ -71,6 +74,7 @@ pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Fo
         if (!isFortran(file)) continue;
         const entry_dir = json.str(json.get(entry, "directory")) orelse ".";
         const dir = if (std.Io.Dir.path.isAbsolute(entry_dir)) entry_dir else try paths.join(a, &.{ base, entry_dir });
+        try found.files.append(a, try paths.normpath(a, if (std.Io.Dir.path.isAbsolute(file)) file else try paths.join(a, &.{ dir, file })));
         var args: std.ArrayList([]const u8) = .empty;
         if (json.get(entry, "arguments")) |arr| {
             for (json.items(arr)) |x| if (json.str(x)) |s| try args.append(a, s);
@@ -280,6 +284,11 @@ test "compile_commands.json: the flags of Fortran entries" {
     try std.testing.expectEqualStrings("", f.defs.items[0].value);
     try std.testing.expectEqualStrings("2", f.defs.items[1].value);
     try std.testing.expectEqualStrings("\"x y\"", f.defs.items[2].value);
+    // the Fortran files, absolute
+    try std.testing.expectEqual(@as(usize, 2), f.files.items.len);
+    const p = if (@import("builtin").target.os.tag == .windows) "C:\\p" else "/p";
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "a.F90" }), f.files.items[0]);
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "c.f90" }), f.files.items[1]);
 }
 
 test "a shell command line is split as a shell would" {
