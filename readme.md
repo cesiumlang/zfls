@@ -991,6 +991,9 @@ zfls deliberately differs from fortls in a few places:
 - The intrinsic procedure documentation is a newer M_intrinsics than
   fortls's, and its links to other procedures open the pages M_intrinsics
   publishes.
+- An intrinsic with several argument lists (`THIS_IMAGE`, `TOKENIZE`)
+  completes to its first, and signature help shows each; fortls's
+  completion mixes the two in one snippet.
 - `--recursion_limit` limits the nesting depth of scopes, emulating the
   recursion error fortls reports for deeply nested code.
 - When several files define the same module, program or procedure name,

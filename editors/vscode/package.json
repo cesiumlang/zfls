@@ -1092,6 +1092,11 @@
     ],
     "configurationDefaults": {
       "[FortranFixedForm]": {
+        "editor.rulers": [
+          5,
+          6,
+          72
+        ],
         "editor.semanticHighlighting.enabled": true,
         "editor.autoIndentOnPaste": false,
         "editor.formatOnType": true

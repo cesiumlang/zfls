@@ -227,3 +227,30 @@ test "a specific name: its line, then its generic's page" {
     try std.testing.expect(std.mem.startsWith(u8, doc, "DSQRT(X) is SQRT for a double precision X"));
     try std.testing.expect(std.mem.find(u8, doc, "## sqrt") != null);
 }
+
+test "an intrinsic with several forms: a snippet and a signature of one form each" {
+    @import("patterns.zig").init();
+    var intr = try load(std.testing.allocator, false);
+    defer intr.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var several: usize = 0;
+    for (intr.funs) |f| {
+        const sn = try f.getSnippet(a, null, null);
+        if (sn.call) |c| try std.testing.expect(std.mem.findScalar(u8, c, '|') == null);
+        if (sn.snippet) |s| try std.testing.expect(std.mem.findScalar(u8, s, '|') == null);
+        const sigs = try f.getSignatures(a);
+        for (sigs) |sig| {
+            if (sig.label) |l| try std.testing.expect(std.mem.findScalar(u8, l, '|') == null);
+            for (sig.params) |p| try std.testing.expect(std.mem.findScalar(u8, p.label, '|') == null);
+        }
+        if (sigs.len > 1) several += 1;
+        if (std.mem.eql(u8, f.name, "THIS_IMAGE")) {
+            try std.testing.expectEqualStrings("THIS_IMAGE(${1:COARRAY}, DIM=${2:dim})", sn.snippet.?);
+            try std.testing.expectEqual(@as(usize, 2), sigs.len);
+            try std.testing.expectEqualStrings("THIS_IMAGE(DISTANCE=distance)", sigs[1].label.?);
+        }
+    }
+    try std.testing.expect(several >= 2);
+}

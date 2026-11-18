@@ -36,20 +36,35 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
     const arg_strings = call.args;
     // a generic interface: the signature of each of its procedures, active
     // the one the arguments so far reference by their type, kind and rank,
-    // else the first that takes them (fortls #6)
-    if (vo.kind == .interface and vo.memList().len > 0) {
+    // else the first that takes them (fortls #6); an intrinsic with several
+    // forms: the signature of each
+    var forms: std.ArrayList(Obj.Signature) = .empty;
+    // the procedure of each form, of a generic interface
+    var form_objs: std.ArrayList(?*Obj) = .empty;
+    if (vo.kind == .interface) {
+        for (vo.memList()) |member| {
+            try forms.append(a, try member.getSignature(a, null));
+            try form_objs.append(a, member);
+        }
+    } else for (try vo.getSignatures(a)) |sg| {
+        try forms.append(a, sg);
+        try form_objs.append(a, null);
+    }
+    if (forms.items.len > 1 or vo.kind == .interface) {
         var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
-        var members: std.ArrayList(*Obj) = .empty;
+        var members: std.ArrayList(?*Obj) = .empty;
         var candidates: std.ArrayList(*Obj) = .empty;
         var active: ?usize = null;
         var active_size: usize = std.math.maxInt(usize);
-        for (vo.memList()) |member| {
-            const s = (try signatureOf(self, a, member, arg_strings)) orelse continue;
+        for (forms.items, form_objs.items) |form, member| {
+            const s = (try signatureFrom(self, a, form, arg_strings)) orelse continue;
             var info = s.info;
             info.activeParameter = s.param;
+            // of a generic the smallest procedure, of an intrinsic its
+            // first form
             if (s.fits) {
-                try candidates.append(a, member);
-                if (s.size < active_size) {
+                if (member) |m| try candidates.append(a, m);
+                if (active == null or (vo.kind == .interface and s.size < active_size)) {
                     active = sigs.items.len;
                     active_size = s.size;
                 }
@@ -60,7 +75,7 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
         if (sigs.items.len == 0) return .null;
         if (candidates.items.len > 1) {
             if (try generic.resolve(a, self.env(a), ast, ast.getInnerScope(sig_line + 1), sig_line + 1, candidates.items, arg_strings)) |r| {
-                active = std.mem.findScalar(*Obj, members.items, r);
+                active = std.mem.findScalar(?*Obj, members.items, r);
             }
         }
         const chosen = active orelse 0;
@@ -205,8 +220,14 @@ pub fn resolved(self: *Server, a: Allocator, file: *const FortranFile, line: usi
 /// The signature of procedure `vo` for a call whose arguments so far are
 /// `arg_strings`: the parameter they reach, whether the procedure takes
 /// them (their number and keywords), and its number of parameters
-pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize } {
-    const sig = try vo.getSignature(a, null);
+pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?SignatureFit {
+    return signatureFrom(self, a, try vo.getSignature(a, null), arg_strings);
+}
+
+pub const SignatureFit = struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize };
+
+/// `signatureOf` for signature `sig`
+fn signatureFrom(self: *Server, a: Allocator, sig: Obj.Signature, arg_strings: []const []const u8) !?SignatureFit {
     const label = sig.label orelse return null;
     const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
