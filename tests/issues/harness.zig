@@ -208,6 +208,9 @@ pub const Workspace = struct {
         for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
+        // as `main` gives it
+        var environ = try std.testing.environ.createMap(aa);
+        try w.server.setEnviron(&environ);
         w.server.sink = .{ .ctx = w, .sendFn = collect };
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
         _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
@@ -320,6 +323,23 @@ pub const Workspace = struct {
         var out: std.ArrayList([]const u8) = .empty;
         for (w.sent.items) |m| if (std.mem.find(u8, m, needle) != null) try out.append(w.a(), m);
         return out.items;
+    }
+
+    /// The first message the server sent with `method` that contains
+    /// `needle`, waiting up to `timeout_s` seconds for one sent by another
+    /// thread (such as the compiler's); null when none came
+    pub fn waitForSent(w: *Workspace, method: []const u8, needle: []const u8, timeout_s: u32) !?[]const u8 {
+        const m = try std.mem.concat(w.a(), u8, &.{ "\"method\":\"", method, "\"" });
+        var waited: u32 = 0;
+        while (true) : (waited += 1) {
+            {
+                w.server.send_lock.lockUncancelable(io);
+                defer w.server.send_lock.unlock(io);
+                for (w.sent.items) |x| if (std.mem.find(u8, x, m) != null and std.mem.find(u8, x, needle) != null) return x;
+            }
+            if (waited >= timeout_s * 10) return null;
+            io.sleep(.fromMilliseconds(100), .awake) catch {};
+        }
     }
 
     /// `textDocument/didSave`: (re)read and parse the file from disk

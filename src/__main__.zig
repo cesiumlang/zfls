@@ -20,6 +20,7 @@ const Ctx = struct {
     gpa: std.mem.Allocator,
     io: Io,
     s: settings.Settings,
+    environ: *const std.process.Environ.Map,
     exit_code: u8 = 0,
 };
 
@@ -43,6 +44,7 @@ fn runServer(ctx: *Ctx) void {
         return;
     };
     defer server.destroy();
+    server.setEnviron(ctx.environ) catch |e| log.warn("the tools' environment: {s}", .{@errorName(e)});
     var io_copy = io;
     server.sink = .{ .ctx = @ptrCast(&io_copy), .sendFn = stdoutSend };
 
@@ -164,7 +166,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var ctx: Ctx = .{ .gpa = gpa, .io = io, .s = s };
+    var ctx: Ctx = .{ .gpa = gpa, .io = io, .s = s, .environ = init.environ_map };
     // Run on a thread with a large stack: Fortran code can nest deeply and
     // name resolution is recursive.
     const th = try std.Thread.spawn(.{ .stack_size = 256 * 1024 * 1024 }, runServer, .{&ctx});
