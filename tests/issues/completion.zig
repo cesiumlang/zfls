@@ -88,6 +88,54 @@ test "hansec #133 completion of keyword arguments inside a call" {
     try h.checkIn(.hansec, 133, .fixed, expectKeywordArguments(w));
 }
 
+const two_forms = [_]h.File{.{ .name = "p.f90", .text =
+    \\program p
+    \\  implicit none
+    \\  character(:), allocatable :: t(:)
+    \\  integer :: n
+    \\  n = this_im
+    \\  call tokeni
+    \\  n = this_image(
+    \\  call tokenize(
+    \\end program
+    \\
+}};
+
+/// The completion item `label` at `needle` + `plus` of p.f90
+fn itemAt(w: *h.Workspace, needle: []const u8, plus: usize, label: []const u8) !h.Workspace.Item {
+    for (try w.completionItems("p.f90", w.pos("p.f90", needle, 0, plus))) |i| {
+        if (std.ascii.eqlIgnoreCase(i.label, label)) return i;
+    }
+    return h.unmet("{s}: no {s}", .{ needle, label });
+}
+
+fn expectOneForm(w: *h.Workspace) !void {
+    const this_image = try itemAt(w, "this_im\n", 7, "THIS_IMAGE");
+    try h.expect(std.mem.eql(u8, this_image.insert, "THIS_IMAGE(${1:COARRAY}, DIM=${2:dim})"), "THIS_IMAGE inserts {s}", .{this_image.insert});
+    try h.expect(std.mem.findScalar(u8, this_image.detail, '|') == null, "THIS_IMAGE: {s}", .{this_image.detail});
+    const tokenize = try itemAt(w, "tokeni\n", 6, "TOKENIZE");
+    try h.expect(std.mem.eql(u8, tokenize.insert, "TOKENIZE(${1:STRING}, ${2:SET}, ${3:TOKENS}, SEPARATORS=${4:separators})"), "TOKENIZE inserts {s}", .{tokenize.insert});
+    try h.expect(std.mem.findScalar(u8, tokenize.detail, '|') == null, "TOKENIZE: {s}", .{tokenize.detail});
+}
+
+fn expectBothForms(w: *h.Workspace) !void {
+    for ([_][]const u8{ "this_image(", "tokenize(" }) |call| {
+        const sig = (try w.signature("p.f90", w.pos("p.f90", call, 0, call.len))) orelse return h.unmet("{s}: no signature help", .{call});
+        try h.expect(sig.count == 2 and std.mem.findScalar(u8, sig.label, '|') == null, "{s}: {d} signatures, {s}", .{ call, sig.count, sig.label });
+    }
+}
+
+test "#245 an intrinsic with two forms completes to the first, and signature help shows both" {
+    {
+        const w = try h.Workspace.init(&two_forms, .{});
+        defer w.deinit();
+        try expectOneForm(w);
+    }
+    const w = try h.Workspace.init(&two_forms, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    try expectBothForms(w);
+}
+
 const modules = [_]h.File{
     .{ .name = "consts.f90", .text =
     \\module consts
