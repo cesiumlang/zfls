@@ -129,6 +129,12 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
         if (compilers.isLineLength(id, file.fixed, x)) break true;
     } else false else false;
     if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
+    // debug lines as zfls reads them, unless `user` says
+    if (file.fixed) {
+        for (user orelse &.{}) |x| {
+            if (compilers.isDLinesArg(x)) break;
+        } else try args.appendSlice(a, compilers.dLines(id, self.s.dLinesCode(), o));
+    }
     if (file.preproc) {
         try args.appendSlice(a, compilers.preprocess(id, o));
         if (cmd == null) for (self.s.pp_defs.items) |d| try args.append(a, try compilers.define(a, id, d.name, d.value, o));
