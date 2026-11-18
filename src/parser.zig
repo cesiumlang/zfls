@@ -197,6 +197,9 @@ pub const FortranFile = struct {
     /// `raw_text` (owned by `gpa`), to which changes apply; else empty
     raw_lines: std.ArrayList([]const u8) = .empty,
     raw_text: []u8 = &.{},
+    /// `d_lines` is `code`: the D or d in column 1 of a fixed-form line (a
+    /// debug line) is a blank in `lines`, not the start of a comment
+    d_lines_code: bool = false,
 
     pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
         const self = try gpa.create(FortranFile);
@@ -241,10 +244,10 @@ pub const FortranFile = struct {
     /// tell when no line is indented 1 to 4 columns nor ends with `&` (the
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
-    fn detectFixed(self: *const FortranFile) bool {
+    fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
         const ext = std.Io.Dir.path.extension(self.path);
         for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
-        return helpers.detectFixedFormat(self.editLines());
+        return helpers.detectFixedFormat(lines);
     }
 
     fn resetPp(self: *FortranFile) void {
@@ -268,14 +271,17 @@ pub const FortranFile = struct {
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
-        self.replaceText(buf, fresh, detect_format);
+        // the form first, which the lines zfls reads depend on
+        if (detect_format) self.fixed = self.detectFixed(fresh.items);
+        self.replaceText(buf, fresh);
     }
 
-    /// Take `buf` (owned by `gpa`) and the lines in it as the contents,
-    /// detecting the form from them if `detect_format`. When comment
-    /// markers or OpenMP conditional lines make the text zfls reads differ
-    /// from the editor's, they are the raw lines, and `lines` a copy.
-    fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8), detect_format: bool) void {
+    /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
+    /// When zfls reads them otherwise than they are written (`rewrites`),
+    /// they are the raw lines, and `lines` a copy: comment markers made
+    /// comments, the D of debug lines and the sentinel of OpenMP
+    /// conditional lines blanks.
+    fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
         self.gpa.free(self.raw_text);
         self.raw_lines.deinit(self.gpa);
         self.raw_text = &.{};
@@ -285,8 +291,6 @@ pub const FortranFile = struct {
         self.text = buf;
         self.lines = new_lines;
         self.resetPp();
-        // the form of the text as the editor has it
-        if (detect_format) self.fixed = self.detectFixed();
         if (!self.rewrites()) return;
         // without memory for the copy, the text is read as it is
         const code = self.codeCopy(buf, new_lines.items) catch return;
@@ -297,16 +301,17 @@ pub const FortranFile = struct {
     }
 
     /// Whether a line of the text is read otherwise than it is written:
-    /// it has a comment marker or is an OpenMP conditional line
+    /// comment markers, debug lines read as code, OpenMP conditional lines
     fn rewrites(self: *const FortranFile) bool {
-        if (self.comment_markers.len > 0) return true;
+        if (self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
         if (!self.openmp_conditional) return false;
         for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
         return false;
     }
 
     /// A copy of `buf` and its lines as zfls reads them: the comment
-    /// markers made `!`, the sentinels of OpenMP conditional lines blanks
+    /// markers made `!`, the D or d in column 1 a blank with
+    /// `d_lines_code`, the sentinels of OpenMP conditional lines blanks
     fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
         const text = try self.gpa.dupe(u8, buf);
         errdefer self.gpa.free(text);
@@ -316,8 +321,9 @@ pub const FortranFile = struct {
         for (raw) |l| {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
+            if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
             if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
-            helpers.markComments(line, self.comment_markers);
+            if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
             lines.appendAssumeCapacity(line);
         }
         return .{ .text = text, .lines = lines };
@@ -366,7 +372,8 @@ pub const FortranFile = struct {
         }
         try fresh.append(self.gpa, text[start..]);
         self.hash = h;
-        self.replaceText(text, fresh, true);
+        self.fixed = self.detectFixed(fresh.items);
+        self.replaceText(text, fresh);
         return true;
     }
 
@@ -748,7 +755,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
@@ -855,4 +862,16 @@ test "comment markers: zfls reads comments, changes apply to the editor's text" 
     try std.testing.expectEqualStrings("  go to 110 !*", f.getLine(1, false).?);
     try std.testing.expectEqualStrings("  x = 1 !* two it's a comment", f.getLine(2, false).?);
     try std.testing.expectEqual(@as(usize, 5), f.nLines());
+}
+
+test "d_lines code: zfls reads the D of a debug line as a blank, changes apply to the editor's text" {
+    const f = try FortranFile.create(std.testing.allocator, "/w/a.f", null);
+    defer f.destroy();
+    f.d_lines_code = true;
+    _ = try f.setText("      I = 1\nD     I = 2\n      END\n");
+    try std.testing.expect(f.fixed);
+    try std.testing.expectEqualStrings("      I = 2", f.getLine(1, false).?);
+    _ = try f.applyChange(.{ .text = "3", .range = .{ .sl = 1, .sc = 10, .el = 1, .ec = 11 } });
+    try std.testing.expectEqualStrings("D     I = 3", f.editLines()[1]);
+    try std.testing.expectEqualStrings("      I = 3", f.getLine(1, false).?);
 }

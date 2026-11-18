@@ -46,6 +46,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "excludePaths", flag: "--excl_paths", kind: "list", path: true },
   { setting: "commentMarkers", flag: "--comment_markers", kind: "list" },
   { setting: "disableOpenmpConditional", flag: "--disable_openmp_conditional", kind: "flag" },
+  { setting: "fixedFormDLines", flag: "--d_lines", kind: "string" },
   { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
   { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
@@ -139,7 +140,7 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   }
   const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
   if (extra.length) {
-    args.push(`--compiler_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    args.push(argOption("--compiler_args", extra.map((a) => resolvePath(a, folder))));
   }
   const includes = directories(config.get<string[]>("includePaths", []), folder);
   if (includes.length) {
@@ -168,7 +169,7 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
       ...config.get<string[]>("fypp.extraArgs", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)),
     ];
     if (fyppArgs.length) {
-      args.push(`--compiler_fypp_args=${fyppArgs.join(" ")}`);
+      args.push(argOption("--compiler_fypp_args", fyppArgs));
     }
   }
   return args;
@@ -194,7 +195,7 @@ function fortitudeArguments(folder: vscode.WorkspaceFolder | undefined): string[
   }
   const extra = config.get<string[]>("args", []).filter((a) => a !== "");
   if (extra.length) {
-    args.push(`--fortitude_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    args.push(argOption("--fortitude_args", extra.map((a) => resolvePath(a, folder))));
   }
   if (config.get<boolean>("lintOnType", false)) {
     args.push("--fortitude_on_change", "--fortitude_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 500))));
@@ -216,7 +217,7 @@ function codeeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   }
   const extra = config.get<string[]>("args", []).filter((a) => a !== "");
   if (extra.length) {
-    args.push(`--codee_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    args.push(argOption("--codee_args", extra.map((a) => resolvePath(a, folder))));
   }
   return args;
 }
@@ -243,7 +244,7 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
     args.push(flag, formatter);
     const extra = config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "");
     if (extra.length) {
-      args.push(`${argsFlag}=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+      args.push(argOption(argsFlag, extra.map((a) => resolvePath(a, folder))));
     }
   }
   if (!any) {
@@ -311,7 +312,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
   return {
     compiler_diagnostics: on ? compiler : null,
     compiler_path: on && exe ? resolvePath(exe, folder) : null,
-    compiler_args: on && extra.length ? argString(extra.map((a) => resolvePath(a, folder))) : null,
+    compiler_args: on && extra.length ? extra.map((a) => resolvePath(a, folder)) : null,
     compiler_include_dirs: on ? directories(config.get<string[]>("includePaths", []), folder) : [],
     compiler_mod_dir: on && modDir ? resolvePath(modDir, folder) : null,
     compiler_no_save: on && !config.get<boolean>("lintOnSave", true),
@@ -319,22 +320,23 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
     compiler_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 1000)),
     compiler_no_dependencies: on && !config.get<boolean>("resolveModules", true),
     compiler_fypp: fypp ? programPath(config.get<string>("fypp.path", "fypp").trim() || "fypp", folder) : null,
-    compiler_fypp_args: argString(
-      fypp
-        ? [
-            ...directories(config.get<string[]>("fypp.includes", []), folder).map((d) => `-I${d}`),
-            ...Object.entries(config.get<Record<string, string>>("fypp.definitions", {})).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
-            ...config.get<string[]>("fypp.extraArgs", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)),
-          ]
-        : [],
-    ),
+    compiler_fypp_args: fypp
+      ? [
+          ...directories(config.get<string[]>("fypp.includes", []), folder).map((d) => `-I${d}`),
+          ...Object.entries(config.get<Record<string, string>>("fypp.definitions", {})).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
+          ...config.get<string[]>("fypp.extraArgs", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)),
+        ]
+      : [],
   };
 }
 
-/** A program's arguments as one string, as on the command line, which zfls
- * splits at spaces: an argument with a space in it is two either way */
-function argString(args: string[]): string {
-  return args.join(" ");
+/** A zfls option that holds a program's arguments, on the command line:
+ * the arguments separated by spaces, or, when one has a space in it (a
+ * folder under a path with a space), as a JSON list, which zfls keeps item
+ * by item. The settings sent over LSP are lists. */
+export function argOption(flag: string, args: string[]): string {
+  const list = args.some((a) => /\s/.test(a)) || args[0]?.trimStart().startsWith("[");
+  return `${flag}=${list ? JSON.stringify(args) : args.join(" ")}`;
 }
 
 /** `fortitudeArguments` as settings */
@@ -345,7 +347,7 @@ function fortitudeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSe
   return {
     fortitude: on,
     fortitude_path: on && exe ? programPath(exe, folder) : null,
-    fortitude_args: argString(on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : []),
+    fortitude_args: on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : [],
     fortitude_on_change: on && config.get<boolean>("lintOnType", false),
     fortitude_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 500)),
   };
@@ -359,7 +361,7 @@ function codeeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettin
   return {
     codee: on,
     codee_path: on && exe ? programPath(exe, folder) : null,
-    codee_args: argString(on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : []),
+    codee_args: on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : [],
   };
 }
 
@@ -377,7 +379,7 @@ function formattingSettings(folder: vscode.WorkspaceFolder | undefined): ServerS
     any ||= on;
     out[key] = on ? formatter : "none";
     const extra = on ? config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "") : [];
-    out[`${key}_args`] = argString(extra.map((a) => resolvePath(a, folder)));
+    out[`${key}_args`] = extra.map((a) => resolvePath(a, folder));
   }
   const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
   out.formatter_path = any && exe ? resolvePath(exe, folder) : null;

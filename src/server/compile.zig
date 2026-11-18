@@ -404,8 +404,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
 
 /// The text as the editor has it
 pub fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
-    const lines = if (file.comment_markers.len > 0) file.raw_lines.items else file.lines.items;
-    return std.mem.join(a, "\n", lines);
+    return std.mem.join(a, "\n", file.editLines());
 }
 
 fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
@@ -424,6 +423,13 @@ fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFil
     var args: std.ArrayList([]const u8) = .empty;
     try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
     try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
+    // debug lines as zfls reads them, unless compiler_args says
+    if (file.fixed) {
+        const user: []const []const u8 = if (self.s.compiler_args) |u| u.slice() else &.{};
+        for (user) |x| {
+            if (compilers.isDLinesArg(x)) break;
+        } else try args.appendSlice(a, compilers.dLines(id, self.s.dLinesCode(), o));
+    }
     if (file.preproc) {
         try args.appendSlice(a, compilers.preprocess(id, o));
         for (self.s.pp_defs.items) |d| try args.append(a, try compilers.define(a, id, d.name, d.value, o));
