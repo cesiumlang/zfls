@@ -14,6 +14,7 @@ fn R() *const patterns.Patterns {
 }
 
 const objects = @import("../objects.zig");
+const implicit = @import("../implicit.zig");
 const Obj = objects.Obj;
 const UseStmt = objects.UseStmt;
 const Env = objects.Env;
@@ -28,6 +29,36 @@ pub const IncludeInfo = struct {
     scope_objs: std.ArrayList(*Obj) = .empty,
     /// Cached `Include` object returned by `find_in_scope`
     inc_obj: ?*Obj = null,
+    /// The scope the file's USE statements and IMPLICIT state are linked
+    /// into (see `Ast.linkIncludeScope`)
+    parent: ?*Obj = null,
+    /// The copies of the file's USE statements in `parent`'s list
+    uses: std.ArrayList(*UseStmt) = .empty,
+    /// `parent`'s IMPLICIT state before the file's IMPLICIT statement set it
+    implicit_before: ?ImplicitState = null,
+
+    pub const ImplicitState = struct { vars: ?bool, line: ?usize, rules: []const implicit.Rule };
+
+    /// Take the file's USE statements and IMPLICIT state out of the
+    /// including scope again
+    pub fn unlink(inc: *IncludeInfo) void {
+        const ps = inc.parent orelse return;
+        inc.parent = null;
+        const use = &ps.scopeData().use;
+        for (inc.uses.items) |u| {
+            for (use.items, 0..) |x, i| if (x == u) {
+                _ = use.orderedRemove(i);
+                break;
+            };
+        }
+        inc.uses.clearRetainingCapacity();
+        if (inc.implicit_before) |before| {
+            ps.implicit_vars = before.vars;
+            ps.scopeData().implicit_line = before.line;
+            ps.scopeData().implicit_rules = before.rules;
+            inc.implicit_before = null;
+        }
+    }
 };
 
 /// The innermost scope of each line of a file (`Ast.innerScopes`)
@@ -340,8 +371,12 @@ pub const Ast = struct {
         for (self.include_statements.items) |inc| {
             // a part of a statement's text: no declarations to link
             if (self.file) |f| if (f.continuesInto(inc.line_number -| 1)) continue;
-            const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse continue;
+            const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse {
+                if (only_path == null) inc.unlink();
+                continue;
+            };
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
+            inc.unlink();
             const parent_scope = self.getInnerScope(inc.line_number);
             const include_file = workspace.get(file_path) orelse continue;
             const include_ast = include_file.ast orelse continue;
@@ -372,7 +407,37 @@ pub const Ast = struct {
                     try child.updateFqsn(ps.fqsn);
                 }
             }
+            if (include_ast.inc_scope) |ns| if (parent_scope) |ps| try self.linkIncludeScope(inc, ps, ns);
             if (include_ast.inc_scope != null) include_ast.none_scope = parent_scope;
+        }
+    }
+
+    /// The USE statements of an included file's unnamed scope `ns` are USE
+    /// statements of the including scope `ps` too, at the include line, and
+    /// its IMPLICIT statement sets `ps`'s rule; copied into this file's
+    /// memory, so that they outlive the included file's parse
+    fn linkIncludeScope(self: *Ast, inc: *IncludeInfo, ps: *Obj, ns: *Obj) !void {
+        if (ps.data != .scope or ns.data != .scope or ps == ns) return;
+        const a = self.allocator();
+        inc.parent = ps;
+        const sd = ns.scopeDataConst();
+        for (sd.use.items) |u| {
+            if (u.is_import) continue;
+            const copy = try a.create(UseStmt);
+            copy.* = .{ .mod_name = try a.dupe(u8, u.mod_name), .line_number = inc.line_number, .included = true };
+            for (u.only_list.items.items) |name| try copy.only_list.add(a, try a.dupe(u8, name));
+            for (u.rename_map.keys.items, u.rename_map.values.items) |k, v| try copy.rename_map.put(a, try a.dupe(u8, k), try a.dupe(u8, v));
+            try ps.scopeData().use.append(a, copy);
+            try inc.uses.append(a, copy);
+        }
+        const flag = ns.implicit_vars orelse return;
+        const psd = ps.scopeData();
+        inc.implicit_before = .{ .vars = ps.implicit_vars, .line = psd.implicit_line, .rules = psd.implicit_rules };
+        ps.setImplicit(flag, inc.line_number);
+        if (sd.implicit_rules.len > 0) {
+            const rules = try a.alloc(implicit.Rule, sd.implicit_rules.len);
+            for (sd.implicit_rules, rules) |r, *out| out.* = .{ .first = r.first, .last = r.last, .type = try a.dupe(u8, r.type) };
+            psd.implicit_rules = try std.mem.concat(a, implicit.Rule, &.{ psd.implicit_rules, rules });
         }
     }
 

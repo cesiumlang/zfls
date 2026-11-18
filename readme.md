@@ -980,6 +980,11 @@ zfls deliberately differs from fortls in a few places:
   are published only while it is open. fortls only links files of the
   workspace. An include that a statement continues into (the rest of an
   argument list) is text of that statement, and is not linked.
+- The USE statements and the IMPLICIT statement of a file that an `INCLUDE`
+  or `#include` brings in (a header with a project's USE list) apply in the
+  including scope, as if written at the include line; fortls keeps them in
+  the included file, so the names of those modules are unknown there (FL PR
+  #277).
 - Hover shows the whole value of a parameter. fortls cuts it at the first
   parenthesis or bracket, so `selected_real_kind(6)` shows as
   `selected_real_kind`.

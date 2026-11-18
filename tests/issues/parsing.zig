@@ -250,6 +250,124 @@ test "#495 hover and definition inside a file that is #included into a module" {
     });
 }
 
+const include_uses = [_]h.File{
+    .{ .name = "tmod.f90", .text =
+    \\module tmod
+    \\  implicit none
+    \\  type :: tt
+    \\    integer :: comp
+    \\  end type
+    \\  integer :: modvar
+    \\contains
+    \\  subroutine tsub(n)
+    \\    integer, intent(in) :: n
+    \\  end subroutine tsub
+    \\end module tmod
+    \\
+    },
+    .{ .name = "uses.inc", .text =
+    \\      use tmod
+    \\      implicit none
+    \\
+    },
+    .{ .name = "main.f90", .text =
+    \\subroutine s1()
+    \\  include 'uses.inc'
+    \\  type(tt) :: v
+    \\  v%comp = modvar
+    \\  call tsub(1)
+    \\  undeclared = 1
+    \\end subroutine s1
+    \\
+    },
+    .{ .name = "main2.F90", .text =
+    \\subroutine s2()
+    \\#include "uses.inc"
+    \\  type(tt) :: v
+    \\  v%comp = modvar
+    \\  call tsub(1)
+    \\  undeclared = 1
+    \\end subroutine s2
+    \\
+    },
+};
+
+/// The USE and IMPLICIT NONE of uses.inc apply in `name`, which includes it
+fn expectIncludedUses(w: *h.Workspace, name: []const u8) !void {
+    var undeclared = false;
+    for (try w.diagnostics(name)) |d| {
+        if (std.mem.eql(u8, d.code, "object-not-found") or std.mem.eql(u8, d.code, "module-not-found") or std.mem.eql(u8, d.code, "use-after-implicit"))
+            return h.unmet("{s}:{d}: {s}", .{ name, d.line + 1, d.message });
+        if (std.mem.find(u8, d.message, "\"undeclared\" is not declared") != null) undeclared = true;
+    }
+    try h.expect(undeclared, "{s}: undeclared is not reported", .{name});
+    try w.expectHoverContains(name, w.pos(name, "v%comp", 0, 2), "INTEGER :: comp");
+    const at = w.pos(name, "modvar", 0, 0);
+    try w.expectHoverContains(name, at, "INTEGER :: modvar");
+    if (std.mem.find(u8, (try w.hover(name, at)).?, "Implicitly") != null) return h.unmet("{s}: modvar is implicitly typed", .{name});
+    try w.expectHoverContains(name, w.pos(name, "tsub", 0, 0), "tsub");
+    const def = (try w.definition(name, at)) orelse return h.unmet("{s}: no definition of modvar", .{name});
+    try h.expect(std.mem.endsWith(u8, def.uri, "tmod.f90"), "{s}: modvar is defined in {s}", .{ name, def.uri });
+    // completion offers it without adding a USE statement
+    for (try w.completionItems(name, w.pos(name, "modvar", 0, 4))) |item| {
+        if (std.mem.eql(u8, item.label, "modvar") and item.added != null) return h.unmet("{s}: completion adds {s}", .{ name, item.added.? });
+    }
+}
+
+test "USE and IMPLICIT NONE in a file included with INCLUDE or #include apply in the including scope (#249)" {
+    const w = try h.Workspace.init(&include_uses, .{});
+    defer w.deinit();
+    try expectIncludedUses(w, "main.f90");
+    try expectIncludedUses(w, "main2.F90");
+    // without the USE in the included file, the type is not found again
+    try w.changeOnDisk("uses.inc", "      integer :: other\n");
+    var not_found = false;
+    for (try w.diagnostics("main.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "object-not-found")) not_found = true;
+    }
+    try h.expect(not_found, "tt is still found after the USE was removed from uses.inc", .{});
+}
+
+test "USE statements in the active branch of an #included header and in a header it #includes apply (#249)" {
+    const files = include_uses ++ [_]h.File{
+        .{ .name = "kmod.f90", .text =
+        \\module kmod
+        \\  implicit none
+        \\  integer :: kvar
+        \\end module kmod
+        \\
+        },
+        .{ .name = "outer.INC", .text =
+        \\#ifdef NOT_DEFINED
+        \\      use nonexistent
+        \\#else
+        \\      use tmod
+        \\#endif
+        \\#include "inner.inc"
+        \\      implicit none
+        \\
+        },
+        .{ .name = "inner.inc", .text =
+        \\      use kmod
+        \\
+        },
+        .{ .name = "main3.F90", .text =
+        \\subroutine s3()
+        \\#include "outer.INC"
+        \\  type(tt) :: v
+        \\  v%comp = modvar + kvar
+        \\  call tsub(1)
+        \\  undeclared = 1
+        \\end subroutine s3
+        \\
+        },
+    };
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    try expectIncludedUses(w, "main3.F90");
+    try w.expectHoverContains("main3.F90", w.pos("main3.F90", "kvar", 0, 0), "INTEGER :: kvar");
+}
+
 test "a procedure #included into a submodule is found before another file's of the same name" {
     // two libraries each #include their own errors.F90 into their
     // submodules; each submodule calls the one it includes, not the one
