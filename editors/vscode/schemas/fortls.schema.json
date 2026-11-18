@@ -50,6 +50,13 @@
       "uniqueItems": true,
       "default": []
     },
+    "d_lines": {
+      "description": "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "nthreads": {
       "description": "Number of threads to use during workspace initialization (default: 4)",
       "type": "integer",
@@ -251,7 +258,7 @@
       ]
     },
     "compiler_args": {
-      "description": "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added",
+      "description": "The compiler's arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added",
       "type": [
         "array",
         "string",
@@ -305,7 +312,7 @@
       ]
     },
     "compiler_fypp_args": {
-      "description": "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file",
+      "description": "fypp's further arguments (-I, -D, ...), separated by spaces (or a JSON list) on the command line and a list in a configuration file",
       "type": [
         "array",
         "string"
@@ -328,7 +335,7 @@
       ]
     },
     "fortitude_args": {
-      "description": "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file",
+      "description": "fortitude check's further arguments, such as --select; separated by spaces (or a JSON list) on the command line and a list in a configuration file",
       "type": [
         "array",
         "string"
@@ -361,7 +368,7 @@
       ]
     },
     "codee_args": {
-      "description": "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file",
+      "description": "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces (or a JSON list) on the command line and a list in a configuration file",
       "type": [
         "array",
         "string"
@@ -392,7 +399,7 @@
       ]
     },
     "formatter_args": {
-      "description": "The formatter's further arguments, separated by spaces on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up",
+      "description": "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up",
       "type": [
         "array",
         "string"

@@ -436,6 +436,16 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.fixedFormCommentCharacter.markdownDescription%"
         },
+        "zfls.fixedFormDLines": {
+          "type": "string",
+          "enum": [
+            "comment",
+            "code"
+          ],
+          "default": "comment",
+          "scope": "window",
+          "markdownDescription": "%config.zfls.fixedFormDLines.markdownDescription%"
+        },
         "zfls.configFile": {
           "type": "string",
           "default": "",
@@ -1432,7 +1442,7 @@
     "package": "vsce package --no-dependencies",
     "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node20 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node20",
     "test": "npm run build && npm run build-test && node out/runTest.js",
-    "unit": "esbuild test/unit/*.test.ts --bundle --outdir=out/unit --platform=node --target=node20 --format=cjs && node --test out/unit/*.test.js"
+    "unit": "esbuild test/unit/*.test.ts --bundle --alias:vscode=./test/unit/vscode.ts --outdir=out/unit --platform=node --target=node20 --format=cjs && node --test out/unit/*.test.js"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.2"
