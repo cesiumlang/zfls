@@ -795,6 +795,12 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- With nothing typed, completion (Ctrl+Space) lists the names of a module
+  after `use m, only:` and after each comma of the list (less those it has
+  already), the modules after `use`, the types after `type(`, `class(` and
+  `extends(`, the interfaces after `procedure(`, and the names after
+  `import ::`, `public ::` and `private ::`; elsewhere it still waits for
+  a letter. fortls answers nothing until a letter is typed.
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
   with a quick fix removing a declaration of that name only. A name counts
