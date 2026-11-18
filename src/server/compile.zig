@@ -406,8 +406,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
 
 /// The text as the editor has it
 pub fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
-    const lines = if (file.comment_markers.len > 0) file.raw_lines.items else file.lines.items;
-    return std.mem.join(a, "\n", lines);
+    return std.mem.join(a, "\n", file.editLines());
 }
 
 fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
