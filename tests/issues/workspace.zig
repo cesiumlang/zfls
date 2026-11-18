@@ -439,3 +439,54 @@ test "renaming a file rewrites the includes that name it (#198)" {
         }
     }
 }
+
+fn expectUncAnswers(w: *h.Workspace) !void {
+    const root_uri = try w.uri("");
+    try h.expect(std.mem.startsWith(u8, root_uri, "file://localhost/"), "the root's URI is {s}", .{root_uri});
+    try w.open("a.f90", "fortran");
+    const at = w.pos("a.f90", "n = 1", 0, 0);
+    const hover = (try w.hover("a.f90", at)) orelse return h.unmet("no hover", .{});
+    try h.expect(std.mem.find(u8, hover, "INTEGER :: n") != null, "hover gives {s}", .{hover});
+    const def = (try w.definition("a.f90", at)) orelse return h.unmet("no definition", .{});
+    try h.expect(def.line == 2 and def.col == 14, "the definition is at {d}:{d}", .{ def.line, def.col });
+    // answers name files as the client does
+    try h.expect(std.mem.eql(u8, def.uri, try w.uri("a.f90")), "the definition is in {s}", .{def.uri});
+    // a file that is not open, found through `source_dirs`
+    const shared = (try w.definition("a.f90", w.pos("a.f90", "shared = 2", 0, 0))) orelse return h.unmet("no definition in another file", .{});
+    try h.expect(std.mem.eql(u8, shared.uri, try w.uri("sub/b.f90")), "the other file is {s}", .{shared.uri});
+    const syms = try w.workspaceSymbolInfos("m219");
+    try h.expect(syms.len == 1, "{d} workspace symbols", .{syms.len});
+    try h.expect(std.mem.eql(u8, syms[0].uri, try w.uri("a.f90")), "the workspace symbol is in {s}", .{syms[0].uri});
+    try h.expect((try w.workspaceSymbols("skipped219")).len == 0, "excl_paths does not apply", .{});
+}
+
+test "Modern Fortran #1087 a workspace on a UNC path (file://host/share/...) is served" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text = "{\"source_dirs\": [\"sub\"], \"excl_paths\": [\"skip/**\"]}\n" },
+        .{ .name = "a.f90", .text =
+        \\module m219
+        \\   use m2
+        \\   integer :: n
+        \\contains
+        \\   subroutine sub()
+        \\      n = 1
+        \\      shared = 2
+        \\   end subroutine
+        \\end module
+        \\
+        },
+        .{ .name = "sub/b.f90", .text =
+        \\module m2
+        \\   integer :: shared
+        \\end module
+        \\
+        },
+        .{ .name = "skip/c.f90", .text =
+        \\module skipped219
+        \\end module
+        \\
+        },
+    }, .{ .unc_root = true });
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 1087, .fixed, expectUncAnswers(w));
+}
