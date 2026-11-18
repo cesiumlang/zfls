@@ -172,5 +172,6 @@
   "debugger.fortran.snippet.2.description": "Attach zfls's debugger to a running Fortran program",
   "command.zfls.setUpIfx.title": "Set Up ifx (Intel Fortran) without Visual Studio",
   "config.zfls.codeLensNoReferences.markdownDescription": "Do not show the number of references above each module, procedure and derived type (`--code_lens_no_references`). VS Code's `#editor.codeLens#` turns off every code lens.",
-  "config.zfls.codeLensNoRun.markdownDescription": "Do not show Run and Debug above a program (`--code_lens_no_run`)."
+  "config.zfls.codeLensNoRun.markdownDescription": "Do not show Run and Debug above a program (`--code_lens_no_run`).",
+  "config.zfls.fixedFormDLines.markdownDescription": "How a fixed-form line with `D` or `d` in column 1 (a debug line) is read: as a `comment`, or as `code` (the `D` is a blank), as compilers do by an option (gfortran `-fd-lines-as-code`, Intel `-d-lines`). zfls reads the lines so, and the compiler check passes the compiler the option that reads them so, unless its arguments already have one."
 }
