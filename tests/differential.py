@@ -285,6 +285,9 @@ def zfls_only_item(item) -> bool:
         return True
     if "additionalTextEdits" in item:
         return True
+    # a construct or program unit at the start of a statement (#264)
+    if "textEdit" in item:
+        return True
     return str(item.get("label", "")).endswith("=") and "filterText" in item
 
 
@@ -659,7 +662,11 @@ def main() -> int:
                 # zfls offers the keyword arguments of the call the position
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls does not
+                own_items = [x for x in b if zfls_only_item(x)]
                 b = [x for x in b if not zfls_only_item(x)]
+                if a is None and not b and own_items:
+                    # only zfls's own items (after `end`, its end statement)
+                    b = None
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway
