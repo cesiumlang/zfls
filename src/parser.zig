@@ -323,6 +323,13 @@ pub const FortranFile = struct {
         return if (self.comment_markers.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 
+    /// The `hash` of a file's text, whose tabs and form feeds become
+    /// spaces
+    pub fn textHash(text: []u8) u64 {
+        blankSpaces(text);
+        return std.hash.Wyhash.hash(0, text);
+    }
+
     /// Set contents from text; returns false if unchanged (same hash)
     pub fn setText(self: *FortranFile, text_in: []const u8) !bool {
         return self.setTextOwned(try self.gpa.dupe(u8, text_in));
@@ -332,8 +339,7 @@ pub const FortranFile = struct {
     /// are slices of it, without a copy
     pub fn setTextOwned(self: *FortranFile, text: []u8) !bool {
         errdefer self.gpa.free(text);
-        blankSpaces(text);
-        const h = std.hash.Wyhash.hash(0, text);
+        const h = textHash(text);
         if (self.hash != null and self.hash.? == h) {
             self.gpa.free(text);
             return false;

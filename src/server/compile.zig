@@ -53,6 +53,9 @@ pub fn checkSetting(self: *Server, a: Allocator) !void {
 pub const Trigger = enum {
     /// The file was opened
     open,
+    /// Opened with a text that is not the file's (unsaved changes that the
+    /// editor restored, a new file): the editor's text, from a copy
+    open_unsaved,
     /// Saved (unless `compiler_no_save`)
     save,
     /// Edited: its unsaved text, after `compiler_change_delay` (with
@@ -248,14 +251,14 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8, tri
     switch (trigger) {
         .save => if (self.s.compiler_no_save) return,
         .change => if (!self.s.compiler_on_change) return,
-        .open, .now => {},
+        .open, .open_unsaved, .now => {},
     }
     const file = self.workspace.get(path) orelse return;
     // no compiler reads fypp's directives: fypp has to run first
     if (fyppExe(self) == null and std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(path), ".fypp")) return;
     // the editor's text of an open file (a check of edits, or one asked
     // for); a check of edits waits for the modules to compile on saving
-    const unsaved = (trigger == .change or trigger == .now) and self.open_docs.contains(path);
+    const unsaved = (trigger == .change or trigger == .now or trigger == .open_unsaved) and self.open_docs.contains(path);
     const job = try makeJob(self, a, id, uri, file, unsaved, trigger != .change);
     errdefer freeJob(self.gpa, job);
     if (trigger == .change) job.not_before = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, @max(0, self.s.compiler_change_delay)) * std.time.ns_per_ms;
