@@ -282,3 +282,115 @@ test "continued statements in fixed form fold (#275)" {
     defer w.deinit();
     try expectFoldPairs(w, "s.f", &.{ .{ 0, 5 }, .{ 2, 5 } });
 }
+
+fn expectPaths(w: *h.Workspace, name: []const u8, want: []const []const u8, not: []const []const u8) !void {
+    const paths = try w.symbolPaths(name);
+    for (want) |p| try h.expect(contains(paths, p), "{s}: no symbol {s}: {any}", .{ name, p, paths });
+    for (not) |p| try h.expect(!contains(paths, p), "{s}: symbol {s}: {any}", .{ name, p, paths });
+}
+
+const implicit_main = [_]h.File{
+    .{ .name = "free.f90", .text =
+    \\implicit none
+    \\integer :: i
+    \\i = 1
+    \\call calc(i)
+    \\end
+    \\subroutine calc(n)
+    \\  integer :: n
+    \\  print *, n
+    \\end subroutine
+    \\function dbl(x)
+    \\  real :: x, dbl
+    \\  dbl = 2 * x
+    \\end function
+    \\
+    },
+    // fortls PR #540
+    .{ .name = "implicit_main.f", .text =
+    \\c Implicit main program: no PROGRAM statement, fixed form.
+    \\c The bare END must close the implicit main scope so that the
+    \\c following top-level units are parsed as external procedures.
+    \\      integer i
+    \\      i = 1
+    \\      end
+    \\      subroutine calc2(i)
+    \\      integer i
+    \\      i = i + 1
+    \\      end
+    \\      function dbl2(x)
+    \\      dbl2 = 2 * x
+    \\      end
+    \\
+    },
+    // the main program after a procedure, with procedures of its own
+    .{ .name = "last.f90", .text =
+    \\subroutine first(n)
+    \\  integer :: n
+    \\  print *, n
+    \\end subroutine
+    \\implicit none
+    \\integer :: k
+    \\k = inner()
+    \\call first(k)
+    \\contains
+    \\  integer function inner()
+    \\    inner = 1
+    \\  end function inner
+    \\end program
+    \\
+    },
+};
+
+fn expectImplicitMain(w: *h.Workspace) !void {
+    for ([_][]const u8{ "free.f90", "implicit_main.f", "last.f90" }) |name| try w.expectNoDiagnostics(name);
+    try expectPaths(w, "free.f90", &.{ "main", "calc", "dbl" }, &.{ "main/calc", "main/dbl" });
+    try w.expectHoverContains("free.f90", w.pos("free.f90", "i = 1", 0, 0), "INTEGER :: i");
+    try expectPaths(w, "implicit_main.f", &.{ "main", "calc2", "dbl2" }, &.{"main/calc2"});
+    try expectPaths(w, "last.f90", &.{ "first", "main", "main/inner" }, &.{"first/main"});
+    try w.expectHoverContains("last.f90", w.pos("last.f90", "k = inner", 0, 0), "INTEGER :: k");
+    // IMPLICIT NONE applies to the main program
+    try w.replaceText("free.f90", "implicit none\ninteger :: i\ni = j\nend\n");
+    const ds = try w.diagnostics("free.f90");
+    try h.expect(ds.len == 1 and std.mem.find(u8, ds[0].message, "\"j\" is not declared") != null, "{any}", .{ds});
+}
+
+test "a main program without a PROGRAM statement (#229, fortls PR #540)" {
+    const w = try h.Workspace.init(&implicit_main, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    expectImplicitMain(w) catch |e| {
+        std.debug.print("\n{s}\n", .{h.lastNote()});
+        return e;
+    };
+}
+
+test "the text of an include outside any program unit reads as before (#229)" {
+    const files = [_]h.File{
+        .{ .name = "decls.inc", .text = "  integer :: shared_n\n  real :: shared_x\n" },
+        .{ .name = "stmts.inc", .text = "  shared_n = shared_n + 1\n  shared_x = 2.0\n" },
+        .{ .name = "s.f90", .text =
+        \\subroutine s
+        \\  implicit none
+        \\  include 'decls.inc'
+        \\  include 'stmts.inc'
+        \\  print *, shared_n, shared_x
+        \\end subroutine s
+        \\
+        },
+        // an IMPLICIT outside every unit that no END closes is reported
+        .{ .name = "stray.f90", .text = "program p\nend program p\nimplicit none\n" },
+    };
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    try w.open("decls.inc", "fortran");
+    try w.open("stmts.inc", "fortran");
+    for ([_][]const u8{ "s.f90", "decls.inc", "stmts.inc" }) |name| {
+        w.expectNoDiagnostics(name) catch |e| {
+            std.debug.print("\n{s}\n", .{h.lastNote()});
+            return e;
+        };
+    }
+    try w.expectHoverContains("s.f90", w.pos("s.f90", "shared_n,", 0, 0), "INTEGER :: shared_n");
+    const ds = try w.diagnostics("stray.f90");
+    try std.testing.expect(ds.len == 1 and std.mem.startsWith(u8, ds[0].message, "IMPLICIT statement without enclosing scope"));
+}
