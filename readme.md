@@ -829,6 +829,13 @@ zfls deliberately differs from fortls in a few places:
   the binding and the assignments to variables of the types that use it.
 - Hover on a coarray shows its codimension (`REAL, CODIMENSION[*] :: x`),
   written after its name or as an attribute; fortls drops it.
+- With the `hover_signature` option (`zfls.hoverSignature`, on by default
+  in the VS Code extension), hover on an actual argument of a call also
+  shows the dummy argument it is passed to: the procedure's signature and
+  the dummy's declaration and documentation (hansec #107, #188). Keyword
+  arguments, the passed-object argument of a type-bound procedure, the
+  specific of a generic that the arguments fit and nested calls are
+  followed. fortls reads the option and does nothing with it.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
   ...) shows its documentation (fortls #547), and so does hover on a word of
   an OpenMP or OpenACC directive (`!$omp parallel do`, `reduction`,

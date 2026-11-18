@@ -116,7 +116,7 @@
       "default": false
     },
     "hover_signature": {
-      "description": "Show signature information in hover for arguments",
+      "description": "Hover on an actual argument of a call also shows the dummy argument it is passed to",
       "type": "boolean",
       "default": false
     },
