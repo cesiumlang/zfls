@@ -127,6 +127,9 @@ pub const Server = struct {
     external_diags: [@typeInfo(compile.Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8) = @splat(.empty),
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
+    /// The command of each Fortran file in compile_commands.json, for the
+    /// compiler check (in `arena`)
+    compile_commands: project.Commands = .empty,
     /// The formatting problems posted (hashes of their keys), each once
     format_reported: std.ArrayList(u64) = .empty,
     /// The thread that runs fortitude and Codee, once it has a job

@@ -157,6 +157,9 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   if (!config.get<boolean>("resolveModules", true)) {
     args.push("--compiler_no_dependencies");
   }
+  if (config.get<boolean>("noCompileCommands", false)) {
+    args.push("--compiler_no_compile_commands");
+  }
   if (config.get<boolean>("fypp.enabled", false)) {
     const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
     // a name is looked for on the PATH; a path is resolved
@@ -317,6 +320,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
     compiler_on_change: on && config.get<boolean>("lintOnType", false),
     compiler_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 1000)),
     compiler_no_dependencies: on && !config.get<boolean>("resolveModules", true),
+    compiler_no_compile_commands: on && config.get<boolean>("noCompileCommands", false),
     compiler_fypp: fypp ? programPath(config.get<string>("fypp.path", "fypp").trim() || "fypp", folder) : null,
     compiler_fypp_args: argString(
       fypp

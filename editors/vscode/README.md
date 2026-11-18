@@ -195,6 +195,7 @@ Whether a file is free or fixed form follows its language in VS Code
 | `zfls.linter.lintOnType` | `false` | Check files while they are edited (a copy of the unsaved text is compiled) |
 | `zfls.linter.lintOnTypeDelay` | `1000` | Milliseconds after the last change before such a check |
 | `zfls.linter.resolveModules` | `true` | Build the modules a file uses first (see below) |
+| `zfls.linter.noCompileCommands` | `false` | Do not check a file with its command's options from `compile_commands.json` (see below) |
 | `zfls.linter.fypp.enabled` | `false` | Run [fypp](https://fypp.readthedocs.io) on files first; `.fypp` files are only checked with it |
 | `zfls.linter.fypp.path` | `fypp` | The fypp executable |
 | `zfls.linter.fypp.definitions` | `{}` | fypp definitions (`-DNAME=VALUE`) |
@@ -217,6 +218,14 @@ How it behaves:
   `zfls.linter.includePaths`. A module whose file does not compile cannot
   be used; the file using it then shows the compiler's error about the
   missing module.
+- **The project's options.** When `zfls.linter.extraArgs` is empty and
+  `compile_commands.json` has a command for the file (or for another file
+  in its folder), the file is checked with that command's options (its
+  `-std`, `-fdefault-real-8`, `-ffree-line-length-none`, `-D`, `-I`, ...),
+  in that command's directory, and with its compiler when that is the
+  configured one; zfls's own syntax-only and module directory options
+  stay, and the command's `-c`, `-o`, module directory and dependency
+  files are left out. `zfls.linter.noCompileCommands` turns this off.
 - **Included files.** An error in a file brought in by `INCLUDE` or
   `#include` shows at that `INCLUDE` line, prefixed with the included
   file's name and line, with a link to the place in the included file.

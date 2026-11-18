@@ -119,6 +119,9 @@ pub const Settings = struct {
     compiler_change_delay: i64 = 1000,
     /// Do not compile the workspace modules a file uses first
     compiler_no_dependencies: bool = false,
+    /// Do not check a file with its command from compile_commands.json
+    /// (when `compiler_args` is not set)
+    compiler_no_compile_commands: bool = false,
     /// fypp, run on each file before the compiler checks it; null: none
     compiler_fypp: ?[]const u8 = null,
     /// fypp's further arguments (-I, -D, ...)
@@ -266,6 +269,7 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_on_change", .kind = .flag, .help = "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_compile_commands", .kind = .flag, .help = "Do not check a file with the arguments of its command in compile_commands.json (used when compiler_args is not set)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
 
@@ -624,6 +628,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.compiler_on_change = jsonBool(json.get(cfg, "compiler_on_change"), s.compiler_on_change);
     s.compiler_change_delay = jsonInt(json.get(cfg, "compiler_change_delay"), s.compiler_change_delay);
     s.compiler_no_dependencies = jsonBool(json.get(cfg, "compiler_no_dependencies"), s.compiler_no_dependencies);
+    s.compiler_no_compile_commands = jsonBool(json.get(cfg, "compiler_no_compile_commands"), s.compiler_no_compile_commands);
     if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
     if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
         s.compiler_fypp_args = l;

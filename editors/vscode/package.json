@@ -787,6 +787,12 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.resolveModules.markdownDescription%"
         },
+        "zfls.linter.noCompileCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.noCompileCommands.markdownDescription%"
+        },
         "zfls.fortitude.enabled": {
           "type": "boolean",
           "default": false,

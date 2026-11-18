@@ -282,6 +282,11 @@
       "type": "boolean",
       "default": false
     },
+    "compiler_no_compile_commands": {
+      "description": "Do not check a file with the arguments of its command in compile_commands.json (used when compiler_args is not set)",
+      "type": "boolean",
+      "default": false
+    },
     "compiler_fypp": {
       "description": "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)",
       "type": [
