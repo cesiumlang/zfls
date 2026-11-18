@@ -176,7 +176,7 @@ zfls says so once and checks nothing.
 | `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -J<dir>`, and `-Wall` by default |
 | `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`) |
 | `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
-| `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>`; the modules a file uses are compiled with `--symtab-only -c -o <dir>/zfls-lint.o`, which writes their `.mod` files |
+| `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>`, `--implicit-typing --implicit-interface` unless your options say otherwise or choose a `--std`; the modules a file uses are compiled with `--symtab-only -c -o <dir>/zfls-lint.o`, which writes their `.mod` files |
 | `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
 | `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>` |
 | `Disabled` | | No compiler diagnostics |

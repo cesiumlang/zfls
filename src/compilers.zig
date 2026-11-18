@@ -216,6 +216,30 @@ pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
     };
 }
 
+/// Accept implicit typing and implicit interfaces, as the standard does:
+/// LFortran's own dialect (`--std=lf`, its default) rejects them, which
+/// gives standard code without IMPLICIT NONE, and most fixed form, false
+/// errors. Each is left out when `own` (`compiler_args`, or the project's
+/// command) has an option about it, and both when `own` chooses a standard
+/// (`--disable-implicit-typing` with `--implicit-typing` is an error).
+/// Not `--std=f23`: it also casts arguments implicitly, which hides
+/// arguments of the wrong type.
+pub fn implicitRules(id: Id, own: []const []const u8) []const []const u8 {
+    if (id != .lfortran) return &.{};
+    var typing = true;
+    var interface = true;
+    for (own) |x| {
+        if (std.mem.startsWith(u8, x, "--std")) return &.{};
+        if (std.mem.eql(u8, x, "--implicit-typing") or std.mem.eql(u8, x, "--disable-implicit-typing")) typing = false;
+        if (std.mem.eql(u8, x, "--implicit-interface") or std.mem.eql(u8, x, "--disable-implicit-interface")) interface = false;
+    }
+    const both: []const []const u8 = &.{ "--implicit-typing", "--implicit-interface" };
+    if (typing and interface) return both;
+    if (typing) return both[0..1];
+    if (interface) return both[1..];
+    return &.{};
+}
+
 /// Write .mod files to, and read them from, `dir`
 pub fn modOutput(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
     return switch (id) {
@@ -739,6 +763,22 @@ test "the modules a file uses: LFortran compiles their symbol tables, which writ
     // the file itself: semantics only
     try std.testing.expectEqualStrings("--semantics-only", (try syntaxOnly(a, .lfortran, o))[0]);
     try std.testing.expectEqualStrings("-fsyntax-only", (try moduleOnly(a, .gfortran, o))[0]);
+}
+
+fn expectImplicitRules(own: []const []const u8, want: []const []const u8) !void {
+    const got = implicitRules(.lfortran, own);
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "LFortran: implicit typing and interfaces, unless the user's options say" {
+    try expectImplicitRules(&.{}, &.{ "--implicit-typing", "--implicit-interface" });
+    try expectImplicitRules(&.{"--disable-implicit-typing"}, &.{"--implicit-interface"});
+    try expectImplicitRules(&.{"--implicit-interface"}, &.{"--implicit-typing"});
+    try expectImplicitRules(&.{ "--implicit-typing", "--implicit-interface" }, &.{});
+    try expectImplicitRules(&.{"--std=f23"}, &.{});
+    try expectImplicitRules(&.{ "--std", "lf" }, &.{});
+    try std.testing.expectEqual(@as(usize, 0), implicitRules(.gfortran, &.{}).len);
 }
 
 fn expectLineLength(id: Id, fixed: bool, columns: ?usize, windows: bool, want: []const []const u8) !void {

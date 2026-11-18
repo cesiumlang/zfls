@@ -579,7 +579,11 @@ elsewhere, which is also stopped when the server shuts down during a run.
   nvfortran and `-132` for nagfor with 132), and free-form lines without a
   limit (`-ffree-line-length-none` for gfortran, whose default is 132
   columns before GCC 16); a line-length option in `compiler_args` replaces
-  zfls's of that form. On the command line it is one
+  zfls's of that form. For LFortran, whose own dialect (its default
+  `--std=lf`) rejects implicit typing and implicit interfaces, zfls passes
+  `--implicit-typing --implicit-interface`, each unless `compiler_args` (or
+  the project's command) has an option about it, and neither with a
+  `--std`. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the

@@ -146,11 +146,15 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
         const dir = if (std.Io.Dir.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d });
         try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, dir), o));
     }
-    if (user) |u| {
-        for (try compilers.absoluteDirs(a, id, u, base, o)) |x| try args.append(a, try a.dupe(u8, x));
-    } else if (cmd) |c| {
-        for (try compilers.absoluteDirs(a, id, try project.compilerArgs(a, c), c.dir, o)) |x| try args.append(a, try a.dupe(u8, x));
-    } else try args.appendSlice(a, compilers.defaultArgs(id, o));
+    const own = if (user) |u|
+        try compilers.absoluteDirs(a, id, u, base, o)
+    else if (cmd) |c|
+        try compilers.absoluteDirs(a, id, try project.compilerArgs(a, c), c.dir, o)
+    else
+        compilers.defaultArgs(id, o);
+    // the standard's implicit typing and interfaces, unless `own` says
+    try args.appendSlice(a, compilers.implicitRules(id, own));
+    for (own) |x| try args.append(a, try a.dupe(u8, x));
     try args.append(a, try a.dupe(u8, file.path));
     return args.items;
 }
