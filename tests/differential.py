@@ -556,14 +556,17 @@ def ref_key(r: dict):
 PROCEDURE_STMT = re.compile(r"\b(?:subroutine|function|procedure)\b", re.I)
 
 
-def uri_line(uri: str, line: int) -> str:
+def uri_line(uri: str, line: int, whole: bool = False):
+    """Line `line` of the file of `uri`, or with `whole` all its lines"""
     path = unquote(uri.removeprefix("file://"))
     if os.name == "nt":
         path = path.lstrip("/")
     try:
         lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return ""
+        return [] if whole else ""
+    if whole:
+        return lines
     return lines[line] if 0 <= line < len(lines) else ""
 
 
@@ -579,6 +582,28 @@ def separate_procedure_refs(a, b) -> bool:
     if not ka < kb:
         return False
     return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
+
+
+def implicit_result_refs(a, b) -> bool:
+    """zfls's references to a function without RESULT and to its result
+    variable are those of both (zfls #228); fortls lists one or the other:
+    whether `b` is `a` plus places of a name that a FUNCTION statement
+    without RESULT among the places defines."""
+    if not (isinstance(a, list) and isinstance(b, list)) or not a:
+        return False
+    ka = {ref_key(r) for r in a}
+    kb = {ref_key(r) for r in b}
+    if not ka < kb:
+        return False
+    texts = {u: uri_line(u, -1, whole=True) for u, _, _ in kb}
+    for u, ln, ch in kb - ka:
+        m = re.match(r"\w+", uri_line(u, ln)[ch:])
+        if not m:
+            return False
+        fun = re.compile(rf"\bfunction\s+{re.escape(m.group(0))}\s*\(", re.I)
+        if not any(fun.search(t) and "result" not in t.lower() for text in texts.values() for t in text):
+            return False
+    return True
 
 
 def parse_args():
@@ -744,6 +769,10 @@ def main() -> int:
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
                 # interface and implementation (hansec issue 168)
+                continue
+            if kind == "references" and implicit_result_refs(a, b):
+                # a function without RESULT and its result variable are
+                # one name (zfls #228)
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with
