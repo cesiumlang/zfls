@@ -19,5 +19,6 @@ test {
     _ = @import("settings.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
+    _ = @import("use.zig");
     _ = @import("workspace.zig");
 }

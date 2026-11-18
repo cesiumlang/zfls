@@ -1002,6 +1002,12 @@ zfls deliberately differs from fortls in a few places:
   that name. On the USE line, hover, definition and references on either
   name reach the module's entity (hansec #137); fortls only reads renames
   after `ONLY:` and has no answer on the original name.
+- A module passes on the names it has by USE as the Fortran standard says:
+  with `private` as its default, only those a `public` statement names, and
+  never those a `private` statement names. fortls applies a module's
+  default only to its own declarations, so names hidden behind a facade
+  module get hover and completion and are not reported as undeclared
+  (fortls PR #562).
 - `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
   submodule (and through it the ancestor module); fortls names it `parent`.
 - Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
