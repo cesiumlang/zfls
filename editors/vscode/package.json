@@ -267,6 +267,12 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.lowercaseHover.markdownDescription%"
         },
+        "zfls.hoverNoTypeComponents": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverNoTypeComponents.markdownDescription%"
+        },
         "zfls.lowercaseIntrinsics": {
           "type": "boolean",
           "default": true,

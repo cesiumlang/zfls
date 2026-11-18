@@ -1007,6 +1007,13 @@ zfls deliberately differs from fortls in a few places:
 - With the `lowercase_hover` option, the keywords of hover are in lowercase
   (`real, intent(in) :: x`), names and strings as written (fortls #28);
   fortls's are always uppercase.
+- Hover on a derived type, or on a variable of one, shows the type as it
+  is written: `TYPE, EXTENDS(base) :: name`, its own components, its
+  type-bound procedures and generics after `CONTAINS` (hansec #147).
+  Outside the type's module its private components and bindings are left
+  out, and after 20 lines the block ends with `...`. The
+  `hover_no_type_components` option (`zfls.hoverNoTypeComponents`) turns
+  it off. fortls shows only `TYPE :: name` and the variable's declaration.
 - A rename without `ONLY` (`use m, local => original`) is read: the local
   name is the module's entity and the original name is not visible under
   that name. On the USE line, hover, definition and references on either

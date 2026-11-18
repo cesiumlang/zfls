@@ -76,6 +76,9 @@ pub const Settings = struct {
     prefer_implementation: bool = false,
     /// Keywords in hover in lowercase (`real, intent(in) :: x`)
     lowercase_hover: bool = false,
+    /// Hover on a derived type, or a variable of one, does not list the
+    /// type's components and bindings
+    hover_no_type_components: bool = false,
     // Diagnostic options
     max_line_length: i64 = -1,
     max_comment_line_length: i64 = -1,
@@ -245,6 +248,7 @@ pub const opts = [_]Opt{
     .{ .long = "hover_signature", .kind = .flag, .help = "Show signature information in hover for arguments ", .group = "Hover options" },
     .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
     .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
+    .{ .long = "hover_no_type_components", .kind = .flag, .help = "Hover on a derived type or a variable of one does not list the type's components and type-bound procedures", .group = "Hover options" },
     .{ .long = "prefer_implementation", .kind = .flag, .help = "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface", .group = "Hover options" },
 
     .{ .long = "max_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum line length (default: -1)", .group = "Diagnostic options (error swigles)" },
@@ -606,6 +610,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.str(json.get(cfg, "hover_language"))) |hl| s.hover_language = hl;
     s.prefer_implementation = jsonBool(json.get(cfg, "prefer_implementation"), s.prefer_implementation);
     s.lowercase_hover = jsonBool(json.get(cfg, "lowercase_hover"), s.lowercase_hover);
+    s.hover_no_type_components = jsonBool(json.get(cfg, "hover_no_type_components"), s.hover_no_type_components);
     // Diagnostic options
     s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);

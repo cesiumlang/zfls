@@ -135,6 +135,11 @@
       "type": "boolean",
       "default": false
     },
+    "hover_no_type_components": {
+      "description": "Hover on a derived type or a variable of one does not list the type's components and type-bound procedures",
+      "type": "boolean",
+      "default": false
+    },
     "max_line_length": {
       "description": "Maximum line length (default: -1)",
       "type": "integer",
