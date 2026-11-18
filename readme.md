@@ -210,10 +210,11 @@ settings, the configuration file. A change applies at once:
 
 - One of the options that decide what is indexed (`source_dirs`,
   `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`,
-  `pp_defs`, `pp_suffixes`, `comment_markers`, `compile_commands`, ...)
-  indexes the workspace again, keeping the unsaved text of the open
-  documents. Set those in `initializationOptions` (Neovim's
-  `init_options`) to index once at start-up.
+  `pp_defs`, `pp_suffixes`, `comment_markers`, `d_lines`,
+  `compile_commands`, ...) indexes the workspace again, keeping the
+  unsaved text of the open documents. Set those in
+  `initializationOptions` (Neovim's `init_options`) to index once at
+  start-up.
 - Turning on signature help, code actions or formatting registers them
   with an editor that allows that (`client/registerCapability`); others are
   told to restart zfls. Turning one off makes it answer nothing.
@@ -485,6 +486,23 @@ are not names and a quote in it does not start a string.
 In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
 those comments too, after a window reload.
 
+### Debug lines
+
+A fixed-form line with `D` or `d` in column 1 is a debug line (a DEC
+extension), which compilers read as a comment or as code by an option.
+`d_lines` says which: `comment` (the default) or `code`, where the `D` is
+a blank. zfls reads the lines so, the compiler check passes the compiler
+the option that reads them so (gfortran `-fd-lines-as-comments` /
+`-fd-lines-as-code`, Intel `-nod-lines` / `-d-lines`, flang's, nvfortran
+`-Mnodlines` / `-Mdlines`, nagfor `-d_lines`) unless `compiler_args`
+already has one, and a debug line read as a comment is a comment for the
+editor's highlighting (semantic tokens). In VS Code, `zfls.fixedFormDLines`
+sets it.
+
+```json
+{ "d_lines": "code" }
+```
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
@@ -541,13 +559,22 @@ the open files that use them.
   nvfortran). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
   for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
-  string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
+  string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
+  list, which keeps an argument with a space whole:
+  `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
+  other options that are a program's arguments (`compiler_fypp_args`,
+  `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
   `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls` elsewhere).
 - `compiler_include_dirs`: further include directories, for the compiler
   only, relative to the root.
+- The compiler runs in the file's directory, so relative paths in
+  `compiler_args` are relative to that. ifx and ifort, which write their
+  preprocessor's output (`file.i90`) into their working directory, run in
+  one of zfls's cache instead, with the relative directories of the `-I`
+  and `-module` options of `compiler_args` made absolute.
 - A file opened with a text that is not the one on disk (unsaved changes
   the editor restored) is checked from a copy of that text.
 - `compiler_on_change`: also check a file while it is edited, its unsaved
@@ -659,6 +686,7 @@ is and zfls shows the error once (`window/showMessage`).
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
+| `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
 
@@ -788,6 +816,10 @@ zfls deliberately differs from fortls in a few places:
   semantic token, and no names there. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- On Windows, a folder on a UNC path, as a network share or
+  `\\wsl.localhost\...` is, is served: its URIs
+  (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`
+  and written back in that form (hansec PR #219, Modern Fortran #1087).
 - Typing `#` first on an indented line moves it to the first column
   (`textDocument/onTypeFormatting`, Modern Fortran #177); fortls has no
   on-type formatting.
@@ -1002,6 +1034,12 @@ zfls deliberately differs from fortls in a few places:
   that name. On the USE line, hover, definition and references on either
   name reach the module's entity (hansec #137); fortls only reads renames
   after `ONLY:` and has no answer on the original name.
+- A module passes on the names it has by USE as the Fortran standard says:
+  with `private` as its default, only those a `public` statement names, and
+  never those a `private` statement names. fortls applies a module's
+  default only to its own declarations, so names hidden behind a facade
+  module get hover and completion and are not reported as undeclared
+  (fortls PR #562).
 - `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
   submodule (and through it the ancestor module); fortls names it `parent`.
 - Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
