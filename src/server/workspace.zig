@@ -39,6 +39,7 @@ const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const configuration = @import("configuration.zig");
+const pull = @import("pull.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -54,6 +55,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.prepare_rename = params.capabilities.textDocument.rename.prepareSupport;
     try self.s.source_dirs.add(sa, self.root_path);
     self.config.client = params.capabilities;
+    self.pull_diagnostics = pull.wanted(params.capabilities);
 
     try configuration.load(self, a, params.initializationOptions);
     try loadProjectFiles(self, a);
@@ -72,6 +74,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
     const on = configuration.wanted(self);
     self.config.announced = on;
+    self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
         .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
         .textDocumentSync = self.sync_type,
@@ -81,6 +84,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
         .documentFormattingProvider = if (on.formatting) true else null,
         .documentRangeFormattingProvider = if (on.formatting) true else null,
+        .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
     } });
 }
 
@@ -518,6 +522,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
         if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
     }
     self.link_version = @mod(self.link_version + 1, 1000);
+    pull.changed(self);
     var tmp = std.heap.ArenaAllocator.init(self.gpa);
     defer tmp.deinit();
     for (self.workspace.values()) |f| {
@@ -531,6 +536,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
 }
 
 pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
+    pull.changed(self);
     const path = try self.pathFromUri(a, params.textDocument.uri);
     if (self.c_docs.get(path) orelse self.nml_docs.get(path)) |doc| {
         for (params.contentChanges) |c| _ = doc.applyChange(toChange(c)) catch {};
@@ -852,6 +858,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
     }
     if (f.ast) |old| removeFromTree(self, old);
     f.ast = ast_new;
+    pull.changed(self);
     try addToTree(self, f);
     if (update_links) {
         self.link_version = @mod(self.link_version + 1, 1000);

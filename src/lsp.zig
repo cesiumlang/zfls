@@ -189,6 +189,26 @@ pub const ServerCapabilities = struct {
     /// with a formatter (`formatter`)
     documentFormattingProvider: ?bool = null,
     documentRangeFormattingProvider: ?bool = null,
+    /// for a client that pulls diagnostics (pull.zig)
+    diagnosticProvider: ?DiagnosticOptions = null,
+};
+
+pub const DiagnosticOptions = struct {
+    identifier: []const u8 = "zfls",
+    /// a file's diagnostics change with the modules it uses
+    interFileDependencies: bool = true,
+    workspaceDiagnostics: bool,
+};
+
+/// `textDocument/diagnostic`
+pub const DocumentDiagnosticParams = struct {
+    textDocument: TextDocumentIdentifier,
+    previousResultId: ?[]const u8 = null,
+};
+
+/// `workspace/diagnostic`
+pub const WorkspaceDiagnosticParams = struct {
+    previousResultIds: []const struct { uri: []const u8, value: []const u8 } = &.{},
 };
 
 pub const InitializeResult = struct { capabilities: ServerCapabilities };
@@ -316,12 +336,16 @@ pub const ClientCapabilities = struct {
             prepareSupport: bool = false,
         } = .{},
         signatureHelp: Dynamic = .{},
+        /// present: the client pulls diagnostics (`textDocument/diagnostic`)
+        diagnostic: ?Dynamic = null,
         codeAction: Dynamic = .{},
         formatting: Dynamic = .{},
         rangeFormatting: Dynamic = .{},
     } = .{},
     workspace: struct {
         didChangeWatchedFiles: Dynamic = .{},
+        /// the client takes `workspace/diagnostic/refresh`
+        diagnostics: struct { refreshSupport: bool = false } = .{},
     } = .{},
 
     /// Whether the client takes `client/registerCapability` for a method

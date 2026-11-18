@@ -136,6 +136,9 @@ pub const Options = struct {
     hierarchical_symbols: bool = false,
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
+    /// the client pulls diagnostics (`textDocument/diagnostic`) and takes
+    /// `workspace/diagnostic/refresh`
+    pull_diagnostics: bool = false,
     /// the `initializationOptions` of the initialize request (JSON)
     init_options: ?[]const u8 = null,
     /// the client registers signature help, code actions and formatting
@@ -164,6 +167,8 @@ pub const Workspace = struct {
     unreadable: []const []const u8,
     /// the notifications the server sent (JSON texts)
     sent: std.ArrayList([]const u8) = .empty,
+    /// the result of the initialize request
+    init_result: Value = .null,
 
     fn collect(ctx: ?*anyopaque, body: []const u8) void {
         const w: *Workspace = @ptrCast(@alignCast(ctx.?));
@@ -187,6 +192,7 @@ pub const Workspace = struct {
         w.files = files;
         w.unreadable = &.{};
         w.sent = .empty;
+        w.init_result = .null;
         for (files) |f| {
             if (std.Io.Dir.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
@@ -221,7 +227,7 @@ pub const Workspace = struct {
         errdefer w.server.destroy();
         w.server.sink = .{ .ctx = w, .sendFn = collect };
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
-        _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
+        w.init_result = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
             .rootPath = if (opts.unc_root) null else w.root,
             .rootUri = if (opts.unc_root) try paths.pathToUri(aa, w.root) else null,
             .capabilities = .{ .textDocument = .{
@@ -230,8 +236,10 @@ pub const Workspace = struct {
                 .codeAction = dynamic,
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
+                .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
             } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,

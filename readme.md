@@ -505,6 +505,18 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
   Other open documents that use a changed module follow when it is saved.
   A result of the compiler or a linter for a changed text is published
   with zfls's diagnostics of that text, not before them.
+- A client that pulls diagnostics (its `textDocument.diagnostic`
+  capability, as VS Code's has) asks for zfls's own when it shows a
+  document (`textDocument/diagnostic`), and with `workspace_diagnostics`
+  for every file (`workspace/diagnostic`); zfls then publishes none of
+  them, and `diagnostics_change_delay` does not apply. A report the client
+  already has comes back `unchanged`, computed again only after a change in
+  the workspace; `interFileDependencies` tells the client that a change of
+  a module changes the reports of the files that use it. The compiler's and
+  the linters' diagnostics, which come later from their threads, are still
+  published. After a change of the settings zfls asks the client to pull
+  again (`workspace/diagnostic/refresh`). Turning `workspace_diagnostics`
+  on for such a client takes a restart.
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
   the severities are `off`, `error`, `warning`, `information` and `hint`.
