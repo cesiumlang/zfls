@@ -356,6 +356,18 @@ def on_include_directive(path: Path, position) -> bool:
     return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
 
 
+INCLUDE_LINE = re.compile(r"\s*(?:#\s*include|include)\s*[\"'<]", re.I)
+
+
+def on_include_line(path: Path, position) -> bool:
+    """Whether the position is on an `#include` or INCLUDE line of the file."""
+    if not position:
+        return False
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line = position.get("line", -1)
+    return 0 <= line < len(lines) and bool(INCLUDE_LINE.match(lines[line]))
+
+
 ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
 
 
@@ -677,6 +689,11 @@ def main() -> int:
             ):
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
+                continue
+            if kind == "hover" and on_include_line(path, params.get("position")):
+                # hover on an included file's name shows that file, nothing
+                # when it is not found (#240); fortls has no answer or one
+                # for a character literal
                 continue
             pos = params.get("position") or {}
             if (
