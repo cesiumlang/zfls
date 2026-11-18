@@ -113,6 +113,8 @@ const Checker = struct {
     env: objects.Env,
     ast: *Ast,
     cache: std.StringHashMapUnmanaged(?*Obj) = .empty,
+    /// the workspace's files, for `objects.declaredProcedure`
+    files: []const *FortranFile,
     out: std.ArrayList(Problem) = .empty,
     /// the innermost scope of each line, found once
     inner: objects.InnerScopes,
@@ -165,7 +167,11 @@ const Checker = struct {
                 try c.member(scope, text[0..w.end], w.str)
             else
                 try c.lookup(scope, w.str, line_no);
-            const obj = callee_obj orelse continue;
+            var obj = callee_obj orelse continue;
+            // the caller's own declaration of a procedure it calls (#232)
+            if (!is_member) if (try objects.declaredProcedure(c.env, c.ast, c.files, obj, true)) |p| {
+                obj = p;
+            };
             var drop: ?usize = null;
             const proc = switch (obj.kind) {
                 .subroutine, .function => obj,
@@ -631,9 +637,10 @@ fn headerHasDirective(proc: *const Obj) bool {
     return false;
 }
 
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) ![]const Problem {
+/// `files`: the workspace's
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile) ![]const Problem {
     const n = file.nLines();
-    var c: Checker = .{ .a = a, .env = env, .ast = ast, .inner = try ast.innerScopes(a, n) };
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n) };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);

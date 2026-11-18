@@ -160,7 +160,9 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     in_cache = true;
                 };
                 if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def) or
-                    isSeparateProcedurePair(def_obj, var_def))
+                    isSeparateProcedurePair(def_obj, var_def) or
+                    // a caller's own declaration of the procedure (#232)
+                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
                 {
                     ref_match = true;
                 } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
@@ -227,7 +229,7 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
     if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
-    const obj = functionOfResult(d.obj);
+    const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
     const rs = referenceScope(self, obj) orelse return .null;
     const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);
     var out: std.ArrayList(lsp.Location) = .empty;
@@ -275,7 +277,7 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
     const all = if (try renamedImport(a, d.file, d.line, d.col, d.obj)) |ri|
         try aliasReferences(self, a, d.file, d.obj, ri)
     else blk: {
-        const obj = functionOfResult(d.obj);
+        const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
         const rs = referenceScope(self, obj) orelse return .null;
         break :blk try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, true);
     };
