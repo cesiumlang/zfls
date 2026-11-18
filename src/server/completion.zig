@@ -277,7 +277,9 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, cl.curr, ac_char, true)) orelse return .null;
     const var_stack = try helpers.getVarStack(a, line_prefix);
     const is_member = var_stack.len > 1;
-    var var_prefix = str.strip(var_stack[var_stack.len - 1]);
+    // after a space no name is begun (`use `, not `use`)
+    const after_space = line_prefix.len > 0 and std.ascii.isWhitespace(line_prefix[line_prefix.len - 1]);
+    var var_prefix = if (after_space and !is_member) "" else str.strip(var_stack[var_stack.len - 1]);
     const typed_prefix = var_prefix;
 
     var item_list: std.ArrayList(lsp.CompletionItem) = .empty;
@@ -285,7 +287,13 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     var public_only = false;
     var include_globals = true;
     const lc = try parser.getLineContext(a, line_prefix);
-    if (lc.ctx == .skip or (var_prefix.len == 0 and !is_member)) return .null;
+    if (lc.ctx == .skip) return .null;
+    // with nothing typed, only where the names are few and wanted (#283)
+    const short_list = switch (lc.ctx) {
+        .mod_mems, .mod_only, .type_only, .int_only, .import, .vis => true,
+        else => false,
+    };
+    if (var_prefix.len == 0 and !is_member and !short_list) return .null;
     if (self.s.autocomplete_no_prefix) var_prefix = "";
 
     var scope_list: []const *Obj = &.{};
@@ -301,6 +309,8 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         scope_list = try ast.getScopes(a, ac_line + 1);
     }
     var req_callable = false;
+    // the names an ONLY list has already
+    var listed: []const []const u8 = &.{};
     var abstract_only = false;
     var no_use = false;
     var type_mask = setTypeMask(false);
@@ -326,6 +336,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             public_only = true;
             include_globals = false;
             type_mask.remove(.class);
+            listed = try onlyListed(a, line_prefix);
         },
         .pro_link => {
             type_mask = setTypeMask(true);
@@ -397,10 +408,13 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         else => {},
     }
     if (lc.ctx == .default and !is_member) try keywordArgItems(self, a, file, ast, ac_line, ac_char, &item_list);
+    // no intrinsics nor global names for nothing typed
+    if (typed_prefix.len == 0) include_globals = false;
     const cands = try getCandidates(self, a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
-    for (cands.objs, cands.renames) |cand, rename| {
+    next: for (cands.objs, cands.renames) |cand, rename| {
         const ctype = cand.getType(false);
         if (type_mask.contains(ctype)) continue;
+        for (listed) |l| if (std.ascii.eqlIgnoreCase(l, cand.name)) continue :next;
         if (req_callable and !cand.isCallable()) continue;
         var name_replace = rename;
         if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
@@ -425,6 +439,22 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         else => {},
     };
     return json.from(a, item_list.items);
+}
+
+/// The names of the module an ONLY list (at the end of `line`) has before
+/// the one being written: `alpha` of `use m, only: alpha, a => beta, al`
+/// and `beta`
+fn onlyListed(a: Allocator, line: []const u8) ![]const []const u8 {
+    const u = ((try parser.readUseStmt(a, line)) orelse return &.{}).use;
+    if (u.only_list.len < 2) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    for (u.only_list[0 .. u.only_list.len - 1]) |local| {
+        const original = for (u.renames) |r| {
+            if (std.mem.eql(u8, r[0], local)) break r[1];
+        } else local;
+        try out.append(a, original);
+    }
+    return out.items;
 }
 
 /// The modules a USE statement can bring names in from: those of the

@@ -26,6 +26,7 @@ const Options = parser.Options;
 const DefResult = @import("definitions.zig").DefResult;
 const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
 const plain_docs = @import("plain_docs.zig");
+const attributes = @import("attributes.zig");
 
 pub fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
     if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
@@ -83,6 +84,8 @@ pub const Parser = struct {
     comment_re: *const regex.Regex = undefined,
     cur_line: usize = 0,
     doc_re: *const regex.Regex = undefined,
+    /// what the attribute statements say, applied at the end
+    attrs: std.ArrayList(attributes.Attr) = .empty,
 
     pub fn dbg(p: *const Parser, comptime fmt: []const u8, args: anytype) void {
         Trace.print(p.opts.trace, fmt, args);
@@ -232,7 +235,8 @@ pub const Parser = struct {
                 ast.pending_doc = null;
                 continue;
             }
-            if (try p.parseParameterStmt(a, line_no_comment)) {
+            if (try attributes.read(sa, line_no_comment, ast.current_scope, line_no, &p.attrs)) {
+                p.dbg("{s} !!! ATTRIBUTE statement - Ln:{d}", .{ str.strip(line_no_comment), line_no });
                 ast.pending_doc = null;
                 continue;
             }
@@ -247,6 +251,7 @@ pub const Parser = struct {
             const obj_read = (try getFortranDefinition(a, line)) orelse continue;
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
         }
+        try attributes.apply(ast, sa, p.attrs.items, p.opts.sort_keywords);
         try ast.closeFile(line_no);
         try p.plain.apply(ast);
     }
@@ -564,8 +569,6 @@ pub const Parser = struct {
         return did_close;
     }
 
-    /// `PARAMETER (name = value, ...)`: makes variables already declared in
-    /// the current scope constants, with their values (upstream #203)
     /// DEC structures (fortls #171, hansec #230): STRUCTURE defines a
     /// derived type (a nested one with a name list also declares those
     /// fields of the structure around it), RECORD declares variables of one
@@ -597,28 +600,6 @@ pub const Parser = struct {
         o.typeData().dec_structure = true;
         try ast.addScope(o, &R().END_STRUCTURED, true, true);
         p.dbg("{s} !!! STRUCTURE - Ln:{d}", .{ line, ln });
-        return true;
-    }
-
-    fn parseParameterStmt(p: *Parser, a: Allocator, line: []const u8) !bool {
-        const m = R().PARAMETER_STMT.match(line) orelse return false;
-        const ast = p.file_ast;
-        const cs = ast.current_scope orelse return false;
-        const pa = ast.allocator();
-        for (try helpers.splitArgs(a, m.group(1) orelse "")) |item| {
-            const eq = std.mem.findScalar(u8, item, '=') orelse continue;
-            const name = str.strip(item[0..eq]);
-            for (cs.childList()) |child| {
-                if (child.kind != .variable or !std.ascii.eqlIgnoreCase(child.name, name)) continue;
-                if (!child.varData().is_const) {
-                    child.varData().is_const = true;
-                    try child.keywords.append(pa, C.KW.parameter);
-                }
-                const words = try str.splitWhitespace(a, str.strip(item[eq + 1 ..]));
-                child.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
-            }
-        }
-        p.dbg("{s} !!! PARAMETER statement - Ln:{d}", .{ str.strip(line), p.cur_line });
         return true;
     }
 

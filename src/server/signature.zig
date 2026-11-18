@@ -35,16 +35,23 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
     const vo = call.obj;
     const arg_strings = call.args;
     // a generic interface: the signature of each of its procedures, the
-    // first that takes the arguments so far active (fortls #6)
-    if (vo.kind == .interface and vo.memList().len > 0) {
+    // first that takes the arguments so far active (fortls #6); an
+    // intrinsic with several forms: the signature of each
+    var forms: std.ArrayList(Obj.Signature) = .empty;
+    if (vo.kind == .interface) {
+        for (vo.memList()) |member| try forms.append(a, try member.getSignature(a, null));
+    } else try forms.appendSlice(a, try vo.getSignatures(a));
+    if (forms.items.len > 1 or vo.kind == .interface) {
         var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
         var active: ?i64 = null;
         var active_size: usize = std.math.maxInt(usize);
-        for (vo.memList()) |member| {
-            const s = (try signatureOf(self, a, member, arg_strings)) orelse continue;
+        for (forms.items) |form| {
+            const s = (try signatureFrom(self, a, form, arg_strings)) orelse continue;
             var info = s.info;
             info.activeParameter = s.param;
-            if (s.fits and s.size < active_size) {
+            // of a generic the smallest procedure, of an intrinsic its
+            // first form
+            if (s.fits and (active == null or (vo.kind == .interface and s.size < active_size))) {
                 active = @intCast(sigs.items.len);
                 active_size = s.size;
             }
@@ -110,6 +117,10 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
             break;
         };
     }
+    // the caller's own declaration of a procedure it calls (#232)
+    if (var_obj) |v| if (try objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, true)) |p| {
+        var_obj = p;
+    };
     return .{ .obj = var_obj orelse return null, .args = arg_strings };
 }
 
@@ -171,8 +182,14 @@ pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, li
 /// The signature of procedure `vo` for a call whose arguments so far are
 /// `arg_strings`: the parameter they reach, whether the procedure takes
 /// them (their number and keywords), and its number of parameters
-pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize } {
-    const sig = try vo.getSignature(a, null);
+pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?SignatureFit {
+    return signatureFrom(self, a, try vo.getSignature(a, null), arg_strings);
+}
+
+pub const SignatureFit = struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize };
+
+/// `signatureOf` for signature `sig`
+fn signatureFrom(self: *Server, a: Allocator, sig: Obj.Signature, arg_strings: []const []const u8) !?SignatureFit {
     const label = sig.label orelse return null;
     const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     const math = docmath.Mode.of(self.s.doc_math);
