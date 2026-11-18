@@ -31,6 +31,7 @@ const suppress = @import("suppress.zig");
 const workspace = @import("server/workspace.zig");
 const symbols = @import("server/symbols.zig");
 const completion = @import("server/completion.zig");
+const completion_resolve = @import("server/completion_resolve.zig");
 const definition = @import("server/definition.zig");
 const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
@@ -148,6 +149,9 @@ pub const Server = struct {
     /// The thread writing the index cache after initialization
     index_writer: ?std.Thread = null,
     next_id: i64 = 1,
+    /// Completion items leave their documentation to
+    /// `completionItem/resolve` (the client resolves it)
+    completion_resolve: bool = false,
     /// Where the settings come from, and the providers announced to the
     /// client (configuration.zig)
     config: configuration.State = .{},
@@ -346,6 +350,7 @@ pub const Server = struct {
         semantic_tokens,
         semantic_tokens_range,
         completion,
+        completion_resolve,
         signature_help,
         definition,
         references,
@@ -401,6 +406,7 @@ pub const Server = struct {
         .{ "textDocument/semanticTokens/full", .semantic_tokens },
         .{ "textDocument/semanticTokens/range", .semantic_tokens_range },
         .{ "textDocument/completion", .completion },
+        .{ "completionItem/resolve", .completion_resolve },
         .{ "textDocument/signatureHelp", .signature_help },
         .{ "textDocument/definition", .definition },
         .{ "textDocument/references", .references },
@@ -458,6 +464,7 @@ pub const Server = struct {
             .semantic_tokens => symbols.serveSemanticTokens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .semantic_tokens_range => symbols.serveSemanticTokensRange(self, a, try json.decode(lsp.SemanticTokensRangeParams, a, params)),
             .completion => completion.serveAutocomplete(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .completion_resolve => completion_resolve.serveResolve(self, a, params),
             .signature_help => if (configuration.withdrawn(self, .signature_help)) .null else signature.serveSignature(self, a, try json.decode(lsp.PositionParams, a, params)),
             .definition => definition.serveDefinition(self, a, try json.decode(lsp.PositionParams, a, params)),
             .references => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), true),

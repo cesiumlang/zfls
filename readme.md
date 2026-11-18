@@ -773,6 +773,11 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- To a client that resolves completion items (`completionItem/resolve`,
+  as VS Code does), completion sends each item without its documentation,
+  which follows when the item is selected: a list of 2,000 procedures is
+  less than half the size and takes half the time; fortls sends every
+  item's documentation.
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
   with a quick fix removing a declaration of that name only. A name counts
