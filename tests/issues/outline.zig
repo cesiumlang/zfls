@@ -171,3 +171,114 @@ test "hansec #166 folding follows the program units, constructs and their branch
     defer w.deinit();
     try h.checkIn(.hansec, 166, .fixed, expectFolds(w));
 }
+
+/// The folding ranges of a file as `start-end` pairs (0-based), in the
+/// order the server gives them
+fn foldPairs(w: *h.Workspace, name: []const u8) ![]const [2]i64 {
+    var out: std.ArrayList([2]i64) = .empty;
+    for (try w.foldingRanges(name)) |f| try out.append(w.arena.allocator(), .{ f.start, f.end });
+    return out.items;
+}
+
+fn expectFoldPairs(w: *h.Workspace, name: []const u8, want: []const [2]i64) !void {
+    const got = try foldPairs(w, name);
+    std.testing.expectEqualSlices([2]i64, want, got) catch |e| {
+        for (got) |g| std.debug.print("({d}, {d}) ", .{ g[0], g[1] });
+        return e;
+    };
+}
+
+test "a SELECT construct folds as a whole and branch by branch; continued statements fold (#275)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text =
+        \\subroutine s(k, &
+        \\             x, &
+        \\             y)
+        \\  integer :: k
+        \\  real :: x, y
+        \\  select case (k)
+        \\  case (1)
+        \\    x = 1
+        \\    y = 1
+        \\  case default
+        \\    x = 2
+        \\    y = 2
+        \\  end select
+        \\  if (k > 1) then
+        \\    x = 3
+        \\    y = 3
+        \\  end if
+        \\end subroutine
+        \\
+    }}, .{});
+    defer w.deinit();
+    try expectFoldPairs(w, "s.f90", &.{ .{ 0, 16 }, .{ 5, 11 }, .{ 6, 8 }, .{ 9, 11 }, .{ 13, 15 } });
+}
+
+test "nested and named SELECT constructs, SELECT TYPE (#275)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text =
+        \\subroutine s(k, j, v)
+        \\  integer :: k, j
+        \\  class(*) :: v
+        \\  sel: select case (k)
+        \\  case (1) sel
+        \\    select case (j)
+        \\    case (1)
+        \\      k = 2
+        \\    case default
+        \\      k = 3
+        \\    end select
+        \\  case default sel
+        \\    k = 4
+        \\  end select sel
+        \\  select type (v)
+        \\  type is (integer)
+        \\    k = v
+        \\  class default
+        \\    k = 0
+        \\  end select
+        \\end subroutine
+        \\
+    }}, .{});
+    defer w.deinit();
+    try expectFoldPairs(w, "s.f90", &.{
+        .{ 0, 19 },  .{ 3, 12 },  .{ 4, 10 },  .{ 5, 9 }, .{ 6, 7 }, .{ 8, 9 }, .{ 11, 12 },
+        .{ 14, 18 }, .{ 15, 16 }, .{ 17, 18 },
+    });
+}
+
+test "continued statements of three lines or more fold, comment lines between them included (#275)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text =
+        \\subroutine s(k)
+        \\  integer :: k
+        \\  real :: a, &
+        \\    ! a comment line in between
+        \\          b, &
+        \\          c
+        \\  real :: d, &
+        \\          e
+        \\  if (k > 1) then
+        \\    call t(a, &
+        \\           b, &
+        \\           c)
+        \\  end if
+        \\end subroutine
+        \\
+    }}, .{});
+    defer w.deinit();
+    try expectFoldPairs(w, "s.f90", &.{ .{ 0, 12 }, .{ 2, 5 }, .{ 8, 11 }, .{ 9, 11 } });
+}
+
+test "continued statements in fixed form fold (#275)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f", .text =
+        \\      SUBROUTINE S(K)
+        \\      INTEGER K
+        \\      CALL T(K,
+        \\C     a comment line
+        \\     &       K,
+        \\     &       K)
+        \\      END
+        \\
+    }}, .{});
+    defer w.deinit();
+    try expectFoldPairs(w, "s.f", &.{ .{ 0, 5 }, .{ 2, 5 } });
+}

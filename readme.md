@@ -14,7 +14,8 @@ command line options and configuration files.
   workspace symbols
 - Beyond fortls: an outline tree of document symbols (for clients that take
   one: breadcrumbs, sticky scroll); folding of program units, constructs
-  and their branches, preprocessor conditionals and comment blocks; semantic
+  and their branches, statements continued over three lines or more,
+  preprocessor conditionals and comment blocks; semantic
   highlighting of modules, types, procedures, dummy arguments, components
   and variables by what they are (a variable named `if` is a variable), with
   the lines that preprocessor conditionals leave out shown inactive, for the
