@@ -315,28 +315,51 @@ pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) 
 /// global procedure of that name, if there is one (upstream #483, #23)
 pub fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
     if (v.kind != .variable or !v.varDataConst().is_external) return null;
-    const key = try std.ascii.allocLowerString(a, v.name);
-    const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
-    return switch (cand.kind) {
-        .subroutine, .function => cand,
-        else => null,
-    };
+    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, false);
 }
 
 /// The global function that a variable of the same name stands for when it
 /// is called: `real fff` in the caller and then `fff(1.2, 3.3)` declares
 /// the type of the function, not a variable (upstream #118)
 pub fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj {
-    const v = d.obj;
-    if (v.kind != .variable or v.varData().is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
-    if (v.parent) |p| if (p.getType(false) == C.TypeId.class) return null;
-    const text = d.file.getLine(d.line, false) orelse return null;
-    var end = d.col;
+    if (!isCalledAt(d.file, d.line, d.col)) return null;
+    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), d.obj, true);
+}
+
+/// The procedure that the caller's own declaration `v` of a name stands
+/// for (`objects.declaredProcedure`, #232), `v` being found at byte
+/// column `col` of 0-based line `line` of `file`, where it may be called
+pub fn callerTarget(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj) !?*Obj {
+    if (v.kind != .variable) return null;
+    const ast = file.ast orelse return null;
+    const called = v.varDataConst().is_external or isCalledAt(file, line, col) or isCalledIn(v);
+    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, called);
+}
+
+/// Whether the name at byte column `col` of 0-based line `line` is
+/// followed by an argument list
+pub fn isCalledAt(file: *const FortranFile, line: usize, col: usize) bool {
+    const text = file.getLine(line, false) orelse return false;
+    var end = @min(col, text.len);
     while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
-    if (!std.mem.startsWith(u8, str.lstrip(text[end..]), "(")) return null;
-    const key = try std.ascii.allocLowerString(a, v.name);
-    const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
-    return if (cand.kind == .function) cand else null;
+    return std.mem.startsWith(u8, str.lstrip(text[end..]), "(");
+}
+
+/// Whether variable `v` is called somewhere in the scope that declares it,
+/// `v(...)` on a line after its declaration
+fn isCalledIn(v: *const Obj) bool {
+    const scope = v.parent orelse return false;
+    const file = v.file_ast.file orelse return false;
+    var ln = v.sline;
+    while (ln < scope.eline and ln < file.nLines()) : (ln += 1) {
+        const text = file.getLine(ln, false) orelse continue;
+        var it = helpers.words(text);
+        while (it.next()) |w| {
+            if (!std.ascii.eqlIgnoreCase(w.str, v.name)) continue;
+            if (isCalledAt(file, ln, w.start)) return true;
+        }
+    }
+    return false;
 }
 
 /// With `prefer_implementation`, the implementation of a procedure that

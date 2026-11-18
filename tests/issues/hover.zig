@@ -818,3 +818,100 @@ test "hansec #135 go to definition on a call of a generic interface goes to the 
     defer w.deinit();
     try h.checkIn(.hansec, 135, .fixed, expectSpecificDefinition(w));
 }
+
+/// The hover of a variable, its declaration line alone, is `want`
+fn expectDecl(w: *h.Workspace, name: []const u8, p: h.Pos, want: []const u8) !void {
+    const got = (try w.hover(name, p)) orelse return h.unmet("{s}:{d}:{d}: no hover, expected {s}", .{ name, p.line + 1, p.col, want });
+    const fenced = try std.mem.concat(std.testing.allocator, u8, &.{ "\n", want, "\n" });
+    defer std.testing.allocator.free(fenced);
+    if (std.mem.find(u8, got, fenced) == null) return h.unmet("{s}:{d}:{d}: hover is not {s}: {s}", .{ name, p.line + 1, p.col, want, got });
+}
+
+const attr_stmts = [_]h.File{
+    .{ .name = "a.f90", .text =
+    \\module m
+    \\  implicit none
+    \\contains
+    \\  subroutine t(v, n, w)
+    \\    integer :: n
+    \\    real :: v, w
+    \\    dimension v(n)
+    \\    optional :: w
+    \\    v(1) = 0
+    \\  end subroutine
+    \\  subroutine caller()
+    \\    real :: arr(4)
+    \\    call t(arr, 4)
+    \\  end subroutine
+    \\  subroutine before(q)
+    \\    dimension q(2)
+    \\    intent(out) q
+    \\    real :: q
+    \\    q = 0
+    \\  end subroutine
+    \\end module
+    \\
+    },
+    .{ .name = "b.f90", .text =
+    \\subroutine attrs(a, b)
+    \\  real :: x, y, z, a, b, c
+    \\  dimension x(3), a(*)
+    \\  allocatable :: y(:)
+    \\  pointer :: z
+    \\  intent(in) :: a
+    \\  optional :: b
+    \\  save x
+    \\  save
+    \\  save /blk/
+    \\  target :: c
+    \\  c = x(1) + a(1)
+    \\end subroutine
+    \\
+    },
+    .{ .name = "c.f", .text =
+    \\      SUBROUTINE S
+    \\      PARAMETER (PI=3.14159, KMAX=10)
+    \\      DIMENSION A(10)
+    \\      A(1) = PI
+    \\      PRINT *, KMAX
+    \\      END
+    \\
+    },
+    // a type declaration keeps the attributes after VALUE
+    .{ .name = "d.f90", .text =
+    \\subroutine s(x, y)
+    \\  integer, value, intent(in) :: x
+    \\  real, volatile :: y
+    \\  y = x
+    \\end subroutine
+    \\
+    },
+};
+
+test "attribute statements give their attribute to the names they list (#238)" {
+    const w = try h.Workspace.init(&attr_stmts, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("a.f90");
+    try expectDecl(w, "a.f90", w.pos("a.f90", "v(1) = 0", 0, 0), "REAL, DIMENSION(n) :: v");
+    try expectDecl(w, "a.f90", w.pos("a.f90", "w)", 0, 0), "REAL, OPTIONAL :: w");
+    // the declaration after the statements
+    try expectDecl(w, "a.f90", w.pos("a.f90", "q = 0", 0, 0), "REAL, DIMENSION(2), INTENT(OUT) :: q");
+    for ([_][2][]const u8{
+        .{ "x, y", "REAL, DIMENSION(3), SAVE :: x" },
+        .{ "y, z", "REAL, ALLOCATABLE, DIMENSION(:) :: y" },
+        .{ "z, a", "REAL, POINTER :: z" },
+        .{ "a, b, c", "REAL, DIMENSION(*), INTENT(IN) :: a" },
+        .{ "b, c", "REAL, OPTIONAL :: b" },
+        .{ "c\n", "REAL, TARGET :: c" },
+    }) |case| try expectDecl(w, "b.f90", w.pos("b.f90", case[0], 0, 0), case[1]);
+    // implicitly typed names: the statement declares them
+    try expectDecl(w, "c.f", w.pos("c.f", "PI\n", 0, 0), "REAL, PARAMETER :: PI = 3.14159");
+    try expectDecl(w, "c.f", w.pos("c.f", "PI=", 0, 0), "REAL, PARAMETER :: PI = 3.14159");
+    try expectDecl(w, "c.f", w.pos("c.f", "KMAX\n", 0, 0), "INTEGER, PARAMETER :: KMAX = 10");
+    try expectDecl(w, "c.f", w.pos("c.f", "A(1)", 0, 0), "REAL, DIMENSION(10) :: A");
+    try expectDecl(w, "c.f", w.pos("c.f", "A(10)", 0, 0), "REAL, DIMENSION(10) :: A");
+    const def = (try w.definition("c.f", w.pos("c.f", "PI\n", 0, 0))) orelse return error.NoDefinition;
+    try std.testing.expectEqual(@as(i64, 1), def.line);
+    try expectDecl(w, "d.f90", w.pos("d.f90", "x\n", 0, 0), "INTEGER, VALUE, INTENT(IN) :: x");
+    try expectDecl(w, "d.f90", w.pos("d.f90", "y = x", 0, 0), "REAL, VOLATILE :: y");
+}

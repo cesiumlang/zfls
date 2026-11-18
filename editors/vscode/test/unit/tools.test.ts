@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { expandVariables, findExecutable, runProcess } from "../../src/tools";
+import { expandVariables, findExecutable, runProcess, serverExecutable } from "../../src/tools";
 
 const ctx = {
   workspaceFolder: path.join("/ws", "proj"),
@@ -58,6 +58,34 @@ test("executables are found in a directory, by path, or on the PATH", () => {
     assert.equal(findExecutable("other", "missing", os.tmpdir(), env), undefined);
     assert.equal(findExecutable("zfls-no-such-program-xyz"), undefined);
     assert.ok(findExecutable(process.execPath));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("zfls.path: variables, a relative path, a directory, and the path tried", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-unit-"));
+  try {
+    const ws = path.join(dir, "my ws");
+    const home = path.join(dir, "home");
+    const name = process.platform === "win32" ? "zfls.exe" : "zfls";
+    const exe = path.join(ws, "tools", name);
+    const homeExe = path.join(home, "bin", name);
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.mkdirSync(path.dirname(homeExe), { recursive: true });
+    fs.writeFileSync(exe, "");
+    fs.writeFileSync(homeExe, "");
+    const ctx = { workspaceFolder: ws, home };
+    const env = { PATH: "", PATHEXT: ".EXE" };
+    assert.deepEqual(serverExecutable(`\${workspaceFolder}/tools/${name}`, ctx, env), { command: path.join(ws, "tools", name) });
+    assert.deepEqual(serverExecutable(`~/bin/${name}`, ctx, env), { command: path.join(home, "bin", name) });
+    assert.deepEqual(serverExecutable(`tools/${name}`, ctx, env), { command: exe });
+    // a directory: the zfls in it
+    assert.deepEqual(serverExecutable("${workspaceFolder}/tools", ctx, env), { command: exe });
+    assert.deepEqual(serverExecutable(" tools ", ctx, env), { command: exe });
+    // none there: the path looked for
+    assert.deepEqual(serverExecutable("${workspaceFolder}/bin/zfls", ctx, env), { tried: path.join(ws, "bin", "zfls") });
+    assert.deepEqual(serverExecutable("bin/zfls", ctx, env), { tried: path.join(ws, "bin", "zfls") });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

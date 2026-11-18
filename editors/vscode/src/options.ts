@@ -109,7 +109,8 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
-  args.push(...config.get<string[]>("arguments", []));
+  // the settings editor's "Add Item" leaves empty items easily
+  args.push(...config.get<string[]>("arguments", []).filter((a) => typeof a === "string" && a.trim() !== ""));
   return args;
 }
 
