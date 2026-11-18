@@ -1089,6 +1089,10 @@ zfls deliberately differs from fortls in a few places:
 - The lines of an inactive preprocessor branch inside a continued statement
   (`REAL &` / `#ifdef X` / `, POINTER &` / `#endif`) are left out of it; fortls
   joins them, so the declaration gets the attributes of every branch.
+- A function-like macro without parameters (`#define NOARG() 42`) expands to
+  its value, and a macro's value is used as written; fortls reads it as a
+  regex template, so `\1` in it and, for `NOARG()`, its digits are lost
+  (FL #486).
 - A file named as free-form source (`.f90`, `.F90`, `.f08`, ...) is read as
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
