@@ -124,6 +124,11 @@ WORD = re.compile(
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
+# the value of a parameter declared on a line with `;`, its strings blanked:
+# a string continued by a doubled quote (`"a;""b"`) is one literal in zfls
+# and two in fortls, which pairs the `"` from the left (#231); compare such
+# values without their quotes and blanks
+BLANKED_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([\" /]+)$", re.M)
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -307,6 +312,7 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
+        v = BLANKED_VALUE.sub(lambda m: m.group(1) + m.group(2).replace('"', "").replace(" ", ""), v)
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
