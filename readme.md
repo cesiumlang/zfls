@@ -914,6 +914,11 @@ zfls deliberately differs from fortls in a few places:
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
+- The interface modules that ifort and ifx write with `-warn interfaces`
+  (`<name>__genmod.f90`, first line `!COMPILER-GENERATED INTERFACE
+  MODULE`) are not indexed, so their procedures are not listed twice in
+  the workspace symbols; one opened in the editor is served as usual.
+  fortls indexes them (hansec PR #56).
 - Settings are taken over LSP as well, under the names of the
   configuration file: in `initializationOptions` and in
   `workspace/didChangeConfiguration`, which applies them at once, and the
