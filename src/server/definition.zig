@@ -37,6 +37,7 @@ const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
 const bindc = @import("bindc.zig");
+const macros = @import("macros.zig");
 
 /// A temporary variable allocated in `a` (not owned by any AST)
 pub fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8, desc: []const u8, keywords: []const C.Kw) !*Obj {
@@ -62,6 +63,10 @@ pub fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8,
 /// `get_definition` with `def_char` as a byte offset on the line
 pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_line: usize, def_char: usize, hover_req: bool) !?*Obj {
     const ast = def_file.ast orelse return null;
+    // a macro named in a directive's line (`#ifdef X`)
+    if (helpers.isPpDirective(def_file.getLine(def_line, false) orelse "")) {
+        if (try macros.at(self, a, def_file, def_line, def_char)) |m| return macros.directiveObj(self, a, m);
+    }
     const cl = try def_file.getCodeLine(a, def_line, false, true, false, true);
     const curr_line = cl.curr orelse return null;
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, def_char, false)) orelse return null;
@@ -73,14 +78,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     if (try useRenameTarget(self, a, ast, curr_line, def_char, def_name)) |o| return o;
     // Search in Preprocessor defined variables
     if (def_file.pp_defs.get(def_name)) |d| {
-        var arg_str: []const u8 = "";
-        if (d.args) |args| {
-            var parts: std.ArrayList([]const u8) = .empty;
-            for (try str.split(a, args, ",")) |p| try parts.append(a, str.strip(p));
-            arg_str = try a.print("({s})", .{try std.mem.join(a, ", ", parts.items)});
-        }
-        const desc = try a.print("#define {s}{s} {s}", .{ def_name, arg_str, d.value });
-        return try tempVariable(a, ast, def_line + 1, def_name, desc, &.{});
+        return try tempVariable(a, ast, def_line + 1, def_name, try macros.describe(a, def_name, d), &.{});
     }
     var curr_scope = ast.getInnerScope(def_line + 1);
     if (is_member) {
@@ -285,6 +283,8 @@ pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) 
     if (try includeDirectiveTarget(self, a, params, false)) |target| {
         return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
     }
+    // a macro: its #define
+    if (try macros.atPosition(self, a, params)) |m| return macros.definitionOf(self, a, m);
     if (try definitionAt(self, a, params, false)) |d| {
         if (try signature.genericSpecific(self, a, d.file, d.line, d.col, d.obj)) |s| if (s.file_ast.file != null) return createRefLink(self, a, preferredBody(self, s));
         const target = preferredBody(self, d.obj);

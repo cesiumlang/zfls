@@ -24,6 +24,7 @@ const assignment = @import("assignment.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
+const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
@@ -217,6 +218,7 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.assignmentAt(self, a, params)) |b| return assignment.references(self, a, b);
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
+    if (try macros.atPosition(self, a, params)) |m| return macros.references(self, a, m, with_c);
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
     if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
     const rs = referenceScope(self, d.obj) orelse return .null;
