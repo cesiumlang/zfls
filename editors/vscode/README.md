@@ -592,18 +592,23 @@ can ask too); the extension builds and runs them.
 
 ## Snippets
 
-Type a prefix and pick the snippet from the completion list:
+At the start of a statement, the server completes the constructs and
+program units that can begin there, each with its end statement:
+`program`, `module`, `submodule`, `subroutine`, `function`, `type`,
+`interface`, `enum`, `if ... then`, `do`, `do while`, `do concurrent`,
+`select case`, `select type`, `select rank`, `associate`, `block`,
+`where`, `forall`, `critical`; inside an open construct its `else`,
+`else if`, `case`, `type is`, `elsewhere` and the like; `then` after
+`if (...)`; and after `end`, the end statement of the scope that is open.
+They follow `zfls.lowercaseIntrinsics` and `zfls.autocompleteNoSnippets`.
+
+The extension adds these: type a prefix and pick the snippet from the
+completion list.
 
 | Prefix | Inserts |
 | --- | --- |
-| `program`, `module`, `submodule` | A program unit with `implicit none` |
-| `fun`, `sub` | A function with a result variable, a subroutine |
-| `interface`, `abstract` | An interface block, an abstract interface |
 | `typ`, `typc`, `proc` | A derived type with `contains`, a type with a type-bound procedure, a type-bound procedure binding |
-| `if`, `ife`, `el`, `else` | A one-line `if`, an `if` block, an `if`/`else` block, `else if` and `else` branches |
-| `do`, `dow`, `doc` | `do`, `do while` and `do concurrent` loops |
-| `selc`, `selt` | `select case`, `select type` |
-| `block`, `associate`, `where`, `enum` | Those constructs |
+| `if`, `ife` | A one-line `if`, an `if`/`else` block |
 | `imp` | `implicit none` |
 | `modoc` | A module documentation header |
 

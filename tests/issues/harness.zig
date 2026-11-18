@@ -144,6 +144,8 @@ pub const Options = struct {
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
+    /// the client takes snippets in completion items
+    snippet_support: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -218,6 +220,7 @@ pub const Workspace = struct {
                 .codeAction = dynamic,
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
+                .completion = .{ .completionItem = .{ .snippetSupport = opts.snippet_support } },
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
             } },

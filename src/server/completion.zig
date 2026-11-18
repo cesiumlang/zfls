@@ -24,6 +24,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const snippets = @import("snippets.zig");
 
 /// The inner scopes and the base type are always left out; `def` is
 /// whether the types of named objects are
@@ -283,6 +284,11 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     var public_only = false;
     var include_globals = true;
     const lc = try parser.getLineContext(a, line_prefix);
+    // constructs and program units at the start of a statement (#264)
+    if (!is_member and cl.pre.len == 0) if (try snippets.constructItems(self, a, file, ast, ac_line, ac_char)) |c| {
+        if (c.alone or lc.ctx == .skip) return json.from(a, c.items);
+        try item_list.appendSlice(a, c.items);
+    };
     if (lc.ctx == .skip or (var_prefix.len == 0 and !is_member)) return .null;
     if (self.s.autocomplete_no_prefix) var_prefix = "";
 

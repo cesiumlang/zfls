@@ -51,6 +51,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
     self.hierarchical_symbols = params.capabilities.textDocument.documentSymbol.hierarchicalDocumentSymbolSupport;
     self.prepare_rename = params.capabilities.textDocument.rename.prepareSupport;
+    self.completion_snippets = params.capabilities.textDocument.completion.completionItem.snippetSupport;
     try self.s.source_dirs.add(sa, self.root_path);
     self.config.client = params.capabilities;
 
