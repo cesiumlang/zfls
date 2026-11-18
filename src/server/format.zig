@@ -27,7 +27,7 @@ const Server = srv.Server;
 
 const is_windows = builtin.target.os.tag == .windows;
 /// A formatter run that takes longer is stopped
-const timeout_s = 30;
+pub const timeout_s = 30;
 
 pub const Formatter = enum {
     findent,
@@ -45,7 +45,7 @@ pub const Formatter = enum {
     }
 
     /// How to install it, for the message when it is missing
-    fn installHint(f: Formatter) []const u8 {
+    pub fn installHint(f: Formatter) []const u8 {
         return switch (f) {
             .findent => "`pip install findent` (or `conda install -c conda-forge findent`)",
             .fprettify => "`pip install fprettify` (or `conda install -c conda-forge fprettify`)",
@@ -250,7 +250,7 @@ fn writeInput(io: Io, file: Io.File, input: []const u8) void {
 
 /// The executables to try: `formatter_path` (a file, or a directory that
 /// holds the formatter), else the formatter's name, found on the PATH
-fn executables(self: *Server, a: Allocator, formatter: Formatter) ![]const []const u8 {
+pub fn executables(self: *Server, a: Allocator, formatter: Formatter) ![]const []const u8 {
     const name = @tagName(formatter);
     var configured = std.mem.trim(u8, self.s.formatter_path orelse "", " ");
     // Codee's formatter is the `codee` of the checks, unless formatter_path

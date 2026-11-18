@@ -20,6 +20,7 @@ import { registerPfunitTests } from "./pfunitTests";
 import { registerIfxSetup } from "./ifxSetup";
 import { registerDebugType } from "./debugType";
 import { registerModuleVariables } from "./moduleVariablesView";
+import { registerConvertCommands } from "./convertForm";
 
 import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
 import { appliesLive, ServerSettings } from "./settingsSync";
@@ -53,6 +54,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerIfxSetup(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
   registerDebugType(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
   registerModuleVariables(context, clientForUri);
+  registerConvertCommands(context, clientForUri);
   context.subscriptions.push(
     output,
     vscode.commands.registerCommand("zfls.linter.lint", () => lintActive()),

@@ -67,6 +67,7 @@ export async function run(): Promise<void> {
   checkLanguageContributions();
   await checkConfigSchema();
   await checkCompilerDiagnostics();
+  await checkConvertForm();
 }
 
 // The snippets are packaged for both languages. (VS Code's snippet service in
@@ -152,6 +153,31 @@ async function checkCompilerDiagnostics(): Promise<void> {
   assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith(".mod") || f.endsWith(".o")), "files written beside the source");
   await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
   console.log(`gfortran diagnostics shown: ${found[0].message}`);
+}
+
+// Fortran: Convert to Free Form writes name.f90 beside a fixed-form file
+// and opens it (where the runner has findent).
+async function checkConvertForm(): Promise<void> {
+  const commands = await vscode.commands.getCommands(true);
+  assert.ok(commands.includes("zfls.convertToFreeForm") && commands.includes("zfls.convertToFixedForm"), "conversion commands");
+  if (!findExecutable("findent")) {
+    console.log("no findent on the PATH: the conversion not checked");
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-convert-"));
+  const file = path.join(dir, "old.f");
+  fs.writeFileSync(file, ["C     a comment", "      program old", "      x = 1 +", "     &    2", "      end", ""].join("\n"));
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  assert.strictEqual(doc.languageId, "FortranFixedForm");
+  await vscode.commands.executeCommand("zfls.convertToFreeForm");
+  const converted = path.join(dir, "old.f90");
+  await poll("old.f90", async () => (fs.existsSync(converted) ? true : undefined));
+  const text = fs.readFileSync(converted, "utf8");
+  assert.match(text, /program old/i);
+  assert.match(text, /&/);
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  console.log("findent converted old.f to old.f90");
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {

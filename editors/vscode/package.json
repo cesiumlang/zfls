@@ -985,6 +985,16 @@
         "category": "%command.category%"
       },
       {
+        "command": "zfls.convertToFreeForm",
+        "title": "%command.zfls.convertToFreeForm.title%",
+        "category": "%command.category.fortran%"
+      },
+      {
+        "command": "zfls.convertToFixedForm",
+        "title": "%command.zfls.convertToFixedForm.title%",
+        "category": "%command.category.fortran%"
+      },
+      {
         "command": "zfls.linter.clear",
         "title": "%command.zfls.linter.clear.title%",
         "category": "%command.category%"
@@ -1025,6 +1035,14 @@
         {
           "command": "zfls.setUpIfx",
           "when": "isWindows"
+        },
+        {
+          "command": "zfls.convertToFreeForm",
+          "when": "editorLangId == FortranFixedForm && resourceScheme == file"
+        },
+        {
+          "command": "zfls.convertToFixedForm",
+          "when": "editorLangId == FortranFreeForm && resourceScheme == file"
         },
         {
           "command": "zfls.runFile",

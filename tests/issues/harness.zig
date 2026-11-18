@@ -144,6 +144,9 @@ pub const Options = struct {
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
+    /// the client creates files in workspace edits
+    /// (`workspace.workspaceEdit.resourceOperations`)
+    create_files: bool = false,
     /// the workspace is opened through this machine's administrative share
     /// (`\\localhost\c$\...`, as `file://localhost/c%24/...`), the way a
     /// folder on a network share is (a test is skipped off Windows and
@@ -232,6 +235,7 @@ pub const Workspace = struct {
                 .rangeFormatting = dynamic,
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .workspaceEdit = .{ .resourceOperations = if (opts.create_files) &[_][]const u8{"create"} else &[_][]const u8{} },
             } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
