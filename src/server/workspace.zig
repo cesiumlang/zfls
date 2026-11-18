@@ -67,6 +67,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);
     self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
+    try logOptions(self, a);
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
     const on = configuration.wanted(self);
@@ -84,8 +85,8 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
 }
 
 /// The names of the configuration file, the first found being read
-pub fn configFileNames(self: *const Server) [4][]const u8 {
-    return .{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
+pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames("")) {
+    return settings_mod.configFileNames(self.s.config);
 }
 
 /// Reads the configuration file: its JSON object (owned by the server's
@@ -191,6 +192,13 @@ pub fn configLogger(self: *Server) !void {
         self.log.openFile(self.io, fname);
         try self.post_messages.append(self.gpa, .{ .severity = C.Severity.info, .message = "fortls debugging enabled" });
     }
+}
+
+/// The options in effect, after the command line, the editor's settings,
+/// the configuration file and the build files, in the debug log
+pub fn logOptions(self: *Server, a: Allocator) Allocator.Error!void {
+    if (!self.log.enabled(.debug)) return;
+    self.log.debug("Final options: {s}", .{try json.stringify(a, try settings_mod.toJson(a, &self.s))});
 }
 
 pub fn loadIntrinsics(self: *Server) !void {
