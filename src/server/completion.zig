@@ -276,7 +276,9 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, cl.curr, ac_char, true)) orelse return .null;
     const var_stack = try helpers.getVarStack(a, line_prefix);
     const is_member = var_stack.len > 1;
-    var var_prefix = str.strip(var_stack[var_stack.len - 1]);
+    // after a space no name is begun (`use `, not `use`)
+    const after_space = line_prefix.len > 0 and std.ascii.isWhitespace(line_prefix[line_prefix.len - 1]);
+    var var_prefix = if (after_space and !is_member) "" else str.strip(var_stack[var_stack.len - 1]);
     const typed_prefix = var_prefix;
 
     var item_list: std.ArrayList(lsp.CompletionItem) = .empty;
@@ -289,7 +291,21 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         if (c.alone or lc.ctx == .skip) return json.from(a, c.items);
         try item_list.appendSlice(a, c.items);
     };
-    if (lc.ctx == .skip or (var_prefix.len == 0 and !is_member)) return .null;
+    if (lc.ctx == .skip) return .null;
+    // a name of the entity list of a declaration: the dummy arguments of
+    // the procedure that are not declared yet, first, and with nothing
+    // typed alone (#270)
+    const entity = !is_member and entityNameAt(lc.ctx, line_prefix);
+    if (entity) {
+        try undeclaredArgItems(a, ast, ac_line, typed_prefix, &item_list);
+        if (typed_prefix.len == 0) return if (item_list.items.len > 0) json.from(a, item_list.items) else .null;
+    }
+    // with nothing typed, only where the names are few and wanted (#283)
+    const short_list = switch (lc.ctx) {
+        .mod_mems, .mod_only, .type_only, .int_only, .import, .vis => true,
+        else => false,
+    };
+    if (var_prefix.len == 0 and !is_member and !short_list) return if (item_list.items.len > 0) json.from(a, item_list.items) else .null;
     if (self.s.autocomplete_no_prefix) var_prefix = "";
 
     var scope_list: []const *Obj = &.{};
@@ -305,6 +321,8 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         scope_list = try ast.getScopes(a, ac_line + 1);
     }
     var req_callable = false;
+    // the names an ONLY list has already
+    var listed: []const []const u8 = &.{};
     var abstract_only = false;
     var no_use = false;
     var type_mask = setTypeMask(false);
@@ -330,6 +348,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             public_only = true;
             include_globals = false;
             type_mask.remove(.class);
+            listed = try onlyListed(a, line_prefix);
         },
         .pro_link => {
             type_mask = setTypeMask(true);
@@ -401,10 +420,15 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         else => {},
     }
     if (lc.ctx == .default and !is_member) try keywordArgItems(self, a, file, ast, ac_line, ac_char, &item_list);
+    // no intrinsics nor global names for nothing typed
+    if (typed_prefix.len == 0) include_globals = false;
     const cands = try getCandidates(self, a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
-    for (cands.objs, cands.renames) |cand, rename| {
+    next: for (cands.objs, cands.renames) |cand, rename| {
         const ctype = cand.getType(false);
         if (type_mask.contains(ctype)) continue;
+        // the name being typed, which this declaration declares
+        if (entity and cand.kind == .variable and cand.file_ast == ast and cand.sline == ac_line + 1 and std.ascii.eqlIgnoreCase(cand.name, typed_prefix)) continue;
+        for (listed) |l| if (std.ascii.eqlIgnoreCase(l, cand.name)) continue :next;
         if (req_callable and !cand.isCallable()) continue;
         var name_replace = rename;
         if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
@@ -429,6 +453,70 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         else => {},
     };
     return json.from(a, item_list.items);
+}
+
+/// Whether the end of `line`, in line context `ctx`, is a name of the
+/// entity list of a declaration (`real :: a, b`, `real x`), not its type,
+/// attributes or an initialization
+fn entityNameAt(ctx: parser.LineContext, line: []const u8) bool {
+    const colons = std.mem.findLast(u8, line, "::");
+    switch (ctx) {
+        .var_only => {},
+        .var_key => if (colons == null) return false,
+        else => return false,
+    }
+    var list = if (colons) |c| line[c + 2 ..] else line;
+    var depth: usize = 0;
+    var i = list.len;
+    while (i > 0) : (i -= 1) switch (list[i - 1]) {
+        ')', ']' => depth += 1,
+        '(', '[' => depth -|= 1,
+        ',' => if (depth == 0) break,
+        else => {},
+    };
+    list = list[i..];
+    // the old form: the name after the type
+    if (colons == null and i == 0) list = list[(std.mem.findScalarLast(u8, str.rstrip(list), ' ') orelse return false) + 1 ..];
+    for (str.strip(list)) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_')) return false;
+    return true;
+}
+
+/// The dummy arguments starting with `prefix` of the procedure at 0-based
+/// `line` that have no declaration (those `argument-not-declared` reports),
+/// sorted first
+fn undeclaredArgItems(a: Allocator, ast: *Ast, line: usize, prefix: []const u8, items: *std.ArrayList(lsp.CompletionItem)) !void {
+    const proc = ast.getInnerScope(line + 1) orelse return;
+    if (proc.kind != .subroutine and proc.kind != .function) return;
+    const names = try str.split(a, proc.argList(), ",");
+    for (proc.procDataConst().arg_objs.items, 0..) |arg, i| {
+        if (arg != null or i >= names.len) continue;
+        const name = str.strip(names[i]);
+        // alternate returns
+        if (name.len == 0 or name[0] == '*') continue;
+        if (!std.ascii.startsWithIgnoreCase(name, prefix)) continue;
+        try items.append(a, .{
+            .label = name,
+            .kind = 6,
+            .detail = "argument not declared",
+            .sortText = try std.mem.concat(a, u8, &.{ "0", name }),
+        });
+    }
+}
+
+/// The names of the module an ONLY list (at the end of `line`) has before
+/// the one being written: `alpha` of `use m, only: alpha, a => beta, al`
+/// and `beta`
+fn onlyListed(a: Allocator, line: []const u8) ![]const []const u8 {
+    const u = ((try parser.readUseStmt(a, line)) orelse return &.{}).use;
+    if (u.only_list.len < 2) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    for (u.only_list[0 .. u.only_list.len - 1]) |local| {
+        const original = for (u.renames) |r| {
+            if (std.mem.eql(u8, r[0], local)) break r[1];
+        } else local;
+        try out.append(a, original);
+    }
+    return out.items;
 }
 
 /// The modules a USE statement can bring names in from: those of the
