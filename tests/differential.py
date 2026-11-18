@@ -288,6 +288,12 @@ def zfls_only_item(item) -> bool:
     return str(item.get("label", "")).endswith("=") and "filterText" in item
 
 
+def two_forms_item(item) -> bool:
+    """A completion item of an intrinsic whose table entry has two
+    argument lists (`THIS_IMAGE`)."""
+    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
+
+
 def normalize(v):
     """Drop details that legitimately differ between the servers."""
     if isinstance(v, dict):
@@ -660,6 +666,11 @@ def main() -> int:
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls does not
                 b = [x for x in b if not zfls_only_item(x)]
+            if kind == "completion":
+                # an intrinsic with two forms completes to one of them
+                # (#245); fortls's snippet mixes them
+                a = [x for x in a if not two_forms_item(x)] if isinstance(a, list) else a
+                b = [x for x in b if not two_forms_item(x)] if isinstance(b, list) else b
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway
