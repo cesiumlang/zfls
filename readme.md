@@ -1064,6 +1064,12 @@ zfls deliberately differs from fortls in a few places:
   (fortls PR #562).
 - `SUBMODULE (ancestor:parent) name` is named `name` and extends its parent
   submodule (and through it the ancestor module); fortls names it `parent`.
+- A main program without a `PROGRAM` statement (the statements before an
+  `END` outside every program unit) is a program unit named `main` in the
+  outline, its `IMPLICIT` and `CONTAINS` apply to it, and the procedures
+  after its `END` are external ones. fortls reports its `IMPLICIT` as
+  outside any scope and each procedure after it as defined before
+  `CONTAINS`.
 - Of several scopes that open on one line (`do i = 1, n; associate (p => a(i))`),
   the last is the innermost, so the names it declares are found; fortls uses
   the first.
