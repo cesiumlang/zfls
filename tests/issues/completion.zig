@@ -227,3 +227,109 @@ test "type hierarchy: the type a type extends, and the types that extend it" {
     try std.testing.expectEqual(@as(usize, 0), (try w.typeHierarchy(from_var, false)).len);
     try std.testing.expectEqualStrings("feature_ext", (try w.typeHierarchy(from_var, true))[0]);
 }
+
+const empty_prefix = [_]h.File{
+    .{ .name = "mymod.f90", .text =
+    \\module mymod
+    \\implicit none
+    \\private
+    \\integer, public :: alpha_one, alpha_two
+    \\integer :: alpha_hidden
+    \\type, public :: shape_t
+    \\end type shape_t
+    \\end module mymod
+    \\
+    },
+    // the space at the end of a line is where the cursor is
+    .{ .name = "use.f90", .text = "subroutine s()\n" ++
+        "use mymod, only: \n" ++
+        "implicit none\n" ++
+        "end subroutine s\n" ++
+        "subroutine t()\n" ++
+        "use mymod, only: alpha_one, \n" ++
+        "implicit none\n" ++
+        "end subroutine t\n" ++
+        "subroutine u()\n" ++
+        "use mymod, only: al\n" ++
+        "implicit none\n" ++
+        "end subroutine u\n" ++
+        "subroutine v()\n" ++
+        "use \n" ++
+        "implicit none\n" ++
+        "type(\n" ++
+        "end subroutine v\n" ++
+        "subroutine w()\n" ++
+        "use mymod, only: a => alpha_one, \n" ++
+        "implicit none\n" ++
+        "end subroutine w\n" ++
+        "subroutine x(n)\n" ++
+        "use mymod\n" ++
+        "implicit none\n" ++
+        "integer :: n\n" ++
+        "type(\n" ++
+        "\n" ++
+        "n = \n" ++
+        "call x( \n" ++
+        "end subroutine x\n" },
+};
+
+/// The labels completion gives at the end of line `line` (0-based) of
+/// use.f90, or null when it answers null
+fn atEnd(w: *h.Workspace, line: i64) !?[]const []const u8 {
+    const text = w.text("use.f90");
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var n: i64 = 0;
+    const content = while (it.next()) |l| : (n += 1) {
+        if (n == line) break l;
+    } else "";
+    const v = try w.server.dispatchPublic(w.arena.allocator(), "textDocument/completion", try h.json.from(w.arena.allocator(), .{
+        .textDocument = .{ .uri = try w.uri("use.f90") },
+        .position = .{ .line = line, .character = content.len },
+    }));
+    if (v == .null) return null;
+    var out: std.ArrayList([]const u8) = .empty;
+    for (h.json.items(v)) |item| try out.append(w.arena.allocator(), h.json.str(h.json.get(item, "label")) orelse "");
+    return out.items;
+}
+
+fn sameSet(got: []const []const u8, want: []const []const u8) bool {
+    if (got.len != want.len) return false;
+    for (want) |x| if (!has(got, x)) return false;
+    return true;
+}
+
+fn expectEmptyPrefix(w: *h.Workspace) !void {
+    // after `only:`, the module's public names
+    var got = (try atEnd(w, 1)) orelse return h.unmet("only: null", .{});
+    try h.expect(sameSet(got, &.{ "alpha_one", "alpha_two", "shape_t" }), "only: {any}", .{got});
+    // after a comma, the names not listed yet
+    got = (try atEnd(w, 5)) orelse return h.unmet("only: alpha_one, null", .{});
+    try h.expect(sameSet(got, &.{ "alpha_two", "shape_t" }), "only: alpha_one, {any}", .{got});
+    // as before with a prefix
+    got = (try atEnd(w, 9)) orelse return h.unmet("only: al null", .{});
+    try h.expect(sameSet(got, &.{ "alpha_one", "alpha_two" }), "only: al {any}", .{got});
+    // the modules after `use`
+    got = (try atEnd(w, 13)) orelse return h.unmet("use: null", .{});
+    try h.expect(has(got, "mymod"), "use: {any}", .{got});
+    // a renamed name is listed
+    got = (try atEnd(w, 18)) orelse return h.unmet("only: a => alpha_one, null", .{});
+    try h.expect(sameSet(got, &.{ "alpha_two", "shape_t" }), "only: a => alpha_one, {any}", .{got});
+    // the types in scope after `type(`
+    got = (try atEnd(w, 25)) orelse return h.unmet("type( null", .{});
+    try h.expect(sameSet(got, &.{"shape_t"}), "type(: {any}", .{got});
+    got = (try atEnd(w, 15)) orelse return h.unmet("type( in v: null", .{});
+    try h.expect(got.len == 0, "type( in v: {any}", .{got});
+    // elsewhere still null: the start of a statement, after `=`, in a call
+    for ([_]i64{ 26, 27, 28 }) |line| {
+        if (try atEnd(w, line)) |g| return h.unmet("line {d}: {any}", .{ line, g });
+    }
+}
+
+test "#283 completion with nothing typed after only:, use and type(" {
+    const w = try h.Workspace.init(&empty_prefix, .{});
+    defer w.deinit();
+    expectEmptyPrefix(w) catch |e| {
+        std.debug.print("{s}\n", .{h.lastNote()});
+        return e;
+    };
+}

@@ -25,6 +25,10 @@ pub const Kw = enum(u8) {
     abstract,
     external,
     codimension,
+    @"volatile",
+    asynchronous,
+    protected,
+    value,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {

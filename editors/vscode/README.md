@@ -87,6 +87,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.maxCommentLineLength` | `-1` (off) | Warn about longer comment lines |
 | `zfls.fixedFormLineLength` | `72` | Columns of code in a fixed-form line (80 or 132 for longer cards); the rest is shown as a comment |
 | `zfls.fixedFormCommentCharacter` | `!` | The character **Toggle Line Comment** (`Ctrl+/`) puts in column 1 of a fixed-form line: `C`, `c` or `*` (`!`: VS Code's own toggle) |
+| `zfls.fixedFormDLines` | `comment` | How a fixed-form line with `D` or `d` in column 1 (a debug line) is read: as a `comment`, or as `code`; zfls reads it so, and the compiler check passes the option that reads it so (gfortran `-fd-lines-as-code`, Intel `-d-lines`) unless `zfls.linter.extraArgs` has one |
 | `zfls.configFile` | empty | Configuration file instead of `.fortlsrc` / `.fortls.json` / `.fortls` |
 | `zfls.sourceDirs` | the workspace folder | Folders with source files (globs allowed) |
 | `zfls.includeDirs` | none | Folders searched for `#include` and `INCLUDE` files |
@@ -319,7 +320,7 @@ next formatting; turning formatting off restarts the server, so that
 VS Code stops offering it. In `zfls.formatting.path` and the argument settings,
 `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
 `${env:NAME}` and a leading `~` are expanded; an argument with a space in
-it becomes two.
+it stays one.
 
 **Format Selection** formats the whole lines the selection touches. The
 formatter sees only those lines, not the surrounding code: findent starts
