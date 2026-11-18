@@ -1,7 +1,8 @@
 //! The compiler check (`compiler_diagnostics`) with LFortran: the modules a
 //! file uses compiled so that their .mod files exist (#177), implicit
 //! typing and interfaces as the standard has them (#178), every error
-//! (#179). With a real LFortran; skipped where it is not on the PATH.
+//! (#179), messages without a location (#180). With a real LFortran;
+//! skipped where it is not on the PATH.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -129,4 +130,11 @@ test "LFortran: every error, not only the first (#179)" {
     defer std.testing.allocator.free(sent);
     try expectIn(sent, "Variable 'abc' is not declared", true);
     try expectIn(sent, "Variable 'def' is not declared", true);
+}
+
+test "LFortran: messages without a file, line and column are published (#180)" {
+    const sent = (try lfortranDiagnostics(&.{errors}, errors.name, ", \"compiler_args\": [\"--bogus\"]")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(sent);
+    try expectIn(sent, "The following argument was not expected: --bogus", true);
+    try expectIn(sent, "Run with --help", false);
 }

@@ -496,9 +496,26 @@ const Parser = struct {
         // `--error-format=short`: `file:line-endline:col-endcol: severity
         // [code]: message`, or without a location `severity: message`
         const r = try p.re("^(?:(?P<file>.+?):(?P<ls>\\d+)-(?P<le>\\d+):(?P<cs>\\d+)-(?P<ce>\\d+): )?(?P<sev>(?:[\\w ]*error)|warning|note|help|style suggestion)(?: \\[(?P<code>[^\\]]+)\\])?: (?P<msg>.*)$", .{});
+        // the other lines are messages too, without a location: about the
+        // command line ("The following argument was not expected: --x",
+        // "Cannot use --disable-implicit-typing and --implicit-typing at
+        // the same time"), a file that cannot be opened, an internal
+        // error. The lines of one (a traceback) go together, up to an
+        // empty line or a message of the format above.
+        var free: std.ArrayList(u8) = .empty;
         var it = lines(output);
         while (it.next()) |raw| {
-            const m = r.match(trimCr(raw)) orelse continue;
+            const text = std.mem.trimEnd(u8, trimCr(raw), " \t");
+            const m = r.match(text) orelse {
+                if (text.len == 0) {
+                    try p.unlocated(&free);
+                } else if (!lfortranNoise(text)) {
+                    if (free.items.len > 0) try free.append(p.a, '\n');
+                    try free.appendSlice(p.a, text);
+                }
+                continue;
+            };
+            try p.unlocated(&free);
             const sev_text = m.named(r, "sev").?;
             const sev: Severity = if (std.mem.eql(u8, sev_text, "warning")) .warning else if (std.mem.eql(u8, sev_text, "note")) .info else if (std.mem.eql(u8, sev_text, "help") or std.mem.eql(u8, sev_text, "style suggestion")) .hint else .@"error";
             try p.push(m.named(r, "file"), if (m.named(r, "ls")) |s| num(s) else 0, numOpt(m.named(r, "cs")), sev, m.named(r, "msg").?, m.named(r, "code"));
@@ -508,6 +525,22 @@ const Parser = struct {
                 last.end_column = numOpt(m.named(r, "ce"));
             }
         }
+        try p.unlocated(&free);
+    }
+
+    /// The lines gathered in `free`, as one error without a location
+    fn unlocated(p: *Parser, free: *std.ArrayList(u8)) !void {
+        if (free.items.len == 0) return;
+        try p.push(null, 0, null, .@"error", try free.toOwnedSlice(p.a), null);
+    }
+
+    /// LFortran's lines that are no message: the advice after a
+    /// command-line error, and the request for reports after the messages
+    /// of its human format
+    fn lfortranNoise(text: []const u8) bool {
+        return std.mem.eql(u8, text, "Run with --help for more information.") or
+            std.mem.startsWith(u8, text, "Note: Please report unclear") or
+            std.mem.startsWith(u8, text, "https://github.com/lfortran/lfortran/issues");
     }
 
     // --- NVIDIA nvfortran -----------------------------------------------------
@@ -693,12 +726,43 @@ test "lfortran messages" {
         \\test.f90:8-8:3-3: warning: The variable 'x' is used before it is set
         \\test.f90:9-9:3-9: style suggestion: Use '**' instead
         \\C preprocessor error: cannot open 'x.h'
+        \\pp.F90:2-2:11-19: C preprocessor error: Include file 'nothere.h' not found.
+        \\C:\w\a b.f90:3-3:3-13: semantic error: Function 'ext' not found (not user defined nor intrinsic)
+        \\semantic error: no main program found; cannot build an executable.
     , &.{
         "test.f90:3:5 error: Variable 'abc' is not declared",
         "test.f90:5:1 error: Token 'end' is unexpected here",
         "test.f90:8:3 warning: The variable 'x' is used before it is set",
         "test.f90:9:3 hint: Use '**' instead",
         "-:0:- error: cannot open 'x.h'",
+        "pp.F90:2:11 error: Include file 'nothere.h' not found.",
+        "C:\\w\\a b.f90:3:3 error: Function 'ext' not found (not user defined nor intrinsic)",
+        "-:0:- error: no main program found; cannot build an executable.",
+    });
+}
+
+test "lfortran messages without a location" {
+    // as LFortran 0.69 prints them
+    try expectBrief(.lfortran, "The following argument was not expected: --bogus\r\nRun with --help for more information.\r\n", &.{
+        "-:0:- error: The following argument was not expected: --bogus",
+    });
+    try expectBrief(.lfortran,
+        \\The option `--std=f77` is not supported
+        \\error: no such file or directory: 'nofile.f90'
+        \\File 'incdir' cannot be opened.
+        \\Cannot use --disable-implicit-typing and --implicit-typing at the same time
+        \\
+        \\Internal Compiler Error: Unhandled exception
+        \\Traceback (most recent call last):
+        \\  File "lfortran.cpp", line 10
+        \\a.f90:1-1:1-1: semantic error: x
+        \\
+    , &.{
+        "-:0:- error: The option `--std=f77` is not supported",
+        "-:0:- error: no such file or directory: 'nofile.f90'",
+        "-:0:- error: File 'incdir' cannot be opened.\nCannot use --disable-implicit-typing and --implicit-typing at the same time",
+        "-:0:- error: Internal Compiler Error: Unhandled exception\nTraceback (most recent call last):\n  File \"lfortran.cpp\", line 10",
+        "a.f90:1:1 error: x",
     });
 }
 

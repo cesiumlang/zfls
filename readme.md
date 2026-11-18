@@ -551,7 +551,11 @@ zfls reads the compiler's messages in English, so it runs the compiler (and
 fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a
 compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
-says so once and logs that output.
+says so once and logs that output. A message without a file and line (a bad
+option, a file the compiler cannot open) is published at the top of the
+file; for LFortran that is every line of its output that is not
+`file:lines:columns: severity: message`, such as an internal error and its
+traceback.
 
 A compiler run that takes longer than 120 seconds is stopped, with the
 processes it started (a driver's compiler proper, such as gfortran's
