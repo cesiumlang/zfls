@@ -60,6 +60,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
+| [#309](https://github.com/fortran-lang/fortls/issues/309) | Intel's `!DEC$ IF DEFINED` / `!DIR$ IF` branches not taken are skipped: no false "declared twice", hover shows the declaration in effect | intel_directives | fixed (feature) | every branch read |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
 | [#301](https://github.com/fortran-lang/fortls/issues/301) | `INCLUDE` statement searched in `include_dirs`, go to definition on it | workspace | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |

@@ -98,6 +98,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.excludeSuffixes` | none | File extensions not to index |
 | `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
+| `zfls.disableIntelDirectives` | `false` | Read Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`) as comments, every branch included |
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling Modern Fortran when both are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |

@@ -213,7 +213,7 @@ pub fn loadIntrinsics(self: *Server) !void {
 }
 
 pub fn parseOptions(self: *const Server) parser.Options {
-    return .{ .sort_keywords = self.s.sort_keywords };
+    return .{ .sort_keywords = self.s.sort_keywords, .intel_directives = !self.s.disable_intel_directives };
 }
 
 pub fn addSourceDirs(self: *Server, a: Allocator) !void {

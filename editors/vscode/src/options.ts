@@ -51,6 +51,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
   { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list" },
   { setting: "ppDefs", flag: "--pp_defs", kind: "json" },
+  { setting: "disableIntelDirectives", flag: "--disable_intel_directives", kind: "flag" },
   { setting: "diagnosticSeverity", flag: "--diagnostic_severity", kind: "json" },
   { setting: "externalModules", flag: "--external_modules", kind: "list" },
 ];

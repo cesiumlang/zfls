@@ -25,6 +25,7 @@ fn R() *const patterns.Patterns {
 const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
 const openmp = @import("parser/openmp.zig");
+const pp_intel = @import("preprocessor/intel.zig");
 
 /// The suffixes of free-form source, in either case (CUDA Fortran's `.cuf`
 /// too)
@@ -72,6 +73,9 @@ pub const Trace = struct {
 pub const Options = struct {
     /// Order the keywords of a definition by id (`--sort_keywords`)
     sort_keywords: bool = false,
+    /// Honor Intel's conditional compilation directives (`!DEC$ IF`,
+    /// preprocessor/intel.zig)
+    intel_directives: bool = true,
     trace: ?Trace = null,
 };
 
@@ -733,14 +737,32 @@ pub const FortranFile = struct {
     pub fn prepare(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !?pp.Output {
         if (self.preproc) {
             Trace.print(opts.trace, "=== PreProc Pass ===\n", .{});
-            const out = try self.preprocess(io, defs, include_dirs, opts.trace);
+            var out = try self.preprocess(io, defs, include_dirs, opts.trace);
             Trace.print(opts.trace, "\n=== Parsing Pass ===\n", .{});
+            if (opts.intel_directives) try self.addIntelSkips(&out, defs);
             return out;
         }
         Trace.print(opts.trace, "=== No PreProc ===\n", .{});
         self.pp_lines = null;
         self.pp_skips = &.{};
-        return null;
+        if (!opts.intel_directives) return null;
+        // the Intel conditionals alone: no macros, no includes
+        _ = self.pp_arena.reset(.free_all);
+        self.pp_defs = .empty;
+        var out: pp.Output = .{ .lines = self.lines.items, .skips = &.{}, .defines = &.{}, .includes = &.{}, .defs = .empty };
+        try self.addIntelSkips(&out, defs);
+        return if (out.skips.len > 0) out else null;
+    }
+
+    /// Adds to `out` (and `pp_skips`) the branches that Intel's conditional
+    /// compilation directives (`!DEC$ IF DEFINED (X)`) leave out, after the
+    /// C preprocessor's
+    fn addIntelSkips(self: *FortranFile, out: *pp.Output, defs: ?*const pp.Defs) !void {
+        const a = self.pp_arena.allocator();
+        const extra = (try pp_intel.branchSkips(a, self.lines.items, self.fixed, defs, out.skips)) orelse return;
+        if (extra.len == 0) return;
+        out.skips = try std.mem.concat(a, pp.Skip, &.{ out.skips, extra });
+        self.pp_skips = out.skips;
     }
 
     /// A hash of all that parsing reads, `prepared` and `opts` included,

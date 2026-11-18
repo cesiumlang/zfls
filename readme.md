@@ -63,7 +63,9 @@ command line options and configuration files.
   the language `FortranNamelist`): an outline of their groups and the
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
-  macros, `#include`)
+  macros, `#include`), and Intel's conditional compilation directives
+  (`!DEC$ IF DEFINED (X)`, `!DIR$ IF (expr)`; see
+  [Intel conditional compilation](#intel-conditional-compilation))
 - Documentation for intrinsic procedures (with the specific names, such as
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
@@ -502,6 +504,25 @@ compiler check sees them as code only with the OpenMP flag in
 `compiler_args` (`-fopenmp`, `-qopenmp`). The VS Code grammar still colors
 them as comments, under the semantic highlighting of their names.
 
+### Intel conditional compilation
+
+Intel Fortran has conditional compilation in directive comments, which the
+compiler honors without `-fpp`: `!DEC$ IF DEFINED (sym)`, `!DIR$ IF (expr)`,
+`ELSEIF (expr)` (or `ELSE IF`), `ELSE`, `ENDIF` (or `END IF`), and
+`DEFINE sym [= value]` and `UNDEFINE sym`, which change the symbols for the
+rest of the file. The prefix is `!DEC$` or `!DIR$` in any case (in fixed form
+`!`, `C`, `c` or `*` in column 1: `CDEC$`). zfls skips the branches they
+leave out, in every Fortran file and after the C preprocessor's `#if`, as it
+does those of `#if`: they are not parsed (no false "declared twice", the
+declaration in effect in hover), are shown inactive, and fold. Conditions
+take the Fortran operators (`.AND.`, `.OR.`, `.NOT.`, `.EQ.` ... `.GE.`,
+`==`, `/=`, ...) and `DEFINED(sym)`. Symbols come from `pp_defs` and the
+`-D` flags of `compile_commands.json`, and are not case-sensitive.
+`#define` does not define them, as for the compiler. Other directives
+(`!DIR$ ATTRIBUTES`, `!DIR$ IVDEP`) stay comments.
+`disable_intel_directives` (`zfls.disableIntelDirectives` in VS Code) reads
+every branch, as before.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
@@ -815,6 +836,11 @@ zfls deliberately differs from fortls in a few places:
   Fortran #17); fortls reads them as comments, so its references and
   rename leave them out. `disable_openmp_conditional` reads them as fortls
   does.
+- Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`,
+  `!DIR$ IF (expr)`) leave their branches not taken out of parsing, as
+  `#if` does, in every file (FL #309); fortls reads every branch, which
+  gives false "declared twice" errors. `disable_intel_directives` reads
+  them as fortls does.
 - On Windows, a folder on a UNC path, as a network share or
   `\\wsl.localhost\...` is, is served: its URIs
   (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`

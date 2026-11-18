@@ -13,6 +13,7 @@ test {
     _ = @import("documents.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
+    _ = @import("intel_directives.zig");
     _ = @import("language.zig");
     _ = @import("navigation.zig");
     _ = @import("openmp.zig");
