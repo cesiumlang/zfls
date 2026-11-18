@@ -87,6 +87,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.maxCommentLineLength` | `-1` (off) | Warn about longer comment lines |
 | `zfls.fixedFormLineLength` | `72` | Columns of code in a fixed-form line (80 or 132 for longer cards); the rest is shown as a comment |
 | `zfls.fixedFormCommentCharacter` | `!` | The character **Toggle Line Comment** (`Ctrl+/`) puts in column 1 of a fixed-form line: `C`, `c` or `*` (`!`: VS Code's own toggle) |
+| `zfls.fixedFormDLines` | `comment` | How a fixed-form line with `D` or `d` in column 1 (a debug line) is read: as a `comment`, or as `code`; zfls reads it so, and the compiler check passes the option that reads it so (gfortran `-fd-lines-as-code`, Intel `-d-lines`) unless `zfls.linter.extraArgs` has one |
 | `zfls.configFile` | empty | Configuration file instead of `.fortlsrc` / `.fortls.json` / `.fortls` |
 | `zfls.sourceDirs` | the workspace folder | Folders with source files (globs allowed) |
 | `zfls.includeDirs` | none | Folders searched for `#include` and `INCLUDE` files |

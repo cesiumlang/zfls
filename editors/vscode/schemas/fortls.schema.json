@@ -50,6 +50,13 @@
       "uniqueItems": true,
       "default": []
     },
+    "d_lines": {
+      "description": "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "nthreads": {
       "description": "Number of threads to use during workspace initialization (default: 4)",
       "type": "integer",

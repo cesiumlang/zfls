@@ -8,6 +8,7 @@ test {
     _ = @import("constructs.zig");
     _ = @import("corpus.zig");
     _ = @import("debugging.zig");
+    _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
     _ = @import("documents.zig");
     _ = @import("highlighting.zig");

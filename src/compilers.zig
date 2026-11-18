@@ -129,6 +129,31 @@ pub fn fixedForm(id: Id, o: Options) []const []const u8 {
     };
 }
 
+/// How a fixed-form file's debug lines (D or d in column 1) are read, as
+/// zfls reads them (`d_lines`): as code or as comments. gfortran rejects
+/// them without an option; LFortran has none.
+pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
+    return switch (id) {
+        .gfortran, .flang => if (code) &.{"-fd-lines-as-code"} else &.{"-fd-lines-as-comments"},
+        .ifx, .ifort => if (o.windows)
+            (if (code) &.{"/d-lines"} else &.{"/nod-lines"})
+        else
+            (if (code) &.{"-d-lines"} else &.{"-nod-lines"}),
+        .nvfortran => if (code) &.{"-Mdlines"} else &.{"-Mnodlines"},
+        // comments by default
+        .nagfor => if (code) &.{"-d_lines"} else &.{},
+        .lfortran => &.{},
+    };
+}
+
+/// Whether `arg` of `compiler_args` says how debug lines are read, which
+/// `dLines` then leaves to it
+pub fn isDLinesArg(arg: []const u8) bool {
+    const names = [_][]const u8{ "-fd-lines-as-code", "-fd-lines-as-comments", "-d-lines", "-nod-lines", "/d-lines", "/nod-lines", "-Mdlines", "-Mnodlines", "-d_lines" };
+    for (names) |n| if (std.ascii.eqlIgnoreCase(arg, n)) return true;
+    return false;
+}
+
 /// The arguments when `compiler_args` is not set
 pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
     return switch (id) {
@@ -451,6 +476,16 @@ fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
     const got = try brief(a, try parse(a, id, output));
     try std.testing.expectEqual(want.len, got.len);
     for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "the arguments for debug lines: as zfls reads them, unless the user's say" {
+    const o: Options = .{ .windows = false, .mod_dir = "m" };
+    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(.gfortran, true, o)[0]);
+    try std.testing.expectEqualStrings("-fd-lines-as-comments", dLines(.gfortran, false, o)[0]);
+    try std.testing.expectEqualStrings("-d-lines", dLines(.ifx, true, o)[0]);
+    try std.testing.expectEqualStrings("/nod-lines", dLines(.ifort, false, .{ .windows = true, .mod_dir = "m" })[0]);
+    try std.testing.expectEqual(@as(usize, 0), dLines(.lfortran, true, o).len);
+    try std.testing.expect(isDLinesArg("-fd-lines-as-code") and isDLinesArg("/D-Lines") and !isDLinesArg("-Wall"));
 }
 
 test "gfortran one-line messages" {

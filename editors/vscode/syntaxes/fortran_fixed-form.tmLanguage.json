@@ -7,6 +7,9 @@
     "source.fortran.fixed - ( string | comment )": {
       "patterns": [
         {
+          "include": "#debug-line"
+        },
+        {
           "include": "#line-header"
         }
       ]
@@ -36,6 +39,9 @@
       ]
     },
     {
+      "include": "#debug-line"
+    },
+    {
       "include": "#line-header"
     },
     {
@@ -57,8 +63,13 @@
         }
       ]
     },
+    "debug-line": {
+      "comment": "D or d in column 1: a debug line, which compilers read as a comment or as code by an option (zfls's d_lines; its semantic tokens make the line a comment when it is one)",
+      "match": "^[dD]",
+      "name": "comment.line.debug.fortran"
+    },
     "line-header": {
-      "match": "^(?!\\s*[!#])(?:([ \\d]{5} )|( {5}.)|(\\t)|(.{1,5}))",
+      "match": "^(?![dD]|\\s*[!#])(?:([ \\d]{5} )|( {5}.)|(\\t)|(.{1,5}))",
       "captures": {
         "1": {
           "name": "constant.numeric.fortran"
