@@ -465,6 +465,26 @@ jobs:
           echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
           echo "GDB=$MSYS2_LOCATION\\ucrt64\\bin\\gdb.exe" >> "$GITHUB_ENV"
 
+      # LFortran from conda-forge, for the tests of the compiler check with a
+      # real compiler: tests/issues/compiler_lfortran.zig (in the unit
+      # tests) and tests/compiler_check.zig. Only `lfortran` goes on the
+      # PATH, not its environment's other programs
+      - name: LFortran (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          mkdir -p "$mm" "$RUNNER_TEMP/lfortran-bin"
+          for wait in 15 30 60 0; do
+            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$mm" bin/micromamba &&
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          ln -s "$RUNNER_TEMP/lfortran/bin/lfortran" "$RUNNER_TEMP/lfortran-bin/lfortran"
+          "$RUNNER_TEMP/lfortran-bin/lfortran" --version
+          echo "$RUNNER_TEMP/lfortran-bin" >> "$GITHUB_PATH"
+
       - name: Unit tests
         run: zig build test --summary failures
 
@@ -523,6 +543,12 @@ jobs:
         env:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
+
+      # the compiler check of the release binary with LFortran, on files of
+      # tests/compiler
+      - name: The compiler check with LFortran (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS"
 
       - name: Version under test
         run: |

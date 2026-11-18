@@ -738,6 +738,7 @@ is and zfls shows the error once (`window/showMessage`).
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
+| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
@@ -756,6 +757,10 @@ default or `-Dfortls=PATH` (the stress test takes its test sources, else
 own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
 required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+The compiler check's test (and `tests/issues/compiler_lfortran.zig`) needs
+`lfortran` on the `PATH` (`--lfortran EXE` or `LFORTRAN` for the driver),
+from conda-forge (`pixi add lfortran`, `conda install -c conda-forge
+lfortran`), and is skipped without it; CI runs it on Linux x64.
 
 `zig build bench` times zfls on a large workspace (workspace
 initialization, request latency, edits, memory), and fortls too when
