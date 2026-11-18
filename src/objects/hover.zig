@@ -267,10 +267,11 @@ pub fn getSignatures(self: *const Obj, a: Allocator) Allocator.Error![]const Obj
 /// The signature of intrinsic `self` with the argument list `args`
 fn intrinsicSignature(self: *const Obj, a: Allocator, args: []const u8) Allocator.Error!Obj.Signature {
     var arg_sigs: std.ArrayList(Obj.ArgSig) = .empty;
+    // without arguments one empty parameter, as fortls has
+    const list = try str.split(a, args, ",");
+    for (list) |arg| try arg_sigs.append(a, .{ .label = arg });
     var call: []const u8 = try std.mem.concat(a, u8, &.{ self.name, "()" });
     if (args.len > 0) {
-        const list = try str.split(a, args, ",");
-        for (list) |arg| try arg_sigs.append(a, .{ .label = arg });
         call = try std.mem.concat(a, u8, &.{ self.name, (try helpers.getPlaceholders(a, list))[0] });
     } else if (self.intrinsicData().itype == C.keyword_itype or self.intrinsicData().itype == C.statement_itype) {
         return .{ .doc = self.doc_str };
