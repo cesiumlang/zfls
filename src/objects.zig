@@ -41,6 +41,7 @@ pub const InnerScopes = objects_ast.InnerScopes;
 pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
+pub const findThroughUse = objects_resolve.findThroughUse;
 pub const findInWorkspace = objects_resolve.findInWorkspace;
 pub const declaredProcedure = objects_resolve.declaredProcedure;
 pub const findSymbolsInWorkspace = objects_resolve.findSymbolsInWorkspace;
@@ -118,6 +119,17 @@ pub const UseStmt = struct {
         for (only) |o| try u.only_list.add(a, try std.ascii.allocLowerString(a, o));
         for (renames) |r| try u.rename_map.put(a, try std.ascii.allocLowerString(a, r[0]), try std.ascii.allocLowerString(a, r[1]));
         return u;
+    }
+
+    /// The name in the used module of what this statement makes `local`
+    /// (lowercase) in the scope that has it, or null when it does not make
+    /// `local` a name there
+    pub fn nameThere(self: *const UseStmt, local: []const u8) ?[]const u8 {
+        if (self.only_list.len() > 0 and !self.only_list.contains(local)) return null;
+        if (self.rename_map.get(local)) |name| return name;
+        // without ONLY, a renamed entity is not accessible under its own name
+        if (self.only_list.len() == 0 and self.rename_map.hasValue(local)) return null;
+        return local;
     }
 
     /// Rename ONLY:, statements
@@ -236,6 +248,10 @@ pub const Scope = struct {
     /// Inherited children: of a type from its parent type, of a procedure
     /// from the submodule prototype it implements
     in_children: std.ArrayList(*Obj) = .empty,
+    /// The names (lowercase) its PUBLIC and PRIVATE statements list: for
+    /// those it has by USE, which have no object of their own to mark
+    public_names: std.ArrayList([]const u8) = .empty,
+    private_names: std.ArrayList([]const u8) = .empty,
     ext: ScopeExt = .none,
     /// `children` by name, for lookups (objects/index.zig)
     index: objects_index.ChildIndex = .{},

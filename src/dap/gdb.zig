@@ -12,6 +12,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
+const stdio = @import("../stdio.zig");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
@@ -222,7 +223,7 @@ fn readErrors(s: *Session, file: Io.File, gen: u32) void {
     while (true) {
         const n = file.readStreaming(s.io, &.{&buf}) catch break;
         if (n == 0) continue;
-        Io.File.stderr().writeStreamingAll(s.io, buf[0..n]) catch {};
+        stdio.stderr().writeStreamingAll(s.io, buf[0..n]) catch {};
         s.queue.mutex.lockUncancelable(s.io);
         defer s.queue.mutex.unlock(s.io);
         if (gen != s.g.gen) continue;

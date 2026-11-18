@@ -34,6 +34,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
+const stdio = @import("../stdio.zig");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
@@ -183,7 +184,7 @@ pub const Session = struct {
         s.seq += 1;
         const body = json.stringify(a, v) catch return 0;
         const framed = jsonrpc.frame(a, body) catch return 0;
-        Io.File.stdout().writeStreamingAll(s.io, framed) catch {};
+        stdio.stdout().writeStreamingAll(s.io, framed) catch {};
         return seq;
     }
 
@@ -293,11 +294,11 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         } else if (std.mem.eql(u8, arg, "--text") and i + 1 < args.len) {
             i += 1;
             s.text = Text.parse(options_arena.allocator(), args[i]) catch {
-                try Io.File.stderr().writeStreamingAll(io, "zfls dap: --text needs a JSON object\n");
+                try stdio.stderr().writeStreamingAll(io, "zfls dap: --text needs a JSON object\n");
                 return 2;
             };
         } else {
-            try Io.File.stderr().writeStreamingAll(io, "usage: zfls dap [--gdb PATH] [--dbgeng] [--text JSON]\n");
+            try stdio.stderr().writeStreamingAll(io, "usage: zfls dap [--gdb PATH] [--dbgeng] [--text JSON]\n");
             return 2;
         }
     }
@@ -362,7 +363,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
 
 fn readRequests(s: *Session) void {
     var buf: [64 * 1024]u8 = undefined;
-    var reader = Io.File.stdin().readerStreaming(s.io, &buf);
+    var reader = stdio.stdin().readerStreaming(s.io, &buf);
     // the session may end while this thread still waits for the client:
     // not `gpa`'s, whose leaks are counted at the end
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
