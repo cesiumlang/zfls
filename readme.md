@@ -776,16 +776,19 @@ zfls deliberately differs from fortls in a few places:
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
   with a quick fix removing a declaration of that name only. A name counts
-  as used when it appears anywhere else in the scope, contained procedures
-  and inactive preprocessor branches included; dummy arguments, function
-  results and module names are not reported. fortls has no such check.
+  as used when it appears anywhere else in the scope, contained procedures,
+  inactive preprocessor branches and the values of the macros used there
+  included; dummy arguments, function results and module names are not
+  reported. fortls has no such check.
 - `workspace_diagnostics` publishes the diagnostics of every workspace file
   after initialization, and again when a saved or changed file changes
   them, so that editors list the problems of files that are not open; a
   deleted file's are cleared. fortls only checks open files.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
-  fortls only checks the types named in declarations. It is left out where
+  fortls only checks the types named in declarations. A line with macros is
+  read with them expanded, as the compiler reads it, and a name is reported
+  where it is written (`CHECK(nope)`). It is left out where
   a USE statement names a module that is not in the workspace, or in a
   scope with an INCLUDE whose file is not found or that continues a
   statement, as the name could come from those.

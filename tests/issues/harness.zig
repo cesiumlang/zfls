@@ -102,7 +102,7 @@ fn record(repo: Repo, issue: u32, status: Status, why: []const u8) void {
 
 pub const Pos = struct { line: i64, col: i64 };
 
-pub const Diagnostic = struct { line: i64, severity: i64, message: []const u8, code: []const u8 = "" };
+pub const Diagnostic = struct { line: i64, severity: i64, message: []const u8, code: []const u8 = "", col: i64 = -1 };
 
 pub const Location = struct { uri: []const u8, line: i64, col: i64 };
 
@@ -377,6 +377,7 @@ pub const Workspace = struct {
                 .severity = json.int(json.get(d, "severity")) orelse 0,
                 .message = json.str(json.get(d, "message")) orelse "",
                 .code = json.str(json.get(d, "code")) orelse "",
+                .col = json.int(json.path(d, &.{ "range", "start", "character" })) orelse -1,
             });
         }
         return out.items;

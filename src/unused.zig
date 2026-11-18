@@ -98,7 +98,9 @@ fn isArgOrResult(scope: *const Obj, c: *const Obj) bool {
 }
 
 /// How many times each word (lowercase) occurs in the code of 0-based lines
-/// `first`..`last`; null when they include a file, whose code may use names
+/// `first`..`last`, with their macros expanded (a name in a macro's value is
+/// used where the macro is); null when they include a file, whose code may
+/// use names
 fn wordCounts(a: Allocator, file: *const FortranFile, first: usize, last: usize) !?std.StringHashMapUnmanaged(usize) {
     var counts: std.StringHashMapUnmanaged(usize) = .empty;
     var ln = first;
@@ -107,7 +109,7 @@ fn wordCounts(a: Allocator, file: *const FortranFile, first: usize, last: usize)
         if (helpers.isComment(file.fixed, raw)) continue;
         const t = std.mem.trimStart(u8, raw, " \t");
         if (std.ascii.startsWithIgnoreCase(t, "include") or std.mem.startsWith(u8, t, "#") and std.mem.find(u8, t, "include") != null) return null;
-        var code = try helpers.stripStrings(a, raw, true);
+        var code = try helpers.stripStrings(a, file.getLine(ln, true) orelse raw, true);
         if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
         var it = helpers.words(code);
         while (it.next()) |w| {

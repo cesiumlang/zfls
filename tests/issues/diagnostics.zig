@@ -653,6 +653,59 @@ test "hansec #129 names that are not declared under IMPLICIT NONE" {
     try h.checkIn(.hansec, 129, .fixed, expectUndeclared(w));
 }
 
+const macro_names = [_]h.File{.{ .name = "a.F90", .text =
+    \\#define MYPURE pure
+    \\#define MYREAL real(8)
+    \\#define CHECK(A) if (A /= 0) print *, tag, A
+    \\module m
+    \\  implicit none
+    \\contains
+    \\  MYPURE function twice(a) result(x)
+    \\    MYREAL, intent(in) :: a
+    \\    MYREAL :: x
+    \\    x = 2 * a
+    \\  end function
+    \\  subroutine s(status)
+    \\    integer, intent(in) :: status
+    \\    character(len=*), parameter :: tag = "s"
+    \\    integer :: never_used
+    \\    CHECK(status)
+    \\  end subroutine
+    \\  subroutine t(c)
+    \\    MYREAL, intent(in) :: c
+    \\    character(len=*), parameter :: tag = "t"
+    \\    print *, b + c
+    \\    CHECK(nope)
+    \\  end subroutine
+    \\end module
+    \\
+}};
+
+test "the name checks read a line with macros as the compiler does, expanded (#227)" {
+    const w = try h.Workspace.init(&macro_names, .{});
+    defer w.deinit();
+    var got: std.ArrayList(h.Diagnostic) = .empty;
+    defer got.deinit(std.testing.allocator);
+    for (try w.diagnostics("a.F90")) |d| try got.append(std.testing.allocator, d);
+    // `b` and the argument of `CHECK(nope)`, where they are written, and
+    // the variable no macro uses
+    const want = [_]struct { []const u8, h.Pos }{
+        .{ "\"b\" is not declared", w.pos("a.F90", "b + c", 0, 0) },
+        .{ "\"nope\" is not declared", w.pos("a.F90", "nope", 0, 0) },
+        .{ "\"never_used\" is not used", w.pos("a.F90", "never_used", 0, 0) },
+    };
+    try std.testing.expectEqual(want.len, got.items.len);
+    for (want) |wd| {
+        const fragment, const p = wd;
+        for (got.items) |d| {
+            if (std.mem.find(u8, d.message, fragment) != null and d.line == p.line and d.col == p.col) break;
+        } else {
+            for (got.items) |d| std.debug.print("{d}:{d} {s}\n", .{ d.line, d.col, d.message });
+            return error.TestExpectedDiagnostic;
+        }
+    }
+}
+
 const unused_names = [_]h.File{
     .{ .name = "consts.f90", .text =
     \\module consts
