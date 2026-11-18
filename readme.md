@@ -995,6 +995,14 @@ zfls deliberately differs from fortls in a few places:
   that name. On the USE line, hover, definition and references on either
   name reach the module's entity (hansec #137); fortls only reads renames
   after `ONLY:` and has no answer on the original name.
+- References and document highlights on a name that USE statements rename
+  (`use base, only: loc => origin`) list its places under every name it
+  has, the original and the local ones. Rename changes only the name it
+  starts on: on a module's local name, also where the modules that use
+  that module name it, renaming it again (`use user, only: far => loc`)
+  or not. A name renamed in two modules in a row resolves with or
+  without `ONLY`. fortls lists only the places of the original name and
+  renames a local name only in the scope of its USE statement (fortls #52).
 - A module passes on the names it has by USE as the Fortran standard says:
   with `private` as its default, only those a `public` statement names, and
   never those a `private` statement names. fortls applies a module's

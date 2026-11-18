@@ -42,6 +42,7 @@ pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
 pub const findThroughUse = objects_resolve.findThroughUse;
+pub const comesThrough = objects_resolve.comesThrough;
 pub const findInWorkspace = objects_resolve.findInWorkspace;
 pub const findSymbolsInWorkspace = objects_resolve.findSymbolsInWorkspace;
 pub const climbTypeTree = objects_resolve.climbTypeTree;
