@@ -140,6 +140,11 @@
       "type": "boolean",
       "default": false
     },
+    "hover_plain_comments": {
+      "description": "Plain comments directly above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no !>, !< or !! documentation",
+      "type": "boolean",
+      "default": false
+    },
     "max_line_length": {
       "description": "Maximum line length (default: -1)",
       "type": "integer",

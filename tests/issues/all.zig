@@ -14,6 +14,7 @@ test {
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
     _ = @import("hover_types.zig");
+    _ = @import("plain_comments.zig");
     _ = @import("language.zig");
     _ = @import("navigation.zig");
     _ = @import("outline.zig");

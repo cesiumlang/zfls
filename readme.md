@@ -1014,6 +1014,15 @@ zfls deliberately differs from fortls in a few places:
   out, and after 20 lines the block ends with `...`. The
   `hover_no_type_components` option (`zfls.hoverNoTypeComponents`) turns
   it off. fortls shows only `TYPE :: name` and the variable's declaration.
+- With the `hover_plain_comments` option (`zfls.hoverPlainComments`),
+  plain `!` comments document a declaration that has no `!>`, `!<` or `!!`
+  documentation, as legacy code (LAPACK and the like) is documented: the
+  block of comment lines directly above a procedure, type, module or
+  variable (`C` and `*` lines in fixed form), a comment at the end of its
+  line, and a block right under a procedure's header line. A blank line
+  between, directives (`!$omp`, `!dir$`) and rulers (`!-----`) are no
+  documentation. Hover, completion and signature help show it (hansec #44,
+  #37); fortls reads only `!>`, `!<` and `!!` comments.
 - A rename without `ONLY` (`use m, local => original`) is read: the local
   name is the module's entity and the original name is not visible under
   that name. On the USE line, hover, definition and references on either
