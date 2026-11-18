@@ -227,3 +227,101 @@ test "type hierarchy: the type a type extends, and the types that extend it" {
     try std.testing.expectEqual(@as(usize, 0), (try w.typeHierarchy(from_var, false)).len);
     try std.testing.expectEqualStrings("feature_ext", (try w.typeHierarchy(from_var, true))[0]);
 }
+
+const enums = [_]h.File{
+    .{ .name = "em.f90", .text =
+    \\module em
+    \\  implicit none
+    \\  enum, bind(c)
+    \\    enumerator :: red_color, green_color
+    \\    enumerator :: blue_color = 5
+    \\  end enum
+    \\  integer, parameter :: grey_color = 7
+    \\contains
+    \\  subroutine s()
+    \\    integer :: k
+    \\    k = gre
+    \\    k = green_color
+    \\  end subroutine
+    \\end module
+    \\program p
+    \\  use em
+    \\  implicit none
+    \\  integer :: j
+    \\  j = blu
+    \\end program p
+    \\
+    },
+    .{ .name = "only.f90", .text =
+    \\program q
+    \\  use em, only: blue_color
+    \\  implicit none
+    \\  integer :: j
+    \\  j = b
+    \\  j = r
+    \\end program q
+    \\program r
+    \\  use em, only: b => blue_color
+    \\  implicit none
+    \\  integer :: j
+    \\  j = b
+    \\end program r
+    \\
+    },
+    .{ .name = "hid.f90", .text =
+    \\module hid
+    \\  implicit none
+    \\  private
+    \\  enum, bind(c)
+    \\    enumerator :: red_one, red_two
+    \\  end enum
+    \\  public :: red_one
+    \\end module hid
+    \\program t
+    \\  use hid
+    \\  implicit none
+    \\  integer :: j
+    \\  j = red
+    \\end program t
+    \\
+    },
+};
+
+fn count(items: []const []const u8, label: []const u8) usize {
+    var n: usize = 0;
+    for (items) |i| n += @intFromBool(std.mem.eql(u8, i, label));
+    return n;
+}
+
+fn expectEnumerators(w: *h.Workspace) !void {
+    // in the scope that declares them, beside a named constant
+    var items = try w.completion("em.f90", w.pos("em.f90", "k = gre", 0, 7));
+    try h.expect(count(items, "green_color") == 1 and count(items, "grey_color") == 1, "k = gre: {any}", .{items});
+    // through USE
+    items = try w.completion("em.f90", w.pos("em.f90", "j = blu", 0, 7));
+    try h.expect(count(items, "blue_color") == 1, "j = blu: {any}", .{items});
+    // as a named constant is
+    const gre = try w.completionItems("em.f90", w.pos("em.f90", "k = gre", 0, 7));
+    const green = find(gre, "green_color") orelse return h.unmet("no green_color", .{});
+    const grey = find(gre, "grey_color") orelse return h.unmet("no grey_color", .{});
+    try h.expect(std.mem.eql(u8, green.detail, grey.detail), "green_color: {s}, grey_color: {s}", .{ green.detail, grey.detail });
+    // an ONLY list, and a rename
+    items = try w.completion("only.f90", w.pos("only.f90", "j = b\n", 0, 5));
+    try h.expect(count(items, "blue_color") == 1, "only: blue_color: {any}", .{items});
+    items = try w.completion("only.f90", w.pos("only.f90", "j = r", 0, 5));
+    try h.expect(count(items, "red_color") == 0, "red_color is not in the ONLY list: {any}", .{items});
+    items = try w.completion("only.f90", w.pos("only.f90", "j = b\n", 1, 5));
+    try h.expect(count(items, "b") == 1 and count(items, "blue_color") == 0, "only: b => blue_color: {any}", .{items});
+    // a PRIVATE module, PUBLIC by name
+    items = try w.completion("hid.f90", w.pos("hid.f90", "j = red", 0, 7));
+    try h.expect(count(items, "red_one") == 1 and count(items, "red_two") == 0, "j = red: {any}", .{items});
+    // inside the ENUM, each once
+    items = try w.completion("hid.f90", w.pos("hid.f90", "red_two", 0, 3));
+    try h.expect(count(items, "red_one") <= 1 and count(items, "red_two") <= 1, "enumerator :: red: {any}", .{items});
+}
+
+test "#252 completion offers enumerators, in their scope and through USE" {
+    const w = try h.Workspace.init(&enums, .{});
+    defer w.deinit();
+    try h.checkIn(.hansec, 167, .fixed, expectEnumerators(w));
+}
