@@ -764,6 +764,12 @@ zfls deliberately differs from fortls in a few places:
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own
   signature (hansec #60); fortls shows none there.
+- In a structure constructor (`pt(1, 2)`), signature help shows the
+  type's data components, its parent's first, and with them the
+  procedures of a generic interface named like the type (hansec #148);
+  keyword completion offers both. A component with a default value is
+  optional, and outside the type's module a type with a private component
+  has no constructor signature. fortls shows none.
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.

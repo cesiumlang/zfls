@@ -12,6 +12,7 @@ const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const arguments = @import("../arguments.zig");
+const autouse = @import("../autouse.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -35,12 +36,24 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
     const arg_strings = call.args;
     // a generic interface: the signature of each of its procedures, the
     // first that takes the arguments so far active (fortls #6); an
-    // intrinsic with several forms: the signature of each
+    // intrinsic with several forms: the signature of each; a derived type:
+    // the procedures of the generic interface of its name and its
+    // structure constructor (hansec #148)
     var forms: std.ArrayList(Obj.Signature) = .empty;
-    if (vo.kind == .interface) {
-        for (vo.memList()) |member| try forms.append(a, try member.getSignature(a, null));
-    } else try forms.appendSlice(a, try vo.getSignatures(a));
-    if (forms.items.len > 1 or vo.kind == .interface) {
+    var generic = vo.kind == .interface;
+    switch (vo.kind) {
+        .interface => {
+            for (vo.memList()) |member| try forms.append(a, try member.getSignature(a, null));
+            if (arguments.namesake(vo, .type)) |t| if (try constructorSignature(a, ast, sig_line, t)) |s| try forms.append(a, s);
+        },
+        .type => {
+            generic = true;
+            if (arguments.namesake(vo, .interface)) |g| for (g.memList()) |member| try forms.append(a, try member.getSignature(a, null));
+            if (try constructorSignature(a, ast, sig_line, vo)) |s| try forms.append(a, s);
+        },
+        else => try forms.appendSlice(a, try vo.getSignatures(a)),
+    }
+    if (forms.items.len > 1 or generic) {
         var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
         var active: ?i64 = null;
         var active_size: usize = std.math.maxInt(usize);
@@ -50,7 +63,7 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
             info.activeParameter = s.param;
             // of a generic the smallest procedure, of an intrinsic its
             // first form
-            if (s.fits and (active == null or (vo.kind == .interface and s.size < active_size))) {
+            if (s.fits and (active == null or (generic and s.size < active_size))) {
                 active = @intCast(sigs.items.len);
                 active_size = s.size;
             }
@@ -66,6 +79,64 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
     }
     const s = (try signatureOf(self, a, vo, arg_strings)) orelse return .null;
     return json.from(a, lsp.SignatureHelp{ .signatures = &.{s.info}, .activeParameter = s.param });
+}
+
+/// The signature of the structure constructor of type `t` for a call at
+/// 0-based `line` of `ast`: its data components, those of the type it
+/// extends first, a component with a default value optional; null for an
+/// abstract type, or outside the type's module when a component is private
+fn constructorSignature(a: Allocator, ast: *Ast, line: usize, t: *Obj) !?Obj.Signature {
+    if (t.typeDataConst().abstract) return null;
+    const comps = try arguments.components(a, t);
+    const module = t.parent;
+    const inside = if (module) |m| (if (ast.getInnerScope(line + 1)) |s| t.file_ast == ast and autouse.isWithin(s, m) else false) else true;
+    const params = try a.alloc(Obj.ArgSig, comps.len);
+    var labels: std.ArrayList([]const u8) = .empty;
+    for (comps, params) |c, *p| {
+        const owner = c.parent orelse t;
+        const private = c.vis == .private or (owner.def_vis == .private and c.vis != .public);
+        if (private and !inside) return null;
+        const lname = try std.ascii.allocLowerString(a, c.name);
+        const label = if (hasDefault(c)) try a.print("{s}={s}", .{ lname, lname }) else lname;
+        p.* = .{ .label = label, .doc_md = try c.getHoverMd(a, false, null) };
+        try labels.append(a, label);
+    }
+    return .{
+        .label = try a.print("{s}({s})", .{ t.name, try std.mem.join(a, ", ", labels.items) }),
+        .doc = t.getDocumentation(),
+        .params = params,
+    };
+}
+
+/// Whether component `c` is declared with a default value (`= 0`,
+/// `=> null()`)
+fn hasDefault(c: *const Obj) bool {
+    const file = c.file_ast.file orelse return false;
+    const text = file.getLine(c.sline -| 1, false) orelse return false;
+    const after = if (std.mem.find(u8, text, "::")) |i| text[i + 2 ..] else text;
+    const r = helpers.findWordInLineIgnoreCase(after, c.name);
+    if (r.end < 0) return false;
+    var rest = str.lstrip(after[@intCast(r.end)..]);
+    // its shape, coshape, length
+    while (rest.len > 0 and (rest[0] == '(' or rest[0] == '[' or rest[0] == '*')) {
+        if (rest[0] == '*') {
+            rest = str.lstrip(rest[1..]);
+            var n: usize = 0;
+            while (n < rest.len and std.ascii.isAlphanumeric(rest[n])) n += 1;
+            rest = str.lstrip(rest[n..]);
+            continue;
+        }
+        var depth: usize = 0;
+        const close = for (rest, 0..) |ch, i| {
+            if (ch == '(' or ch == '[') depth += 1;
+            if (ch == ')' or ch == ']') {
+                depth -|= 1;
+                if (depth == 0) break i;
+            }
+        } else return false;
+        rest = str.lstrip(rest[close + 1 ..]);
+    }
+    return rest.len > 0 and rest[0] == '=';
 }
 
 /// The call whose argument list holds byte column `col` of 0-based line
