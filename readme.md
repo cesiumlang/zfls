@@ -968,6 +968,10 @@ zfls deliberately differs from fortls in a few places:
   `selected_real_kind`.
 - The `PARAMETER` statement (`parameter (n = 5)`) makes the variables it
   names constants, with their values; fortls ignores it.
+- A `BLOCK DATA` unit may end with `END` alone, as FORTRAN 77 sources end
+  it, and the outline lists it (an unnamed one as `BLOCK DATA`); fortls
+  reports the `END` as an unexpected end of scope. That error, where it
+  applies (a `BLOCK` construct closed by `END` alone), is on the `END` line.
 - An `ASSOCIATE` name bound to an array element or section shows the
   dimensions of that element or section; fortls shows those of the whole
   array.

@@ -719,3 +719,63 @@ test "unused local variables and USE ONLY names are shown faded, with a quick fi
     defer w.deinit();
     try expectUnused(w);
 }
+
+const block_data_end = [_]h.File{
+    .{ .name = "a.f90", .text =
+    \\block data bd
+    \\  common /blk/ testing
+    \\  data testing /1.0/
+    \\end
+    \\
+    },
+    .{ .name = "b.f", .text =
+    \\      BLOCK DATA
+    \\      COMMON /NOTHING/ TESTING
+    \\      DATA TESTING /1.0/
+    \\      END
+    \\      BLOCK DATA BD2
+    \\      COMMON /OTHER/ T2
+    \\      DATA T2 /2.0/
+    \\      END BLOCK DATA BD2
+    \\
+    },
+    // a BLOCK construct still needs END BLOCK
+    .{ .name = "c.f90", .text =
+    \\subroutine s
+    \\  block
+    \\    integer :: i
+    \\    i = 1
+    \\  end
+    \\end subroutine s
+    \\
+    },
+};
+
+fn expectBlockDataEnd(w: *h.Workspace) !void {
+    try w.expectNoDiagnostics("a.f90");
+    try w.expectNoDiagnostics("b.f");
+    const paths = try w.symbolPaths("a.f90");
+    try h.expect(paths.len == 1 and std.mem.eql(u8, paths[0], "bd"), "a.f90 outline: {any}", .{paths});
+    const fixed = try w.symbolPaths("b.f");
+    try h.expect(fixed.len == 2 and std.mem.eql(u8, fixed[0], "BLOCK DATA") and std.mem.eql(u8, fixed[1], "BD2"), "b.f outline: {any}", .{fixed});
+}
+
+test "hansec #182 a BLOCK DATA unit closed by END alone (#234)" {
+    const w = try h.Workspace.init(&block_data_end, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try h.checkIn(.hansec, 182, .fixed, expectBlockDataEnd(w));
+    // the error of a BLOCK closed by END alone is at the END
+    const ds = try w.diagnostics("c.f90");
+    try std.testing.expectEqual(@as(usize, 1), ds.len);
+    try std.testing.expectEqualStrings("Unexpected end of scope at line 5", ds[0].message);
+    try std.testing.expectEqual(@as(i64, 4), ds[0].line);
+}
+
+test "the flat outline lists BLOCK DATA units (#234)" {
+    const w = try h.Workspace.init(&block_data_end, .{});
+    defer w.deinit();
+    const names = try w.documentSymbols("b.f");
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try std.testing.expectEqualStrings("BLOCK DATA", names[0]);
+    try std.testing.expectEqualStrings("BD2", names[1]);
+}
