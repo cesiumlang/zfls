@@ -213,10 +213,11 @@ settings, the configuration file. A change applies at once:
 
 - One of the options that decide what is indexed (`source_dirs`,
   `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`,
-  `pp_defs`, `pp_suffixes`, `comment_markers`, `compile_commands`, ...)
-  indexes the workspace again, keeping the unsaved text of the open
-  documents. Set those in `initializationOptions` (Neovim's
-  `init_options`) to index once at start-up.
+  `pp_defs`, `pp_suffixes`, `comment_markers`, `d_lines`,
+  `compile_commands`, ...) indexes the workspace again, keeping the
+  unsaved text of the open documents. Set those in
+  `initializationOptions` (Neovim's `init_options`) to index once at
+  start-up.
 - Turning on signature help, code actions or formatting registers them
   with an editor that allows that (`client/registerCapability`); others are
   told to restart zfls. Turning one off makes it answer nothing.
@@ -504,6 +505,23 @@ compiler check sees them as code only with the OpenMP flag in
 `compiler_args` (`-fopenmp`, `-qopenmp`). The VS Code grammar still colors
 them as comments, under the semantic highlighting of their names.
 
+### Debug lines
+
+A fixed-form line with `D` or `d` in column 1 is a debug line (a DEC
+extension), which compilers read as a comment or as code by an option.
+`d_lines` says which: `comment` (the default) or `code`, where the `D` is
+a blank. zfls reads the lines so, the compiler check passes the compiler
+the option that reads them so (gfortran `-fd-lines-as-comments` /
+`-fd-lines-as-code`, Intel `-nod-lines` / `-d-lines`, flang's, nvfortran
+`-Mnodlines` / `-Mdlines`, nagfor `-d_lines`) unless `compiler_args`
+already has one, and a debug line read as a comment is a comment for the
+editor's highlighting (semantic tokens). In VS Code, `zfls.fixedFormDLines`
+sets it.
+
+```json
+{ "d_lines": "code" }
+```
+
 ### Intel conditional compilation
 
 Intel Fortran has conditional compilation in directive comments, which the
@@ -579,7 +597,11 @@ the open files that use them.
   nvfortran). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
   for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
-  string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
+  string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
+  list, which keeps an argument with a space whole:
+  `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
+  other options that are a program's arguments (`compiler_fypp_args`,
+  `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
