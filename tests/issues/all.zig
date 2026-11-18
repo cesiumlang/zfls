@@ -8,8 +8,11 @@ test {
     _ = @import("constructs.zig");
     _ = @import("corpus.zig");
     _ = @import("debugging.zig");
+    _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
+    _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("external.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
@@ -20,5 +23,6 @@ test {
     _ = @import("settings.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
+    _ = @import("use.zig");
     _ = @import("workspace.zig");
 }
