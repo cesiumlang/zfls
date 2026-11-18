@@ -191,7 +191,12 @@ const Tokenizer = struct {
 
     fn tokenizeLine(t: *Tokenizer, ln: usize) !void {
         const raw = t.file.getLine(ln, false) orelse return;
-        if (helpers.isComment(t.file.fixed, raw)) return;
+        if (helpers.isComment(t.file.fixed, raw)) {
+            // a debug line read as a comment (`d_lines`), which the grammar
+            // colors as code: a comment token over it
+            if (t.file.fixed and (raw[0] == 'd' or raw[0] == 'D') and t.unknown == null) try t.add(ln, raw, 0, raw.len, .{ .type = .comment });
+            return;
+        }
         const trimmed = std.mem.trimStart(u8, raw, " \t");
         if (trimmed.len > 0 and trimmed[0] == '#') return;
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
