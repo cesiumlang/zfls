@@ -45,6 +45,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   module variables, stopping on Fortran runtime errors (see
   [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the
   other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
+- code lenses: the number of references above each module, procedure and
+  derived type (click it for the references), and **Run** and **Debug**
+  above a program
 - run and debug the current file with one click (see
   [Running and debugging](#running-and-debugging))
 - fpm projects: tasks, running and debugging their targets, and their tests
@@ -77,6 +80,8 @@ disable Modern Fortran when you install zfls (see
 | `zfls.autocompleteNoAutoUse` | `false` | Do not offer names of modules not used yet (completing one adds its `use` statement) |
 | `zfls.sortKeywords` | `false` | Sort variable keywords in hover |
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
+| `zfls.codeLensNoReferences` | `false` | No reference counts above modules, procedures and types (`editor.codeLens` turns off every lens) |
+| `zfls.codeLensNoRun` | `false` | No **Run** and **Debug** above a program |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |

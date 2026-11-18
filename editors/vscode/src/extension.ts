@@ -20,6 +20,7 @@ import { registerPfunitTests } from "./pfunitTests";
 import { registerIfxSetup } from "./ifxSetup";
 import { registerDebugType } from "./debugType";
 import { registerModuleVariables } from "./moduleVariablesView";
+import { lensCommandsFeature, ProtocolPosition, referenceArgs } from "./codeLenses";
 
 import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
 import { appliesLive, ServerSettings } from "./settingsSync";
@@ -65,6 +66,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("zfls.showOutput", () => output?.show()),
     vscode.commands.registerCommand("zfls.showCompileOrder", () => showCompileOrder()),
     vscode.commands.registerCommand("zfls.toggleFixedFormComment", () => toggleFixedFormComment()),
+    vscode.commands.registerCommand("zfls.showReferences", (...args: unknown[]) => showReferences(args)),
     vscode.languages.registerDefinitionProvider(
       C_LANGUAGES.map((language) => ({ language })),
       { provideDefinition: fortranOfC },
@@ -95,6 +97,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await ensureClient(doc);
   }
   void checkModernFortran();
+}
+
+/** zfls.showReferences, the command of a reference count lens: VS Code's
+ * references peek at the lens */
+async function showReferences(args: unknown[]): Promise<void> {
+  const a = referenceArgs(args);
+  if (!a) {
+    return;
+  }
+  const position = (p: ProtocolPosition) => new vscode.Position(p.line, p.character);
+  const locations = a.locations.map(
+    (l) => new vscode.Location(vscode.Uri.parse(l.uri), new vscode.Range(position(l.range.start), position(l.range.end))),
+  );
+  await vscode.commands.executeCommand("editor.action.showReferences", vscode.Uri.parse(a.uri), position(a.position), locations);
 }
 
 /** The C declarations of the BIND(C) procedure at a position
@@ -626,6 +642,7 @@ async function startClient(
   };
   const name = folder ? `zfls (${folder.name})` : `zfls (${root.fsPath})`;
   const client = new LanguageClient("zfls", name, serverOptions, clientOptions);
+  client.registerFeature(lensCommandsFeature());
   try {
     await client.start();
   } catch (err) {

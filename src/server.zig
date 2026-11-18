@@ -48,6 +48,7 @@ const modvars = @import("server/modvars.zig");
 const tests = @import("server/tests.zig");
 const cache = @import("server/cache.zig");
 const clangd = @import("server/clangd.zig");
+const lenses = @import("server/lenses.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -108,6 +109,8 @@ pub const Server = struct {
     /// Every directory under the root is a source directory (no
     /// `source_dirs` option), so new ones are too
     whole_root: bool = false,
+    /// The commands of code lenses that the client runs (lenses.zig)
+    lens_commands: lenses.Commands = .{},
     post_messages: std.ArrayList(PostMessage) = .empty,
     src_ext_regex: regex.Regex,
     intr: intrinsics.Intrinsics,
@@ -359,6 +362,8 @@ pub const Server = struct {
         linked_editing,
         selection_range,
         document_link,
+        code_lens,
+        code_lens_resolve,
         on_type_formatting,
         formatting,
         range_formatting,
@@ -414,6 +419,8 @@ pub const Server = struct {
         .{ "textDocument/linkedEditingRange", .linked_editing },
         .{ "textDocument/selectionRange", .selection_range },
         .{ "textDocument/documentLink", .document_link },
+        .{ "textDocument/codeLens", .code_lens },
+        .{ "codeLens/resolve", .code_lens_resolve },
         .{ "textDocument/onTypeFormatting", .on_type_formatting },
         .{ "textDocument/formatting", .formatting },
         .{ "textDocument/rangeFormatting", .range_formatting },
@@ -471,6 +478,8 @@ pub const Server = struct {
             .linked_editing => references.serveLinkedEditing(self, a, try json.decode(lsp.PositionParams, a, params)),
             .selection_range => definition.serveSelectionRanges(self, a, try json.decode(lsp.SelectionRangeParams, a, params)),
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .code_lens => lenses.serveCodeLens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .code_lens_resolve => lenses.serveResolve(self, a, params),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
             .formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
             .range_formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
