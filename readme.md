@@ -210,10 +210,11 @@ settings, the configuration file. A change applies at once:
 
 - One of the options that decide what is indexed (`source_dirs`,
   `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`,
-  `pp_defs`, `pp_suffixes`, `comment_markers`, `compile_commands`, ...)
-  indexes the workspace again, keeping the unsaved text of the open
-  documents. Set those in `initializationOptions` (Neovim's
-  `init_options`) to index once at start-up.
+  `pp_defs`, `pp_suffixes`, `comment_markers`, `d_lines`,
+  `compile_commands`, ...) indexes the workspace again, keeping the
+  unsaved text of the open documents. Set those in
+  `initializationOptions` (Neovim's `init_options`) to index once at
+  start-up.
 - Turning on signature help, code actions or formatting registers them
   with an editor that allows that (`client/registerCapability`); others are
   told to restart zfls. Turning one off makes it answer nothing.
@@ -484,6 +485,23 @@ are not names and a quote in it does not start a string.
 
 In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
 those comments too, after a window reload.
+
+### Debug lines
+
+A fixed-form line with `D` or `d` in column 1 is a debug line (a DEC
+extension), which compilers read as a comment or as code by an option.
+`d_lines` says which: `comment` (the default) or `code`, where the `D` is
+a blank. zfls reads the lines so, the compiler check passes the compiler
+the option that reads them so (gfortran `-fd-lines-as-comments` /
+`-fd-lines-as-code`, Intel `-nod-lines` / `-d-lines`, flang's, nvfortran
+`-Mnodlines` / `-Mdlines`, nagfor `-d_lines`) unless `compiler_args`
+already has one, and a debug line read as a comment is a comment for the
+editor's highlighting (semantic tokens). In VS Code, `zfls.fixedFormDLines`
+sets it.
+
+```json
+{ "d_lines": "code" }
+```
 
 ### Diagnostics
 
