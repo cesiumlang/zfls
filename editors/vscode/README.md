@@ -535,7 +535,8 @@ release from its site); `zfls.fpm.path` says where when it is not on the
   `target`, `example`, `profile`, `compiler`, `flags`, `args`,
   `programArgs` and `cwd` (the project's directory in the folder). The
   compiler's errors appear in the Problems view (the problem matchers
-  `$zfls-gfortran` and `$zfls-intel`).
+  `$zfls-gfortran` and `$zfls-intel`); `build` and `install` run in the C
+  locale (`LC_ALL=C`), so that the compiler writes them in English.
 - **zfls: Run fpm Target** and **zfls: Debug fpm Target** offer the
   executables and examples (and, to debug, the tests) that fpm lists.
   Debugging builds the target with fpm, then starts the debugger of

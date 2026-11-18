@@ -219,10 +219,11 @@ pub const Output = struct { term: std.process.Child.Term, stdout: []u8, stderr: 
 
 /// Runs `argv` in `cwd` with `input` on its stdin, to its end or for
 /// `timeout_s` seconds
-pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: []const u8, input: []const u8, timeout_s: i64) !Output {
+pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: []const u8, env: ?*const std.process.Environ.Map, input: []const u8, timeout_s: i64) !Output {
     var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .path = cwd },
+        .environ_map = env,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -260,7 +261,7 @@ fn runJob(w: *Worker, job: *Job) !void {
         .codee => codee_timeout_s,
     };
     self.log.debug("{s}: {s} (in {s})", .{ @tagName(job.tool), try std.mem.join(a, " ", job.argv), job.cwd });
-    const out = runWithInput(a, self.io, job.argv, job.cwd, job.text, timeout) catch |e| switch (e) {
+    const out = runWithInput(a, self.io, job.argv, job.cwd, self.toolEnv(), job.text, timeout) catch |e| switch (e) {
         error.FileNotFound => {
             const i = @backingInt(job.tool);
             if (!w.reported_missing[i]) {
@@ -494,7 +495,7 @@ fn oneFile(a: Allocator, uri: []const u8, edits: []const lsp.TextEdit) !lsp.Work
 /// thread); null when fortitude failed
 fn fixAll(self: *Server, a: Allocator, path: []const u8, text: []const u8) !?[]const u8 {
     const argv = try fortitudeArgs(a, try executable(self, a, .fortitude), &.{"--fix-only"}, self.s.fortitude_args.slice(), path);
-    const out = runWithInput(a, self.io, argv, self.root_path, text, fortitude_timeout_s) catch |e| {
+    const out = runWithInput(a, self.io, argv, self.root_path, self.toolEnv(), text, fortitude_timeout_s) catch |e| {
         self.log.warn("fortitude --fix-only on {s}: {s}", .{ path, @errorName(e) });
         return null;
     };
