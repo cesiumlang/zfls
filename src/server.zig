@@ -41,6 +41,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const pending = @import("server/pending.zig");
 const format = @import("server/format.zig");
 const linters = @import("server/linters.zig");
 const bindc = @import("server/bindc.zig");
@@ -125,6 +126,10 @@ pub const Server = struct {
     diag_lock: Io.Mutex = .init,
     own_diags: std.StringHashMapUnmanaged([]u8) = .empty,
     external_diags: [@typeInfo(compile.Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8) = @splat(.empty),
+    /// The documents changed since zfls's diagnostics of them were
+    /// published, by URI, and when those are due (pending.zig: the awake
+    /// clock's nanoseconds); keys owned by `gpa`, under `diag_lock`
+    diag_pending: std.StringHashMapUnmanaged(i96) = .empty,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
     /// The formatting problems posted (hashes of their keys), each once
@@ -180,6 +185,7 @@ pub const Server = struct {
         compile.stop(self);
         linters.stop(self);
         compile.deinitStore(self);
+        pending.deinit(self);
         clangd.stop(self);
         bindc.deinitIndex(self);
         var c_it = self.c_docs.iterator();
@@ -533,6 +539,19 @@ pub const Server = struct {
 
     pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
         return diagnostics.getDiagnostics(self, a, uri);
+    }
+
+    /// When the diagnostics of a changed document are next due (the awake
+    /// clock's nanoseconds), for the loop that reads the messages to wait
+    /// no longer; null: none are
+    pub fn nextDiagnosticsTime(self: *Server) ?i96 {
+        return pending.next(self);
+    }
+
+    /// Publishes the diagnostics of changed documents due at `now` (null:
+    /// all of them)
+    pub fn publishPendingDiagnostics(self: *Server, a: Allocator, now: ?i96) void {
+        pending.publishDue(self, a, now);
     }
 
     pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {

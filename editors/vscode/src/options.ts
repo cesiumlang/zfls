@@ -35,6 +35,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
+  { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
   { setting: "nthreads", flag: "--nthreads", kind: "int", fallback: 4 },
   { setting: "maxLineLength", flag: "--max_line_length", kind: "int", fallback: -1 },

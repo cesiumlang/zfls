@@ -17,6 +17,7 @@
   "config.zfls.symbolSkipMembers.markdownDescription": "Leave type members out of document symbols (`--symbol_skip_mem`).",
   "config.zfls.disableDiagnostics.markdownDescription": "Turn off zfls's diagnostics (`--disable_diagnostics`).",
   "config.zfls.workspaceDiagnostics.markdownDescription": "Show the problems of every Fortran file of the workspace in the Problems panel, not only of the open ones (`--workspace_diagnostics`).",
+  "config.zfls.diagnosticsChangeDelay.markdownDescription": "Milliseconds without a change before zfls's diagnostics of a file that is edited are updated (`--diagnostics_change_delay`; 0: with each change).",
   "config.zfls.diagnosticSeverity.markdownDescription": "Severity of zfls's diagnostics by code, `off` to hide them (`--diagnostic_severity`), e.g. `{\"masks-parent\": \"off\"}`. The code of a diagnostic shows in the Problems panel. In the code, a comment `! zfls: disable=masks-parent` hides a code on its line (`! zfls: disable` every code), `! zfls: disable-next-line=...` on the next line, and `! zfls: disable-file=...` in the file.",
   "config.zfls.externalModules.markdownDescription": "Modules that are not in the project, such as those of MPI or PETSc, that `USE` statements may name without a \"not found\" diagnostic (`--external_modules`); glob patterns, case-insensitive, e.g. `[\"mpi\", \"petsc*\"]`.",
   "config.zfls.notifyInit.markdownDescription": "Show a notification when the workspace has been indexed (`--notify_init`).",
