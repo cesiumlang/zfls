@@ -442,15 +442,20 @@ fn commandOf(self: *Server, a: Allocator, file: *const FortranFile) !?project.Co
     return project.commandFor(a, &self.compile_commands, file.path);
 }
 
-/// The compiler's arguments for `file`: syntax only, its form, the
-/// preprocessor and zfls's definitions when zfls preprocesses it, the .mod
-/// directory, the include directories, then `compiler_args` (or the
-/// arguments of the file's command `cmd`, which has its own definitions,
-/// or the compiler's defaults) and the file
+/// The compiler's arguments for `file`: syntax only, its form and line
+/// length, the preprocessor and zfls's definitions when zfls preprocesses
+/// it, the .mod directory, the include directories, then `compiler_args`
+/// (or the arguments of the file's command `cmd`, which has its own
+/// definitions, or the compiler's defaults) and the file
 fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFile, cmd: ?project.Command, o: compilers.Options) ![]const []const u8 {
     var args: std.ArrayList([]const u8) = .empty;
     try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
     try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
+    // the line length zfls reads, unless `compiler_args` sets one
+    const user_sets = if (self.s.compiler_args) |user| for (user.slice()) |x| {
+        if (compilers.isLineLength(id, file.fixed, x)) break true;
+    } else false else false;
+    if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
     if (file.preproc) {
         try args.appendSlice(a, compilers.preprocess(id, o));
         if (cmd == null) for (self.s.pp_defs.items) |d| try args.append(a, try compilers.define(a, id, d.name, d.value, o));

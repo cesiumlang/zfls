@@ -21,4 +21,5 @@ test {
     _ = @import("parsing.zig");
     _ = @import("project.zig");
     _ = @import("workspace.zig");
+    _ = @import("compiler_line_length.zig");
 }
