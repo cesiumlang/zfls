@@ -78,20 +78,20 @@ pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_
             for (try use_info.rename(a)) |o| try only.add(a, o);
             var tmp: std.ArrayList(*Obj) = .empty;
             try childCandidates(a, scope, &only, true, abstract_only, &tmp);
-            if (use_info.rename_map.count() > 0) {
-                for (tmp.items) |obj| {
-                    try var_list.append(a, obj);
-                    var rev: ?[]const u8 = null;
-                    // reversed rename map (last key wins for duplicate values);
-                    // the values are lowercase
-                    for (use_info.rename_map.keys.items, use_info.rename_map.values.items) |k, v| {
-                        if (std.ascii.eqlIgnoreCase(v, obj.name)) rev = k;
-                    }
-                    try rename_list.append(a, rev);
+            for (tmp.items) |obj| {
+                var rev: ?[]const u8 = null;
+                // reversed rename map (last key wins for duplicate values);
+                // the values are lowercase
+                for (use_info.rename_map.keys.items, use_info.rename_map.values.items) |k, v| {
+                    if (std.ascii.eqlIgnoreCase(v, obj.name)) rev = k;
                 }
-            } else {
-                try var_list.appendSlice(a, tmp.items);
-                try rename_list.appendNTimes(a, null, tmp.items.len);
+                const local = rev orelse obj.name;
+                if (!std.ascii.startsWithIgnoreCase(local, var_prefix)) continue;
+                // a module that the USE tree passes through may keep it
+                // from the scopes (#235)
+                if (!try seenThroughUse(self, a, scope_list, local, public_only)) continue;
+                try var_list.append(a, obj);
+                try rename_list.append(a, rev);
             }
         } else {
             const scope = use_info.scope orelse continue;
@@ -126,6 +126,17 @@ pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_
         }
     }
     return .{ .objs = out_objs.items, .renames = out_renames.items };
+}
+
+/// Whether a name of a used module, `local` as the scopes have it, is one
+/// of theirs by USE; `outside`: as the users of the module that is the
+/// one scope see it
+fn seenThroughUse(self: *Server, a: Allocator, scope_list: []const *Obj, local: []const u8, outside: bool) !bool {
+    const lower = try std.ascii.allocLowerString(a, local);
+    for (scope_list) |s| {
+        if (try objects.findThroughUse(self.env(a), s, lower, outside) != null) return true;
+    }
+    return false;
 }
 
 /// The LSP completion item kind; the ids of the types that have no kind of
