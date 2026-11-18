@@ -20,7 +20,6 @@ const Ctx = struct {
     gpa: std.mem.Allocator,
     io: Io,
     s: settings.Settings,
-    inbox: Inbox,
     exit_code: u8 = 0,
 };
 
@@ -33,10 +32,13 @@ fn stdoutSend(ctx: ?*anyopaque, body: []const u8) void {
     out.writeStreamingAll(io.*, body) catch return;
 }
 
-/// The client's messages, read by a thread of its own, so that the server
-/// can wait for one only until the diagnostics of a changed document are
-/// due (`Server.nextDiagnosticsTime`). It lives as long as the process: the
-/// thread is in a read of the standard input when the server ends.
+/// The client's messages, read by a task of its own (`read`, an `Io`
+/// task), so that the server can wait for one only until the diagnostics
+/// of a changed document are due (`Server.nextDiagnosticsTime`). When the
+/// server ends, the input can still be open and the task in a read of it:
+/// the server cancels the task and waits for it to end (`runServer`), so
+/// that nothing the task uses is gone while it runs, nor the body of a
+/// message it was reading left allocated.
 const Inbox = struct {
     gpa: std.mem.Allocator,
     io: Io,
@@ -47,9 +49,9 @@ const Inbox = struct {
     /// The input has ended or failed (`failure`): no message follows
     ended: bool = false,
     failure: ?jsonrpc.ReadError = null,
-    /// The server has ended: what is read now is dropped
-    closed: bool = false,
 
+    /// Reads messages until the input ends or fails, or the task is
+    /// canceled (a failure of the read)
     fn read(inbox: *Inbox) void {
         const io = inbox.io;
         var read_buf: [64 * 1024]u8 = undefined;
@@ -67,10 +69,6 @@ const Inbox = struct {
                 inbox.ended = true;
                 return;
             };
-            if (inbox.closed) {
-                inbox.gpa.free(body);
-                return;
-            }
             inbox.queue.append(inbox.gpa, body) catch {
                 inbox.gpa.free(body);
                 inbox.failure = error.OutOfMemory;
@@ -102,12 +100,10 @@ const Inbox = struct {
         return !inbox.ended;
     }
 
-    fn close(inbox: *Inbox) void {
-        inbox.mutex.lockUncancelable(inbox.io);
-        defer inbox.mutex.unlock(inbox.io);
-        inbox.closed = true;
+    /// Once the task has ended
+    fn deinit(inbox: *Inbox) void {
         for (inbox.queue.items) |b| inbox.gpa.free(b);
-        inbox.queue.clearAndFree(inbox.gpa);
+        inbox.queue.deinit(inbox.gpa);
     }
 };
 
@@ -125,14 +121,18 @@ fn runServer(ctx: *Ctx) void {
     var io_copy = io;
     server.sink = .{ .ctx = @ptrCast(&io_copy), .sendFn = stdoutSend };
 
-    const inbox = &ctx.inbox;
-    defer inbox.close();
-    const reader = std.Thread.spawn(.{}, Inbox.read, .{inbox}) catch |e| {
+    var inbox_storage: Inbox = .{ .gpa = gpa, .io = io };
+    const inbox = &inbox_storage;
+    var reader = io.concurrent(Inbox.read, .{inbox}) catch |e| {
         log.err("failed to start server: {s}", .{@errorName(e)});
         ctx.exit_code = 1;
         return;
     };
-    reader.detach();
+    // the input can still be open after `exit`: the read is canceled
+    defer {
+        reader.cancel(io);
+        inbox.deinit();
+    }
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -243,7 +243,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var ctx: Ctx = .{ .gpa = gpa, .io = io, .s = s, .inbox = .{ .gpa = gpa, .io = io } };
+    var ctx: Ctx = .{ .gpa = gpa, .io = io, .s = s };
     // Run on a thread with a large stack: Fortran code can nest deeply and
     // name resolution is recursive.
     const th = try std.Thread.spawn(.{ .stack_size = 256 * 1024 * 1024 }, runServer, .{&ctx});
