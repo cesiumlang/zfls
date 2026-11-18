@@ -413,6 +413,16 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.fixedFormCommentCharacter.markdownDescription%"
         },
+        "zfls.fixedFormDLines": {
+          "type": "string",
+          "enum": [
+            "comment",
+            "code"
+          ],
+          "default": "comment",
+          "scope": "window",
+          "markdownDescription": "%config.zfls.fixedFormDLines.markdownDescription%"
+        },
         "zfls.configFile": {
           "type": "string",
           "default": "",

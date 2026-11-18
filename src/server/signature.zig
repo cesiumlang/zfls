@@ -122,6 +122,10 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
             break;
         };
     }
+    // the caller's own declaration of a procedure it calls (#232)
+    if (var_obj) |v| if (try objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, true)) |p| {
+        var_obj = p;
+    };
     return .{ .obj = var_obj orelse return null, .args = arg_strings };
 }
 

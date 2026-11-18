@@ -150,6 +150,8 @@ pub const Checker = struct {
     env: objects.Env,
     ast: *Ast,
     cache: std.StringHashMapUnmanaged(?*Obj) = .empty,
+    /// the workspace's files, for `objects.declaredProcedure`
+    files: []const *FortranFile,
     out: std.ArrayList(Problem) = .empty,
     /// the innermost scope of each line, found once
     inner: objects.InnerScopes,
@@ -202,7 +204,11 @@ pub const Checker = struct {
                 try c.member(scope, text[0..w.end], w.str)
             else
                 try c.lookup(scope, w.str, line_no);
-            const obj = callee_obj orelse continue;
+            var obj = callee_obj orelse continue;
+            // the caller's own declaration of a procedure it calls (#232)
+            if (!is_member) if (try objects.declaredProcedure(c.env, c.ast, c.files, obj, true)) |p| {
+                obj = p;
+            };
             var drop: ?usize = null;
             const proc = switch (obj.kind) {
                 .subroutine, .function => obj,
@@ -719,9 +725,10 @@ fn headerHasDirective(proc: *const Obj) bool {
     return false;
 }
 
-/// A checker for the arguments of single calls (`Checker.compare`)
+/// A checker for the arguments of single calls (`Checker.compare`); with no
+/// workspace files, which only serve the checks of a file's calls
 pub fn checker(a: Allocator, env: objects.Env, ast: *Ast) Checker {
-    return .{ .a = a, .env = env, .ast = ast, .inner = .{ .lines = &.{}, .none_scope = null } };
+    return .{ .a = a, .env = env, .ast = ast, .files = &.{}, .inner = .{ .lines = &.{}, .none_scope = null } };
 }
 
 /// The type of expression `expr` in `scope` (1-based `line_no`), as the
@@ -732,9 +739,10 @@ pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, e
     return c.exprType(expr, scope, line_no, 0);
 }
 
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) ![]const Problem {
+/// `files`: the workspace's
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile) ![]const Problem {
     const n = file.nLines();
-    var c: Checker = .{ .a = a, .env = env, .ast = ast, .inner = try ast.innerScopes(a, n) };
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n) };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);
