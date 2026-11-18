@@ -14,6 +14,7 @@ const UseStmt = objects.UseStmt;
 const StrSet = objects.StrSet;
 const StrMap = objects.StrMap;
 const Env = objects.Env;
+const index = @import("index.zig");
 
 /// Build the USE tree of a scope. `use_dict` maps module name -> merged USE.
 pub fn getUseTree(
@@ -116,27 +117,48 @@ pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_pu
         .variable, .method, .intrinsic => return null,
         else => &.{},
     };
-    for ([_][]const *Obj{ local_scope.childList(), inherited }) |list| for (list) |child| {
-        if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
-            if (try checkScope(env, child, name_lower, filter_public, null)) |v| return v;
-        }
-        // the enumerators of an ENUM are names of this scope, public or
-        // not as its own
-        if (child.kind == .enum_) for (child.childList()) |e| {
-            const e_private = e.vis == .private or (local_scope.def_vis == .private and e.vis != .public);
-            if (filter_public and e_private) continue;
-            if (std.ascii.eqlIgnoreCase(e.name, name_lower)) return e;
+    const own = local_scope.childList();
+    if (try index.of(local_scope)) |idx| {
+        // only the children where the name can be
+        var it = idx.find(name_lower);
+        while (it.next()) |i| switch (try checkChild(env, local_scope, own[i], name_lower, filter_public, var_line_number)) {
+            .next => {},
+            .found => |v| return v,
         };
-        const is_private = child.vis == .private or (local_scope.def_vis == .private and child.vis != .public);
-        if (filter_public and is_private) continue;
-        if (std.ascii.eqlIgnoreCase(child.name, name_lower)) {
-            if (local_scope.kind == .function and std.ascii.eqlIgnoreCase(local_scope.name, child.name)) {
-                if (var_line_number) |vl| if (vl == local_scope.sline or vl == local_scope.eline) return null;
-            }
-            return child;
-        }
+    } else for (own) |child| switch (try checkChild(env, local_scope, child, name_lower, filter_public, var_line_number)) {
+        .next => {},
+        .found => |v| return v,
+    };
+    for (inherited) |child| switch (try checkChild(env, local_scope, child, name_lower, filter_public, var_line_number)) {
+        .next => {},
+        .found => |v| return v,
     };
     return null;
+}
+
+/// What `checkScope` makes of one child: go on to the next, or answer
+const Step = union(enum) { next, found: ?*Obj };
+
+fn checkChild(env: Env, local_scope: *Obj, child: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!Step {
+    if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
+        if (try checkScope(env, child, name_lower, filter_public, null)) |v| return .{ .found = v };
+    }
+    // the enumerators of an ENUM are names of this scope, public or
+    // not as its own
+    if (child.kind == .enum_) for (child.childList()) |e| {
+        const e_private = e.vis == .private or (local_scope.def_vis == .private and e.vis != .public);
+        if (filter_public and e_private) continue;
+        if (std.ascii.eqlIgnoreCase(e.name, name_lower)) return .{ .found = e };
+    };
+    const is_private = child.vis == .private or (local_scope.def_vis == .private and child.vis != .public);
+    if (filter_public and is_private) return .next;
+    if (std.ascii.eqlIgnoreCase(child.name, name_lower)) {
+        if (local_scope.kind == .function and std.ascii.eqlIgnoreCase(local_scope.name, child.name)) {
+            if (var_line_number) |vl| if (vl == local_scope.sline or vl == local_scope.eline) return .{ .found = null };
+        }
+        return .{ .found = child };
+    }
+    return .next;
 }
 
 pub fn checkImportScope(scope: *const Obj, name_lower: []const u8) ?ImportType {
@@ -292,5 +314,111 @@ pub fn climbTypeTree(env: Env, var_stack: []const []const u8, curr_scope: ?*Obj)
         var_obj = (try findInScope(env, type_obj, name, .{ .local_only = true })) orelse return null;
     }
     // Python raises KeyError here
+    return null;
+}
+
+test "checkScope finds through a scope's index what walking its children finds (#209)" {
+    const gpa = std.testing.allocator;
+    @import("../patterns.zig").init();
+    const FortranFile = @import("../parser.zig").FortranFile;
+    var src: std.ArrayList(u8) = .empty;
+    defer src.deinit(gpa);
+    try src.appendSlice(gpa,
+        \\module big
+        \\  private
+        \\  public :: v1, v3, fres, Red, ext_f
+        \\  integer :: dup
+        \\  real, public :: DUP
+        \\  enum, bind(c)
+        \\    enumerator :: red = 1, green
+        \\  end enum
+        \\  interface
+        \\    function ext_f(x)
+        \\      real :: x, ext_f
+        \\    end function
+        \\    subroutine ext_s()
+        \\    end subroutine
+        \\  end interface
+        \\
+    );
+    for (0..40) |i| try src.print(gpa, "  integer :: v{d}\n", .{i});
+    try src.appendSlice(gpa,
+        \\contains
+        \\  function fres(a)
+        \\    integer :: a, fres
+        \\
+    );
+    for (0..40) |i| try src.print(gpa, "    integer :: w{d}\n", .{i});
+    try src.appendSlice(gpa,
+        \\    fres = a
+        \\  end function fres
+        \\end module big
+        \\
+    );
+    const f = try FortranFile.create(gpa, "/w/big.f90", null);
+    defer f.destroy();
+    _ = try f.setTextOwned(try src.toOwnedSlice(gpa));
+    const ast = try f.parse(std.testing.io, null, &.{}, .{});
+    defer ast.destroy();
+    var tree: objects.ObjTree = .empty;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const env: Env = .{ .tree = &tree, .tmp = arena.allocator() };
+
+    const mod = ast.global_dict.get("big").?;
+    try std.testing.expect(try index.of(mod) != null);
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(gpa);
+    for (ast.scope_list.items) |s| {
+        try names.append(gpa, s.name);
+        for (s.childList()) |c| {
+            try names.append(gpa, c.name);
+            for (c.childList()) |e| try names.append(gpa, e.name);
+        }
+    }
+    try names.appendSlice(gpa, &.{ "RED", "Ext_F", "V39", "nothing", "#gen_int" });
+    for (ast.scope_list.items) |s| for (names.items) |n| {
+        const lower = try std.ascii.allocLowerString(arena.allocator(), n);
+        for ([_]bool{ false, true }) |public| for ([_]?usize{ null, s.sline, s.sline + 1, s.eline }) |line| {
+            const want = try walkScope(env, s, lower, public, line);
+            try std.testing.expectEqual(want, try checkScope(env, s, lower, public, line));
+        };
+    };
+    // the function's own name on its first line is not its result
+    const fres = (try checkScope(env, mod, "fres", false, null)).?;
+    try std.testing.expect(try index.of(fres) != null);
+    try std.testing.expect(try checkScope(env, fres, "fres", false, fres.sline) == null);
+    try std.testing.expect(try checkScope(env, fres, "fres", false, fres.sline + 1) != null);
+    // of two declarations, the public one when only public names count
+    const first = (try checkScope(env, mod, "dup", false, null)).?;
+    const public = (try checkScope(env, mod, "dup", true, null)).?;
+    try std.testing.expectEqualStrings("dup", first.name);
+    try std.testing.expectEqualStrings("DUP", public.name);
+    // a child added or removed after a lookup
+    try std.testing.expect(try checkScope(env, mod, "late", false, null) == null);
+    try mod.addChild(try Obj.newScope(ast, .scope, 1, "late", &.{}));
+    try std.testing.expect(try checkScope(env, mod, "late", false, null) != null);
+    mod.removeChild(mod.childList().len - 1);
+    try std.testing.expect(try checkScope(env, mod, "late", false, null) == null);
+    // and one added to a generic interface
+    for (mod.childList()) |c| if (std.mem.startsWith(u8, c.name, "#GEN_INT")) {
+        try c.addChild(try Obj.newScope(ast, .subroutine, 1, "late_s", &.{}));
+    };
+    try std.testing.expect(try checkScope(env, mod, "late_s", false, null) != null);
+}
+
+/// What `checkScope` finds walking every child, without an index
+fn walkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!?*Obj {
+    const inherited: []const *Obj = switch (local_scope.kind) {
+        .type, .subroutine, .function => local_scope.scopeDataConst().in_children.items,
+        .variable, .method, .intrinsic => return null,
+        else => &.{},
+    };
+    for ([_][]const *Obj{ local_scope.childList(), inherited }) |list| for (list) |child| {
+        switch (try checkChild(env, local_scope, child, name_lower, filter_public, var_line_number)) {
+            .next => {},
+            .found => |v| return v,
+        }
+    };
     return null;
 }

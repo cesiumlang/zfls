@@ -114,6 +114,8 @@ const Checker = struct {
     ast: *Ast,
     cache: std.StringHashMapUnmanaged(?*Obj) = .empty,
     out: std.ArrayList(Problem) = .empty,
+    /// the innermost scope of each line, found once
+    inner: objects.InnerScopes,
 
     fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
@@ -137,7 +139,7 @@ const Checker = struct {
         var it = helpers.words(text);
         const first = it.next() orelse return;
         const line_no = j.lines[s + first.start] + 1;
-        const scope = c.ast.getInnerScope(line_no);
+        const scope = c.inner.at(line_no);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
         // the calls
@@ -630,8 +632,8 @@ fn headerHasDirective(proc: *const Obj) bool {
 }
 
 pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) ![]const Problem {
-    var c: Checker = .{ .a = a, .env = env, .ast = ast };
     const n = file.nLines();
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .inner = try ast.innerScopes(a, n) };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);

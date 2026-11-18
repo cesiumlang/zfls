@@ -496,7 +496,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             var k: usize = 0;
             while (k < s.childList().len) {
                 if (s.childList()[k].file_ast != ast) {
-                    _ = s.scopeData().children.orderedRemove(k);
+                    s.removeChild(k);
                 } else k += 1;
             }
         }
@@ -504,7 +504,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             var k: usize = 0;
             while (k < ns.childList().len) {
                 if (ns.childList()[k].file_ast != ast) {
-                    _ = ns.scopeData().children.orderedRemove(k);
+                    ns.removeChild(k);
                 } else k += 1;
             }
         }
