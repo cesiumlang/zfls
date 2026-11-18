@@ -14,6 +14,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
+const stdio = @import("stdio.zig");
 const Allocator = std.mem.Allocator;
 
 /// A zip archive in memory or in a file; it may follow other data (a
@@ -402,11 +403,11 @@ fn writeFile(io: Io, path: []const u8, data: []const u8) !void {
 }
 
 fn toStdout(io: Io, text: []const u8) !void {
-    try Io.File.stdout().writeStreamingAll(io, text);
+    try stdio.stdout().writeStreamingAll(io, text);
 }
 
 fn toStderr(io: Io, text: []const u8) !void {
-    try Io.File.stderr().writeStreamingAll(io, text);
+    try stdio.stderr().writeStreamingAll(io, text);
 }
 
 fn fail(io: Io, a: Allocator, comptime fmt: []const u8, args: anytype) !u8 {
