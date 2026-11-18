@@ -987,6 +987,11 @@ zfls deliberately differs from fortls in a few places:
   interface. Go to declaration (`textDocument/declaration`, which fortls
   does not answer) always goes to the interface, also from the body; for
   other names it is go to definition.
+- In a function without `RESULT`, the function's name and its result
+  variable are one name for references, document highlights and rename,
+  started from either (fortls #322); fortls keeps them apart, and its
+  rename from inside the body leaves the function statement and the calls
+  with the old name. With `RESULT(r)`, `r` stays separate.
 - With the `lowercase_hover` option, the keywords of hover are in lowercase
   (`real, intent(in) :: x`), names and strings as written (fortls #28);
   fortls's are always uppercase.
