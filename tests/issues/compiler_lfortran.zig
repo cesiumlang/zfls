@@ -1,7 +1,7 @@
 //! The compiler check (`compiler_diagnostics`) with LFortran: the modules a
 //! file uses compiled so that their .mod files exist (#177), implicit
-//! typing and interfaces as the standard has them (#178). With a real
-//! LFortran; skipped where it is not on the PATH.
+//! typing and interfaces as the standard has them (#178), every error
+//! (#179). With a real LFortran; skipped where it is not on the PATH.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -112,4 +112,21 @@ test "LFortran: a standard chosen in compiler_args has its own implicit rules (#
     const sent = (try lfortranDiagnostics(&.{implicit_free}, implicit_free.name, ", \"compiler_args\": [\"--std=lf\"]")) orelse return error.SkipZigTest;
     defer std.testing.allocator.free(sent);
     try expectIn(sent, "Variable 'i' is not declared", true);
+}
+
+const errors = h.File{ .name = "errs.f90", .text =
+    \\program e
+    \\  implicit none
+    \\  integer :: k
+    \\  k = abc + 1
+    \\  k = def + 2
+    \\end program e
+    \\
+};
+
+test "LFortran: every error, not only the first (#179)" {
+    const sent = (try lfortranDiagnostics(&.{errors}, errors.name, "")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(sent);
+    try expectIn(sent, "Variable 'abc' is not declared", true);
+    try expectIn(sent, "Variable 'def' is not declared", true);
 }

@@ -86,7 +86,8 @@ pub fn syntaxOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
         .ifx, .ifort => if (o.windows) &.{ "/nologo", "/syntax-only" } else &.{"-syntax-only"},
         // -M: produce .mod files only; -quiet: no banner and summary line
         .nagfor => &.{ "-M", "-quiet" },
-        .lfortran => &.{ "--semantics-only", "--error-format=short", "--no-color" },
+        // --continue-compilation: every error, not only the first
+        .lfortran => &.{ "--semantics-only", "--continue-compilation", "--error-format=short", "--no-color" },
         // no syntax-only mode: compile, with the object file next to the
         // .mod files rather than in the source tree
         .nvfortran => try dupeArgs(a, &.{ "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }) }),
@@ -760,8 +761,10 @@ test "the modules a file uses: LFortran compiles their symbol tables, which writ
     try std.testing.expectEqualStrings("--symtab-only", lf[0]);
     try std.testing.expectEqualStrings("-c", lf[1]);
     try std.testing.expectEqualStrings(try std.Io.Dir.path.join(a, &.{ "m", "zfls-lint.o" }), lf[3]);
-    // the file itself: semantics only
-    try std.testing.expectEqualStrings("--semantics-only", (try syntaxOnly(a, .lfortran, o))[0]);
+    // the file itself: semantics only, and every error
+    const check = try syntaxOnly(a, .lfortran, o);
+    try std.testing.expectEqualStrings("--semantics-only", check[0]);
+    try std.testing.expectEqualStrings("--continue-compilation", check[1]);
     try std.testing.expectEqualStrings("-fsyntax-only", (try moduleOnly(a, .gfortran, o))[0]);
 }
 

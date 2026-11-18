@@ -537,7 +537,9 @@ warnings with its own diagnostics of the file, labelled with the compiler's
 name. This works in every editor, not only VS Code.
 
 The compiler runs on a thread of its own, in syntax-only mode, one file at a
-time (a newer save of a file replaces a run that has not started). First it
+time (a newer save of a file replaces a run that has not started), with
+every error (LFortran, which stops at the first one by default, with
+`--continue-compilation`). First it
 compiles the workspace modules that the file uses, and those they use,
 whose `.mod` files are missing or older than their sources, in compile order
 from zfls's module graph (LFortran, whose syntax-only mode writes no
