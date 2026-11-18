@@ -775,7 +775,10 @@ zfls deliberately differs from fortls in a few places:
   that is not found has a quick fix adding that statement.
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
-  with a quick fix removing a declaration of that name only. A name counts
+  with a quick fix removing it from its declaration: the whole statement
+  when it declares nothing else, otherwise the name with its dimensions and
+  initialization (continuation lines included). The source action "Remove
+  all unused declarations" removes all of a file's. A name counts
   as used when it appears anywhere else in the scope, contained procedures
   and inactive preprocessor branches included; dummy arguments, function
   results and module names are not reported. fortls has no such check.
