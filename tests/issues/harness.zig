@@ -342,6 +342,23 @@ pub const Workspace = struct {
         return out.items;
     }
 
+    /// The first message the server sent with `method` that contains
+    /// `needle`, waiting up to `timeout_s` seconds for one sent by another
+    /// thread (such as the compiler's); null when none came
+    pub fn waitForSent(w: *Workspace, method: []const u8, needle: []const u8, timeout_s: u32) !?[]const u8 {
+        const m = try std.mem.concat(w.a(), u8, &.{ "\"method\":\"", method, "\"" });
+        var waited: u32 = 0;
+        while (true) : (waited += 1) {
+            {
+                w.server.send_lock.lockUncancelable(io);
+                defer w.server.send_lock.unlock(io);
+                for (w.sent.items) |x| if (std.mem.find(u8, x, m) != null and std.mem.find(u8, x, needle) != null) return x;
+            }
+            if (waited >= timeout_s * 10) return null;
+            io.sleep(.fromMilliseconds(100), .awake) catch {};
+        }
+    }
+
     /// `textDocument/didSave`: (re)read and parse the file from disk
     pub fn save(w: *Workspace, name: []const u8) !void {
         _ = try w.server.dispatchPublic(w.a(), "textDocument/didSave", try w.docParams(name));
