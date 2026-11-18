@@ -12,6 +12,7 @@ const server_mod = @import("server.zig");
 const debug = @import("debug.zig");
 const version_info = @import("version.zig");
 const Logger = @import("logger.zig");
+const stdio = @import("stdio.zig");
 
 const app_name = if (@hasDecl(root, "app_name")) root.app_name else "zfls";
 const version = if (@hasDecl(root, "version")) root.version else @import("build_options").version;
@@ -23,14 +24,36 @@ const Ctx = struct {
     exit_code: u8 = 0,
 };
 
-fn stdoutSend(ctx: ?*anyopaque, body: []const u8) void {
-    const io: *const Io = @ptrCast(@alignCast(ctx.?));
-    var buf: [128]u8 = undefined;
-    const header = std.mem.print(&buf, "Content-Length: {d}\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n", .{body.len}) catch return;
-    const out = Io.File.stdout();
-    out.writeStreamingAll(io.*, header) catch return;
-    out.writeStreamingAll(io.*, body) catch return;
-}
+/// The client's end of the server: standard output
+const Client = struct {
+    io: Io,
+    out: Io.File,
+    server: *server_mod.Server,
+    log: *Logger,
+    ctx: *Ctx,
+    failed: bool = false,
+
+    /// A message the client does not get is not dropped silently: the
+    /// server reports it and stops, since the client would wait for the
+    /// answer forever.
+    fn send(ctx: ?*anyopaque, body: []const u8) void {
+        const self: *Client = @ptrCast(@alignCast(ctx.?));
+        if (self.failed) return;
+        self.write(body) catch |e| {
+            self.failed = true;
+            self.log.err("cannot write to the client ({s}): stopping", .{@errorName(e)});
+            self.server.running = false;
+            self.ctx.exit_code = 1;
+        };
+    }
+
+    fn write(self: *Client, body: []const u8) !void {
+        var buf: [128]u8 = undefined;
+        const header = try std.mem.print(&buf, "Content-Length: {d}\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n", .{body.len});
+        try self.out.writeStreamingAll(self.io, header);
+        try self.out.writeStreamingAll(self.io, body);
+    }
+};
 
 fn runServer(ctx: *Ctx) void {
     const gpa = ctx.gpa;
@@ -43,11 +66,11 @@ fn runServer(ctx: *Ctx) void {
         return;
     };
     defer server.destroy();
-    var io_copy = io;
-    server.sink = .{ .ctx = @ptrCast(&io_copy), .sendFn = stdoutSend };
+    var client: Client = .{ .io = io, .out = stdio.stdout(), .server = server, .log = &log, .ctx = ctx };
+    server.sink = .{ .ctx = @ptrCast(&client), .sendFn = Client.send };
 
     var read_buf: [64 * 1024]u8 = undefined;
-    var reader = Io.File.stdin().readerStreaming(io, &read_buf);
+    var reader = stdio.stdin().readerStreaming(io, &read_buf);
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     // messages read but not handled yet, so that a request the client
@@ -146,11 +169,11 @@ pub fn main(init: std.process.Init) !void {
     const s = switch (parsed) {
         .run => |s| s,
         .exit_ok => |text| {
-            try Io.File.stdout().writeStreamingAll(io, text);
+            try stdio.stdout().writeStreamingAll(io, text);
             return;
         },
         .exit_err => |text| {
-            try Io.File.stderr().writeStreamingAll(io, text);
+            try stdio.stderr().writeStreamingAll(io, text);
             std.process.exit(2);
         },
     };
@@ -158,7 +181,7 @@ pub fn main(init: std.process.Init) !void {
     if (s.debug_parser or s.debug_preproc or s.isDebugMode()) {
         const code = debug.run(gpa, io, s) catch |e| blk: {
             const msg = try arena.print("ERROR: {s}\n", .{@errorName(e)});
-            try Io.File.stdout().writeStreamingAll(io, msg);
+            try stdio.stdout().writeStreamingAll(io, msg);
             break :blk 255;
         };
         if (code != 0) std.process.exit(code);
