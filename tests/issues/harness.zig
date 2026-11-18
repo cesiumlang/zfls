@@ -401,6 +401,17 @@ pub const Workspace = struct {
         } }));
     }
 
+    /// `textDocument/didClose`
+    pub fn close(w: *Workspace, name: []const u8) !void {
+        _ = try w.server.dispatchPublic(w.a(), "textDocument/didClose", try w.docParams(name));
+    }
+
+    /// Whether the server reads a file as fixed form
+    pub fn isFixed(w: *Workspace, name: []const u8) !bool {
+        const file = w.server.workspace.get(try w.server.pathFromUri(w.a(), try w.uri(name))) orelse return error.FileNotInWorkspace;
+        return file.fixed;
+    }
+
     pub fn implementation(w: *Workspace, name: []const u8, p: Pos) !?Location {
         return location(try w.server.dispatchPublic(w.a(), "textDocument/implementation", try w.posParams(name, p)));
     }

@@ -162,6 +162,19 @@ fn fixedNoComment(a: Allocator, line: []const u8) ![]const u8 {
     return line;
 }
 
+/// The source form of a file
+pub const SourceForm = enum { fixed, free };
+
+/// The form that an editor's language for a document (`languageId`) names:
+/// the VS Code extension's `FortranFixedForm` and `FortranFreeForm`. Other
+/// editors' (`fortran`, `fortran90`) name none.
+pub fn formOfLanguage(language_id: ?[]const u8) ?SourceForm {
+    const id = language_id orelse return null;
+    if (std.ascii.eqlIgnoreCase(id, "FortranFixedForm")) return .fixed;
+    if (std.ascii.eqlIgnoreCase(id, "FortranFreeForm")) return .free;
+    return null;
+}
+
 pub const FortranFile = struct {
     gpa: Allocator,
     path: []const u8,
@@ -177,6 +190,10 @@ pub const FortranFile = struct {
     pp_arena: std.heap.ArenaAllocator,
     pp_defs: pp.Defs = .empty,
     fixed: bool = false,
+    /// The form the editor gives the document while it is open (its
+    /// language: `formOfLanguage`), which comes before the form that its
+    /// name and text suggest
+    forced_form: ?SourceForm = null,
     preproc: bool = false,
     ast: ?*Ast = null,
     hash: ?u64 = null,
@@ -231,12 +248,24 @@ pub const FortranFile = struct {
         return self.lines.items.len;
     }
 
-    /// Whether the file is in fixed form. A file named as free-form source
+    /// Sets the form the editor gives the document (null: none, as for a
+    /// document that is closed). Returns whether the file's form changed,
+    /// after which it has to be parsed again.
+    pub fn forceForm(self: *FortranFile, form: ?SourceForm) bool {
+        self.forced_form = form;
+        const was = self.fixed;
+        self.fixed = self.detectFixed();
+        return was != self.fixed;
+    }
+
+    /// Whether the file is in fixed form: as the editor says, if it does
+    /// (`forced_form`). A file named as free-form source
     /// (`.f90`, `.F08`, ...) is not, as compilers decide: its text cannot
     /// tell when no line is indented 1 to 4 columns nor ends with `&` (the
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
     fn detectFixed(self: *const FortranFile) bool {
+        if (self.forced_form) |form| return form == .fixed;
         const ext = std.Io.Dir.path.extension(self.path);
         for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
         return helpers.detectFixedFormat(self.lines.items);

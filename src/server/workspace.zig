@@ -609,14 +609,23 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         try self.open_docs.put(self.gpa, key, {});
     }
     if (did_close) if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
-    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, did_open, did_close);
+    // the form the editor's language names, while the document is open
+    const form: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
         if (self.workspace.get(filepath)) |f| if (f.ast) |ast| removeFromTree(self, ast);
         return .null;
     }
-    const changed = updateWorkspaceFile(self, filepath, true, did_open, false) catch |e| {
+    var changed = updateWorkspaceFile(self, filepath, true, did_open, false) catch |e| {
         self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
         return .null;
+    };
+    // read in the other form than before: parsed again
+    if (did_open or did_close) if (self.workspace.get(filepath)) |f| if (f.forceForm(form)) {
+        changed = updateWorkspaceFile(self, filepath, false, true, false) catch |e| {
+            self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
+            return .null;
+        };
     };
     if (changed) {
         _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
@@ -729,7 +738,7 @@ pub fn isSourceFile(self: *const Server, path: []const u8) bool {
 /// `didOpen`, `didSave` and `didClose` of a document that is not a file
 /// (an untitled one): its text comes with `didOpen` and its changes,
 /// and it leaves the workspace when it is closed
-pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, did_open: bool, did_close: bool) !Value {
+pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
     if (did_close) {
         if (self.workspace.get(path)) |f| if (f.ast) |ast| removeFromTree(self, ast);
         return .null;
@@ -743,6 +752,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
             break :blk nf;
         };
         _ = try file.setText(text orelse "");
+        _ = file.forceForm(form);
         const changed = updateWorkspaceFile(self, path, false, true, false) catch |e| {
             self.postMessage(a, try a.print("Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
             return .null;

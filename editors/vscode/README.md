@@ -182,7 +182,11 @@ zfls says so once and checks nothing.
 
 Whether a file is free or fixed form follows its language in VS Code
 (`FortranFreeForm` or `FortranFixedForm`, from the file extension or
-`files.associations`), not the compiler's guess from the extension.
+`files.associations`), not the compiler's guess from the extension. The
+server reads an open document in that form too. A file that is not open
+has the form of its name and text, so give a fixed-form source a
+fixed-form extension, or one that says neither (`.inc`), when other files
+use what it declares.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
