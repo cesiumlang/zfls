@@ -974,7 +974,16 @@ zfls deliberately differs from fortls in a few places:
   parenthesis or bracket, so `selected_real_kind(6)` shows as
   `selected_real_kind`.
 - The `PARAMETER` statement (`parameter (n = 5)`) makes the variables it
-  names constants, with their values; fortls ignores it.
+  names constants, with their values, and the other attribute statements
+  (`dimension v(n)`, `optional :: w`, `intent(in) a`, `allocatable`,
+  `pointer`, `target`, `save`, `codimension`, `contiguous`, `value`,
+  `volatile`, `asynchronous`, `protected`) give their attribute to the
+  names they list, before or after the type declaration, so hover shows it
+  and the argument checks know the arrays and optional arguments. A name
+  they list without a declaration, under implicit typing, is declared by
+  the statement with its implicit type. fortls ignores these statements.
+  A type declaration keeps `VALUE`, `VOLATILE`, `ASYNCHRONOUS` and
+  `PROTECTED`, and the attributes after them, which fortls drops.
 - An `ASSOCIATE` name bound to an array element or section shows the
   dimensions of that element or section; fortls shows those of the whole
   array.
