@@ -31,6 +31,7 @@ pub const autouse = @import("autouse.zig");
 pub const selection = @import("selection.zig");
 pub const statement = @import("statement.zig");
 pub const procinterface = @import("procinterface.zig");
+pub const extract = @import("extract.zig");
 pub const fuzzy = @import("fuzzy.zig");
 pub const implicit = @import("implicit.zig");
 pub const unused = @import("unused.zig");

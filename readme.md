@@ -44,8 +44,8 @@ command line options and configuration files.
   keywords before a new name is typed
 - Code actions: implementing deferred type-bound procedures, adding
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
-  `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
-  title case
+  `real(8)`, extracting statements into a subroutine, and (Source Actions)
+  the keywords of a file in upper, lower or title case
 - Formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))
 - Include directories and preprocessor definitions from the project's
@@ -878,6 +878,17 @@ zfls deliberately differs from fortls in a few places:
   Actions putting the keywords of a file in upper, lower or title case
   (hansec #226, Modern Fortran #234), names spelled like keywords excepted.
   fortls only implements deferred procedures.
+- Refactoring (`refactor.extract`): selected statements of a procedure or
+  program move into a new internal subroutine after `CONTAINS` (of the
+  procedure, or of its host when it is an internal procedure itself), and a
+  CALL replaces them. The procedure's variables they use become its
+  arguments: `intent(in)` when only read, `intent(out)` when first assigned
+  whole and unconditionally and not read, `intent(inout)` otherwise (also
+  when passed to a procedure); arrays of assumed shape (lower bounds kept),
+  characters of assumed length. Refused, with the reason where the editor
+  shows it, when the statements return, EXIT or CYCLE a construct around
+  them, refer to a label outside them or are jumped into, or do not make up
+  whole constructs; free form only.
 - Calls of workspace procedures are checked (`argument-mismatch`): too
   many arguments, a keyword the procedure does not have, an argument given
   twice, a required (not OPTIONAL) argument missing, and the kind of type

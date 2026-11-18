@@ -141,6 +141,9 @@ pub const Options = struct {
     /// the client registers signature help, code actions and formatting
     /// when the server asks (`client/registerCapability`)
     dynamic_registration: bool = false,
+    /// the client shows code actions that cannot be taken, with why
+    /// (`codeAction.disabledSupport`)
+    disabled_actions: bool = false,
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
@@ -227,7 +230,7 @@ pub const Workspace = struct {
             .capabilities = .{ .textDocument = .{
                 .documentSymbol = .{ .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols },
                 .signatureHelp = dynamic,
-                .codeAction = dynamic,
+                .codeAction = .{ .dynamicRegistration = opts.dynamic_registration, .disabledSupport = opts.disabled_actions },
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
             }, .workspace = .{
