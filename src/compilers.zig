@@ -129,6 +129,31 @@ pub fn fixedForm(id: Id, o: Options) []const []const u8 {
     };
 }
 
+/// How a fixed-form file's debug lines (D or d in column 1) are read, as
+/// zfls reads them (`d_lines`): as code or as comments. gfortran rejects
+/// them without an option; LFortran has none.
+pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
+    return switch (id) {
+        .gfortran, .flang => if (code) &.{"-fd-lines-as-code"} else &.{"-fd-lines-as-comments"},
+        .ifx, .ifort => if (o.windows)
+            (if (code) &.{"/d-lines"} else &.{"/nod-lines"})
+        else
+            (if (code) &.{"-d-lines"} else &.{"-nod-lines"}),
+        .nvfortran => if (code) &.{"-Mdlines"} else &.{"-Mnodlines"},
+        // comments by default
+        .nagfor => if (code) &.{"-d_lines"} else &.{},
+        .lfortran => &.{},
+    };
+}
+
+/// Whether `arg` of `compiler_args` says how debug lines are read, which
+/// `dLines` then leaves to it
+pub fn isDLinesArg(arg: []const u8) bool {
+    const names = [_][]const u8{ "-fd-lines-as-code", "-fd-lines-as-comments", "-d-lines", "-nod-lines", "/d-lines", "/nod-lines", "-Mdlines", "-Mnodlines", "-d_lines" };
+    for (names) |n| if (std.ascii.eqlIgnoreCase(arg, n)) return true;
+    return false;
+}
+
 /// The arguments when `compiler_args` is not set
 pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
     return switch (id) {
@@ -165,6 +190,51 @@ pub fn define(a: Allocator, id: Id, name: []const u8, value: []const u8, o: Opti
     const flag = if ((id == .ifx or id == .ifort) and o.windows) "/D" else "-D";
     if (value.len == 0) return a.print("{s}{s}", .{ flag, name });
     return a.print("{s}{s}={s}", .{ flag, name, value });
+}
+
+/// Whether the compiler writes files into its working directory even when
+/// it only checks the source: Intel's write their preprocessor's output
+/// (`file.i90`, `file.i`) there, so they run in a directory of zfls's
+/// rather than beside the sources
+pub fn writesToWorkDir(id: Id) bool {
+    return id == .ifx or id == .ifort;
+}
+
+/// `args` with the relative directories of its include and module options
+/// made absolute against `base`, for a compiler run in another directory
+/// (`writesToWorkDir`): `-Idir`, `-I dir`, `-module dir` and, on Windows,
+/// `/Idir`, `/I dir`, `/module:dir`
+pub fn absoluteDirs(a: Allocator, id: Id, args: []const []const u8, base: []const u8, o: Options) ![]const []const u8 {
+    if (!writesToWorkDir(id)) return args;
+    const out = try a.dupe([]const u8, args);
+    const joined = struct {
+        fn f(al: Allocator, b: []const u8, prefix: []const u8, dir: []const u8) ![]const u8 {
+            if (dir.len == 0 or std.Io.Dir.path.isAbsolute(dir)) return std.mem.concat(al, u8, &.{ prefix, dir });
+            return std.mem.concat(al, u8, &.{ prefix, try std.Io.Dir.path.join(al, &.{ b, dir }) });
+        }
+    }.f;
+    // the options whose value is the next argument, and those with it
+    // attached
+    const separate: []const []const u8 = if (o.windows) &.{ "-I", "/I", "-module", "/module" } else &.{ "-I", "-module" };
+    const attached: []const []const u8 = if (o.windows) &.{ "/module:", "-I", "/I" } else &.{"-I"};
+    var i: usize = 0;
+    while (i < out.len) : (i += 1) {
+        const x = out[i];
+        if (for (separate) |s| {
+            if (std.mem.eql(u8, x, s)) break true;
+        } else false) {
+            if (i + 1 < out.len) {
+                out[i + 1] = try joined(a, base, "", out[i + 1]);
+                i += 1;
+            }
+            continue;
+        }
+        for (attached) |p| if (std.mem.startsWith(u8, x, p)) {
+            out[i] = try joined(a, base, p, x[p.len..]);
+            break;
+        };
+    }
+    return out;
 }
 
 /// The messages in a compiler's output
@@ -453,6 +523,16 @@ fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
     for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
 }
 
+test "the arguments for debug lines: as zfls reads them, unless the user's say" {
+    const o: Options = .{ .windows = false, .mod_dir = "m" };
+    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(.gfortran, true, o)[0]);
+    try std.testing.expectEqualStrings("-fd-lines-as-comments", dLines(.gfortran, false, o)[0]);
+    try std.testing.expectEqualStrings("-d-lines", dLines(.ifx, true, o)[0]);
+    try std.testing.expectEqualStrings("/nod-lines", dLines(.ifort, false, .{ .windows = true, .mod_dir = "m" })[0]);
+    try std.testing.expectEqual(@as(usize, 0), dLines(.lfortran, true, o).len);
+    try std.testing.expect(isDLinesArg("-fd-lines-as-code") and isDLinesArg("/D-Lines") and !isDLinesArg("-Wall"));
+}
+
 test "gfortran one-line messages" {
     try expectBrief(.gfortran,
         \\main.f90:5:7: Error: Symbol 'j' at (1) has no IMPLICIT type
@@ -597,4 +677,23 @@ test "flang messages and their context lines" {
 
 test "repeated messages are dropped" {
     try expectBrief(.gfortran, "a.f90:1:2: Error: x\na.f90:1:2: Error: x\na.f90:1:3: Error: x\n", &.{ "a.f90:1:2 error: x", "a.f90:1:3 error: x" });
+}
+
+fn expectAbsoluteDirs(id: Id, windows: bool, args: []const []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const base = if (windows) "C:\\src" else "/src";
+    const got = try absoluteDirs(arena.allocator(), id, args, base, .{ .windows = windows, .mod_dir = "m" });
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "Intel's relative include and module directories, made absolute for a run elsewhere" {
+    if (@import("builtin").target.os.tag == .windows) {
+        try expectAbsoluteDirs(.ifx, true, &.{ "/warn:all", "/Iinc", "/I", "more", "-Iother", "/module:mods", "/IC:\\abs" }, &.{ "/warn:all", "/IC:\\src\\inc", "/I", "C:\\src\\more", "-IC:\\src\\other", "/module:C:\\src\\mods", "/IC:\\abs" });
+    } else {
+        try expectAbsoluteDirs(.ifort, false, &.{ "-warn", "all", "-Iinc", "-I", "more", "-module", "mods", "-I/abs" }, &.{ "-warn", "all", "-I/src/inc", "-I", "/src/more", "-module", "/src/mods", "-I/abs" });
+    }
+    // the other compilers run beside the file: unchanged
+    try expectAbsoluteDirs(.gfortran, false, &.{"-Iinc"}, &.{"-Iinc"});
 }
