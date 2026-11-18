@@ -94,6 +94,20 @@ pub fn syntaxOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
     };
 }
 
+/// Compile a module that the file checked uses, for its .mod files: as
+/// `syntaxOnly`, except for LFortran, whose --semantics-only writes none
+pub fn moduleOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
+    return switch (id) {
+        // the symbol tables only, without the executable statements: enough
+        // for the users of its type-bound procedures, defined operators and
+        // pure functions. -c and -o: LFortran writes .mod files only when
+        // it compiles, and the object goes next to them, not into the
+        // source tree.
+        .lfortran => try dupeArgs(a, &.{ "--symtab-only", "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }), "--error-format=short", "--no-color" }),
+        else => syntaxOnly(a, id, o),
+    };
+}
+
 fn dupeArgs(a: Allocator, args: []const []const u8) ![]const []const u8 {
     return a.dupe([]const u8, args);
 }
@@ -676,6 +690,20 @@ test "flang messages and their context lines" {
     try std.testing.expectEqual(@as(usize, 1), ms[1].related.items.len);
     try std.testing.expectEqualStrings("Previous declaration of 'y'", ms[1].related.items[0].message);
     try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
+}
+
+test "the modules a file uses: LFortran compiles their symbol tables, which writes .mod files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const o: Options = .{ .windows = false, .mod_dir = "m" };
+    const lf = try moduleOnly(a, .lfortran, o);
+    try std.testing.expectEqualStrings("--symtab-only", lf[0]);
+    try std.testing.expectEqualStrings("-c", lf[1]);
+    try std.testing.expectEqualStrings(try std.Io.Dir.path.join(a, &.{ "m", "zfls-lint.o" }), lf[3]);
+    // the file itself: semantics only
+    try std.testing.expectEqualStrings("--semantics-only", (try syntaxOnly(a, .lfortran, o))[0]);
+    try std.testing.expectEqualStrings("-fsyntax-only", (try moduleOnly(a, .gfortran, o))[0]);
 }
 
 fn expectLineLength(id: Id, fixed: bool, columns: ?usize, windows: bool, want: []const []const u8) !void {

@@ -522,8 +522,10 @@ The compiler runs on a thread of its own, in syntax-only mode, one file at a
 time (a newer save of a file replaces a run that has not started). First it
 compiles the workspace modules that the file uses, and those they use,
 whose `.mod` files are missing or older than their sources, in compile order
-from zfls's module graph; saving a file that defines modules checks again
-the open files that use them.
+from zfls's module graph (LFortran, whose syntax-only mode writes no
+`.mod` file, compiles their symbol tables: `--symtab-only -c`, with the
+object file in the `.mod` directory); saving a file that defines modules
+checks again the open files that use them.
 
 zfls reads the compiler's messages in English, so it runs the compiler (and
 fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a

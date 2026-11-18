@@ -26,4 +26,5 @@ test {
     _ = @import("use.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
+    _ = @import("compiler_lfortran.zig");
 }

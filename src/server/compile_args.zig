@@ -100,7 +100,16 @@ pub fn commandOf(self: *Server, a: Allocator, file: *const FortranFile, user: ?[
     return project.commandFor(a, &self.compile_commands, file.path);
 }
 
-/// The compiler's arguments for `file`: syntax only, its form and line
+/// What a compiler run is for
+pub const Role = enum {
+    /// The file checked, whose messages are published
+    check,
+    /// A module the file checked uses, compiled first for its .mod files
+    dependency,
+};
+
+/// The compiler's arguments for `file`: syntax only (or, for a module the
+/// file checked uses, what writes its .mod files), its form and line
 /// length, the preprocessor and zfls's definitions when zfls preprocesses
 /// it, the .mod directory, the include directories, then `user`
 /// (`compiler_args` of the form checked, or the arguments of the file's
@@ -108,9 +117,12 @@ pub fn commandOf(self: *Server, a: Allocator, file: *const FortranFile, user: ?[
 /// defaults) and the file. Relative directories in `user` are relative to
 /// `base`, the directory of the file checked, and those of `cmd` to its
 /// directory.
-pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFile, user: ?[]const []const u8, cmd: ?project.Command, base: []const u8, o: compilers.Options) ![]const []const u8 {
+pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *const FortranFile, user: ?[]const []const u8, cmd: ?project.Command, base: []const u8, o: compilers.Options) ![]const []const u8 {
     var args: std.ArrayList([]const u8) = .empty;
-    try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
+    try args.appendSlice(a, switch (role) {
+        .check => try compilers.syntaxOnly(a, id, o),
+        .dependency => try compilers.moduleOnly(a, id, o),
+    });
     try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
     // the line length zfls reads, unless `compiler_args` sets one
     const user_sets = if (user) |u| for (u) |x| {

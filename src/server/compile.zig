@@ -371,7 +371,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     var dep_cwd: std.ArrayList([]const u8) = .empty;
     if (with_deps and !self.s.compiler_no_dependencies) for (try dependencies(self, a, file)) |d| if (stale(self, a, d, mod_dir)) {
         const dep_cmd = try commandOf(self, a, d, user);
-        try dep_args.append(ja, try argsOf(self, ja, id, d, user, dep_cmd, paths.dirname(file.path), o));
+        try dep_args.append(ja, try argsOf(self, ja, id, .dependency, d, user, dep_cmd, paths.dirname(file.path), o));
         try dep_fixed.append(ja, d.fixed);
         try dep_cwd.append(ja, try ja.dupe(u8, run_dir orelse if (dep_cmd) |c| c.dir else paths.dirname(file.path)));
     };
@@ -395,7 +395,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .deps = dep_args.items,
         .deps_fixed = dep_fixed.items,
         .deps_cwd = dep_cwd.items,
-        .args = try argsOf(self, ja, id, file, user, cmd, paths.dirname(file.path), o),
+        .args = try argsOf(self, ja, id, .check, file, user, cmd, paths.dirname(file.path), o),
         .fixed = file.fixed,
         .text = if (unsaved) try editorText(ja, file) else null,
         .fypp = fypp,
