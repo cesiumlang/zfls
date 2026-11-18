@@ -106,9 +106,14 @@ const ConfigInfo = struct {
 };
 
 /// The preprocessor options as the server takes them: the command line's
-/// (`s`), and the configuration file's in `root` over them
+/// (`s`), the user's configuration file's over them, and the configuration
+/// file's in `root` over those
 fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settings) !ConfigInfo {
     var merged = try settings_mod.clone(a, s.*);
+    if (paths.userConfigFile()) |u| if (paths.isFile(io, u)) {
+        o.print("  User config file = {s}\n", .{u});
+        try applyConfigFile(a, io, o, &merged, u);
+    };
     if (root) |r| {
         var config_path: ?[]const u8 = null;
         for (settings_mod.configFileNames(s.config)) |f| {
@@ -119,15 +124,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
             }
         }
         o.print("  Config file = {s}\n", .{config_path orelse "None"});
-        if (config_path) |cp| if (Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 26))) |data| {
-            var p: json5.Parser = .{ .a = a, .src = data };
-            if (p.parseDocument()) |cfg| {
-                if (cfg == .object) try settings_mod.applyConfig(a, &merged, cfg);
-            } else |_| {
-                const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-                o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, cp });
-            }
-        } else |_| {};
+        if (config_path) |cp| try applyConfigFile(a, io, o, &merged, cp);
     }
     var info: ConfigInfo = .{};
     // an empty list is the default rule, as in the server
@@ -141,6 +138,18 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
     }
     info.include_dirs = dirs.items;
     return info;
+}
+
+/// The settings of the configuration file `path` over `s`
+fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8) !void {
+    const data = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 26)) catch return;
+    var p: json5.Parser = .{ .a = a, .src = data };
+    if (p.parseDocument()) |cfg| {
+        if (cfg == .object) try settings_mod.applyConfig(a, s, cfg);
+    } else |_| {
+        const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
+        o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, path });
+    }
 }
 
 fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {

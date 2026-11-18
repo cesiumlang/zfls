@@ -321,7 +321,12 @@ pub const ClientCapabilities = struct {
         rangeFormatting: Dynamic = .{},
     } = .{},
     workspace: struct {
-        didChangeWatchedFiles: Dynamic = .{},
+        didChangeWatchedFiles: struct {
+            dynamicRegistration: bool = false,
+            /// patterns relative to a directory, which may be outside the
+            /// workspace
+            relativePatternSupport: bool = false,
+        } = .{},
     } = .{},
 
     /// Whether the client takes `client/registerCapability` for a method

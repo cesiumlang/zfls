@@ -219,7 +219,7 @@ pub const Workspace = struct {
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
             }, .workspace = .{
-                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },
             } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,

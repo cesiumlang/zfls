@@ -18,6 +18,7 @@ test {
     _ = @import("outline.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");
+    _ = @import("user_config.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
     _ = @import("workspace.zig");

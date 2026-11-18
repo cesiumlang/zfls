@@ -50,6 +50,31 @@ pub fn cacheDir() ?[]const u8 {
     return cache_root;
 }
 
+var user_config: ?[]const u8 = null;
+
+/// Find the user's configuration file (call once at startup):
+/// `%APPDATA%\zfls\config.json` on Windows, else
+/// `$XDG_CONFIG_HOME/zfls/config.json` or `~/.config/zfls/config.json`.
+/// It need not exist.
+pub fn initUserConfig(a: Allocator, env: *const std.process.Environ.Map) void {
+    const nonempty = struct {
+        fn f(x: ?[]const u8) ?[]const u8 {
+            const v = x orelse return null;
+            return if (v.len > 0) v else null;
+        }
+    }.f;
+    const base: ?[]const u8 = if (builtin.target.os.tag == .windows)
+        nonempty(env.get("APPDATA"))
+    else if (nonempty(env.get("XDG_CONFIG_HOME"))) |x| x else if (nonempty(env.get("HOME"))) |h| std.Io.Dir.path.join(a, &.{ h, ".config" }) catch null else null;
+    user_config = if (base) |b| std.Io.Dir.path.join(a, &.{ b, "zfls", "config.json" }) catch null else null;
+}
+
+/// The path of the user's configuration file, null without a home
+/// directory
+pub fn userConfigFile() ?[]const u8 {
+    return user_config;
+}
+
 /// `os.path.normpath`
 pub fn normpath(a: Allocator, p: []const u8) ![]u8 {
     if (p.len == 0) return a.dupe(u8, ".");
