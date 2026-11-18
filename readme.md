@@ -561,6 +561,13 @@ says so once and logs that output.
   `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls` elsewhere).
 - `compiler_include_dirs`: further include directories, for the compiler
   only, relative to the root.
+- The compiler runs in the file's directory, so relative paths in
+  `compiler_args` are relative to that. ifx and ifort, which write their
+  preprocessor's output (`file.i90`) into their working directory, run in
+  one of zfls's cache instead, with the relative directories of the `-I`
+  and `-module` options of `compiler_args` made absolute.
+- A file opened with a text that is not the one on disk (unsaved changes
+  the editor restored) is checked from a copy of that text.
 - `compiler_on_change`: also check a file while it is edited, its unsaved
   text (a copy in zfls's cache), after `compiler_change_delay` milliseconds
   without a change (1000 by default). `compiler_no_save` checks files when
@@ -612,7 +619,8 @@ rule's page.
   directory, `fortitude_args` further arguments of `fortitude check`, and
   `fortitude_on_change` lints while a file is edited too, after
   `fortitude_change_delay` milliseconds (500) without a change.
-- `codee`: run `codee checks --json` on the file as saved. Its defects
+- `codee`: run `codee checks --json` on the file as saved (not on a file
+  opened with unsaved changes, until it is saved). Its defects
   (`PWD...`) are errors, its recommendations (`PWR...`) warnings and its
   remarks (`RMK...`) hints. `codee_path` is its executable or directory,
   and `codee_args` further arguments, before the file, or with `${file}`
@@ -949,9 +957,13 @@ zfls deliberately differs from fortls in a few places:
   of a file that moves: relative to the including file's directory when
   the file was found there, to the include directory it was found in while
   it stays in it; fortls has none.
-- A document that is not a file (an untitled one, `untitled:Untitled-1`) is
-  served from the text the client sends with `didOpen` and its changes;
-  fortls reads every document from disk.
+- A document is served from the text the client sends with `didOpen` and
+  its changes: a file whose text in the editor is not the one on disk
+  (unsaved changes restored when the editor starts, a new file not saved
+  yet: hansec #123), and a document that is not a file (an untitled one,
+  `untitled:Untitled-1`). Closed without a save, a file is read from disk
+  again, and one that was never saved leaves the workspace. fortls reads
+  every document from disk.
 - `compile_commands.json` and `fpm.toml` add include directories and
   preprocessor definitions (see [Build files](#build-files)).
 - Diagnostics have a `code` and the `source` `zfls`, and can be configured
