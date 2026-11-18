@@ -47,7 +47,7 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     const eline = params.range.end.line;
     try addUseActions(self, a, file, ast, sline, eline, &out);
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
-    try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);
+    try addRemoveUnusedActions(self, a, file, ast, sline, eline, params.context.only, &out);
     try addRewriteActions(self, a, file, ast, sline, eline, &out);
     try addStubActions(self, a, file, ast, sline, eline, &out);
     if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
@@ -426,27 +426,50 @@ pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects
     return out.items;
 }
 
-/// For each unused name on 0-based lines `sline`..`eline` whose statement
-/// declares nothing else: a quick fix removing that statement
-pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+/// For each unused name on 0-based lines `sline`..`eline`: a quick fix
+/// removing it from its declaration (the whole statement when it declares
+/// nothing else); and as a source action, removing all of the file's.
+/// Names whose hint is hidden are left alone.
+pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, only: ?[]const []const u8, out: *std.ArrayList(lsp.CodeAction)) !void {
+    if ((severityOf(self, .unused_name) orelse C.Severity.hint) == 0) return;
     const uri = try paths.pathToUri(a, file.path);
-    const diags = try unusedNames(a, file, ast);
-    for (try unused.find(a, file, ast), diags) |u, d| {
+    const hidden = try suppress.of(a, file);
+    const found = try unused.find(a, file, ast);
+    // the names of each declaration statement, for the source action
+    var by_statement: std.array_hash_map.Auto(usize, std.ArrayList([]const u8)) = .empty;
+    for (found, try unusedNames(a, file, ast)) |u, d| {
+        if (hidden.hides(d.code, d.sln)) continue;
+        const gop = try by_statement.getOrPut(a, u.decl_line);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(a, u.name);
         if (u.line < sline or u.line > eline) continue;
-        const r = u.removable orelse continue;
-        const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, r.first, 0, r.last + 1, 0), .newText = "" };
-        const files = try a.alloc(lsp.Changes.File, 1);
-        files[0] = .{ .uri = uri, .edits = edits };
+        const cuts = (try unused.removal(a, file, u.decl_line, &.{u.name})) orelse continue;
         const dv = try a.alloc(lsp.Diagnostic, 1);
         dv[0] = try self.diagnosticOf(a, file, d);
-        try out.append(a, .{
-            .title = try a.print("Remove unused {s}", .{u.name}),
-            .kind = "quickfix",
-            .edit = .{ .changes = .{ .files = files } },
-            .diagnostics = dv,
-        });
+        var act = try action(a, uri, try a.print("Remove unused {s}", .{u.name}), "quickfix", try cutEdits(a, file, cuts));
+        act.diagnostics = dv;
+        try out.append(a, act);
     }
+    if (!wants(only, "source")) return;
+    var edits: std.ArrayList(lsp.TextEdit) = .empty;
+    var it = by_statement.iterator();
+    while (it.next()) |e| {
+        const cuts = (try unused.removal(a, file, e.key_ptr.*, e.value_ptr.items)) orelse continue;
+        try edits.appendSlice(a, try cutEdits(a, file, cuts));
+    }
+    if (edits.items.len > 0) try out.append(a, try action(a, uri, "Remove all unused declarations", "source.removeUnused", edits.items));
+}
+
+fn cutEdits(a: Allocator, file: *const FortranFile, cuts: []const unused.Cut) ![]const lsp.TextEdit {
+    const edits = try a.alloc(lsp.TextEdit, cuts.len);
+    for (cuts, edits) |c, *e| e.* = .{
+        .range = .{
+            .start = .{ .line = c.sl, .character = Server.toLspCol(file, c.sl, c.sc) },
+            .end = .{ .line = c.el, .character = Server.toLspCol(file, c.el, c.ec) },
+        },
+        .newText = "",
+    };
+    return edits;
 }
 
 /// Whether `file` has fypp directives (`#:for`, `#:set`, ...) or inline
