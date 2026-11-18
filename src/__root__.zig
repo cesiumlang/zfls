@@ -37,6 +37,7 @@ pub const compilers = @import("compilers.zig");
 pub const argcheck = @import("argcheck.zig");
 pub const argcheck_typing = @import("argcheck/typing.zig");
 pub const literals = @import("literals.zig");
+pub const docmath = @import("docmath.zig");
 pub const rewrite = @import("rewrite.zig");
 pub const outline = @import("outline.zig");
 pub const namelist = @import("namelist.zig");

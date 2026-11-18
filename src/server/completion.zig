@@ -14,6 +14,7 @@ const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
 const arguments = @import("../arguments.zig");
 const autouse = @import("../autouse.zig");
+const docmath = @import("../docmath.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -178,7 +179,8 @@ pub fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, 
     var documentation: ?lsp.MarkupContent = null;
     const hover_msg = try candidate.getHoverMd(a, true, null);
     if (hover_msg.len > 0) {
-        documentation = .{ .value = try str.replaceFirst(a, hover_msg, "```{langid}", try a.print("```{s}", .{self.s.hover_language})) };
+        const md = try str.replaceFirst(a, hover_msg, "```{langid}", try a.print("```{s}", .{self.s.hover_language}));
+        documentation = .{ .value = try docmath.rewrite(a, md, docmath.Mode.of(self.s.doc_math)) };
     }
     return .{
         .label = label,

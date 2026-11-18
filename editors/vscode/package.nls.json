@@ -170,5 +170,6 @@
   "debugger.fortran.attach.setupCommands.description": "gdb commands to run before attaching, such as `set print elements 0`.",
   "debugger.fortran.snippet.2.label": "Fortran: attach",
   "debugger.fortran.snippet.2.description": "Attach zfls's debugger to a running Fortran program",
-  "command.zfls.setUpIfx.title": "Set Up ifx (Intel Fortran) without Visual Studio"
+  "command.zfls.setUpIfx.title": "Set Up ifx (Intel Fortran) without Visual Studio",
+  "config.zfls.docMath.markdownDescription": "How the formulas of documentation comments (Doxygen's `\\f$ x \\f$`, `\\f[ x \\f]`, FORD's `\\( x \\)`) appear in hover, completion and signature help: `plain` puts them in backticks without their markers, `dollar` writes `$x$` and `$$x$$` for a Markdown renderer with math (VS Code's hover has none), `keep` leaves them as written (`--doc_math`)."
 }

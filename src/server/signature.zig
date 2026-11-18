@@ -12,6 +12,7 @@ const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const arguments = @import("../arguments.zig");
+const docmath = @import("../docmath.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -174,10 +175,11 @@ pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const [
     const sig = try vo.getSignature(a, null);
     const label = sig.label orelse return null;
     const lang_fence = try a.print("```{s}", .{self.s.hover_language});
+    const math = docmath.Mode.of(self.s.doc_math);
     const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
     for (sig.params, parameters) |p, *pv| {
         pv.* = .{ .label = p.label };
-        if (p.doc_md) |md| pv.documentation = .{ .value = try str.replaceFirst(a, md, "```{langid}", lang_fence) };
+        if (p.doc_md) |md| pv.documentation = .{ .value = try docmath.rewrite(a, try str.replaceFirst(a, md, "```{langid}", lang_fence), math) };
     }
     // Find current parameter by index or by last arg with optional name
     var param_num: i64 = @as(i64, @intCast(arg_strings.len)) - 1;
@@ -189,7 +191,7 @@ pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const [
         }
     } else param_num = opt_num.?;
     var info: lsp.SignatureInformation = .{ .label = label, .parameters = parameters };
-    if (sig.doc) |doc| info.documentation = .{ .value = try srv.pyFormatLangid(a, doc, self.s.hover_language) };
+    if (sig.doc) |doc| info.documentation = .{ .value = try docmath.rewrite(a, try srv.pyFormatLangid(a, doc, self.s.hover_language), math) };
     // it takes as many arguments, and has the keywords given
     var fits = arg_strings.len <= sig.params.len;
     for (arg_strings) |arg| {

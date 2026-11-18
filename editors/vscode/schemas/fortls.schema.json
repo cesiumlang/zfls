@@ -125,6 +125,11 @@
       "type": "string",
       "default": "fortran90"
     },
+    "doc_math": {
+      "description": "The formulas of documentation comments (\\f$ x \\f$, \\( x \\), \\f[ x \\f]) in hover, completion and signature help: keep (as written), dollar ($x$ and $$x$$, for clients that render math) or plain (in backticks, without the markers) (default: keep)",
+      "type": "string",
+      "default": "keep"
+    },
     "prefer_implementation": {
       "description": "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface",
       "type": "boolean",
