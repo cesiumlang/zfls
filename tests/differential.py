@@ -272,12 +272,6 @@ def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
     return False
 
 
-def two_forms_item(item) -> bool:
-    """A completion item of an intrinsic whose table entry has two
-    argument lists (`THIS_IMAGE`)."""
-    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
-
-
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
     (hansec #133), a name of a module not used yet that adds the USE
@@ -292,6 +286,12 @@ def zfls_only_item(item) -> bool:
     if "additionalTextEdits" in item:
         return True
     return str(item.get("label", "")).endswith("=") and "filterText" in item
+
+
+def two_forms_item(item) -> bool:
+    """A completion item of an intrinsic whose table entry has two
+    argument lists (`THIS_IMAGE`)."""
+    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
 
 
 def normalize(v):
