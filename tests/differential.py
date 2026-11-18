@@ -272,12 +272,6 @@ def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
     return False
 
 
-def two_forms_item(item) -> bool:
-    """A completion item of an intrinsic whose table entry has two
-    argument lists (`THIS_IMAGE`)."""
-    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
-
-
 def in_constructor_or_group(lines: list, line: int, char: int) -> bool:
     """Whether the innermost bracket open before the position is an array
     constructor (`[`, `(/`) or a parenthesis that follows no name (an
@@ -316,6 +310,12 @@ def zfls_only_item(item) -> bool:
     if "additionalTextEdits" in item:
         return True
     return str(item.get("label", "")).endswith("=") and "filterText" in item
+
+
+def two_forms_item(item) -> bool:
+    """A completion item of an intrinsic whose table entry has two
+    argument lists (`THIS_IMAGE`)."""
+    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
 
 
 def normalize(v):
