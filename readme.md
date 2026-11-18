@@ -52,7 +52,8 @@ command line options and configuration files.
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
-  documentation comments
+  documentation comments, OpenMP conditional compilation lines (`!$ x = 1`)
+  read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and
   `.` between a variable and its component (`rec.field`)
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures,
@@ -485,6 +486,22 @@ are not names and a quote in it does not start a string.
 In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
 those comments too, after a window reload.
 
+### OpenMP conditional compilation
+
+A line that starts with the OpenMP sentinel `!$` and a blank (`!$ use
+omp_lib`, `!$ call omp_set_num_threads(n)`; in fixed form `!$`, `c$`, `C$`
+or `*$` in columns 1 and 2, then blanks or a label up to column 5) is a
+statement when the file is compiled with OpenMP. zfls reads it as code, the
+sentinel as two blanks: hover, definition, completion, references and rename
+see the names in it, and a variable used only there is not unused. A line
+continues as any other (`!$ call s(a, &` then `!$ & b)`). The directives
+(`!$omp`, `!$acc`) and a comment such as `!$this` stay comments.
+`disable_openmp_conditional` (`zfls.disableOpenmpConditional` in VS Code)
+reads these lines as comments, as a build without OpenMP does. The
+compiler check sees them as code only with the OpenMP flag in
+`compiler_args` (`-fopenmp`, `-qopenmp`). The VS Code grammar still colors
+them as comments, under the semantic highlighting of their names.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
@@ -794,6 +811,10 @@ zfls deliberately differs from fortls in a few places:
   semantic token, and no names there. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
+  Fortran #17); fortls reads them as comments, so its references and
+  rename leave them out. `disable_openmp_conditional` reads them as fortls
+  does.
 - On Windows, a folder on a UNC path, as a network share or
   `\\wsl.localhost\...` is, is served: its URIs
   (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`

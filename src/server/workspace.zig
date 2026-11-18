@@ -280,6 +280,7 @@ pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
 pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
     f.comment_markers = self.s.comment_markers.slice();
+    f.openmp_conditional = !self.s.disable_openmp_conditional;
     errdefer f.destroy();
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
@@ -661,6 +662,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8) parser.Fi
         const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
         errdefer nf.destroy();
         nf.comment_markers = self.s.comment_markers.slice();
+        nf.openmp_conditional = !self.s.disable_openmp_conditional;
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
     };
@@ -779,6 +781,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
@@ -807,6 +810,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         if (file == null) {
             const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;

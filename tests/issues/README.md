@@ -139,6 +139,7 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | --- | --- | --- | --- | --- |
 | [#981](https://github.com/fortran-lang/vscode-fortran-support/issues/981) | a `! zfls: disable=masks-parent` comment hides the "masks variable in parent scope" warning | diagnostics | fixed (feature) | cannot be hidden |
 | [#1306](https://github.com/fortran-lang/vscode-fortran-support/issues/1306) | `external_modules` stops `use mpi` (and other library modules) being reported as not found | diagnostics | fixed (feature) | always reported |
+| [#17](https://github.com/fortran-lang/vscode-fortran-support/issues/17) | OpenMP conditional compilation lines (`!$ call omp_set_num_threads(n)`) are code: hover, references and rename see their names | openmp | fixed (feature) | read as comments |
 | [#401](https://github.com/fortran-lang/vscode-fortran-support/issues/401) | variables and functions named like keywords (`if`, `module`, `format`) highlighted as keywords | highlighting | fixed (feature) | no semantic tokens |
 | [#245](https://github.com/fortran-lang/vscode-fortran-support/issues/245) | type-bound procedures not highlighted at their calls | highlighting | fixed (feature) | no semantic tokens |
 | [#471](https://github.com/fortran-lang/vscode-fortran-support/issues/471) | `fpm.toml`: its include directory and preprocessor macros | project | fixed (feature) | not read |

@@ -57,6 +57,9 @@ pub const Settings = struct {
     excl_paths: StrList = .{},
     /// Further markers that start a comment as `!` does, such as `;*`
     comment_markers: StrList = .{},
+    /// Read OpenMP conditional compilation lines (`!$ x = 1`) as comments,
+    /// as a build without OpenMP does, not as code
+    disable_openmp_conditional: bool = false,
     // Autocomplete options
     autocomplete_no_prefix: bool = false,
     /// Do not offer names of modules that are not used yet (with the USE
@@ -233,6 +236,7 @@ pub const opts = [_]Opt{
     .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
     .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
+    .{ .long = "disable_openmp_conditional", .kind = .flag, .help = "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code", .group = "Sources file parsing options" },
 
     .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
     .{ .long = "autocomplete_no_auto_use", .kind = .flag, .help = "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)", .group = "Autocomplete options" },
@@ -586,6 +590,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "comment_markers")) |v| s.comment_markers = try jsonList(a, v);
+    s.disable_openmp_conditional = jsonBool(json.get(cfg, "disable_openmp_conditional"), s.disable_openmp_conditional);
     // General options
     s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
     s.notify_init = jsonBool(json.get(cfg, "notify_init"), s.notify_init);

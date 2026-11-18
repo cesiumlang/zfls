@@ -93,6 +93,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.compileCommands` | `compile_commands.json` in the folder or `build/` | Compilation database adding include folders and definitions |
 | `zfls.excludePaths` | none | Folders not to index |
 | `zfls.commentMarkers` | none | Further markers that start a comment as `!` does, such as `;*`; zfls reads them as comments, and they are highlighted as comments after a window reload |
+| `zfls.disableOpenmpConditional` | `false` | Read OpenMP conditional compilation lines (`!$ x = 1`) as comments, as a build without OpenMP does; by default they are code |
 | `zfls.includeSuffixes` | none | More file extensions to index, e.g. `.inc` |
 | `zfls.excludeSuffixes` | none | File extensions not to index |
 | `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |

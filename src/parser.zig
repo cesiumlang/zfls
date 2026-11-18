@@ -24,6 +24,7 @@ fn R() *const patterns.Patterns {
 // The line readers and the parser, in parser/
 const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
+const openmp = @import("parser/openmp.zig");
 
 /// The suffixes of free-form source, in either case (CUDA Fortran's `.cuf`
 /// too)
@@ -188,8 +189,12 @@ pub const FortranFile = struct {
     /// such as `;*`): outside strings, the first byte of one is `!` in
     /// `lines`, the text zfls reads, so that it is a comment there
     comment_markers: []const []const u8 = &.{},
-    /// With `comment_markers`: the lines as the editor has them, slices of
-    /// `raw_text` (owned by `gpa`), to which changes apply
+    /// Read OpenMP conditional compilation lines (`!$ x = 1`) as code: their
+    /// sentinel is two blanks in `lines` (parser/openmp.zig)
+    openmp_conditional: bool = true,
+    /// When `lines` differ from the editor's text (comment markers, OpenMP
+    /// conditional lines): the lines as the editor has them, slices of
+    /// `raw_text` (owned by `gpa`), to which changes apply; else empty
     raw_lines: std.ArrayList([]const u8) = .empty,
     raw_text: []u8 = &.{},
 
@@ -239,7 +244,7 @@ pub const FortranFile = struct {
     fn detectFixed(self: *const FortranFile) bool {
         const ext = std.Io.Dir.path.extension(self.path);
         for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
-        return helpers.detectFixedFormat(self.lines.items);
+        return helpers.detectFixedFormat(self.editLines());
     }
 
     fn resetPp(self: *FortranFile) void {
@@ -263,37 +268,46 @@ pub const FortranFile = struct {
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
-        self.replaceText(buf, fresh);
-        if (detect_format) self.fixed = self.detectFixed();
+        self.replaceText(buf, fresh, detect_format);
     }
 
-    /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
-    /// With comment markers, they are the raw lines, and `lines` a copy
-    /// with the markers made comments.
-    fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
-        if (self.comment_markers.len > 0) {
-            if (self.markedCopy(buf, new_lines.items)) |marked| {
-                self.gpa.free(self.raw_text);
-                self.raw_lines.deinit(self.gpa);
-                self.raw_text = buf;
-                self.raw_lines = new_lines;
-                self.gpa.free(self.text);
-                self.lines.deinit(self.gpa);
-                self.text = marked.text;
-                self.lines = marked.lines;
-                self.resetPp();
-                return;
-            } else |_| {}
-        }
+    /// Take `buf` (owned by `gpa`) and the lines in it as the contents,
+    /// detecting the form from them if `detect_format`. When comment
+    /// markers or OpenMP conditional lines make the text zfls reads differ
+    /// from the editor's, they are the raw lines, and `lines` a copy.
+    fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8), detect_format: bool) void {
+        self.gpa.free(self.raw_text);
+        self.raw_lines.deinit(self.gpa);
+        self.raw_text = &.{};
+        self.raw_lines = .empty;
         self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
         self.text = buf;
         self.lines = new_lines;
         self.resetPp();
+        // the form of the text as the editor has it
+        if (detect_format) self.fixed = self.detectFixed();
+        if (!self.rewrites()) return;
+        // without memory for the copy, the text is read as it is
+        const code = self.codeCopy(buf, new_lines.items) catch return;
+        self.raw_text = buf;
+        self.raw_lines = new_lines;
+        self.text = code.text;
+        self.lines = code.lines;
     }
 
-    /// A copy of `buf` and its lines with the comment markers made `!`
-    fn markedCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+    /// Whether a line of the text is read otherwise than it is written:
+    /// it has a comment marker or is an OpenMP conditional line
+    fn rewrites(self: *const FortranFile) bool {
+        if (self.comment_markers.len > 0) return true;
+        if (!self.openmp_conditional) return false;
+        for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
+        return false;
+    }
+
+    /// A copy of `buf` and its lines as zfls reads them: the comment
+    /// markers made `!`, the sentinels of OpenMP conditional lines blanks
+    fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
         const text = try self.gpa.dupe(u8, buf);
         errdefer self.gpa.free(text);
         var lines: std.ArrayList([]const u8) = .empty;
@@ -302,6 +316,7 @@ pub const FortranFile = struct {
         for (raw) |l| {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
+            if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
             helpers.markComments(line, self.comment_markers);
             lines.appendAssumeCapacity(line);
         }
@@ -310,7 +325,7 @@ pub const FortranFile = struct {
 
     /// The lines that changes apply to: the editor's
     pub fn editLines(self: *const FortranFile) []const []const u8 {
-        return if (self.comment_markers.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
+        return if (self.raw_lines.items.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 
     /// The `hash` of a file's text, whose tabs become spaces
@@ -351,8 +366,7 @@ pub const FortranFile = struct {
         }
         try fresh.append(self.gpa, text[start..]);
         self.hash = h;
-        self.replaceText(text, fresh);
-        self.fixed = self.detectFixed();
+        self.replaceText(text, fresh, true);
         return true;
     }
 

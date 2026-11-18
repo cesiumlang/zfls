@@ -50,6 +50,11 @@
       "uniqueItems": true,
       "default": []
     },
+    "disable_openmp_conditional": {
+      "description": "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code",
+      "type": "boolean",
+      "default": false
+    },
     "nthreads": {
       "description": "Number of threads to use during workspace initialization (default: 4)",
       "type": "integer",

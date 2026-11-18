@@ -45,6 +45,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "includeDirs", flag: "--include_dirs", kind: "list", path: true },
   { setting: "excludePaths", flag: "--excl_paths", kind: "list", path: true },
   { setting: "commentMarkers", flag: "--comment_markers", kind: "list" },
+  { setting: "disableOpenmpConditional", flag: "--disable_openmp_conditional", kind: "flag" },
   { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
   { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
