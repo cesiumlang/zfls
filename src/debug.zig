@@ -3,6 +3,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const stdio = @import("stdio.zig");
 const str = @import("str.zig");
 const json = @import("json.zig");
 const json5 = @import("json5.zig");
@@ -28,6 +29,8 @@ const Out = struct {
     a: Allocator,
     /// What `fail` reported
     fail_msg: []const u8 = "",
+    /// The error of the first write that failed: the output is incomplete
+    write_error: ?anyerror = null,
 
     fn print(self: *Out, comptime fmt: []const u8, args: anytype) void {
         self.buf.print(self.a, fmt, args) catch {};
@@ -35,7 +38,9 @@ const Out = struct {
     }
 
     fn flush(self: *Out) void {
-        Io.File.stdout().writeStreamingAll(self.io, self.buf.items) catch {};
+        if (self.write_error == null) stdio.stdout().writeStreamingAll(self.io, self.buf.items) catch |e| {
+            self.write_error = e;
+        };
         self.buf.clearRetainingCapacity();
     }
 };
@@ -77,6 +82,15 @@ pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
         },
         else => return e,
     };
+    if (o.write_error) |e| {
+        // a reader that has gone away (`| head`) knows
+        if (e != error.BrokenPipe) {
+            var buf: [128]u8 = undefined;
+            const msg = std.mem.print(&buf, "ERROR: the output is incomplete: {s}\n", .{@errorName(e)}) catch "";
+            stdio.stderr().writeStreamingAll(io, msg) catch {};
+        }
+        return 1;
+    }
     return 0;
 }
 

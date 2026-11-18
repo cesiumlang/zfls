@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const Io = std.Io;
+const stdio = @import("stdio.zig");
 
 const Logger = @This();
 
@@ -59,7 +60,7 @@ fn write(self: *Logger, level: Level, comptime fmt: []const u8, args: anytype) v
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
     if (@backingInt(level) >= @backingInt(self.stderr_level)) {
-        Io.File.stderr().writeStreamingAll(self.io, msg) catch {};
+        stdio.stderr().writeStreamingAll(self.io, msg) catch {};
     }
     if (self.file) |f| {
         if (@backingInt(level) >= @backingInt(self.file_level)) f.writeStreamingAll(self.io, msg) catch {};
