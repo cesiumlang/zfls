@@ -278,6 +278,30 @@ def two_forms_item(item) -> bool:
     return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
 
 
+def in_constructor_or_group(lines: list, line: int, char: int) -> bool:
+    """Whether the innermost bracket open before the position is an array
+    constructor (`[`, `(/`) or a parenthesis that follows no name (an
+    implied DO, an expression in parentheses), where zfls's signature help
+    looks for the call outside it (hansec #60) and fortls answers null."""
+    if not (0 <= line < len(lines)):
+        return False
+    text = lines[line][:char]
+    depth = 0
+    for i in range(len(text) - 1, -1, -1):
+        c = text[i]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth > 0:
+                depth -= 1
+                continue
+            if c == "[" or text[i + 1 :].lstrip().startswith("/"):
+                return True
+            before = text[:i].rstrip()
+            return not before or not (before[-1].isalnum() or before[-1] in "_)]>")
+    return False
+
+
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
     (hansec #133), a name of a module not used yet that adds the USE
@@ -741,6 +765,15 @@ def main() -> int:
             ):
                 # the intrinsics fortls's table lacks: specific names
                 # (`DSQRT`) and newer generic ones (`REDUCE`)
+                continue
+            if (
+                kind == "signature"
+                and a is None
+                and isinstance(b, dict)
+                and in_constructor_or_group(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside an array constructor or parentheses, the call
+                # around them (hansec #60); fortls answers null
                 continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
