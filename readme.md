@@ -541,18 +541,18 @@ the open files that use them.
   nvfortran). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
   for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
-  string, split at spaces: `--compiler_args="-Wall -std=f2018"`. The
-  compiler runs in the file's directory, so relative paths in it are
-  relative to that; ifx and ifort, which write their preprocessor's output
-  (`file.i90`) into their working directory, run in one of zfls's cache
-  instead, with the relative directories of their `-I` and `-module`
-  options made absolute.
+  string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
   `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls` elsewhere).
 - `compiler_include_dirs`: further include directories, for the compiler
   only, relative to the root.
+- The compiler runs in the file's directory, so relative paths in
+  `compiler_args` are relative to that. ifx and ifort, which write their
+  preprocessor's output (`file.i90`) into their working directory, run in
+  one of zfls's cache instead, with the relative directories of the `-I`
+  and `-module` options of `compiler_args` made absolute.
 - A file opened with a text that is not the one on disk (unsaved changes
   the editor restored) is checked from a copy of that text.
 - `compiler_on_change`: also check a file while it is edited, its unsaved

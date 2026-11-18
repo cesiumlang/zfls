@@ -129,6 +129,44 @@ pub fn fixedForm(id: Id, o: Options) []const []const u8 {
     };
 }
 
+/// The arguments when `compiler_args` is not set
+pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
+    return switch (id) {
+        .gfortran => &.{"-Wall"},
+        .ifx, .ifort => if (o.windows) &.{"/warn:all"} else &.{ "-warn", "all" },
+        .nvfortran => &.{"-Minform=warn"},
+        .nagfor, .lfortran, .flang => &.{},
+    };
+}
+
+/// Write .mod files to, and read them from, `dir`
+pub fn modOutput(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
+    return switch (id) {
+        .gfortran => dupeArgs(a, &.{try a.print("-J{s}", .{dir})}),
+        .ifx, .ifort => if (o.windows) dupeArgs(a, &.{try a.print("/module:{s}", .{dir})}) else dupeArgs(a, &.{ "-module", dir }),
+        // -mdir only writes there; -I also reads from there
+        .nagfor => dupeArgs(a, &.{ "-mdir", dir, "-I", dir }),
+        .lfortran => dupeArgs(a, &.{ "-J", dir, "-I", dir }),
+        .nvfortran => dupeArgs(a, &.{ "-module", dir }),
+        .flang => dupeArgs(a, &.{ "-module-dir", dir }),
+    };
+}
+
+pub fn include(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
+    return switch (id) {
+        .nagfor => dupeArgs(a, &.{ "-I", dir }),
+        .ifx, .ifort => dupeArgs(a, &.{try a.print("{s}{s}", .{ if (o.windows) "/I" else "-I", dir })}),
+        else => dupeArgs(a, &.{try a.print("-I{s}", .{dir})}),
+    };
+}
+
+/// A preprocessor definition, `-DNAME=VALUE` (or `-DNAME`)
+pub fn define(a: Allocator, id: Id, name: []const u8, value: []const u8, o: Options) ![]const u8 {
+    const flag = if ((id == .ifx or id == .ifort) and o.windows) "/D" else "-D";
+    if (value.len == 0) return a.print("{s}{s}", .{ flag, name });
+    return a.print("{s}{s}={s}", .{ flag, name, value });
+}
+
 /// Whether the compiler writes files into its working directory even when
 /// it only checks the source: Intel's write their preprocessor's output
 /// (`file.i90`, `file.i`) there, so they run in a directory of zfls's
@@ -172,44 +210,6 @@ pub fn absoluteDirs(a: Allocator, id: Id, args: []const []const u8, base: []cons
         };
     }
     return out;
-}
-
-/// The arguments when `compiler_args` is not set
-pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
-    return switch (id) {
-        .gfortran => &.{"-Wall"},
-        .ifx, .ifort => if (o.windows) &.{"/warn:all"} else &.{ "-warn", "all" },
-        .nvfortran => &.{"-Minform=warn"},
-        .nagfor, .lfortran, .flang => &.{},
-    };
-}
-
-/// Write .mod files to, and read them from, `dir`
-pub fn modOutput(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
-    return switch (id) {
-        .gfortran => dupeArgs(a, &.{try a.print("-J{s}", .{dir})}),
-        .ifx, .ifort => if (o.windows) dupeArgs(a, &.{try a.print("/module:{s}", .{dir})}) else dupeArgs(a, &.{ "-module", dir }),
-        // -mdir only writes there; -I also reads from there
-        .nagfor => dupeArgs(a, &.{ "-mdir", dir, "-I", dir }),
-        .lfortran => dupeArgs(a, &.{ "-J", dir, "-I", dir }),
-        .nvfortran => dupeArgs(a, &.{ "-module", dir }),
-        .flang => dupeArgs(a, &.{ "-module-dir", dir }),
-    };
-}
-
-pub fn include(a: Allocator, id: Id, dir: []const u8, o: Options) ![]const []const u8 {
-    return switch (id) {
-        .nagfor => dupeArgs(a, &.{ "-I", dir }),
-        .ifx, .ifort => dupeArgs(a, &.{try a.print("{s}{s}", .{ if (o.windows) "/I" else "-I", dir })}),
-        else => dupeArgs(a, &.{try a.print("-I{s}", .{dir})}),
-    };
-}
-
-/// A preprocessor definition, `-DNAME=VALUE` (or `-DNAME`)
-pub fn define(a: Allocator, id: Id, name: []const u8, value: []const u8, o: Options) ![]const u8 {
-    const flag = if ((id == .ifx or id == .ifort) and o.windows) "/D" else "-D";
-    if (value.len == 0) return a.print("{s}{s}", .{ flag, name });
-    return a.print("{s}{s}={s}", .{ flag, name, value });
 }
 
 /// The messages in a compiler's output
@@ -640,6 +640,10 @@ test "flang messages and their context lines" {
     try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
 }
 
+test "repeated messages are dropped" {
+    try expectBrief(.gfortran, "a.f90:1:2: Error: x\na.f90:1:2: Error: x\na.f90:1:3: Error: x\n", &.{ "a.f90:1:2 error: x", "a.f90:1:3 error: x" });
+}
+
 fn expectAbsoluteDirs(id: Id, windows: bool, args: []const []const u8, want: []const []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -657,8 +661,4 @@ test "Intel's relative include and module directories, made absolute for a run e
     }
     // the other compilers run beside the file: unchanged
     try expectAbsoluteDirs(.gfortran, false, &.{"-Iinc"}, &.{"-Iinc"});
-}
-
-test "repeated messages are dropped" {
-    try expectBrief(.gfortran, "a.f90:1:2: Error: x\na.f90:1:2: Error: x\na.f90:1:3: Error: x\n", &.{ "a.f90:1:2 error: x", "a.f90:1:3 error: x" });
 }
