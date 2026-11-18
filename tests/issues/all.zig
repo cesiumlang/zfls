@@ -6,6 +6,7 @@ test {
     _ = @import("argchecks.zig");
     _ = @import("completion.zig");
     _ = @import("constructs.zig");
+    _ = @import("continuation.zig");
     _ = @import("corpus.zig");
     _ = @import("debugging.zig");
     _ = @import("diagnostics.zig");
