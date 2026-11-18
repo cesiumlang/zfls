@@ -911,7 +911,9 @@ zfls deliberately differs from fortls in a few places:
   for intrinsic types and `class(*)`. fortls has none.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
-  constructs (hansec #157); fortls has no answer on them.
+  constructs (hansec #157); fortls has no answer on them. A construct name
+  repeated on an `else`, `case` or `elsewhere` statement is no undeclared
+  name, and `selectcase` written as one word is a SELECT construct.
 - `textDocument/linkedEditingRange` is answered: typing in the name of a
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
