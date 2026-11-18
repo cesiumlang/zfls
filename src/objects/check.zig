@@ -55,13 +55,16 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                 if (arg_obj == null) {
                     const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
-                    try errors.append(a, Diagnostic.init(
+                    var d = Diagnostic.init(
                         .argument_not_declared,
                         self.sline -| 1,
                         try a.print("No matching declaration found for argument \"{s}\"", .{arg_name}),
                         1,
                         arg_name,
-                    ));
+                    );
+                    // for the quick fix declaring it
+                    d.subject = arg_name;
+                    try errors.append(a, d);
                 }
             }
         },
