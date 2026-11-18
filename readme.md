@@ -860,7 +860,11 @@ zfls deliberately differs from fortls in a few places:
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
 - Stub actions: on a call of a procedure defined outside any module, an
-  interface block for it in the calling unit; on a separate module procedure
+  interface block for it after the calling unit's declarations, written from
+  the procedure's source (its USE and IMPLICIT statements and the
+  declarations of its arguments and result, in the caller's source form),
+  replacing the caller's EXTERNAL or type declaration of it, and not
+  offered when an interface is visible already; on a separate module procedure
   without implementation, its `module procedure` stub in a submodule of its
   module (a new one at the end of the file when there is none).
 - More code actions: "Add IMPLICIT NONE" on the first line of a program

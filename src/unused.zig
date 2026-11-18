@@ -13,6 +13,7 @@ const Obj = objects.Obj;
 const Ast = objects.Ast;
 const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
+const statement = @import("statement.zig");
 
 pub const Unused = struct {
     /// 0-based line and byte columns of the name in its declaration
@@ -130,17 +131,16 @@ fn findName(file: *const FortranFile, line: usize, name: []const u8) ?struct { l
 /// Text to delete: 0-based lines and byte columns, the end exclusive
 pub const Cut = struct { sl: usize, sc: usize, el: usize, ec: usize };
 
-/// The cuts that remove `names` from the type declaration or USE ONLY list
-/// on 0-based line `line`: the whole statement when it declares nothing
-/// else, otherwise each name with its dimensions and initialization and a
-/// comma (continuation lines included). Null when the statement is not one
+/// The cuts that remove `names` from the type declaration, EXTERNAL
+/// statement or USE ONLY list on 0-based line `line`: the whole statement
+/// when it declares nothing else, otherwise each name with its dimensions
+/// and initialization and a comma (continuation lines included). Null when
+/// the statement is not one
 /// of those, declares none of `names`, or is not one zfls can take apart
 /// (several statements on a line, a string continued on the next line).
 pub fn removal(a: Allocator, file: *const FortranFile, line: usize, names: []const []const u8) !?[]const Cut {
-    const st = selection.statementLines(file, line);
-    var lines: std.ArrayList([]const u8) = .empty;
-    for (st.first..st.last + 1) |l| try lines.append(a, file.getLine(l, false) orelse return null);
-    const cuts = (try removeFrom(a, lines.items, file.fixed, names)) orelse return null;
+    const st = (try statement.linesOf(a, file, line)) orelse return null;
+    const cuts = (try removeFrom(a, st.lines, file.fixed, names)) orelse return null;
     for (cuts) |*c| {
         c.sl += st.first;
         c.el += st.first;
@@ -148,89 +148,9 @@ pub fn removal(a: Allocator, file: *const FortranFile, line: usize, names: []con
     return cuts;
 }
 
-/// The code of a statement, without comments and continuation marks: its
-/// characters (blanks in strings), and where each is in the lines
-const Code = struct {
-    text: []const u8,
-    at: []const Pos,
-
-    const Pos = struct { line: usize, col: usize };
-
-    fn skipBlanks(code: Code, from: usize) usize {
-        var p = from;
-        while (p < code.text.len and isBlank(code.text[p])) p += 1;
-        return p;
-    }
-
-    /// The word (letters, digits, `_`) starting at `p`; empty when none
-    fn word(code: Code, p: usize) []const u8 {
-        var e = p;
-        while (e < code.text.len and (std.ascii.isAlphanumeric(code.text[e]) or code.text[e] == '_')) e += 1;
-        return code.text[p..e];
-    }
-
-    /// The `)` that closes the `(` at `open`
-    fn closing(code: Code, open: usize) ?usize {
-        var depth: usize = 0;
-        for (code.text[open..], open..) |c, i| switch (c) {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if (depth == 0) return i;
-            },
-            else => {},
-        };
-        return null;
-    }
-};
-
-fn isBlank(c: u8) bool {
-    return c == ' ' or c == '\t' or c == '\r';
-}
-
-/// `lines` as `Code`; null when a string goes on to the next line or a `;`
-/// ends a statement
-fn codeOf(a: Allocator, lines: []const []const u8, fixed: bool) !?Code {
-    var text: std.ArrayList(u8) = .empty;
-    var at: std.ArrayList(Code.Pos) = .empty;
-    for (lines, 0..) |line, l| {
-        var i: usize = 0;
-        if (l > 0) {
-            if (fixed) i = @min(6, line.len) else if (helpers.freeContEnd(line)) |e| i = e;
-        }
-        const end = if (fixed) @min(line.len, 72) else line.len;
-        const first = text.items.len;
-        var quote: u8 = 0;
-        while (i < end) : (i += 1) {
-            var c = line[i];
-            if (quote != 0) {
-                if (c == quote) quote = 0 else c = ' ';
-            } else if (c == '!') {
-                break;
-            } else if (c == ';') {
-                return null;
-            } else if (c == '\'' or c == '"') {
-                quote = c;
-            }
-            try text.append(a, c);
-            try at.append(a, .{ .line = l, .col = i });
-        }
-        if (quote != 0) return null;
-        if (!fixed and l + 1 < lines.len) {
-            while (text.items.len > first and isBlank(text.items[text.items.len - 1])) text.items.len -= 1;
-            if (text.items.len > first and text.items[text.items.len - 1] == '&') text.items.len -= 1;
-            at.items.len = text.items.len;
-        }
-        // keeps the words of two lines apart
-        try text.append(a, ' ');
-        try at.append(a, .{ .line = l, .col = end });
-    }
-    return .{ .text = text.items, .at = at.items };
-}
-
 /// `removal` on the lines of one statement
 fn removeFrom(a: Allocator, lines: []const []const u8, fixed: bool, names: []const []const u8) !?[]Cut {
-    const code = (try codeOf(a, lines, fixed)) orelse return null;
+    const code = (try statement.of(a, lines, fixed)) orelse return null;
     const t = code.text;
     var p = code.skipBlanks(0);
     const kw = try std.ascii.allocLowerString(a, code.word(p));
@@ -249,6 +169,9 @@ fn removeFrom(a: Allocator, lines: []const []const u8, fixed: bool, names: []con
     } else if (typeKeyword(kw)) blk: {
         if (findDoubleColon(t, p)) |dc| break :blk dc + 2;
         break :blk (try typeSpecEnd(a, code, p, kw)) orelse return null;
+    } else if (std.mem.eql(u8, kw, "external")) blk: {
+        if (findDoubleColon(t, p)) |dc| break :blk dc + 2;
+        break :blk p;
     } else return null;
     // the entities, between commas outside parentheses
     const Entity = struct { start: usize, end: usize, remove: bool };
@@ -267,7 +190,7 @@ fn removeFrom(a: Allocator, lines: []const []const u8, fixed: bool, names: []con
         }
         const b = code.skipBlanks(s);
         var e = k;
-        while (e > b and isBlank(t[e - 1])) e -= 1;
+        while (e > b and statement.isBlank(t[e - 1])) e -= 1;
         if (e == b) return null;
         const name = code.word(b);
         var remove = false;
@@ -335,7 +258,7 @@ fn findDoubleColon(t: []const u8, from: usize) ?usize {
 /// Where the names of a declaration without `::` start: after its type
 /// keyword `kw` (ending at `from`) and the kind or length after it
 /// (`double precision`, `real(8)`, `real*8`, `character*(*)`, `type(t)`)
-fn typeSpecEnd(a: Allocator, code: Code, from: usize, kw: []const u8) !?usize {
+fn typeSpecEnd(a: Allocator, code: statement.Code, from: usize, kw: []const u8) !?usize {
     const t = code.text;
     var p = from;
     if (std.mem.eql(u8, kw, "double")) {
@@ -409,5 +332,8 @@ test "removing names from declarations" {
     // not taken apart
     try eq("(none)", try removedText(a, &.{"  real :: x; real :: y"}, false, &.{"x"}));
     try eq("(none)", try removedText(a, &.{"  common /c/ x, y"}, false, &.{"x"}));
+    // EXTERNAL statements
+    try eq("  external g\n", try removedText(a, &.{"  external f, g"}, false, &.{"f"}));
+    try eq("", try removedText(a, &.{"  external :: f"}, false, &.{"f"}));
     try eq("(none)", try removedText(a, &.{"  real :: x, y"}, false, &.{"z"}));
 }
