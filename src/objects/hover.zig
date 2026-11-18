@@ -245,14 +245,37 @@ pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: ?usize) Allocator.
             }
             return .{};
         },
-        .intrinsic => {
-            var arg_sigs: std.ArrayList(Obj.ArgSig) = .empty;
-            for (try str.split(a, self.argList(), ",")) |arg| try arg_sigs.append(a, .{ .label = arg });
-            const sig = try self.getSnippet(a, null, null);
-            return .{ .label = sig.call, .doc = self.doc_str, .params = arg_sigs.items };
-        },
+        .intrinsic => return intrinsicSignature(self, a, self.argList()),
         else => return .{},
     }
+}
+
+/// The signature of each form of an object: of each argument list of an
+/// intrinsic with several (`THIS_IMAGE`), else the one of `getSignature`
+pub fn getSignatures(self: *const Obj, a: Allocator) Allocator.Error![]const Obj.Signature {
+    if (self.kind != .intrinsic) {
+        const one = try a.alloc(Obj.Signature, 1);
+        one[0] = try self.getSignature(a, null);
+        return one;
+    }
+    const forms = try self.argForms(a);
+    const out = try a.alloc(Obj.Signature, forms.len);
+    for (forms, out) |form, *sig| sig.* = try intrinsicSignature(self, a, form);
+    return out;
+}
+
+/// The signature of intrinsic `self` with the argument list `args`
+fn intrinsicSignature(self: *const Obj, a: Allocator, args: []const u8) Allocator.Error!Obj.Signature {
+    var arg_sigs: std.ArrayList(Obj.ArgSig) = .empty;
+    var call: []const u8 = try std.mem.concat(a, u8, &.{ self.name, "()" });
+    if (args.len > 0) {
+        const list = try str.split(a, args, ",");
+        for (list) |arg| try arg_sigs.append(a, .{ .label = arg });
+        call = try std.mem.concat(a, u8, &.{ self.name, (try helpers.getPlaceholders(a, list))[0] });
+    } else if (self.intrinsicData().itype == C.keyword_itype or self.intrinsicData().itype == C.statement_itype) {
+        return .{ .doc = self.doc_str };
+    }
+    return .{ .label = call, .doc = self.doc_str, .params = arg_sigs.items };
 }
 
 pub fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {
