@@ -521,7 +521,9 @@ pub const Parser = struct {
                 try ast.end_errors.append(ast.allocator(), .{ .end_line = ln, .scope_line = cs.sline });
             }
         } else {
-            if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| end_scope_word = sm.str();
+            if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| {
+                end_scope_word = sm.str();
+            } else return p.mismatchedEnd(line, ln, m);
         }
         if (end_scope_word != null) {
             if (cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) try ast.endScope(ln, true);
@@ -535,6 +537,48 @@ pub const Parser = struct {
             return true;
         }
         return false;
+    }
+
+    /// `END word` that does not fit the innermost open scope: an error on
+    /// its line (unless one names that scope already). When the word fits a
+    /// scope further out, the scopes inside it are closed (each not
+    /// closed, an error) and it; otherwise the statement is ignored.
+    fn mismatchedEnd(p: *Parser, line: []const u8, ln: usize, m: regex.Match) !bool {
+        const ast = p.file_ast;
+        const cs = ast.current_scope orelse return false;
+        // statements outside any program unit (an include file's part of
+        // one), and FORALL, which opens no scope
+        if (cs == ast.none_scope) return false;
+        const word = line[m.start(1)..m.end(1)];
+        if (std.ascii.eqlIgnoreCase(word, "forall")) return false;
+        const open = Ast.constructOf(cs);
+        if (!ast.scopeReported(open)) {
+            const pa = ast.allocator();
+            const upper = try std.ascii.allocUpperString(pa, word);
+            const message = try pa.print("END {s} does not match {s}{s} opened at line {d}", .{
+                upper,
+                if (open.kind.isBlock()) "the " else "",
+                try ast.scopeLabel(open),
+                open.sline,
+            });
+            try ast.scope_errors.append(pa, .{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
+        }
+        // a scope further out that the word fits
+        var k = @min(ast.scope_stack.items.len, ast.end_stack.items.len);
+        const target = while (k > 0) {
+            k -= 1;
+            const s = ast.scope_stack.items[k];
+            if (s == ast.none_scope) continue;
+            if (ast.end_stack.items[k].match(line[m.start(1)..]) != null) break s;
+        } else return false;
+        while (ast.current_scope) |inner| {
+            if (inner == target) break;
+            try ast.reportUnclosed(inner);
+            try ast.endScope(ln, true);
+        }
+        try ast.endScope(ln, true);
+        p.dbg("{s} !!! END {s} Scope (closing the scopes inside it) - Ln:{d}", .{ line, word, ln });
+        return true;
     }
 
     fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: usize, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) !bool {

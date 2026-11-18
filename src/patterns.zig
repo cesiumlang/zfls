@@ -41,7 +41,7 @@ const defs = [_]Def{
     .{ "END_BLOCK_DATA", "BLOCK[ ]*DATA", true },
     .{ "DO", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?DO([ ]+[0-9]*|$)", true },
     .{ "END_DO", "DO", true },
-    .{ "WHERE", "[ ]*WHERE[ ]*\\(", true },
+    .{ "WHERE", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?WHERE[ ]*\\(", true },
     .{ "END_WHERE", "WHERE", true },
     .{ "IF", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?IF[ ]*\\(", true },
     .{ "THEN", "\\)[ ]*THEN$", true },
