@@ -169,7 +169,16 @@ pub const Parser = struct {
                 try p.setSingleLineDocstring(line[ci..]);
             }
             if (std.mem.findScalar(u8, line_stripped, ';') != null) {
-                const pieces = try str.split(sa, line_stripped, ";");
+                // the statements, with their strings: split at the `;`
+                // outside strings
+                var pieces_list: std.ArrayList([]const u8) = .empty;
+                var piece_start: usize = 0;
+                for (line_stripped, 0..) |c, ci| if (c == ';') {
+                    try pieces_list.append(sa, line_no_comment[piece_start..ci]);
+                    piece_start = ci + 1;
+                };
+                try pieces_list.append(sa, line_no_comment[piece_start..]);
+                const pieces = pieces_list.items;
                 // extendleft + pop: process pieces in order
                 var k: usize = pieces.len;
                 var tmp: std.ArrayList([]const u8) = .empty;
@@ -276,16 +285,34 @@ pub const Parser = struct {
                     if (std.mem.startsWith(u8, name, "(")) continue;
                     const dim = try parseImpDim(a, name);
                     name = dim.line;
+                    // the codimensions of a coarray, x[:], are not part of its
+                    // name (upstream #172); a length may follow them, x[*]*10
+                    var codims: ?[]const u8 = null;
+                    if (std.mem.findScalar(u8, name, '[')) |bracket| {
+                        const close = std.mem.findScalarLast(u8, name, ']') orelse bracket;
+                        if (close > bracket) {
+                            codims = name[bracket .. close + 1];
+                            name = try std.mem.concat(a, u8, &.{ name[0..bracket], name[close + 1 ..] });
+                        } else name = name[0..bracket];
+                    }
                     const chr = try parseImpChar(a, name);
                     name = chr.line;
-                    if (dim.extra) |d| try var_keywords.append(a, d);
-                    if (chr.extra) |c| desc = try std.mem.concat(a, u8, &.{ desc, c });
-                    // the codimensions of a coarray, x[:], are not part of its name (upstream #172)
-                    if (std.mem.findScalar(u8, name, '[')) |bracket| {
-                        if (std.mem.findScalarLast(u8, name, ']')) |close| if (close > bracket) {
-                            try var_keywords.append(a, try a.print("CODIMENSION{s}", .{name[bracket .. close + 1]}));
-                        };
-                        name = name[0..bracket];
+                    // the entity's own bounds take the place of the
+                    // declaration's DIMENSION
+                    if (dim.extra) |d| {
+                        for (var_keywords.items) |*kw| {
+                            if (std.ascii.startsWithIgnoreCase(kw.*, "dimension")) {
+                                kw.* = d;
+                                break;
+                            }
+                        } else try var_keywords.append(a, d);
+                    }
+                    if (codims) |c| try var_keywords.append(a, try a.print("CODIMENSION{s}", .{c}));
+                    // and its own length that of the type, `v*8` in
+                    // `character*(*) u, v*8`
+                    var kind = info.var_kind;
+                    if (chr.extra) |c| {
+                        if (procedure_def) desc = try std.mem.concat(a, u8, &.{ desc, c }) else kind = try entityLength(a, info.var_kind, c);
                     }
                     name = str.strip(name);
                     const mk = try helpers.mapKeywords(a, var_keywords.items, p.opts.sort_keywords);
@@ -295,15 +322,15 @@ pub const Parser = struct {
                     } else {
                         new_var = try Obj.newVariable(ast, line_no, name, desc, mk.ids, .{
                             .keyword_info = mk.info,
-                            .kind = info.var_kind,
+                            .kind = kind,
                             .link_obj = link_name,
                         });
                         if (new_var.isParameter()) {
                             const r = helpers.findWordInLine(line, name);
                             const col: usize = @intCast(@max(r.end, 0));
-                            if (helpers.parameterValue(str.from(line, col))) |value| {
-                                const words = try str.splitWhitespace(a, value);
-                                new_var.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
+                            // the value follows the entity's bounds and length
+                            if (helpers.parameterValue(afterEntitySpecs(str.from(line, col)))) |value| {
+                                new_var.varData().param_val = try pa.dupe(u8, try helpers.collapseBlanks(a, value));
                             }
                         }
                         if (try findExternal(ast, desc, name, new_var)) continue;
@@ -351,6 +378,8 @@ pub const Parser = struct {
                         .kind = info.result.kind,
                     });
                     try ast.addVariable(v);
+                    // a comment after the statement documents the function
+                    ast.last_obj = o;
                 };
                 p.dbg("{s} !!! FUNCTION - Ln:{d}", .{ line, line_no });
             },
@@ -741,6 +770,49 @@ pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, va
 
 pub const Split = struct { line: []const u8, extra: ?[]const u8 };
 
+/// The type parameters of an entity with its own length `len` (`*8`,
+/// `*(n)`) declared with `kind` (`*(*)`, `(len=5)`, `(KIND=4, LEN=200)`):
+/// the length replaces the declaration's, a KIND stays
+pub fn entityLength(a: Allocator, kind: ?[]const u8, len: []const u8) ![]const u8 {
+    const k = kind orelse return len;
+    if (k.len < 2 or k[0] != '(' or std.ascii.findIgnoreCase(k, "kind") == null) return len;
+    var value = str.strip(len[1..]);
+    if (value.len > 1 and value[0] == '(' and value[value.len - 1] == ')') value = value[1 .. value.len - 1];
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(a, '(');
+    for (try helpers.splitArgs(a, k[1 .. k.len - 1])) |item| {
+        const t = str.strip(item);
+        if (!std.ascii.startsWithIgnoreCase(t, "kind")) continue;
+        try out.appendSlice(a, t);
+        try out.appendSlice(a, ", ");
+    }
+    try out.print(a, "LEN={s})", .{value});
+    return out.items;
+}
+
+/// `s` after the bounds, cobounds and length that may follow an entity's
+/// name in a declaration: `(3)[*]*10 = ...`
+pub fn afterEntitySpecs(s: []const u8) []const u8 {
+    var t = str.lstrip(s);
+    if (t.len > 0 and t[0] == '(') {
+        const m = helpers.findParenMatch(t[1..]);
+        if (m >= 0) t = str.lstrip(t[@as(usize, @intCast(m)) + 2 ..]);
+    }
+    if (t.len > 0 and t[0] == '[') {
+        if (std.mem.findScalar(u8, t, ']')) |c| t = str.lstrip(t[c + 1 ..]);
+    }
+    if (t.len > 0 and t[0] == '*') {
+        t = str.lstrip(t[1..]);
+        if (t.len > 0 and t[0] == '(') {
+            const m = helpers.findParenMatch(t[1..]);
+            if (m >= 0) t = t[@as(usize, @intCast(m)) + 2 ..];
+        } else {
+            while (t.len > 0 and std.ascii.isDigit(t[0])) t = t[1..];
+        }
+    }
+    return str.lstrip(t);
+}
+
 /// Parse the implicit dimension of an array e.g. var(3,4)
 pub fn parseImpDim(a: Allocator, line: []const u8) !Split {
     const m = R().IMP_DIM.match(line) orelse return .{ .line = line, .extra = null };
@@ -765,4 +837,17 @@ pub fn parseImpChar(a: Allocator, line: []const u8) !Split {
         char_len = g2;
     }
     return .{ .line = m.group(1).?, .extra = try std.mem.concat(a, u8, &.{ "*", char_len }) };
+}
+
+test "an entity's own length replaces its declaration's, a KIND stays" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("*8", try entityLength(a, "*(*)", "*8"));
+    try std.testing.expectEqualStrings("*10", try entityLength(a, null, "*10"));
+    try std.testing.expectEqualStrings("*4", try entityLength(a, "(len=5)", "*4"));
+    try std.testing.expectEqualStrings("(KIND=4, LEN=100)", try entityLength(a, "(KIND=4, LEN=200)", "*100"));
+    try std.testing.expectEqualStrings("(KIND=4, LEN=LEN(B))", try entityLength(a, "(KIND=4)", "*(LEN(B))"));
+    try std.testing.expectEqualStrings("= 'x'", afterEntitySpecs("(3)[*]*10 = 'x'"));
+    try std.testing.expectEqualStrings("= 1", afterEntitySpecs("*(len(a)) = 1"));
 }

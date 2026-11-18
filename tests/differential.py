@@ -370,6 +370,49 @@ PP_ENDIF = re.compile(r"\s*#\s*endif", re.I)
 CONT_ATTRIBUTE = re.compile(r"\s*,\s*(\w+)", re.I)
 
 
+ENTITY_LENGTH = re.compile(
+    r"^\s*(?:character|real|integer|logical|complex)\b.*?[a-z_]\w*\s*"
+    r"(?:\((?:[^()]|\([^()]*\))*\))?\s*\*\s*[\d(]",
+    re.I | re.M,
+)
+TYPE_PARAMS = re.compile(
+    r"\b(CHARACTER|REAL|INTEGER|LOGICAL|COMPLEX)"
+    r"(?:\s*\*\s*(?:\d+|\((?:[^()]|\([^()]*\))*\))|\((?:[^()]|\([^()]*\))*\))+",
+    re.I,
+)
+SEMICOLON_STRINGS = re.compile(r"^[^!\n]*(?:;[^!\n]*['\"]|['\"][^!\n]*;)", re.M)
+PARAM_STRINGS = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([^\n]*)")
+STRING_LITERAL = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'")
+
+
+def ignore_type_params(v):
+    """An entity's own length replaces that of its declaration in zfls
+    (`character*10 b*(len(a))` has the length len(a), #237); fortls puts
+    both. Compare types without their kind and length."""
+    if isinstance(v, dict):
+        return {k: ignore_type_params(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_type_params(x) for x in v]
+    if isinstance(v, str):
+        return TYPE_PARAMS.sub(r"\1", v)
+    return v
+
+
+def ignore_param_strings(v):
+    """fortls shows the strings of a parameter declared on a line with `;`
+    blanked, zfls as they are (#237). Compare such values without the text
+    of their strings and without blanks."""
+    if isinstance(v, dict):
+        return {k: ignore_param_strings(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_param_strings(x) for x in v]
+    if isinstance(v, str):
+        return PARAM_STRINGS.sub(
+            lambda m: m.group(1) + STRING_LITERAL.sub('""', m.group(2)).replace(" ", ""), v
+        )
+    return v
+
+
 def conditional_attributes(source: str) -> set:
     """Uppercase attributes given on a continuation line inside a
     preprocessor conditional, as in `REAL &` / `#ifdef X` / `, POINTER &`."""
@@ -641,12 +684,18 @@ def main() -> int:
         assoc = associate_names(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
+        entity_lengths = bool(ENTITY_LENGTH.search(source))
+        semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
             if cond_attrs and kind in ("hover", "completion"):
                 a = ignore_conditional_attributes(a, cond_attrs)
                 b = ignore_conditional_attributes(b, cond_attrs)
+            if entity_lengths and kind in ("hover", "completion"):
+                a, b = ignore_type_params(a), ignore_type_params(b)
+            if semicolon_strings and kind in ("hover", "completion"):
+                a, b = ignore_param_strings(a), ignore_param_strings(b)
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
