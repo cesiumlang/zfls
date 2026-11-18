@@ -323,5 +323,5 @@ fn expectEnumerators(w: *h.Workspace) !void {
 test "#252 completion offers enumerators, in their scope and through USE" {
     const w = try h.Workspace.init(&enums, .{});
     defer w.deinit();
-    try h.checkIn(.hansec, 167, .fixed, expectEnumerators(w));
+    try expectEnumerators(w);
 }
