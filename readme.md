@@ -1022,7 +1022,11 @@ zfls deliberately differs from fortls in a few places:
 - A variable that is declared with a type and then called, `real fff` and
   `fff(1.2, 3.3)`, shows the signature of the global function of that name in
   hover, and an `EXTERNAL` name shows the interface of its procedure and
-  has it as its implementation.
+  has it as its implementation. Signature help, inlay hints, the argument
+  checks, references and rename go through such a declaration to the
+  procedure too, as they do for a call with no declaration (fortls #23,
+  #483): not for a dummy argument of the caller (a dummy procedure), nor
+  when the workspace has no global procedure of the name or more than one.
 - A `!>` documentation comment is dropped at an assignment, a `CALL`, `IMPLICIT`,
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
