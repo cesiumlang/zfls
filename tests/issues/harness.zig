@@ -144,6 +144,11 @@ pub const Options = struct {
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
+    /// the workspace is opened through this machine's administrative share
+    /// (`\\localhost\c$\...`, as `file://localhost/c%24/...`), the way a
+    /// folder on a network share is (a test is skipped off Windows and
+    /// where the share cannot be reached)
+    unc_root: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -200,6 +205,12 @@ pub const Workspace = struct {
         }
         w.unreadable = opts.unreadable;
         w.root = try aa.dupe(u8, try w.tmp.dir.realPathFileAlloc(io, ".", aa));
+        if (opts.unc_root) {
+            if (@import("builtin").target.os.tag != .windows) return error.SkipZigTest;
+            if (w.root.len < 3 or w.root[1] != ':') return error.SkipZigTest;
+            w.root = try aa.print("\\\\localhost\\{c}${s}", .{ std.ascii.toLower(w.root[0]), w.root[2..] });
+            if (!paths.isDir(io, w.root)) return error.SkipZigTest;
+        }
         w.log = Logger.init(io);
         w.log.stderr_level = .off;
         var settings = opts.settings;
@@ -214,7 +225,8 @@ pub const Workspace = struct {
         w.server.sink = .{ .ctx = w, .sendFn = collect };
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
         _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
-            .rootPath = w.root,
+            .rootPath = if (opts.unc_root) null else w.root,
+            .rootUri = if (opts.unc_root) try paths.pathToUri(aa, w.root) else null,
             .capabilities = .{ .textDocument = .{
                 .documentSymbol = .{ .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols },
                 .signatureHelp = dynamic,
