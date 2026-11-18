@@ -53,6 +53,9 @@ pub fn checkSetting(self: *Server, a: Allocator) !void {
 pub const Trigger = enum {
     /// The file was opened
     open,
+    /// Opened with a text that is not the file's (unsaved changes that the
+    /// editor restored, a new file): the editor's text, from a copy
+    open_unsaved,
     /// Saved (unless `compiler_no_save`)
     save,
     /// Edited: its unsaved text, after `compiler_change_delay` (with
@@ -72,6 +75,8 @@ const Job = struct {
     exes: []const []const u8,
     /// `compiler_path` (settings can change while the job runs)
     compiler_path: ?[]const u8,
+    /// The compiler's working directory: the file's, or for a compiler
+    /// that writes files there (`compilers.writesToWorkDir`) one of zfls's
     cwd: []const u8,
     /// The files of the modules it uses, in compile order: each one's
     /// arguments (the file last), and whether it is in fixed form
@@ -248,14 +253,14 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8, tri
     switch (trigger) {
         .save => if (self.s.compiler_no_save) return,
         .change => if (!self.s.compiler_on_change) return,
-        .open, .now => {},
+        .open, .open_unsaved, .now => {},
     }
     const file = self.workspace.get(path) orelse return;
     // no compiler reads fypp's directives: fypp has to run first
     if (fyppExe(self) == null and std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(path), ".fypp")) return;
     // the editor's text of an open file (a check of edits, or one asked
     // for); a check of edits waits for the modules to compile on saving
-    const unsaved = (trigger == .change or trigger == .now) and self.open_docs.contains(path);
+    const unsaved = (trigger == .change or trigger == .now or trigger == .open_unsaved) and self.open_docs.contains(path);
     const job = try makeJob(self, a, id, uri, file, unsaved, trigger != .change);
     errdefer freeJob(self.gpa, job);
     if (trigger == .change) job.not_before = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, @max(0, self.s.compiler_change_delay)) * std.time.ns_per_ms;
@@ -359,10 +364,14 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id));
     Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir };
+    const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
+    // Intel's preprocessor output goes into the working directory: one of
+    // zfls's per file, not the source tree
+    const cwd = if (compilers.writesToWorkDir(id)) try paths.join(ja, &.{ work_dir, "run", try pathKey(a, file.path) }) else try ja.dupe(u8, paths.dirname(file.path));
     var dep_args: std.ArrayList([]const []const u8) = .empty;
     var dep_fixed: std.ArrayList(bool) = .empty;
     if (with_deps and !self.s.compiler_no_dependencies) for (try dependencies(self, a, file)) |d| if (stale(self, a, d, mod_dir)) {
-        try dep_args.append(ja, try argsOf(self, ja, id, d, o));
+        try dep_args.append(ja, try argsOf(self, ja, id, d, paths.dirname(file.path), o));
         try dep_fixed.append(ja, d.fixed);
     };
     var fypp: ?[]const []const u8 = null;
@@ -381,22 +390,21 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .id = id,
         .exes = try dupeAll(ja, try executables(self, a, id)),
         .compiler_path = if (self.s.compiler_path) |p| try ja.dupe(u8, p) else null,
-        .cwd = try ja.dupe(u8, paths.dirname(file.path)),
+        .cwd = cwd,
         .deps = dep_args.items,
         .deps_fixed = dep_fixed.items,
-        .args = try argsOf(self, ja, id, file, o),
+        .args = try argsOf(self, ja, id, file, paths.dirname(file.path), o),
         .fixed = file.fixed,
         .text = if (unsaved) try editorText(ja, file) else null,
         .fypp = fypp,
-        .work_dir = try ja.dupe(u8, try cacheDir(self, a, "work")),
+        .work_dir = work_dir,
     };
     return job;
 }
 
 /// The text as the editor has it
 pub fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
-    const lines = if (file.comment_markers.len > 0) file.raw_lines.items else file.lines.items;
-    return std.mem.join(a, "\n", lines);
+    return std.mem.join(a, "\n", file.editLines());
 }
 
 fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
@@ -408,8 +416,10 @@ fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
 /// The compiler's arguments for `file`: syntax only, its form and line
 /// length, the preprocessor and zfls's definitions when zfls preprocesses it, the .mod
 /// directory, the include directories, then `compiler_args` (or the
-/// compiler's defaults) and the file
-fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFile, o: compilers.Options) ![]const []const u8 {
+/// compiler's defaults) and the file. Relative directories in
+/// `compiler_args` are relative to `base`, the directory of the file
+/// checked.
+fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFile, base: []const u8, o: compilers.Options) ![]const []const u8 {
     var args: std.ArrayList([]const u8) = .empty;
     try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
     try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
@@ -418,6 +428,13 @@ fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFil
         if (compilers.isLineLength(id, file.fixed, x)) break true;
     } else false else false;
     if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
+    // debug lines as zfls reads them, unless compiler_args says
+    if (file.fixed) {
+        const user: []const []const u8 = if (self.s.compiler_args) |u| u.slice() else &.{};
+        for (user) |x| {
+            if (compilers.isDLinesArg(x)) break;
+        } else try args.appendSlice(a, compilers.dLines(id, self.s.dLinesCode(), o));
+    }
     if (file.preproc) {
         try args.appendSlice(a, compilers.preprocess(id, o));
         for (self.s.pp_defs.items) |d| try args.append(a, try compilers.define(a, id, d.name, d.value, o));
@@ -430,7 +447,7 @@ fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFil
         try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, dir), o));
     }
     if (self.s.compiler_args) |user| {
-        for (user.slice()) |x| try args.append(a, try a.dupe(u8, x));
+        for (try compilers.absoluteDirs(a, id, user.slice(), base, o)) |x| try args.append(a, try a.dupe(u8, x));
     } else try args.appendSlice(a, compilers.defaultArgs(id, o));
     try args.append(a, try a.dupe(u8, file.path));
     return args.items;
@@ -607,6 +624,7 @@ fn runJob(w: *Worker, job: *Job) !void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
+    if (compilers.writesToWorkDir(job.id)) try Io.Dir.cwd().createDirPath(io, job.cwd);
     for (job.deps, job.deps_fixed) |args, fixed| {
         if (w.stopped()) return;
         var dep_args = args;
