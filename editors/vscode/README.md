@@ -319,7 +319,7 @@ next formatting; turning formatting off restarts the server, so that
 VS Code stops offering it. In `zfls.formatting.path` and the argument settings,
 `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
 `${env:NAME}` and a leading `~` are expanded; an argument with a space in
-it becomes two.
+it stays one.
 
 **Format Selection** formats the whole lines the selection touches. The
 formatter sees only those lines, not the surrounding code: findent starts

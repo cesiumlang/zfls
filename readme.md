@@ -541,7 +541,11 @@ the open files that use them.
   nvfortran). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
   for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
-  string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
+  string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
+  list, which keeps an argument with a space whole:
+  `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
+  other options that are a program's arguments (`compiler_fypp_args`,
+  `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
