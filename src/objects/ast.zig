@@ -30,6 +30,18 @@ pub const IncludeInfo = struct {
     inc_obj: ?*Obj = null,
 };
 
+/// The innermost scope of each line of a file (`Ast.innerScopes`)
+pub const InnerScopes = struct {
+    lines: []const ?*Obj,
+    none_scope: ?*Obj,
+
+    /// What `Ast.getInnerScope(line_number)` gives
+    pub fn at(self: InnerScopes, line_number: usize) ?*Obj {
+        if (line_number >= 1 and line_number <= self.lines.len) if (self.lines[line_number - 1]) |s| return s;
+        return self.none_scope;
+    }
+};
+
 pub const Ast = struct {
     arena: std.heap.ArenaAllocator,
     file: ?*FortranFile = null,
@@ -234,6 +246,26 @@ pub const Ast = struct {
         return curr;
     }
 
+    /// The scope `getInnerScope` gives each of the first `n_lines` lines, for
+    /// a caller that asks for many lines: `getInnerScope` looks at every
+    /// scope of the file, which for every line of a long file of many
+    /// procedures is quadratic in its length. This finds them in one pass
+    /// over the scopes, by the same rule: of the scopes around the line, the
+    /// last listed of those that open last.
+    pub fn innerScopes(self: *Ast, a: Allocator, n_lines: usize) Allocator.Error!InnerScopes {
+        const scopes = try a.alloc(?*Obj, n_lines);
+        @memset(scopes, null);
+        for (self.scope_list.items) |s| {
+            // scopes count lines from 1
+            var l = @max(s.sline, 1);
+            while (l <= s.eline and l <= n_lines) : (l += 1) {
+                if (scopes[l - 1]) |prev| if (s.sline < prev.sline) continue;
+                scopes[l - 1] = s;
+            }
+        }
+        return .{ .lines = scopes, .none_scope = self.none_scope };
+    }
+
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
         for (parent.childList()) |child| {
             if (std.mem.eql(u8, child.name, name)) return child;
@@ -327,7 +359,7 @@ pub const Ast = struct {
             if (parent_scope) |ps| {
                 for (inc.scope_objs.items) |obj| {
                     for (ps.childList(), 0..) |c, i| if (c == obj) {
-                        _ = ps.scopeData().children.orderedRemove(i);
+                        ps.removeChild(i);
                         break;
                     };
                 }
@@ -386,3 +418,40 @@ pub const Ast = struct {
         return .{ .errors = errors.items, .parse_errors = self.parse_errors.items };
     }
 };
+
+test "innerScopes gives each line the scope getInnerScope gives it (#209)" {
+    const gpa = std.testing.allocator;
+    @import("../patterns.zig").init();
+    const src =
+        \\module m
+        \\  integer :: x
+        \\contains
+        \\  subroutine s(n)
+        \\    integer :: n, i
+        \\    do i = 1, n; associate (y => x)
+        \\      block
+        \\        x = y
+        \\      end block
+        \\    end associate; end do
+        \\  end subroutine s
+        \\  function f()
+        \\    integer :: f
+        \\    f = 1
+        \\  end function f
+        \\end module m
+        \\program p
+        \\  use m
+        \\  call s(2)
+        \\end program p
+        \\
+    ;
+    const f = try FortranFile.create(gpa, "/w/inner.f90", null);
+    defer f.destroy();
+    _ = try f.setTextOwned(try gpa.dupe(u8, src));
+    const ast = try f.parse(std.testing.io, null, &.{}, .{});
+    defer ast.destroy();
+    const n = f.nLines();
+    const inner = try ast.innerScopes(gpa, n);
+    defer gpa.free(inner.lines);
+    for (0..n + 2) |ln| try std.testing.expectEqual(ast.getInnerScope(ln), inner.at(ln));
+}

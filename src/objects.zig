@@ -30,12 +30,14 @@ const objects_check = @import("objects/check.zig");
 const objects_diagnostic = @import("objects/diagnostic.zig");
 const objects_ast = @import("objects/ast.zig");
 const objects_resolve = @import("objects/resolve.zig");
+const objects_index = @import("objects/index.zig");
 
 pub const Diagnostic = objects_diagnostic.Diagnostic;
 pub const BuiltDiag = objects_diagnostic.BuiltDiag;
 pub const EndError = objects_diagnostic.EndError;
 pub const IncludeInfo = objects_ast.IncludeInfo;
 pub const Ast = objects_ast.Ast;
+pub const InnerScopes = objects_ast.InnerScopes;
 pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
@@ -234,6 +236,8 @@ pub const Scope = struct {
     /// from the submodule prototype it implements
     in_children: std.ArrayList(*Obj) = .empty,
     ext: ScopeExt = .none,
+    /// `children` by name, for lookups (objects/index.zig)
+    index: objects_index.ChildIndex = .{},
 };
 
 pub const Submodule = struct {
@@ -663,7 +667,14 @@ pub const Obj = struct {
 
     pub fn addChild(self: *Obj, child: *Obj) !void {
         try self.scopeData().children.append(self.al(), child);
+        objects_index.changed(self);
         child.setParent(self);
+    }
+
+    /// Remove the child at position `i`
+    pub fn removeChild(self: *Obj, i: usize) void {
+        _ = self.scopeData().children.orderedRemove(i);
+        objects_index.changed(self);
     }
 
     pub fn updateFqsn(self: *Obj, enc_scope: ?[]const u8) !void {

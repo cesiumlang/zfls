@@ -98,32 +98,16 @@ const Tokenizer = struct {
     /// their declarations)
     constants: ?*std.ArrayList(ConstantUse) = null,
     /// the innermost scope of each line, found once (see `innerScope`)
-    inner: ?[]const ?*Obj = null,
+    inner: ?objects.InnerScopes = null,
 
-    /// The scope `Ast.getInnerScope` gives line `ln` (0-based). That looks
-    /// at every scope of the file, which for every line of a long file of
-    /// many procedures made the tokens quadratic in its length; this finds
-    /// the scope of every line in one pass over the scopes, by the same
-    /// rule: of the scopes around the line, the last listed of those that
-    /// open last.
+    /// The scope `Ast.getInnerScope` gives line `ln` (0-based), from the
+    /// scopes of every line, found once (`Ast.innerScopes`)
     fn innerScope(t: *Tokenizer, ln: usize) !?*Obj {
         const inner = t.inner orelse blk: {
-            const n = t.file.nLines();
-            const scopes = try t.a.alloc(?*Obj, n);
-            @memset(scopes, null);
-            for (t.ast.scope_list.items) |s| {
-                // scopes count lines from 1
-                var l = @max(s.sline, 1);
-                while (l <= s.eline and l <= n) : (l += 1) {
-                    if (scopes[l - 1]) |prev| if (s.sline < prev.sline) continue;
-                    scopes[l - 1] = s;
-                }
-            }
-            t.inner = scopes;
-            break :blk scopes;
+            t.inner = try t.ast.innerScopes(t.a, t.file.nLines());
+            break :blk t.inner.?;
         };
-        if (ln < inner.len) if (inner[ln]) |s| return s;
-        return t.ast.none_scope;
+        return inner.at(ln + 1);
     }
 
     /// Collect a name that stands for nothing found, unless it is a word
