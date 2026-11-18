@@ -58,6 +58,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | fixed (patched) | fails, same cause |
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
+| [#443](https://github.com/fortran-lang/fortls/issues/443) | a form feed at the start of a line hides its statement | parsing | fixed (patched) | fails (per the issue) |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
