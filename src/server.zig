@@ -130,6 +130,9 @@ pub const Server = struct {
     /// published, by URI, and when those are due (pending.zig: the awake
     /// clock's nanoseconds); keys owned by `gpa`, under `diag_lock`
     diag_pending: std.StringHashMapUnmanaged(i96) = .empty,
+    /// The client asked for `shutdown`: no diagnostics of a change wait
+    /// or are computed until `exit` (pending.zig; the server's thread)
+    shut_down: bool = false,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
     /// The formatting problems posted (hashes of their keys), each once
@@ -397,6 +400,7 @@ pub const Server = struct {
         will_rename_files,
         /// accepted and ignored
         ignored,
+        shutdown,
         exit,
     };
 
@@ -452,7 +456,7 @@ pub const Server = struct {
         .{ "workspace/didChangeConfiguration", .did_change_configuration },
         .{ "$/cancelRequest", .ignored },
         .{ "$/setTrace", .ignored },
-        .{ "shutdown", .ignored },
+        .{ "shutdown", .shutdown },
         .{ "exit", .exit },
     });
 
@@ -512,6 +516,10 @@ pub const Server = struct {
             .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
             .did_change_configuration => configuration.serveDidChange(self, a, params),
             .ignored => .null,
+            .shutdown => blk: {
+                pending.shutdown(self);
+                break :blk .null;
+            },
             .exit => blk: {
                 self.serveExit();
                 break :blk .null;

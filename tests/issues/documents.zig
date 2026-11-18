@@ -232,3 +232,22 @@ test "diagnostics_change_delay: 0 publishes with each change, a negative one onl
         try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
     }
 }
+
+test "nothing of a change is published after shutdown (#261)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text = uses_j }}, .{});
+    defer w.deinit();
+    try w.open("p.f90", "fortran");
+    try change(w, "p.f90", declares_j);
+    try std.testing.expect(w.server.nextDiagnosticsTime() != null);
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "shutdown", .null);
+    // what waited is dropped: the loop does not wake up for it
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+    // and a change now does not wait either
+    try change(w, "p.f90", uses_k);
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+}

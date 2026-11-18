@@ -23,7 +23,7 @@ const diagnostics = @import("diagnostics.zig");
 /// one
 pub fn schedule(self: *Server, a: Allocator, uri: []const u8) void {
     const delay = self.s.diagnostics_change_delay;
-    if (delay < 0) return;
+    if (delay < 0 or self.shut_down) return;
     if (delay == 0) return diagnostics.sendDiagnostics(self, a, uri);
     const when = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, delay) * std.time.ns_per_ms;
     put(self, uri, when) catch |e| self.log.err("diagnostics of {s}: {s}", .{ uri, @errorName(e) });
@@ -97,6 +97,18 @@ pub fn publishDue(self: *Server, a: Allocator, now: ?i96) void {
         // not published (the document is gone): what was kept of it is
         compile.publishKept(self, a, uri);
     }
+}
+
+/// `shutdown`: the client is leaving. What waits is dropped, and nothing
+/// more waits until `exit` (`schedule`), so that nothing is computed or
+/// published of a change after the answer to `shutdown`.
+pub fn shutdown(self: *Server) void {
+    self.diag_lock.lockUncancelable(self.io);
+    defer self.diag_lock.unlock(self.io);
+    self.shut_down = true;
+    var it = self.diag_pending.keyIterator();
+    while (it.next()) |k| self.gpa.free(k.*);
+    self.diag_pending.clearRetainingCapacity();
 }
 
 pub fn deinit(self: *Server) void {
