@@ -12,6 +12,7 @@ test {
     _ = @import("diagnostics.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("formatting.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
     _ = @import("language.zig");

@@ -5,7 +5,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { expandDirectoryGlob } from "./lint/paths";
-import type { ServerSettings } from "./settingsSync";
+import { FORMATTERS, type ServerSettings } from "./settingsSync";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -232,14 +232,16 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   ];
   const args: string[] = [];
   let any = false;
+  let codee = false;
   for (const { languageId, flag, argsFlag } of forms) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
     const formatter = config.get<string>("formatter", "Disabled");
-    if (formatter !== "findent" && formatter !== "fprettify") {
+    if (!FORMATTERS.includes(formatter)) {
       args.push(flag, "none");
       continue;
     }
     any = true;
+    codee ||= formatter === "codee";
     args.push(flag, formatter);
     const extra = config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "");
     if (extra.length) {
@@ -249,11 +251,20 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   if (!any) {
     return [];
   }
-  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  const exe = formatterPath(folder, codee);
   if (exe) {
     args.push("--formatter_path", resolvePath(exe, folder));
   }
   return args;
+}
+
+/** zfls.formatting.path, else for Codee's formatter zfls.codee.path */
+function formatterPath(folder: vscode.WorkspaceFolder | undefined, codee: boolean): string {
+  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  if (exe || !codee) {
+    return exe;
+  }
+  return vscode.workspace.getConfiguration("zfls.codee", folder?.uri).get<string>("path", "").trim();
 }
 
 /** The settings of `serverArguments` (but `zfls.arguments` and those a
@@ -368,19 +379,21 @@ function codeeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettin
 function formattingSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
   const out: ServerSettings = {};
   let any = false;
+  let codee = false;
   for (const [languageId, key] of [
     ["FortranFreeForm", "formatter"],
     ["FortranFixedForm", "formatter_fixed"],
   ]) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
     const formatter = config.get<string>("formatter", "Disabled");
-    const on = formatter === "findent" || formatter === "fprettify";
+    const on = FORMATTERS.includes(formatter);
     any ||= on;
+    codee ||= formatter === "codee";
     out[key] = on ? formatter : "none";
     const extra = on ? config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "") : [];
     out[`${key}_args`] = extra.map((a) => resolvePath(a, folder));
   }
-  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  const exe = formatterPath(folder, codee);
   out.formatter_path = any && exe ? resolvePath(exe, folder) : null;
   return out;
 }

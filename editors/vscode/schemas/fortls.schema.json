@@ -364,7 +364,7 @@
       "default": []
     },
     "formatter": {
-      "description": "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)",
+      "description": "Format documents and selections with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout (default: none)",
       "type": [
         "string",
         "null"
@@ -377,14 +377,14 @@
       ]
     },
     "formatter_path": {
-      "description": "The formatter executable, or the directory that holds it (default: the one on the PATH)",
+      "description": "The formatter executable, or the directory that holds it (default: the one on the PATH; for codee, codee_path's); the command of the custom formatter",
       "type": [
         "string",
         "null"
       ]
     },
     "formatter_args": {
-      "description": "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up",
+      "description": "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up; codee gets format - -o -, forformat --stdin-filename=FILE and -ifree or -ifixed; for custom they are the whole command line, in which ${file} is the document's path and ${form} free or fixed",
       "type": [
         "array",
         "string"
@@ -395,7 +395,7 @@
       "default": []
     },
     "formatter_fixed": {
-      "description": "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)",
+      "description": "The formatter of fixed-form files: findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)",
       "type": [
         "string",
         "null"
