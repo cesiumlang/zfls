@@ -540,7 +540,14 @@ the open files that use them.
   (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for
   nvfortran). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
-  for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
+  for files it preprocesses, `pp_defs` (`-D`). It also has the compiler read
+  lines as zfls does: fixed-form lines up to `fixed_line_length` when it is
+  set (`-ffixed-line-length-N` for gfortran, `-ffixed-line-length=N` for
+  flang, `-extend-source N` for Intel with 72, 80 or 132, `-Mextend` for
+  nvfortran and `-132` for nagfor with 132), and free-form lines without a
+  limit (`-ffree-line-length-none` for gfortran, whose default is 132
+  columns before GCC 16); a line-length option in `compiler_args` replaces
+  zfls's of that form. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
@@ -782,7 +789,8 @@ zfls deliberately differs from fortls in a few places:
   statement, as the name could come from those.
 - `fixed_line_length` (as gfortran's `-ffixed-line-length-n`: 72, 80, 132)
   makes the columns past it of a fixed-form line a comment: a `comment`
-  semantic token, and no names there. The VS Code extension passes 72 by
+  semantic token, and no names there; the compiler check is given the same
+  length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
 - Typing `#` first on an indented line moves it to the first column
