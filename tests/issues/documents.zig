@@ -129,3 +129,125 @@ test "a document opened with its file's text is not parsed again" {
     try std.testing.expect(file.ast.? == indexed);
     try std.testing.expect(try hasSymbol(w, "thing"));
 }
+
+/// `didChange` of `name` to `text` (the whole document)
+fn change(w: *h.Workspace, name: []const u8, text: []const u8) !void {
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "textDocument/didChange", try json.from(a, .{
+        .textDocument = .{ .uri = try w.uri(name) },
+        .contentChanges = &[_]struct { text: []const u8 }{.{ .text = text }},
+    }));
+}
+
+/// How often the diagnostics of `name` were published
+fn publications(w: *h.Workspace, name: []const u8) usize {
+    var n: usize = 0;
+    for (w.sent.items) |msg| {
+        if (std.mem.find(u8, msg, "publishDiagnostics") != null and std.mem.find(u8, msg, name) != null) n += 1;
+    }
+    return n;
+}
+
+/// What the server's loop does when the delay of a change is over
+fn pause(w: *h.Workspace) void {
+    w.server.publishPendingDiagnostics(w.arena.allocator(), null);
+}
+
+fn undeclared(comptime name: []const u8) []const u8 {
+    return "Name \\\"" ++ name ++ "\\\" is not declared";
+}
+
+const uses_j = "program p\n  implicit none\n  integer :: i\n  i = j + 1\nend program p\n";
+const declares_j = "program p\n  implicit none\n  integer :: i, j\n  j = 1\n  i = j + 1\nend program p\n";
+const uses_k = "program p\n  implicit none\n  integer :: i, j\n  j = 1\n  i = j + k\nend program p\n";
+
+test "zfls's diagnostics follow the changes of a document, after a pause (#261)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text = uses_j }}, .{});
+    defer w.deinit();
+    try w.open("p.f90", "fortran");
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+    try std.testing.expect(std.mem.find(u8, lastPublished(w, "p.f90").?, undeclared("j")) != null);
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+
+    // the problem is fixed: nothing in the notification, an empty list after
+    try change(w, "p.f90", declares_j);
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+    try std.testing.expect(w.server.nextDiagnosticsTime() != null);
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 2), publications(w, "p.f90"));
+    try std.testing.expect(std.mem.find(u8, lastPublished(w, "p.f90").?, "\"diagnostics\":[]") != null);
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+
+    // a new problem appears
+    try change(w, "p.f90", uses_k);
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 3), publications(w, "p.f90"));
+    try std.testing.expect(std.mem.find(u8, lastPublished(w, "p.f90").?, undeclared("k")) != null);
+
+    // nothing is due before the delay is over
+    try change(w, "p.f90", declares_j);
+    w.server.publishPendingDiagnostics(w.arena.allocator(), w.server.nextDiagnosticsTime().? - 1);
+    try std.testing.expectEqual(@as(usize, 3), publications(w, "p.f90"));
+    // a save publishes, and then nothing waits
+    try w.tmp.dir.writeFile(std.testing.io, .{ .sub_path = "p.f90", .data = declares_j });
+    try w.save("p.f90");
+    try std.testing.expectEqual(@as(usize, 4), publications(w, "p.f90"));
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 4), publications(w, "p.f90"));
+}
+
+test "a burst of changes gives one publication, of the last text (#261)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text = uses_j }}, .{});
+    defer w.deinit();
+    try w.open("p.f90", "fortran");
+    for (0..10) |i| try change(w, "p.f90", if (i == 9) uses_k else if (i % 2 == 0) declares_j else uses_j);
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 2), publications(w, "p.f90"));
+    const last = lastPublished(w, "p.f90").?;
+    try std.testing.expect(std.mem.find(u8, last, undeclared("k")) != null);
+    try std.testing.expect(std.mem.find(u8, last, undeclared("j")) == null);
+    // closed before the pause is over: nothing more of it
+    try change(w, "p.f90", uses_j);
+    try close(w, "p.f90");
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+}
+
+test "diagnostics_change_delay: 0 publishes with each change, a negative one only on open and save (#261)" {
+    {
+        const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text = uses_j }}, .{ .settings = .{ .diagnostics_change_delay = 0 } });
+        defer w.deinit();
+        try w.open("p.f90", "fortran");
+        try change(w, "p.f90", uses_k);
+        try std.testing.expectEqual(@as(usize, 2), publications(w, "p.f90"));
+        try std.testing.expect(std.mem.find(u8, lastPublished(w, "p.f90").?, undeclared("k")) != null);
+    }
+    {
+        const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text = uses_j }}, .{ .settings = .{ .diagnostics_change_delay = -1 } });
+        defer w.deinit();
+        try w.open("p.f90", "fortran");
+        try change(w, "p.f90", uses_k);
+        try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+        try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+    }
+}
+
+test "nothing of a change is published after shutdown (#261)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text = uses_j }}, .{});
+    defer w.deinit();
+    try w.open("p.f90", "fortran");
+    try change(w, "p.f90", declares_j);
+    try std.testing.expect(w.server.nextDiagnosticsTime() != null);
+    const a = w.arena.allocator();
+    _ = try w.server.dispatchPublic(a, "shutdown", .null);
+    // what waited is dropped: the loop does not wake up for it
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+    // and a change now does not wait either
+    try change(w, "p.f90", uses_k);
+    try std.testing.expectEqual(@as(?i96, null), w.server.nextDiagnosticsTime());
+    pause(w);
+    try std.testing.expectEqual(@as(usize, 1), publications(w, "p.f90"));
+}

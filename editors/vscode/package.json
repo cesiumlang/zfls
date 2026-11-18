@@ -315,6 +315,13 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.workspaceDiagnostics.markdownDescription%"
         },
+        "zfls.diagnosticsChangeDelay": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.diagnosticsChangeDelay.markdownDescription%"
+        },
         "zfls.diagnosticSeverity": {
           "type": "object",
           "propertyNames": {

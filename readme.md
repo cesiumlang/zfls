@@ -515,6 +515,14 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `undeclared-name`, `unused-name`, `circular-use`, `argument-mismatch`,
 `argument-kind` and `intent-in-assigned`.
 
+- zfls publishes its diagnostics of a document when it is opened, when it
+  is saved, and while it is edited: once its text has not changed for
+  `diagnostics_change_delay` milliseconds (300 by default), so that a burst
+  of typing costs one check, of the last text. 0 publishes with each
+  change, a negative value only when the document is opened and saved.
+  Other open documents that use a changed module follow when it is saved.
+  A result of the compiler or a linter for a changed text is published
+  with zfls's diagnostics of that text, not before them.
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
   the severities are `off`, `error`, `warning`, `information` and `hint`.
@@ -807,6 +815,11 @@ zfls deliberately differs from fortls in a few places:
   as used when it appears anywhere else in the scope, contained procedures
   and inactive preprocessor branches included; dummy arguments, function
   results and module names are not reported. fortls has no such check.
+- Diagnostics follow the text while a document is edited, after
+  `diagnostics_change_delay` milliseconds without a change (see
+  [Diagnostics](#diagnostics)); fortls publishes them when a document is
+  opened and saved only, so that the list is the last save's while one
+  types.
 - `workspace_diagnostics` publishes the diagnostics of every workspace file
   after initialization, and again when a saved or changed file changes
   them, so that editors list the problems of files that are not open; a
