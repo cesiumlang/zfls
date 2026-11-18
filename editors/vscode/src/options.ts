@@ -128,10 +128,20 @@ function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefi
 export function linterArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
-  if (compiler === "Disabled") {
+  const fixed = fixedCompilerSettings(config, folder);
+  if (compiler === "Disabled" && !fixed.compiler_diagnostics_fixed) {
     return [];
   }
-  const args = ["--compiler_diagnostics", compiler];
+  const args = ["--compiler_diagnostics", compiler === "Disabled" ? "none" : compiler];
+  if (fixed.compiler_diagnostics_fixed) {
+    args.push("--compiler_diagnostics_fixed", fixed.compiler_diagnostics_fixed);
+  }
+  if (fixed.compiler_path_fixed) {
+    args.push("--compiler_path_fixed", fixed.compiler_path_fixed);
+  }
+  if (fixed.compiler_args_fixed !== null) {
+    args.push(`--compiler_args_fixed=${fixed.compiler_args_fixed}`);
+  }
   const exe = config.get<string>("compilerPath", "").trim();
   if (exe) {
     args.push("--compiler_path", resolvePath(exe, folder));
@@ -301,17 +311,32 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
   return { ...out, ...linterSettings(folder), ...formattingSettings(folder), ...fortitudeSettings(folder), ...codeeSettings(folder) };
 }
 
+/** The compiler of fixed-form files (`zfls.linter.fixedCompiler`, its path
+ * and arguments) as settings; null: those of free form */
+function fixedCompilerSettings(config: vscode.WorkspaceConfiguration, folder: vscode.WorkspaceFolder | undefined) {
+  const name = config.get<string>("fixedCompiler", "").trim();
+  const exe = config.get<string>("fixedCompilerPath", "").trim();
+  const extra = config.get<string[] | null>("fixedExtraArgs", null);
+  return {
+    compiler_diagnostics_fixed: name === "" ? null : name === "Disabled" ? "none" : name,
+    compiler_path_fixed: exe ? resolvePath(exe, folder) : null,
+    compiler_args_fixed: Array.isArray(extra) ? argString(extra.filter((a) => a !== "").map((a) => resolvePath(a, folder))) : null,
+  };
+}
+
 /** `linterArguments` as settings */
 function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
-  const on = compiler !== "Disabled";
+  const fixed = fixedCompilerSettings(config, folder);
+  const on = compiler !== "Disabled" || fixed.compiler_diagnostics_fixed !== null;
   const exe = config.get<string>("compilerPath", "").trim();
   const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
   const modDir = config.get<string>("modOutput", "").trim();
   const fypp = on && config.get<boolean>("fypp.enabled", false);
   return {
-    compiler_diagnostics: on ? compiler : null,
+    compiler_diagnostics: compiler !== "Disabled" ? compiler : null,
+    ...fixed,
     compiler_path: on && exe ? resolvePath(exe, folder) : null,
     compiler_args: on && extra.length ? argString(extra.map((a) => resolvePath(a, folder))) : null,
     compiler_include_dirs: on ? directories(config.get<string[]>("includePaths", []), folder) : [],

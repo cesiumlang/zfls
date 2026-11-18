@@ -531,6 +531,12 @@ compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
 says so once and logs that output.
 
+A compiler run that takes longer than 120 seconds is stopped, with the
+processes it started (a driver's compiler proper, such as gfortran's
+`f951`): each tool zfls runs, the compiler, fypp, the linters and the
+formatters, runs in a job object of its own on Windows and a process group
+elsewhere, which is also stopped when the server shuts down during a run.
+
 ```json
 {
   "compiler_diagnostics": "gfortran",
@@ -555,6 +561,14 @@ says so once and logs that output.
   columns before GCC 16); a line-length option in `compiler_args` replaces
   zfls's of that form. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`.
+- `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`:
+  the compiler, executable and arguments of fixed-form files, for a
+  project whose legacy code builds with another compiler or options; each
+  is the free form's when not set (an empty `compiler_args_fixed`: the
+  compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no
+  fixed-form file. The modules a file uses are compiled with the compiler
+  of that file, whatever their form (the `.mod` files of two compilers do
+  not mix).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,

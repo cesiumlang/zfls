@@ -668,7 +668,7 @@ pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
     };
     if (res) |diags| {
         // with the compiler's diagnostics of the file, when there are any
-        if (compile.compilerOf(self) != null) {
+        if (compile.anyCompiler(self)) {
             compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
             return;
         }

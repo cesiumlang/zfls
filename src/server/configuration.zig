@@ -252,7 +252,7 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
     }
     if (!same(&prev, &next, "debug_log") and self.s.debug_log) try workspace.configLogger(self);
     if (!same(&prev, &next, "diagnostic_severity")) try diagnostics.checkDiagnosticSeverity(self, a);
-    if (!same(&prev, &next, "compiler_diagnostics")) try compile.checkSetting(self, a);
+    if (!same(&prev, &next, "compiler_diagnostics") or !same(&prev, &next, "compiler_diagnostics_fixed")) try compile.checkSetting(self, a);
     if (!same(&prev, &next, "formatter") or !same(&prev, &next, "formatter_fixed")) try format.checkSetting(self, a);
     try announce(self, a);
     try republish(self, a, was_published, was_workspace);
