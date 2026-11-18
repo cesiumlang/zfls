@@ -57,6 +57,9 @@ pub const Settings = struct {
     excl_paths: StrList = .{},
     /// Further markers that start a comment as `!` does, such as `;*`
     comment_markers: StrList = .{},
+    /// How a fixed-form line with D or d in column 1 (a debug line) is
+    /// read: `comment` (null: the default) or `code`
+    d_lines: ?[]const u8 = null,
     // Autocomplete options
     autocomplete_no_prefix: bool = false,
     /// Do not offer names of modules that are not used yet (with the USE
@@ -199,6 +202,11 @@ pub const Settings = struct {
             self.debug_implementation or self.debug_references or self.debug_rename != null or
             self.debug_actions or self.debug_rootpath != null or self.debug_workspace_symbols != null;
     }
+
+    /// Whether `d_lines` reads debug lines as code
+    pub fn dLinesCode(self: *const Settings) bool {
+        return if (self.d_lines) |v| std.ascii.eqlIgnoreCase(std.mem.trim(u8, v, " "), "code") else false;
+    }
 };
 
 const Kind = enum { flag, int, string, list, json, help, debug_help, version };
@@ -233,6 +241,7 @@ pub const opts = [_]Opt{
     .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
     .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
+    .{ .long = "d_lines", .kind = .string, .metavar = "READING", .help = "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)", .group = "Sources file parsing options" },
 
     .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
     .{ .long = "autocomplete_no_auto_use", .kind = .flag, .help = "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)", .group = "Autocomplete options" },
@@ -259,7 +268,7 @@ pub const opts = [_]Opt{
 
     .{ .long = "compiler_diagnostics", .kind = .string, .metavar = "COMPILER", .help = "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
@@ -267,20 +276,20 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
 
     .{ .long = "fortitude", .kind = .flag, .help = "Lint files with fortitude (pip install fortitude-lint) when they are opened and saved: its problems are warnings, its fixes quick fixes, and source.fixAll.fortitude applies the safe ones", .group = "Linter options" },
     .{ .long = "fortitude_path", .kind = .string, .metavar = "PATH", .help = "fortitude's executable (default: the one on the PATH)", .group = "Linter options" },
-    .{ .long = "fortitude_args", .kind = .string, .metavar = "ARGS", .help = "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
+    .{ .long = "fortitude_args", .kind = .string, .metavar = "ARGS", .help = "fortitude check's further arguments, such as --select; separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Linter options" },
     .{ .long = "fortitude_on_change", .kind = .flag, .help = "Also lint a file with fortitude while it is edited, after fortitude_change_delay milliseconds without a change", .group = "Linter options" },
     .{ .long = "fortitude_change_delay", .kind = .int, .metavar = "MS", .help = "With fortitude_on_change, the milliseconds without a change before linting (default: 500)", .group = "Linter options" },
     .{ .long = "codee", .kind = .flag, .help = "Check files with Codee (codee checks, a commercial tool) when they are opened and saved", .group = "Linter options" },
     .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
-    .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
+    .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Linter options" },
 
     .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
     .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
-    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
+    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
     .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
     .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
 
@@ -439,9 +448,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     continue;
                 }
                 if (isArgList(o.long)) {
-                    var list: StrList = .{};
-                    var words = std.mem.tokenizeAny(u8, val, " \t");
-                    while (words.next()) |w| try list.items.append(a, w);
+                    const list = try cliArgList(a, val);
                     inline for (arg_lists) |name| if (std.mem.eql(u8, o.long, name)) {
                         @field(s, name) = if (@FieldType(Settings, name) == StrList) list else @as(?StrList, list);
                     };
@@ -546,8 +553,8 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
 }
 
 /// The options that are arguments of another program: one string, split at
-/// spaces, on the command line, and a list or a string in a configuration
-/// file
+/// spaces, or a JSON list, on the command line, and a list or a string in a
+/// configuration file
 const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
 
 fn isArgList(name: []const u8) bool {
@@ -570,6 +577,17 @@ fn argList(a: Allocator, v: json.Value) !?StrList {
     return list;
 }
 
+/// Arguments on the command line: a JSON list of strings, which keeps an
+/// argument with a space whole, else a string split at spaces
+fn cliArgList(a: Allocator, val: []const u8) !StrList {
+    if (std.mem.startsWith(u8, str.strip(val), "[")) {
+        if (json.parse(a, val)) |v| {
+            if (v == .array) if (try argList(a, v)) |list| return list;
+        } else |e| if (e == error.OutOfMemory) return e;
+    }
+    return (try argList(a, .{ .string = val })).?;
+}
+
 fn jsonInt(v: ?json.Value, default: i64) i64 {
     const x = v orelse return default;
     return json.int(x) orelse default;
@@ -586,6 +604,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "comment_markers")) |v| s.comment_markers = try jsonList(a, v);
+    if (json.get(cfg, "d_lines")) |v| s.d_lines = json.str(v);
     // General options
     s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
     s.notify_init = jsonBool(json.get(cfg, "notify_init"), s.notify_init);
@@ -826,6 +845,21 @@ test "the options as JSON" {
     try std.testing.expect(std.mem.find(u8, text, "\"pp_suffixes\":null") != null);
     try std.testing.expect(std.mem.find(u8, text, "\"debug_log\":false") != null);
     try std.testing.expect(std.mem.find(u8, text, "debug_filepath") == null);
+}
+
+test "program arguments on the command line: a JSON list keeps an argument with a space whole" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = try parseArgs(a, &.{ "--compiler_args=[\"-I/a b/inc\", \"-Wall\"]", "--fortitude_args", "[1, \"x\"", "--codee_args=[]" }, "0.1.0");
+    const s = r.run;
+    try std.testing.expectEqual(@as(usize, 2), s.compiler_args.?.len());
+    try std.testing.expectEqualStrings("-I/a b/inc", s.compiler_args.?.slice()[0]);
+    try std.testing.expectEqualStrings("-Wall", s.compiler_args.?.slice()[1]);
+    // not JSON: split at spaces, as before
+    try std.testing.expectEqual(@as(usize, 2), s.fortitude_args.len());
+    try std.testing.expectEqualStrings("[1,", s.fortitude_args.slice()[0]);
+    try std.testing.expectEqual(@as(usize, 0), s.codee_args.len());
 }
 
 test "cli parsing" {
