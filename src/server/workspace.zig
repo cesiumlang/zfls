@@ -613,15 +613,31 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     const form: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
     if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
-        if (self.workspace.get(filepath)) |f| if (f.ast) |ast| removeFromTree(self, ast);
+        // a document that was never saved, or whose file is gone: it leaves
+        // the workspace, and its problems with it
+        const f = self.workspace.get(filepath) orelse return .null;
+        if (f.ast == null) return .null;
+        try retireFileAst(self, f);
+        f.ast = null;
+        // so that the same text, opened again, is parsed again (in the form
+        // its language names then)
+        f.hash = null;
+        f.forced_form = null;
+        try fullRelink(self, a);
+        if (!self.s.disable_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
         return .null;
     }
-    var changed = updateWorkspaceFile(self, filepath, true, did_open, false) catch |e| {
-        self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
+    // an opened document's text is the editor's, which need not be the
+    // file's: unsaved changes restored, or a new file not saved yet. Only a
+    // didOpen without a text (and a save or a close) reads the file.
+    const open_text = if (did_open) params.textDocument.text else null;
+    var changed = (if (open_text) |t| openDocument(self, filepath, t, form) else updateWorkspaceFile(self, filepath, true, did_open, false)) catch |e| {
+        self.postMessage(a, try a.print("{s} request failed for file '{s}': {s}", .{ if (did_open) "Open" else "Save", filepath, parser.describeFileError(e) }), C.Severity.err);
         return .null;
     };
-    // read in the other form than before: parsed again
-    if (did_open or did_close) if (self.workspace.get(filepath)) |f| if (f.forceForm(form)) {
+    // read in the other form than before: parsed again (an opened text
+    // was read in its form by openDocument)
+    if (open_text == null and (did_open or did_close)) if (self.workspace.get(filepath)) |f| if (f.forceForm(form)) {
         changed = updateWorkspaceFile(self, filepath, false, true, false) catch |e| {
             self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
             return .null;
@@ -633,7 +649,10 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     }
     // the compiler checks the file as saved, on its own thread
     if (!did_close and !self.s.disable_diagnostics) {
-        const trigger: compile.Trigger = if (did_open) .open else .save;
+        // the compiler and Codee read the file, which an opened document's
+        // text may differ from
+        const unsaved = open_text != null and (compile.compilerOf(self) != null or self.s.codee) and differsFromDisk(self, filepath);
+        const trigger: compile.Trigger = if (unsaved) .open_unsaved else if (did_open) .open else .save;
         compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
         linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });
     }
@@ -644,6 +663,33 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     }
     if (!self.s.disable_diagnostics) diagnostics.sendDiagnostics(self, a, uri);
     return .null;
+}
+
+/// `didOpen` of a file's document with its text: the text is the document's,
+/// whatever the file holds (if there is one). Returns whether it changed:
+/// a text equal to the one the workspace has of the file is not parsed again.
+fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?parser.SourceForm) parser.FileError!bool {
+    const file = self.workspace.get(filepath) orelse blk: {
+        const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
+        errdefer nf.destroy();
+        nf.comment_markers = self.s.comment_markers.slice();
+        try self.workspace.put(self.gpa, nf.path, nf);
+        break :blk nf;
+    };
+    // the form first, so that a new text is read in it
+    const reformed = file.forceForm(form);
+    const changed = try file.setText(text);
+    if (!changed and !reformed and file.ast != null) return false;
+    return updateWorkspaceFile(self, filepath, false, true, false);
+}
+
+/// Whether the text zfls has of `filepath` is not what the file holds (or
+/// there is no such file)
+fn differsFromDisk(self: *Server, filepath: []const u8) bool {
+    const file = self.workspace.get(filepath) orelse return false;
+    const data = Io.Dir.cwd().readFileAlloc(self.io, filepath, self.gpa, .limited(1 << 30)) catch return true;
+    defer self.gpa.free(data);
+    return file.hash == null or file.hash.? != parser.FortranFile.textHash(data);
 }
 
 /// A document zfls holds the text of but does not parse as Fortran: a C
