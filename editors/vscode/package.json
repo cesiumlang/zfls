@@ -64,10 +64,14 @@
           ".F95",
           ".f03",
           ".F03",
+          ".f05",
+          ".F05",
           ".f08",
           ".F08",
           ".f18",
           ".F18",
+          ".f23",
+          ".F23",
           ".fpp",
           ".FPP",
           ".cuf",
@@ -94,7 +98,9 @@
           ".f77",
           ".F77",
           ".for",
-          ".FOR"
+          ".FOR",
+          ".ftn",
+          ".FTN"
         ],
         "configuration": "./language-configuration.json",
         "icon": {

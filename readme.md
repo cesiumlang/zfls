@@ -53,6 +53,12 @@ command line options and configuration files.
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
   documentation comments
+- Sources indexed by default by their extension, in either case: `.f90`,
+  `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit),
+  `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn`
+  (`incl_suffixes` adds more); one table (`src/suffixes.zig`) decides the
+  source form, the Fortran entries of `compile_commands.json` and the
+  VS Code extension's file associations
 - DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and
   `.` between a variable and its component (`rec.field`)
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures,
@@ -911,6 +917,8 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- `.f23`, `.ftn`, `.pf` and `.fypp` files are indexed by default, besides
+  fortls's extensions (FL #299, FL #521).
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
