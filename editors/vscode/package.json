@@ -341,7 +341,8 @@
               "circular-use",
               "argument-mismatch",
               "argument-kind",
-              "intent-in-assigned"
+              "intent-in-assigned",
+              "include-not-found"
             ]
           },
           "additionalProperties": {

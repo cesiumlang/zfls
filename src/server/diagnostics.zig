@@ -406,6 +406,27 @@ pub fn circularUses(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) 
     return out.items;
 }
 
+/// The `#include` directives whose file is found neither next to the file
+/// nor in `include_dirs` (`include-not-found`, information)
+pub fn includesNotFound(a: Allocator, ast: *Ast) ![]const objects.BuiltDiag {
+    var out: std.ArrayList(objects.BuiltDiag) = .empty;
+    for (ast.include_statements.items) |inc| {
+        const cols = inc.missing orelse continue;
+        if (inc.file != null) continue;
+        try out.append(a, .{
+            .sln = inc.line_number -| 1,
+            .sch = cols[0],
+            .eln = inc.line_number -| 1,
+            .ech = cols[1],
+            .message = try a.print("Include file \"{s}\" not found (include_dirs)", .{inc.path}),
+            .severity = C.Severity.info,
+            .code = .include_not_found,
+            .subject = inc.path,
+        });
+    }
+    return out.items;
+}
+
 /// The local variables and USE ONLY names that their scope never uses,
 /// shown faded (`unused-name`, a hint)
 pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
@@ -587,7 +608,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {

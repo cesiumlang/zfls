@@ -368,6 +368,98 @@ test "USE statements in the active branch of an #included header and in a header
     try w.expectHoverContains("main3.F90", w.pos("main3.F90", "kvar", 0, 0), "INTEGER :: kvar");
 }
 
+const petsc_file = [_]h.File{.{ .name = "a.F90", .text =
+    \\module multigrid
+    \\#include <petsc/finclude/petscksp.h>
+    \\  use petscksp
+    \\  implicit none
+    \\contains
+    \\  subroutine destroy(prec)
+    \\    PC, intent(inout) :: prec
+    \\    PetscErrorCode ierr
+    \\    call PCDestroy(prec, ierr)
+    \\  end subroutine destroy
+    \\end module multigrid
+    \\
+}};
+
+/// The diagnostics of `name` are those of `want` (0-based line and code,
+/// sorted), in any order
+fn expectCodes(w: *h.Workspace, name: []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var got: std.ArrayList([]const u8) = .empty;
+    for (try w.diagnostics(name)) |d| try got.append(arena.allocator(), try arena.allocator().print("{d}:{s}", .{ d.line, d.code }));
+    std.mem.sort([]const u8, got.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    errdefer for (got.items) |g| std.debug.print("{s}: {s}\n", .{ name, g });
+    try std.testing.expectEqual(want.len, got.items.len);
+    for (want, got.items) |x, y| try std.testing.expectEqualStrings(x, y);
+}
+
+test "an #include whose file is not found gets a diagnostic, and what depends on it no errors (#282)" {
+    const w = try h.Workspace.init(&petsc_file, .{});
+    defer w.deinit();
+    try expectCodes(w, "a.F90", &.{ "1:include-not-found", "2:module-not-found" });
+    var found = false;
+    for (try w.diagnostics("a.F90")) |d| {
+        if (!std.mem.eql(u8, d.code, "include-not-found")) continue;
+        found = true;
+        try std.testing.expectEqualStrings("Include file \"petsc/finclude/petscksp.h\" not found (include_dirs)", d.message);
+        try std.testing.expectEqual(@as(i64, 3), d.severity);
+    }
+    try std.testing.expect(found);
+}
+
+test "diagnostic_severity turns include-not-found off (#282)" {
+    const w = try h.Workspace.init(&petsc_file, .{ .diagnostic_severity = &.{.{ .code = "include-not-found", .level = "off" }} });
+    defer w.deinit();
+    try expectCodes(w, "a.F90", &.{"2:module-not-found"});
+}
+
+test "a missing #include in one procedure, or in a branch #if leaves out, leaves the other checks on (#282)" {
+    const w = try h.Workspace.init(&.{.{ .name = "b.F90", .text =
+        \\module m
+        \\  implicit none
+        \\contains
+        \\  subroutine one(x)
+        \\#include "nothere.h"
+        \\    HT :: x
+        \\  end subroutine one
+        \\  subroutine two(y)
+        \\#if 0
+        \\#include "nothere_either.h"
+        \\#endif
+        \\  end subroutine two
+        \\end module m
+        \\
+    }}, .{});
+    defer w.deinit();
+    try expectCodes(w, "b.F90", &.{ "4:include-not-found", "7:argument-not-declared" });
+}
+
+test "#include <file> is found in include_dirs (#282)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text = "{\"include_dirs\": [\"inc\"]}\n" },
+        .{ .name = "inc/h.h", .text = "#define HT integer\n" },
+        .{ .name = "s.F90", .text =
+        \\subroutine s(a)
+        \\#include <h.h>
+        \\  implicit none
+        \\  HT :: a
+        \\  a = 1
+        \\end subroutine
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("s.F90");
+    try w.expectHoverContains("s.F90", w.pos("s.F90", "a = 1", 0, 0), "INTEGER :: a");
+}
+
 test "a procedure #included into a submodule is found before another file's of the same name" {
     // two libraries each #include their own errors.F90 into their
     // submodules; each submodule calls the one it includes, not the one
