@@ -160,6 +160,46 @@ test "#486 a function-like macro with an empty argument list" {
     });
 }
 
+test "token pasting, stringification and empty C comments make names (#226)" {
+    const w = try h.Workspace.init(&.{.{ .name = "cat.F90", .text =
+        \\#define PASTE(a,b) a##b
+        \\#define STR(x) #x
+        \\#define WRAP(P) P , wrap_/**/P
+        \\module cat_m
+        \\  implicit none
+        \\  integer :: PASTE(my,var)
+        \\  integer :: pre/**/fix
+        \\  type :: t
+        \\  contains
+        \\    procedure :: WRAP(abc)
+        \\  end type t
+        \\contains
+        \\  subroutine abc(self)
+        \\    class(t) :: self
+        \\    myvar = 1
+        \\    prefix = 2
+        \\    print *, STR(hello), "a##b", 'x/**/y'
+        \\  end subroutine
+        \\  subroutine wrap_abc(self)
+        \\    class(t) :: self
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    // `hello` of `STR(hello)` is still taken for a name (#227)
+    for (try w.diagnostics("cat.F90")) |d| {
+        if (std.mem.find(u8, d.message, "\"hello\"") == null) return h.unmet("line {d}: {s}", .{ d.line + 1, d.message });
+    }
+    try w.expectHoverContains("cat.F90", w.pos("cat.F90", "myvar = 1", 0, 0), "INTEGER :: myvar");
+    const syms = try w.symbolPaths("cat.F90");
+    for ([_][]const u8{ "cat_m/myvar", "cat_m/prefix", "cat_m/t/wrap_abc" }) |want| {
+        for (syms) |s| {
+            if (std.mem.eql(u8, s, want)) break;
+        } else return h.unmet("no symbol {s} among {d}", .{ want, syms.len });
+    }
+}
+
 test "#236 a continued line that runs into an include directive" {
     const w = try h.Workspace.init(&.{
         .{ .name = "hellomain.F90", .text =
