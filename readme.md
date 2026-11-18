@@ -759,6 +759,10 @@ zfls deliberately differs from fortls in a few places:
   each of its procedures, the one the arguments so far fit active (fortls
   #6), and go to definition goes to that procedure (hansec #135); fortls
   shows no signature and goes to the interface.
+- Signature help stays on the call while the cursor is inside an array
+  constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
+  the constructor is one argument, and a call inside it has its own
+  signature (hansec #60); fortls shows none there.
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.
