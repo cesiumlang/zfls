@@ -24,6 +24,7 @@ pub const settings = @import("settings.zig");
 pub const glob = @import("glob.zig");
 pub const jsonrpc = @import("jsonrpc.zig");
 pub const logger = @import("logger.zig");
+pub const stdio = @import("stdio.zig");
 pub const constructs = @import("constructs.zig");
 pub const arguments = @import("arguments.zig");
 pub const autouse = @import("autouse.zig");

@@ -10,6 +10,7 @@ test {
     _ = @import("corpus.zig");
     _ = @import("debugging.zig");
     _ = @import("diagnostics.zig");
+    _ = @import("documents.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover.zig");
     _ = @import("language.zig");
@@ -19,5 +20,6 @@ test {
     _ = @import("settings.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
+    _ = @import("use.zig");
     _ = @import("workspace.zig");
 }

@@ -125,7 +125,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
     const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap with the engine and gdb)");
-    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false };
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false };
     const tools = [_]Tool{
         .{
             .name = "gfortran_oracle",
@@ -155,6 +155,14 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .step = "test-dap-gdb",
             .desc = "Debug a gfortran program with zfls dap and gdb (skipped without gfortran or gdb 14+)",
             .needs_fortls = false,
+        },
+        .{
+            .name = "async_stdio",
+            .root = "tests/async_stdio.zig",
+            .step = "test-stdio",
+            .desc = "Run zfls on standard streams opened for overlapped I/O (Windows only)",
+            .needs_fortls = false,
+            .in_test = true,
         },
         .{
             .name = "bench_workspace",
@@ -188,6 +196,8 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         run.has_side_effects = true;
         b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
         if (t.step != null) all.dependOn(&run.step);
+        // quick, and needs nothing installed: also part of `zig build test`
+        if (t.in_test and b.graph.host.result.os.tag == .windows and mod.resolved_target.?.result.os.tag == .windows) test_step.dependOn(&run.step);
     }
 
     const Script = struct { step: []const u8, desc: []const u8, script: []const u8, needs_fortls: bool };

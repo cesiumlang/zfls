@@ -164,7 +164,8 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8, tri
         if (trigger == .change) job.not_before = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, @max(0, self.s.fortitude_change_delay)) * std.time.ns_per_ms;
         try enqueue(self, job);
     }
-    if (self.s.codee and trigger != .change) {
+    // Codee reads the file, not the editor's text
+    if (self.s.codee and trigger != .change and trigger != .open_unsaved) {
         const job = try newJob(self, .codee, uri, path);
         errdefer freeJob(self.gpa, job);
         const ja = job.arena.allocator();
