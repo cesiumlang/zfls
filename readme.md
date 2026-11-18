@@ -785,6 +785,10 @@ zfls deliberately differs from fortls in a few places:
   semantic token, and no names there. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- On Windows, a folder on a UNC path, as a network share or
+  `\\wsl.localhost\...` is, is served: its URIs
+  (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`
+  and written back in that form (hansec PR #219, Modern Fortran #1087).
 - Typing `#` first on an indented line moves it to the first column
   (`textDocument/onTypeFormatting`, Modern Fortran #177); fortls has no
   on-type formatting.
