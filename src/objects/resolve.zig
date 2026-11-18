@@ -174,6 +174,55 @@ pub fn checkImportScope(scope: *const Obj, name_lower: []const u8) ?ImportType {
     return null;
 }
 
+/// Whether module `mod` gives its users `name` (lowercase), a name it has by
+/// USE: not when a PRIVATE statement names it, nor, when PRIVATE is its
+/// default, unless a PUBLIC statement does (#235)
+pub fn exportsUsedName(mod: *const Obj, name: []const u8) bool {
+    if (mod.data != .scope) return false;
+    const sd = mod.scopeDataConst();
+    for (sd.private_names.items) |n| if (std.mem.eql(u8, n, name)) return false;
+    if (mod.def_vis != .private) return true;
+    for (sd.public_names.items) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
+/// What `name_lower` stands for in `scope` by its USE statements, through
+/// the modules they use and those these use in turn, each statement's ONLY
+/// list and renames applied. A used module passes on the names it has by
+/// USE only as `exportsUsedName` says. `outside`: as `scope`'s users see
+/// the name, `scope` being a module.
+pub fn findThroughUse(env: Env, scope: *Obj, name_lower: []const u8, outside: bool) Allocator.Error!?*Obj {
+    if (outside and !exportsUsedName(scope, name_lower)) return null;
+    var walk: UseWalk = .{ .env = env, .name = name_lower };
+    return walk.search(scope, name_lower);
+}
+
+const UseWalk = struct {
+    env: Env,
+    /// The name looked up, as `scope` has it: a used module of that name is
+    /// the answer
+    name: []const u8,
+    /// The modules searched, each with a hash of the name searched there
+    seen: std.AutoHashMapUnmanaged(struct { *Obj, u64 }, void) = .empty,
+
+    /// Search the modules `scope` uses for `name`, its name in `scope`
+    fn search(w: *UseWalk, scope: *Obj, name: []const u8) Allocator.Error!?*Obj {
+        if (scope.data != .scope) return null;
+        for (scope.scopeDataConst().use.items) |u| {
+            if (u.is_import or !w.env.tree.contains(u.mod_name)) continue;
+            const mod = w.env.global(scope.file_ast, u.mod_name) orelse continue;
+            if (std.mem.eql(u8, u.mod_name, w.name)) return mod;
+            const there = u.nameThere(name) orelse continue;
+            if (try checkScope(w.env, mod, there, true, null)) |v| return v;
+            if (!exportsUsedName(mod, there)) continue;
+            const gop = try w.seen.getOrPut(w.env.tmp, .{ mod, std.hash.Wyhash.hash(0, there) });
+            if (gop.found_existing) continue;
+            if (try w.search(mod, there)) |v| return v;
+        }
+        return null;
+    }
+};
+
 /// Find a named object visible from `scope_opt`
 pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindOpts) Allocator.Error!?*Obj {
     const scope = scope_opt orelse return null;
@@ -199,23 +248,7 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
             }
         }
     }
-    // Setup USE search
-    var use_dict = std.array_hash_map.String(*UseStmt).empty;
-    try getUseTree(env, scope, &use_dict, null, null, &.{});
-    var it = use_dict.iterator();
-    while (it.next()) |entry| {
-        const use_mod = entry.key_ptr.*;
-        const use_info = entry.value_ptr.*;
-        if (use_info.is_import) continue;
-        const use_scope = env.global(scope.file_ast, use_mod) orelse continue;
-        if (std.mem.eql(u8, use_mod, name_lower)) return use_scope;
-        if (use_info.only_list.len() > 0 and !use_info.only_list.contains(name_lower)) continue;
-        const renamed = use_info.rename_map.get(name_lower);
-        // a renamed entity is not accessible under its original name
-        if (renamed == null and use_info.rename_map.hasValue(name_lower)) continue;
-        const mod_name = renamed orelse name_lower;
-        if (try checkScope(env, use_scope, mod_name, true, null)) |v| return v;
-    }
+    if (try findThroughUse(env, scope, name_lower, false)) |v| return v;
     // Only search local and imported names for interfaces
     var import_type: ImportType = .default;
     if (opts.interface) {

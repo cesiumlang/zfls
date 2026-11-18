@@ -494,8 +494,10 @@ pub const Parser = struct {
                         cs.def_vis = .private;
                     } else if (info.private) {
                         for (info.obj_names) |w| try ast.addPrivate(w);
+                        if (cs.data == .scope) for (info.obj_names) |w| try cs.scopeData().private_names.append(pa, try std.ascii.allocLowerString(pa, w));
                     } else {
                         for (info.obj_names) |w| try ast.addPublic(w);
+                        if (cs.data == .scope) for (info.obj_names) |w| try cs.scopeData().public_names.append(pa, try std.ascii.allocLowerString(pa, w));
                     }
                 } else {
                     try ast.addError(.statement_without_scope, "Visibility statement without enclosing scope", C.Severity.err, line_no, 0, null);
