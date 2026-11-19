@@ -9,6 +9,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const FortranFile = @import("../parser.zig").FortranFile;
+const no_arg_check = @import("no_arg_check.zig");
 
 /// The checks that a directive leaves out for a dummy argument
 pub const Ignored = struct {
@@ -83,8 +84,9 @@ fn letters(text: []const u8) Ignored {
 }
 
 /// The directives of a procedure whose first line is `sline` and last
-/// `eline` (1-based) in `f`: those of its own specification part, not of
-/// the interface bodies in it, nor of the procedures after its CONTAINS
+/// `eline` (1-based) in `f`, `ignore_tkr` and `NO_ARG_CHECK`
+/// (no_arg_check.zig): those of its own specification part, not of the
+/// interface bodies in it, nor of the procedures after its CONTAINS
 pub fn ofProcedure(a: Allocator, f: *const FortranFile, sline: usize, eline: usize) ![]const Entry {
     var out: std.ArrayList(Entry) = .empty;
     if (sline == 0) return out.items;
@@ -94,7 +96,7 @@ pub fn ofProcedure(a: Allocator, f: *const FortranFile, sline: usize, eline: usi
     while (ln < end) : (ln += 1) {
         const text = f.getLine(ln, false) orelse break;
         const before = out.items.len;
-        if (try parse(a, f.fixed, text, &out)) {
+        if (try parse(a, f.fixed, text, &out) or try no_arg_check.parse(a, f.fixed, text, &out)) {
             // of an interface body in it: not its own
             if (depth > 0) out.shrinkRetainingCapacity(before);
             continue;

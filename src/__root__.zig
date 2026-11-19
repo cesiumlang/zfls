@@ -45,6 +45,7 @@ pub const compilers_flang = @import("compilers/flang.zig");
 pub const argcheck = @import("argcheck.zig");
 pub const argcheck_typing = @import("argcheck/typing.zig");
 pub const argcheck_ignore_tkr = @import("argcheck/ignore_tkr.zig");
+pub const argcheck_no_arg_check = @import("argcheck/no_arg_check.zig");
 pub const literals = @import("literals.zig");
 pub const docmath = @import("docmath.zig");
 pub const rewrite = @import("rewrite.zig");

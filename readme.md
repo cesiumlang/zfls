@@ -156,6 +156,7 @@ the columns say whose dialect each is.
 | Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
 | CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | ✓ | ✓ | – | – |
 | `!DIR$ IGNORE_TKR`: no argument checks for the dummy arguments it names | – | – | – | ✓ | ✓ | – | – |
+| `!GCC$ ATTRIBUTES NO_ARG_CHECK` (gfortran), `!DIR$ ATTRIBUTES NO_ARG_CHECK` (Intel): no argument checks for the dummy arguments it names | ✓ | ✓ | ✓ | – | – | – | – |
 | `!DIR$ FIXED`, `!DIR$ FREE`: the source form of the lines after them | – | – | – | ✓ | – | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 
@@ -1440,7 +1441,10 @@ zfls deliberately differs from fortls in a few places:
   these gives is not checked. The dummy arguments that a `!DIR$
   IGNORE_TKR` of the procedure names (LLVM Flang's and nvfortran's; all of
   them when it names none) are not checked for what its letters say: type
-  (`t`), kind (`k`), rank (`r`), all three without letters. Assigning to an
+  (`t`), kind (`k`), rank (`r`), all three without letters; nor are those
+  that a `NO_ARG_CHECK` of the procedure names (`!GCC$ ATTRIBUTES
+  NO_ARG_CHECK :: x`, gfortran's; `!DIR$` or `!DEC$ ATTRIBUTES NO_ARG_CHECK
+  :: x`, Intel's), for any of the three. Assigning to an
   INTENT(IN) dummy argument (not a pointer) is an `intent-in-assigned`
   error. fortls checks none of these.
 - The modules and submodules of the workspace form a dependency graph: a
