@@ -84,6 +84,9 @@ fn forGdbInitialize(s: *Session, a: Allocator, args: ?Value) !Value {
         while (it.next()) |kv| try o.put(a, kv.key_ptr.*, kv.value_ptr.*);
     };
     try o.put(a, "supportsRunInTerminalRequest", .{ .bool = false });
+    // the adapter's `variables` with `start` and `count`, which gdb ignores
+    // otherwise: children one at a time (gdb_children.zig)
+    try o.put(a, "supportsVariablePaging", .{ .bool = true });
     return .{ .object = o };
 }
 
