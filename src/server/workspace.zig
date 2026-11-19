@@ -34,6 +34,7 @@ const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
 const format = @import("format.zig");
 const linters = @import("linters.zig");
+const pending = @import("pending.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
@@ -573,8 +574,11 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
         try self.mergePpDefs(&out.defs);
     }
-    // the compiler checks the unsaved text after a pause (compiler_on_change)
+    // zfls's diagnostics of the new text follow after a pause
+    // (diagnostics_change_delay), as does the compiler's check of it
+    // (compiler_on_change)
     if (!self.s.disable_diagnostics) {
+        pending.schedule(self, a, params.textDocument.uri);
         compile.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ path, @errorName(e) });
         linters.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("linters of {s}: {s}", .{ path, @errorName(e) });
     }
@@ -609,7 +613,10 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         errdefer self.gpa.free(key);
         try self.open_docs.put(self.gpa, key, {});
     }
-    if (did_close) if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
+    if (did_close) {
+        if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
+        pending.cancel(self, uri);
+    }
     if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
         // a document that was never saved, or whose file is gone: it leaves
