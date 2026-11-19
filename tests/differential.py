@@ -329,8 +329,9 @@ def normalize(v):
         }
     if isinstance(v, list):
         # names not declared under IMPLICIT NONE (hansec #129): zfls only
-        # and unused names: zfls only
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned"))]
+        # and unused names: zfls only; so is the diagnostic on an #include
+        # whose file is not found (#282)
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "include-not-found"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
@@ -501,6 +502,62 @@ def ignore_slice_dimensions(v, names: set):
             return m.group(0) if m.group(3).lower() not in names else m.group(2) + m.group(3)
 
         return re.sub(r"(, )?DIMENSION\([^)\n]*\)( :: )(\w+)", repl, v)
+    return v
+
+
+ASSOC_STMT = re.compile(r"^\s*(?:\w+\s*:\s*)?associate\s*\((.*)$", re.I | re.M)
+ASSOC_NAME = re.compile(r"(\w+)\s*=>")
+
+
+def associate_bound(source: str) -> set:
+    """Lowercase names that ASSOCIATE statements of a source file bind."""
+    out = set()
+    for m in ASSOC_STMT.finditer(source):
+        out |= {n.lower() for n in ASSOC_NAME.findall(m.group(1))}
+    return out
+
+
+def untyped_by_fortls(v, names: set) -> set:
+    """The names of `names` that fortls's answer `v` gives the type UNKNOWN
+    (in a hover, or as the detail of a completion item)."""
+    found = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            label = x.get("label")
+            if isinstance(label, str) and label.lower() in names and x.get("detail") == "UNKNOWN":
+                found.add(label.lower())
+            for y in x.values():
+                walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                walk(y)
+        elif isinstance(x, str):
+            for m in re.finditer(r"UNKNOWN :: (\w+)", x):
+                if m.group(1).lower() in names:
+                    found.add(m.group(1).lower())
+
+    walk(v)
+    return found
+
+
+def forget_associate_types(v, names: set):
+    """fortls gives an ASSOCIATE name bound to a literal or an expression, or
+    spelled like the variable of its selector, the type UNKNOWN; zfls the
+    type of the selector (#230). Compare the types of such names as equal."""
+    if isinstance(v, dict):
+        label = v.get("label")
+        out = {k: forget_associate_types(x, names) for k, x in v.items()}
+        if isinstance(label, str) and label.lower() in names and "detail" in v:
+            out["detail"] = "UNKNOWN"
+        return out
+    if isinstance(v, list):
+        return [forget_associate_types(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return f"UNKNOWN :: {m.group(1)}" if m.group(1).lower() in names else m.group(0)
+
+        return re.sub(r"^[^\n]*? :: (\w+)$", repl, v, flags=re.M)
     return v
 
 
@@ -792,6 +849,7 @@ def main() -> int:
                     diffs.append((method, None, a, b))
         source = path.read_text(encoding="utf-8", errors="replace")
         assoc = associate_names(source)
+        bound = associate_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
         entity_lengths = bool(ENTITY_LENGTH.search(source))
@@ -809,6 +867,11 @@ def main() -> int:
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
+            if bound and kind in ("hover", "completion"):
+                untyped = untyped_by_fortls(a, bound)
+                if untyped:
+                    a = forget_associate_types(a, untyped)
+                    b = forget_associate_types(b, untyped)
             total += 1
             if kind == "references":
                 # cross-file order follows workspace iteration order
