@@ -895,8 +895,9 @@ elsewhere, which is also stopped when the server shuts down during a run.
   command in `compile_commands.json` (or another file of its directory
   that has one) is checked with that command's arguments in place of the
   compiler's defaults, in the command's `directory`, and with the
-  command's compiler when its name is the configured compiler's (and
-  `compiler_path` is not set). zfls keeps its syntax-only, form and module
+  command's compiler when its name, with or without a version
+  (`gfortran-14`, `flang-new-19`, `flang-21`), is the configured
+  compiler's (and `compiler_path` is not set). zfls keeps its syntax-only, form and module
   directory options, leaves out the command's compiler, `-c`, `-o`, source
   file, module directory (`-J`, `-module`, `/module:`...), dependency files
   (`-MD`, `-MF`...) and color options, and does not add `pp_defs` (the
