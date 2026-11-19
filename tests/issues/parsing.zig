@@ -359,6 +359,8 @@ test "USE and IMPLICIT NONE in a file included with INCLUDE or #include apply in
     defer w.deinit();
     try expectIncludedUses(w, "main.f90");
     try expectIncludedUses(w, "main2.F90");
+    // its IMPLICIT NONE is not without a scope: it applies in the includer's
+    try w.expectNoDiagnostics("uses.inc");
     // without the USE in the included file, the type is not found again
     try w.changeOnDisk("uses.inc", "      integer :: other\n");
     var not_found = false;
@@ -405,6 +407,7 @@ test "USE statements in the active branch of an #included header and in a header
     const w = try h.Workspace.init(&files, .{});
     defer w.deinit();
     try expectIncludedUses(w, "main3.F90");
+    try w.expectNoDiagnostics("outer.INC");
     try w.expectHoverContains("main3.F90", w.pos("main3.F90", "kvar", 0, 0), "INTEGER :: kvar");
 }
 
