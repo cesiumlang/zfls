@@ -5,7 +5,8 @@
 //! error functions, whose stops are exceptions), the runtime's frames
 //! de-emphasized, the program in a terminal (`console`), the
 //! configuration's gdb commands (`setupCommands`), and values set by
-//! Fortran expressions.
+//! Fortran expressions. lldb-dap's requests (lldb.zig) come here too, but
+//! for its variables and expressions, which are lldb's own.
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -23,6 +24,7 @@ const Session = session.Session;
 const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
 const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
+const lldb = @import("lldb.zig");
 const vars = @import("gdb_variables.zig");
 const Variable = vars.Variable;
 
@@ -33,7 +35,8 @@ const ada_filters = [_][]const u8{ "assert", "exception" };
 /// stop are gone
 const resuming = [_][]const u8{ "continue", "next", "stepIn", "stepOut", "stepBack", "reverseContinue", "goto" };
 
-/// `initialize`: gdb's, its capabilities with the runtime's errors
+/// `initialize`: gdb's (or lldb-dap's), its capabilities with the
+/// runtime's errors
 pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const r = try gdb.request(s, a, "initialize", try forGdbInitialize(s, a, args));
     if (gdb.isSuccess(r)) if (json.get(r, "body")) |body| if (body == .object) {
@@ -44,16 +47,17 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
             .description = s.text.runtime_errors_description,
             .default = true,
         }));
+        const foreign: []const []const u8 = if (s.g.lldb) &lldb.foreign_filters else &ada_filters;
         for (json.items(json.get(body, "exceptionBreakpointFilters"))) |f| {
             const name = json.str(json.get(f, "filter")) orelse "";
-            const ada = for (ada_filters) |x| {
+            const other = for (foreign) |x| {
                 if (std.mem.eql(u8, x, name)) break true;
             } else false;
-            if (!ada) try filters.append(f);
+            if (!other) try filters.append(f);
         }
         var o = body.object;
         try o.put(a, "supportsExceptionInfoRequest", .{ .bool = true });
-        try o.put(a, "supportsSetVariable", .{ .bool = true });
+        if (!s.g.lldb) try o.put(a, "supportsSetVariable", .{ .bool = true });
         try o.put(a, "exceptionBreakpointFilters", .{ .array = filters });
         r.object.getPtr("body").?.* = .{ .object = o };
     };
@@ -132,7 +136,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 }
 
 /// A JSON value as text: a string's own
-fn text(a: Allocator, v: Value) ![]const u8 {
+pub fn text(a: Allocator, v: Value) ![]const u8 {
     return switch (v) {
         .string => |t| t,
         .integer => |n| a.print("{d}", .{n}),
@@ -181,7 +185,7 @@ fn prepare(s: *Session, a: Allocator, args: ?Value) !void {
 
 /// A terminal of the client for the program: its tty, which a shell in it
 /// writes to a file and then waits
-fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8) !?[]const u8 {
+pub fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8) !?[]const u8 {
     const tmp = s.environ.get("TMPDIR") orelse "/tmp";
     const file = try a.print("{s}/zfls-tty-{d}", .{ std.mem.trimEnd(u8, tmp, "/"), Io.Clock.real.now(s.io).nanoseconds });
     const seq = s.sendSeq(a, .{
@@ -221,12 +225,20 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
     const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, disconnect, terminate };
+    if (s.g.lldb) try lldb.afterEntry(s, a);
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
         for (resuming) |r| if (std.mem.eql(u8, r, command)) vars.clear(s);
+        if (std.mem.eql(u8, command, "pause")) s.g.pausing = true;
         return gdb.forward(s, a, req, args);
+    };
+    // lldb reads no Fortran: its own variables and expressions
+    if (s.g.lldb) switch (cmd) {
+        .scopes, .variables, .evaluate, .setVariable => return gdb.forward(s, a, req, args),
+        else => {},
     };
     switch (cmd) {
         .configurationDone => {
+            if (s.g.lldb) try lldb.beforeRun(s, a);
             const held = s.g.held_launch orelse return gdb.forward(s, a, req, args);
             s.g.held_launch = null;
             defer s.gpa.free(held);
@@ -255,7 +267,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
             .exceptionId = f,
             .description = if (fortran.isErrorStop(f)) s.text.error_stop else s.text.runtime_error,
             .breakMode = "always",
-        }) else s.fail(a, req, ""),
+        }) else if (s.g.lldb) try gdb.forward(s, a, req, args) else s.fail(a, req, ""),
         .stackTrace => {
             const r = try gdb.request(s, a, command, args orelse Value.null);
             for (json.items(json.path(r, &.{ "body", "stackFrames" }))) |*f| {
@@ -295,11 +307,13 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
 }
 
 /// gdb's function breakpoints: the client's, then the runtime's error
-/// functions when that filter is on
+/// functions when that filter is on (lldb-dap's: the client's; the
+/// runtime's are lldb's own, lldb.zig)
 fn syncFunctions(s: *Session, a: Allocator) !Value {
     var list: json.Array = .init(a);
     const user = if (s.g.user_functions.len > 0) json.items(json.parse(a, s.g.user_functions) catch Value.null) else &.{};
     try list.appendSlice(user);
+    if (s.g.lldb) return gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     const ours: []const []const u8 = if (s.g.runtime_errors) &fortran.runtime_error_functions else &.{};
     for (ours) |name| try list.append(try json.from(a, .{ .name = name }));
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
@@ -331,7 +345,7 @@ fn setExceptions(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const r = try gdb.request(s, a, "setExceptionBreakpoints", .{ .filters = Value{ .array = filters }, .filterOptions = Value{ .array = options } });
     if (wanted != s.g.runtime_errors) {
         s.g.runtime_errors = wanted;
-        _ = try syncFunctions(s, a);
+        if (s.g.lldb) try lldb.syncErrors(s, a) else _ = try syncFunctions(s, a);
     }
     if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
     const theirs = json.items(json.path(r, &.{ "body", "breakpoints" }));
@@ -490,6 +504,15 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
             }
         }
         s.g.last_error = hit;
+        // lldb's breakpoint of the stop at the start, and its stop of a pause
+        if (s.g.entry_breakpoint) |entry| for (json.items(json.get(body, "hitBreakpointIds"))) |id| {
+            if (json.int(id) != entry or body != .object) continue;
+            body.object.put(a, "reason", .{ .string = "entry" }) catch {};
+            s.g.entry_hit = true;
+        };
+        if (s.g.pausing and s.g.lldb and body == .object and std.mem.eql(u8, json.str(json.get(body, "reason")) orelse "", "exception"))
+            body.object.put(a, "reason", .{ .string = "pause" }) catch {};
+        s.g.pausing = false;
         if (hit) |f| if (body == .object) {
             body.object.put(a, "reason", .{ .string = "exception" }) catch {};
             body.object.put(a, "description", .{ .string = if (fortran.isErrorStop(f)) s.text.error_stop else s.text.runtime_error }) catch {};

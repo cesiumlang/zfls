@@ -168,7 +168,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | Links on Windows without Visual Studio | ✓⁵ | ✓⁶ | – | – | – | – | ✓⁶ |
 | `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁷ |
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓⁸ | Windows's ○ | Windows's ○ | – | gdb ○ | –⁷ |
-| `zfls dap` on macOS | –⁹ | –⁹ | –⁹ | –⁹ | – | –⁹ | –⁷ ⁹ |
+| `zfls dap` on macOS | lldb-dap ✓⁹ | – | lldb-dap ○⁹ | lldb-dap ○⁹ | – | lldb-dap ○⁹ | –⁷ |
 | Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓⁸ | ○ | ○ | ○ | ○ | –⁷ |
 | Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ○ | ○ | ○ | –⁷ |
 
@@ -181,17 +181,18 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 8. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
    Microsoft's format; arrays are read through Intel's descriptors. CI
    tests the engine on a C program only: it has no ifx.
-9. Not yet: `zfls dap` debugs with gdb there, which does not run on Apple
-   Silicon and which every user must code-sign on an Intel Mac. Debug
-   Fortran File in VS Code uses another extension's lldb instead (C/C++,
-   CodeLLDB), which stops at breakpoints and steps, but has no Fortran
-   support for variables and expressions.
+9. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
+   Silicon and every user must code-sign it on an Intel Mac: breakpoints,
+   stepping, the stack and the stops at runtime errors and ERROR STOP, but
+   lldb has no Fortran support for variables and expressions, so the
+   Variables view of these programs is empty (the row of variables is
+   gdb's).
 
 ### What is tested with a real compiler
 
 CI runs zfls against gfortran (the symbols zfls extracts, compared with
 gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
-Linux and Windows x64) and against LFortran (the compiler check, on Linux
+Linux and Windows x64, with lldb-dap on macOS) and against LFortran (the compiler check, on Linux
 x64; its programs linking without Visual Studio, on Windows x64). The other
 compilers' options and message formats are tested with recorded output, not
 with the compilers.
@@ -433,8 +434,9 @@ The VS Code extension's **Run Fortran File** sets this up itself.
 `zfls dap` is a debug adapter (the Debug Adapter Protocol on standard input
 and output) that shows a Fortran program as Fortran, for any editor with a
 client of the protocol (VS Code through the extension's `fortran` debug
-type, Neovim's nvim-dap, Emacs's dape, Helix). It debugs with one of two
-debuggers, chosen by the `launch` or `attach` configuration:
+type, Neovim's nvim-dap, Emacs's dape, Helix). It debugs with one of three
+debuggers, chosen by the `launch` or `attach` configuration: by default gdb
+on Linux and Windows, lldb-dap on macOS.
 
 - gdb, for the programs of gfortran, LLVM Flang and the others with DWARF
   debug information: gdb 14 or later, built with Python (`gdb -i=dap`),
@@ -450,6 +452,20 @@ debuggers, chosen by the `launch` or `attach` configuration:
   a terminal for its input; `setupCommands` are gdb commands run first;
   `stopAtEntry` stops at the main program; an `attach` takes a
   `processId` or a gdbserver's `target`.
+- lldb-dap, LLVM's debug adapter (`"lldb": true` or `"lldb": PATH`, or
+  `--lldb [PATH]`; the default on macOS, where gdb does not run on Apple
+  silicon and must be code-signed with a certificate of one's own on
+  Intel, and `"gdb": PATH` still chooses gdb): the configured one, else
+  `xcrun --find lldb-dap` on macOS (Xcode's command line tools have it,
+  signed: `xcode-select --install`), else the `PATH`'s `lldb-dap`, else
+  its `lldb-vscode`. zfls passes its protocol through: breakpoints of
+  lines and functions, stepping, the stack, `console`, `stopAtEntry`, an
+  `attach` to a `processId`, and `setupCommands` as lldb commands. lldb
+  reads no Fortran ("no plugin for the language fortran95"): for the
+  programs of gfortran and LLVM Flang its Variables view is empty (its
+  globals show without values), expressions are not evaluated, and there
+  is no module variables scope. Over ssh, macOS lets a debugger start a
+  program only with Developer Mode on (`sudo DevToolsSecurity -enable`).
 - Windows's own Debugger Engine (`"dbgeng": true`, or `--dbgeng`;
   `dbgeng.dll` of System32, which every Windows 10 and later has), for the
   programs whose debug information is Microsoft's: those of ifx, ifort and
@@ -459,9 +475,9 @@ debuggers, chosen by the `launch` or `attach` configuration:
   is, and zfls's declarations its type, kind and rank; arrays are read
   through Intel's descriptors.
 
-With both, the module variables that the frame's line sees are a scope of
-their own (zfls indexes the program's sources: `sourceRoot` of the
-configuration, else `cwd`), and the exception filter
+With gdb and the engine, the module variables that the frame's line sees
+are a scope of their own (zfls indexes the program's sources: `sourceRoot`
+of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
 error without `iostat=`) or at ERROR STOP. `--text JSON` translates the

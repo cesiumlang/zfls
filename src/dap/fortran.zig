@@ -420,6 +420,10 @@ pub const runtime_error_functions = [_][]const u8{
     "for__issue_diagnostic",
 };
 
+/// The functions of the main program, where a stop at the start stops
+/// (lldb.zig): gfortran's and Intel's, LLVM Flang's
+pub const main_program_functions = [_][]const u8{ "MAIN__", "_QQmain" };
+
 /// Whether a runtime function is one of `ERROR STOP`
 pub fn isErrorStop(function: []const u8) bool {
     return std.ascii.findIgnoreCase(function, "error_stop") != null;

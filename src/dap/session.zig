@@ -1,12 +1,17 @@
 //! `zfls dap`: a debug adapter (Debug Adapter Protocol, on standard input
-//! and output) of Fortran programs, over one of two debuggers, chosen at
+//! and output) of Fortran programs, over one of three debuggers, chosen at
 //! `launch` or `attach`:
 //!
 //! - gdb (gdb.zig, gdb_requests.zig, gdb_variables.zig): `gdb -i=dap`,
 //!   gdb 14 or later built with Python, whose own protocol zfls passes
 //!   through and reshapes for Fortran (fortran.zig): the programs of
 //!   gfortran, LLVM Flang and the others of DWARF's debug information. The
-//!   gdb is `--gdb PATH`'s, or the configuration's `gdb`, else the PATH's.
+//!   gdb is the configuration's `gdb`, else `--gdb PATH`'s, else the
+//!   PATH's. The default, but on macOS.
+//! - lldb-dap (lldb.zig), LLVM's adapter, passed through as gdb's is, when
+//!   the configuration says `lldb: true` or `lldb: PATH` (or `--lldb
+//!   [PATH]`); the default on macOS. lldb reads no Fortran: the variables
+//!   and expressions are lldb's own.
 //! - Windows's Debugger Engine (dbgeng.zig), when the configuration says
 //!   `dbgeng: true` (or `--dbgeng`), for programs with Microsoft's debug
 //!   information: Intel's ifx and LLVM Flang's on Windows. Their variables
@@ -16,7 +21,7 @@
 //!   is; arrays are read through Intel's descriptors. The program runs in a
 //!   console of its own.
 //!
-//! Both show a "Module variables" scope (the module variables that a
+//! gdb and the engine show a "Module variables" scope (the module variables that a
 //! frame's line sees, by zfls's index of the sources) and a "Fortran
 //! runtime errors" exception filter. `--text JSON` translates the words
 //! they show (`Text`).
@@ -66,6 +71,7 @@ const show = variables.show;
 const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
 const gdb_variables = @import("gdb_variables.zig");
+const lldb = @import("lldb.zig");
 
 /// The words the adapter shows, which `--text` translates (its keys:
 /// `moduleVariables`, `notAllocated`, ...)
@@ -79,6 +85,7 @@ pub const Text = struct {
     runtime_error: []const u8 = "Fortran runtime error",
     error_stop: []const u8 = "ERROR STOP",
     gdb_exited: []const u8 = "gdb exited",
+    lldb_exited: []const u8 = "lldb-dap exited",
 
     /// `--text`'s JSON object: its strings over the English ones
     fn parse(a: Allocator, text: []const u8) !Text {
@@ -122,7 +129,12 @@ const Queue = struct {
     gdb: std.ArrayList(gdb.Item) = .empty,
 };
 
-pub const Backend = enum { none, dbgeng, gdb };
+pub const Backend = enum { none, dbgeng, gdb, lldb };
+
+/// The debugger unless the configuration names one: lldb-dap on macOS,
+/// where gdb does not run on Apple silicon and must be code-signed on
+/// Intel; gdb elsewhere
+const default_backend: Backend = if (builtin.target.os.tag == .macos) .lldb else .gdb;
 
 pub const Session = struct {
     gpa: Allocator,
@@ -132,12 +144,17 @@ pub const Session = struct {
     text: Text = .{},
     /// `--gdb`: the gdb unless the configuration names one
     gdb_path: []const u8 = "gdb",
+    /// `--lldb PATH`: the lldb-dap unless the configuration names one
+    lldb_path: ?[]const u8 = null,
+    /// The debugger unless the configuration names one: `--gdb`'s or
+    /// `--lldb`'s, else the platform's
+    default: Backend = default_backend,
     /// `--dbgeng`: Windows's Debugger Engine whatever the configuration
     want_dbgeng: bool = false,
     /// The client's `initialize` arguments (JSON, `gpa`'s), for a gdb
     /// started at `launch`
     client_init: []u8 = "",
-    /// Why gdb did not start at `initialize` (`gpa`'s)
+    /// Why the default debugger did not start at `initialize` (`gpa`'s)
     gdb_error: ?[]u8 = null,
     /// The gdb backend's state (gdb.zig)
     g: gdb.State = .{},
@@ -269,7 +286,8 @@ pub const Val = struct {
     empty: bool = false,
 };
 
-/// Runs `zfls dap [--gdb PATH] [--dbgeng] [--text JSON]`: its exit code
+/// Runs `zfls dap [--gdb PATH | --lldb [PATH]] [--dbgeng] [--text JSON]`:
+/// its exit code
 pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args: []const []const u8) !u8 {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -291,6 +309,13 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         } else if (std.mem.eql(u8, arg, "--gdb") and i + 1 < args.len) {
             i += 1;
             s.gdb_path = args[i];
+            s.default = .gdb;
+        } else if (std.mem.eql(u8, arg, "--lldb")) {
+            s.default = .lldb;
+            if (i + 1 < args.len and !std.mem.startsWith(u8, args[i + 1], "-")) {
+                i += 1;
+                s.lldb_path = args[i];
+            }
         } else if (std.mem.eql(u8, arg, "--text") and i + 1 < args.len) {
             i += 1;
             s.text = Text.parse(options_arena.allocator(), args[i]) catch {
@@ -298,7 +323,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
                 return 2;
             };
         } else {
-            try stdio.stderr().writeStreamingAll(io, "usage: zfls dap [--gdb PATH] [--dbgeng] [--text JSON]\n");
+            try stdio.stderr().writeStreamingAll(io, "usage: zfls dap [--gdb PATH | --lldb [PATH]] [--dbgeng] [--text JSON]\n");
             return 2;
         }
     }
@@ -354,7 +379,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
             },
         }
     }
-    if (s.backend == .gdb) {
+    if (s.backend == .gdb or s.backend == .lldb) {
         _ = arena.reset(.retain_capacity);
         gdb.finish(&s, arena.allocator());
     }
@@ -420,19 +445,21 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             s.backend = .dbgeng;
             return handleEngine(s, a, req);
         }
-        // the configuration's gdb, when another than the one started
-        const configured = if (json.str(json.get(args, "gdb"))) |g| if (g.len > 0) g else null else null;
-        const other = if (configured) |g| !std.mem.eql(u8, g, s.g.path) else false;
-        if (s.g.child == null or s.g.exit_message != null or other) {
-            if (configured == null) if (s.gdb_error) |why| return s.fail(a, req, why);
-            if (try gdb.start(s, a, configured orelse s.gdb_path)) |why| return s.fail(a, req, why);
+        // the configuration's debugger, when another than the one started
+        const want = chosen(s, args);
+        const lldb_wanted = want.backend == .lldb;
+        const other = if (want.path) |p| !std.mem.eql(u8, p, s.g.path) else false;
+        if (s.g.child == null or s.g.exit_message != null or s.g.lldb != lldb_wanted or other) {
+            if (want.path == null and want.backend == s.default) if (s.gdb_error) |why| return s.fail(a, req, why);
+            const why = if (lldb_wanted) try lldb.start(s, a, want.path orelse s.lldb_path) else try gdb.start(s, a, want.path orelse s.gdb_path);
+            if (why) |w| return s.fail(a, req, w);
             try gdb_requests.initializeAgain(s, a);
         }
-        s.backend = .gdb;
-        return gdb_requests.launch(s, a, req, args);
+        s.backend = want.backend;
+        return if (lldb_wanted) lldb.launch(s, a, req, args) else gdb_requests.launch(s, a, req, args);
     }
     switch (s.backend) {
-        .gdb => return gdb_requests.handle(s, a, req),
+        .gdb, .lldb => return gdb_requests.handle(s, a, req),
         .dbgeng => if (is_windows) return handleEngine(s, a, req),
         .none => {},
     }
@@ -442,16 +469,29 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
     } else s.fail(a, req, "not supported before launch or attach");
 }
 
-/// `initialize`: gdb's capabilities, its own, unless the engine is to be
-/// used; else the engine's, on Windows, where the configuration may still
-/// want it
+/// The debugger of a configuration: `lldb: true` or `lldb: PATH`, `gdb:
+/// PATH`, else the default; `lldb: false` is gdb
+fn chosen(s: *Session, args: ?Value) struct { backend: Backend, path: ?[]const u8 = null } {
+    if (json.get(args, "lldb")) |v| switch (v) {
+        .bool => |b| if (b) return .{ .backend = .lldb } else if (json.str(json.get(args, "gdb")) == null) return .{ .backend = .gdb },
+        .string => |p| return .{ .backend = .lldb, .path = if (p.len > 0) p else null },
+        else => {},
+    };
+    if (json.str(json.get(args, "gdb"))) |g| if (g.len > 0) return .{ .backend = .gdb, .path = g };
+    return .{ .backend = s.default };
+}
+
+/// `initialize`: the default debugger's capabilities, its own (gdb's,
+/// lldb-dap's), unless the engine is to be used; else the engine's, on
+/// Windows, where the configuration may still want it
 fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     if (s.client_init.len > 0) s.gpa.free(s.client_init);
     s.client_init = try s.gpa.dupe(u8, try json.stringify(a, args orelse Value.null));
     s.g.run_in_terminal = flag(args, "supportsRunInTerminalRequest");
     if (!(is_windows and s.want_dbgeng)) {
-        const why = try gdb.start(s, a, s.gdb_path) orelse {
-            s.backend = .gdb;
+        const started = if (s.default == .lldb) try lldb.start(s, a, s.lldb_path) else try gdb.start(s, a, s.gdb_path);
+        const why = started orelse {
+            s.backend = s.default;
             return gdb_requests.initialize(s, a, req, args);
         };
         if (!is_windows) return s.fail(a, req, why);
