@@ -1,7 +1,8 @@
 ! zfls dap with gdb (tests/dap_gdb.zig): arrays, derived types, a
 ! polymorphic argument, allocatables and pointers, module variables, and a
-! bound exceeded (built with -fcheck=bounds). The test stops at the lines
-! marked `stop here`.
+! bound exceeded (built with -fcheck=bounds; LLVM Flang, which has no such
+! check, stops at the OPEN of a missing file after it). The test
+! stops at the lines marked `stop here`.
 module grid
   implicit none
   type :: point
@@ -53,6 +54,7 @@ program main
   origin%x = 9.0
   call work(v, m, 'abcdef', origin, tg)
   print *, allocated(none), big(1), ip, nhits
-  k = 1001 ! stop here: main
-  big(k) = 1.0
+  k = 4 ! stop here: main
+  m(k, -1) = 0
+  open(newunit=k, file='no/such/file', status='old')
 end program

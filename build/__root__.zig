@@ -169,7 +169,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_gdb",
             .root = "tests/dap_gdb.zig",
             .step = "test-dap-gdb",
-            .desc = "Debug a gfortran program with zfls dap and gdb (skipped without gfortran or gdb 14+)",
+            .desc = "Debug a gfortran program (or LLVM Flang's, with -- --compiler flang) with zfls dap and gdb (skipped without the compiler or gdb 14+)",
             .needs_fortls = false,
         },
         .{

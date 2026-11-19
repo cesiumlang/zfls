@@ -1,16 +1,18 @@
 //! zfls dap with gdb, on a program of gfortran's (tests/dap/grid.f90, built
-//! with -fcheck=bounds): breakpoints, the stack, the variables as Fortran
-//! (subscripts, sections, previews, not allocated, pointers, a polymorphic
-//! argument, hidden lengths left out), the module variables of a line,
-//! setting values, expressions, a Fortran runtime error, stopping at the
-//! start with gdb commands, the program's exit, and (on Linux, with
+//! with -fcheck=bounds) or of LLVM Flang's (`--compiler flang`; on Windows
+//! with DWARF, `-gdwarf-4 -Wl,-debug:dwarf`, and linked with zfls's ifx kit
+//! when it is next to zfls): breakpoints, the stack, the variables as
+//! Fortran (subscripts, sections, previews, not allocated, pointers, a
+//! polymorphic argument, hidden lengths left out), the module variables of
+//! a line, setting values, expressions, a Fortran runtime error, stopping
+//! at the start with gdb commands, the program's exit, and (on Linux, with
 //! script(1)) the program in a terminal (`zig build test-dap-gdb`). Skipped
-//! without gfortran or a gdb of the Debug Adapter Protocol (gdb 14 or
+//! without the compiler or a gdb of the Debug Adapter Protocol (gdb 14 or
 //! later).
 //!
-//!     dap_gdb --zfls ZFLS [--gfortran GFORTRAN] [--gdb GDB]
+//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB]
 //!
-//! GFORTRAN and GDB in the environment name them too.
+//! GFORTRAN (or FLANG) and GDB in the environment name them too.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -31,10 +33,16 @@ const check = dap.check;
 
 const source = "tests/dap/grid.f90";
 
+const Compiler = enum { gfortran, flang };
+
 const Setup = struct {
     zfls: []const u8,
     gdb: []const u8,
-    gfortran: []const u8,
+    compiler: Compiler,
+    /// The compiler's executable
+    fc: []const u8,
+    /// The build's environment (Flang's link with the ifx kit on Windows)
+    build_env: ?*const std.process.Environ.Map,
     dir: []const u8,
     src: []const u8,
     program: []const u8,
@@ -48,21 +56,28 @@ pub fn main(init: std.process.Init) !u8 {
     const argv = try init.minimal.args.toSlice(a);
     var zfls_exe: ?[]const u8 = null;
     var gdb: []const u8 = init.environ_map.get("GDB") orelse "gdb";
-    var gfortran: []const u8 = init.environ_map.get("GFORTRAN") orelse "gfortran";
+    var compiler: ?Compiler = .gfortran;
+    var fc_arg: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--zfls")) {
             zfls_exe = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--gdb")) {
             gdb = argv[i + 1];
-        } else if (std.mem.eql(u8, argv[i], "--gfortran")) {
-            gfortran = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--compiler")) {
+            compiler = std.meta.stringToEnum(Compiler, argv[i + 1]);
+        } else if (std.mem.eql(u8, argv[i], "--fc") or std.mem.eql(u8, argv[i], "--gfortran")) {
+            fc_arg = argv[i + 1];
         } else break;
     }
-    if (i != argv.len or zfls_exe == null) {
-        std.debug.print("usage: dap_gdb --zfls ZFLS [--gfortran GFORTRAN] [--gdb GDB]\n", .{});
+    if (i != argv.len or zfls_exe == null or compiler == null) {
+        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB]\n", .{});
         return 2;
     }
+    const fc = fc_arg orelse switch (compiler.?) {
+        .gfortran => init.environ_map.get("GFORTRAN") orelse "gfortran",
+        .flang => init.environ_map.get("FLANG") orelse "flang",
+    };
     const version = std.process.run(a, io, .{ .argv = &.{ gdb, "--version" } }) catch {
         std.debug.print("skipped: no {s}\n", .{gdb});
         return 0;
@@ -72,10 +87,11 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("skipped: {s} is gdb {d}.{d}; the Debug Adapter Protocol needs gdb 14 or later\n", .{ gdb, v[0], v[1] });
         return 0;
     }
-    _ = std.process.run(a, io, .{ .argv = &.{ gfortran, "--version" } }) catch {
-        std.debug.print("skipped: no {s}\n", .{gfortran});
+    const fc_version = std.process.run(a, io, .{ .argv = &.{ fc, "--version" } }) catch {
+        std.debug.print("skipped: no {s}\n", .{fc});
         return 0;
     };
+    std.debug.print("{s}\n", .{firstLine(fc_version.stdout)});
 
     const cwd = Io.Dir.cwd();
     const tmp = try lsp.tempDir(io, a, init.environ_map, "zfls-dap-gdb-");
@@ -84,24 +100,20 @@ pub fn main(init: std.process.Init) !u8 {
     const src = try std.Io.Dir.path.join(a, &.{ tmp, "grid.f90" });
     try cwd.writeFile(io, .{ .sub_path = src, .data = text });
     const program = try std.Io.Dir.path.join(a, &.{ tmp, if (builtin.target.os.tag == .windows) "grid.exe" else "grid" });
-    const built = try std.process.run(a, io, .{
-        .argv = &.{ gfortran, "-g", "-O0", "-fcheck=bounds", "-o", program, src },
-        .cwd = .{ .path = tmp },
-    });
-    if (!built.term.success()) {
-        std.debug.print("{s} failed:\n{s}{s}\n", .{ gfortran, built.stdout, built.stderr });
-        return 1;
-    }
+    const zfls_path = try cwd.realPathFileAlloc(io, zfls_exe.?, a);
     const setup: Setup = .{
-        .zfls = try cwd.realPathFileAlloc(io, zfls_exe.?, a),
+        .zfls = zfls_path,
         .gdb = gdb,
-        .gfortran = gfortran,
+        .compiler = compiler.?,
+        .fc = fc,
+        .build_env = if (compiler.? == .flang and builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path) else null,
         .dir = tmp,
         .src = src,
         .program = program,
         .work_line = lineOf(text, "stop here: work"),
         .main_line = lineOf(text, "stop here: main"),
     };
+    build(io, a, setup, src, program, &.{"-fcheck=bounds"}) catch return 1;
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
@@ -115,6 +127,42 @@ pub fn main(init: std.process.Init) !u8 {
     if (failed) return 1;
     std.debug.print("zfls dap with gdb: all good\n", .{});
     return 0;
+}
+
+/// Builds `src` into `out` with the setup's compiler, for gdb: gfortran
+/// with `gfortran_args` too; LLVM Flang with DWARF (on Windows also kept in
+/// the program by lld-link, with the C runtime in DLLs and the ifx kit when
+/// there is `build_env`), and elsewhere with its runtime's directory as the
+/// program's run path (conda-forge's libflang-rt is a shared library)
+fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, gfortran_args: []const []const u8) !void {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(a, setup.fc);
+    switch (setup.compiler) {
+        .gfortran => {
+            try argv.appendSlice(a, &.{ "-g", "-O0" });
+            try argv.appendSlice(a, gfortran_args);
+        },
+        .flang => if (builtin.target.os.tag == .windows) {
+            try argv.appendSlice(a, &.{ "-gdwarf-4", "-O0", "-Wl,-debug:dwarf" });
+            if (setup.build_env != null) try argv.appendSlice(a, &.{ "-fms-runtime-lib=dll", "-fuse-ld=lld" });
+        } else {
+            try argv.appendSlice(a, &.{ "-g", "-O0" });
+            // <prefix>/bin/flang: <prefix>/lib
+            const exe = Io.Dir.cwd().realPathFileAlloc(io, setup.fc, a) catch setup.fc;
+            const lib = try std.Io.Dir.path.join(a, &.{ std.Io.Dir.path.dirname(exe) orelse ".", "..", "lib" });
+            try argv.append(a, try a.print("-Wl,-rpath,{s}", .{lib}));
+        },
+    }
+    try argv.appendSlice(a, &.{ "-o", out, src });
+    const built = try std.process.run(a, io, .{ .argv = argv.items, .cwd = .{ .path = setup.dir }, .environ_map = setup.build_env });
+    if (!built.term.success()) {
+        std.debug.print("{s} failed:\n{s}{s}\n", .{ setup.fc, built.stdout, built.stderr });
+        return error.BuildFailed;
+    }
+}
+
+fn firstLine(s: []const u8) []const u8 {
+    return std.mem.trimEnd(u8, s[0 .. std.mem.findScalar(u8, s, '\n') orelse s.len], "\r");
 }
 
 /// The 1-based line of a marker of the source
@@ -314,8 +362,14 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(contains(str(get(stack[0], "source") orelse Value.null, "path"), "grid.f90") and int(stack[0], "line").? < setup.main_line, "stopped at the start ({?d})", .{int(stack[0], "line")});
     const shown = try c.request("evaluate", .{ .expression = "show print elements", .context = "repl", .frameId = int(stack[0], "id").? });
     try check(contains(str(shown, "result"), "2"), "set print elements 2 ({s})", .{str(shown, "result") orelse "?"});
-    // without the filter, the bound exceeded ends the program
+    // without the filter, the runtime error ends the program: gfortran's
+    // runtime exits, Flang's aborts, where gdb stops first (a signal)
     _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
+    if (setup.compiler == .flang) {
+        const aborted = get(try c.event("stopped"), "body").?;
+        try check(!eql(str(aborted, "reason"), "exception") and !eql(str(aborted, "reason"), "breakpoint"), "stopped at the abort, not by the filter ({s})", .{str(aborted, "reason") orelse "?"});
+        _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
+    }
     const exited = get(try c.event("exited"), "body").?;
     try check((int(exited, "exitCode") orelse 0) != 0, "the program exited with {?d}", .{int(exited, "exitCode")});
     _ = try c.event("terminated");
@@ -332,8 +386,7 @@ fn terminal(io: Io, gpa: Allocator, setup: Setup) !void {
     const reader_src = try std.Io.Dir.path.join(a, &.{ setup.dir, "reader.f90" });
     const reader_exe = try std.Io.Dir.path.join(a, &.{ setup.dir, "reader" });
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = reader_src, .data = "program reader\n  integer :: n\n  read(*, *) n\n  print '(a,i0)', 'read ', n\nend program\n" });
-    const built = try std.process.run(a, io, .{ .argv = &.{ setup.gfortran, "-g", "-o", reader_exe, reader_src } });
-    try check(built.term.success(), "reader built", .{});
+    try build(io, a, setup, reader_src, reader_exe, &.{});
 
     const c = try start(io, gpa, setup);
     defer c.deinit();

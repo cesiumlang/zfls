@@ -2,7 +2,8 @@
 //! `zfls dap` (tests/dap_windows.zig, tests/dap_gdb.zig): the adapter's
 //! process, whose messages a thread reads, keeping the responses by the
 //! request they answer, and the events and the adapter's own requests
-//! (`runInTerminal`) in order.
+//! (`runInTerminal`) in order. And how the tests build LLVM Flang's
+//! programs on Windows without Visual Studio (`flangKitEnv`).
 
 const std = @import("std");
 const Io = std.Io;
@@ -209,4 +210,23 @@ pub fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
         return error.CheckFailed;
     }
     std.debug.print("ok: " ++ what ++ "\n", args);
+}
+
+/// Flang's build environment on Windows that links with lld-link and
+/// zfls's ifx kit (`ifx-kit` next to zfls, or `../lib/ifx`), as Run Fortran
+/// File links without Visual Studio; null without the kit
+pub fn flangKitEnv(io: Io, a: Allocator, environ: *const std.process.Environ.Map, zfls_path: []const u8) !?*const std.process.Environ.Map {
+    const exe_dir = std.Io.Dir.path.dirname(zfls_path) orelse return null;
+    for ([_][]const []const u8{ &.{ exe_dir, "ifx-kit" }, &.{ exe_dir, "..", "lib", "ifx" } }) |parts| {
+        const kit = try std.Io.Dir.path.join(a, parts);
+        const shim = try std.Io.Dir.path.join(a, &.{ kit, "zfls_ifx_shim.obj" });
+        Io.Dir.cwd().access(io, shim, .{}) catch continue;
+        const env = try a.create(std.process.Environ.Map);
+        env.* = try environ.clone(a);
+        try env.put("LIB", kit);
+        try env.put("LINK", try a.print("\"{s}\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib", .{shim}));
+        std.debug.print("linking with the ifx kit {s}\n", .{kit});
+        return env;
+    }
+    return null;
 }
