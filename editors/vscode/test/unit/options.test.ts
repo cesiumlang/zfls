@@ -41,3 +41,10 @@ test("arguments without a space are one string on the command line", () => {
   // a first argument zfls would take for a JSON list
   assert.equal(argOption("--codee_args", ["[x]"]), '--codee_args=["[x]"]');
 });
+
+test("empty and blank items of zfls.arguments are left out", () => {
+  settings["zfls.arguments"] = ["", " ", "--nthreads=2"];
+  const args = serverArguments(folder);
+  assert.equal(args[args.length - 1], "--nthreads=2");
+  assert.ok(!args.some((a) => a.trim() === ""));
+});
