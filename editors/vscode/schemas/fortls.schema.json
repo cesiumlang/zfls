@@ -162,6 +162,11 @@
       "type": "boolean",
       "default": false
     },
+    "diagnostics_change_delay": {
+      "description": "The milliseconds without a change before the diagnostics of a document that is edited are published again (default: 300; 0: with each change; negative: only when it is opened and saved)",
+      "type": "integer",
+      "default": 300
+    },
     "workspace_diagnostics": {
       "description": "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)",
       "type": "boolean",

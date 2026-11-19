@@ -13,6 +13,7 @@ const regex = @import("regex.zig");
 const paths = @import("paths.zig");
 const helpers = @import("helpers.zig");
 const parser = @import("parser.zig");
+const macro = @import("preprocessor/macro.zig");
 
 fn R() *const patterns.Patterns {
     return patterns.get();
@@ -519,26 +520,6 @@ const PyEval = struct {
 // --------------------------------------------------------------------------
 // Preprocessing
 
-const DefRegex = struct { re: regex.Regex, template: []const u8 };
-
-fn expandFuncMacro(a: Allocator, def_name: []const u8, args: []const u8, value: []const u8) !DefRegex {
-    const def_args = try str.split(a, args, ",");
-    var pat: std.ArrayList(u8) = .empty;
-    try pat.print(a, "\\b{s}\\s*\\(", .{def_name});
-    for (def_args, 0..) |_, i| {
-        if (i > 0) try pat.append(a, ',');
-        try pat.appendSlice(a, "(.*)");
-    }
-    try pat.appendSlice(a, "\\)");
-    var sub = value;
-    for (def_args, 0..) |arg, i| {
-        var arg_re = try regex.Regex.compile(a, try a.print("\\b({s})\\b", .{str.strip(arg)}), .{});
-        defer arg_re.deinit();
-        sub = try arg_re.sub(a, try a.print("\\\\{d}", .{i + 1}), sub);
-    }
-    return .{ .re = try regex.Regex.compile(a, pat.items, .{}), .template = sub };
-}
-
 fn appendMultilineMacro(a: Allocator, d: Def, line: []const u8) !Def {
     return .{ .args = d.args, .value = try std.mem.concat(a, u8, &.{ d.value, line }) };
 }
@@ -602,10 +583,10 @@ fn preprocessInner(
     var pp_stack: std.ArrayList(StackEntry) = .empty;
     var pp_stack_group: std.ArrayList(struct { usize, bool }) = .empty;
     var defs_tmp: Defs = if (pp_defs) |d| try cloneDefs(a, d) else .empty;
-    var def_regexes = std.array_hash_map.String(?DefRegex).empty;
+    var def_regexes = std.array_hash_map.String(?macro.Compiled).empty;
     defer {
         var it = def_regexes.iterator();
-        while (it.next()) |e| if (e.value_ptr.*) |*dr| dr.re.deinit();
+        while (it.next()) |e| if (e.value_ptr.*) |*c| c.deinit();
     }
     var output: std.ArrayList([]const u8) = .empty;
     var def_cont_name: ?[]const u8 = null;
@@ -718,6 +699,11 @@ fn preprocessInner(
             try pp_defines.append(a, i + 1);
             const def_name = m.group(2).?;
             const directive = m.group(1).?;
+            // a macro defined again gets its pattern again
+            if (def_regexes.fetchOrderedRemove(def_name)) |kv| {
+                var compiled = kv.value;
+                if (compiled) |*c| c.deinit();
+            }
             if (std.mem.eql(u8, directive, "define") and !defs_tmp.contains(def_name)) {
                 var def_value: []const u8 = undefined;
                 const rest = line[m.end(0)..];
@@ -785,22 +771,15 @@ fn preprocessInner(
             const gop = try def_regexes.getOrPut(a, def_tmp);
             if (!gop.found_existing) {
                 gop.key_ptr.* = def_tmp;
-                if (value.args) |args| {
-                    gop.value_ptr.* = expandFuncMacro(a, def_tmp, args, value.value) catch |err| blk: {
-                        parser.Trace.print(trace, "!!! bad macro {s}: {s}", .{ def_tmp, @errorName(err) });
-                        break :blk null;
-                    };
-                } else {
-                    const re = regex.Regex.compile(a, try a.print("\\b{s}\\b", .{def_tmp}), .{}) catch null;
-                    gop.value_ptr.* = if (re) |r| .{ .re = r, .template = "" } else null;
-                }
+                gop.value_ptr.* = macro.compile(a, def_tmp, value.args) catch |err| blk: {
+                    parser.Trace.print(trace, "!!! bad macro {s}: {s}", .{ def_tmp, @errorName(err) });
+                    break :blk null;
+                };
             }
-            const dr = gop.value_ptr.* orelse continue;
-            const template = if (value.args != null) dr.template else value.value;
-            const res = try dr.re.subn(a, template, line);
+            const c = &(gop.value_ptr.* orelse continue);
+            const res = try macro.substitute(a, c, value.value, line);
             if (res.count > 0) {
-                const shown = if (value.args != null) dr.template else value.value;
-                parser.Trace.print(trace, "{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, shown });
+                parser.Trace.print(trace, "{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, value.value });
                 line = res.out;
             }
         }
@@ -857,4 +836,25 @@ test "pp macro expansion" {
     try testing.expectEqual(@as(usize, 1), out.skips.len);
     try testing.expectEqual(@as(usize, 5), out.skips[0].start);
     try testing.expectEqual(@as(usize, 7), out.skips[0].end);
+}
+
+test "pp function-like macro without arguments (#225)" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const lines = [_][]const u8{
+        "#define NOARG() 42",
+        "#define CHECK() if (ie /= 0) return",
+        "#define ONE(x) (x + 1)",
+        "i = NOARG()",
+        "i = ONE(i)",
+        "CHECK()",
+        "i = NOARG( )",
+    };
+    const out = try preprocessFile(a, undefined, &lines, null, null, &.{}, null);
+    try testing.expectEqualStrings("i = 42", out.lines[3]);
+    try testing.expectEqualStrings("i = (i + 1)", out.lines[4]);
+    try testing.expectEqualStrings("if (ie /= 0) return", out.lines[5]);
+    try testing.expectEqualStrings("i = 42", out.lines[6]);
 }
