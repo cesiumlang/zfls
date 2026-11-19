@@ -5,10 +5,12 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("associate.zig");
+    _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
+    _ = @import("compiler_fixed.zig");
     _ = @import("corpus.zig");
     _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
@@ -25,6 +27,7 @@ test {
     _ = @import("language.zig");
     _ = @import("lenses.zig");
     _ = @import("navigation.zig");
+    _ = @import("openmp.zig");
     _ = @import("outline.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");
