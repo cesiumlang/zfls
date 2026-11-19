@@ -25,7 +25,10 @@
 //! needs no Visual Studio (with ifx's lld-link and the import libraries of
 //! build/ifxkit.zig): the entry point over the Universal CRT, `_fltused`,
 //! the stack probe `__chkstk`, and the `/GS` stack cookie that Intel's
-//! `for_main.obj` checks. It imports only from the UCRT.
+//! `for_main.obj` checks. LFortran's programs link with it too, and its
+//! runtime (`lfortran_runtime_static.lib`, built by MSVC) also asks for
+//! `atexit`, `__report_rangecheckfailure` and `__GSHandlerCheck`. It
+//! imports only from the UCRT.
 
 /// The C runtime's marker that floating point is used
 export var _fltused: c_int = 0x9875;
@@ -40,7 +43,9 @@ extern fn __p___argc() callconv(.c) *c_int;
 extern fn __p___argv() callconv(.c) *[*:null]?[*:0]u8;
 extern fn __p__environ() callconv(.c) *[*:null]?[*:0]u8;
 extern fn exit(status: c_int) callconv(.c) noreturn;
-/// The program's `main`, from Intel's runtime (`for_main.obj`)
+extern fn _crt_atexit(function: *const fn () callconv(.c) void) callconv(.c) c_int;
+/// The program's `main`: Intel's runtime's (`for_main.obj`), or LFortran's
+/// object's
 extern fn main(argc: c_int, argv: [*:null]?[*:0]u8, envp: [*:null]?[*:0]u8) callconv(.c) c_int;
 
 /// The console program's entry point
@@ -100,4 +105,28 @@ export fn __chkstk() callconv(.naked) void {
         \\popq %%rcx
         \\retq
     );
+}
+
+/// `atexit`, which MSVC's static library puts over the UCRT's table of the
+/// functions that `exit` calls (a program's table is the process's)
+export fn atexit(function: *const fn () callconv(.c) void) callconv(.c) c_int {
+    return _crt_atexit(function);
+}
+
+/// MSVC's `/GS` report of an index past a local array's end: ends the
+/// process (`__fastfail(FAST_FAIL_RANGE_CHECK_FAILURE)`)
+export fn __report_rangecheckfailure() callconv(.naked) noreturn {
+    asm volatile (
+        \\movl $8, %%ecx
+        \\int $0x29
+    );
+}
+
+/// The exception handler of MSVC's functions that have a `/GS` cookie:
+/// MSVC's checks the cookie first; this one only goes on searching
+/// (`ExceptionContinueSearch`), and the cookie is still checked when the
+/// function returns
+export fn __GSHandlerCheck(record: ?*anyopaque, frame: ?*anyopaque, context: ?*anyopaque, dispatcher: ?*anyopaque) callconv(.c) c_int {
+    _ = .{ record, frame, context, dispatcher };
+    return 1;
 }

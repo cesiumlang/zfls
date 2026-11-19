@@ -293,6 +293,26 @@ runtime) does not link; CMake, which runs the linker itself, needs
 directories. The VS Code extension's **zfls: Set Up ifx** does the same,
 showing Intel's license first.
 
+The kit links LFortran's programs too (its startup object also has the
+`atexit`, `__report_rangecheckfailure` and `__GSHandlerCheck` that
+LFortran's runtime asks of Visual Studio's). LFortran runs `link` from the
+`PATH`, so a `link.cmd` that runs `lld-link` (conda-forge's `lld`, next to
+`lfortran`) stands for Visual Studio's, and `LINK`, which `lld-link` reads
+as arguments, names the kit's files:
+
+```bat
+rem link.cmd, in a directory of its own put first on the PATH
+@"C:\conda\envs\lf\Library\bin\lld-link.exe" %*
+```
+
+```bat
+set LIB=C:\zfls\ifx-kit
+set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib
+lfortran hello.f90 -o hello.exe
+```
+
+The VS Code extension's **Run Fortran File** sets this up itself.
+
 ### A debugger (`zfls dap`)
 
 `zfls dap` is a debug adapter (the Debug Adapter Protocol on standard input
@@ -386,6 +406,15 @@ build files say:
 
 A definition from the options or the configuration file is kept over one
 from a build file.
+
+A project that builds several programs may have a module of the same name
+in each (`utils` in `app1/` and in `app2/`). zfls keeps every one, and a
+file's `USE utils` (hover, definition, completion, diagnostics) sees the
+one whose module directory (`-J`, `-module`, `/module:`, ...; the compile's
+directory without one) comes first on that file's search path in
+`compile_commands.json` (that directory, `-I`, the compile's directory);
+without build information, the one in the file's own directory, then in
+the nearest directory, then the one of the lowest path.
 
 ### Fortran and C
 
@@ -554,7 +583,8 @@ sets it.
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
 panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
-`multiple-contains`, `unexpected-end`, `invalid-parent`,
+`multiple-contains`, `unexpected-end`, `mismatched-end`, `unclosed-scope`,
+`invalid-parent`,
 `procedure-before-contains`, `declared-twice`, `masks-parent`,
 `import-outside-interface`, `module-not-found`, `use-after-implicit`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
@@ -952,7 +982,18 @@ zfls deliberately differs from fortls in a few places:
 - On a call of a generic interface, signature help shows the signature of
   each of its procedures, the one the arguments so far fit active (fortls
   #6), and go to definition goes to that procedure (hansec #135); fortls
-  shows no signature and goes to the interface.
+  shows no signature and goes to the interface. The procedure is the one
+  the arguments fit by their type, kind and rank (#273), when zfls can type
+  them (literals, variables, expressions of these): `area(k)` with an
+  integer `k` takes `area_i`, `twice(1.0d0)` the `REAL(8)` one, `total(a)`
+  with an array `a` the one with an array argument, a call with an array
+  an elemental procedure unless a nonelemental one takes the array, and
+  derived types (an extension for a `CLASS`). Type-bound generics resolve
+  the same way. When the types do not tell (an argument of unknown type, or
+  several procedures still fit), it is the first that takes as many
+  arguments with those keywords. Go to implementation, the inlay hints,
+  the call hierarchy and hover (which shows only that procedure when the
+  call fits no other) take the same procedure.
 - Signature help stays on the call while the cursor is inside an array
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own
@@ -996,6 +1037,14 @@ zfls deliberately differs from fortls in a few places:
   after initialization, and again when a saved or changed file changes
   them, so that editors list the problems of files that are not open; a
   deleted file's are cleared. fortls only checks open files.
+- An END statement that does not fit the construct open there gets a
+  `mismatched-end` error (`END DO does not match the IF construct opened at
+  line 4`); when it fits a scope further out, the scopes inside are closed
+  with it, so that what follows is not read as nested. A program unit or
+  construct still open at the end of the file gets an `unclosed-scope` error
+  at its first line, except in a file that another includes, in a scope with
+  an INCLUDE, and in a file that is not preprocessed but has `#if`
+  directives. fortls reports neither.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
   fortls only checks the types named in declarations. A line with macros is
@@ -1172,6 +1221,10 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- Modules of the same name in several directories are all kept, and each
+  file sees the one its build puts on its module search path, else the
+  nearest (see [Build files](#build-files)); fortls keeps one per name
+  (FL PR #504 has a similar design).
 - The Fortran files that `compile_commands.json` compiles outside the
   workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
   source directories only.
@@ -1376,6 +1429,12 @@ zfls deliberately differs from fortls in a few places:
 - The lines of an inactive preprocessor branch inside a continued statement
   (`REAL &` / `#ifdef X` / `, POINTER &` / `#endif`) are left out of it; fortls
   joins them, so the declaration gets the attributes of every branch.
+- Comment lines, blank lines and preprocessor directives between the lines
+  of a continued statement (`call foo(a, &` / `! the rest` / `b)`) do not
+  end it, in either source form: signature help, completion and hover see
+  the whole statement, and a fixed-form declaration continued after a
+  comment line declares all its names. fortls ends the statement at such a
+  line.
 - A function-like macro without parameters (`#define NOARG() 42`) expands to
   its value, and a macro's value is used as written; fortls reads it as a
   regex template, so `\1` in it and, for `NOARG()`, its digits are lost

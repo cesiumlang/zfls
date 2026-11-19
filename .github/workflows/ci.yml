@@ -547,6 +547,40 @@ jobs:
           done
           "$ZFLS" setup-ifx --help | head -1
 
+      # LFortran's programs link with lld-link and the package's ifx kit, as
+      # Run Fortran File has them link without Visual Studio: LFortran and
+      # lld from conda-forge, `link` a script that runs lld-link, and a PATH
+      # without Visual Studio's or Git's `link`
+      - name: LFortran links with the ifx kit (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          # a POSIX path: tar takes the "D:" of a Windows one for a host
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          bin="$tmp/lfortran/Library/bin"
+          kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
+          mkdir -p "$tmp/lfortran-link"
+          printf '@"%s" %%*\r\n' "$(cygpath -w "$bin/lld-link.exe")" > "$tmp/lfortran-link/link.cmd"
+          cd "$tmp"
+          printf "program p\n  real :: x(3)\n  x = 2\n  open(10, file='p.txt')\n  write(10, *) sum(x)\n  close(10)\n  print *, 'linked', sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
+          PATH="$tmp/lfortran-link:/c/Windows/System32:/c/Windows" LIB="$kit" \
+            LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" \
+            MSYS2_ARG_CONV_EXCL='*' "$bin/lfortran.exe" p.f90 -o p.exe
+          set +e
+          ./p.exe > p.out 2>&1
+          code=$?
+          set -e
+          cat p.out p.txt
+          grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+
       # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig,
       # tests/gfortran_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers

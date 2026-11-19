@@ -9,6 +9,7 @@ test {
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
+    _ = @import("continuation.zig");
     _ = @import("convert.zig");
     _ = @import("compiler_fixed.zig");
     _ = @import("corpus.zig");
@@ -18,9 +19,11 @@ test {
     _ = @import("diagnostics.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("ends.zig");
     _ = @import("extensions.zig");
     _ = @import("external.zig");
     _ = @import("formatting.zig");
+    _ = @import("generics.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover_arguments.zig");
@@ -35,6 +38,7 @@ test {
     _ = @import("outline.zig");
     _ = @import("outside_sources.zig");
     _ = @import("rename.zig");
+    _ = @import("same_name_modules.zig");
     _ = @import("settings.zig");
     _ = @import("signature.zig");
     _ = @import("parsing.zig");
