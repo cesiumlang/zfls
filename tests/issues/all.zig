@@ -26,6 +26,7 @@ test {
     _ = @import("language.zig");
     _ = @import("lenses.zig");
     _ = @import("navigation.zig");
+    _ = @import("openmp.zig");
     _ = @import("outline.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");

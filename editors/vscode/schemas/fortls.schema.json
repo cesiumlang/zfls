@@ -50,6 +50,11 @@
       "uniqueItems": true,
       "default": []
     },
+    "disable_openmp_conditional": {
+      "description": "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code",
+      "type": "boolean",
+      "default": false
+    },
     "d_lines": {
       "description": "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)",
       "type": [
