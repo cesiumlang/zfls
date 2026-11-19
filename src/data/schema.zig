@@ -15,7 +15,9 @@ pub const Keyword = struct {
 pub const Procedure = struct {
     name: []const u8,
     kind: enum { subroutine, function },
-    /// Comma separated, e.g. `NAME,MODE`
+    /// Comma separated, e.g. `NAME,MODE`; `|` separates the argument lists
+    /// of a procedure with several forms, the one completion inserts first
+    /// (`COARRAY,DIM=dim|DISTANCE=distance`)
     args: []const u8 = "",
     /// One line summary, used when there is no M_intrinsics page
     doc: []const u8,
