@@ -1,12 +1,14 @@
 //! The compilers whose messages zfls publishes as diagnostics
 //! (`compiler_diagnostics`): their command-line options and parsers of
-//! their messages. A port of the VS Code extension's linter
-//! (editors/vscode/src/lint/compilers.ts), whose tests the ones here follow.
+//! their messages (LLVM Flang's in compilers/flang.zig). A port of the VS
+//! Code extension's linter (editors/vscode/src/lint/compilers.ts), whose
+//! tests the ones here follow.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const regex = @import("regex.zig");
 const Regex = regex.Regex;
+const flang = @import("compilers/flang.zig");
 
 pub const Id = enum {
     gfortran,
@@ -173,7 +175,8 @@ pub fn lineLength(a: Allocator, id: Id, fixed: bool, fixed_columns: ?usize, o: O
 /// them without an option; LFortran has none.
 pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
     return switch (id) {
-        .gfortran, .flang => if (code) &.{"-fd-lines-as-code"} else &.{"-fd-lines-as-comments"},
+        .gfortran => if (code) &.{"-fd-lines-as-code"} else &.{"-fd-lines-as-comments"},
+        .flang => flang.dLines(code),
         .ifx, .ifort => if (o.windows)
             (if (code) &.{"/d-lines"} else &.{"/nod-lines"})
         else
@@ -324,7 +327,7 @@ pub fn parse(a: Allocator, id: Id, output: []const u8) ![]Message {
         .nagfor => try p.nag(output),
         .lfortran => try p.lfortran(output),
         .nvfortran => try p.nvfortran(output),
-        .flang => try p.flang(output),
+        .flang => try flang.parse(&p, output),
     }
     return dedupe(a, p.out.items);
 }
@@ -343,7 +346,7 @@ pub fn dedupe(a: Allocator, msgs: []Message) ![]Message {
     return out.items;
 }
 
-const Parser = struct {
+pub const Parser = struct {
     a: Allocator,
     out: std.ArrayList(Message) = .empty,
     res: std.ArrayList(*Regex) = .empty,
@@ -354,20 +357,20 @@ const Parser = struct {
 
     /// Compiled once per parse; each has its own allocation, so that the
     /// pointers stay valid
-    fn re(p: *Parser, pattern: []const u8, flags: regex.Flags) !*const Regex {
+    pub fn re(p: *Parser, pattern: []const u8, flags: regex.Flags) !*const Regex {
         const r = try p.a.create(Regex);
         r.* = try Regex.compile(p.a, pattern, flags);
         try p.res.append(p.a, r);
         return r;
     }
 
-    fn push(p: *Parser, file: ?[]const u8, line: usize, column: ?usize, sev: Severity, text: []const u8, code: ?[]const u8) !void {
+    pub fn push(p: *Parser, file: ?[]const u8, line: usize, column: ?usize, sev: Severity, text: []const u8, code: ?[]const u8) !void {
         try p.out.append(p.a, .{ .file = file, .line = line, .column = column, .severity = sev, .message = std.mem.trim(u8, text, " \t"), .code = code });
     }
 
     /// A message without a location from the compiler driver, such as
     /// "gfortran: error: unrecognized command-line option '-Wfoo'"
-    fn driver(p: *Parser, line: []const u8) !bool {
+    pub fn driver(p: *Parser, line: []const u8) !bool {
         const r = try p.re("^(?P<bin>[\\w.+-]+(?:\\.exe)?): (?P<sev>fatal error|error|warning): (?P<msg>.+)$", regex.I);
         const m = r.match(line) orelse return false;
         const sev: Severity = if (std.ascii.eqlIgnoreCase(m.named(r, "sev").?, "warning")) .warning else .@"error";
@@ -558,53 +561,17 @@ const Parser = struct {
             try p.push(m.named(r, "file"), if (m.named(r, "ln")) |l| num(l) else 0, numOpt(m.named(r, "cn")), sev, m.named(r, "msg").?, m.named(r, "code"));
         }
     }
-
-    // --- LLVM flang -----------------------------------------------------------
-
-    fn flang(p: *Parser, output: []const u8) !void {
-        // `file:line:column: severity: message`, as clang; flang adds
-        // context lines without a severity (`file:line:column: Declaration
-        // of 'x'`), which belong to the message before them
-        const r = try p.re("^(?P<file>.+?):(?P<ln>\\d+):(?P<cn>\\d+): (?:(?P<sev>fatal error|error|warning|portability|note|remark|because): )?(?P<msg>.*)$", .{});
-        const summary = try p.re("^error: (?:Semantic errors in|Could not scan) ", .{});
-        var it = lines(output);
-        while (it.next()) |raw| {
-            const text = trimCr(raw);
-            if (r.match(text)) |m| {
-                const sev_text = m.named(r, "sev");
-                const sev: ?Severity = if (sev_text) |s|
-                    (if (std.mem.eql(u8, s, "error") or std.mem.eql(u8, s, "fatal error")) .@"error" else if (std.mem.eql(u8, s, "warning") or std.mem.eql(u8, s, "portability")) .warning else if (std.mem.eql(u8, s, "remark")) .info else null)
-                else
-                    null;
-                const ln = num(m.named(r, "ln"));
-                const cn = num(m.named(r, "cn"));
-                const msg = m.named(r, "msg").?;
-                if (sev) |s| {
-                    const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try p.a.print("portability: {s}", .{msg}) else msg;
-                    try p.push(m.named(r, "file"), ln, cn, s, text_msg, null);
-                } else if (p.out.items.len > 0) {
-                    // a note, a "because" or a context line
-                    try p.out.items[p.out.items.len - 1].related.append(p.a, .{ .file = m.named(r, "file"), .line = ln, .column = cn, .message = std.mem.trim(u8, msg, " \t") });
-                }
-                continue;
-            }
-            // "error: Semantic errors in x.f90" repeats the messages above it
-            if (summary.match(text) != null) continue;
-            if (try p.driver(text)) continue;
-            if (std.mem.startsWith(u8, text, "error: ")) try p.push(null, 0, null, .@"error", text["error: ".len..], null);
-        }
-    }
 };
 
-fn lines(output: []const u8) std.mem.SplitIterator(u8, .scalar) {
+pub fn lines(output: []const u8) std.mem.SplitIterator(u8, .scalar) {
     return std.mem.splitScalar(u8, output, '\n');
 }
 
-fn trimCr(s: []const u8) []const u8 {
+pub fn trimCr(s: []const u8) []const u8 {
     return std.mem.trimEnd(u8, s, "\r");
 }
 
-fn num(s: ?[]const u8) usize {
+pub fn num(s: ?[]const u8) usize {
     return std.fmt.parseInt(usize, s orelse return 0, 10) catch 0;
 }
 
@@ -614,7 +581,8 @@ fn numOpt(s: ?[]const u8) ?usize {
 
 // --- tests: the samples of editors/vscode/test/unit/lint.test.ts ------------
 
-fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
+/// One line per message, for the tests
+pub fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     for (ms) |m| {
         const col = if (m.column) |c| try a.print("{d}", .{c}) else "-";
@@ -781,39 +749,6 @@ test "nvfortran messages" {
         "test.f90:9:12 info: Predefined intrinsic sum loses intrinsic property [0035]",
         "old.f90:4:- error: Symbol, y, has not been explicitly declared [0038]",
     });
-}
-
-test "flang messages and their context lines" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const out =
-        \\error: Semantic errors in test.f90
-        \\./test.f90:3:3: error: No explicit type declared for 'x'
-        \\    x = 1
-        \\    ^
-        \\./test.f90:5:7: error: 'y' is already declared in this scoping unit
-        \\    real :: y
-        \\            ^
-        \\./test.f90:4:14: Previous declaration of 'y'
-        \\./test.f90:8:1: portability: nonstandard usage: tab character
-        \\./test.f90:9:3: warning: Variable 'z' is used but never defined [-Wused-undefined-variable]
-        \\flang: error: unknown argument: '-Wbogus'
-    ;
-    const ms = try parse(a, .flang, out);
-    const want = [_][]const u8{
-        "./test.f90:3:3 error: No explicit type declared for 'x'",
-        "./test.f90:5:7 error: 'y' is already declared in this scoping unit",
-        "./test.f90:8:1 warning: portability: nonstandard usage: tab character",
-        "./test.f90:9:3 warning: Variable 'z' is used but never defined [-Wused-undefined-variable]",
-        "-:0:- error: flang: unknown argument: '-Wbogus'",
-    };
-    const got = try brief(a, ms);
-    try std.testing.expectEqual(want.len, got.len);
-    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
-    try std.testing.expectEqual(@as(usize, 1), ms[1].related.items.len);
-    try std.testing.expectEqualStrings("Previous declaration of 'y'", ms[1].related.items[0].message);
-    try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
 }
 
 test "the modules a file uses: LFortran compiles their symbol tables, which writes .mod files" {
