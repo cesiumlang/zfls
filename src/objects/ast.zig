@@ -60,6 +60,9 @@ pub const Ast = struct {
     linkable_objs: std.ArrayList(*Obj) = .empty,
     external_objs: std.ArrayList(*Obj) = .empty,
     none_scope: ?*Obj = null,
+    /// Indices of `parse_errors` that an END of the unnamed scope withdraws
+    /// (`addMainError`)
+    main_errors: std.ArrayList(usize) = .empty,
     inc_scope: ?*Obj = null,
     /// The scope of the including file that this file is included into, so
     /// that names are looked up there after the file's own scopes (cleared
@@ -90,11 +93,59 @@ pub const Ast = struct {
         return self.arena.allocator();
     }
 
-    fn createNoneScope(self: *Ast) Allocator.Error!void {
-        std.debug.assert(self.none_scope == null);
-        const ns = try Obj.newScope(self, .program, 1, "main", &.{});
+    /// Makes the unnamed scope of the statements outside every program unit
+    /// (`none_scope`) the current scope, created at line `line_number` if
+    /// there is none. It is the main program when an END closes it
+    /// (`endMain`), else the text of an include.
+    pub fn openMain(self: *Ast, line_number: usize) Allocator.Error!void {
+        std.debug.assert(self.current_scope == null);
+        if (self.none_scope) |ns| {
+            self.current_scope = ns;
+            self.end_scope_regex = &R().END_PROGRAM_NONE;
+            self.enc_scope_name = ns.fqsn;
+            return;
+        }
+        const ns = try Obj.newScope(self, .program, line_number, "main", &.{});
         self.none_scope = ns;
         try self.addScope(ns, &R().END_PROGRAM_NONE, false, false);
+    }
+
+    /// Whether the current scope is the unnamed one outside every program
+    /// unit
+    pub fn inMain(self: *const Ast) bool {
+        return self.current_scope != null and self.current_scope == self.none_scope and self.scope_stack.items.len == 0;
+    }
+
+    /// Leaves the unnamed scope for a program unit that starts after its
+    /// statements: one cannot be inside it (an include's text before it)
+    pub fn leaveMain(self: *Ast) void {
+        std.debug.assert(self.inMain());
+        self.current_scope = null;
+        self.end_scope_regex = null;
+        self.enc_scope_name = null;
+    }
+
+    /// An error of a statement in the unnamed scope that is no error in a
+    /// main program: withdrawn when an END makes the scope one
+    pub fn addMainError(self: *Ast, code: C.DiagCode, msg: []const u8, ln: usize, sch: usize, ech: ?usize) !void {
+        try self.main_errors.append(self.allocator(), self.parse_errors.items.len);
+        try self.addError(code, msg, C.Severity.err, ln, sch, ech);
+    }
+
+    /// An END at line `line_number` closes the unnamed scope: it is a main
+    /// program without a PROGRAM statement, which stays in the scope list,
+    /// and statements after it open a new unnamed scope
+    pub fn endMain(self: *Ast, line_number: usize) void {
+        std.debug.assert(self.inMain());
+        self.none_scope.?.end(line_number);
+        self.leaveMain();
+        self.none_scope = null;
+        var k = self.main_errors.items.len;
+        while (k > 0) {
+            k -= 1;
+            _ = self.parse_errors.orderedRemove(self.main_errors.items[k]);
+        }
+        self.main_errors.clearRetainingCapacity();
     }
 
     fn getEncScopeName(self: *const Ast) ?[]const u8 {
@@ -108,7 +159,7 @@ pub const Ast = struct {
         if (new_scope.requireLink()) try self.linkable_objs.append(a, new_scope);
         if (self.current_scope == null) {
             if (req_container) {
-                try self.createNoneScope();
+                try self.openMain(new_scope.sline);
                 new_scope.fqsn = try std.mem.concat(a, u8, &.{ self.none_scope.?.fqsn, "::", try std.ascii.allocLowerString(a, new_scope.name) });
                 try self.current_scope.?.addChild(new_scope);
                 try self.scope_stack.append(a, self.current_scope.?);
@@ -144,7 +195,7 @@ pub const Ast = struct {
     pub fn addVariable(self: *Ast, new_var: *Obj) !void {
         const a = self.allocator();
         if (self.current_scope == null) {
-            try self.createNoneScope();
+            try self.openMain(new_var.sline);
             new_var.fqsn = try std.mem.concat(a, u8, &.{ self.none_scope.?.fqsn, "::", try std.ascii.allocLowerString(a, new_var.name) });
         }
         try self.current_scope.?.addChild(new_var);
@@ -172,7 +223,7 @@ pub const Ast = struct {
     }
 
     pub fn addUse(self: *Ast, use_mod: *UseStmt) !void {
-        if (self.current_scope == null) try self.createNoneScope();
+        if (self.current_scope == null) try self.openMain(use_mod.line_number);
         try self.current_scope.?.scopeData().use.append(self.allocator(), use_mod);
     }
 
@@ -300,6 +351,14 @@ pub const Ast = struct {
         while (self.current_scope != null) try self.endScope(line_number, false);
         if (self.none_scope) |ns| {
             ns.end(line_number);
+            // no END closes it: the text of an include, whose IMPLICIT and
+            // CONTAINS belong to the scope that includes it (its errors
+            // stay)
+            ns.implicit_vars = null;
+            const sd = ns.scopeData();
+            sd.implicit_line = null;
+            sd.implicit_rules = &.{};
+            sd.contains_start = null;
             for (self.scope_list.items, 0..) |s, i| if (s == ns) {
                 _ = self.scope_list.orderedRemove(i);
                 break;
@@ -454,4 +513,35 @@ test "innerScopes gives each line the scope getInnerScope gives it (#209)" {
     const inner = try ast.innerScopes(gpa, n);
     defer gpa.free(inner.lines);
     for (0..n + 2) |ln| try std.testing.expectEqual(ast.getInnerScope(ln), inner.at(ln));
+}
+
+test "statements outside every program unit: a main program when END closes them (#229)" {
+    const gpa = std.testing.allocator;
+    @import("../patterns.zig").init();
+    const Case = struct { path: []const u8, text: []const u8, main: ?[2]usize, none: bool };
+    for ([_]Case{
+        .{ .path = "/w/a.f90", .text = "implicit none\ninteger :: i\ni = 1\nend\nsubroutine s\nend subroutine\n", .main = .{ 1, 4 }, .none = false },
+        .{ .path = "/w/b.f90", .text = "subroutine s\nend subroutine\n\n  print *, 1\nend program\n", .main = .{ 4, 5 }, .none = false },
+        // the text of an include: no END
+        .{ .path = "/w/c.inc", .text = "  integer :: n\n  n = 1\n", .main = null, .none = true },
+        // the body of a macro is no statement
+        .{ .path = "/w/d.h", .text = "#define ewrite(p, f) \\\n    if (p <= 3) write(p, f)\n", .main = null, .none = false },
+    }) |c| {
+        const f = try FortranFile.create(gpa, c.path, null);
+        defer f.destroy();
+        _ = try f.setTextOwned(try gpa.dupe(u8, c.text));
+        const ast = try f.parse(std.testing.io, null, &.{}, .{});
+        defer ast.destroy();
+        var main: ?*Obj = null;
+        for (ast.scope_list.items) |s| if (s.kind == .program) {
+            main = s;
+        };
+        if (c.main) |lines| {
+            try std.testing.expectEqual(lines[0], main.?.sline);
+            try std.testing.expectEqual(lines[1], main.?.eline);
+            try std.testing.expect(main.?.parent == null);
+        } else try std.testing.expect(main == null);
+        try std.testing.expectEqual(c.none, ast.none_scope != null);
+        for (ast.scope_list.items) |s| if (s.kind == .subroutine) try std.testing.expect(s.parent == null);
+    }
 }
