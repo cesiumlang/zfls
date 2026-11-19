@@ -303,6 +303,18 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.symbolSkipMembers.markdownDescription%"
         },
+        "zfls.codeLensNoReferences": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.codeLensNoReferences.markdownDescription%"
+        },
+        "zfls.codeLensNoRun": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.codeLensNoRun.markdownDescription%"
+        },
         "zfls.disableDiagnostics": {
           "type": "boolean",
           "default": false,
