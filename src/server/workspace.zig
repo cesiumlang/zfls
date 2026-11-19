@@ -129,11 +129,13 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 /// project's compile_commands.json and fpm.toml to the options' own
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
+    self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
+                self.compile_commands = found.commands;
                 self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -225,7 +227,7 @@ pub fn loadIntrinsics(self: *Server) !void {
 }
 
 pub fn parseOptions(self: *const Server) parser.Options {
-    return .{ .sort_keywords = self.s.sort_keywords, .intel_directives = !self.s.disable_intel_directives };
+    return .{ .sort_keywords = self.s.sort_keywords, .intel_directives = !self.s.disable_intel_directives, .plain_comments = self.s.hover_plain_comments };
 }
 
 pub fn addSourceDirs(self: *Server, a: Allocator) !void {
@@ -666,7 +668,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     if (!did_close and !self.s.disable_diagnostics) {
         // the compiler and Codee read the file, which an opened document's
         // text may differ from
-        const unsaved = open_text != null and (compile.compilerOf(self) != null or self.s.codee) and differsFromDisk(self, filepath);
+        const unsaved = open_text != null and (compile.anyCompiler(self) or self.s.codee) and differsFromDisk(self, filepath);
         const trigger: compile.Trigger = if (unsaved) .open_unsaved else if (did_open) .open else .save;
         compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
         linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });

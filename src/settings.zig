@@ -94,6 +94,12 @@ pub const Settings = struct {
     prefer_implementation: bool = false,
     /// Keywords in hover in lowercase (`real, intent(in) :: x`)
     lowercase_hover: bool = false,
+    /// Hover on a derived type, or a variable of one, does not list the
+    /// type's components and bindings
+    hover_no_type_components: bool = false,
+    /// Plain `!` comments above or after a declaration that has no `!>`,
+    /// `!<` or `!!` documentation are its documentation
+    hover_plain_comments: bool = false,
     // Diagnostic options
     max_line_length: i64 = -1,
     max_comment_line_length: i64 = -1,
@@ -128,6 +134,12 @@ pub const Settings = struct {
     compiler_path: ?[]const u8 = null,
     /// The compiler's arguments; null: its defaults (gfortran's -Wall)
     compiler_args: ?StrList = null,
+    /// The compiler, its executable and its arguments for fixed-form
+    /// files; null: those of free form (`compiler_diagnostics`,
+    /// `compiler_path`, `compiler_args`)
+    compiler_diagnostics_fixed: ?[]const u8 = null,
+    compiler_path_fixed: ?[]const u8 = null,
+    compiler_args_fixed: ?StrList = null,
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
@@ -141,6 +153,9 @@ pub const Settings = struct {
     compiler_change_delay: i64 = 1000,
     /// Do not compile the workspace modules a file uses first
     compiler_no_dependencies: bool = false,
+    /// Do not check a file with its command from compile_commands.json
+    /// (when `compiler_args` is not set)
+    compiler_no_compile_commands: bool = false,
     /// fypp, run on each file before the compiler checks it; null: none
     compiler_fypp: ?[]const u8 = null,
     /// fypp's further arguments (-I, -D, ...)
@@ -162,7 +177,7 @@ pub const Settings = struct {
     codee_args: StrList = .{},
     // Formatting
     /// The formatter of `textDocument/formatting` and `rangeFormatting`:
-    /// findent or fprettify; null or `none`: none
+    /// findent, fprettify, codee, forformat or custom; null or `none`: none
     formatter: ?[]const u8 = null,
     /// The formatter executable, or the directory that holds it; null: the
     /// one on the PATH
@@ -283,6 +298,8 @@ pub const opts = [_]Opt{
     .{ .long = "hover_signature", .kind = .flag, .help = "Hover on an actual argument of a call also shows the dummy argument it is passed to", .group = "Hover options" },
     .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
     .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
+    .{ .long = "hover_no_type_components", .kind = .flag, .help = "Hover on a derived type or a variable of one does not list the type's components and type-bound procedures", .group = "Hover options" },
+    .{ .long = "hover_plain_comments", .kind = .flag, .help = "Plain comments directly above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no !>, !< or !! documentation", .group = "Hover options" },
     .{ .long = "prefer_implementation", .kind = .flag, .help = "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface", .group = "Hover options" },
 
     .{ .long = "max_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum line length (default: -1)", .group = "Diagnostic options (error swigles)" },
@@ -299,12 +316,16 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_diagnostics", .kind = .string, .metavar = "COMPILER", .help = "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_diagnostics_fixed", .kind = .string, .metavar = "COMPILER", .help = "The compiler that checks fixed-form files, as compiler_diagnostics, or none (default: compiler_diagnostics). The modules a file uses are compiled with the compiler of the file", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_path_fixed", .kind = .string, .metavar = "PATH", .help = "The executable of compiler_diagnostics_fixed, as compiler_path (default: compiler_path)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_args_fixed", .kind = .string, .metavar = "ARGS", .help = "The arguments of the compiler for fixed-form files, as compiler_args (default: compiler_args; empty: the compiler's defaults)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_on_change", .kind = .flag, .help = "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_compile_commands", .kind = .flag, .help = "Do not check a file with the arguments of its command in compile_commands.json (used when compiler_args is not set)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
 
@@ -317,10 +338,10 @@ pub const opts = [_]Opt{
     .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
     .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Linter options" },
 
-    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
-    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
-    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
-    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
+    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout (default: none)", .group = "Formatting options" },
+    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH; for codee, codee_path's); the command of the custom formatter", .group = "Formatting options" },
+    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up; codee gets format - -o -, forformat --stdin-filename=FILE and -ifree or -ifixed; for custom they are the whole command line, in which ${file} is the document's path and ${form} free or fixed", .group = "Formatting options" },
+    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
     .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
@@ -589,7 +610,7 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
 /// The options that are arguments of another program: one string, split at
 /// spaces, or a JSON list, on the command line, and a list or a string in a
 /// configuration file
-const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
+const arg_lists = .{ "compiler_args", "compiler_args_fixed", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
 
 fn isArgList(name: []const u8) bool {
     inline for (arg_lists) |n| if (std.mem.eql(u8, name, n)) return true;
@@ -660,6 +681,8 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.str(json.get(cfg, "hover_language"))) |hl| s.hover_language = hl;
     s.prefer_implementation = jsonBool(json.get(cfg, "prefer_implementation"), s.prefer_implementation);
     s.lowercase_hover = jsonBool(json.get(cfg, "lowercase_hover"), s.lowercase_hover);
+    s.hover_no_type_components = jsonBool(json.get(cfg, "hover_no_type_components"), s.hover_no_type_components);
+    s.hover_plain_comments = jsonBool(json.get(cfg, "hover_plain_comments"), s.hover_plain_comments);
     // Diagnostic options
     s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
@@ -673,12 +696,16 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "compiler_diagnostics")) |v| s.compiler_diagnostics = json.str(v);
     if (json.get(cfg, "compiler_path")) |v| s.compiler_path = json.str(v);
     if (json.get(cfg, "compiler_args")) |v| s.compiler_args = if (v == .null) null else try argList(a, v) orelse s.compiler_args;
+    if (json.get(cfg, "compiler_diagnostics_fixed")) |v| s.compiler_diagnostics_fixed = json.str(v);
+    if (json.get(cfg, "compiler_path_fixed")) |v| s.compiler_path_fixed = json.str(v);
+    if (json.get(cfg, "compiler_args_fixed")) |v| s.compiler_args_fixed = if (v == .null) null else try argList(a, v) orelse s.compiler_args_fixed;
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
     if (json.get(cfg, "compiler_include_dirs")) |v| s.compiler_include_dirs = try jsonList(a, v);
     s.compiler_no_save = jsonBool(json.get(cfg, "compiler_no_save"), s.compiler_no_save);
     s.compiler_on_change = jsonBool(json.get(cfg, "compiler_on_change"), s.compiler_on_change);
     s.compiler_change_delay = jsonInt(json.get(cfg, "compiler_change_delay"), s.compiler_change_delay);
     s.compiler_no_dependencies = jsonBool(json.get(cfg, "compiler_no_dependencies"), s.compiler_no_dependencies);
+    s.compiler_no_compile_commands = jsonBool(json.get(cfg, "compiler_no_compile_commands"), s.compiler_no_compile_commands);
     if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
     if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
         s.compiler_fypp_args = l;

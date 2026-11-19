@@ -58,6 +58,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | fixed (patched) | fails, same cause |
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
+| [#443](https://github.com/fortran-lang/fortls/issues/443) | a form feed at the start of a line hides its statement | parsing | fixed (patched) | fails (per the issue) |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
 | [#309](https://github.com/fortran-lang/fortls/issues/309) | Intel's `!DEC$ IF DEFINED` / `!DIR$ IF` branches not taken are skipped: no false "declared twice", hover shows the declaration in effect | intel_directives | fixed (feature) | every branch read |
@@ -115,6 +116,7 @@ some of its bugs were never reported again to fortls. Their tests use
 | [#168](https://github.com/hansec/fortran-language-server/issues/168) | references to a separate module procedure miss its implementation in a submodule | hover | fixed (patched) | fails, same cause |
 | [#137](https://github.com/hansec/fortran-language-server/issues/137) | the original name on a USE rename line resolves to a local variable of that name | hover | fixed (patched) | fails, same cause |
 | [#178](https://github.com/hansec/fortran-language-server/issues/178) | signature help counts the commas inside an array constructor or a nested call | hover | fixed | fails, same cause |
+| [#148](https://github.com/hansec/fortran-language-server/issues/148) | signature help for a structure constructor and for a generic interface named like its type | signature | fixed (feature) | no signature help |
 | [#60](https://github.com/hansec/fortran-language-server/issues/60) | signature help inside an array constructor argument (`call s([1, 2, ...`) | signature | fixed (patched) | no signature help |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |

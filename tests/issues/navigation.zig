@@ -416,7 +416,7 @@ test "hansec #115: references across Fortran and C" {
     };
     // references of c_add: its Fortran references, those of the other
     // interface of the same C name, and the C declarations and call (not
-    // the comment)
+    // the comment); of `add2`, also its result variable (#228)
     const refs = try places.of(a, try w.references("iface.f90", w.pos("iface.f90", "c_add(n", 0, 1)));
     try places.expect(&.{
         .{ .file = "cfuncs.c", .line = 1 },
@@ -426,6 +426,7 @@ test "hansec #115: references across Fortran and C" {
         .{ .file = "iface.f90", .line = 6 },
         .{ .file = "iface.f90", .line = 11 },
         .{ .file = "other.f90", .line = 2 },
+        .{ .file = "other.f90", .line = 5 },
         .{ .file = "other.f90", .line = 6 },
         .{ .file = "other.f90", .line = 11 },
     }, refs);

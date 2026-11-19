@@ -273,6 +273,18 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.lowercaseHover.markdownDescription%"
         },
+        "zfls.hoverNoTypeComponents": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverNoTypeComponents.markdownDescription%"
+        },
+        "zfls.hoverPlainComments": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverPlainComments.markdownDescription%"
+        },
         "zfls.lowercaseIntrinsics": {
           "type": "boolean",
           "default": true,
@@ -719,12 +731,18 @@
           "enum": [
             "Disabled",
             "findent",
-            "fprettify"
+            "fprettify",
+            "codee",
+            "forformat",
+            "custom"
           ],
           "enumDescriptions": [
             "%config.zfls.formatting.formatter.enumDescriptions.0%",
             "%config.zfls.formatting.formatter.enumDescriptions.1%",
-            "%config.zfls.formatting.formatter.enumDescriptions.2%"
+            "%config.zfls.formatting.formatter.enumDescriptions.2%",
+            "%config.zfls.formatting.formatter.enumDescriptions.3%",
+            "%config.zfls.formatting.formatter.enumDescriptions.4%",
+            "%config.zfls.formatting.formatter.enumDescriptions.5%"
           ],
           "default": "Disabled",
           "scope": "language-overridable",
@@ -753,6 +771,33 @@
           "default": [],
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.fprettifyArgs.markdownDescription%"
+        },
+        "zfls.formatting.codeeArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.codeeArgs.markdownDescription%"
+        },
+        "zfls.formatting.forformatArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.forformatArgs.markdownDescription%"
+        },
+        "zfls.formatting.customArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.customArgs.markdownDescription%"
         },
         "zfls.linter.compiler": {
           "type": "string",
@@ -795,6 +840,52 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.extraArgs.markdownDescription%"
         },
+        "zfls.linter.fixedCompiler": {
+          "type": "string",
+          "enum": [
+            "",
+            "gfortran",
+            "ifx",
+            "ifort",
+            "nagfor",
+            "lfortran",
+            "nvfortran",
+            "flang",
+            "Disabled"
+          ],
+          "enumDescriptions": [
+            "%config.zfls.linter.fixedCompiler.enumDescriptions.0%",
+            "%config.zfls.linter.compiler.enumDescriptions.0%",
+            "%config.zfls.linter.compiler.enumDescriptions.1%",
+            "%config.zfls.linter.compiler.enumDescriptions.2%",
+            "%config.zfls.linter.compiler.enumDescriptions.3%",
+            "%config.zfls.linter.compiler.enumDescriptions.4%",
+            "%config.zfls.linter.compiler.enumDescriptions.5%",
+            "%config.zfls.linter.compiler.enumDescriptions.6%",
+            "%config.zfls.linter.fixedCompiler.enumDescriptions.8%"
+          ],
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.fixedCompiler.markdownDescription%"
+        },
+        "zfls.linter.fixedCompilerPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "%config.zfls.linter.fixedCompilerPath.markdownDescription%"
+        },
+        "zfls.linter.fixedExtraArgs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.fixedExtraArgs.markdownDescription%"
+        },
         "zfls.linter.includePaths": {
           "type": "array",
           "items": {
@@ -834,6 +925,12 @@
           "default": true,
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.resolveModules.markdownDescription%"
+        },
+        "zfls.linter.noCompileCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.noCompileCommands.markdownDescription%"
         },
         "zfls.fortitude.enabled": {
           "type": "boolean",

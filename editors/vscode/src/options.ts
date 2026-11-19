@@ -5,7 +5,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { expandDirectoryGlob } from "./lint/paths";
-import type { ServerSettings } from "./settingsSync";
+import { FORMATTERS, type ServerSettings } from "./settingsSync";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -27,6 +27,8 @@ export const OPTIONS: readonly Option[] = [
   { setting: "hoverSignature", flag: "--hover_signature", kind: "flag" },
   { setting: "preferImplementation", flag: "--prefer_implementation", kind: "flag" },
   { setting: "lowercaseHover", flag: "--lowercase_hover", kind: "flag" },
+  { setting: "hoverNoTypeComponents", flag: "--hover_no_type_components", kind: "flag" },
+  { setting: "hoverPlainComments", flag: "--hover_plain_comments", kind: "flag" },
   { setting: "lowercaseIntrinsics", flag: "--lowercase_intrinsics", kind: "flag" },
   { setting: "autocompleteNameOnly", flag: "--autocomplete_name_only", kind: "flag" },
   { setting: "autocompleteNoSnippets", flag: "--autocomplete_no_snippets", kind: "flag" },
@@ -135,10 +137,20 @@ function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefi
 export function linterArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
-  if (compiler === "Disabled") {
+  const fixed = fixedCompilerSettings(config, folder);
+  if (compiler === "Disabled" && !fixed.compiler_diagnostics_fixed) {
     return [];
   }
-  const args = ["--compiler_diagnostics", compiler];
+  const args = ["--compiler_diagnostics", compiler === "Disabled" ? "none" : compiler];
+  if (fixed.compiler_diagnostics_fixed) {
+    args.push("--compiler_diagnostics_fixed", fixed.compiler_diagnostics_fixed);
+  }
+  if (fixed.compiler_path_fixed) {
+    args.push("--compiler_path_fixed", fixed.compiler_path_fixed);
+  }
+  if (fixed.compiler_args_fixed !== null) {
+    args.push(argOption("--compiler_args_fixed", fixed.compiler_args_fixed));
+  }
   const exe = config.get<string>("compilerPath", "").trim();
   if (exe) {
     args.push("--compiler_path", resolvePath(exe, folder));
@@ -163,6 +175,9 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   }
   if (!config.get<boolean>("resolveModules", true)) {
     args.push("--compiler_no_dependencies");
+  }
+  if (config.get<boolean>("noCompileCommands", false)) {
+    args.push("--compiler_no_compile_commands");
   }
   if (config.get<boolean>("fypp.enabled", false)) {
     const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
@@ -238,14 +253,16 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   ];
   const args: string[] = [];
   let any = false;
+  let codee = false;
   for (const { languageId, flag, argsFlag } of forms) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
     const formatter = config.get<string>("formatter", "Disabled");
-    if (formatter !== "findent" && formatter !== "fprettify") {
+    if (!FORMATTERS.includes(formatter)) {
       args.push(flag, "none");
       continue;
     }
     any = true;
+    codee ||= formatter === "codee";
     args.push(flag, formatter);
     const extra = config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "");
     if (extra.length) {
@@ -255,11 +272,20 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   if (!any) {
     return [];
   }
-  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  const exe = formatterPath(folder, codee);
   if (exe) {
     args.push("--formatter_path", resolvePath(exe, folder));
   }
   return args;
+}
+
+/** zfls.formatting.path, else for Codee's formatter zfls.codee.path */
+function formatterPath(folder: vscode.WorkspaceFolder | undefined, codee: boolean): string {
+  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  if (exe || !codee) {
+    return exe;
+  }
+  return vscode.workspace.getConfiguration("zfls.codee", folder?.uri).get<string>("path", "").trim();
 }
 
 /** The settings of `serverArguments` (but `zfls.arguments` and those a
@@ -305,17 +331,32 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
   return { ...out, ...linterSettings(folder), ...formattingSettings(folder), ...fortitudeSettings(folder), ...codeeSettings(folder) };
 }
 
+/** The compiler of fixed-form files (`zfls.linter.fixedCompiler`, its path
+ * and arguments) as settings; null: those of free form */
+function fixedCompilerSettings(config: vscode.WorkspaceConfiguration, folder: vscode.WorkspaceFolder | undefined) {
+  const name = config.get<string>("fixedCompiler", "").trim();
+  const exe = config.get<string>("fixedCompilerPath", "").trim();
+  const extra = config.get<string[] | null>("fixedExtraArgs", null);
+  return {
+    compiler_diagnostics_fixed: name === "" ? null : name === "Disabled" ? "none" : name,
+    compiler_path_fixed: exe ? resolvePath(exe, folder) : null,
+    compiler_args_fixed: Array.isArray(extra) ? extra.filter((a) => a !== "").map((a) => resolvePath(a, folder)) : null,
+  };
+}
+
 /** `linterArguments` as settings */
 function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
-  const on = compiler !== "Disabled";
+  const fixed = fixedCompilerSettings(config, folder);
+  const on = compiler !== "Disabled" || fixed.compiler_diagnostics_fixed !== null;
   const exe = config.get<string>("compilerPath", "").trim();
   const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
   const modDir = config.get<string>("modOutput", "").trim();
   const fypp = on && config.get<boolean>("fypp.enabled", false);
   return {
-    compiler_diagnostics: on ? compiler : null,
+    compiler_diagnostics: compiler !== "Disabled" ? compiler : null,
+    ...fixed,
     compiler_path: on && exe ? resolvePath(exe, folder) : null,
     compiler_args: on && extra.length ? extra.map((a) => resolvePath(a, folder)) : null,
     compiler_include_dirs: on ? directories(config.get<string[]>("includePaths", []), folder) : [],
@@ -324,6 +365,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
     compiler_on_change: on && config.get<boolean>("lintOnType", false),
     compiler_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 1000)),
     compiler_no_dependencies: on && !config.get<boolean>("resolveModules", true),
+    compiler_no_compile_commands: on && config.get<boolean>("noCompileCommands", false),
     compiler_fypp: fypp ? programPath(config.get<string>("fypp.path", "fypp").trim() || "fypp", folder) : null,
     compiler_fypp_args: fypp
       ? [
@@ -374,19 +416,21 @@ function codeeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettin
 function formattingSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
   const out: ServerSettings = {};
   let any = false;
+  let codee = false;
   for (const [languageId, key] of [
     ["FortranFreeForm", "formatter"],
     ["FortranFixedForm", "formatter_fixed"],
   ]) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
     const formatter = config.get<string>("formatter", "Disabled");
-    const on = formatter === "findent" || formatter === "fprettify";
+    const on = FORMATTERS.includes(formatter);
     any ||= on;
+    codee ||= formatter === "codee";
     out[key] = on ? formatter : "none";
     const extra = on ? config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "") : [];
     out[`${key}_args`] = extra.map((a) => resolvePath(a, folder));
   }
-  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  const exe = formatterPath(folder, codee);
   out.formatter_path = any && exe ? resolvePath(exe, folder) : null;
   return out;
 }
