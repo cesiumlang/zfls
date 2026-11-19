@@ -33,9 +33,12 @@ pub const State = struct {
     path: []u8 = "",
     /// The process is lldb-dap's (lldb.zig), not gdb's
     lldb: bool = false,
-    /// lldb's breakpoint of the stop at the start (lldb.zig)
+    /// The breakpoint of the stop at the start: lldb's (lldb.zig), or
+    /// gdb's on LLVM Flang's main program (gdb_entry.zig), whose function
+    /// is `entry_function`
     entry_breakpoint: ?i64 = null,
     entry_hit: bool = false,
+    entry_function: ?[]const u8 = null,
     /// The client asked for a pause, which lldb-dap's stop calls an
     /// exception (the signal SIGSTOP)
     pausing: bool = false,
