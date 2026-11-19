@@ -1038,7 +1038,11 @@ zfls deliberately differs from fortls in a few places:
   argument list) is text of that statement, and is not linked.
 - Hover shows the whole value of a parameter. fortls cuts it at the first
   parenthesis or bracket, so `selected_real_kind(6)` shows as
-  `selected_real_kind`.
+  `selected_real_kind`. It shows it after an entity's own bounds too
+  (`arr(3) = [1, 2, 3]`), with the blanks of its strings (and its strings
+  on a line of several statements, where fortls blanks them), and an entity's
+  own bounds and length (`b(5)` in `real, dimension(3) :: a, b(5)`, `v*8`
+  in `character*(*) u, v*8`, `s(3)[*]*10`) in place of the declaration's.
 - The `PARAMETER` statement (`parameter (n = 5)`) makes the variables it
   names constants, with their values, and the other attribute statements
   (`dimension v(n)`, `optional :: w`, `intent(in) a`, `allocatable`,

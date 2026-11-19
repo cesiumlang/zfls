@@ -321,6 +321,29 @@ pub fn parameterValue(after_name: []const u8) ?[]const u8 {
     return str.strip(v[0..end]);
 }
 
+/// `text` with each run of white space outside strings made one blank (a
+/// value written over continuation lines), and its strings as they are
+pub fn collapseBlanks(a: Allocator, text: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var quote: u8 = 0;
+    var blank = false;
+    for (str.strip(text)) |c| {
+        if (quote == 0 and std.ascii.isWhitespace(c)) {
+            blank = true;
+            continue;
+        }
+        if (blank) try out.append(a, ' ');
+        blank = false;
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+        } else if (c == '\'' or c == '"') {
+            quote = c;
+        }
+        try out.append(a, c);
+    }
+    return out.items;
+}
+
 /// Split an argument list at its own commas: not those inside parentheses,
 /// brackets or string literals, as in `arr(2, 3), 'a,b'` (upstream #87). The
 /// pieces are slices of `s`.
