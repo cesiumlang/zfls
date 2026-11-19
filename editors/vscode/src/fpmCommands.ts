@@ -49,6 +49,9 @@ export interface FpmTaskDefinition extends vscode.TaskDefinition {
 }
 
 const PROBLEM_MATCHERS = ["$zfls-gfortran", "$zfls-intel"];
+/** The environment of a build whose messages the problem matchers read:
+ * the C locale, so that the compiler writes "Error" and "Warning" in English */
+const MATCHER_ENV = { LC_ALL: "C" };
 
 /** Directories whose fpm.toml files are not projects of the workspace:
  * fpm's dependencies are in build/dependencies */
@@ -188,7 +191,10 @@ export function fpmTask(project: FpmProject, def: FpmTaskDefinition, name: strin
     project.folder ?? vscode.TaskScope.Workspace,
     name,
     "fpm",
-    new vscode.ProcessExecution(fpm, args, { cwd: project.root }),
+    new vscode.ProcessExecution(fpm, args, {
+      cwd: project.root,
+      env: def.command === "build" || def.command === "install" ? MATCHER_ENV : undefined,
+    }),
     def.command === "clean" ? [] : PROBLEM_MATCHERS,
   );
   if (def.command === "build" || def.command === "install") {
