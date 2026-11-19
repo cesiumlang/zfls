@@ -4,6 +4,7 @@
 
 test {
     _ = @import("argchecks.zig");
+    _ = @import("associate.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
@@ -14,7 +15,9 @@ test {
     _ = @import("diagnostics.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("extensions.zig");
     _ = @import("external.zig");
+    _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
@@ -31,4 +34,5 @@ test {
     _ = @import("project.zig");
     _ = @import("use.zig");
     _ = @import("workspace.zig");
+    _ = @import("compiler_line_length.zig");
 }
