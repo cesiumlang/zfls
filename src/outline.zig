@@ -104,7 +104,13 @@ const Outline = struct {
     /// variables of procedures, nor constructs (DO, IF, BLOCK, ...).
     fn append(o: Outline, obj: *Obj, parent: *Obj, out: *std.ArrayList(lsp.DocumentSymbol)) Allocator.Error!void {
         switch (obj.kind) {
-            .include, .block, .do_, .if_, .where, .select, .associate => {},
+            .block => if (obj.isBlockData()) {
+                var sym = o.symbol(obj, Kind.module, null, try o.childrenOf(obj));
+                // without a name, the parser's `#BLOCKDATA<n>`
+                if (std.mem.startsWith(u8, obj.name, "#")) sym.name = "BLOCK DATA";
+                try out.append(o.a, sym);
+            },
+            .include, .do_, .if_, .where, .select, .associate => {},
             .variable, .method => {
                 const in_type = parent.kind == .type;
                 if (!in_type and !isModuleLike(parent)) return;
