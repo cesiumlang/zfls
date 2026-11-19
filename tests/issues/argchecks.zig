@@ -685,3 +685,87 @@ test "argument checks: the dummy arguments of `!dir$ ignore_tkr`" {
     }
     for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
 }
+
+test "argument checks: the dummy arguments of NO_ARG_CHECK (gfortran's and Intel's)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "nac.f90", .text =
+        \\module nac
+        \\  implicit none
+        \\  interface
+        \\    subroutine ext(buf, n)
+        \\      !GCC$ ATTRIBUTES NO_ARG_CHECK :: buf
+        \\      integer :: buf(*)
+        \\      integer :: n
+        \\    end subroutine ext
+        \\  end interface
+        \\contains
+        \\  subroutine s(a, b)
+        \\    !dir$ attributes no_arg_check :: a
+        \\    integer :: a(*)
+        \\    integer :: b
+        \\  end subroutine
+        \\  subroutine t(c)
+        \\    !DEC$ ATTRIBUTES REFERENCE, NO_ARG_CHECK :: c
+        \\    integer :: c
+        \\  end subroutine
+        \\  subroutine outer(z)
+        \\    integer :: z
+        \\    interface
+        \\      subroutine inner(z)
+        \\        !GCC$ ATTRIBUTES NO_ARG_CHECK :: z
+        \\        integer :: z(*)
+        \\      end subroutine inner
+        \\    end interface
+        \\  end subroutine
+        \\end module
+        \\program p
+        \\  use nac
+        \\  implicit none
+        \\  real :: x(4), r
+        \\  double precision :: d(2,2)
+        \\  call ext(x, 4)
+        \\  call ext(d, 1.0)
+        \\  call s(x, 1)
+        \\  call s(d, r)
+        \\  call t(d)
+        \\  call outer(r)
+        \\end program
+        \\
+        },
+        .{ .name = "fixed.f", .text =
+        \\      subroutine f(buf)
+        \\CDEC$ ATTRIBUTES NO_ARG_CHECK :: buf
+        \\      integer buf(*)
+        \\      end
+        \\      subroutine g(v)
+        \\      integer v
+        \\      end
+        \\      program q
+        \\      real y(3)
+        \\      call f(y)
+        \\      call g(y)
+        \\      end
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    for ([_]struct { []const u8, []const []const u8 }{
+        .{ "nac.f90", &.{
+            "Argument n of ext: integer expected, real given",
+            "Argument b of s: integer expected, real given",
+            "Argument z of outer: integer expected, real given",
+        } },
+        .{ "fixed.f", &.{"Argument v of g: integer expected, real given"} },
+    }) |c| {
+        var msgs: std.ArrayList([]const u8) = .empty;
+        defer msgs.deinit(std.testing.allocator);
+        for (try w.diagnostics(c[0])) |d| {
+            if (std.mem.startsWith(u8, d.message, "Argument ")) try msgs.append(std.testing.allocator, d.message);
+        }
+        if (msgs.items.len != c[1].len) {
+            std.debug.print("{s}: got {any}\n", .{ c[0], msgs.items });
+            return error.TestExpectedEqual;
+        }
+        for (c[1], msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
+    }
+}

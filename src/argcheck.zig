@@ -156,7 +156,8 @@ pub const Checker = struct {
     out: std.ArrayList(Problem) = .empty,
     /// the innermost scope of each line, found once
     inner: objects.InnerScopes,
-    /// the `!dir$ ignore_tkr` directives of each procedure called, read once
+    /// the `!dir$ ignore_tkr` and `NO_ARG_CHECK` directives of each
+    /// procedure called, read once
     tkr: std.AutoHashMapUnmanaged(*const Obj, []const ignore_tkr.Entry) = .empty,
 
     fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
@@ -309,7 +310,7 @@ pub const Checker = struct {
     /// its kind, and an array for a scalar or a scalar expression for an
     /// array (not for an elemental procedure)
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, scope: ?*Obj, line_no: usize) !void {
-        // those that `!dir$ ignore_tkr` leaves out
+        // those that `!dir$ ignore_tkr` or `NO_ARG_CHECK` leaves out
         const ignored = try c.ignoredChecks(proc, dummy.name);
         switch (try c.compare(dummy, actual, elemental, false, scope, line_no)) {
             .type => |t| if (!ignored.type) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(t.want), @tagName(t.have) }),
@@ -324,7 +325,7 @@ pub const Checker = struct {
     }
 
     /// The checks of dummy argument `name` of `proc` that its `!dir$
-    /// ignore_tkr` directives leave out
+    /// ignore_tkr` and `NO_ARG_CHECK` directives leave out
     fn ignoredChecks(c: *Checker, proc: *const Obj, name: []const u8) !ignore_tkr.Ignored {
         const gop = try c.tkr.getOrPut(c.a, proc);
         if (!gop.found_existing) gop.value_ptr.* = if (proc.file_ast.file) |f| try ignore_tkr.ofProcedure(c.a, f, proc.sline, proc.eline) else &.{};
