@@ -57,7 +57,7 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
         }
         if (scope.data != .scope) continue;
         for (scope.scopeDataConst().use.items) |u| {
-            if (u.is_import or u.line_number == 0 or u.only_list.len() == 0) continue;
+            if (u.is_import or u.line_number == 0 or u.only_list.len() == 0 or u.included) continue;
             for (u.only_list.items.items) |name| {
                 if (!isName(name)) continue;
                 if ((counts.get(name) orelse 0) > 1) continue;
