@@ -509,13 +509,17 @@ pub const Workspace = struct {
 
     /// A completion item and the text its additional edits insert (the
     /// first one's), with the 0-based line it goes before
-    pub const Item = struct { label: []const u8, detail: []const u8, added: ?[]const u8 = null, added_line: i64 = -1 };
+    pub const Item = struct { label: []const u8, detail: []const u8, insert: []const u8 = "", added: ?[]const u8 = null, added_line: i64 = -1 };
 
     pub fn completionItems(w: *Workspace, name: []const u8, p: Pos) ![]const Item {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/completion", try w.posParams(name, p));
         var out: std.ArrayList(Item) = .empty;
         for (json.items(v)) |item| {
-            var it: Item = .{ .label = json.str(json.get(item, "label")) orelse "", .detail = json.str(json.get(item, "detail")) orelse "" };
+            var it: Item = .{
+                .label = json.str(json.get(item, "label")) orelse "",
+                .detail = json.str(json.get(item, "detail")) orelse "",
+                .insert = json.str(json.get(item, "insertText")) orelse "",
+            };
             const edits = json.items(json.get(item, "additionalTextEdits") orelse .null);
             if (edits.len > 0) {
                 it.added = json.str(json.get(edits[0], "newText"));
