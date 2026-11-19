@@ -422,20 +422,7 @@ const empty_prefix = [_]h.File{
 /// The labels completion gives at the end of line `line` (0-based) of
 /// use.f90, or null when it answers null
 fn atEnd(w: *h.Workspace, line: i64) !?[]const []const u8 {
-    const text = w.text("use.f90");
-    var it = std.mem.splitScalar(u8, text, '\n');
-    var n: i64 = 0;
-    const content = while (it.next()) |l| : (n += 1) {
-        if (n == line) break l;
-    } else "";
-    const v = try w.server.dispatchPublic(w.arena.allocator(), "textDocument/completion", try h.json.from(w.arena.allocator(), .{
-        .textDocument = .{ .uri = try w.uri("use.f90") },
-        .position = .{ .line = line, .character = content.len },
-    }));
-    if (v == .null) return null;
-    var out: std.ArrayList([]const u8) = .empty;
-    for (h.json.items(v)) |item| try out.append(w.arena.allocator(), h.json.str(h.json.get(item, "label")) orelse "");
-    return out.items;
+    return labelsAtEnd(w, "use.f90", line);
 }
 
 fn sameSet(got: []const []const u8, want: []const []const u8) bool {
@@ -475,6 +462,108 @@ test "#283 completion with nothing typed after only:, use and type(" {
     const w = try h.Workspace.init(&empty_prefix, .{});
     defer w.deinit();
     expectEmptyPrefix(w) catch |e| {
+        std.debug.print("{s}\n", .{h.lastNote()});
+        return e;
+    };
+}
+
+// the space at the end of a line is where the cursor is
+const undeclared_args = [_]h.File{.{ .name = "m.f90", .text = "module m\n" ++
+    "  implicit none\n" ++
+    "  integer :: mod_var\n" ++
+    "  real :: mo\n" ++
+    "contains\n" ++
+    "  subroutine foo(nodes, cells)\n" ++
+    "    implicit none\n" ++
+    "    real(kind=8), allocatable :: no\n" ++
+    "  end subroutine\n" ++
+    "  subroutine bar(nodes, cells)\n" ++
+    "    implicit none\n" ++
+    "    integer :: \n" ++
+    "  end subroutine\n" ++
+    "  subroutine baz(nodes, cells)\n" ++
+    "    implicit none\n" ++
+    "    integer :: nodes\n" ++
+    "    real :: \n" ++
+    "  end subroutine\n" ++
+    "  subroutine qux(nodes)\n" ++
+    "    implicit none\n" ++
+    "    integer :: nodes\n" ++
+    "    real :: \n" ++
+    "  end subroutine\n" ++
+    "end module m\n" }};
+
+/// The labels completion gives at the end of 0-based line `line`, or
+/// null when it answers null
+fn labelsAtEnd(w: *h.Workspace, name: []const u8, line: i64) !?[]const []const u8 {
+    var it = std.mem.splitScalar(u8, w.text(name), '\n');
+    var n: i64 = 0;
+    const content = while (it.next()) |l| : (n += 1) {
+        if (n == line) break l;
+    } else "";
+    const v = try w.server.dispatchPublic(w.arena.allocator(), "textDocument/completion", try h.json.from(w.arena.allocator(), .{
+        .textDocument = .{ .uri = try w.uri(name) },
+        .position = .{ .line = line, .character = content.len },
+    }));
+    if (v == .null) return null;
+    var out: std.ArrayList([]const u8) = .empty;
+    for (h.json.items(v)) |item| try out.append(w.arena.allocator(), h.json.str(h.json.get(item, "label")) orelse "");
+    return out.items;
+}
+
+fn expectUndeclaredArgs(w: *h.Workspace) !void {
+    // the argument being declared, not the name being typed
+    var got = (try labelsAtEnd(w, "m.f90", 7)) orelse return h.unmet(":: no: null", .{});
+    try h.expect(got.len > 0 and std.mem.eql(u8, got[0], "nodes") and !has(got, "no"), ":: no: {any}", .{got});
+    // with nothing typed, the arguments not declared
+    got = (try labelsAtEnd(w, "m.f90", 11)) orelse return h.unmet("bar :: null", .{});
+    try h.expect(got.len == 2 and has(got, "nodes") and has(got, "cells"), "bar :: {any}", .{got});
+    got = (try labelsAtEnd(w, "m.f90", 16)) orelse return h.unmet("baz :: null", .{});
+    try h.expect(got.len == 1 and has(got, "cells"), "baz :: {any}", .{got});
+    // all declared: nothing, as before
+    if (try labelsAtEnd(w, "m.f90", 21)) |g| return h.unmet("qux :: {any}", .{g});
+    // not at module level
+    got = (try labelsAtEnd(w, "m.f90", 3)) orelse &.{};
+    try h.expect(!has(got, "nodes"), "real :: mo: {any}", .{got});
+}
+
+fn expectDeclareArgActions(w: *h.Workspace) !void {
+    const header = w.pos("m.f90", "subroutine foo", 0, 0).line;
+    var one: ?h.Workspace.Action = null;
+    var all: ?h.Workspace.Action = null;
+    for (try w.codeActions("m.f90", header)) |act| {
+        if (std.mem.eql(u8, act.title, "Declare nodes as integer")) one = act;
+        if (std.mem.startsWith(u8, act.title, "Declare the arguments")) all = act;
+    }
+    const act = one orelse return h.unmet("no quick fix declaring nodes", .{});
+    try h.expect(std.mem.eql(u8, act.new_text, "    integer :: nodes\n") and act.line == header + 3, "declares with {s} before line {d}", .{ act.new_text, act.line });
+    const both = all orelse return h.unmet("no quick fix declaring both", .{});
+    try h.expect(std.mem.eql(u8, both.new_text, "    integer :: nodes\n    real :: cells\n"), "declares both with {s}", .{both.new_text});
+    // applied, the diagnostic is gone
+    const text = w.text("m.f90");
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var buf: std.ArrayList(u8) = .empty;
+    const aa = w.arena.allocator();
+    var n: i64 = 0;
+    while (lines.next()) |l| : (n += 1) {
+        if (n == act.line) try buf.appendSlice(aa, act.new_text);
+        try buf.appendSlice(aa, l);
+        if (lines.peek() != null) try buf.append(aa, '\n');
+    }
+    try w.replaceText("m.f90", buf.items);
+    for (try w.diagnostics("m.f90")) |d| {
+        if (d.line == header and std.mem.find(u8, d.message, "\"nodes\"") != null) return h.unmet("still: {s}", .{d.message});
+    }
+}
+
+test "#270 completion of the arguments not declared yet; a quick fix declaring them" {
+    const w = try h.Workspace.init(&undeclared_args, .{});
+    defer w.deinit();
+    expectUndeclaredArgs(w) catch |e| {
+        std.debug.print("{s}\n", .{h.lastNote()});
+        return e;
+    };
+    expectDeclareArgActions(w) catch |e| {
         std.debug.print("{s}\n", .{h.lastNote()});
         return e;
     };
