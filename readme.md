@@ -860,7 +860,10 @@ zfls deliberately differs from fortls in a few places:
   a letter. fortls answers nothing until a letter is typed.
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
-  with a quick fix removing a declaration of that name only. A name counts
+  with a quick fix removing it from its declaration: the whole statement
+  when it declares nothing else, otherwise the name with its dimensions and
+  initialization (continuation lines included). The source action "Remove
+  all unused declarations" removes all of a file's. A name counts
   as used when it appears anywhere else in the scope, contained procedures
   and inactive preprocessor branches included; dummy arguments, function
   results and module names are not reported. fortls has no such check.
@@ -965,7 +968,11 @@ zfls deliberately differs from fortls in a few places:
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
 - Stub actions: on a call of a procedure defined outside any module, an
-  interface block for it in the calling unit; on a separate module procedure
+  interface block for it after the calling unit's declarations, written from
+  the procedure's source (its USE and IMPLICIT statements and the
+  declarations of its arguments and result, in the caller's source form),
+  replacing the caller's EXTERNAL or type declaration of it, and not
+  offered when an interface is visible already; on a separate module procedure
   without implementation, its `module procedure` stub in a submodule of its
   module (a new one at the end of the file when there is none).
 - More code actions: "Add IMPLICIT NONE" on the first line of a program
