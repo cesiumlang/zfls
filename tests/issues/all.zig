@@ -9,6 +9,7 @@ test {
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
     _ = @import("corpus.zig");
+    _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
     _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
@@ -17,8 +18,10 @@ test {
     _ = @import("external.zig");
     _ = @import("generics.zig");
     _ = @import("highlighting.zig");
+    _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
     _ = @import("language.zig");
+    _ = @import("lenses.zig");
     _ = @import("navigation.zig");
     _ = @import("outline.zig");
     _ = @import("rename.zig");

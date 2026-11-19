@@ -953,3 +953,78 @@ test "`pass ( self )` with blanks names the passed-object argument (#243)" {
         try h.expect(std.mem.endsWith(u8, sig.label, "(k)"), "{s}: signature {s}", .{ call, sig.label });
     }
 }
+
+const decl_hovers = [_]h.File{.{ .name = "m.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  integer, parameter :: arr(3) = [1, 2, 3]
+    \\  integer, dimension(3), parameter :: crr = [1, 2, 3]
+    \\  character(len=3), parameter :: names(2) = ['abc', 'def']
+    \\  character(len=6), parameter :: space_str = 'a   b' // "c"
+    \\  character :: s(3)[*]*10
+    \\  character :: s2(3)*10
+    \\  real, dimension(3) :: a, b(5)
+    \\  real, dimension(3), target :: c(2,2)
+    \\  integer, parameter :: d(2, 2) = reshape([1, 2, 3, 4], [2, 2])
+    \\  integer, parameter :: p1 = 1, p2(2) = [1, 2], p3 = 3
+    \\  character(len=*), parameter :: blanks = "x  y", &
+    \\       more = 'u   v'
+    \\  character(len=4), parameter :: q1 = 'a;b'; integer, parameter :: q2 = 2
+    \\  character(kind=4, len=200) :: k4*100
+    \\contains
+    \\  subroutine old(u, v)
+    \\    character*(*) u, v*8
+    \\    real*8 r8b, r4*4
+    \\    print *, arr
+    \\  end subroutine
+    \\  logical function lf()
+    \\    !! doc of lf
+    \\    lf = .false.
+    \\  end function
+    \\  function lg()
+    \\    !! doc of lg
+    \\    logical :: lg
+    \\    lg = .false.
+    \\  end function
+    \\end module
+    \\
+}};
+
+test "hover of a declaration shows it as written: values, strings, lengths, one DIMENSION (#237)" {
+    const w = try h.Workspace.init(&decl_hovers, .{});
+    defer w.deinit();
+    for ([_][2][]const u8{
+        .{ "arr(3)", "INTEGER, PARAMETER, DIMENSION(3) :: arr = [1, 2, 3]" },
+        .{ "crr", "INTEGER, DIMENSION(3), PARAMETER :: crr = [1, 2, 3]" },
+        .{ "names", "CHARACTER(len=3), PARAMETER, DIMENSION(2) :: names = ['abc', 'def']" },
+        .{ "space_str", "CHARACTER(len=6), PARAMETER :: space_str = 'a   b' // \"c\"" },
+        .{ "s(3)", "CHARACTER*10, DIMENSION(3), CODIMENSION[*] :: s" },
+        .{ "s2", "CHARACTER*10, DIMENSION(3) :: s2" },
+        .{ "a, b", "REAL, DIMENSION(3) :: a" },
+        .{ "b(5)", "REAL, DIMENSION(5) :: b" },
+        .{ "c(2,2)", "REAL, DIMENSION(2,2), TARGET :: c" },
+        .{ "d(2, 2)", "INTEGER, PARAMETER, DIMENSION(2, 2) :: d = reshape([1, 2, 3, 4], [2, 2])" },
+        .{ "p1", "INTEGER, PARAMETER :: p1 = 1" },
+        .{ "p2", "INTEGER, PARAMETER, DIMENSION(2) :: p2 = [1, 2]" },
+        .{ "p3", "INTEGER, PARAMETER :: p3 = 3" },
+        .{ "blanks", "CHARACTER(len=*), PARAMETER :: blanks = \"x  y\"" },
+        .{ "more", "CHARACTER(len=*), PARAMETER :: more = 'u   v'" },
+        .{ "q1", "CHARACTER(len=4), PARAMETER :: q1 = 'a;b'" },
+        .{ "q2", "INTEGER, PARAMETER :: q2 = 2" },
+        .{ "k4", "CHARACTER(kind=4, LEN=100) :: k4" },
+        .{ "u, v", "CHARACTER*(*) :: u" },
+        .{ "v*8", "CHARACTER*8 :: v" },
+        .{ "r8b", "REAL*8 :: r8b" },
+        .{ "r4*4", "REAL*4 :: r4" },
+    }) |case| try expectDecl(w, "m.f90", w.pos("m.f90", case[0], 0, 0), case[1]);
+    // the documentation of a function with a type prefix is the function's
+    const lf = (try w.hover("m.f90", w.pos("m.f90", "lf()", 0, 0))) orelse return error.NoHover;
+    try h.expect(std.mem.find(u8, lf, "**Return:**") == null, "lf: {s}", .{lf});
+    try h.expect(std.mem.find(u8, lf, "```\n-----\ndoc of lf") != null, "lf: {s}", .{lf});
+    const lg = (try w.hover("m.f90", w.pos("m.f90", "lg()", 0, 0))) orelse return error.NoHover;
+    try h.expect(std.mem.find(u8, lg, "```\n-----\ndoc of lg") != null, "lg: {s}", .{lg});
+    // the named-constant inlay hint has the value too
+    var found = false;
+    for (try w.inlayHints("m.f90")) |hint| found = found or std.mem.find(u8, hint.label, "[1, 2, 3]") != null;
+    try h.expect(found, "no inlay hint = [1, 2, 3] on the use of arr", .{});
+}
