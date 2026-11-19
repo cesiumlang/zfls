@@ -38,7 +38,14 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             // file that zfls does not read: not found, or a part of a
             // statement's text (json-fortran's argument lists)
             for (self.file_ast.include_statements.items) |inc| {
-                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                if (inc.file != null) continue;
+                if (inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                // the macros of an `#include` not found outside every
+                // procedure may make the declarations of those after it
+                if (inc.missing != null and inc.line_number < self.sline) {
+                    const at = self.file_ast.getInnerScope(inc.line_number);
+                    if (at == null or !at.?.kind.isSubroutine()) return errors.items;
+                }
             }
             for (self.procDataConst().missing_args.items) |m| {
                 try errors.append(a, Diagnostic.init(
