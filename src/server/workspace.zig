@@ -81,7 +81,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
         .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
-        .textDocumentSync = self.sync_type,
+        .textDocumentSync = .{ .change = self.sync_type },
         .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
         .codeActionProvider = if (on.code_actions) true else null,
         .semanticTokensProvider = .{ .legend = semantic.legend },
