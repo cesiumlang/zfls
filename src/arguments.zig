@@ -45,7 +45,8 @@ fn collect(a: Allocator, obj: *const Obj, drop_arg: ?usize, out: *std.ArrayList(
         },
         .method => if (obj.linkObj()) |l| try collect(a, l, obj.varDataConst().drop_arg, out, depth + 1),
         .interface => for (obj.memList()) |m| try collect(a, m, null, out, depth + 1),
-        .intrinsic => for (try str.split(a, obj.argList(), ",")) |arg| {
+        // the arguments of each form
+        .intrinsic => for (try obj.argForms(a)) |form| for (try str.split(a, form, ",")) |arg| {
             const eq = std.mem.findScalar(u8, arg, '=');
             try add(a, out, .{
                 .name = str.strip(if (eq) |e| arg[0..e] else arg),

@@ -34,7 +34,6 @@ pub fn setTypeMask(def: bool) Server.TypeMask {
 }
 
 pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, req_abstract: bool, out: *std.ArrayList(*Obj)) !void {
-    const nonly = if (only_list) |o| o.len() else 0;
     for (try scope.getChildren(a, filter_public)) |child| {
         if (req_abstract) {
             if (child.isAbstract()) try childCandidates(a, child, only_list, filter_public, false, out);
@@ -42,18 +41,32 @@ pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.Str
             if (child.isExternalInt()) {
                 try childCandidates(a, child, only_list, filter_public, false, out);
             } else {
-                if (nonly > 0) {
-                    var buf: [256]u8 = undefined;
-                    const lname = if (child.name.len <= buf.len)
-                        std.ascii.lowerString(&buf, child.name)
-                    else
-                        try std.ascii.allocLowerString(a, child.name);
-                    if (!only_list.?.contains(lname)) continue;
-                }
+                if (!try inOnlyList(a, only_list, child.name)) continue;
                 try out.append(a, child);
             }
         }
     }
+    if (req_abstract) return;
+    // the enumerators of an ENUM are names of the scope around it, public
+    // or not as its own names (as `checkScope` finds them)
+    for (scope.childList()) |child| {
+        if (child.kind != .enum_) continue;
+        for (child.childList()) |e| {
+            const private = e.vis == .private or (scope.def_vis == .private and e.vis != .public);
+            if (filter_public and private) continue;
+            if (!try inOnlyList(a, only_list, e.name)) continue;
+            try out.append(a, e);
+        }
+    }
+}
+
+/// Whether `name` passes an ONLY list (an empty or no list passes all)
+fn inOnlyList(a: Allocator, only_list: ?*const objects.StrSet, name: []const u8) !bool {
+    const only = only_list orelse return true;
+    if (only.len() == 0) return true;
+    var buf: [256]u8 = undefined;
+    const lname = if (name.len <= buf.len) std.ascii.lowerString(&buf, name) else try std.ascii.allocLowerString(a, name);
+    return only.contains(lname);
 }
 
 pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_prefix: []const u8, inc_globals: bool, public_only: bool, abstract_only: bool, no_use: bool) !Server.Candidates {
@@ -65,6 +78,16 @@ pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_
         try childCandidates(a, scope, null, public_only, abstract_only, &var_list);
         if (!no_use) try objects.getUseTree(self.env(a), scope, &use_dict, null, null, &.{});
     }
+    // inside an ENUM its enumerators are names of it and of the scope
+    // around it: each once
+    var seen: std.AutoHashMapUnmanaged(*Obj, void) = .empty;
+    var n: usize = 0;
+    for (var_list.items) |o| {
+        if ((try seen.getOrPut(a, o)).found_existing) continue;
+        var_list.items[n] = o;
+        n += 1;
+    }
+    var_list.shrinkRetainingCapacity(n);
     var rename_list: std.ArrayList(?[]const u8) = .empty;
     try rename_list.appendNTimes(a, null, var_list.items.len);
     var import_var_list: std.ArrayList(*Obj) = .empty;
@@ -275,7 +298,9 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, cl.curr, ac_char, true)) orelse return .null;
     const var_stack = try helpers.getVarStack(a, line_prefix);
     const is_member = var_stack.len > 1;
-    var var_prefix = str.strip(var_stack[var_stack.len - 1]);
+    // after a space no name is begun (`use `, not `use`)
+    const after_space = line_prefix.len > 0 and std.ascii.isWhitespace(line_prefix[line_prefix.len - 1]);
+    var var_prefix = if (after_space and !is_member) "" else str.strip(var_stack[var_stack.len - 1]);
     const typed_prefix = var_prefix;
 
     var item_list: std.ArrayList(lsp.CompletionItem) = .empty;
@@ -283,7 +308,13 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     var public_only = false;
     var include_globals = true;
     const lc = try parser.getLineContext(a, line_prefix);
-    if (lc.ctx == .skip or (var_prefix.len == 0 and !is_member)) return .null;
+    if (lc.ctx == .skip) return .null;
+    // with nothing typed, only where the names are few and wanted (#283)
+    const short_list = switch (lc.ctx) {
+        .mod_mems, .mod_only, .type_only, .int_only, .import, .vis => true,
+        else => false,
+    };
+    if (var_prefix.len == 0 and !is_member and !short_list) return .null;
     if (self.s.autocomplete_no_prefix) var_prefix = "";
 
     var scope_list: []const *Obj = &.{};
@@ -299,6 +330,8 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         scope_list = try ast.getScopes(a, ac_line + 1);
     }
     var req_callable = false;
+    // the names an ONLY list has already
+    var listed: []const []const u8 = &.{};
     var abstract_only = false;
     var no_use = false;
     var type_mask = setTypeMask(false);
@@ -324,6 +357,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             public_only = true;
             include_globals = false;
             type_mask.remove(.class);
+            listed = try onlyListed(a, line_prefix);
         },
         .pro_link => {
             type_mask = setTypeMask(true);
@@ -395,10 +429,13 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         else => {},
     }
     if (lc.ctx == .default and !is_member) try keywordArgItems(self, a, file, ast, ac_line, ac_char, &item_list);
+    // no intrinsics nor global names for nothing typed
+    if (typed_prefix.len == 0) include_globals = false;
     const cands = try getCandidates(self, a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
-    for (cands.objs, cands.renames) |cand, rename| {
+    next: for (cands.objs, cands.renames) |cand, rename| {
         const ctype = cand.getType(false);
         if (type_mask.contains(ctype)) continue;
+        for (listed) |l| if (std.ascii.eqlIgnoreCase(l, cand.name)) continue :next;
         if (req_callable and !cand.isCallable()) continue;
         var name_replace = rename;
         if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
@@ -423,6 +460,22 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         else => {},
     };
     return json.from(a, item_list.items);
+}
+
+/// The names of the module an ONLY list (at the end of `line`) has before
+/// the one being written: `alpha` of `use m, only: alpha, a => beta, al`
+/// and `beta`
+fn onlyListed(a: Allocator, line: []const u8) ![]const []const u8 {
+    const u = ((try parser.readUseStmt(a, line)) orelse return &.{}).use;
+    if (u.only_list.len < 2) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    for (u.only_list[0 .. u.only_list.len - 1]) |local| {
+        const original = for (u.renames) |r| {
+            if (std.mem.eql(u8, r[0], local)) break r[1];
+        } else local;
+        try out.append(a, original);
+    }
+    return out.items;
 }
 
 /// The modules a USE statement can bring names in from: those of the
