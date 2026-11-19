@@ -386,6 +386,15 @@ build files say:
 A definition from the options or the configuration file is kept over one
 from a build file.
 
+A project that builds several programs may have a module of the same name
+in each (`utils` in `app1/` and in `app2/`). zfls keeps every one, and a
+file's `USE utils` (hover, definition, completion, diagnostics) sees the
+one whose module directory (`-J`, `-module`, `/module:`, ...; the compile's
+directory without one) comes first on that file's search path in
+`compile_commands.json` (that directory, `-I`, the compile's directory);
+without build information, the one in the file's own directory, then in
+the nearest directory, then the one of the lowest path.
+
 ### Fortran and C
 
 For a procedure with `BIND(C)`, whose C name is its `NAME=` or else its
@@ -1159,6 +1168,10 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- Modules of the same name in several directories are all kept, and each
+  file sees the one its build puts on its module search path, else the
+  nearest (see [Build files](#build-files)); fortls keeps one per name
+  (FL PR #504 has a similar design).
 - The Fortran files that `compile_commands.json` compiles outside the
   workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
   source directories only.

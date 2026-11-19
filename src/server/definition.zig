@@ -129,8 +129,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     const key = try std.ascii.allocLowerString(a, def_name);
     // the file's own global definition before another file's of the
     // same name (fortls gets this from parsing the open file last)
-    if (ast.global_dict.get(key)) |o| return o;
-    if (self.obj_tree.get(key)) |e| return e.obj;
+    if (self.env(a).global(ast, key)) |o| return o;
     for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) return f;
     if (hover_req) if (curr_scope) |cs| {
         var var_type: ?[]const u8 = null;
