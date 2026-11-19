@@ -1,16 +1,17 @@
 //! The compiler check (`compiler_diagnostics`) against a real compiler,
-//! LFortran: zfls, started as an editor starts it, checks the files of
-//! tests/compiler when they are opened, and each must get the compiler's
-//! errors it has and none of those it has not: a program that uses a
-//! module of the workspace (compiled first, for its .mod file), implicit
-//! typing and an external procedure, fixed form, the preprocessor with a
-//! definition of `pp_defs`, an include directory of `include_dirs`, and
-//! the unsaved text of an edit (`compiler_on_change`)
-//! (`zig build test-compiler`). Skipped without LFortran.
+//! LFortran or LLVM Flang: zfls, started as an editor starts it, checks
+//! the files of tests/compiler when they are opened, and each must get the
+//! compiler's errors it has and none of those it has not: a program that
+//! uses a module of the workspace (compiled first, for its .mod file),
+//! implicit typing and an external procedure, fixed form, the preprocessor
+//! with a definition of `pp_defs`, an include directory of `include_dirs`,
+//! and the unsaved text of an edit (`compiler_on_change`); with Flang also
+//! a `.f77` file, a debug line (a comment) and an error in an included file
+//! (`zig build test-compiler`). Skipped without the compiler.
 //!
-//!     compiler_check --zfls ZFLS [--lfortran LFORTRAN]
+//!     compiler_check --zfls ZFLS [--compiler lfortran|flang] [--path EXE]
 //!
-//! LFORTRAN in the environment names it too.
+//! LFORTRAN or FLANG in the environment names the compiler's executable too.
 
 const std = @import("std");
 const Io = std.Io;
@@ -34,29 +35,84 @@ const Case = struct {
     absent: []const []const u8 = &.{},
 };
 
-const cases = [_]Case{
-    // the module's .mod file exists, with its type-bound procedure; every
-    // error, not only the first
-    .{ .file = "main.f90", .want = &.{
-        .{ .line = 8, .text = "Variable 'undeclared_main' is not declared" },
-        .{ .line = 9, .text = "Variable 'also_undeclared' is not declared" },
-    }, .absent = &.{"modfile"} },
-    // implicit typing and implicit interfaces, but no implicit casting of
-    // arguments
-    .{ .file = "implicit.f90", .want = &.{
-        .{ .line = 5, .text = "Type mismatch in argument" },
-    }, .absent = &.{ "is not declared", "not found" } },
-    .{ .file = "legacy.f", .want = &.{
-        .{ .line = 6, .text = "Type mismatch in argument" },
-    }, .absent = &.{ "is not declared", "not found" } },
-    // ZFLS_DEFINED, of pp_defs, declares `from_define`
-    .{ .file = "defines.F90", .want = &.{
-        .{ .line = 8, .text = "Variable 'undeclared_defines' is not declared" },
-    }, .absent = &.{"from_define"} },
-    // consts.inc is in include_dirs
-    .{ .file = "includes.f90", .want = &.{
-        .{ .line = 6, .text = "Variable 'undeclared_includes' is not declared" },
-    }, .absent = &.{ "Include file", "included_n" } },
+/// A compiler under test: its `compiler_diagnostics` name (also the source
+/// of its diagnostics), the variable that names its executable, the cases,
+/// and main.f90 with `undeclared_main` edited to `undeclared_edit`
+const Compiler = struct {
+    name: []const u8,
+    env: []const u8,
+    cases: []const Case,
+    edited: Want,
+};
+
+const compilers = [_]Compiler{
+    .{
+        .name = "lfortran",
+        .env = "LFORTRAN",
+        .cases = &.{
+            // the module's .mod file exists, with its type-bound procedure;
+            // every error, not only the first
+            .{ .file = "main.f90", .want = &.{
+                .{ .line = 8, .text = "Variable 'undeclared_main' is not declared" },
+                .{ .line = 9, .text = "Variable 'also_undeclared' is not declared" },
+            }, .absent = &.{"modfile"} },
+            // implicit typing and implicit interfaces, but no implicit casting
+            // of arguments
+            .{ .file = "implicit.f90", .want = &.{
+                .{ .line = 5, .text = "Type mismatch in argument" },
+            }, .absent = &.{ "is not declared", "not found" } },
+            .{ .file = "legacy.f", .want = &.{
+                .{ .line = 6, .text = "Type mismatch in argument" },
+            }, .absent = &.{ "is not declared", "not found" } },
+            // ZFLS_DEFINED, of pp_defs, declares `from_define`
+            .{ .file = "defines.F90", .want = &.{
+                .{ .line = 8, .text = "Variable 'undeclared_defines' is not declared" },
+            }, .absent = &.{"from_define"} },
+            // consts.inc is in include_dirs
+            .{ .file = "includes.f90", .want = &.{
+                .{ .line = 6, .text = "Variable 'undeclared_includes' is not declared" },
+            }, .absent = &.{ "Include file", "included_n" } },
+        },
+        .edited = .{ .line = 8, .text = "Variable 'undeclared_edit' is not declared" },
+    },
+    .{
+        .name = "flang",
+        .env = "FLANG",
+        .cases = &.{
+            .{ .file = "main.f90", .want = &.{
+                .{ .line = 8, .text = "No explicit type declared for 'undeclared_main'" },
+                .{ .line = 9, .text = "No explicit type declared for 'also_undeclared'" },
+            }, .absent = &.{"module file"} },
+            .{ .file = "implicit.f90", .want = &.{
+                .{ .line = 5, .text = "Actual argument type 'INTEGER(4)' is not compatible with dummy argument type 'REAL(4)'" },
+            }, .absent = &.{ "No explicit type", "not found" } },
+            .{ .file = "legacy.f", .want = &.{
+                .{ .line = 6, .text = "Actual argument type 'INTEGER(4)' is not compatible with dummy argument type 'REAL(4)'" },
+            }, .absent = &.{ "No explicit type", "not found" } },
+            .{ .file = "defines.F90", .want = &.{
+                .{ .line = 8, .text = "No explicit type declared for 'undeclared_defines'" },
+            }, .absent = &.{"from_define"} },
+            .{ .file = "includes.f90", .want = &.{
+                .{ .line = 6, .text = "No explicit type declared for 'undeclared_includes'" },
+            }, .absent = &.{ "not found", "included_n" } },
+            // a suffix Flang's driver does not know as Fortran (#376), fixed
+            // form
+            .{ .file = "old.f77", .want = &.{
+                .{ .line = 5, .text = "No explicit type declared for 'jundef'" },
+            }, .absent = &.{"linker input"} },
+            // the D line is a comment (-fd-lines-as-comments, where the Flang
+            // has it: #375)
+            .{ .file = "dlines.f", .want = &.{
+                .{ .line = 6, .text = "No explicit type declared for 'undeclared_fixed'" },
+            }, .absent = &.{ "dvar", "unknown argument" } },
+            // an error in an included file is at the INCLUDE line, and no
+            // "included here" of its own (#378)
+            .{ .file = "incerr.f90", .want = &.{
+                .{ .line = 4, .text = "No explicit type declared for 'undeclared_in_inc'" },
+            }, .absent = &.{"included here"} },
+        },
+        .edited = .{ .line = 8, .text = "No explicit type declared for 'undeclared_edit'" },
+    },
 };
 
 pub fn main(init: std.process.Init) !u8 {
@@ -64,21 +120,29 @@ pub fn main(init: std.process.Init) !u8 {
     const a = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(a);
     var zfls_exe: ?[]const u8 = null;
-    var lfortran: []const u8 = init.environ_map.get("LFORTRAN") orelse "lfortran";
+    var name: []const u8 = "lfortran";
+    var exe_arg: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--zfls")) {
             zfls_exe = argv[i + 1];
-        } else if (std.mem.eql(u8, argv[i], "--lfortran")) {
-            lfortran = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--compiler")) {
+            name = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--path")) {
+            exe_arg = argv[i + 1];
         } else break;
     }
-    if (i != argv.len or zfls_exe == null) {
-        std.debug.print("usage: compiler_check --zfls ZFLS [--lfortran LFORTRAN]\n", .{});
+    const known: ?*const Compiler = for (&compilers) |*cc| {
+        if (std.mem.eql(u8, cc.name, name)) break cc;
+    } else null;
+    if (i != argv.len or zfls_exe == null or known == null) {
+        std.debug.print("usage: compiler_check --zfls ZFLS [--compiler lfortran|flang] [--path EXE]\n", .{});
         return 2;
     }
-    const version = std.process.run(a, io, .{ .argv = &.{ lfortran, "--version" } }) catch {
-        std.debug.print("skipped: no {s}\n", .{lfortran});
+    const compiler = known.?;
+    const exe = exe_arg orelse init.environ_map.get(compiler.env) orelse compiler.name;
+    const version = std.process.run(a, io, .{ .argv = &.{ exe, "--version" } }) catch {
+        std.debug.print("skipped: no {s}\n", .{exe});
         return 0;
     };
     std.debug.print("{s}", .{firstLine(version.stdout)});
@@ -103,10 +167,10 @@ pub fn main(init: std.process.Init) !u8 {
         // an object (`.{}` would be an empty array)
         .capabilities = struct {}{},
         .initializationOptions = .{
-            .compiler_diagnostics = "lfortran",
+            .compiler_diagnostics = compiler.name,
             // a name is looked for on the PATH; zfls takes a relative
             // path as relative to the root
-            .compiler_path = if (std.mem.findAny(u8, lfortran, "/\\") != null) try Io.Dir.cwd().realPathFileAlloc(io, lfortran, a) else null,
+            .compiler_path = if (std.mem.findAny(u8, exe, "/\\") != null) try Io.Dir.cwd().realPathFileAlloc(io, exe, a) else null,
             .compiler_mod_dir = "build/mod",
             .include_dirs = &[_][]const u8{"include"},
             .pp_defs = .{ .ZFLS_DEFINED = "" },
@@ -121,7 +185,7 @@ pub fn main(init: std.process.Init) !u8 {
     try c.send("initialized", struct {}{}, null);
 
     var failures: std.ArrayList([]const u8) = .empty;
-    for (cases) |case| {
+    for (compiler.cases) |case| {
         const path = try std.Io.Dir.path.join(a, &.{ work, case.file });
         const uri = try zfls.paths.pathToUri(a, path);
         try c.send("textDocument/didOpen", .{ .textDocument = .{
@@ -130,8 +194,8 @@ pub fn main(init: std.process.Init) !u8 {
             .version = 1,
             .text = try Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)),
         } }, null);
-        const diags = try waitFor(io, a, c, uri, null);
-        try expectCase(a, &failures, case.file, diags, case.want, case.absent);
+        const diags = try waitFor(io, a, c, compiler.name, uri, null);
+        try expectCase(a, &failures, compiler.name, case.file, diags, case.want, case.absent);
     }
 
     // an unsaved edit: its text is checked, from a copy
@@ -144,10 +208,8 @@ pub fn main(init: std.process.Init) !u8 {
             .textDocument = .{ .uri = uri, .version = 2 },
             .contentChanges = &[_]struct { text: []const u8 }{.{ .text = edited }},
         }, null);
-        const diags = try waitFor(io, a, c, uri, "undeclared_edit");
-        try expectCase(a, &failures, "main.f90 (edited)", diags, &.{
-            .{ .line = 8, .text = "Variable 'undeclared_edit' is not declared" },
-        }, &.{"undeclared_main"});
+        const diags = try waitFor(io, a, c, compiler.name, uri, "undeclared_edit");
+        try expectCase(a, &failures, compiler.name, "main.f90 (edited)", diags, &.{compiler.edited}, &.{"undeclared_main"});
     }
 
     const term = try c.close();
@@ -157,7 +219,7 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("zfls's stderr:\n{s}\n", .{c.stderr.items});
         return 1;
     }
-    std.debug.print("ok   {d} files and an edit checked with LFortran\n", .{cases.len});
+    std.debug.print("ok   {d} files and an edit checked with {s}\n", .{ compiler.cases.len, compiler.name });
     return 0;
 }
 
@@ -168,10 +230,10 @@ fn firstLine(s: []const u8) []const u8 {
 
 /// The compiler's diagnostics of `uri`, once there are some (that contain
 /// `needle`, when given); an empty list after the timeout
-fn waitFor(io: Io, a: Allocator, c: *lsp.Client, uri: []const u8, needle: ?[]const u8) ![]const Value {
+fn waitFor(io: Io, a: Allocator, c: *lsp.Client, source: []const u8, uri: []const u8, needle: ?[]const u8) ![]const Value {
     var waited: u32 = 0;
     while (waited < timeout_ms) : (waited += 100) {
-        const ours = try compilerDiagnostics(a, c.diagnosticsOf(uri));
+        const ours = try compilerDiagnostics(a, source, c.diagnosticsOf(uri));
         if (ours.len > 0) {
             const found = if (needle) |n| for (ours) |d| {
                 if (std.mem.find(u8, message(d), n) != null) break true;
@@ -183,14 +245,14 @@ fn waitFor(io: Io, a: Allocator, c: *lsp.Client, uri: []const u8, needle: ?[]con
     return &.{};
 }
 
-/// The diagnostics of `list` whose source is the compiler
-fn compilerDiagnostics(a: Allocator, list: Value) ![]const Value {
+/// The diagnostics of `list` whose source is the compiler (`source`)
+fn compilerDiagnostics(a: Allocator, source: []const u8, list: Value) ![]const Value {
     var out: std.ArrayList(Value) = .empty;
     if (list != .array) return &.{};
     for (list.array.items) |d| {
         if (d != .object) continue;
-        const source = d.object.get("source") orelse continue;
-        if (source == .string and std.mem.eql(u8, source.string, "lfortran")) try out.append(a, d);
+        const s = d.object.get("source") orelse continue;
+        if (s == .string and std.mem.eql(u8, s.string, source)) try out.append(a, d);
     }
     return out.items;
 }
@@ -210,9 +272,9 @@ fn lineOf(d: Value) i64 {
     return if (line == .integer) line.integer + 1 else 0;
 }
 
-fn expectCase(a: Allocator, failures: *std.ArrayList([]const u8), name: []const u8, diags: []const Value, want: []const Want, absent: []const []const u8) !void {
+fn expectCase(a: Allocator, failures: *std.ArrayList([]const u8), compiler: []const u8, name: []const u8, diags: []const Value, want: []const Want, absent: []const []const u8) !void {
     if (diags.len == 0) {
-        try failures.append(a, try a.print("{s}: no diagnostics from LFortran", .{name}));
+        try failures.append(a, try a.print("{s}: no diagnostics from {s}", .{ name, compiler }));
         return;
     }
     for (want) |w| {
@@ -239,12 +301,12 @@ test "a diagnostic's line and message" {
         \\[{"range":{"start":{"line":7,"character":10}},"message":"Variable 'x' is not declared","source":"lfortran"},
         \\ {"range":{"start":{"line":0,"character":0}},"message":"own","source":"zfls"}]
     , .{});
-    const ours = try compilerDiagnostics(a, list);
+    const ours = try compilerDiagnostics(a, "lfortran", list);
     try std.testing.expectEqual(@as(usize, 1), ours.len);
     try std.testing.expectEqual(@as(i64, 8), lineOf(ours[0]));
     var failures: std.ArrayList([]const u8) = .empty;
-    try expectCase(a, &failures, "f", ours, &.{.{ .line = 8, .text = "'x' is not declared" }}, &.{"modfile"});
+    try expectCase(a, &failures, "lfortran", "f", ours, &.{.{ .line = 8, .text = "'x' is not declared" }}, &.{"modfile"});
     try std.testing.expectEqual(@as(usize, 0), failures.items.len);
-    try expectCase(a, &failures, "f", ours, &.{.{ .line = 9, .text = "'x'" }}, &.{"'x'"});
+    try expectCase(a, &failures, "lfortran", "f", ours, &.{.{ .line = 9, .text = "'x'" }}, &.{"'x'"});
     try std.testing.expectEqual(@as(usize, 2), failures.items.len);
 }

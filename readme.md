@@ -217,8 +217,9 @@ CI runs zfls against gfortran (the symbols zfls extracts, compared with
 gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
 Linux and Windows x64, with lldb-dap on macOS), against LFortran (the
 compiler check, on Linux x64; its programs linking without Visual Studio,
-on Windows x64) and against LLVM Flang (its programs linking without Visual
-Studio, on Windows x64). The other
+on Windows x64) and against LLVM Flang (the compiler check, on Linux x64
+and Windows x64; its programs linking without Visual Studio, on Windows
+x64). The other
 compilers' options and message formats are tested with recorded output, not
 with the compilers.
 
@@ -1089,7 +1090,7 @@ before they overwrite one, and open it.
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
-| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran |
+| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran (`-- --compiler flang`: LLVM Flang; `--path EXE` names the compiler) |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |

@@ -183,7 +183,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "compiler_check",
             .root = "tests/compiler_check.zig",
             .step = "test-compiler",
-            .desc = "Check tests/compiler with compiler_diagnostics and a real LFortran (skipped without LFortran)",
+            .desc = "Check tests/compiler with compiler_diagnostics and a real LFortran, or LLVM Flang with -- --compiler flang (skipped without it)",
             .needs_fortls = false,
         },
         .{
