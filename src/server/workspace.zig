@@ -39,6 +39,7 @@ const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const configuration = @import("configuration.zig");
+const lenses = @import("lenses.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -64,6 +65,8 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try configLogger(self);
     try loadIntrinsics(self);
     try addSourceDirs(self, a);
+    self.lens_commands = lenses.clientCommands(params.capabilities.experimental);
+    self.config.client.experimental = null;
 
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);
@@ -490,7 +493,13 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             ast.none_scope = inc;
             for (inc.childList()) |c| c.parent = inc;
         }
-        for (ast.include_statements.items) |inc| {
+        // the last linked first, so that each restores the IMPLICIT state
+        // it found
+        var k_inc = ast.include_statements.items.len;
+        while (k_inc > 0) {
+            k_inc -= 1;
+            const inc = ast.include_statements.items[k_inc];
+            inc.unlink();
             inc.inc_obj = null;
             inc.file = null;
         }
