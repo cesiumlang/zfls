@@ -873,6 +873,11 @@ zfls deliberately differs from fortls in a few places:
   a USE statement names a module that is not in the workspace, or in a
   scope with an INCLUDE whose file is not found or that continues a
   statement, as the name could come from those.
+- A dummy argument with no declaration (`argument-not-declared`) has a
+  quick fix declaring it after the procedure's declarations, and one for
+  all of them when a header has several; and while a declaration's names
+  are typed in the procedure, completion offers those arguments first
+  (alone with nothing typed). fortls has neither (FL #323).
 - `fixed_line_length` (as gfortran's `-ffixed-line-length-n`: 72, 80, 132)
   makes the columns past it of a fixed-form line a comment: a `comment`
   semantic token, and no names there; the compiler check is given the same
