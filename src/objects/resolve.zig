@@ -197,6 +197,18 @@ pub fn findThroughUse(env: Env, scope: *Obj, name_lower: []const u8, outside: bo
     return walk.search(scope, name_lower);
 }
 
+/// Whether what `name_lower` stands for in `scope` by USE (as
+/// `findThroughUse` finds it) comes through module `via`, where it is
+/// named `via_name`: through the rename of a USE statement there, say.
+/// Null when the name is not found.
+pub fn comesThrough(env: Env, scope: *Obj, name_lower: []const u8, outside: bool, via: *Obj, via_name: []const u8) Allocator.Error!?bool {
+    if (outside and !exportsUsedName(scope, name_lower)) return null;
+    var walk: UseWalk = .{ .env = env, .name = name_lower, .via = .{ via, via_name } };
+    walk.on_path = scope == via and std.mem.eql(u8, name_lower, via_name);
+    _ = (try walk.search(scope, name_lower)) orelse return null;
+    return walk.found_on_path;
+}
+
 const UseWalk = struct {
     env: Env,
     /// The name looked up, as `scope` has it: a used module of that name is
@@ -204,6 +216,11 @@ const UseWalk = struct {
     name: []const u8,
     /// The modules searched, each with a hash of the name searched there
     seen: std.AutoHashMapUnmanaged(struct { *Obj, u64 }, void) = .empty,
+    /// For `comesThrough`: the module and its name to look for on the way,
+    /// whether the walk is in it, and whether it was when the name was found
+    via: ?struct { *Obj, []const u8 } = null,
+    on_path: bool = false,
+    found_on_path: bool = false,
 
     /// Search the modules `scope` uses for `name`, its name in `scope`
     fn search(w: *UseWalk, scope: *Obj, name: []const u8) Allocator.Error!?*Obj {
@@ -211,15 +228,25 @@ const UseWalk = struct {
         for (scope.scopeDataConst().use.items) |u| {
             if (u.is_import or !w.env.tree.contains(u.mod_name)) continue;
             const mod = w.env.global(scope.file_ast, u.mod_name) orelse continue;
-            if (std.mem.eql(u8, u.mod_name, w.name)) return mod;
+            if (std.mem.eql(u8, u.mod_name, w.name)) return w.found(mod);
             const there = u.nameThere(name) orelse continue;
-            if (try checkScope(w.env, mod, there, true, null)) |v| return v;
+            if (try checkScope(w.env, mod, there, true, null)) |v| return w.found(v);
             if (!exportsUsedName(mod, there)) continue;
             const gop = try w.seen.getOrPut(w.env.tmp, .{ mod, std.hash.Wyhash.hash(0, there) });
             if (gop.found_existing) continue;
+            const was_on_path = w.on_path;
+            defer w.on_path = was_on_path;
+            if (w.via) |v| if (v[0] == mod and std.mem.eql(u8, v[1], there)) {
+                w.on_path = true;
+            };
             if (try w.search(mod, there)) |v| return v;
         }
         return null;
+    }
+
+    fn found(w: *UseWalk, obj: *Obj) *Obj {
+        w.found_on_path = w.on_path;
+        return obj;
     }
 };
 
@@ -265,6 +292,43 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         if (host.file_ast != scope.file_ast) return findInScope(env, host, var_name, .{});
     };
     return null;
+}
+
+/// The global subroutine or function that `v`, a caller's own declaration
+/// of the name, stands for (#232): a variable with the EXTERNAL attribute
+/// (`external solve`, `real, external :: twice`), or, when `called` (the
+/// name is called somewhere), one declared with a type and no array shape,
+/// `real twice`, which declares the type of a function. Not a dummy
+/// argument of the caller (a dummy procedure) nor a function's result,
+/// and only when one of `files` (the workspace's `FortranFile`s) alone
+/// defines a global procedure of that name.
+pub fn declaredProcedure(env: Env, ast: *const objects.Ast, files: anytype, v: *const Obj, called: bool) Allocator.Error!?*Obj {
+    if (v.kind != .variable) return null;
+    const vd = v.varDataConst();
+    if (!vd.is_external and (!called or vd.is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null)) return null;
+    const parent = v.parent orelse return null;
+    switch (parent.kind) {
+        .type => return null,
+        .subroutine, .function => {
+            if (parent.kind == .function and std.ascii.eqlIgnoreCase(parent.name, v.name)) return null;
+            for (parent.procDataConst().arg_objs.items) |arg| if (arg == v) return null;
+        },
+        else => {},
+    }
+    const key = try std.ascii.allocLowerString(env.tmp, v.name);
+    const cand = env.global(ast, key) orelse return null;
+    switch (cand.kind) {
+        .function => {},
+        .subroutine => if (!vd.is_external) return null,
+        else => return null,
+    }
+    var defined: usize = 0;
+    for (files) |f| {
+        const fa = f.ast orelse continue;
+        const o = fa.global_dict.get(key) orelse continue;
+        if (o.kind == .subroutine or o.kind == .function) defined += 1;
+    }
+    return if (defined == 1) cand else null;
 }
 
 pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_match: bool) ![]*Obj {

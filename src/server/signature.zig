@@ -34,16 +34,23 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
     const vo = call.obj;
     const arg_strings = call.args;
     // a generic interface: the signature of each of its procedures, the
-    // first that takes the arguments so far active (fortls #6)
-    if (vo.kind == .interface and vo.memList().len > 0) {
+    // first that takes the arguments so far active (fortls #6); an
+    // intrinsic with several forms: the signature of each
+    var forms: std.ArrayList(Obj.Signature) = .empty;
+    if (vo.kind == .interface) {
+        for (vo.memList()) |member| try forms.append(a, try member.getSignature(a, null));
+    } else try forms.appendSlice(a, try vo.getSignatures(a));
+    if (forms.items.len > 1 or vo.kind == .interface) {
         var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
         var active: ?i64 = null;
         var active_size: usize = std.math.maxInt(usize);
-        for (vo.memList()) |member| {
-            const s = (try signatureOf(self, a, member, arg_strings)) orelse continue;
+        for (forms.items) |form| {
+            const s = (try signatureFrom(self, a, form, arg_strings)) orelse continue;
             var info = s.info;
             info.activeParameter = s.param;
-            if (s.fits and s.size < active_size) {
+            // of a generic the smallest procedure, of an intrinsic its
+            // first form
+            if (s.fits and (active == null or (vo.kind == .interface and s.size < active_size))) {
                 active = @intCast(sigs.items.len);
                 active_size = s.size;
             }
@@ -70,10 +77,9 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, sig_char, true)) orelse return null;
     if (R().SCOPE_DEF.match(curr_line) != null or R().END.match(curr_line) != null) return null;
     // get_sub_name
-    const pl = try helpers.getParenLevel(a, line_prefix);
-    if (pl.sections[0].start <= 1) return null;
-    const arg_string = str.slice(line_prefix, pl.sections[0].start, pl.sections[pl.sections.len - 1].end);
-    const pl2 = try helpers.getParenLevel(a, str.slice(line_prefix, 0, pl.sections[0].start - 1));
+    const open = (try argListOpen(a, line_prefix)) orelse return null;
+    const arg_string = line_prefix[open + 1 ..];
+    const pl2 = try helpers.getParenLevel(a, line_prefix[0..open]);
     var sub_name_raw = str.strip(pl2.str);
     // a CUDA Fortran kernel launch, `call k<<<grid, block>>>(args)`
     if (std.mem.endsWith(u8, sub_name_raw, ">>>")) {
@@ -109,7 +115,43 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
             break;
         };
     }
+    // the caller's own declaration of a procedure it calls (#232)
+    if (var_obj) |v| if (try objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, true)) |p| {
+        var_obj = p;
+    };
     return .{ .obj = var_obj orelse return null, .args = arg_strings };
+}
+
+/// The index in `line` of the bracket that opens the argument list the
+/// end of `line` is in, or null. An array constructor (`[`, `(/`) and a
+/// parenthesis that follows no name (an implied DO, an expression in
+/// parentheses) are not argument lists: the search goes on outside them,
+/// and they are part of the argument they are in (hansec #60).
+pub fn argListOpen(a: Allocator, line: []const u8) !?usize {
+    var end = line.len;
+    while (true) {
+        const pl = try helpers.getParenLevel(a, line[0..end]);
+        if (pl.sections[0].start <= 1) return null;
+        const open: usize = @intCast(pl.sections[0].start - 1);
+        if (line[open] == '(' and !opensConstructor(line, open) and followsName(line[0..open])) return open;
+        end = open;
+    }
+}
+
+/// Whether the `(` at `i` of `line` is the `(/` of an array constructor
+fn opensConstructor(line: []const u8, i: usize) bool {
+    const rest = str.lstrip(line[i + 1 ..]);
+    return rest.len > 0 and rest[0] == '/' and !(rest.len > 1 and rest[1] == '=');
+}
+
+/// Whether `before` ends in what a `(` after it can be the argument list
+/// of: a name, a subscript or coarray subscript (`a(1)(`, `a[2](`) or a
+/// CUDA kernel launch (`k<<<g, b>>>(`)
+fn followsName(before: []const u8) bool {
+    const t = str.rstrip(before);
+    if (t.len == 0) return false;
+    const c = t[t.len - 1];
+    return std.ascii.isAlphanumeric(c) or c == '_' or c == ')' or c == ']' or std.mem.endsWith(u8, t, ">>>");
 }
 
 /// For a call of generic interface `obj` at byte column `col` of 0-based
@@ -170,8 +212,14 @@ pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, li
 /// The signature of procedure `vo` for a call whose arguments so far are
 /// `arg_strings`: the parameter they reach, whether the procedure takes
 /// them (their number and keywords), and its number of parameters
-pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize } {
-    const sig = try vo.getSignature(a, null);
+pub fn signatureOf(self: *Server, a: Allocator, vo: *Obj, arg_strings: []const []const u8) !?SignatureFit {
+    return signatureFrom(self, a, try vo.getSignature(a, null), arg_strings);
+}
+
+pub const SignatureFit = struct { info: lsp.SignatureInformation, param: i64, fits: bool, size: usize };
+
+/// `signatureOf` for signature `sig`
+fn signatureFrom(self: *Server, a: Allocator, sig: Obj.Signature, arg_strings: []const []const u8) !?SignatureFit {
     const label = sig.label orelse return null;
     const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     const parameters = try a.alloc(lsp.ParameterInformation, sig.params.len);
@@ -208,4 +256,18 @@ pub fn checkOptional(arg: []const u8, params: []const Obj.ArgSig) ?i64 {
         if (std.ascii.eqlIgnoreCase(lbl, opt_arg)) return @intCast(i);
     }
     return null;
+}
+
+test "argListOpen steps out of array constructors and parentheses after no name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s([1, 2, "));
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s((/ 9, "));
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s([(i, i = 1, "));
+    try std.testing.expectEqual(@as(?usize, 9), try argListOpen(a, "call s([f(1, "));
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s(a(1), "));
+    try std.testing.expectEqual(@as(?usize, 16), try argListOpen(a, "call k<<<1, 2>>>(x, "));
+    try std.testing.expectEqual(@as(?usize, null), try argListOpen(a, "x = [1, 2"));
+    try std.testing.expectEqual(@as(?usize, null), try argListOpen(a, "x = 1"));
 }

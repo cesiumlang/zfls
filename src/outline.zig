@@ -104,7 +104,13 @@ const Outline = struct {
     /// variables of procedures, nor constructs (DO, IF, BLOCK, ...).
     fn append(o: Outline, obj: *Obj, parent: *Obj, out: *std.ArrayList(lsp.DocumentSymbol)) Allocator.Error!void {
         switch (obj.kind) {
-            .include, .block, .do_, .if_, .where, .select, .associate => {},
+            .block => if (obj.isBlockData()) {
+                var sym = o.symbol(obj, Kind.module, null, try o.childrenOf(obj));
+                // without a name, the parser's `#BLOCKDATA<n>`
+                if (std.mem.startsWith(u8, obj.name, "#")) sym.name = "BLOCK DATA";
+                try out.append(o.a, sym);
+            },
+            .include, .do_, .if_, .where, .select, .associate => {},
             .variable, .method => {
                 const in_type = parent.kind == .type;
                 if (!in_type and !isModuleLike(parent)) return;
@@ -220,7 +226,8 @@ fn eqlAny(word: []const u8, comptime options: []const []const u8) bool {
 /// ...`), not one of the branches the parser opens a scope for
 fn opensSelect(file: *const FortranFile, scope: *const Obj) bool {
     const w = leadingWords(file, scope.sline) orelse return true;
-    return eqlAny(w[0], &.{"select"}) or eqlAny(w[1], &.{"select"});
+    const words = .{ "select", "selectcase", "selecttype", "selectrank" };
+    return eqlAny(w[0], &words) or eqlAny(w[1], &words);
 }
 
 /// Whether 1-based line `ln` starts a new branch of a construct of `kind`

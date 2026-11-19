@@ -2,6 +2,11 @@ name: CI
 
 # Every pull request and every push to main is built and tested on all
 # supported platforms, and the tests run on the release binaries themselves.
+# macOS arm64 is the exception: its jobs (in test, conda and install-script)
+# run only for pull requests into main, which is where releases come from,
+# and for a push to main that releases binaries it built itself (see
+# `test`); pull requests into dev, other pushes and runs started by hand
+# leave them out.
 # Pushes to dev are not run: what reaches dev is tested by its pull request,
 # and dev as a whole by the pull request that releases it (to main), so
 # running pushes to dev too would test the same trees twice (start the
@@ -28,7 +33,9 @@ name: CI
 # from main publishes the archives of a passed pull request run that built
 # exactly the same tree, with the same version, instead of building and
 # testing them again; without one (main moved on after the pull request ran,
-# a direct push, expired artifacts) it builds and tests them itself.
+# a direct push, expired artifacts, a pull request whose CI was started by
+# hand as m-intrinsics.yml does) it builds and tests them itself, macOS
+# arm64 included.
 
 on:
   push:
@@ -194,7 +201,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
-          # the test matrix (6) and the conda package matrix (5)
+          # the test matrix (6) and the conda package matrix (5), macOS arm64
+          # included: only runs of pull requests into main have those (see
+          # test), so only they count
           JOBS: 11
         run: |
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
@@ -202,7 +211,6 @@ jobs:
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
-            # all six test jobs must have run and passed, not been skipped
             # all test and conda package jobs must have run and passed, not
             # been skipped
             passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (") or startswith("Conda package (")) | select(.conclusion == "success")] | length')
@@ -378,14 +386,31 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # The macOS arm64 (macos-15) job, here and in conda, runs only for a
+      # pull request into main and for a run that releases (a push to main
+      # that found no pull request run to reuse, see reuse, so builds and
+      # tests the release itself): GitHub's hosted macOS arm64 runners can
+      # stay unavailable for hours, holding up every merge, and the
+      # organization's plan runs at most five macOS jobs at a time. A
+      # release thus always has its macOS arm64 binaries tested: by the pull
+      # request run whose archives it publishes (reuse requires all 11 test
+      # and conda jobs of it to have passed) or by its own run. The job is
+      # left out of the matrix, not skipped, since even a skipped leg waits
+      # for its runner; and as an include list cannot be filtered with
+      # exclude, the list is JSON, with the macOS arm64 entry appended when
+      # it runs.
       matrix:
-        include:
-          - { os: ubuntu-24.04, target: x86_64-linux, vscode: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-linux, vscode: linux-arm64 }
-          - { os: windows-2025, target: x86_64-windows, vscode: win32-x64 }
-          - { os: windows-11-arm, target: aarch64-windows, vscode: win32-arm64 }
-          - { os: macos-15-intel, target: x86_64-macos, vscode: darwin-x64 }
-          - { os: macos-15, target: aarch64-macos, vscode: darwin-arm64 }
+        include: >-
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"os": "ubuntu-24.04", "target": "x86_64-linux", "vscode": "linux-x64"},
+          {"os": "ubuntu-24.04-arm", "target": "aarch64-linux", "vscode": "linux-arm64"},
+          {"os": "windows-2025", "target": "x86_64-windows", "vscode": "win32-x64"},
+          {"os": "windows-11-arm", "target": "aarch64-windows", "vscode": "win32-arm64"},
+          {"os": "macos-15-intel", "target": "x86_64-macos", "vscode": "darwin-x64"}',
+          ((github.event_name == 'pull_request' && github.base_ref == 'main')
+          || needs.version.outputs.release == 'true')
+          && ', {"os": "macos-15", "target": "aarch64-macos", "vscode": "darwin-arm64"}'
+          || '')) }}
     env:
       FORTLS: ${{ github.workspace }}/_fortls
       VERSION: ${{ needs.version.outputs.version }}
@@ -636,13 +661,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # (macOS arm64 only for pull requests into main and releasing runs:
+      # see test)
       matrix:
-        include:
-          - { os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl }
-          - { os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe }
-          - { os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin }
-          - { os: macos-15, platform: osx-arm64, rattler: aarch64-apple-darwin }
+        include: >-
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"os": "ubuntu-24.04", "platform": "linux-64", "rattler": "x86_64-unknown-linux-musl"},
+          {"os": "ubuntu-24.04-arm", "platform": "linux-aarch64", "rattler": "aarch64-unknown-linux-musl"},
+          {"os": "windows-2025", "platform": "win-64", "rattler": "x86_64-pc-windows-msvc.exe"},
+          {"os": "macos-15-intel", "platform": "osx-64", "rattler": "x86_64-apple-darwin"}',
+          ((github.event_name == 'pull_request' && github.base_ref == 'main')
+          || needs.version.outputs.release == 'true')
+          && ', {"os": "macos-15", "platform": "osx-arm64", "rattler": "aarch64-apple-darwin"}'
+          || '')) }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
       RATTLER_BUILD_VERSION: v0.76.1
@@ -698,8 +729,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # (macOS arm64 only for pull requests into main, see test; these test
+      # published releases, not this run's binaries, so a releasing run
+      # does not need it)
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: >-
+          ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref == 'main'
+          && '["ubuntu-24.04", "macos-15", "windows-2025"]'
+          || '["ubuntu-24.04", "windows-2025"]') }}
     steps:
       - uses: actions/checkout@v7
         with:

@@ -36,6 +36,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const argument_hover = @import("argument_hover.zig");
 const bindc = @import("bindc.zig");
 
 /// A temporary variable allocated in `a` (not owned by any AST)
@@ -57,6 +58,27 @@ pub fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8,
     if (o.hasKeyword(C.KW.private)) o.vis = .private;
     if (o.hasKeyword(C.KW.parameter)) o.varData().is_const = true;
     return o;
+}
+
+/// Whether the name at byte `col` of 0-based line `ln` is in a selector of
+/// the ASSOCIATE statement that opens `scope`: on that statement, and not an
+/// associate name (which `=>` follows)
+fn inSelector(file: *const FortranFile, scope: *const Obj, ln: usize, col: usize) bool {
+    if (scope.kind != .associate or scope.sline == 0) return false;
+    const st = selection.statementLines(file, scope.sline - 1);
+    if (ln < st.first or ln > st.last) return false;
+    const text = file.getLine(ln, false) orelse return false;
+    var end = @min(col, text.len);
+    while (end < text.len and regex.isWordChar(text[end])) end += 1;
+    const rest = std.mem.trimStart(u8, text[end..], " \t");
+    if (std.mem.startsWith(u8, rest, "=>")) return false;
+    // after the `(` of `associate (`
+    if (ln == scope.sline - 1) {
+        const kw = std.ascii.findIgnoreCase(text, "associate") orelse return false;
+        const open = std.mem.findScalarPos(u8, text, kw, '(') orelse return false;
+        return col > open;
+    }
+    return true;
 }
 
 /// `get_definition` with `def_char` as a byte offset on the line
@@ -83,6 +105,11 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
         return try tempVariable(a, ast, def_line + 1, def_name, desc, &.{});
     }
     var curr_scope = ast.getInnerScope(def_line + 1);
+    // a selector of an ASSOCIATE statement names what the scope around it
+    // has (`associate (x => x%field)`: the outer `x`)
+    if (curr_scope) |cs| if (inSelector(def_file, cs, def_line, def_char)) {
+        curr_scope = cs.parent orelse cs;
+    };
     if (is_member) {
         curr_scope = (try objects.climbTypeTree(self.env(a), var_stack, curr_scope)) orelse return null;
     }
@@ -183,13 +210,43 @@ pub fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
 /// of the including file and in the include directories (upstream #498,
 /// #301)
 pub fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?[]const u8 {
+    const at = (try includeNameAt(self, a, params, statement)) orelse return null;
+    return resolveInclude(self, a, at.file, at.name);
+}
+
+/// The file name that the `#include` directive (or, with `statement`, the
+/// INCLUDE statement) under the cursor names, when the cursor is on it
+fn includeNameAt(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?struct { file: *FortranFile, name: []const u8 } {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
     const text = file.getLine(params.position.line, false) orelse return null;
     const re = if (statement) &R().INCLUDE else &R().INCLUDE_DIRECTIVE;
     const m = re.match(text) orelse return null;
     const col = Server.toByteCol(file, params.position.line, params.position.character);
     if (col < m.start(1) or col > m.end(1)) return null;
-    return resolveInclude(self, a, file, m.group(1).?);
+    return .{ .file = file, .name = m.group(1).? };
+}
+
+/// Hover on the file name of an `#include` directive or INCLUDE
+/// statement (#240): the file it reads, relative to the workspace root
+/// when it is inside it, as a link; nothing when it is not found. Null
+/// when the cursor is not on such a name.
+fn includeHover(self: *Server, a: Allocator, params: lsp.PositionParams) !?Value {
+    const at = (try includeNameAt(self, a, params, false)) orelse (try includeNameAt(self, a, params, true)) orelse return null;
+    const target = (try resolveInclude(self, a, at.file, at.name)) orelse return .null;
+    const root = self.root_path;
+    const shown = if (root.len > 0 and target.len > root.len + 1 and paths.eql(target[0..root.len], root) and std.Io.Dir.path.isSep(target[root.len]))
+        try a.dupe(u8, target[root.len + 1 ..])
+    else
+        try a.dupe(u8, target);
+    std.mem.replaceScalar(u8, shown, '\\', '/');
+    const md = try a.print("Included file [{s}]({s})", .{ shown, try paths.pathToUri(a, target) });
+    return try json.from(a, lsp.Hover{ .contents = .{ .value = md } });
+}
+
+/// Whether `text` is a preprocessor line (`#define`, `#if`, ...), whose
+/// strings and numbers are not Fortran literals
+fn isPreprocessorLine(text: []const u8) bool {
+    return std.mem.startsWith(u8, std.mem.trimStart(u8, text, " \t"), "#");
 }
 
 /// The file an `#include` or `INCLUDE` of `name` in `file` reads: next
@@ -314,28 +371,51 @@ pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) 
 /// global procedure of that name, if there is one (upstream #483, #23)
 pub fn externalTarget(self: *Server, a: Allocator, ast: *Ast, v: *const Obj) !?*Obj {
     if (v.kind != .variable or !v.varDataConst().is_external) return null;
-    const key = try std.ascii.allocLowerString(a, v.name);
-    const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
-    return switch (cand.kind) {
-        .subroutine, .function => cand,
-        else => null,
-    };
+    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, false);
 }
 
 /// The global function that a variable of the same name stands for when it
 /// is called: `real fff` in the caller and then `fff(1.2, 3.3)` declares
 /// the type of the function, not a variable (upstream #118)
 pub fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj {
-    const v = d.obj;
-    if (v.kind != .variable or v.varData().is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null) return null;
-    if (v.parent) |p| if (p.getType(false) == C.TypeId.class) return null;
-    const text = d.file.getLine(d.line, false) orelse return null;
-    var end = d.col;
+    if (!isCalledAt(d.file, d.line, d.col)) return null;
+    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), d.obj, true);
+}
+
+/// The procedure that the caller's own declaration `v` of a name stands
+/// for (`objects.declaredProcedure`, #232), `v` being found at byte
+/// column `col` of 0-based line `line` of `file`, where it may be called
+pub fn callerTarget(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj) !?*Obj {
+    if (v.kind != .variable) return null;
+    const ast = file.ast orelse return null;
+    const called = v.varDataConst().is_external or isCalledAt(file, line, col) or isCalledIn(v);
+    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, called);
+}
+
+/// Whether the name at byte column `col` of 0-based line `line` is
+/// followed by an argument list
+pub fn isCalledAt(file: *const FortranFile, line: usize, col: usize) bool {
+    const text = file.getLine(line, false) orelse return false;
+    var end = @min(col, text.len);
     while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
-    if (!std.mem.startsWith(u8, str.lstrip(text[end..]), "(")) return null;
-    const key = try std.ascii.allocLowerString(a, v.name);
-    const cand = ast.global_dict.get(key) orelse (if (self.obj_tree.get(key)) |e| e.obj else return null);
-    return if (cand.kind == .function) cand else null;
+    return std.mem.startsWith(u8, str.lstrip(text[end..]), "(");
+}
+
+/// Whether variable `v` is called somewhere in the scope that declares it,
+/// `v(...)` on a line after its declaration
+fn isCalledIn(v: *const Obj) bool {
+    const scope = v.parent orelse return false;
+    const file = v.file_ast.file orelse return false;
+    var ln = v.sline;
+    while (ln < scope.eline and ln < file.nLines()) : (ln += 1) {
+        const text = file.getLine(ln, false) orelse continue;
+        var it = helpers.words(text);
+        while (it.next()) |w| {
+            if (!std.ascii.eqlIgnoreCase(w.str, v.name)) continue;
+            if (isCalledAt(file, ln, w.start)) return true;
+        }
+    }
+    return false;
 }
 
 /// With `prefer_implementation`, the implementation of a procedure that
@@ -435,7 +515,13 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 }
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-    const v = try hoverAt(self, a, params);
+    var v = try hoverAt(self, a, params);
+    // on an actual argument: the dummy it is passed to (#281)
+    if (self.s.hover_signature and v != .null) if (try argument_hover.dummyBlock(self, a, params)) |block| {
+        if (json.str(json.get(json.get(v, "contents"), "value"))) |md| {
+            v = try json.from(a, lsp.Hover{ .contents = .{ .value = try a.print("{s}\n\n-----\n{s}", .{ md, block }) } });
+        }
+    };
     if (!self.s.lowercase_hover) return v;
     const md = json.str(json.get(json.get(v, "contents"), "value")) orelse return v;
     return json.from(a, lsp.Hover{ .contents = .{ .value = try lowercaseKeywords(a, md) } });
@@ -485,11 +571,20 @@ pub fn lowercaseKeywords(a: Allocator, md: []const u8) ![]const u8 {
 fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
     if (try assignmentAt(self, a, params)) |b| return assignment.hover(self, a, b);
+    if (try includeHover(self, a, params)) |v| return v;
+    // the strings and numbers of preprocessor lines are no Fortran literals
+    const pp_line = if (try self.fileFromUri(a, params.textDocument.uri)) |f|
+        isPreprocessorLine(f.getLine(params.position.line, false) orelse "")
+    else
+        false;
     const d = (try definitionAt(self, a, params, true)) orelse {
-        if (try literalHover(self, a, params)) |v| return v;
+        if (!pp_line) if (try literalHover(self, a, params)) |v| return v;
         return implicitHover(self, a, params);
     };
-    if (std.mem.startsWith(u8, d.obj.descOf(), C.FORTRAN_LITERAL)) if (try literalHover(self, a, params)) |v| return v;
+    if (std.mem.startsWith(u8, d.obj.descOf(), C.FORTRAN_LITERAL)) {
+        if (pp_line) return .null;
+        if (try literalHover(self, a, params)) |v| return v;
+    }
     const ast = d.file.ast.?;
     var var_obj = (try externalTarget(self, a, ast, d.obj)) orelse (try calledFunction(self, a, ast, d)) orelse d.obj;
     // the implementation's documentation, or the interface's when it has none

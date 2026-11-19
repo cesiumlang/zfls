@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 /** Every Fortran extension of package.json, both cases */
-export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f05,F05,f08,F08,f18,F18,f23,F23,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR,ftn,FTN}";
 
 /** What `${...}` variables in a setting stand for. */
 export interface VariableContext {
@@ -130,7 +130,7 @@ export function findExecutable(
       return tryFile(pathMod.join(full, name));
     }
     const found = tryFile(full);
-    if (found || /[\/]/.test(configured)) {
+    if (found || /[\\/]/.test(configured)) {
       return found;
     }
     name = configured;
@@ -148,6 +148,29 @@ export function findExecutable(
     }
   }
   return undefined;
+}
+
+/**
+ * The zfls that the `zfls.path` setting names: its variables expanded (as
+ * `expandVariables`), a relative path taken relative to the workspace
+ * folder, a directory for the `zfls` in it, a bare name not found in the
+ * folder looked up on the PATH. `tried`, when there is no such file: the
+ * path looked for.
+ */
+export function serverExecutable(
+  configured: string,
+  ctx: VariableContext,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { command?: string; tried?: string } {
+  const pathMod = platform === "win32" ? path.win32 : path.posix;
+  const expanded = expandVariables(configured.trim(), { ...ctx, env });
+  const command = findExecutable("zfls", expanded, ctx.workspaceFolder, env, platform);
+  if (command) {
+    return { command: pathMod.normalize(command) };
+  }
+  const base = ctx.workspaceFolder;
+  return { tried: pathMod.isAbsolute(expanded) || !base ? pathMod.normalize(expanded) : pathMod.resolve(base, expanded) };
 }
 
 function isFile(file: string): boolean {
