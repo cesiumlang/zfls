@@ -188,6 +188,8 @@ pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
     // lines are 1-based, so 0 is before every USE statement
     var last_use_line: usize = 0;
     for (self.scopeDataConst().use.items) |u| {
+        // the included file reports its own
+        if (u.included) continue;
         last_use_line = @max(last_use_line, u.line_number);
         if (u.is_import) {
             if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
