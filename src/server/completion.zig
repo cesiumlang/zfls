@@ -563,7 +563,7 @@ pub fn autoUseItems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, 
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     for (items.items) |it| try seen.put(a, try std.ascii.allocLowerString(a, it.label), {});
     const at = try autouse.insertionPoint(a, file, unit);
-    const range = Server.rangeOf(file, at.line, 0, at.line, 0);
+    const ins = Server.lineInsertion(file, at.line);
     for (try autouse.exports(a, try usableModules(self, a, ast), .{ .prefix = prefix }, 50)) |e| {
         if (autouse.isWithin(unit, e.module)) continue;
         if (seen.contains(try std.ascii.allocLowerString(a, e.obj.name))) continue;
@@ -573,7 +573,7 @@ pub fn autoUseItems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, 
         item.detail = try a.print("{s} (use {s})", .{ item.detail, e.module.name });
         item.sortText = try std.mem.concat(a, u8, &.{ "~", e.obj.name });
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = range, .newText = try autouse.statement(a, at.indent, e.module.name, e.obj.name) };
+        edits[0] = .{ .range = ins.range, .newText = try std.mem.concat(a, u8, &.{ ins.prefix, try autouse.statement(a, at.indent, e.module.name, e.obj.name) }) };
         item.additionalTextEdits = edits;
         try items.append(a, item);
     }

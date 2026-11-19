@@ -172,7 +172,7 @@ fn session(a: Allocator, root: []const u8, file: []const u8, text: []const u8) !
         .jsonrpc = "2.0",
         .id = 1,
         .method = "initialize",
-        .params = .{ .rootUri = root_uri, .capabilities = .{} },
+        .params = .{ .rootUri = root_uri, .capabilities = struct {}{} },
     }, opts)));
     try out.appendSlice(a, try zfls.jsonrpc.frame(a, try std.json.Stringify.valueAlloc(a, .{
         .jsonrpc = "2.0",
@@ -211,7 +211,7 @@ fn shortSession(a: Allocator, root: []const u8) ![]u8 {
         .jsonrpc = "2.0",
         .id = 1,
         .method = "initialize",
-        .params = .{ .rootUri = try zfls.paths.pathToUri(a, root), .capabilities = .{} },
+        .params = .{ .rootUri = try zfls.paths.pathToUri(a, root), .capabilities = struct {}{} },
     }, opts)));
     try out.appendSlice(a, try zfls.jsonrpc.frame(a, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}"));
     try out.appendSlice(a, try zfls.jsonrpc.frame(a, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"));

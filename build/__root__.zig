@@ -103,7 +103,22 @@ pub fn build(b: *std.Build) !void {
     fuzz_step.dependOn(&run_fuzz_tests.step);
     test_step.dependOn(&run_fuzz_tests.step);
 
-    addScriptTests(b, mod, exe, test_step);
+    // The corpus damaged as half-typed code is (tests/damaged_source.zig):
+    // a sample in `zig build test`, all of it in `zig build test-damaged`
+    const damaged_mod = b.createModule(.{
+        .root_source_file = b.path("tests/damaged_source.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const damaged_tests = b.addTest(.{ .root_module = damaged_mod });
+    test_step.dependOn(&b.addRunArtifact(damaged_tests).step);
+    const run_damaged_long = b.addRunArtifact(damaged_tests);
+    run_damaged_long.setEnvironmentVariable("ZFLS_DAMAGE", "long");
+    const damaged_step = b.step("test-damaged", "Damage every line of the test corpus and check the server's answers (minutes)");
+    damaged_step.dependOn(&run_damaged_long.step);
+
+    addScriptTests(b, mod, exe, test_step, damaged_step);
 }
 
 /// Steps running the test drivers in tests/ against the built server: the
@@ -113,12 +128,13 @@ pub fn build(b: *std.Build) !void {
 /// zfls (and fortls when CMD starts it) timed on a large workspace
 /// (tools/bench_workspace.zig; build with -Doptimize=safe). Their
 /// unit tests are part of `test_step`.
-fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
+fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step, damaged_step: *std.Build.Step) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
     const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
     all.dependOn(b.getInstallStep());
     all.dependOn(test_step);
+    all.dependOn(damaged_step);
 
     const client = b.createModule(.{
         .root_source_file = b.path("tests/lsp_client.zig"),
