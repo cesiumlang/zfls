@@ -1043,31 +1043,29 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` once, and tests them as release
-candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test. macOS on ARM64,
-whose GitHub-hosted runners are few and can be unavailable for hours, is
-tested only by pull requests into `main`, which release `dev`, and by a push
-to `main` that releases binaries it built itself (when no pull request run
-tested that tree); pull requests into `dev`, other pushes to `main` and runs
-started by hand leave it out. Pushes to `dev`
-are not run on their own: what reaches `dev` is tested by its pull request,
-and `dev` as a whole by the pull request that releases it, so each tree is
-tested once (start the workflow by hand on `dev` to test it in between). A
-pull request that only changes files listed in
+every pull request into `main` and every push to `main` once, and tests
+them as release candidates on Linux, Windows and macOS, each on x86_64 and
+ARM64: the suites above, longer stress runs and the differential test.
+macOS on ARM64, whose GitHub-hosted runners are few and can be unavailable
+for hours, is left out of runs started by hand. Pull requests into `dev`
+and pushes to `dev` are not run: whoever merges them runs the checks first,
+and `dev` as a whole is tested by the pull request that releases it, which
+runs again with each change of `dev`. To test another branch or pull
+request in between, start the workflow by hand on its branch
+(`gh workflow run ci.yml --ref BRANCH`); the run's checks show on the pull
+request. A pull request that only changes files listed in
 `.github/workflows/no-ci.txt` (documentation, editor settings) skips the
 build and the tests. The "CI" check sums up a run, passing when nothing
 failed, so also when the build and the tests were skipped; it is the check
-the rulesets of `main` and `dev` require, with "Version".
+the ruleset of `main` requires, with "Version".
 
-Changes are collected on the `dev` branch, which pull requests target, and
-released together by merging `dev` into `main`. Both branches take a change
-only when its checks pass (an administrator can override that when merging a
-pull request); `main` also takes changes only through pull requests, while
-`dev` takes pushes from maintainers. CI's own push to `dev` after a release
-uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
-lets bypass the checks. A separate ruleset keeps `dev` from being deleted,
-with no exceptions, so merging the release pull request does not remove it.
+Changes are collected on the `dev` branch, by pull requests or pushes of
+maintainers, and released together by merging `dev` into `main`. `main`
+takes changes only through pull requests whose checks pass (an administrator
+can override that when merging); `dev` requires no checks, only that its
+history is not rewritten. A separate ruleset keeps `dev` from being
+deleted, with no exceptions, so merging the release pull request does not
+remove it.
 
 The release notes are generated from the pull requests merged since the last
 release, in sections by label (`.github/release.yml`): `fix`, `feature`,
