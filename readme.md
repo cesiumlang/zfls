@@ -827,6 +827,11 @@ zfls deliberately differs from fortls in a few places:
   points.
 - Inserting text that ends with a newline through an incremental change does
   not add a spurious empty line.
+- `initialize` announces `textDocumentSync` as options (`openClose`,
+  `change`, and `save` without the text), so that every client sends the
+  `didSave` that zfls runs its checks, the compiler and the linters on
+  (hansec PR #183); fortls announces only the change kind, which a client
+  may read as no save notifications.
 - Several requests on which fortls raises an internal error (for example
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
