@@ -23,6 +23,7 @@ test {
     _ = @import("documents.zig");
     _ = @import("ends.zig");
     _ = @import("extensions.zig");
+    _ = @import("cuda_prefix.zig");
     _ = @import("external.zig");
     _ = @import("formatting.zig");
     _ = @import("form_switch.zig");

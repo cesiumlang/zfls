@@ -1294,8 +1294,9 @@ zfls deliberately differs from fortls in a few places:
   signature help and completion work for them, and the names the stubs
   leave out are not reported as undeclared. fortls reports the modules as
   not found.
-- CUDA Fortran: a procedure with `attributes(...)` is a procedure,
-  signature help reads past a kernel's `<<<grid, block>>>`, `.cuf` and `.CUF`
+- CUDA Fortran: a procedure with `attributes(...)` is a procedure, also
+  when other words of its prefix come first (`pure attributes(device)
+  function`, as in LLVM Flang's `cudadevice` module), signature help reads past a kernel's `<<<grid, block>>>`, `.cuf` and `.CUF`
   files are Fortran sources, and the modules of NVIDIA's compiler (`cudafor`,
   `cublas`, `cufft`, `curand`, `cusparse`, ...) are external modules, never
   "not found". fortls reads none of these.
