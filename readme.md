@@ -386,6 +386,15 @@ build files say:
 A definition from the options or the configuration file is kept over one
 from a build file.
 
+A project that builds several programs may have a module of the same name
+in each (`utils` in `app1/` and in `app2/`). zfls keeps every one, and a
+file's `USE utils` (hover, definition, completion, diagnostics) sees the
+one whose module directory (`-J`, `-module`, `/module:`, ...; the compile's
+directory without one) comes first on that file's search path in
+`compile_commands.json` (that directory, `-I`, the compile's directory);
+without build information, the one in the file's own directory, then in
+the nearest directory, then the one of the lowest path.
+
 ### Fortran and C
 
 For a procedure with `BIND(C)`, whose C name is its `NAME=` or else its
@@ -931,7 +940,18 @@ zfls deliberately differs from fortls in a few places:
 - On a call of a generic interface, signature help shows the signature of
   each of its procedures, the one the arguments so far fit active (fortls
   #6), and go to definition goes to that procedure (hansec #135); fortls
-  shows no signature and goes to the interface.
+  shows no signature and goes to the interface. The procedure is the one
+  the arguments fit by their type, kind and rank (#273), when zfls can type
+  them (literals, variables, expressions of these): `area(k)` with an
+  integer `k` takes `area_i`, `twice(1.0d0)` the `REAL(8)` one, `total(a)`
+  with an array `a` the one with an array argument, a call with an array
+  an elemental procedure unless a nonelemental one takes the array, and
+  derived types (an extension for a `CLASS`). Type-bound generics resolve
+  the same way. When the types do not tell (an argument of unknown type, or
+  several procedures still fit), it is the first that takes as many
+  arguments with those keywords. Go to implementation, the inlay hints,
+  the call hierarchy and hover (which shows only that procedure when the
+  call fits no other) take the same procedure.
 - Signature help stays on the call while the cursor is inside an array
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own
@@ -1168,6 +1188,10 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- Modules of the same name in several directories are all kept, and each
+  file sees the one its build puts on its module search path, else the
+  nearest (see [Build files](#build-files)); fortls keeps one per name
+  (FL PR #504 has a similar design).
 - The Fortran files that `compile_commands.json` compiles outside the
   workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
   source directories only.

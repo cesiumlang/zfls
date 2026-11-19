@@ -130,8 +130,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     const key = try std.ascii.allocLowerString(a, def_name);
     // the file's own global definition before another file's of the
     // same name (fortls gets this from parsing the open file last)
-    if (ast.global_dict.get(key)) |o| return o;
-    if (self.obj_tree.get(key)) |e| return e.obj;
+    if (self.env(a).global(ast, key)) |o| return o;
     for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) return f;
     if (hover_req) if (curr_scope) |cs| {
         var var_type: ?[]const u8 = null;
@@ -609,7 +608,13 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     } else if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
         try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
     } else if (vt == C.TypeId.interface) {
-        for (var_obj.memList()) |member| {
+        // a call of a generic interface: the procedure it references, when
+        // the arguments fit no other
+        var members = var_obj.memList();
+        if (try signature.resolved(self, a, d.file, d.line, d.col, var_obj)) |s| if (s.unique) {
+            members = try a.dupe(*Obj, &.{s.obj});
+        };
+        for (members) |member| {
             const h = try member.getHover(a, true, null);
             if (h.msg != null) try hover_array.append(a, try createHover(self, a, h.msg, h.docs));
         }
@@ -719,7 +724,8 @@ fn interfaceOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
 
 pub fn serveImplementation(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const d = (try definitionAt(self, a, params, false)) orelse return .null;
-    const var_obj = d.obj;
+    // a call of a generic interface: the procedure it references
+    const var_obj = (try signature.genericSpecific(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj;
     if (var_obj.kind == .intrinsic) return .null;
     if (try externalTarget(self, a, d.file.ast.?, var_obj)) |target| {
         if (target.file_ast.file != null) return createRefLink(self, a, target);

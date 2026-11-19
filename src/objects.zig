@@ -31,6 +31,7 @@ const objects_diagnostic = @import("objects/diagnostic.zig");
 const objects_ast = @import("objects/ast.zig");
 const objects_resolve = @import("objects/resolve.zig");
 const objects_index = @import("objects/index.zig");
+pub const same_name = @import("objects/same_name.zig");
 
 pub const Diagnostic = objects_diagnostic.Diagnostic;
 pub const BuiltDiag = objects_diagnostic.BuiltDiag;
@@ -115,11 +116,17 @@ pub const TreeEntry = struct { obj: *Obj, path: ?[]const u8 };
 pub const Env = struct {
     tree: *ObjTree,
     tmp: Allocator,
+    /// The definitions of the names that several files define, and the
+    /// build's module directories, to choose among them (#187)
+    same_names: ?*const same_name.SameNames = null,
+    module_dirs: ?*const @import("project.zig").ModuleDirsMap = null,
 
     /// The global (module, program, top-level procedure) `name` as seen from
-    /// file `ast`: its own definition before another file's of that name.
+    /// file `ast`: its own definition before another file's of that name,
+    /// and of several files', the one `same_name.pick` chooses.
     pub fn global(env: Env, ast: *const Ast, name: []const u8) ?*Obj {
         if (ast.global_dict.get(name)) |o| return o;
+        if (env.same_names) |s| if (same_name.global(s, env.module_dirs, env.tmp, ast, name)) |o| return o;
         return if (env.tree.get(name)) |e| e.obj else null;
     }
 };
