@@ -26,6 +26,7 @@ const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
 const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
+const gdb_entry = @import("gdb_entry.zig");
 const vars = @import("gdb_variables.zig");
 const Variable = vars.Variable;
 
@@ -114,7 +115,10 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         try o.put(a, "args", .{ .array = list });
         try o.put(a, "env", try environment(s, a, json.get(args, "env")));
         const at_entry = json.get(args, "stopAtEntry");
-        try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = at_entry != null and at_entry.? == .bool and at_entry.?.bool });
+        const wanted = at_entry != null and at_entry.? == .bool and at_entry.?.bool;
+        // LLVM Flang's main program: the adapter's own stop
+        const own = wanted and gdb_entry.atLaunch(s, a, program, cwd);
+        try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = wanted and !own });
     } else {
         if (json.get(args, "processId")) |p| switch (p) {
             .integer => |n| try o.put(a, "pid", .{ .integer = n }),
@@ -226,7 +230,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
     const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, disconnect, terminate };
-    if (s.g.lldb) try lldb.afterEntry(s, a);
+    if (s.g.lldb) try lldb.afterEntry(s, a) else try gdb_entry.afterEntry(s, a);
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
         for (resuming) |r| if (std.mem.eql(u8, r, command)) vars.clear(s);
         if (std.mem.eql(u8, command, "pause")) s.g.pausing = true;
@@ -239,7 +243,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     };
     switch (cmd) {
         .configurationDone => {
-            if (s.g.lldb) try lldb.beforeRun(s, a);
+            if (s.g.lldb) try lldb.beforeRun(s, a) else try gdb_entry.beforeRun(s, a);
             const held = s.g.held_launch orelse return gdb.forward(s, a, req, args);
             s.g.held_launch = null;
             defer s.gpa.free(held);
@@ -310,7 +314,10 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
 /// gdb's function breakpoints: the client's, then the runtime's error
 /// functions when that filter is on (lldb-dap's: the client's; the
 /// runtime's are lldb's own, lldb.zig)
-fn syncFunctions(s: *Session, a: Allocator) !Value {
+/// The function breakpoints: the client's, those of the runtime's errors
+/// when that filter is on, and that of the stop at the start
+/// (gdb_entry.zig)
+pub fn syncFunctions(s: *Session, a: Allocator) !Value {
     var list: json.Array = .init(a);
     const user = if (s.g.user_functions.len > 0) json.items(json.parse(a, s.g.user_functions) catch Value.null) else &.{};
     try list.appendSlice(user);
@@ -318,6 +325,7 @@ fn syncFunctions(s: *Session, a: Allocator) !Value {
     const ours: []const runtime_errors.GdbBreakpoint = if (s.g.runtime_errors) runtime_errors.gdb_breakpoints else &.{};
     // Flang's STOP functions: only at ERROR STOP
     for (ours) |b| try list.append(if (b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
+    if (s.g.entry_function) |f| try list.append(try json.from(a, .{ .name = f }));
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     s.g.error_breakpoints.clearRetainingCapacity();
     const bps = json.items(json.path(r, &.{ "body", "breakpoints" }));
@@ -326,6 +334,10 @@ fn syncFunctions(s: *Session, a: Allocator) !Value {
         const id = json.int(json.get(bps[user.len + i], "id")) orelse continue;
         try s.g.error_breakpoints.put(s.gpa, id, b.name);
     }
+    s.g.entry_breakpoint = if (s.g.entry_function != null and user.len + ours.len < bps.len)
+        json.int(json.get(bps[user.len + ours.len], "id"))
+    else
+        null;
     return r;
 }
 
@@ -506,7 +518,8 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
             }
         }
         s.g.last_error = hit;
-        // lldb's breakpoint of the stop at the start, and its stop of a pause
+        // the breakpoint of the stop at the start (lldb's, or gdb's on
+        // Flang's main program), and lldb's stop of a pause
         if (s.g.entry_breakpoint) |entry| for (json.items(json.get(body, "hitBreakpointIds"))) |id| {
             if (json.int(id) != entry or body != .object) continue;
             body.object.put(a, "reason", .{ .string = "entry" }) catch {};
@@ -523,8 +536,9 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
     } else if (std.mem.eql(u8, name, "continued")) {
         vars.clear(s);
     } else if (std.mem.eql(u8, name, "breakpoint")) {
-        // those of the runtime's errors are the adapter's own
-        if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id)) return;
+        // those of the runtime's errors and of the stop at the start are
+        // the adapter's own
+        if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id) or id == s.g.entry_breakpoint) return;
     } else if (std.mem.eql(u8, name, "terminated") or std.mem.eql(u8, name, "exited")) {
         killTerminal(s);
     } else if (std.mem.eql(u8, name, "initialized")) {
