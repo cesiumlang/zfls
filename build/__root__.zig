@@ -161,7 +161,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_windows",
             .root = "tests/dap_windows.zig",
             .step = "test-dap",
-            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it)",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it), and LLVM Flang's with -- --flang FLANG",
             .needs_fortls = false,
             .needs_zig = true,
         },
