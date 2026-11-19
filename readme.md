@@ -56,7 +56,8 @@ command line options and configuration files.
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
   `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
   title case
-- Formatting of documents and selections with findent or fprettify (see
+- Formatting of documents and selections with findent, fprettify, Codee's
+  formatter, forformat or a command of the user's (see
   [Formatting](#formatting))
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
@@ -584,17 +585,25 @@ warnings with its own diagnostics of the file, labelled with the compiler's
 name. This works in every editor, not only VS Code.
 
 The compiler runs on a thread of its own, in syntax-only mode, one file at a
-time (a newer save of a file replaces a run that has not started). First it
+time (a newer save of a file replaces a run that has not started), with
+every error (LFortran, which stops at the first one by default, with
+`--continue-compilation`). First it
 compiles the workspace modules that the file uses, and those they use,
 whose `.mod` files are missing or older than their sources, in compile order
-from zfls's module graph; saving a file that defines modules checks again
-the open files that use them.
+from zfls's module graph (LFortran, whose syntax-only mode writes no
+`.mod` file, compiles their symbol tables: `--symtab-only -c`, with the
+object file in the `.mod` directory); saving a file that defines modules
+checks again the open files that use them.
 
 zfls reads the compiler's messages in English, so it runs the compiler (and
 fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a
 compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
-says so once and logs that output.
+says so once and logs that output. A message without a file and line (a bad
+option, a file the compiler cannot open) is published at the top of the
+file; for LFortran that is every line of its output that is not
+`file:lines:columns: severity: message`, such as an internal error and its
+traceback.
 
 A compiler run that takes longer than 120 seconds is stopped, with the
 processes it started (a driver's compiler proper, such as gfortran's
@@ -624,7 +633,11 @@ elsewhere, which is also stopped when the server shuts down during a run.
   nvfortran and `-132` for nagfor with 132), and free-form lines without a
   limit (`-ffree-line-length-none` for gfortran, whose default is 132
   columns before GCC 16); a line-length option in `compiler_args` replaces
-  zfls's of that form. On the command line it is one
+  zfls's of that form. For LFortran, whose own dialect (its default
+  `--std=lf`) rejects implicit typing and implicit interfaces, zfls passes
+  `--implicit-typing --implicit-interface`, each unless `compiler_args` (or
+  the project's command) has an option about it, and neither with a
+  `--std`. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
@@ -721,12 +734,21 @@ drops the compiler's diagnostics and zfls's `.mod` files (not those of
 
 ### Formatting
 
-With `formatter` set to `findent` or `fprettify`, zfls answers
-`textDocument/formatting` and `textDocument/rangeFormatting` (format
-document, format selection, format on save) by running that formatter,
-which is installed separately (`pip install findent`, `pip install
-fprettify`, or the same from conda-forge). This works in every editor, not
+With `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or
+`custom`, zfls answers `textDocument/formatting` and
+`textDocument/rangeFormatting` (format document, format selection, format
+on save) by running that formatter, which is installed separately (`pip
+install findent`, `pip install fprettify`, or the same from conda-forge;
+[Codee](https://www.codee.com); forformat). This works in every editor, not
 only VS Code; zfls offers formatting only when a formatter is set.
+
+| `formatter` | Command line |
+| --- | --- |
+| `findent` | `findent -ifree` (or `-ifixed`), `-Ia` for a selection, then `formatter_args` |
+| `fprettify` | `fprettify`, then `formatter_args` |
+| `codee` | `codee format - -o -`, then `formatter_args`; the `codee` of `codee_path` unless `formatter_path` is set |
+| `forformat` | `forformat --stdin-filename=FILE -ifree` (or `-ifixed`), then `formatter_args` |
+| `custom` | `formatter_path` with `formatter_args`, in which `${file}` is the document's path and `${form}` `free` or `fixed` |
 
 zfls gives the formatter the document's text, as the editor has it, on its
 standard input, reads the result from its standard output (no files are
@@ -758,9 +780,11 @@ text. The formatter runs in the file's directory, so fprettify finds the
 - `formatter_path`: the executable, or the directory that holds it (by
   default the formatter on the `PATH`).
 
-A selection is formatted as whole lines, and the formatter sees only those
-lines: select whole constructs for the indentation inside them to come out
-right. When the formatter is missing or fails, the document is left as it
+A selection is formatted as whole lines, and findent, fprettify and a
+custom formatter see only those lines: select whole constructs for the
+indentation inside them to come out right. Codee's formatter and forformat
+format whole files only: zfls gives them the whole file and keeps the
+changes in the selected lines. When the formatter is missing or fails, the document is left as it
 is and zfls shows the error once (`window/showMessage`).
 
 ## Testing
@@ -773,6 +797,7 @@ is and zfls shows the error once (`window/showMessage`).
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
+| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
@@ -791,6 +816,10 @@ default or `-Dfortls=PATH` (the stress test takes its test sources, else
 own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
 required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+The compiler check's test (and `tests/issues/compiler_lfortran.zig`) needs
+`lfortran` on the `PATH` (`--lfortran EXE` or `LFORTRAN` for the driver),
+from conda-forge (`pixi add lfortran`, `conda install -c conda-forge
+lfortran`), and is skipped without it; CI runs it on Linux x64.
 
 `zig build bench` times zfls on a large workspace (workspace
 initialization, request latency, edits, memory), and fortls too when
@@ -888,6 +917,12 @@ zfls deliberately differs from fortls in a few places:
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own
   signature (hansec #60); fortls shows none there.
+- In a structure constructor (`pt(1, 2)`), signature help shows the
+  type's data components, its parent's first, and with them the
+  procedures of a generic interface named like the type (hansec #148);
+  keyword completion offers both. A component with a default value is
+  optional, and outside the type's module a type with a private component
+  has no constructor signature. fortls shows none.
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.
@@ -1304,6 +1339,9 @@ zfls deliberately differs from fortls in a few places:
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
   indented 5) for fixed form. Other files are still told by their text.
+- A form feed (a page break of old sources) is read as a blank, as compilers
+  read it; fortls drops the statement of a line that starts with one
+  (fortls #443).
 - The enumerators of an ENUM are named integer constants of the scope around
   it, with hover, definition and completion, PUBLIC or PRIVATE by name;
   fortls does not read them.

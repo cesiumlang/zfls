@@ -20,6 +20,7 @@ test {
     _ = @import("documents.zig");
     _ = @import("extensions.zig");
     _ = @import("external.zig");
+    _ = @import("formatting.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover_arguments.zig");
@@ -39,4 +40,5 @@ test {
     _ = @import("use.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
+    _ = @import("compiler_lfortran.zig");
 }

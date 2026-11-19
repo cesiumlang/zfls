@@ -736,12 +736,18 @@
           "enum": [
             "Disabled",
             "findent",
-            "fprettify"
+            "fprettify",
+            "codee",
+            "forformat",
+            "custom"
           ],
           "enumDescriptions": [
             "%config.zfls.formatting.formatter.enumDescriptions.0%",
             "%config.zfls.formatting.formatter.enumDescriptions.1%",
-            "%config.zfls.formatting.formatter.enumDescriptions.2%"
+            "%config.zfls.formatting.formatter.enumDescriptions.2%",
+            "%config.zfls.formatting.formatter.enumDescriptions.3%",
+            "%config.zfls.formatting.formatter.enumDescriptions.4%",
+            "%config.zfls.formatting.formatter.enumDescriptions.5%"
           ],
           "default": "Disabled",
           "scope": "language-overridable",
@@ -770,6 +776,33 @@
           "default": [],
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.fprettifyArgs.markdownDescription%"
+        },
+        "zfls.formatting.codeeArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.codeeArgs.markdownDescription%"
+        },
+        "zfls.formatting.forformatArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.forformatArgs.markdownDescription%"
+        },
+        "zfls.formatting.customArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.customArgs.markdownDescription%"
         },
         "zfls.linter.compiler": {
           "type": "string",

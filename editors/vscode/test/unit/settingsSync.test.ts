@@ -18,6 +18,9 @@ test("a feature turned on is sent, and turned off restarts", () => {
   assert.equal(appliesLive({ ...base, use_signature_help: true }, base), false);
   assert.equal(appliesLive(base, { ...base, formatter: "findent" }), true);
   assert.equal(appliesLive({ ...base, formatter_fixed: "fprettify" }, base), false);
+  // the formatters of #278 are formatters too
+  assert.equal(appliesLive({ ...base, formatter: "custom" }, base), false);
+  assert.equal(appliesLive({ ...base, formatter: "codee" }, { ...base, formatter: "forformat" }), true);
   // code actions stay on while fortitude or enable_code_actions is
   assert.equal(appliesLive({ ...base, fortitude: true }, { ...base, enable_code_actions: true }), true);
   assert.equal(appliesLive({ ...base, fortitude: true }, base), false);

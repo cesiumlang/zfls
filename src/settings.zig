@@ -180,7 +180,7 @@ pub const Settings = struct {
     codee_args: StrList = .{},
     // Formatting
     /// The formatter of `textDocument/formatting` and `rangeFormatting`:
-    /// findent or fprettify; null or `none`: none
+    /// findent, fprettify, codee, forformat or custom; null or `none`: none
     formatter: ?[]const u8 = null,
     /// The formatter executable, or the directory that holds it; null: the
     /// one on the PATH
@@ -339,10 +339,10 @@ pub const opts = [_]Opt{
     .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
     .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Linter options" },
 
-    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
-    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
-    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
-    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
+    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout (default: none)", .group = "Formatting options" },
+    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH; for codee, codee_path's); the command of the custom formatter", .group = "Formatting options" },
+    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up; codee gets format - -o -, forformat --stdin-filename=FILE and -ifree or -ifixed; for custom they are the whole command line, in which ${file} is the document's path and ${form} free or fixed", .group = "Formatting options" },
+    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
     .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
