@@ -101,6 +101,7 @@ pub const CompletionItem = struct {
     filterText: ?[]const u8 = null,
     labelDetails: ?struct { detail: ?[]const u8 = null, description: ?[]const u8 = null } = null,
     additionalTextEdits: ?[]const TextEdit = null,
+    textEdit: ?TextEdit = null,
 };
 
 pub const Hover = struct { contents: MarkupContent };
@@ -346,6 +347,11 @@ pub const ClientCapabilities = struct {
         } = .{},
         rename: struct {
             prepareSupport: bool = false,
+        } = .{},
+        completion: struct {
+            completionItem: struct {
+                snippetSupport: bool = false,
+            } = .{},
         } = .{},
         signatureHelp: Dynamic = .{},
         /// present: the client pulls diagnostics (`textDocument/diagnostic`)

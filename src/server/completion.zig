@@ -24,6 +24,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const snippets = @import("snippets.zig");
 
 /// The inner scopes and the base type are always left out; `def` is
 /// whether the types of named objects are
@@ -308,6 +309,11 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     var public_only = false;
     var include_globals = true;
     const lc = try parser.getLineContext(a, line_prefix);
+    // constructs and program units at the start of a statement (#264)
+    if (!is_member and cl.pre.len == 0) if (try snippets.constructItems(self, a, file, ast, ac_line, ac_char)) |c| {
+        if (c.alone or lc.ctx == .skip) return json.from(a, c.items);
+        try item_list.appendSlice(a, c.items);
+    };
     if (lc.ctx == .skip) return .null;
     // a name of the entity list of a declaration: the dummy arguments of
     // the procedure that are not declared yet, first, and with nothing
@@ -322,7 +328,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         .mod_mems, .mod_only, .type_only, .int_only, .import, .vis => true,
         else => false,
     };
-    if (var_prefix.len == 0 and !is_member and !short_list) return .null;
+    if (var_prefix.len == 0 and !is_member and !short_list) return if (item_list.items.len > 0) json.from(a, item_list.items) else .null;
     if (self.s.autocomplete_no_prefix) var_prefix = "";
 
     var scope_list: []const *Obj = &.{};
