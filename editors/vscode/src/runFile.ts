@@ -227,7 +227,8 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
       });
     return undefined;
   }
-  const kind = compilerKind(compiler, process.platform);
+  // LLVM Flang on Windows: DWARF, for gdb, where it links with lld-link
+  const kind = compilerKind(compiler, process.platform, lldLinkFor(compiler) !== undefined);
   const configuredArgs = config.get<string[] | null>("buildArgs", null);
   const userArgs = configuredArgs ? configuredArgs.map((a) => expandVariables(a, ctx)) : undefined;
   const link = kitLink(context, compiler, userArgs, log);
@@ -295,7 +296,7 @@ function kitLink(
         fs.existsSync(path.join(d, "zfls_ifx_shim.obj")),
       )
     : undefined;
-  const lld = findExecutable("lld-link", path.dirname(compiler)) ?? findExecutable("lld-link");
+  const lld = lldLinkFor(compiler);
   if (!kit || !lld) {
     log?.info(`[run] ${label} links with Visual Studio's link: ${!kit ? "no ifx kit next to zfls" : `no lld-link next to ${label} or on the PATH`}`);
     return none;
@@ -316,6 +317,11 @@ function kitLink(
     return none;
   }
   return { args: [], env: lfortranLinkEnv(kit, linkDir, env) ?? {} };
+}
+
+/** The lld-link next to `compiler` (conda-forge's `lld`), else on the PATH */
+function lldLinkFor(compiler: string): string | undefined {
+  return findExecutable("lld-link", path.dirname(compiler)) ?? findExecutable("lld-link");
 }
 
 /** `env` of the build task of LFortran and LLVM Flang on Windows

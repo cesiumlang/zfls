@@ -35,7 +35,15 @@ test("compiler kinds", () => {
   assert.deepEqual(compilerKind("ifx", "win32"), { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] });
   assert.deepEqual(compilerKind("ifx", "linux"), { argStyle: "gnu", msvc: false, defaultArgs: ["-g", "-O0"] });
   assert.equal(compilerKind("gfortran.exe", "win32").msvc, false);
-  assert.equal(compilerKind("flang-new", "win32").msvc, true);
+  // LLVM Flang on Windows: DWARF for gdb, kept by lld-link; without an
+  // lld-link, Microsoft's debug information only
+  assert.deepEqual(compilerKind("flang-new", "win32"), {
+    argStyle: "gnu",
+    msvc: false,
+    defaultArgs: ["-gdwarf-4", "-O0", "-Wl,-debug:dwarf"],
+  });
+  assert.deepEqual(compilerKind("C:\\flang\\bin\\flang.exe", "win32", false), { argStyle: "gnu", msvc: true, defaultArgs: ["-g", "-O0"] });
+  assert.deepEqual(compilerKind("flang", "linux"), { argStyle: "gnu", msvc: false, defaultArgs: ["-g", "-O0"] });
   assert.equal(compilerKind("flang", "darwin").msvc, false);
   assert.deepEqual(compilerKind("lfortran", "linux").defaultArgs, ["-g"]);
   // LFortran for Windows refuses -g
@@ -238,7 +246,12 @@ test("LLVM Flang on Windows links with lld-link and the ifx kit, unless Visual S
   assert.equal(flangKitLink(kit, ["-fms-runtime-lib=static"], {}), undefined);
   // after the build's arguments, before the source
   const kind = compilerKind("flang", "win32");
-  assert.deepEqual(buildArgs(kind, "C:\\w\\a.f90", "C:\\o\\a.exe", undefined, ["-fuse-ld=lld"]).slice(0, 3), ["-g", "-O0", "-fuse-ld=lld"]);
+  assert.deepEqual(buildArgs(kind, "C:\\w\\a.f90", "C:\\o\\a.exe", undefined, ["-fuse-ld=lld"]).slice(0, 4), [
+    "-gdwarf-4",
+    "-O0",
+    "-Wl,-debug:dwarf",
+    "-fuse-ld=lld",
+  ]);
 });
 
 test("entries are replaced by name", () => {

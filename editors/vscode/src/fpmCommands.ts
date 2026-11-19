@@ -163,6 +163,13 @@ export function fpmExecutable(project: FpmProject, quiet = false): string | unde
   return fpm;
 }
 
+/** Whether fpm's builds of LLVM Flang on Windows have DWARF, for gdb: fpm's
+ * `-g` writes Microsoft's debug information only, so only when zfls.fpm.flags
+ * ask for DWARF (`-gdwarf-4 -Wl,-debug:dwarf`) */
+export function fpmFlangDwarf(project: FpmProject): boolean {
+  return /(^|\s)-gdwarf/.test(buildOptions(project).flags ?? "");
+}
+
 /** zfls.fpm.profile, compiler, flags and args */
 export function buildOptions(project: FpmProject): BuildOptions {
   const config = vscode.workspace.getConfiguration("zfls.fpm", vscode.Uri.file(project.root));
@@ -407,7 +414,7 @@ export async function debugTarget(
     return false;
   }
   const compiler = fpmCompiler(project);
-  const kind = compilerKind(compiler.exe ?? compiler.name, process.platform);
+  const kind = compilerKind(compiler.exe ?? compiler.name, process.platform, fpmFlangDwarf(project));
   const scope = vscode.Uri.file(project.root);
   const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
   const gdbPath = gdbFor(scope, compiler.exe);

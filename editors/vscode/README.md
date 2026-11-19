@@ -411,11 +411,11 @@ its runtime libraries.
 | --- | --- | --- |
 | `zfls.run.compiler` | `gfortran` | The compiler: `gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`, `nagfor`, `lfortran`, ... |
 | `zfls.run.compilerPath` | empty | The compiler, or its directory, when it is not on the `PATH` |
-| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`, and none for `lfortran` on Windows: its build from conda-forge lacks the runtime stacktrace that `-g` needs, and refuses it). The extension adds the include path, the output file and the source |
+| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows; `-gdwarf-4 -O0 -Wl,-debug:dwarf` for `flang` on Windows, for gdb, where there is an `lld-link`; `-g` for `lfortran`, and none for `lfortran` on Windows: its build from conda-forge lacks the runtime stacktrace that `-g` needs, and refuses it). The extension adds the include path, the output file and the source |
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |
-| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it (on macOS an lldb-dap), and for the programs of ifx, ifort and LLVM Flang on Windows, else an installed one |
+| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it (on macOS an lldb-dap), and for the programs of ifx and ifort on Windows, else an installed one |
 | `zfls.run.gdbPath` | empty | The `gdb` for `zfls`, `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH`. On macOS, set: zfls's debugger runs this gdb, not lldb-dap |
 
 `${workspaceFolder}`, `${env:NAME}`, `${userHome}`, `${file}`,
@@ -425,23 +425,35 @@ With `zfls.run.debugger` set to `auto`, debugging uses zfls's own debugger
 when there is a gdb for it (gdb 14 or later, built with Python, as MSYS2's,
 Ubuntu's since 24.04 and most others are; on macOS an lldb-dap, which
 Xcode's command line tools have), and on Windows for the programs
-of `ifx`, `ifort` and LLVM Flang, with Windows's own Debugger Engine (see
+of `ifx` and `ifort`, with Windows's own Debugger Engine (see
 [zfls's debugger](#zflss-debugger)); else the first installed of these
 extensions:
 
 | Extension | Debugger | For |
 | --- | --- | --- |
 | [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) | `cppdbg` | gdb (lldb on macOS): gfortran, Intel on Linux, flang, ... |
-| [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) | `cppvsdbg` | The Visual Studio debugger: `ifx`, `ifort` and LLVM Flang on Windows |
+| [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) | `cppvsdbg` | The Visual Studio debugger: `ifx` and `ifort` on Windows, LLVM Flang's programs built with `-g` |
 | [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) | `lldb` | lldb |
 | [CDT GDB Debug Adapter](https://marketplace.visualstudio.com/items?itemName=eclipse-cdt.cdt-gdb-vscode) | `gdb` | gdb |
 
 If there is none, **Debug Fortran File** says which to install. gdb cannot
-debug the programs of `ifx`, `ifort` and LLVM Flang on Windows (their debug
+debug the programs of `ifx` and `ifort` on Windows (their debug
 information is Microsoft's: zfls's debugger then uses Windows's Debugger
 Engine), nor run on macOS on Arm, where lldb, which knows no Fortran, is
-the debugger. With Intel's compilers on Windows,
-start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
+the debugger.
+
+LLVM Flang's `-g` on Windows also writes Microsoft's debug information
+only. **Debug Fortran File** builds with `-gdwarf-4`, which writes DWARF
+too and has Flang link with `lld-link`, and `-Wl,-debug:dwarf`, with which
+`lld-link` keeps the DWARF in the program (and the PDB beside it): gdb, and
+so zfls's debugger, reads it as it reads gfortran's programs. Without an
+`lld-link` (next to `flang` or on the `PATH`) the build is `-g -O0`, for
+Windows's Debugger Engine. A `fortran` configuration of a program built
+with `-g` takes `"dbgeng": true` for the engine; fpm's builds have DWARF
+when `zfls.fpm.flags` has `-gdwarf-4 -Wl,-debug:dwarf`, and are debugged
+with the engine otherwise.
+
+With Intel's compilers on Windows, start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
 that the compiler finds the linker and libraries, or set up ifx without
 Visual Studio:
 
@@ -518,8 +530,10 @@ first. `args`, `cwd`, `env` and `stopAtEntry` are as their names say;
 (`auto` by default, as `zfls.run.debugger`),
 and `compiler` says which compiler built the program (by default
 `zfls.run.compiler`, or for an fpm target `zfls.fpm.compiler`), which
-decides the debugger on Windows (`ifx` and LLVM Flang programs need the
-Visual Studio one) and puts its runtime libraries on the `PATH`. Any other
+decides the debugger on Windows (`ifx`'s programs need Windows's engine
+or the Visual Studio debugger; `"dbgeng": true` asks for the engine for
+LLVM Flang's built with `-g`) and puts its runtime libraries on the
+`PATH`. Any other
 key goes to the debugger as it is (`setupCommands`, `MIMode`, ...). The
 configuration stays the same whichever debugger runs it.
 
@@ -558,7 +572,8 @@ zfls's debugger is `zfls dap`, the debug adapter of the zfls executable
 (the extension's own, or `zfls.path`), which other editors use too. It
 runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb
 -i=dap`: gdb 14 or later, built with Python), or, for the programs of
-`ifx`, `ifort` and LLVM Flang on Windows, Windows's own Debugger Engine
+`ifx` and `ifort` on Windows (and LLVM Flang's with `"dbgeng": true`),
+Windows's own Debugger Engine
 (`dbgeng.dll`, which every Windows 10 and later has), and shows the program
 as Fortran (on macOS it runs lldb-dap instead, see below):
 

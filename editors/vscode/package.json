@@ -1423,6 +1423,10 @@
                 ],
                 "description": "%debugger.fortran.launch.lldb.description%"
               },
+              "dbgeng": {
+                "type": "boolean",
+                "description": "%debugger.fortran.launch.dbgeng.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
