@@ -21,6 +21,14 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const modgraph = @import("../modgraph.zig");
 const compilers = @import("../compilers.zig");
+const tools = @import("tools.zig");
+const args_mod = @import("compile_args.zig");
+const compilerOf = args_mod.compilerOf;
+const userArgs = args_mod.userArgs;
+const compilerPath = args_mod.compilerPath;
+const executables = args_mod.executables;
+const commandOf = args_mod.commandOf;
+const argsOf = args_mod.argsOf;
 const diagnostics = @import("diagnostics.zig");
 const pending = @import("pending.zig");
 const definition = @import("definition.zig");
@@ -36,19 +44,8 @@ const is_windows = builtin.target.os.tag == .windows;
 /// A compiler run that takes longer is stopped
 const timeout_s = 120;
 
-/// The compiler of `compiler_diagnostics`, null when it is off or unknown
-pub fn compilerOf(self: *const Server) ?compilers.Id {
-    const name = self.s.compiler_diagnostics orelse return null;
-    return compilers.Id.fromName(std.mem.trim(u8, name, " "));
-}
-
-/// Warns about a `compiler_diagnostics` that is no compiler zfls knows
-pub fn checkSetting(self: *Server, a: Allocator) !void {
-    const name = self.s.compiler_diagnostics orelse return;
-    const trimmed = std.mem.trim(u8, name, " ");
-    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "none") or compilerOf(self) != null) return;
-    self.postMessage(a, try a.print("compiler_diagnostics: unknown compiler \"{s}\"; it is one of gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran", .{name}), 2);
-}
+pub const anyCompiler = args_mod.anyCompiler;
+pub const checkSetting = args_mod.checkSetting;
 
 /// What asks for a check
 pub const Trigger = enum {
@@ -76,13 +73,16 @@ const Job = struct {
     exes: []const []const u8,
     /// `compiler_path` (settings can change while the job runs)
     compiler_path: ?[]const u8,
-    /// The compiler's working directory: the file's, or for a compiler
-    /// that writes files there (`compilers.writesToWorkDir`) one of zfls's
+    /// Where the compiler runs: the directory of the file's command in
+    /// compile_commands.json, else the file's; for a compiler that writes
+    /// files there (`compilers.writesToWorkDir`) one of zfls's
     cwd: []const u8,
     /// The files of the modules it uses, in compile order: each one's
-    /// arguments (the file last), and whether it is in fixed form
+    /// arguments (the file last), whether it is in fixed form, and where
+    /// it is compiled
     deps: []const []const []const u8,
     deps_fixed: []const bool,
+    deps_cwd: []const []const u8,
     /// The arguments, the file last
     args: []const []const u8,
     fixed: bool,
@@ -110,6 +110,8 @@ pub const Worker = struct {
     reported_missing: bool = false,
     reported_missing_fypp: bool = false,
     reported_unparsed: bool = false,
+    /// The compiler (or fypp) running, stopped at a shutdown
+    running: tools.Running = .{},
 
     fn run(w: *Worker) void {
         const io = w.server.io;
@@ -151,10 +153,12 @@ fn freeJob(gpa: Allocator, job: *Job) void {
     gpa.destroy(job);
 }
 
-/// Stops the compiler thread, after the run it is in (server shutdown)
+/// Stops the compiler thread, and the program it is running (server
+/// shutdown)
 pub fn stop(self: *Server) void {
     const w = self.compiler orelse return;
     const io = self.io;
+    w.running.stop(io);
     w.mutex.lockUncancelable(io);
     w.stopping = true;
     for (w.queue.items) |job| freeJob(self.gpa, job);
@@ -263,13 +267,16 @@ fn fyppExe(self: *const Server) ?[]const u8 {
 /// Queues a compiler run of a workspace file, replacing one of the same
 /// file that has not started
 pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8, trigger: Trigger) anyerror!void {
-    const id = compilerOf(self) orelse return;
+    if (!anyCompiler(self)) return;
     switch (trigger) {
         .save => if (self.s.compiler_no_save) return,
         .change => if (!self.s.compiler_on_change) return,
         .open, .open_unsaved, .now => {},
     }
     const file = self.workspace.get(path) orelse return;
+    // the compiler of the file's form; the modules it uses are compiled
+    // with it too (.mod files of two compilers do not mix)
+    const id = compilerOf(self, file.fixed) orelse return;
     // no compiler reads fypp's directives: fypp has to run first
     if (fyppExe(self) == null and std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(path), ".fypp")) return;
     // the editor's text of an open file (a check of edits, or one asked
@@ -355,19 +362,6 @@ fn pathKey(a: Allocator, path: []const u8) ![]const u8 {
     return a.print("{x:0>16}", .{h.final()});
 }
 
-/// The executables to try: those of `compiler_path` (a file, or a directory
-/// that holds the compiler), else the compiler's names, found on the PATH
-fn executables(self: *Server, a: Allocator, id: compilers.Id) ![]const []const u8 {
-    const names = compilers.executables(id);
-    const configured = self.s.compiler_path orelse return names;
-    if (configured.len == 0) return names;
-    const p = if (std.Io.Dir.path.isAbsolute(configured)) configured else try paths.join(a, &.{ self.root_path, configured });
-    if (!paths.isDir(self.io, p)) return a.dupe([]const u8, &.{p});
-    var out: std.ArrayList([]const u8) = .empty;
-    for (names) |n| try out.append(a, try paths.join(a, &.{ p, if (is_windows) try a.print("{s}.exe", .{n}) else n }));
-    return out.items;
-}
-
 /// A job for `file`: of the editor's text (`unsaved`) or the file as
 /// saved, and compiling the modules it uses first (`with_deps`)
 fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file: *FortranFile, unsaved: bool, with_deps: bool) !*Job {
@@ -378,15 +372,21 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id));
     Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir };
+    // the settings of the file's form, for the modules it uses too
+    const user = userArgs(self, file.fixed);
+    const cmd = try commandOf(self, a, file, user);
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
     // Intel's preprocessor output goes into the working directory: one of
     // zfls's per file, not the source tree
-    const cwd = if (compilers.writesToWorkDir(id)) try paths.join(ja, &.{ work_dir, "run", try pathKey(a, file.path) }) else try ja.dupe(u8, paths.dirname(file.path));
+    const run_dir: ?[]const u8 = if (compilers.writesToWorkDir(id)) try paths.join(ja, &.{ work_dir, "run", try pathKey(a, file.path) }) else null;
     var dep_args: std.ArrayList([]const []const u8) = .empty;
     var dep_fixed: std.ArrayList(bool) = .empty;
+    var dep_cwd: std.ArrayList([]const u8) = .empty;
     if (with_deps and !self.s.compiler_no_dependencies) for (try dependencies(self, a, file)) |d| if (stale(self, a, d, mod_dir)) {
-        try dep_args.append(ja, try argsOf(self, ja, id, d, paths.dirname(file.path), o));
+        const dep_cmd = try commandOf(self, a, d, user);
+        try dep_args.append(ja, try argsOf(self, ja, id, .dependency, d, user, dep_cmd, paths.dirname(file.path), o));
         try dep_fixed.append(ja, d.fixed);
+        try dep_cwd.append(ja, try ja.dupe(u8, run_dir orelse if (dep_cmd) |c| c.dir else paths.dirname(file.path)));
     };
     var fypp: ?[]const []const u8 = null;
     if (fyppExe(self)) |exe| {
@@ -402,12 +402,13 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .uri = try ja.dupe(u8, uri),
         .path = try ja.dupe(u8, file.path),
         .id = id,
-        .exes = try dupeAll(ja, try executables(self, a, id)),
-        .compiler_path = if (self.s.compiler_path) |p| try ja.dupe(u8, p) else null,
-        .cwd = cwd,
+        .exes = try dupeAll(ja, try executables(self, a, id, compilerPath(self, file.fixed), cmd)),
+        .compiler_path = if (compilerPath(self, file.fixed)) |p| try ja.dupe(u8, p) else null,
+        .cwd = try ja.dupe(u8, run_dir orelse if (cmd) |c| c.dir else paths.dirname(file.path)),
         .deps = dep_args.items,
         .deps_fixed = dep_fixed.items,
-        .args = try argsOf(self, ja, id, file, paths.dirname(file.path), o),
+        .deps_cwd = dep_cwd.items,
+        .args = try argsOf(self, ja, id, .check, file, user, cmd, paths.dirname(file.path), o),
         .fixed = file.fixed,
         .text = if (unsaved) try editorText(ja, file) else null,
         .fypp = fypp,
@@ -425,46 +426,6 @@ fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
     const out = try a.alloc([]const u8, xs.len);
     for (xs, out) |x, *o| o.* = try a.dupe(u8, x);
     return out;
-}
-
-/// The compiler's arguments for `file`: syntax only, its form and line
-/// length, the preprocessor and zfls's definitions when zfls preprocesses it, the .mod
-/// directory, the include directories, then `compiler_args` (or the
-/// compiler's defaults) and the file. Relative directories in
-/// `compiler_args` are relative to `base`, the directory of the file
-/// checked.
-fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFile, base: []const u8, o: compilers.Options) ![]const []const u8 {
-    var args: std.ArrayList([]const u8) = .empty;
-    try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
-    try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
-    // the line length zfls reads, unless `compiler_args` sets one
-    const user_sets = if (self.s.compiler_args) |user| for (user.slice()) |x| {
-        if (compilers.isLineLength(id, file.fixed, x)) break true;
-    } else false else false;
-    if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
-    // debug lines as zfls reads them, unless compiler_args says
-    if (file.fixed) {
-        const user: []const []const u8 = if (self.s.compiler_args) |u| u.slice() else &.{};
-        for (user) |x| {
-            if (compilers.isDLinesArg(x)) break;
-        } else try args.appendSlice(a, compilers.dLines(id, self.s.dLinesCode(), o));
-    }
-    if (file.preproc) {
-        try args.appendSlice(a, compilers.preprocess(id, o));
-        for (self.s.pp_defs.items) |d| try args.append(a, try compilers.define(a, id, d.name, d.value, o));
-    }
-    try args.appendSlice(a, try compilers.modOutput(a, id, o.mod_dir, o));
-    try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, paths.dirname(file.path)), o));
-    for (try definition.includeDirs(self, a)) |d| try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, d), o));
-    for (self.s.compiler_include_dirs.slice()) |d| {
-        const dir = if (std.Io.Dir.path.isAbsolute(d)) d else try paths.join(a, &.{ self.root_path, d });
-        try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, dir), o));
-    }
-    if (self.s.compiler_args) |user| {
-        for (try compilers.absoluteDirs(a, id, user.slice(), base, o)) |x| try args.append(a, try a.dupe(u8, x));
-    } else try args.appendSlice(a, compilers.defaultArgs(id, o));
-    try args.append(a, try a.dupe(u8, file.path));
-    return args.items;
 }
 
 /// The workspace files that define the modules `file` uses, and those they
@@ -532,18 +493,19 @@ const Output = union(enum) {
     failed: anyerror,
 };
 
-/// Runs the compiler with `args`, trying each executable
-fn runCompiler(w: *Worker, a: Allocator, job: *const Job, args: []const []const u8) Output {
+/// Runs the compiler with `args` in `cwd`, trying each executable
+fn runCompiler(w: *Worker, a: Allocator, job: *const Job, cwd: []const u8, args: []const []const u8) Output {
     const io = w.server.io;
     for (job.exes) |exe| {
         const argv = a.alloc([]const u8, args.len + 1) catch |e| return .{ .failed = e };
         argv[0] = exe;
         @memcpy(argv[1..], args);
-        const r = std.process.run(a, io, .{
+        const r = tools.run(a, io, .{
             .argv = argv,
-            .cwd = .{ .path = job.cwd },
+            .cwd = cwd,
             .environ_map = w.server.toolEnv(),
-            .timeout = .{ .duration = .{ .raw = .fromSeconds(timeout_s), .clock = .awake } },
+            .timeout = tools.seconds(timeout_s),
+            .running = &w.running,
         }) catch |e| switch (e) {
             error.FileNotFound => continue,
             else => return .{ .failed = e },
@@ -580,11 +542,12 @@ fn runFypp(w: *Worker, a: Allocator, job: *const Job, origin: []const u8, input:
     const fwd = try a.dupe(u8, input);
     std.mem.replaceScalar(u8, fwd, '\\', '/');
     try argv.appendSlice(a, &.{ fwd, out });
-    const r = std.process.run(a, io, .{
+    const r = tools.run(a, io, .{
         .argv = argv.items,
-        .cwd = .{ .path = paths.dirname(origin) },
+        .cwd = paths.dirname(origin),
         .environ_map = self.toolEnv(),
-        .timeout = .{ .duration = .{ .raw = .fromSeconds(timeout_s), .clock = .awake } },
+        .timeout = tools.seconds(timeout_s),
+        .running = &w.running,
     }) catch |e| switch (e) {
         error.FileNotFound => {
             if (!w.reported_missing_fypp) {
@@ -647,14 +610,14 @@ fn runJob(w: *Worker, job: *Job) !void {
     defer arena.deinit();
     const a = arena.allocator();
     if (compilers.writesToWorkDir(job.id)) try Io.Dir.cwd().createDirPath(io, job.cwd);
-    for (job.deps, job.deps_fixed) |args, fixed| {
+    for (job.deps, job.deps_fixed, job.deps_cwd) |args, fixed, cwd| {
         if (w.stopped()) return;
         var dep_args = args;
         if (job.fypp != null) {
             const src = args[args.len - 1];
             dep_args = try withFile(a, args, (try runFypp(w, a, job, src, src, fixed, false)) orelse continue);
         }
-        switch (runCompiler(w, a, job, dep_args)) {
+        switch (runCompiler(w, a, job, cwd, dep_args)) {
             .ran => {},
             .missing => break,
             .failed => |e| self.log.warn("compiler_diagnostics: compiling {s}: {s}", .{ args[args.len - 1], @errorName(e) }),
@@ -676,7 +639,7 @@ fn runJob(w: *Worker, job: *Job) !void {
         target = (try runFypp(w, a, job, job.path, target, job.fixed, true)) orelse return;
         try aliases.append(a, target);
     }
-    const ran = switch (runCompiler(w, a, job, try withFile(a, job.args, target))) {
+    const ran = switch (runCompiler(w, a, job, job.cwd, try withFile(a, job.args, target))) {
         .ran => |r| r,
         .missing => {
             if (!w.reported_missing) {
@@ -690,7 +653,7 @@ fn runJob(w: *Worker, job: *Job) !void {
             return;
         },
         .failed => |e| {
-            self.log.warn("compiler_diagnostics: running {s} on {s}: {s}", .{ @tagName(job.id), job.path, @errorName(e) });
+            if (e != error.Stopped) self.log.warn("compiler_diagnostics: running {s} on {s}: {s}", .{ @tagName(job.id), job.path, @errorName(e) });
             return;
         },
     };

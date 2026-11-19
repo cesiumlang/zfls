@@ -80,6 +80,8 @@ disable Modern Fortran when you install zfls (see
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
 | `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
+| `zfls.hoverNoTypeComponents` | `false` | Hover on a derived type or a variable of one does not list the type's components and type-bound procedures |
+| `zfls.hoverPlainComments` | `false` | Plain `!` comments above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no `!>`, `!<` or `!!` comment |
 | `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
 | `zfls.autocompleteNameOnly` | `false` | Complete procedure names without their arguments |
@@ -91,7 +93,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.codeLensNoRun` | `false` | No **Run** and **Debug** above a program |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
-| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
+| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change); for other editors only, since VS Code asks zfls for them itself when it wants them |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |
@@ -107,6 +109,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.compileCommands` | `compile_commands.json` in the folder or `build/` | Compilation database adding include folders and definitions |
 | `zfls.excludePaths` | none | Folders not to index |
 | `zfls.commentMarkers` | none | Further markers that start a comment as `!` does, such as `;*`; zfls reads them as comments, and they are highlighted as comments after a window reload |
+| `zfls.disableOpenmpConditional` | `false` | Read OpenMP conditional compilation lines (`!$ x = 1`) as comments, as a build without OpenMP does; by default they are code |
 | `zfls.includeSuffixes` | none | More file extensions to index, e.g. `.inc` |
 | `zfls.excludeSuffixes` | none | File extensions not to index |
 | `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |
@@ -114,10 +117,13 @@ disable Modern Fortran when you install zfls (see
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
-| `zfls.formatting.formatter` | `Disabled` | `findent` or `fprettify` to format Fortran files (see [Formatting](#formatting)) |
+| `zfls.formatting.formatter` | `Disabled` | `findent`, `fprettify`, `codee`, `forformat` or `custom` to format Fortran files (see [Formatting](#formatting)) |
 | `zfls.formatting.path` | empty | The formatter, or its directory, when it is not on the `PATH` |
 | `zfls.formatting.findentArgs` | `[]` | Extra arguments for findent |
 | `zfls.formatting.fprettifyArgs` | `[]` | Extra arguments for fprettify |
+| `zfls.formatting.codeeArgs` | `[]` | Extra arguments for `codee format` |
+| `zfls.formatting.forformatArgs` | `[]` | Extra arguments for forformat |
+| `zfls.formatting.customArgs` | `[]` | The arguments of the custom formatter (`${file}`, `${form}`) |
 | `zfls.run.*` | | Compiler, arguments and debugger for running and debugging a file (see [Running and debugging](#running-and-debugging)) |
 
 Each setting becomes the fortls option of the same meaning (the settings'
@@ -202,7 +208,7 @@ zfls says so once and checks nothing.
 | `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -J<dir>`, and `-Wall` by default |
 | `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`) |
 | `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
-| `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>` |
+| `lfortran` | `lfortran` | `--semantics-only --continue-compilation --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>`, `--implicit-typing --implicit-interface` unless your options say otherwise or choose a `--std`; the modules a file uses are compiled with `--symtab-only -c -o <dir>/zfls-lint.o`, which writes their `.mod` files |
 | `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
 | `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>` |
 | `Disabled` | | No compiler diagnostics |
@@ -219,12 +225,16 @@ Whether a file is free or fixed form follows its language in VS Code
 | `zfls.linter.compiler` | `gfortran` | The compiler, or `Disabled` |
 | `zfls.linter.compilerPath` | empty | The compiler executable, when it is not the one on the `PATH` |
 | `zfls.linter.extraArgs` | `[]` | Further options, such as `-std=f2018`; when set, they replace the default warning options |
+| `zfls.linter.fixedCompiler` | empty | The compiler of fixed-form files, when it is another (or `Disabled`); empty: `zfls.linter.compiler`. The modules a file uses are compiled with the file's compiler |
+| `zfls.linter.fixedCompilerPath` | empty | Its executable; empty: `zfls.linter.compilerPath` |
+| `zfls.linter.fixedExtraArgs` | `null` | Its options; `null`: `zfls.linter.extraArgs`, `[]`: its default warnings |
 | `zfls.linter.includePaths` | `[]` | Directories for `INCLUDE` and `.mod` files (`-I`); glob patterns such as `${workspaceFolder}/build/**/include` |
 | `zfls.linter.modOutput` | empty | Where the compiler writes `.mod` files; empty means a directory in zfls's cache for the workspace, never the source tree |
 | `zfls.linter.lintOnSave` | `true` | Check files when they are saved |
 | `zfls.linter.lintOnType` | `false` | Check files while they are edited (a copy of the unsaved text is compiled) |
 | `zfls.linter.lintOnTypeDelay` | `1000` | Milliseconds after the last change before such a check |
 | `zfls.linter.resolveModules` | `true` | Build the modules a file uses first (see below) |
+| `zfls.linter.noCompileCommands` | `false` | Do not check a file with its command's options from `compile_commands.json` (see below) |
 | `zfls.linter.fypp.enabled` | `false` | Run [fypp](https://fypp.readthedocs.io) on files first; `.fypp` files are only checked with it |
 | `zfls.linter.fypp.path` | `fypp` | The fypp executable |
 | `zfls.linter.fypp.definitions` | `{}` | fypp definitions (`-DNAME=VALUE`) |
@@ -247,6 +257,14 @@ How it behaves:
   `zfls.linter.includePaths`. A module whose file does not compile cannot
   be used; the file using it then shows the compiler's error about the
   missing module.
+- **The project's options.** When `zfls.linter.extraArgs` is empty and
+  `compile_commands.json` has a command for the file (or for another file
+  in its folder), the file is checked with that command's options (its
+  `-std`, `-fdefault-real-8`, `-ffree-line-length-none`, `-D`, `-I`, ...),
+  in that command's directory, and with its compiler when that is the
+  configured one; zfls's own syntax-only and module directory options
+  stay, and the command's `-c`, `-o`, module directory and dependency
+  files are left out. `zfls.linter.noCompileCommands` turns this off.
 - **Included files.** An error in a file brought in by `INCLUDE` or
   `#include` shows at that `INCLUDE` line, prefixed with the included
   file's name and line, with a link to the place in the included file.
@@ -323,6 +341,9 @@ separately:
 | --- | --- | --- |
 | [findent](https://pypi.org/project/findent/) | `pip install findent` or `conda install -c conda-forge findent` | Indentation of free-form and fixed-form files |
 | [fprettify](https://github.com/fortran-lang/fprettify) | `pip install fprettify` or `conda install -c conda-forge fprettify` | Indentation, whitespace and more, free-form files only |
+| [Codee](https://www.codee.com) (`codee`) | Codee's installer; the `codee` of `zfls.codee.path` is used unless `zfls.formatting.path` is set | Its formatter, `codee format`, on whole files |
+| forformat | as its project says | Whole files |
+| `custom` | your own: `zfls.formatting.path` with `zfls.formatting.customArgs` | What your command does with the source on its standard input |
 
 Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so
 that no formatter runs, and VS Code offers formatters of other extensions,

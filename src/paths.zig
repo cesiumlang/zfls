@@ -75,6 +75,13 @@ pub fn userConfigFile() ?[]const u8 {
     return user_config;
 }
 
+/// Whether `path` is inside directory `dir`
+pub fn isUnder(path: []const u8, dir: []const u8) bool {
+    if (path.len <= dir.len + 1) return false;
+    if (!eql(path[0..dir.len], dir)) return false;
+    return std.Io.Dir.path.isSep(path[dir.len]);
+}
+
 /// `os.path.normpath`
 pub fn normpath(a: Allocator, p: []const u8) ![]u8 {
     if (p.len == 0) return a.dupe(u8, ".");

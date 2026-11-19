@@ -44,7 +44,11 @@ fn collect(a: Allocator, obj: *const Obj, drop_arg: ?usize, out: *std.ArrayList(
             }
         },
         .method => if (obj.linkObj()) |l| try collect(a, l, obj.varDataConst().drop_arg, out, depth + 1),
-        .interface => for (obj.memList()) |m| try collect(a, m, null, out, depth + 1),
+        .interface => {
+            for (obj.memList()) |m| try collect(a, m, null, out, depth + 1);
+            // and the structure constructor of a type of that name
+            if (namesake(obj, .type)) |t| for (try components(a, t)) |c| try addComponent(a, out, c);
+        },
         // the arguments of each form
         .intrinsic => for (try obj.argForms(a)) |form| for (try str.split(a, form, ",")) |arg| {
             const eq = std.mem.findScalar(u8, arg, '=');
@@ -54,13 +58,48 @@ fn collect(a: Allocator, obj: *const Obj, drop_arg: ?usize, out: *std.ArrayList(
                 .intrinsic = true,
             });
         },
-        .type => for (try obj.getChildren(a, false)) |child| {
-            if (child.kind != .variable) continue;
-            const h = try child.getHover(a, false, null);
-            try add(a, out, .{ .name = child.name, .detail = h.msg });
+        .type => {
+            // the constructor functions of a generic interface of that
+            // name (hansec #148)
+            if (namesake(obj, .interface)) |g| for (g.memList()) |m| try collect(a, m, null, out, depth + 1);
+            for (try components(a, obj)) |c| try addComponent(a, out, c);
         },
         else => {},
     }
+}
+
+fn addComponent(a: Allocator, out: *std.ArrayList(Keyword), c: *Obj) !void {
+    const h = try c.getHover(a, false, null);
+    try add(a, out, .{ .name = c.name, .detail = h.msg });
+}
+
+/// The data components of type `t` in the order of its structure
+/// constructor: those of the type it extends first
+pub fn components(a: Allocator, t: *const Obj) ![]const *Obj {
+    var chain: std.ArrayList(*const Obj) = .empty;
+    var cur: ?*const Obj = t;
+    while (cur) |c| : (cur = c.typeDataConst().inherit_var) {
+        // types that extend each other while code is being edited
+        if (c.kind != .type or chain.items.len > 32) break;
+        try chain.append(a, c);
+    }
+    var out: std.ArrayList(*Obj) = .empty;
+    var i = chain.items.len;
+    while (i > 0) {
+        i -= 1;
+        for (chain.items[i].childList()) |child| if (child.kind == .variable) try out.append(a, child);
+    }
+    return out.items;
+}
+
+/// The object of kind `kind` named as `obj` in the same scope: the generic
+/// interface named like a type, or the type named like an interface
+pub fn namesake(obj: *const Obj, kind: objects.Kind) ?*Obj {
+    const parent = obj.parent orelse return null;
+    for (parent.childList()) |c| {
+        if (c.kind == kind and c != obj and std.ascii.eqlIgnoreCase(c.name, obj.name)) return c;
+    }
+    return null;
 }
 
 fn add(a: Allocator, out: *std.ArrayList(Keyword), k: Keyword) !void {

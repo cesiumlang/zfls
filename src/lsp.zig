@@ -191,6 +191,26 @@ pub const ServerCapabilities = struct {
     /// with a formatter (`formatter`)
     documentFormattingProvider: ?bool = null,
     documentRangeFormattingProvider: ?bool = null,
+    /// for a client that pulls diagnostics (pull.zig)
+    diagnosticProvider: ?DiagnosticOptions = null,
+};
+
+pub const DiagnosticOptions = struct {
+    identifier: []const u8 = "zfls",
+    /// a file's diagnostics change with the modules it uses
+    interFileDependencies: bool = true,
+    workspaceDiagnostics: bool,
+};
+
+/// `textDocument/diagnostic`
+pub const DocumentDiagnosticParams = struct {
+    textDocument: TextDocumentIdentifier,
+    previousResultId: ?[]const u8 = null,
+};
+
+/// `workspace/diagnostic`
+pub const WorkspaceDiagnosticParams = struct {
+    previousResultIds: []const struct { uri: []const u8, value: []const u8 } = &.{},
 };
 
 /// How documents are synchronized: the options form, which says that the
@@ -328,6 +348,8 @@ pub const ClientCapabilities = struct {
             prepareSupport: bool = false,
         } = .{},
         signatureHelp: Dynamic = .{},
+        /// present: the client pulls diagnostics (`textDocument/diagnostic`)
+        diagnostic: ?Dynamic = null,
         codeAction: Dynamic = .{},
         formatting: Dynamic = .{},
         rangeFormatting: Dynamic = .{},
@@ -339,6 +361,8 @@ pub const ClientCapabilities = struct {
             /// workspace
             relativePatternSupport: bool = false,
         } = .{},
+        /// the client takes `workspace/diagnostic/refresh`
+        diagnostics: struct { refreshSupport: bool = false } = .{},
         codeLens: struct { refreshSupport: bool = false } = .{},
     } = .{},
     /// `commands.commands`: the commands the client runs itself (as

@@ -25,6 +25,7 @@ const Trace = parser.Trace;
 const Options = parser.Options;
 const DefResult = @import("definitions.zig").DefResult;
 const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
+const plain_docs = @import("plain_docs.zig");
 const attributes = @import("attributes.zig");
 
 pub fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
@@ -78,6 +79,8 @@ pub const Parser = struct {
     pp_skips: []const pp.Skip = &.{},
     pp_defines: []const usize = &.{},
     docs: std.ArrayList([]const u8) = .empty,
+    /// plain comments as documentation (`hover_plain_comments`)
+    plain: plain_docs.PlainDocs = .{},
     comment_re: *const regex.Regex = undefined,
     cur_line: usize = 0,
     doc_re: *const regex.Regex = undefined,
@@ -127,6 +130,11 @@ pub const Parser = struct {
                 get_full = false;
             }
             if (line.len == 0) continue;
+            if (p.opts.plain_comments and get_full) if (try p.parsePlainDocs(line, line_no)) |idx| {
+                line_no = idx;
+                line_no_end = line_no;
+                continue;
+            };
             // a fixed-form comment line (C, D or * in column 1) has no code,
             // whatever it contains, even a semicolon (#411)
             if (get_full and f.fixed and std.mem.findScalar(u8, "cCdD*", line[0]) != null) continue;
@@ -153,6 +161,8 @@ pub const Parser = struct {
             if (get_full) {
                 const cl = try f.getCodeLine(a, line_no -| 1, true, false, true, false);
                 line_no_end += @intCast(cl.post.len);
+                p.plain.stmt_start = line_no;
+                p.plain.stmt_end = line_no_end;
                 var parts: std.ArrayList([]const u8) = .empty;
                 try parts.append(a, cl.curr.?);
                 try parts.appendSlice(a, cl.post);
@@ -167,6 +177,7 @@ pub const Parser = struct {
                 line_no_comment = line[0..ci];
                 line_stripped = line_stripped[0..ci];
                 try p.setSingleLineDocstring(line[ci..]);
+                if (p.opts.plain_comments) if (plain_docs.trailingText(line[ci..])) |t| try p.plain.trailing.put(sa, line_no, try sa.dupe(u8, t));
             }
             if (std.mem.findScalar(u8, line_stripped, ';') != null) {
                 // the statements, with their strings: split at the `;`
@@ -252,6 +263,7 @@ pub const Parser = struct {
         }
         try attributes.apply(ast, sa, p.attrs.items, p.opts.sort_keywords);
         try ast.closeFile(line_no);
+        try p.plain.apply(ast);
     }
 
     fn handleDef(p: *Parser, a: Allocator, obj_read: DefResult, line: []const u8, line_no: usize, counters: *Counters, block_id_stack: *std.ArrayList([]const u8)) !void {
@@ -753,6 +765,18 @@ pub const Parser = struct {
             p.dbg("{s} !!! Doc string - Line:{d}", .{ fd, p.cur_line });
             p.docs.clearRetainingCapacity();
         }
+    }
+
+    /// A block of plain comment lines (`hover_plain_comments`) from line
+    /// `ln` (1-based): noted as documentation; returns the index of the
+    /// line after it, or null when the line is no plain comment
+    fn parsePlainDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
+        if (plain_docs.lineText(p.file.fixed, line) == null) return null;
+        try p.addLineComment();
+        const sa = p.scratch.allocator();
+        const blk = try plain_docs.readBlock(sa, p.file, ln - 1);
+        if (blk.lines.len > 0) try p.plain.addBlock(sa, p.file, try p.formatDocs(blk.lines), ln, blk.next, p.file_ast.last_obj);
+        return blk.next;
     }
 
     /// Parse documentation strings; returns the new line number, or null when the line is no documentation

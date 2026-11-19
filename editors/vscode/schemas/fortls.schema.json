@@ -50,6 +50,11 @@
       "uniqueItems": true,
       "default": []
     },
+    "disable_openmp_conditional": {
+      "description": "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code",
+      "type": "boolean",
+      "default": false
+    },
     "d_lines": {
       "description": "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)",
       "type": [
@@ -139,6 +144,16 @@
     },
     "lowercase_hover": {
       "description": "Show the keywords of hover in lowercase (real, intent(in) :: x)",
+      "type": "boolean",
+      "default": false
+    },
+    "hover_no_type_components": {
+      "description": "Hover on a derived type or a variable of one does not list the type's components and type-bound procedures",
+      "type": "boolean",
+      "default": false
+    },
+    "hover_plain_comments": {
+      "description": "Plain comments directly above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no !>, !< or !! documentation",
       "type": "boolean",
       "default": false
     },
@@ -259,6 +274,27 @@
         "type": "string"
       }
     },
+    "compiler_diagnostics_fixed": {
+      "description": "The compiler that checks fixed-form files, as compiler_diagnostics, or none (default: compiler_diagnostics). The modules a file uses are compiled with the compiler of the file",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_path_fixed": {
+      "description": "The executable of compiler_diagnostics_fixed, as compiler_path (default: compiler_path)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_args_fixed": {
+      "description": "The arguments of the compiler for fixed-form files, as compiler_args (default: compiler_args; empty: the compiler's defaults)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "compiler_mod_dir": {
       "description": "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)",
       "type": [
@@ -292,6 +328,11 @@
     },
     "compiler_no_dependencies": {
       "description": "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_no_compile_commands": {
+      "description": "Do not check a file with the arguments of its command in compile_commands.json (used when compiler_args is not set)",
       "type": "boolean",
       "default": false
     },
@@ -370,7 +411,7 @@
       "default": []
     },
     "formatter": {
-      "description": "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)",
+      "description": "Format documents and selections with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout (default: none)",
       "type": [
         "string",
         "null"
@@ -383,14 +424,14 @@
       ]
     },
     "formatter_path": {
-      "description": "The formatter executable, or the directory that holds it (default: the one on the PATH)",
+      "description": "The formatter executable, or the directory that holds it (default: the one on the PATH; for codee, codee_path's); the command of the custom formatter",
       "type": [
         "string",
         "null"
       ]
     },
     "formatter_args": {
-      "description": "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up",
+      "description": "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up; codee gets format - -o -, forformat --stdin-filename=FILE and -ifree or -ifixed; for custom they are the whole command line, in which ${file} is the document's path and ${form} free or fixed",
       "type": [
         "array",
         "string"
@@ -401,7 +442,7 @@
       "default": []
     },
     "formatter_fixed": {
-      "description": "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)",
+      "description": "The formatter of fixed-form files: findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)",
       "type": [
         "string",
         "null"
