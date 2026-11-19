@@ -403,6 +403,81 @@ pub fn castCommand(a: Allocator, variable: []const u8, address: []const u8, t: D
     });
 }
 
+// LLVM Flang's polymorphic objects
+
+/// The gdb command (Python) that finds the dynamic type of LLVM Flang's
+/// polymorphic scalar `expr` and sets the convenience variable `$name` to
+/// the object as a pointer to that type, when it is not `declared` (the
+/// declared type's name). Flang's DWARF gives `class(point)` as a pointer
+/// to `point`, with the object's descriptor (ISO_Fortran_binding's) where
+/// the pointer is: the object's address, its size, the version 20240719,
+/// the rank, type, attribute and `extra` bytes, the dimensions (none for a
+/// scalar) and, when `extra & 1`, an addendum, whose first word is the
+/// type's description, `_QM<module>EXdtX<type>`. The type itself may be
+/// in the DWARF of a procedure (that of the main program, where Flang 23
+/// puts the types its variables need), so it is looked up in the module,
+/// in the frame's blocks, and in the main program's. Prints
+/// `zfls-class <type>` when it set the variable (`flangClassResult`).
+pub fn flangClassCommand(a: Allocator, expr: []const u8, name: []const u8, declared: []const u8) ![]const u8 {
+    const program =
+        \\import gdb, re, struct
+        \\def zfls_class(E, N, D):
+        \\    v = gdb.parse_and_eval(E)
+        \\    if v.type.strip_typedefs().code != gdb.TYPE_CODE_PTR or v.address is None:
+        \\        return
+        \\    at = int(v.address)
+        \\    inf = gdb.selected_inferior()
+        \\    m = inf.read_memory(at, 24).tobytes()
+        \\    base = struct.unpack_from('<Q', m)[0]
+        \\    if struct.unpack_from('<I', m, 16)[0] != 20240719 or m[20] != 0 or not m[23] & 1 or base != int(v):
+        \\        return
+        \\    info = struct.unpack_from('<Q', inf.read_memory(at + 24, 8).tobytes())[0]
+        \\    s = re.search(r'<(_Q\w*?)XdtX(\w+)>', gdb.format_address(info))
+        \\    if not s or s.group(2).lower() == D.lower():
+        \\        return
+        \\    t, mod = s.group(2), re.match(r'_QM([a-z0-9_$]+?)(?:[A-Z]|$)', s.group(1))
+        \\    blocks = [None]
+        \\    try:
+        \\        b = gdb.selected_frame().block()
+        \\        while b is not None:
+        \\            blocks.append(b)
+        \\            b = b.superblock
+        \\    except (gdb.error, RuntimeError):
+        \\        pass
+        \\    try:
+        \\        blocks.append(gdb.block_for_pc(int(gdb.parse_and_eval('_QQmain').address)))
+        \\    except (gdb.error, RuntimeError):
+        \\        pass
+        \\    for c in ([mod.group(1) + '::' + t] if mod else []) + [t]:
+        \\        for b in blocks:
+        \\            try:
+        \\                found = gdb.lookup_type(c, b) if b is not None else gdb.lookup_type(c)
+        \\            except gdb.error:
+        \\                continue
+        \\            gdb.set_convenience_variable(N, gdb.Value(base).cast(found.pointer()))
+        \\            print('zfls-class ' + t)
+        \\            return
+        \\try:
+        \\    zfls_class(E, N, D)
+        \\except (gdb.error, gdb.MemoryError, RuntimeError, ValueError):
+        \\    pass
+        \\
+    ;
+    return a.print("python exec({f}, {{'E': {f}, 'N': {f}, 'D': {f}}})", .{
+        std.json.fmt(program, .{}), std.json.fmt(expr, .{}), std.json.fmt(name, .{}), std.json.fmt(declared, .{}),
+    });
+}
+
+/// The dynamic type that `flangClassCommand`'s output names, or null
+pub fn flangClassResult(output: []const u8) ?[]const u8 {
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |line| {
+        const l = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, l, "zfls-class ") and l.len > "zfls-class ".len) return l["zfls-class ".len..];
+    }
+    return null;
+}
+
 // The start
 
 /// The functions of the main program, where a stop at the start stops
@@ -570,4 +645,20 @@ test "gdb's version" {
     try std.testing.expectEqual([2]u32{ 12, 1 }, gdbVersion("GNU gdb (GDB; SUSE Linux Enterprise 15) 12.1").?);
     try std.testing.expectEqual([2]u32{ 14, 1 }, gdbVersion("GNU gdb (Fedora Linux) 14.1-2.fc39\r\nCopyright").?);
     try std.testing.expect(gdbVersion("lldb version 21") == null);
+}
+
+test "LLVM Flang's polymorphic objects: the command and its output" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cmd = try flangClassCommand(a, "t%\"q\"", "zfls_2", "point");
+    // one line of gdb's, the names as Python's strings
+    try std.testing.expect(std.mem.findScalar(u8, cmd, '\n') == null);
+    try std.testing.expect(std.mem.startsWith(u8, cmd, "python exec(\"import gdb, re, struct\\n"));
+    try std.testing.expect(std.mem.endsWith(u8, cmd, "{'E': \"t%\\\"q\\\"\", 'N': \"zfls_2\", 'D': \"point\"})"));
+    try std.testing.expect(std.mem.find(u8, cmd, "20240719") != null);
+    try std.testing.expectEqualStrings("tagged", flangClassResult("zfls-class tagged\n").?);
+    try std.testing.expectEqualStrings("tagged", flangClassResult("warning: x\r\nzfls-class tagged\r\n").?);
+    try std.testing.expect(flangClassResult("") == null);
+    try std.testing.expect(flangClassResult("zfls-class \n") == null);
 }
