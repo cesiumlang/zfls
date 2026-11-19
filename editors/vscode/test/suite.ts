@@ -91,7 +91,9 @@ function checkSnippets(): void {
     const text = fs.readFileSync(path.join(ext.extensionPath, file.path), "utf8");
     const snippets: Record<string, { prefix: string; body: string[] }> = JSON.parse(text);
     const prefixes = Object.values(snippets).map((x) => x.prefix);
-    assert.ok(prefixes.includes("selt"), `${file.language} snippet prefixes ${prefixes}`);
+    // the constructs (select type and others) are the server's completion
+    // snippets (#264); the extension keeps the others
+    assert.ok(prefixes.includes("typc"), `${file.language} snippet prefixes ${prefixes}`);
     if (file.language === "FortranFixedForm") {
       // typed at column 7, no tabs and nothing past column 72 with the
       // placeholders' default text
