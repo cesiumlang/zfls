@@ -372,7 +372,7 @@ export async function chooseInstalledDebugger(
     const settings = vscode.l10n.t("Open Settings");
     const picked = await vscode.window.showErrorMessage(
       msvc
-        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug MSVC-ABI programs (ifx, ifort, LLVM Flang on Windows); set zfls.run.debugger to cppvsdbg.")
+        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug a program without DWARF debug information (ifx's, ifort's, or LLVM Flang's built with -g on Windows); set zfls.run.debugger to cppvsdbg.")
         : lldb
           ? vscode.l10n.t("zfls: its debugger needs lldb-dap, which Xcode's command line tools have (xcode-select --install); or set zfls.run.gdbPath to debug with gdb, or zfls.run.debugger to another debugger.")
           : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
