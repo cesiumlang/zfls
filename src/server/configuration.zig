@@ -77,7 +77,7 @@ const index_settings = [_][]const u8{
     "source_dirs",          "incl_suffixes",            "excl_suffixes",        "excl_paths",
     "comment_markers",      "d_lines",                  "sort_keywords",        "recursion_limit",
     "lowercase_intrinsics", "pp_suffixes",              "include_dirs",         "pp_defs",
-    "compile_commands",     "disable_compile_commands", "hover_plain_comments",
+    "compile_commands",     "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
 };
 
 fn isIndexSetting(comptime name: []const u8) bool {
@@ -253,7 +253,7 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
     if (!same(&prev, &next, "debug_log") and self.s.debug_log) try workspace.configLogger(self);
     try workspace.logOptions(self, a);
     if (!same(&prev, &next, "diagnostic_severity")) try diagnostics.checkDiagnosticSeverity(self, a);
-    if (!same(&prev, &next, "compiler_diagnostics")) try compile.checkSetting(self, a);
+    if (!same(&prev, &next, "compiler_diagnostics") or !same(&prev, &next, "compiler_diagnostics_fixed")) try compile.checkSetting(self, a);
     if (!same(&prev, &next, "formatter") or !same(&prev, &next, "formatter_fixed")) try format.checkSetting(self, a);
     try announce(self, a);
     if (!same(&prev, &next, "code_lens_no_references") or !same(&prev, &next, "code_lens_no_run")) {
