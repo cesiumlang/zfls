@@ -401,7 +401,10 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
         _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
     }
     const exited = get(try c.event("exited"), "body").?;
-    try check((int(exited, "exitCode") orelse 0) != 0, "the program exited with {?d}", .{int(exited, "exitCode")});
+    // (gdb's exitCode of a program that a signal ended, as SIGABRT ends
+    // Flang's on Linux, is 0)
+    const by_signal = setup.compiler == .flang and builtin.target.os.tag != .windows;
+    try check(by_signal or (int(exited, "exitCode") orelse 0) != 0, "the program exited with {?d}", .{int(exited, "exitCode")});
     _ = try c.event("terminated");
 }
 
