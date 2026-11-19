@@ -91,6 +91,110 @@ command line options and configuration files.
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
   MPI modules `mpi` and `mpi_f08`
+- Compiler diagnostics from gfortran, ifx, ifort, LLVM Flang, nvfortran,
+  nagfor or LFortran, next to zfls's own, and the linters fortitude and
+  Codee (see [Compiler diagnostics](#compiler-diagnostics) and
+  [Linters](#linters))
+- A debug adapter, `zfls dap`, that shows a program's variables as Fortran
+  (see [A debugger](#a-debugger-zfls-dap)), and for a debugger of any kind
+  the module variables a line sees, inline values and the tests of a file
+
+What depends on the compiler is in [Compilers](#compilers).
+
+## Compilers
+
+Everything above works on any Fortran source, whatever compiler builds it:
+zfls parses the code itself. A compiler comes in where zfls runs one (the
+compiler check, running a file) or reads what one wrote (a program under
+the debugger), and where the source is in a compiler's own dialect.
+
+✓ is supported; ○ is implemented but not tested with that compiler (see
+[what is tested](#what-is-tested-with-a-real-compiler)); – is not
+available.
+
+### The compiler check
+
+`compiler_diagnostics` (see [Compiler diagnostics](#compiler-diagnostics)).
+
+| | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Errors and warnings as diagnostics | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Without building (syntax only) | ✓ | ✓ | ✓ | ✓ | –¹ | ✓ | ✓ |
+| Modules the file uses compiled first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓² |
+| The file's own command of `compile_commands.json` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Warnings on by default | `-Wall` | `-warn all` | `-warn all` | – | `-Minform=warn` | – | – |
+| Preprocessed files | `-cpp` | `-fpp` | `-fpp` | `-cpp` | `-Mpreprocess` | `-fpp` | `--cpp` |
+| Fixed-form line length (`fixed_line_length`) | any | 72, 80, 132 | 72, 80, 132 | any | 132 | 132 | – |
+| Debug lines as zfls reads them (`d_lines`) | ✓ | ✓ | ✓ | ✓ | ✓ | as code | – |
+| Every error, not only the first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓³ |
+| Messages without a file and line | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+1. nvfortran has no syntax-only mode: it compiles the file, with the
+   object file in zfls's cache.
+2. LFortran's syntax-only mode writes no `.mod` file: the modules are
+   compiled to their symbol tables (`--symtab-only -c`).
+3. With `--continue-compilation`. zfls also passes LFortran
+   `--implicit-typing --implicit-interface`, which its own dialect rejects,
+   unless the options say otherwise.
+
+### Compiler dialects in the source
+
+The parser reads these in every file, whichever compiler is configured;
+the columns say whose dialect each is.
+
+| | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| `STRUCTURE`, `RECORD`, `UNION`/`MAP`, `rec.field` (DEC) | ✓⁴ | ✓ | ✓ | – | ✓ | – | – |
+| Conditional compilation in directives (`!DEC$ IF`, `!DIR$ IF`; [more](#intel-conditional-compilation)) | – | ✓ | ✓ | – | – | – | – |
+| Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
+| CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | – | ✓ | – | – |
+| Debug lines (`D` in column 1 of fixed form; [more](#debug-lines)) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+
+4. gfortran's with `-fdec-structure`.
+
+Not a compiler's own, and read for all of them: the C preprocessor, fypp
+files, OpenMP conditional compilation lines, kinds written with `*`
+(`real*8`), and comment markers of other preprocessors
+([Comment markers](#comment-markers)).
+
+### Running and debugging
+
+Run Fortran File and Debug Fortran File are the VS Code extension's;
+`zfls dap` is for any editor (see [A debugger](#a-debugger-zfls-dap)).
+
+| | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Run Fortran File | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ✓ |
+| Links on Windows without Visual Studio | ✓⁵ | ✓⁶ | – | – | – | – | ✓⁶ |
+| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁷ |
+| `zfls dap` on Windows | gdb ✓ | Windows's ✓⁸ | Windows's ○ | Windows's ○ | – | gdb ○ | –⁷ |
+| `zfls dap` on macOS | –⁹ | –⁹ | –⁹ | –⁹ | – | –⁹ | –⁷ ⁹ |
+| Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓⁸ | ○ | ○ | ○ | ○ | –⁷ |
+| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ○ | ○ | ○ | –⁷ |
+
+5. MinGW's gfortran needs none.
+6. With `zfls setup-ifx` and zfls's ifx kit, on Windows x64 (see
+   [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
+7. Not yet. LFortran's debug information has integer and real scalars
+   only (no arrays, derived types, CHARACTER lengths or module variables),
+   and LFortran for Windows refuses `-g`.
+8. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
+   Microsoft's format; arrays are read through Intel's descriptors. CI
+   tests the engine on a C program only: it has no ifx.
+9. Not yet: `zfls dap` debugs with gdb there, which does not run on Apple
+   silicon and which every user must code-sign on an Intel Mac. Debug
+   Fortran File in VS Code uses another extension's lldb instead (C/C++,
+   CodeLLDB), which stops at breakpoints and steps, but has no Fortran
+   support for variables and expressions.
+
+### What is tested with a real compiler
+
+CI runs zfls against gfortran (the symbols zfls extracts, compared with
+gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
+Linux and Windows x64) and against LFortran (the compiler check, on Linux
+x64; its programs linking without Visual Studio, on Windows x64). The other
+compilers' options and message formats are tested with recorded output, not
+with the compilers.
 
 ## Installing
 
