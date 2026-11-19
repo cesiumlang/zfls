@@ -720,11 +720,12 @@ extension), which compilers read as a comment or as code by an option.
 `d_lines` says which: `comment` (the default) or `code`, where the `D` is
 a blank. zfls reads the lines so, the compiler check passes the compiler
 the option that reads them so (gfortran `-fd-lines-as-comments` /
-`-fd-lines-as-code`, Intel `-nod-lines` / `-d-lines`, flang's, nvfortran
-`-Mnodlines` / `-Mdlines`, nagfor `-d_lines`) unless `compiler_args`
-already has one, and a debug line read as a comment is a comment for the
-editor's highlighting (semantic tokens). In VS Code, `zfls.fixedFormDLines`
-sets it.
+`-fd-lines-as-code`, Intel `-nod-lines` / `-d-lines`, nvfortran
+`-Mnodlines` / `-Mdlines`, nagfor `-d_lines`, flang `-fd-lines-as-code`,
+which needs Flang 21 or later) unless `compiler_args` already has one,
+and a debug line read as a comment is a comment for the editor's
+highlighting (semantic tokens). In VS Code, `zfls.fixedFormDLines` sets
+it.
 
 ```json
 { "d_lines": "code" }
