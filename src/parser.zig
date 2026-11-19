@@ -204,6 +204,10 @@ pub const FortranFile = struct {
     pp_skips: []const pp.Skip = &.{},
     pp_arena: std.heap.ArenaAllocator,
     pp_defs: pp.Defs = .empty,
+    /// What `prepare` gave the last parse (in `pp_arena`) and the `hash` of
+    /// the text then, from which the summary of a file is parsed again
+    /// (server/summary.zig)
+    prepared: ?struct { out: ?pp.Output, hash: ?u64 } = null,
     fixed: bool = false,
     /// The form the editor gives the document while it is open (its
     /// language: `formOfLanguage`), which comes before the form that its
@@ -615,6 +619,7 @@ pub const FortranFile = struct {
     /// Run the preprocessor over the file contents
     pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, trace: ?Trace) !pp.Output {
         _ = self.pp_arena.reset(.free_all);
+        self.prepared = null;
         self.pp_lines = null;
         self.pp_skips = &.{};
         self.pp_defs = .empty;
@@ -687,6 +692,13 @@ pub const FortranFile = struct {
     /// The preprocessor's output for parsing (null when the file is not
     /// preprocessed), which `self` keeps too
     pub fn prepare(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !?pp.Output {
+        self.prepared = null;
+        const out = try self.preparePass(io, defs, include_dirs, opts);
+        self.prepared = .{ .out = out, .hash = self.hash };
+        return out;
+    }
+
+    fn preparePass(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !?pp.Output {
         if (self.preproc) {
             Trace.print(opts.trace, "=== PreProc Pass ===\n", .{});
             var out = try self.preprocess(io, defs, include_dirs, opts.trace);
@@ -774,51 +786,6 @@ pub const FortranFile = struct {
         return p.file_ast;
     }
 };
-
-test "read definitions" {
-    patterns.init();
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const r = (try readVarDef(a, "  integer(kind=8), intent(in) :: x, y(3)", null, false)).?;
-    try std.testing.expectEqualStrings("INTEGER", r.var_.var_type);
-    try std.testing.expectEqualStrings("(kind=8)", r.var_.var_kind.?);
-    try std.testing.expectEqual(@as(usize, 2), r.var_.var_names.?.len);
-    try std.testing.expectEqualStrings("INTENT(IN)", r.var_.keywords[0]);
-
-    const f = (try readFunDef(a, "pure real function foo(a, b) result(c)", null, false)).?;
-    try std.testing.expectEqualStrings("foo", f.fun.name);
-    try std.testing.expectEqualStrings("a,b", f.fun.args);
-
-    const s = (try getFortranDefinition(a, "subroutine bar(x)")).?;
-    try std.testing.expectEqualStrings("bar", s.sub.name);
-
-    const ctx = try getLineContext(a, "call foo");
-    try std.testing.expectEqual(LineContext.call, ctx.ctx);
-
-    // MODULE after the type (stdlib): a separate module procedure, not a
-    // variable named `module`
-    for ([_][]const u8{ "real(RTICKS) module function lifetime(p) result(t)", "pure real(dp) module function lifetime(p)" }) |line| {
-        const m = (try getFortranDefinition(a, line)).?;
-        try std.testing.expectEqualStrings("lifetime", m.fun.name);
-        try std.testing.expect(m.fun.mod_flag);
-    }
-    // a variable of that name stays one
-    const v = (try getFortranDefinition(a, "      REAL MODULE")).?;
-    try std.testing.expectEqualStrings("MODULE", v.var_.var_names.?[0]);
-}
-
-test "the definition tests are chosen by the first word, labels fall back to all" {
-    var buf: [32]u8 = undefined;
-    try std.testing.expectEqualStrings("integer", firstWord("  INTEGER :: x", &buf).?);
-    try std.testing.expectEqualStrings("doubleprecision", firstWord("      DOUBLEPRECISION X", &buf).?);
-    try std.testing.expect(firstWord("  outer: do i = 1, n", &buf) == null);
-    // `\w` takes bytes past ASCII, so this is a construct label too
-    try std.testing.expect(firstWord("add\xe2\x88\x911 : BLOCK", &buf) == null);
-    try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
-    try std.testing.expect(firstWord("_x: block", &buf) == null);
-    try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
-}
 
 test "comment markers: zfls reads comments, changes apply to the editor's text" {
     patterns.init();

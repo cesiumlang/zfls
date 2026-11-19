@@ -51,6 +51,7 @@ const bindc = @import("server/bindc.zig");
 const modvars = @import("server/modvars.zig");
 const tests = @import("server/tests.zig");
 const cache = @import("server/cache.zig");
+const summary = @import("server/summary.zig");
 const clangd = @import("server/clangd.zig");
 const lenses = @import("server/lenses.zig");
 
@@ -129,6 +130,14 @@ pub const Server = struct {
     intr: intrinsics.Intrinsics,
     /// ASTs replaced by re-parses, freed after the next full relink
     retired: std.ArrayList(*Ast) = .empty,
+    /// The files not open in the editor are kept as summaries
+    /// (server/summary.zig)
+    summaries: bool = true,
+    /// Of the files requests parsed in full, how many stay so at a save
+    /// (the latest), and when each was (`wake_clock`); keys only compared
+    keep_awake: usize = 64,
+    woken: std.AutoHashMapUnmanaged(*const FortranFile, u64) = .empty,
+    wake_clock: u64 = 0,
     pp_defs: pp.Defs = .empty,
     pp_defs_arena: std.heap.ArenaAllocator,
     running: bool = true,
@@ -247,6 +256,7 @@ pub const Server = struct {
         self.same_names.deinit(self.gpa);
         for (self.retired.items) |ast| ast.destroy();
         self.retired.deinit(self.gpa);
+        self.woken.deinit(self.gpa);
         var open_it = self.open_docs.keyIterator();
         while (open_it.next()) |k| self.gpa.free(k.*);
         self.open_docs.deinit(self.gpa);
@@ -522,7 +532,12 @@ pub const Server = struct {
     });
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
-        return switch (methods.get(method) orelse return error.MethodNotFound) {
+        const m = methods.get(method) orelse return error.MethodNotFound;
+        switch (m) {
+            .initialize, .initialized, .did_open, .did_save, .did_close, .did_change, .watched_files, .did_change_configuration, .will_rename_files, .ignored, .shutdown, .exit => {},
+            else => try summary.beforeRequest(self, a, method, params),
+        }
+        return switch (m) {
             .initialize => workspace.serveInitialize(self, a, try json.decode(lsp.InitializeParams, a, params)),
             .document_symbol => symbols.serveDocumentSymbols(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .folding_range => symbols.serveFoldingRanges(self, a, try json.decode(lsp.TextDocumentParams, a, params)),

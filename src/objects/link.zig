@@ -123,9 +123,9 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
                 if (try findInScope(env, p, member, .{})) |m| try mems.append(self.al(), m);
             }
         },
-        .subroutine => try self.resolveArgLink(),
+        .subroutine => try self.resolveArgLink(env.tmp),
         .function => {
-            try self.resolveArgLink();
+            try self.resolveArgLink(env.tmp);
             const proc = self.procData();
             const rn = proc.result_name orelse self.name;
             for (self.childList()) |child| {
@@ -170,13 +170,12 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
     }
 }
 
-pub fn resolveArgLink(self: *Obj) !void {
+/// `t`: for the time of the call (a page allocator's arena for each of a
+/// workspace's procedures made linking it several times slower, #219)
+pub fn resolveArgLink(self: *Obj, t: Allocator) !void {
     const proc = self.procData();
     if (proc.args.len == 0 or self.scopeData().in_children.items.len > 0) return;
     const a = self.al();
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const t = arena.allocator();
     const arg_list = try str.split(t, proc.args, ",");
     const arg_list_lower = try str.split(t, try std.ascii.allocLowerString(t, proc.args), ",");
     proc.arg_objs.clearRetainingCapacity();

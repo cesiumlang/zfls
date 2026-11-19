@@ -20,6 +20,8 @@ const Frame = session.Frame;
 
 pub fn index(s: *Session, a: Allocator, root: []const u8) void {
     const srv = server_mod.Server.create(s.gpa, s.io, .{}, &s.log) catch return;
+    // the declarations of every procedure's variables: no summaries
+    srv.summaries = false;
     _ = srv.dispatchPublic(a, "initialize", json.from(a, .{ .rootPath = root }) catch return) catch {};
     s.server = srv;
 }

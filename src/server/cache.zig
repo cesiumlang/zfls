@@ -19,6 +19,7 @@ const parser = @import("../parser.zig");
 const pp = @import("../preprocessor.zig");
 const objects = @import("../objects.zig");
 const serial = @import("../objects/serial.zig");
+const summary = @import("summary.zig");
 const FortranFile = parser.FortranFile;
 const Ast = objects.Ast;
 
@@ -197,13 +198,16 @@ fn readFile(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]
 }
 
 /// The AST of `f` (read by `read`) with the preprocessor's output
-/// `prepared`: the cache's when its key is the same, else parsed, and then
-/// kept for the cache (on any initialization thread)
-pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: parser.Options) !*Ast {
-    const snap = self.index orelse return f.parsePrepared(prepared, opts);
+/// `prepared`, or its summary when `rest` and the file may rest
+/// (summary.zig): the cache's when its key is the same, else parsed, and
+/// then kept for the cache (on any initialization thread)
+pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: parser.Options, rest: bool) !*Ast {
+    const want_summary = rest and summary.mayRest(self, f);
+    const snap = self.index orelse return parsed(self, f, prepared, opts, want_summary);
     // a trace is of parsing
     if (opts.trace != null) return f.parsePrepared(prepared, opts);
-    const key = f.parseKey(prepared, opts, snap.salt);
+    // a summary is kept under another key than the full AST
+    const key = f.parseKey(prepared, opts, snap.salt) ^ @as(u64, if (want_summary) summary_key else 0);
     if (snap.entries.get(f.path)) |e| if (e.key == key and e.ast.len > 0) {
         const ast = try Ast.create(self.gpa, f);
         if (serial.load(self.gpa, ast, e.ast)) {
@@ -213,8 +217,18 @@ pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: par
             self.log.info("index cache: the AST of {s} is not readable ({s}); parsing it", .{ f.path, @errorName(err) });
         }
     };
-    const ast = try f.parsePrepared(prepared, opts);
-    const bytes = serial.save(self.gpa, ast) catch |err| switch (err) {
+    const full = try f.parsePrepared(prepared, opts);
+    var ast = full;
+    var bytes: []u8 = undefined;
+    if (want_summary) {
+        const s = try summary.ofParsed(self, f, full);
+        ast = s.ast;
+        // a file that cannot be summarized is kept in full
+        bytes = s.bytes orelse serial.save(self.gpa, ast) catch |err| switch (err) {
+            error.OutOfMemory => return ast,
+            error.Foreign => return ast,
+        };
+    } else bytes = serial.save(self.gpa, ast) catch |err| switch (err) {
         error.OutOfMemory => return ast,
         // not kept: parsed every time
         error.Foreign => return ast,
@@ -231,6 +245,17 @@ pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: par
     n.own_ast = true;
     snap.changed = true;
     return ast;
+}
+
+/// Mixed into the key of a summary's entry
+const summary_key: u64 = 0x5d1c_3f0e_a7b2_9461;
+
+fn parsed(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: parser.Options, want_summary: bool) !*Ast {
+    const full = try f.parsePrepared(prepared, opts);
+    if (!want_summary or opts.trace != null) return full;
+    const s = try summary.ofParsed(self, f, full);
+    if (s.bytes) |b| self.gpa.free(b);
+    return s.ast;
 }
 
 /// After initialization: writes the cache again when a text or an AST was
