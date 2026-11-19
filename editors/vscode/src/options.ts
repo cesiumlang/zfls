@@ -33,8 +33,11 @@ export const OPTIONS: readonly Option[] = [
   { setting: "autocompleteNoAutoUse", flag: "--autocomplete_no_auto_use", kind: "flag" },
   { setting: "sortKeywords", flag: "--sort_keywords", kind: "flag" },
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
+  { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
+  { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
+  { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
   { setting: "nthreads", flag: "--nthreads", kind: "int", fallback: 4 },
   { setting: "maxLineLength", flag: "--max_line_length", kind: "int", fallback: -1 },
@@ -109,7 +112,8 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
-  args.push(...config.get<string[]>("arguments", []));
+  // the settings editor's "Add Item" leaves empty items easily
+  args.push(...config.get<string[]>("arguments", []).filter((a) => typeof a === "string" && a.trim() !== ""));
   return args;
 }
 
