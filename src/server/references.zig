@@ -153,7 +153,9 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     in_cache = true;
                 };
                 if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def)) or
-                    isSeparateProcedurePair(def_obj, var_def))
+                    isSeparateProcedurePair(def_obj, var_def) or
+                    // a caller's own declaration of the procedure (#232)
+                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
                 {
                     ref_match = true;
                 } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
@@ -221,15 +223,16 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (try macros.atPosition(self, a, params)) |m| return macros.references(self, a, m, with_c);
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
     if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
-    const rs = referenceScope(self, d.obj) orelse return .null;
-    const all = try getAllReferences(self, a, d.obj, rs.type_mem, rs.restrict, false);
+    const obj = (try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj;
+    const rs = referenceScope(self, obj) orelse return .null;
+    const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);
     var out: std.ArrayList(lsp.Location) = .empty;
     for (all) |fr| {
         const uri = try paths.pathToUri(a, fr.path);
         for (fr.refs.items) |r| try out.append(a, Server.locationOf(uri, fr.file, r.line, r.start, r.line, r.end));
     }
-    if (with_c) if (try bindc.cNameOf(a, d.obj)) |cname| {
-        try bindc.fortranReferences(self, a, cname, d.obj, &out);
+    if (with_c) if (try bindc.cNameOf(a, obj)) |cname| {
+        try bindc.fortranReferences(self, a, cname, obj, &out);
         try out.appendSlice(a, try bindc.cUses(self, a, cname));
         return json.from(a, try bindc.unique(a, out.items));
     };
@@ -268,8 +271,9 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
     const all = if (try renamedImport(a, d.file, d.line, d.col, d.obj)) |ri|
         try aliasReferences(self, a, d.file, d.obj, ri)
     else blk: {
-        const rs = referenceScope(self, d.obj) orelse return .null;
-        break :blk try getAllReferences(self, a, d.obj, rs.type_mem, rs.restrict, true);
+        const obj = (try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj;
+        const rs = referenceScope(self, obj) orelse return .null;
+        break :blk try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, true);
     };
     if (all.len == 0) {
         self.postMessage(a, "Rename failed: No usages found to rename", C.Severity.warn);

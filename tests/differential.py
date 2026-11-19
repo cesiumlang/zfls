@@ -124,6 +124,11 @@ WORD = re.compile(
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
+# the value of a parameter declared on a line with `;`, its strings blanked:
+# a string continued by a doubled quote (`"a;""b"`) is one literal in zfls
+# and two in fortls, which pairs the `"` from the left (#231); compare such
+# values without their quotes and blanks
+BLANKED_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([\" /]+)$", re.M)
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -272,6 +277,30 @@ def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
     return False
 
 
+def in_constructor_or_group(lines: list, line: int, char: int) -> bool:
+    """Whether the innermost bracket open before the position is an array
+    constructor (`[`, `(/`) or a parenthesis that follows no name (an
+    implied DO, an expression in parentheses), where zfls's signature help
+    looks for the call outside it (hansec #60) and fortls answers null."""
+    if not (0 <= line < len(lines)):
+        return False
+    text = lines[line][:char]
+    depth = 0
+    for i in range(len(text) - 1, -1, -1):
+        c = text[i]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth > 0:
+                depth -= 1
+                continue
+            if c == "[" or text[i + 1 :].lstrip().startswith("/"):
+                return True
+            before = text[:i].rstrip()
+            return not before or not (before[-1].isalnum() or before[-1] in "_)]>")
+    return False
+
+
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
     (hansec #133), a name of a module not used yet that adds the USE
@@ -286,6 +315,12 @@ def zfls_only_item(item) -> bool:
     if "additionalTextEdits" in item:
         return True
     return str(item.get("label", "")).endswith("=") and "filterText" in item
+
+
+def two_forms_item(item) -> bool:
+    """A completion item of an intrinsic whose table entry has two
+    argument lists (`THIS_IMAGE`)."""
+    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
 
 
 def normalize(v):
@@ -307,6 +342,7 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
+        v = BLANKED_VALUE.sub(lambda m: m.group(1) + m.group(2).replace('"', "").replace(" ", ""), v)
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -391,6 +427,49 @@ def associate_names(source: str) -> set:
 PP_IF = re.compile(r"\s*#\s*if", re.I)
 PP_ENDIF = re.compile(r"\s*#\s*endif", re.I)
 CONT_ATTRIBUTE = re.compile(r"\s*,\s*(\w+)", re.I)
+
+
+ENTITY_LENGTH = re.compile(
+    r"^\s*(?:character|real|integer|logical|complex)\b.*?[a-z_]\w*\s*"
+    r"(?:\((?:[^()]|\([^()]*\))*\))?\s*\*\s*[\d(]",
+    re.I | re.M,
+)
+TYPE_PARAMS = re.compile(
+    r"\b(CHARACTER|REAL|INTEGER|LOGICAL|COMPLEX)"
+    r"(?:\s*\*\s*(?:\d+|\((?:[^()]|\([^()]*\))*\))|\((?:[^()]|\([^()]*\))*\))+",
+    re.I,
+)
+SEMICOLON_STRINGS = re.compile(r"^[^!\n]*(?:;[^!\n]*['\"]|['\"][^!\n]*;)", re.M)
+PARAM_STRINGS = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([^\n]*)")
+STRING_LITERAL = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'")
+
+
+def ignore_type_params(v):
+    """An entity's own length replaces that of its declaration in zfls
+    (`character*10 b*(len(a))` has the length len(a), #237); fortls puts
+    both. Compare types without their kind and length."""
+    if isinstance(v, dict):
+        return {k: ignore_type_params(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_type_params(x) for x in v]
+    if isinstance(v, str):
+        return TYPE_PARAMS.sub(r"\1", v)
+    return v
+
+
+def ignore_param_strings(v):
+    """fortls shows the strings of a parameter declared on a line with `;`
+    blanked, zfls as they are (#237). Compare such values without the text
+    of their strings and without blanks."""
+    if isinstance(v, dict):
+        return {k: ignore_param_strings(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_param_strings(x) for x in v]
+    if isinstance(v, str):
+        return PARAM_STRINGS.sub(
+            lambda m: m.group(1) + STRING_LITERAL.sub('""', m.group(2)).replace(" ", ""), v
+        )
+    return v
 
 
 def conditional_attributes(source: str) -> set:
@@ -665,12 +744,18 @@ def main() -> int:
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
         macros = macro_names(path, source)
+        entity_lengths = bool(ENTITY_LENGTH.search(source))
+        semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
             if cond_attrs and kind in ("hover", "completion"):
                 a = ignore_conditional_attributes(a, cond_attrs)
                 b = ignore_conditional_attributes(b, cond_attrs)
+            if entity_lengths and kind in ("hover", "completion"):
+                a, b = ignore_type_params(a), ignore_type_params(b)
+            if semicolon_strings and kind in ("hover", "completion"):
+                a, b = ignore_param_strings(a), ignore_param_strings(b)
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
@@ -684,6 +769,11 @@ def main() -> int:
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls does not
                 b = [x for x in b if not zfls_only_item(x)]
+            if kind == "completion":
+                # an intrinsic with two forms completes to one of them
+                # (#245); fortls's snippet mixes them
+                a = [x for x in a if not two_forms_item(x)] if isinstance(a, list) else a
+                b = [x for x in b if not two_forms_item(x)] if isinstance(b, list) else b
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway
@@ -761,6 +851,15 @@ def main() -> int:
             ):
                 # the intrinsics fortls's table lacks: specific names
                 # (`DSQRT`) and newer generic ones (`REDUCE`)
+                continue
+            if (
+                kind == "signature"
+                and a is None
+                and isinstance(b, dict)
+                and in_constructor_or_group(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside an array constructor or parentheses, the call
+                # around them (hansec #60); fortls answers null
                 continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
