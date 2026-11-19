@@ -33,6 +33,8 @@ export const OPTIONS: readonly Option[] = [
   { setting: "autocompleteNoAutoUse", flag: "--autocomplete_no_auto_use", kind: "flag" },
   { setting: "sortKeywords", flag: "--sort_keywords", kind: "flag" },
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
+  { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
+  { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
   { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },

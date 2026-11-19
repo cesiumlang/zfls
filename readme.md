@@ -31,6 +31,15 @@ command line options and configuration files.
 - Completion of the public names of modules not used yet, adding the
   `use module, only: name` statement, and a quick fix adding it for a type
   that is not found
+- Code lenses: the number of references above each module, procedure and
+  derived type, counted when the editor shows the lens
+  (`code_lens_no_references` turns them off), and Run and Debug above a
+  program (`code_lens_no_run`). Clicking runs a command of the client's:
+  zfls names `zfls.showReferences` (URI, position, locations),
+  `zfls.runFile` and `zfls.debugFile` (URI) where the client lists them
+  in its `experimental.commands.commands` capability, as the VS Code
+  extension does; elsewhere a reference lens only shows the count, and a
+  program has none
 - Call hierarchy: the procedures that call a procedure, and those it calls
 - Type hierarchy: the type a derived type extends, and the types that
   extend it; completion offers the parent components of an extended type
@@ -230,7 +239,13 @@ The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
 --debug_line 10 --debug_char 5` runs a single hover request. Their output
-is meant for testing zfls and may differ from fortls's.
+is meant for testing zfls and may differ from fortls's. They take the
+options as the server does: the command line's, with the configuration
+file's (`.fortlsrc`, `.fortls.json`, `.fortls` or `-c`) in
+`--debug_rootpath` over them. With `--debug_log`, `fortls_debug.log` has a
+`Final options` line with the options in effect, after the command line,
+the editor's settings, the configuration file and the build files, at
+start-up and after each change of the settings.
 
 ### ifx without Visual Studio (Windows x64)
 
@@ -758,7 +773,12 @@ released binary reports the plain version.
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
 every pull request and every push to `main` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test. Pushes to `dev`
+suites above, longer stress runs and the differential test. macOS on ARM64,
+whose GitHub-hosted runners are few and can be unavailable for hours, is
+tested only by pull requests into `main`, which release `dev`, and by a push
+to `main` that releases binaries it built itself (when no pull request run
+tested that tree); pull requests into `dev`, other pushes to `main` and runs
+started by hand leave it out. Pushes to `dev`
 are not run on their own: what reaches `dev` is tested by its pull request,
 and `dev` as a whole by the pull request that releases it, so each tree is
 tested once (start the workflow by hand on `dev` to test it in between). A
@@ -820,6 +840,10 @@ zfls deliberately differs from fortls in a few places:
   each of its procedures, the one the arguments so far fit active (fortls
   #6), and go to definition goes to that procedure (hansec #135); fortls
   shows no signature and goes to the interface.
+- Signature help stays on the call while the cursor is inside an array
+  constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
+  the constructor is one argument, and a call inside it has its own
+  signature (hansec #60); fortls shows none there.
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.
@@ -896,6 +920,13 @@ zfls deliberately differs from fortls in a few places:
   the binding and the assignments to variables of the types that use it.
 - Hover on a coarray shows its codimension (`REAL, CODIMENSION[*] :: x`),
   written after its name or as an attribute; fortls drops it.
+- With the `hover_signature` option (`zfls.hoverSignature`, on by default
+  in the VS Code extension), hover on an actual argument of a call also
+  shows the dummy argument it is passed to: the procedure's signature and
+  the dummy's declaration and documentation (hansec #107, #188). Keyword
+  arguments, the passed-object argument of a type-bound procedure, the
+  specific of a generic that the arguments fit and nested calls are
+  followed. fortls reads the option and does nothing with it.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
   ...) shows its documentation (fortls #547), and so does hover on a word of
   an OpenMP or OpenACC directive (`!$omp parallel do`, `reduction`,
@@ -905,6 +936,11 @@ zfls deliberately differs from fortls in a few places:
   `LOGICAL(1)`, `dp_'x'` `CHARACTER(LEN=1, KIND=dp)`, and `z'ff'` a BOZ
   constant of value 255 (fortls #125). fortls shows the type without its
   kind, and nothing on `1d0`, `7_8` or BOZ constants.
+- Hover on the file name of an `#include` directive or `INCLUDE` statement
+  links the file it reads (relative to the workspace root when it is
+  inside it), and is empty when the file is not found; fortls answers as
+  for a character literal. Strings and numbers on other preprocessor lines
+  (`#define X "text"`) are no literals and get no hover.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the surrounding scopes, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has
@@ -999,6 +1035,11 @@ zfls deliberately differs from fortls in a few places:
   configuration file, `fpm.toml` and `compile_commands.json` are read again
   when they change (see [Usage](#usage)); fortls reads its settings once,
   from its command line and configuration file.
+- `--debug_parser` and `--debug_preproc` take the command line's
+  preprocessor options (`--pp_defs`, `--include_dirs`, `--pp_suffixes`)
+  with the configuration file's over them, and find `.fortls.json`, as the
+  server does; fortls's take them from a configuration file only. The
+  debug log names the final options.
 - Renaming or moving a file or directory in the editor
   (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and
   `#include` directives that name a file that moves, and the relative ones
@@ -1052,9 +1093,18 @@ zfls deliberately differs from fortls in a few places:
   are published only while it is open. fortls only links files of the
   workspace. An include that a statement continues into (the rest of an
   argument list) is text of that statement, and is not linked.
+- The USE statements and the IMPLICIT statement of a file that an `INCLUDE`
+  or `#include` brings in (a header with a project's USE list) apply in the
+  including scope, as if written at the include line; fortls keeps them in
+  the included file, so the names of those modules are unknown there (FL PR
+  #277).
 - Hover shows the whole value of a parameter. fortls cuts it at the first
   parenthesis or bracket, so `selected_real_kind(6)` shows as
-  `selected_real_kind`.
+  `selected_real_kind`. It shows it after an entity's own bounds too
+  (`arr(3) = [1, 2, 3]`), with the blanks of its strings (and its strings
+  on a line of several statements, where fortls blanks them), and an entity's
+  own bounds and length (`b(5)` in `real, dimension(3) :: a, b(5)`, `v*8`
+  in `character*(*) u, v*8`, `s(3)[*]*10`) in place of the declaration's.
 - The `PARAMETER` statement (`parameter (n = 5)`) makes the variables it
   names constants, with their values, and the other attribute statements
   (`dimension v(n)`, `optional :: w`, `intent(in) a`, `allocatable`,
@@ -1126,6 +1176,11 @@ zfls deliberately differs from fortls in a few places:
   its value, and a macro's value is used as written; fortls reads it as a
   regex template, so `\1` in it and, for `NOARG()`, its digits are lost
   (FL #486).
+- In a macro's value, `a ## b` pastes the two words together and `#x` is the
+  argument in double quotes; `/**/` is removed from macro values and the
+  lines of a preprocessed file, as gfortran's cpp does, so
+  `wrap_/**/P` is the name `wrap_abc`. Character literals and comments are
+  left as they are. fortls keeps `##`, `#x` and `/**/` in the text.
 - A file named as free-form source (`.f90`, `.F90`, `.f08`, ...) is read as
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
