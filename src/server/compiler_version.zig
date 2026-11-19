@@ -2,7 +2,8 @@
 //! the options that differ between its releases: LLVM Flang's, from
 //! `flang --version`, asked once for each executable, and again when the
 //! file at its path changes (its size or modification time: a compiler
-//! upgraded in place, #427).
+//! upgraded in place, #427). With it, where Flang's intrinsic modules are
+//! when its driver does not find them (compilers/flang_modules.zig, #438).
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -11,19 +12,21 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const compilers = @import("../compilers.zig");
 const flang = @import("../compilers/flang.zig");
+const flang_modules = @import("../compilers/flang_modules.zig");
 const tools = @import("tools.zig");
 
 const Server = @import("../server.zig").Server;
 
-/// The major version of the compiler that the check runs, the first of
-/// `exes` that runs: for LLVM Flang only, else null. Null too when none
+/// What is known of the compiler that the check runs, the first of `exes`
+/// that runs: for LLVM Flang only, else nothing. Nothing too when none
 /// runs or it does not say (no version-dependent options then).
-pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u8) ?u32 {
-    if (id != .flang) return null;
+pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u8) Known {
+    const none: Known = .{ .found = false, .version = null };
+    if (id != .flang) return none;
     for (exes) |exe| {
         const stamp = stampOf(self.io, a, exe, self.toolEnv());
         if (self.compiler_versions.get(exe)) |known| if (std.meta.eql(known.stamp, stamp)) {
-            if (known.found) return known.version;
+            if (known.found) return known;
             continue;
         };
         var found = ask(self, a, exe);
@@ -31,16 +34,17 @@ pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u
         if (self.compiler_versions.getPtr(exe)) |old| {
             old.* = found;
         } else {
-            const key = self.arena.allocator().dupe(u8, exe) catch return found.version;
+            const key = self.arena.allocator().dupe(u8, exe) catch return found;
             self.compiler_versions.put(self.arena.allocator(), key, found) catch {};
         }
-        if (found.found) return found.version;
+        if (found.found) return found;
     }
-    return null;
+    return none;
 }
 
-/// What `exe --version` said, whether `exe` was there, and the file it was
-pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null };
+/// What `exe --version` said, whether `exe` was there, and the file it
+/// was; the directory of Flang's intrinsic modules to pass (the server's)
+pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null, intrinsic_modules: ?[]const u8 = null };
 
 /// The size and modification time of an executable's file
 pub const Stamp = struct { size: u64, mtime: i96 };
@@ -82,7 +86,9 @@ fn ask(self: *Server, a: Allocator, exe: []const u8) Known {
     }) catch |e| return .{ .found = e != error.FileNotFound, .version = null };
     const version = flang.parseVersion(r.stdout) orelse flang.parseVersion(r.stderr);
     self.log.info("compiler_diagnostics: {s} is LLVM Flang {?d}", .{ exe, version });
-    return .{ .found = true, .version = version };
+    const modules = flang_modules.intrinsicModules(self.io, a, r.stdout) catch null;
+    if (modules) |d| self.log.info("compiler_diagnostics: {s}'s intrinsic modules are not where its driver looks: -fintrinsic-modules-path {s}", .{ exe, d });
+    return .{ .found = true, .version = version, .intrinsic_modules = if (modules) |d| self.arena.allocator().dupe(u8, d) catch null else null };
 }
 
 test "an executable's stamp: its file, on the PATH, and none" {

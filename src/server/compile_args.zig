@@ -169,6 +169,8 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
         if (cmd == null) for (self.s.pp_defs.items) |d| try args.append(a, try compilers.define(a, id, d.name, d.value, o));
     }
     try args.appendSlice(a, try compilers.modOutput(a, id, o.mod_dir, o));
+    // Flang's intrinsic modules where its driver does not look (#438)
+    if (id == .flang) if (o.intrinsic_modules) |d| try args.appendSlice(a, &.{ "-fintrinsic-modules-path", try a.dupe(u8, d) });
     try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, paths.dirname(file.path)), o));
     for (try definition.includeDirs(self, a)) |d| try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, d), o));
     for (self.s.compiler_include_dirs.slice()) |d| {

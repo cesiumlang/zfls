@@ -377,7 +377,8 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     const user = userArgs(self, file.declared_fixed);
     const cmd = try commandOf(self, a, file, user);
     const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed), cmd);
-    const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = compiler_version.of(self, a, id, exes) };
+    const known = compiler_version.of(self, a, id, exes);
+    const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = known.version, .intrinsic_modules = known.intrinsic_modules };
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
     // Intel's preprocessor output goes into the working directory: one of
     // zfls's per file, not the source tree

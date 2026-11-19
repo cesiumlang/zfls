@@ -1,7 +1,8 @@
 //! The compiler check (`compiler_diagnostics`) with LLVM Flang's command
 //! line, through a stand-in compiler that logs its arguments: the files of
-//! suffixes Flang's driver does not know (#376), and its version asked
-//! again when the compiler changes (#427).
+//! suffixes Flang's driver does not know (#376), its version asked
+//! again when the compiler changes (#427), and its intrinsic modules where
+//! its driver does not look for them (#438).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -76,4 +77,27 @@ test "Flang: a compiler upgraded at the same path is asked its version again (#4
     const after = try w.tmp.dir.readFileAlloc(io, "flang.log", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(after);
     try std.testing.expect(std.mem.find(u8, after, "-Wunused-variable") != null);
+}
+
+/// A stand-in Flang at `flang/bin` whose driver's triple
+/// (`x86_64-conda-linux-gnu`, conda-forge's) has no intrinsic modules
+const conda_flang: h.File = if (is_windows)
+    .{ .name = "flang/bin/flang.cmd", .text = "@echo off\r\nif \"%1\"==\"--version\" (echo flang version 23.1.5& echo Target: x86_64-conda-linux-gnu& echo InstalledDir: %~dp0& exit /b 0)\r\necho %* >> flang.log\r\necho flang: error: logged 1>&2\r\n" }
+else
+    .{ .name = "flang/bin/flang.sh", .text = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'flang version 23.1.5'; echo 'Target: x86_64-conda-linux-gnu'; echo \"InstalledDir: $(cd \"$(dirname \"$0\")\" && pwd)\"; exit 0; fi\necho \"$@\" >> flang.log\necho 'flang: error: logged' >&2\n" };
+
+test "Flang: its intrinsic modules where its driver does not look for them (#438)" {
+    const modules = h.File{ .name = "flang/lib/clang/23/finclude/flang/x86_64-unknown-linux-gnu/iso_fortran_env.mod", .text = "" };
+    const w = try h.Workspace.init(&.{ user, conda_flang, modules }, .{ .init_options = "{\"compiler_diagnostics\": \"flang\", \"compiler_path\": \"" ++ conda_flang.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, conda_flang.name, .executable_file, .{});
+    try w.open("u.f90", "fortran");
+    _ = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"flang: logged\"", 60)) orelse return error.NoCompilerDiagnostics;
+    const calls = try w.tmp.dir.readFileAlloc(io, "flang.log", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(calls);
+    const at = std.mem.find(u8, calls, "-fintrinsic-modules-path ") orelse {
+        std.debug.print("\nno -fintrinsic-modules-path: {s}\n", .{calls});
+        return error.NoIntrinsicModules;
+    };
+    try std.testing.expect(std.mem.find(u8, calls[at..], "x86_64-unknown-linux-gnu") != null);
 }
