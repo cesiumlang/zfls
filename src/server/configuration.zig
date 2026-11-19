@@ -41,6 +41,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
+const linking = @import("linking.zig");
 const diagnostics = @import("diagnostics.zig");
 const pull = @import("pull.zig");
 const compile = @import("compile.zig");
@@ -322,6 +323,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
     self.same_names.clear(self.gpa);
     for (self.retired.items) |ast| ast.destroy();
     self.retired.clearRetainingCapacity();
+    self.woken.clearRetainingCapacity();
 
     self.s = try settings_mod.clone(sa, next);
     self.whole_root = false;
@@ -343,7 +345,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
     }
     if (docs.items.len > 0) {
         _ = try workspace.addIncludedFiles(self, a, null);
-        try workspace.fullRelink(self, a);
+        try linking.fullRelink(self, a);
     }
     clangd.start(self, a);
 }

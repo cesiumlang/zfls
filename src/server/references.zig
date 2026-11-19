@@ -274,7 +274,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
 /// module, the local names that the USE statements of the workspace give
 /// it, or a name of it, by a rename (`use m, only: local => name`).
 /// Names that only coincide are among them: each place is still checked.
-fn useAliases(self: *Server, a: Allocator, def_obj: *const Obj, def_name: []const u8) ![]const []const u8 {
+pub fn useAliases(self: *Server, a: Allocator, def_obj: *const Obj, def_name: []const u8) ![]const []const u8 {
     var names: std.ArrayList([]const u8) = .empty;
     try names.append(a, def_name);
     const parent = def_obj.parent orelse return names.items;

@@ -32,6 +32,7 @@ const objects_ast = @import("objects/ast.zig");
 const objects_resolve = @import("objects/resolve.zig");
 const objects_index = @import("objects/index.zig");
 pub const same_name = @import("objects/same_name.zig");
+pub const summary = @import("objects/summary.zig");
 
 pub const Diagnostic = objects_diagnostic.Diagnostic;
 pub const BuiltDiag = objects_diagnostic.BuiltDiag;

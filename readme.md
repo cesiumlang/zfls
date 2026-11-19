@@ -646,6 +646,26 @@ thread of its own, when files were added, changed or removed, or parsed
 again; those of other workspaces are deleted after 60 days without use.
 `disable_index_cache` turns it off.
 
+### Memory
+
+zfls keeps a summary of each workspace file that is not open in the
+editor: its modules, types, interfaces and procedures as other files see
+them (dummy arguments, results, named constants, USE statements, docs),
+without the local variables and constructs of the procedures, which are
+most of a file's symbols. The summary is also what the index cache holds
+of such a file. A file is parsed in full again, from the text zfls keeps,
+when it is opened and before a request reads more of it: any request
+about the file itself, and, for find references, rename, document
+highlights, reference lenses and incoming calls, the files whose text has
+the name. Those files go back to summaries at the next save, open or close
+(the last 64 a request read stay in full, for the requests that follow).
+Files that `INCLUDE` others or are included stay in full, as do all files
+with `workspace_diagnostics`. The answers are the same as with every file in
+full. On a generated workspace of 3,000 modules (36 MB of Fortran) memory
+after initialization goes from 505 MiB to 253 MiB (the full ASTs took 360
+MB, the summaries 117 MB), and a start from the index cache takes 0.42 s
+instead of 0.81 s.
+
 ### Comment markers
 
 Some codebases are written in a dialect that a preprocessor turns into
@@ -1150,6 +1170,9 @@ zfls deliberately differs from fortls in a few places:
   which follows when the item is selected: a list of 2,000 procedures is
   less than half the size and takes half the time; fortls sends every
   item's documentation.
+- The workspace files that are not open are kept as summaries, parsed in
+  full again when a request needs more of them (see [Memory](#memory));
+  fortls keeps every file's text and full parse (FL #563).
 - With nothing typed, completion (Ctrl+Space) lists the names of a module
   after `use m, only:` and after each comma of the list (less those it has
   already), the modules after `use`, the types after `type(`, `class(` and

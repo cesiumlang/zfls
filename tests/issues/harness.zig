@@ -166,6 +166,8 @@ pub const Options = struct {
     /// the client resolves the documentation of completion items
     /// (`completionItem/resolve`)
     completion_resolve: bool = false,
+    /// the files that are not open are kept as summaries (#219)
+    summaries: bool = true,
 };
 
 // --------------------------------------------------------------------------
@@ -243,6 +245,9 @@ pub const Workspace = struct {
         var environ = try std.testing.environ.createMap(aa);
         try w.server.setEnviron(&environ);
         w.server.sink = .{ .ctx = w, .sendFn = collect };
+        w.server.summaries = opts.summaries;
+        // every file a request read rests at the next save
+        w.server.keep_awake = 0;
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
         w.init_result = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
             .rootPath = if (opts.unc_root) null else w.root,

@@ -151,7 +151,7 @@ pub fn unique(a: Allocator, locations: []const lsp.Location) ![]const lsp.Locati
 }
 
 /// The identifier at a position of a C document
-fn identifierAt(doc: *const FortranFile, params: lsp.PositionParams) ?[]const u8 {
+pub fn identifierAt(doc: *const FortranFile, params: lsp.PositionParams) ?[]const u8 {
     const text = doc.getLine(params.position.line, false) orelse return null;
     const col = @min(Server.toByteCol(doc, params.position.line, params.position.character), text.len);
     var s = col;

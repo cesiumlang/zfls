@@ -21,7 +21,6 @@ const project = @import("../project.zig");
 const semantic = @import("../semantic.zig");
 const namelist = @import("../namelist.zig");
 
-const Obj = objects.Obj;
 const Ast = objects.Ast;
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
@@ -42,6 +41,8 @@ const configuration = @import("configuration.zig");
 const completion_resolve = @import("completion_resolve.zig");
 const pull = @import("pull.zig");
 const lenses = @import("lenses.zig");
+const linking = @import("linking.zig");
+const summary = @import("summary.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -322,13 +323,14 @@ pub fn initWorker(job: *Server.InitJob) void {
 
 /// Port of `file_init`
 pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
-    const f = loadFile(self, filepath) catch |e| return .{ .err = e };
+    const f = loadFile(self, filepath, true) catch |e| return .{ .err = e };
     return .{ .ok = f };
 }
 
-/// Create, read and parse a workspace file. The caller owns the result
+/// Create, read and parse a workspace file, keeping the summary of its AST
+/// when `rest` and it may rest (summary.zig). The caller owns the result
 /// (the file and its AST).
-pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
+pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
     f.comment_markers = self.s.comment_markers.slice();
     f.openmp_conditional = !self.s.disable_openmp_conditional;
@@ -339,9 +341,10 @@ pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFi
     const opts = parseOptions(self);
     const prepared = f.prepare(self.io, &self.pp_defs, self.s.include_dirs.slice(), opts) catch return error.ParseFailed;
     // or its AST from the index cache
-    const ast = cache.parseFile(self, f, prepared, opts) catch return error.ParseFailed;
+    const ast = cache.parseFile(self, f, prepared, opts, rest) catch return error.ParseFailed;
     // Emulate Python's recursion limit (deeply nested scopes)
-    if (maxScopeDepth(ast) > self.s.recursion_limit) {
+    const depth = if (ast.summary) |sm| sm.depth else objects.summary.maxScopeDepth(ast);
+    if (depth > self.s.recursion_limit) {
         ast.destroy();
         return error.RecursionLimit;
     }
@@ -369,7 +372,7 @@ pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
                 (try definition.resolveInclude(self, a, f, inc.path)) orelse continue;
             const path = try parser.normPath(a, found);
             if (self.workspace.contains(path)) continue;
-            const nf = loadFile(self, path) catch |e| {
+            const nf = loadFile(self, path, false) catch |e| {
                 self.log.info("{s}, included by {s}: {s}", .{ path, f.path, parser.describeFileError(e) });
                 continue;
             };
@@ -378,23 +381,12 @@ pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
                 errdefer nf.destroy();
                 try self.workspace.put(self.gpa, nf.path, nf);
             }
-            try addToTree(self, nf);
+            try linking.addToTree(self, nf);
             try todo.append(a, nf);
             added = true;
         }
     }
     return added;
-}
-
-pub fn maxScopeDepth(ast: *Ast) i64 {
-    var max: i64 = 0;
-    for (ast.scope_list.items) |s| {
-        var d: i64 = 0;
-        var p: ?*Obj = s;
-        while (p) |o| : (p = o.parent) d += 1;
-        max = @max(max, d);
-    }
-    return max;
 }
 
 /// Parse the workspace's files; with the `workDoneToken` of the
@@ -437,161 +429,21 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
             .ok => |f| {
                 if (self.workspace.get(f.path)) |old| {
                     // Duplicate path (overlapping source dirs): keep the newest
-                    try retireFileAst(self, old);
+                    try linking.retireFileAst(self, old);
                     old.ast = f.ast;
                     f.ast = null;
                     f.destroy();
-                    try addToTree(self, old);
+                    try linking.addToTree(self, old);
                 } else {
                     try self.workspace.put(self.gpa, f.path, f);
-                    try addToTree(self, f);
+                    try linking.addToTree(self, f);
                 }
             },
         }
     }
     _ = try addIncludedFiles(self, a, null);
-    try fullRelink(self, a);
-}
-
-// Several files can define the same global name. Unlike fortls, where
-// the last file parsed takes the name and re-parsing either file drops
-// it for both, the tree keeps one owner per name chosen the same way
-// whatever the order of events, so a long session agrees with a fresh
-// start: any file over an intrinsic module, then the lowest path.
-
-/// Whether a definition from `path` takes a name held by `held`.
-pub fn treeOwnerBeats(path: ?[]const u8, held: ?[]const u8) bool {
-    const p = path orelse return false;
-    const h = held orelse return true;
-    return std.mem.order(u8, p, h) == .lt;
-}
-
-pub fn addToTree(self: *Server, f: *FortranFile) !void {
-    const ast = f.ast orelse return;
-    var it = ast.global_dict.iterator();
-    while (it.next()) |e| {
-        const gop = try self.obj_tree.getOrPut(self.gpa, e.key_ptr.*);
-        // another file's of the same name: both kept (#187)
-        if (gop.found_existing) if (gop.value_ptr.path) |held| if (!std.mem.eql(u8, held, f.path)) {
-            try self.same_names.add(self.gpa, e.key_ptr.*, gop.value_ptr.*, .{ .obj = e.value_ptr.*, .path = f.path });
-        };
-        if (gop.found_existing and !treeOwnerBeats(f.path, gop.value_ptr.path)) continue;
-        // the key is the owner's (it lives as long as the owner's AST)
-        gop.key_ptr.* = e.key_ptr.*;
-        gop.value_ptr.* = .{ .obj = e.value_ptr.*, .path = f.path };
-    }
-}
-
-/// Drops the names `ast` owns, handing each to the next file (or
-/// intrinsic module) that defines it.
-pub fn removeFromTree(self: *Server, ast: *Ast) void {
-    self.same_names.remove(self.gpa, ast);
-    for (ast.global_dict.keys()) |key| {
-        const held = self.obj_tree.getEntry(key) orelse continue;
-        if (held.value_ptr.obj.file_ast != ast) continue;
-        var best: ?struct { key: []const u8, entry: objects.TreeEntry } = null;
-        for (self.workspace.values()) |f| {
-            const other = f.ast orelse continue;
-            if (other == ast) continue;
-            const e = other.global_dict.getEntry(key) orelse continue;
-            if (best == null or treeOwnerBeats(f.path, best.?.entry.path)) {
-                best = .{ .key = e.key_ptr.*, .entry = .{ .obj = e.value_ptr.*, .path = f.path } };
-            }
-        }
-        if (best == null) for (self.intr.mods) |m| {
-            if (std.mem.eql(u8, m.fqsn, key)) best = .{ .key = m.fqsn, .entry = .{ .obj = m, .path = null } };
-        };
-        if (best) |b| {
-            held.key_ptr.* = b.key;
-            held.value_ptr.* = b.entry;
-        } else _ = self.obj_tree.orderedRemove(key);
-    }
-}
-
-pub fn retireFileAst(self: *Server, f: *FortranFile) !void {
-    if (f.ast) |old| {
-        try self.retired.append(self.gpa, old);
-        removeFromTree(self, old);
-    }
-}
-
-/// Re-resolve includes and links across the whole workspace, after
-/// which no object references a retired AST, so those can be freed.
-pub fn fullRelink(self: *Server, a: Allocator) !void {
-    // Reset cross-file references so that nothing points into retired ASTs
-    for (self.workspace.values()) |f| {
-        const ast = f.ast orelse continue;
-        ast.included_in = null;
-        if (ast.inc_scope) |inc| {
-            ast.none_scope = inc;
-            for (inc.childList()) |c| c.parent = inc;
-        }
-        // the last linked first, so that each restores the IMPLICIT state
-        // it found
-        var k_inc = ast.include_statements.items.len;
-        while (k_inc > 0) {
-            k_inc -= 1;
-            const inc = ast.include_statements.items[k_inc];
-            inc.unlink();
-            inc.inc_obj = null;
-            inc.file = null;
-        }
-        for (ast.variable_list.items) |v| {
-            v.varData().type_obj = null;
-            v.varData().link_obj = null;
-        }
-        for (ast.scope_list.items) |s| {
-            // a procedure of a file of whole procedures, linked by an
-            // include into another file's scope, is the file's own again
-            if (s.parent) |p| if (p.file_ast != ast) {
-                s.setParent(null);
-                try s.updateFqsn(null);
-            };
-            if (s.kind.isSubroutine()) s.procData().link_obj = null;
-            if (s.procDataOpt()) |p| if (p.linked_from_interface) s.resetInterfaceCopy();
-            if (s.kind == .interface) s.ifaceData().mems.clearRetainingCapacity();
-            if (s.kind == .type) {
-                s.typeData().inherit_var = null;
-                s.scopeData().in_children.clearRetainingCapacity();
-                s.typeData().inherit_version = -1;
-            }
-            if (s.kind == .submodule) s.submodData().ancestor_obj = null;
-            // Children of scopes in other files added through INCLUDE
-            var k: usize = 0;
-            while (k < s.childList().len) {
-                if (s.childList()[k].file_ast != ast) {
-                    s.removeChild(k);
-                } else k += 1;
-            }
-        }
-        if (ast.none_scope) |ns| {
-            var k: usize = 0;
-            while (k < ns.childList().len) {
-                if (ns.childList()[k].file_ast != ast) {
-                    ns.removeChild(k);
-                } else k += 1;
-            }
-        }
-    }
-    for (self.workspace.values()) |f| {
-        const ast = f.ast orelse continue;
-        for (ast.include_statements.items) |inc| inc.scope_objs.clearRetainingCapacity();
-    }
-    for (self.workspace.values()) |f| {
-        if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
-    }
-    self.link_version = @mod(self.link_version + 1, 1000);
-    pull.changed(self);
-    var tmp = std.heap.ArenaAllocator.init(self.gpa);
-    defer tmp.deinit();
-    for (self.workspace.values()) |f| {
-        if (f.ast) |ast| {
-            try ast.resolveLinks(self.env(tmp.allocator()), self.link_version);
-            _ = tmp.reset(.retain_capacity);
-        }
-    }
-    for (self.retired.items) |ast| ast.destroy();
-    self.retired.clearRetainingCapacity();
+    try linking.fullRelink(self, a);
+    try summary.wakeIncluded(self, a);
 }
 
 pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
@@ -633,7 +485,7 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
         // a file not read yet that a new INCLUDE names is linked in by a
         // full relink, as is the memory of replaced ASTs reclaimed
-        if (try addIncludedFiles(self, a, file) or self.retired.items.len >= 16) try fullRelink(self, a);
+        if (try addIncludedFiles(self, a, file) or self.retired.items.len >= 16) try linking.fullRelink(self, a);
     } else if (file.preproc) {
         const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
         try self.mergePpDefs(&out.defs);
@@ -689,13 +541,13 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         // the workspace, and its problems with it
         const f = self.workspace.get(filepath) orelse return .null;
         if (f.ast == null) return .null;
-        try retireFileAst(self, f);
+        try linking.retireFileAst(self, f);
         f.ast = null;
         // so that the same text, opened again, is parsed again (in the form
         // its language names then)
         f.hash = null;
         f.forced_form = null;
-        try fullRelink(self, a);
+        try linking.fullRelink(self, a);
         if (!self.s.disable_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
         return .null;
     }
@@ -715,9 +567,15 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
             return .null;
         };
     };
-    if (changed) {
-        _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
-        try fullRelink(self, a);
+    // an opened summary is parsed in full again, as it was
+    if (did_open) if (self.workspace.get(filepath)) |f| if (summary.dormant(f)) try summary.wake(self, a, &.{f});
+    // the files parsed in full for requests rest again, but for a closed
+    // one, whose diagnostics are of its full AST
+    const slept = !did_close and try summary.sleepAll(self, a);
+    if (changed or slept) {
+        if (changed) _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
+        try linking.fullRelink(self, a);
+        try summary.wakeIncluded(self, a);
     }
     // the compiler checks the file as saved, on its own thread
     if (!did_close and !self.s.disable_diagnostics) {
@@ -734,6 +592,10 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         return .null;
     }
     if (!self.s.disable_diagnostics) diagnostics.sendDiagnostics(self, a, uri);
+    if (did_close) if (self.workspace.get(filepath)) |f| {
+        summary.forget(self, f);
+        if (try summary.sleepAll(self, a)) try linking.fullRelink(self, a);
+    };
     return .null;
 }
 
@@ -813,7 +675,7 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         if (ev.type == 3) {
             const f = self.workspace.get(path) orelse continue;
             if (f.ast == null) continue;
-            try retireFileAst(self, f);
+            try linking.retireFileAst(self, f);
             f.ast = null;
             // so that the same text, restored, is parsed again
             f.hash = null;
@@ -830,9 +692,10 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         };
         changed = changed or updated;
     }
-    if (changed) {
+    if (try summary.sleepAll(self, a) or changed) {
         _ = try addIncludedFiles(self, a, null);
-        try fullRelink(self, a);
+        try linking.fullRelink(self, a);
+        try summary.wakeIncluded(self, a);
     }
     if (settings_file) |kind| {
         // which publishes the diagnostics again
@@ -865,7 +728,7 @@ pub fn isSourceFile(self: *const Server, path: []const u8) bool {
 /// and it leaves the workspace when it is closed
 pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
     if (did_close) {
-        if (self.workspace.get(path)) |f| if (f.ast) |ast| removeFromTree(self, ast);
+        if (self.workspace.get(path)) |f| if (f.ast) |ast| linking.removeFromTree(self, ast);
         return .null;
     }
     if (did_open) {
@@ -884,7 +747,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
             self.postMessage(a, try a.print("Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
             return .null;
         };
-        if (changed) try fullRelink(self, a);
+        if (changed) try linking.fullRelink(self, a);
     }
     if (!self.s.disable_diagnostics) diagnostics.sendDiagnostics(self, a, uri);
     return .null;
@@ -941,10 +804,10 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         }
         if (f.ast) |old| try self.retired.append(self.gpa, old);
     }
-    if (f.ast) |old| removeFromTree(self, old);
+    if (f.ast) |old| linking.removeFromTree(self, old);
     f.ast = ast_new;
     pull.changed(self);
-    try addToTree(self, f);
+    try linking.addToTree(self, f);
     if (update_links) {
         self.link_version = @mod(self.link_version + 1, 1000);
         var tmp = std.heap.ArenaAllocator.init(self.gpa);

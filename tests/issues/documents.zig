@@ -116,7 +116,8 @@ test "hansec #123 a document whose file does not exist yet is served from the te
 }
 
 test "a document opened with its file's text is not parsed again" {
-    const w = try h.Workspace.init(&.{.{ .name = "exists.f90", .text = there }}, .{});
+    // (a summary, which a file not open is, is parsed in full: #219)
+    const w = try h.Workspace.init(&.{.{ .name = "exists.f90", .text = there }}, .{ .summaries = false });
     defer w.deinit();
     const file = w.server.workspace.get(try w.path("exists.f90")).?;
     const indexed = file.ast.?;

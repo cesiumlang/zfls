@@ -37,6 +37,7 @@ const completion = @import("completion.zig");
 const compile = @import("compile.zig");
 const linters = @import("linters.zig");
 const convert = @import("convert.zig");
+const summary = @import("summary.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     var out: std.ArrayList(lsp.CodeAction) = .empty;
@@ -785,6 +786,8 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
+    // those of its full AST
+    if (summary.dormant(file)) try summary.wake(self, a, &.{file});
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
     if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
@@ -863,6 +866,8 @@ pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
 /// that editors list the problems of files that are not open
 pub fn publishWorkspace(self: *Server, a: Allocator) void {
     if (self.s.disable_diagnostics) return;
+    // those of the files' full ASTs
+    summary.wakeAll(self, a) catch |e| self.log.err("parsing the workspace's files in full: {s}", .{@errorName(e)});
     for (self.workspace.values()) |f| {
         if (!publishedInWorkspace(self, f)) continue;
         const uri = paths.pathToUri(a, f.path) catch continue;

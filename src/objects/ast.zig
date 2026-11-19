@@ -141,6 +141,12 @@ pub const Ast = struct {
     enc_scope_name: ?[]const u8 = null,
     last_obj: ?*Obj = null,
     pending_doc: ?[]const u8 = null,
+    /// Set when the AST is the summary of the file's (objects/summary.zig),
+    /// which is parsed again for what needs the rest
+    summary: ?Summary = null,
+
+    /// `depth`: the deepest nesting of scopes of the full AST
+    pub const Summary = struct { depth: i64 };
 
     pub fn create(gpa: Allocator, file: ?*FortranFile) !*Ast {
         var arena = std.heap.ArenaAllocator.init(gpa);
