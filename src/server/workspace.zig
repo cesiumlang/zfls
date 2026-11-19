@@ -130,11 +130,13 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
     self.outside_sources = .empty;
+    self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
+                self.compile_commands = found.commands;
                 // those under the root are the scan's
                 for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
                 self.log.info("{s}: {d} include directories, {d} definitions, {d} files outside the root", .{ p, found.include_dirs.items.len, found.defs.items.len, self.outside_sources.items.len });
@@ -307,6 +309,7 @@ pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
 pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
     f.comment_markers = self.s.comment_markers.slice();
+    f.openmp_conditional = !self.s.disable_openmp_conditional;
     f.d_lines_code = self.s.dLinesCode();
     errdefer f.destroy();
     // from the index cache during initialization
@@ -679,7 +682,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     if (!did_close and !self.s.disable_diagnostics) {
         // the compiler and Codee read the file, which an opened document's
         // text may differ from
-        const unsaved = open_text != null and (compile.compilerOf(self) != null or self.s.codee) and differsFromDisk(self, filepath);
+        const unsaved = open_text != null and (compile.anyCompiler(self) or self.s.codee) and differsFromDisk(self, filepath);
         const trigger: compile.Trigger = if (unsaved) .open_unsaved else if (did_open) .open else .save;
         compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
         linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });
@@ -701,6 +704,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8) parser.Fi
         const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
         errdefer nf.destroy();
         nf.comment_markers = self.s.comment_markers.slice();
+        nf.openmp_conditional = !self.s.disable_openmp_conditional;
         nf.d_lines_code = self.s.dLinesCode();
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
@@ -825,6 +829,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
@@ -854,6 +859,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         if (file == null) {
             const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
