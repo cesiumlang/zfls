@@ -60,6 +60,9 @@ pub const Message = struct {
     message: []const u8,
     code: ?[]const u8 = null,
     related: std.ArrayList(Related) = .empty,
+    /// For a message in an included file, the line that includes it (of
+    /// the outermost include), such as flang's "included here"
+    include_site: ?Related = null,
 };
 
 /// What changes a compiler's command line
