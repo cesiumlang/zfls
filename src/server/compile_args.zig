@@ -114,7 +114,8 @@ pub const Role = enum {
 /// it, the .mod directory, the include directories, then `user`
 /// (`compiler_args` of the form checked, or the arguments of the file's
 /// command `cmd`, which has its own definitions, or the compiler's
-/// defaults) and the file. Relative directories in `user` are relative to
+/// defaults), the file's language for a compiler that needs it, and the
+/// file, last. Relative directories in `user` are relative to
 /// `base`, the directory of the file checked, and those of `cmd` to its
 /// directory.
 pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *const FortranFile, user: ?[]const []const u8, cmd: ?project.Command, base: []const u8, o: compilers.Options) ![]const []const u8 {
@@ -155,6 +156,7 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
     // the standard's implicit typing and interfaces, unless `own` says
     try args.appendSlice(a, compilers.implicitRules(id, own));
     for (own) |x| try args.append(a, try a.dupe(u8, x));
+    try args.appendSlice(a, compilers.language(id));
     try args.append(a, try a.dupe(u8, file.path));
     return args.items;
 }
