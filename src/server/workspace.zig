@@ -79,7 +79,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.config.announced = on;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
         .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
-        .textDocumentSync = self.sync_type,
+        .textDocumentSync = .{ .change = self.sync_type },
         .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
         .codeActionProvider = if (on.code_actions) true else null,
         .semanticTokensProvider = .{ .legend = semantic.legend },
@@ -263,6 +263,7 @@ pub fn getSourceFiles(self: *Server, a: Allocator) ![][]const u8 {
                 excluded = true;
             };
             if (excluded) continue;
+            if (project.isIfortInterface(self.io, p)) continue;
             try out.append(a, p);
         }
     }
@@ -784,14 +785,16 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
 
 /// Whether `path` is a file the workspace indexes: a Fortran file of a
 /// source directory (any directory under the root, without
-/// `source_dirs`) that no exclusion covers
+/// `source_dirs`) that no exclusion covers, and no interface module of
+/// ifort's
 pub fn isSourceFile(self: *const Server, path: []const u8) bool {
     const base = std.Io.Dir.path.basename(path);
     if (self.src_ext_regex.search(base) == null) return false;
     for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
     for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
-    if (self.s.source_dirs.contains(paths.dirname(path))) return true;
-    return self.whole_root and std.mem.startsWith(u8, path, self.root_path);
+    const in_sources = self.s.source_dirs.contains(paths.dirname(path)) or
+        (self.whole_root and std.mem.startsWith(u8, path, self.root_path));
+    return in_sources and !project.isIfortInterface(self.io, path);
 }
 
 /// `didOpen`, `didSave` and `didClose` of a document that is not a file

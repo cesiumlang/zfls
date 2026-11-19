@@ -102,6 +102,12 @@ pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumen
     if (self.hierarchical_symbols) return json.from(a, try outline.documentSymbols(a, file, ast, self.s.symbol_skip_mem));
     var out: std.ArrayList(lsp.SymbolInformation) = .empty;
     for (try ast.getScopes(a, null)) |scope| {
+        // a BLOCK DATA unit is a program unit, also without a name
+        if (scope.isBlockData() and scope.parent == null) {
+            const name = if (std.mem.startsWith(u8, scope.name, "#")) "BLOCK DATA" else scope.name;
+            try out.append(a, symbolOf(name, outline.flatKind(C.TypeId.module, false), uri, scope.sline -| 1, scope.eline -| 1, null));
+            continue;
+        }
         if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
         const tree = try str.split(a, scope.fqsn, "::");
         var scope_type: i64 = undefined;
