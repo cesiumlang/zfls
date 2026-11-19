@@ -100,9 +100,4 @@ fn relative(a: Allocator, from: []const u8, to: []const u8) ![]const u8 {
     return rel;
 }
 
-/// Whether `path` is inside directory `dir`
-fn isUnder(path: []const u8, dir: []const u8) bool {
-    if (path.len <= dir.len + 1) return false;
-    if (!paths.eql(path[0..dir.len], dir)) return false;
-    return std.Io.Dir.path.isSep(path[dir.len]);
-}
+const isUnder = paths.isUnder;

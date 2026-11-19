@@ -23,7 +23,8 @@ const diagnostics = @import("diagnostics.zig");
 /// one
 pub fn schedule(self: *Server, a: Allocator, uri: []const u8) void {
     const delay = self.s.diagnostics_change_delay;
-    if (delay < 0 or self.shut_down) return;
+    // a client that pulls them asks when it wants them (pull.zig)
+    if (delay < 0 or self.shut_down or self.pull_diagnostics) return;
     if (delay == 0) return diagnostics.sendDiagnostics(self, a, uri);
     const when = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, delay) * std.time.ns_per_ms;
     put(self, uri, when) catch |e| self.log.err("diagnostics of {s}: {s}", .{ uri, @errorName(e) });

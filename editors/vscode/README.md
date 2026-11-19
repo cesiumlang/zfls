@@ -80,6 +80,8 @@ disable Modern Fortran when you install zfls (see
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
 | `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
+| `zfls.hoverNoTypeComponents` | `false` | Hover on a derived type or a variable of one does not list the type's components and type-bound procedures |
+| `zfls.hoverPlainComments` | `false` | Plain `!` comments above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no `!>`, `!<` or `!!` comment |
 | `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
 | `zfls.autocompleteNameOnly` | `false` | Complete procedure names without their arguments |
@@ -91,7 +93,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.codeLensNoRun` | `false` | No **Run** and **Debug** above a program |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
-| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
+| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change); for other editors only, since VS Code asks zfls for them itself when it wants them |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |
@@ -202,7 +204,7 @@ zfls says so once and checks nothing.
 | `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -J<dir>`, and `-Wall` by default |
 | `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`) |
 | `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
-| `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>` |
+| `lfortran` | `lfortran` | `--semantics-only --continue-compilation --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>`, `--implicit-typing --implicit-interface` unless your options say otherwise or choose a `--std`; the modules a file uses are compiled with `--symtab-only -c -o <dir>/zfls-lint.o`, which writes their `.mod` files |
 | `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
 | `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>` |
 | `Disabled` | | No compiler diagnostics |
