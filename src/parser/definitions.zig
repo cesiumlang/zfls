@@ -661,10 +661,6 @@ pub fn canStart(entry: DefTestEntry, word: []const u8) bool {
     return false;
 }
 
-/// The first definition test that matches the line (`get_fortran_definition`).
-/// Only the tests whose pattern can begin with the line's first word run,
-/// in order; a line without a usable first word runs all of them. Debug builds
-/// also run all of them and check that the result is the same.
 /// A procedure statement after the CUDA Fortran prefix
 /// `attributes(global|device|host|grid_global)`: the rest of the line
 pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
@@ -679,10 +675,67 @@ pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
     return rest;
 }
 
+/// The words of a procedure's prefix that may come before its CUDA
+/// Fortran `attributes(...)`, and the types of a function's result
+const prefix_words = [_][]const u8{
+    "pure",    "impure", "elemental", "recursive",       "non_recursive", "module", "simple",
+    "integer", "real",   "complex",   "logical",         "character",     "double", "precision",
+    "type",    "class",  "byte",      "doubleprecision", "doublecomplex",
+};
+
+/// A procedure statement with the CUDA Fortran prefix `attributes(...)`
+/// after other words of its prefix (`pure attributes(device) function`):
+/// the line with `attributes(...)` blanked, its columns kept
+pub fn withoutCudaAttributes(a: Allocator, line: []const u8) E!?[]const u8 {
+    var i: usize = 0;
+    var words: usize = 0;
+    while (words < 8) : (words += 1) {
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        const start = i;
+        while (i < line.len and (std.ascii.isAlphanumeric(line[i]) or line[i] == '_')) i += 1;
+        const word = line[start..i];
+        if (word.len == 0) return null;
+        if (std.ascii.eqlIgnoreCase(word, "attributes")) {
+            // not the first word: afterCudaAttributes
+            if (words == 0) return null;
+            const rest = afterCudaAttributes(line[start..]) orelse return null;
+            const out = try a.dupe(u8, line);
+            @memset(out[start .. line.len - rest.len], ' ');
+            return out;
+        }
+        for (prefix_words) |w| {
+            if (std.ascii.eqlIgnoreCase(word, w)) break;
+        } else return null;
+        // a kind or length (`integer(c_int)`, `real*8`)
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        if (i < line.len and line[i] == '(') {
+            var depth: usize = 0;
+            while (i < line.len) : (i += 1) {
+                if (line[i] == '(') depth += 1;
+                if (line[i] == ')') {
+                    depth -= 1;
+                    if (depth == 0) break;
+                }
+            } else return null;
+            i += 1;
+        } else if (i < line.len and line[i] == '*') {
+            i += 1;
+            while (i < line.len and (std.ascii.isDigit(line[i]) or line[i] == ' ')) i += 1;
+        }
+    }
+    return null;
+}
+
+/// The first definition test that matches the line (`get_fortran_definition`).
+/// Only the tests whose pattern can begin with the line's first word run,
+/// in order; a line without a usable first word runs all of them. Debug builds
+/// also run all of them and check that the result is the same.
 pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
     // CUDA Fortran kernels and device procedures (`attributes(global)
-    // subroutine k(...)`) are procedures
+    // subroutine k(...)`, `pure attributes(device) function f(...)`) are
+    // procedures
     if (afterCudaAttributes(line)) |rest| return getFortranDefinition(a, rest);
+    if (try withoutCudaAttributes(a, line)) |rest| return getFortranDefinition(a, rest);
     var buf: [32]u8 = undefined;
     const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
     const found = try runDefTests(a, line, word);
@@ -799,4 +852,20 @@ test "the definition tests are chosen by the first word, labels fall back to all
     try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
     try std.testing.expect(firstWord("_x: block", &buf) == null);
     try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
+}
+
+test "CUDA Fortran's attributes after other words of the prefix" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("pure                    function f(x)", (try withoutCudaAttributes(a, "pure attributes(device) function f(x)")).?);
+    try std.testing.expectEqualStrings("  integer(c_int)                    pure function g()", (try withoutCudaAttributes(a, "  integer(c_int) attributes(device) pure function g()")).?);
+    try std.testing.expect((try withoutCudaAttributes(a, "real*8 attributes(host, device) function h()")) != null);
+    // first: afterCudaAttributes; none
+    try std.testing.expect(try withoutCudaAttributes(a, "attributes(device) pure function f(x)") == null);
+    try std.testing.expect(try withoutCudaAttributes(a, "x = attributes(1)") == null);
+    try std.testing.expect(try withoutCudaAttributes(a, "call attributes(device) x") == null);
+    try std.testing.expect(try withoutCudaAttributes(a, "pure function attributes(x)") == null);
+    const d = (try getFortranDefinition(a, "pure attributes(device) subroutine s(a)")).?;
+    try std.testing.expect(d == .sub);
 }
