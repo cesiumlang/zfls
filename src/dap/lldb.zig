@@ -25,6 +25,7 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
 const fortran = @import("fortran.zig");
+const runtime_errors = @import("runtime_errors.zig");
 const Value = json.Value;
 
 const session = @import("session.zig");
@@ -192,9 +193,14 @@ pub fn syncErrors(s: *Session, a: Allocator) !void {
     if (ids.items.len > 0) _ = try run(s, a, try a.print("breakpoint delete{s}", .{ids.items}));
     s.g.error_breakpoints.clearRetainingCapacity();
     if (!s.g.runtime_errors) return;
-    for (fortran.runtime_error_functions) |name| {
-        const id = try run(s, a, try a.print("breakpoint set --name {s}", .{name})) orelse continue;
-        try s.g.error_breakpoints.put(s.gpa, id, name);
+    for (runtime_errors.gdb_breakpoints) |b| {
+        // Flang's STOP functions: only at ERROR STOP
+        const command = if (b.condition) |c|
+            try a.print("breakpoint set --name {s} --condition '{s}'", .{ b.name, c })
+        else
+            try a.print("breakpoint set --name {s}", .{b.name});
+        const id = try run(s, a, command) orelse continue;
+        try s.g.error_breakpoints.put(s.gpa, id, b.name);
     }
 }
 
