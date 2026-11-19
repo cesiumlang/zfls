@@ -42,6 +42,7 @@ const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const pending = @import("server/pending.zig");
+const pull = @import("server/pull.zig");
 const format = @import("server/format.zig");
 const linters = @import("server/linters.zig");
 const bindc = @import("server/bindc.zig");
@@ -110,6 +111,9 @@ pub const Server = struct {
     /// Every directory under the root is a source directory (no
     /// `source_dirs` option), so new ones are too
     whole_root: bool = false,
+    /// The Fortran files of the compilation database outside the root,
+    /// indexed with the source directories' (#267)
+    outside_sources: std.ArrayList([]const u8) = .empty,
     /// The commands of code lenses that the client runs (lenses.zig)
     lens_commands: lenses.Commands = .{},
     post_messages: std.ArrayList(PostMessage) = .empty,
@@ -136,6 +140,14 @@ pub const Server = struct {
     /// The client asked for `shutdown`: no diagnostics of a change wait
     /// or are computed until `exit` (pending.zig; the server's thread)
     shut_down: bool = false,
+    /// The client pulls zfls's diagnostics (pull.zig), of the workspace
+    /// too when `pull_workspace`
+    pull_diagnostics: bool = false,
+    pull_workspace: bool = false,
+    /// Counts the changes that diagnostics depend on, and the last report
+    /// pulled of each file, by path (keys owned by `gpa`)
+    diag_generation: u64 = 0,
+    pull_results: std.StringHashMapUnmanaged(pull.Result) = .empty,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
     /// The command of each Fortran file in compile_commands.json, for the
@@ -199,6 +211,7 @@ pub const Server = struct {
         linters.stop(self);
         compile.deinitStore(self);
         pending.deinit(self);
+        pull.deinit(self);
         clangd.stop(self);
         bindc.deinitIndex(self);
         var c_it = self.c_docs.iterator();
@@ -420,6 +433,8 @@ pub const Server = struct {
         did_close,
         did_change,
         code_action,
+        document_diagnostic,
+        workspace_diagnostic,
         did_change_configuration,
         workspace_symbol,
         watched_files,
@@ -477,6 +492,8 @@ pub const Server = struct {
         .{ "textDocument/didClose", .did_close },
         .{ "textDocument/didChange", .did_change },
         .{ "textDocument/codeAction", .code_action },
+        .{ "textDocument/diagnostic", .document_diagnostic },
+        .{ "workspace/diagnostic", .workspace_diagnostic },
         .{ "workspace/symbol", .workspace_symbol },
         .{ "initialized", .initialized },
         .{ "workspace/didChangeWatchedFiles", .watched_files },
@@ -541,6 +558,8 @@ pub const Server = struct {
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
             .did_change => workspace.serveOnChange(self, a, try json.decode(lsp.DidChangeParams, a, params)),
             .code_action => if (configuration.withdrawn(self, .code_actions)) .null else diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
+            .document_diagnostic => pull.serveDocument(self, a, try json.decode(lsp.DocumentDiagnosticParams, a, params)),
+            .workspace_diagnostic => pull.serveWorkspace(self, a, try json.decode(lsp.WorkspaceDiagnosticParams, a, params)),
             .workspace_symbol => symbols.serveWorkspaceSymbol(self, a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
             .watched_files => workspace.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
             .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),

@@ -80,7 +80,9 @@ command line options and configuration files.
   the language `FortranNamelist`): an outline of their groups and the
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
-  macros, `#include`)
+  macros, `#include`); go to definition of a macro goes to the `#define`
+  in effect at the use, in the file or a header, and references and
+  highlights list its uses and the directives that name it
 - Documentation for intrinsic procedures (with the specific names, such as
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
@@ -373,7 +375,11 @@ build files say:
   file, or directory, that the `compile_commands` option names; `""` or
   `disable_compile_commands` for none, as in fortls's pending PR #504): the
   `-I`, `-isystem` and `-D` flags (`/I` and `/D` too) of its Fortran entries.
-  Definitions apply to every file, the first value of a name winning.
+  Definitions apply to every file, the first value of a name winning. The
+  Fortran files it compiles outside the root (a sibling library, a fetched
+  dependency) are indexed too, those that `excl_paths` and `excl_suffixes`
+  leave in; the ones under the root are left to the scan of the source
+  directories.
 - `fpm.toml` in the root: the `include-dir` of `[library]` (`include` by
   default, when it exists) and the `macros` of `[preprocess.cpp]`.
 
@@ -563,6 +569,18 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
   Other open documents that use a changed module follow when it is saved.
   A result of the compiler or a linter for a changed text is published
   with zfls's diagnostics of that text, not before them.
+- A client that pulls diagnostics (its `textDocument.diagnostic`
+  capability, as VS Code's has) asks for zfls's own when it shows a
+  document (`textDocument/diagnostic`), and with `workspace_diagnostics`
+  for every file (`workspace/diagnostic`); zfls then publishes none of
+  them, and `diagnostics_change_delay` does not apply. A report the client
+  already has comes back `unchanged`, computed again only after a change in
+  the workspace; `interFileDependencies` tells the client that a change of
+  a module changes the reports of the files that use it. The compiler's and
+  the linters' diagnostics, which come later from their threads, are still
+  published. After a change of the settings zfls asks the client to pull
+  again (`workspace/diagnostic/refresh`). Turning `workspace_diagnostics`
+  on for such a client takes a restart.
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
   the severities are `off`, `error`, `warning`, `information` and `hint`.
@@ -917,6 +935,12 @@ zfls deliberately differs from fortls in a few places:
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own
   signature (hansec #60); fortls shows none there.
+- In a structure constructor (`pt(1, 2)`), signature help shows the
+  type's data components, its parent's first, and with them the
+  procedures of a generic interface named like the type (hansec #148);
+  keyword completion offers both. A component with a default value is
+  optional, and outside the type's module a type with a private component
+  has no constructor signature. fortls shows none.
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.
@@ -937,9 +961,10 @@ zfls deliberately differs from fortls in a few places:
   when it declares nothing else, otherwise the name with its dimensions and
   initialization (continuation lines included). The source action "Remove
   all unused declarations" removes all of a file's. A name counts
-  as used when it appears anywhere else in the scope, contained procedures
-  and inactive preprocessor branches included; dummy arguments, function
-  results and module names are not reported. fortls has no such check.
+  as used when it appears anywhere else in the scope, contained procedures,
+  inactive preprocessor branches and the values of the macros used there
+  included; dummy arguments, function results and module names are not
+  reported. fortls has no such check.
 - Diagnostics follow the text while a document is edited, after
   `diagnostics_change_delay` milliseconds without a change (see
   [Diagnostics](#diagnostics)); fortls publishes them when a document is
@@ -951,7 +976,9 @@ zfls deliberately differs from fortls in a few places:
   deleted file's are cleared. fortls only checks open files.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
-  fortls only checks the types named in declarations. It is left out where
+  fortls only checks the types named in declarations. A line with macros is
+  read with them expanded, as the compiler reads it, and a name is reported
+  where it is written (`CHECK(nope)`). It is left out where
   a USE statement names a module that is not in the workspace, or in a
   scope with an INCLUDE whose file is not found or that continues a
   statement, as the name could come from those.
@@ -966,6 +993,14 @@ zfls deliberately differs from fortls in a few places:
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- Go to definition of a preprocessor macro goes to its `#define` (the one
+  in effect at the use, also in a header an `#include` reads), and null for
+  a macro of `pp_defs` or `-D`; references and document highlights list
+  the macro as a word of the file's code (outside strings and comments)
+  and of its directives, and for a header's macro of the header and the
+  workspace files that include it; hover and definition work on the names
+  of `#ifdef`, `#ifndef`, `#if defined(...)` and `#undef` lines (hansec
+  #115). fortls answers the use itself and lists only it.
 - OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
   Fortran #17); fortls reads them as comments, so its references and
   rename leave them out. `disable_openmp_conditional` reads them as fortls
@@ -1126,6 +1161,9 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- The Fortran files that `compile_commands.json` compiles outside the
+  workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
+  source directories only.
 - `.f23`, `.ftn`, `.pf` and `.fypp` files are indexed by default, besides
   fortls's extensions (FL #299, FL #521).
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
@@ -1270,9 +1308,30 @@ zfls deliberately differs from fortls in a few places:
   interface. Go to declaration (`textDocument/declaration`, which fortls
   does not answer) always goes to the interface, also from the body; for
   other names it is go to definition.
+- In a function without `RESULT`, the function's name and its result
+  variable are one name for references, document highlights and rename,
+  started from either (fortls #322); fortls keeps them apart, and its
+  rename from inside the body leaves the function statement and the calls
+  with the old name. With `RESULT(r)`, `r` stays separate.
 - With the `lowercase_hover` option, the keywords of hover are in lowercase
   (`real, intent(in) :: x`), names and strings as written (fortls #28);
   fortls's are always uppercase.
+- Hover on a derived type, or on a variable of one, shows the type as it
+  is written: `TYPE, EXTENDS(base) :: name`, its own components, its
+  type-bound procedures and generics after `CONTAINS` (hansec #147).
+  Outside the type's module its private components and bindings are left
+  out, and after 20 lines the block ends with `...`. The
+  `hover_no_type_components` option (`zfls.hoverNoTypeComponents`) turns
+  it off. fortls shows only `TYPE :: name` and the variable's declaration.
+- With the `hover_plain_comments` option (`zfls.hoverPlainComments`),
+  plain `!` comments document a declaration that has no `!>`, `!<` or `!!`
+  documentation, as legacy code (LAPACK and the like) is documented: the
+  block of comment lines directly above a procedure, type, module or
+  variable (`C` and `*` lines in fixed form), a comment at the end of its
+  line, and a block right under a procedure's header line. A blank line
+  between, directives (`!$omp`, `!dir$`) and rulers (`!-----`) are no
+  documentation. Hover, completion and signature help show it (hansec #44,
+  #37); fortls reads only `!>`, `!<` and `!!` comments.
 - A rename without `ONLY` (`use m, local => original`) is read: the local
   name is the module's entity and the original name is not visible under
   that name. On the USE line, hover, definition and references on either
@@ -1319,6 +1378,9 @@ zfls deliberately differs from fortls in a few places:
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
   indented 5) for fixed form. Other files are still told by their text.
+- A form feed (a page break of old sources) is read as a blank, as compilers
+  read it; fortls drops the statement of a line that starts with one
+  (fortls #443).
 - The enumerators of an ENUM are named integer constants of the scope around
   it, with hover, definition and completion, PUBLIC or PRIVATE by name;
   fortls does not read them.

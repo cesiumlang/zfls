@@ -829,16 +829,23 @@ pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
 pub fn publishWorkspace(self: *Server, a: Allocator) void {
     if (self.s.disable_diagnostics) return;
     for (self.workspace.values()) |f| {
-        if (f.ast == null) continue;
-        // an included file is a part of others', and diagnosed as a
-        // document only when it is open
-        if (f.included and !self.open_docs.contains(f.path)) continue;
+        if (!publishedInWorkspace(self, f)) continue;
         const uri = paths.pathToUri(a, f.path) catch continue;
         sendDiagnostics(self, a, uri);
     }
 }
 
+/// Whether a file has diagnostics of its own with `workspace_diagnostics`:
+/// a parsed one, but an included file (a part of others') only when it is
+/// open
+pub fn publishedInWorkspace(self: *const Server, f: *const FortranFile) bool {
+    if (f.ast == null) return false;
+    return !f.included or self.open_docs.contains(f.path);
+}
+
 pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
+    // the client asks for them (pull.zig)
+    if (self.pull_diagnostics) return;
     const res = diagnosticsOf(self, a, uri) catch |e| {
         self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
         return;

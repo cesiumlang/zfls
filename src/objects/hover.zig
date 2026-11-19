@@ -156,6 +156,79 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
     }
 }
 
+/// The lines inside a type's block that `getTypeBlock` shows at most
+pub const type_block_lines = 20;
+
+/// Derived type `self` as it would be written (#268): its header, its own
+/// components (those it inherits are not repeated), then after CONTAINS
+/// its type-bound procedures and generics, and END TYPE. Components
+/// declared together stay together (`REAL :: x, y`). Private components
+/// and bindings are left out unless `private`. After `type_block_lines`
+/// lines inside, the block ends with `...`.
+pub fn getTypeBlock(self: *const Obj, a: Allocator, private: bool) ![]const u8 {
+    var comps: std.ArrayList([]const u8) = .empty;
+    var binds: std.ArrayList([]const u8) = .empty;
+    // the type and line of the last component, to join the next to it
+    var last_prefix: []const u8 = "";
+    var last_line: usize = 0;
+    for (self.childList()) |child| {
+        const hidden = child.vis == .private or (self.def_vis == .private and child.vis != .public);
+        if (hidden and !private) continue;
+        switch (child.kind) {
+            .variable => {
+                const msg = (try child.getHover(a, false, null)).msg orelse continue;
+                const suffix = try a.print(" :: {s}", .{child.name});
+                const prefix = if (std.mem.endsWith(u8, msg, suffix)) msg[0 .. msg.len - suffix.len] else null;
+                if (prefix) |p| if (comps.items.len > 0 and child.sline == last_line and std.mem.eql(u8, p, last_prefix)) {
+                    const i = comps.items.len - 1;
+                    comps.items[i] = try a.print("{s}, {s}", .{ comps.items[i], child.name });
+                    continue;
+                };
+                try comps.append(a, try a.print("  {s}", .{msg}));
+                last_prefix = prefix orelse "";
+                last_line = child.sline;
+            },
+            .method => {
+                var parts: std.ArrayList([]const u8) = .empty;
+                try parts.append(a, try child.getDescNoLink(a));
+                try parts.appendSlice(a, try helpers.getKeywords(a, child.keywords.items, child.keyword_info.*));
+                var line = try a.print("  {s} :: {s}", .{ try std.mem.join(a, ", ", parts.items), child.name });
+                if (child.varDataConst().link_name) |target| if (!std.ascii.eqlIgnoreCase(target, child.name)) {
+                    line = try a.print("{s} => {s}", .{ line, target });
+                };
+                try binds.append(a, line);
+            },
+            .interface => {
+                const members = child.scopeDataConst().members.items;
+                if (members.len == 0) continue;
+                const vis: []const u8 = switch (child.vis) {
+                    .private => ", PRIVATE",
+                    .public => ", PUBLIC",
+                    .default => "",
+                };
+                try binds.append(a, try a.print("  GENERIC{s} :: {s} => {s}", .{ vis, child.name, try std.mem.join(a, ", ", members) }));
+            },
+            else => {},
+        }
+    }
+    var lines: std.ArrayList([]const u8) = .empty;
+    try lines.append(a, (try self.getHover(a, false, null)).msg orelse self.name);
+    var inner: std.ArrayList([]const u8) = .empty;
+    try inner.appendSlice(a, comps.items);
+    if (binds.items.len > 0) {
+        try inner.append(a, "CONTAINS");
+        try inner.appendSlice(a, binds.items);
+    }
+    if (inner.items.len > type_block_lines) {
+        try lines.appendSlice(a, inner.items[0..type_block_lines]);
+        try lines.append(a, "  ...");
+    } else {
+        try lines.appendSlice(a, inner.items);
+        try lines.append(a, "END TYPE");
+    }
+    return std.mem.join(a, "\n", lines.items);
+}
+
 pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) ![]const u8 {
     const h = try self.getHover(a, long, drop_arg);
     return helpers.fortranMd(a, h.msg, h.docs);

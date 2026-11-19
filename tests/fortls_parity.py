@@ -319,7 +319,12 @@ def main() -> int:
         import subprocess
         from io import StringIO
 
-        command = [zfls, "--incremental_sync", "--disable_index_cache"]
+        # hover on a derived type lists its components (#268); fortls's
+        # tests expect its declaration alone
+        command = [
+            zfls, "--incremental_sync", "--disable_index_cache",
+            "--hover_no_type_components",
+        ]
         if fortls_args:
             for i in fortls_args:
                 command.extend(shlex.split(i, posix=False))
