@@ -19,6 +19,7 @@ pub const objects = @import("objects.zig");
 pub const parser = @import("parser.zig");
 pub const parser_openmp = @import("parser/openmp.zig");
 pub const preprocessor = @import("preprocessor.zig");
+pub const preprocessor_intel = @import("preprocessor/intel.zig");
 pub const json = @import("json.zig");
 pub const json5 = @import("json5.zig");
 pub const intrinsics = @import("intrinsics.zig");

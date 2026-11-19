@@ -549,6 +549,11 @@
       "type": "boolean",
       "default": false
     },
+    "disable_intel_directives": {
+      "description": "Read Intel's conditional compilation directives (!DEC$ IF DEFINED (X), !DIR$ IF (expr), ELSEIF, ELSE, ENDIF, DEFINE, UNDEFINE) as comments; by default the branches they leave out are skipped, in every Fortran file",
+      "type": "boolean",
+      "default": false
+    },
     "debug_log": {
       "description": "Generate debug log in project root folder",
       "type": "boolean",

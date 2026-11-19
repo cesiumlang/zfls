@@ -553,6 +553,12 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.ppDefs.markdownDescription%"
         },
+        "zfls.disableIntelDirectives": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableIntelDirectives.markdownDescription%"
+        },
         "zfls.arguments": {
           "type": "array",
           "items": {

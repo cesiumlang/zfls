@@ -37,6 +37,7 @@
   "config.zfls.excludeSuffixes.markdownDescription": "File extensions not to index (`--excl_suffixes`).",
   "config.zfls.ppSuffixes.markdownDescription": "File extensions to run the preprocessor on (`--pp_suffixes`; default: upper-case extensions such as `.F90`).",
   "config.zfls.ppDefs.markdownDescription": "Preprocessor definitions, name to value (`--pp_defs`).",
+  "config.zfls.disableIntelDirectives.markdownDescription": "Read Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`, `!DIR$ IF (expr)`, `ELSEIF`, `ELSE`, `ENDIF`, `DEFINE`, `UNDEFINE`) as comments, every branch included (`--disable_intel_directives`). By default zfls skips the branches they leave out, as it does those of `#if`, in every Fortran file.",
   "config.zfls.arguments.markdownDescription": "Extra command-line options for `zfls`, after those of the settings above; zfls accepts the same options as fortls (run `zfls --help`). Settings in a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace also apply.",
   "config.zfls.disableModernFortranCheck.markdownDescription": "Do not recommend disabling the extensions that zfls replaces (Modern Fortran, FORTRAN IntelliSense, Fortran Breakpoint Support) when they are enabled.",
   "config.zfls.trace.server.markdownDescription": "Log the messages between VS Code and zfls in the `zfls` output channel.",
