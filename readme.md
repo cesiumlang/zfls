@@ -585,17 +585,25 @@ warnings with its own diagnostics of the file, labelled with the compiler's
 name. This works in every editor, not only VS Code.
 
 The compiler runs on a thread of its own, in syntax-only mode, one file at a
-time (a newer save of a file replaces a run that has not started). First it
+time (a newer save of a file replaces a run that has not started), with
+every error (LFortran, which stops at the first one by default, with
+`--continue-compilation`). First it
 compiles the workspace modules that the file uses, and those they use,
 whose `.mod` files are missing or older than their sources, in compile order
-from zfls's module graph; saving a file that defines modules checks again
-the open files that use them.
+from zfls's module graph (LFortran, whose syntax-only mode writes no
+`.mod` file, compiles their symbol tables: `--symtab-only -c`, with the
+object file in the `.mod` directory); saving a file that defines modules
+checks again the open files that use them.
 
 zfls reads the compiler's messages in English, so it runs the compiler (and
 fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a
 compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
-says so once and logs that output.
+says so once and logs that output. A message without a file and line (a bad
+option, a file the compiler cannot open) is published at the top of the
+file; for LFortran that is every line of its output that is not
+`file:lines:columns: severity: message`, such as an internal error and its
+traceback.
 
 A compiler run that takes longer than 120 seconds is stopped, with the
 processes it started (a driver's compiler proper, such as gfortran's
@@ -625,7 +633,11 @@ elsewhere, which is also stopped when the server shuts down during a run.
   nvfortran and `-132` for nagfor with 132), and free-form lines without a
   limit (`-ffree-line-length-none` for gfortran, whose default is 132
   columns before GCC 16); a line-length option in `compiler_args` replaces
-  zfls's of that form. On the command line it is one
+  zfls's of that form. For LFortran, whose own dialect (its default
+  `--std=lf`) rejects implicit typing and implicit interfaces, zfls passes
+  `--implicit-typing --implicit-interface`, each unless `compiler_args` (or
+  the project's command) has an option about it, and neither with a
+  `--std`. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
@@ -785,6 +797,7 @@ is and zfls shows the error once (`window/showMessage`).
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
+| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
@@ -803,6 +816,10 @@ default or `-Dfortls=PATH` (the stress test takes its test sources, else
 own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
 required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+The compiler check's test (and `tests/issues/compiler_lfortran.zig`) needs
+`lfortran` on the `PATH` (`--lfortran EXE` or `LFORTRAN` for the driver),
+from conda-forge (`pixi add lfortran`, `conda install -c conda-forge
+lfortran`), and is skipped without it; CI runs it on Linux x64.
 
 `zig build bench` times zfls on a large workspace (workspace
 initialization, request latency, edits, memory), and fortls too when
