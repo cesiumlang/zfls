@@ -64,10 +64,14 @@
           ".F95",
           ".f03",
           ".F03",
+          ".f05",
+          ".F05",
           ".f08",
           ".F08",
           ".f18",
           ".F18",
+          ".f23",
+          ".F23",
           ".fpp",
           ".FPP",
           ".cuf",
@@ -94,7 +98,9 @@
           ".f77",
           ".F77",
           ".for",
-          ".FOR"
+          ".FOR",
+          ".ftn",
+          ".FTN"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
@@ -303,6 +309,18 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.symbolSkipMembers.markdownDescription%"
         },
+        "zfls.codeLensNoReferences": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.codeLensNoReferences.markdownDescription%"
+        },
+        "zfls.codeLensNoRun": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.codeLensNoRun.markdownDescription%"
+        },
         "zfls.disableDiagnostics": {
           "type": "boolean",
           "default": false,
@@ -314,6 +332,13 @@
           "default": false,
           "scope": "resource",
           "markdownDescription": "%config.zfls.workspaceDiagnostics.markdownDescription%"
+        },
+        "zfls.diagnosticsChangeDelay": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.diagnosticsChangeDelay.markdownDescription%"
         },
         "zfls.diagnosticSeverity": {
           "type": "object",
@@ -341,7 +366,8 @@
               "circular-use",
               "argument-mismatch",
               "argument-kind",
-              "intent-in-assigned"
+              "intent-in-assigned",
+              "include-not-found"
             ]
           },
           "additionalProperties": {
@@ -1098,6 +1124,11 @@
     ],
     "configurationDefaults": {
       "[FortranFixedForm]": {
+        "editor.rulers": [
+          5,
+          6,
+          72
+        ],
         "editor.semanticHighlighting.enabled": true,
         "editor.autoIndentOnPaste": false,
         "editor.formatOnType": true
@@ -1436,6 +1467,8 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
   }
 }

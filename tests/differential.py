@@ -272,6 +272,30 @@ def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
     return False
 
 
+def in_constructor_or_group(lines: list, line: int, char: int) -> bool:
+    """Whether the innermost bracket open before the position is an array
+    constructor (`[`, `(/`) or a parenthesis that follows no name (an
+    implied DO, an expression in parentheses), where zfls's signature help
+    looks for the call outside it (hansec #60) and fortls answers null."""
+    if not (0 <= line < len(lines)):
+        return False
+    text = lines[line][:char]
+    depth = 0
+    for i in range(len(text) - 1, -1, -1):
+        c = text[i]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth > 0:
+                depth -= 1
+                continue
+            if c == "[" or text[i + 1 :].lstrip().startswith("/"):
+                return True
+            before = text[:i].rstrip()
+            return not before or not (before[-1].isalnum() or before[-1] in "_)]>")
+    return False
+
+
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
     (hansec #133), a name of a module not used yet that adds the USE
@@ -288,6 +312,12 @@ def zfls_only_item(item) -> bool:
     return str(item.get("label", "")).endswith("=") and "filterText" in item
 
 
+def two_forms_item(item) -> bool:
+    """A completion item of an intrinsic whose table entry has two
+    argument lists (`THIS_IMAGE`)."""
+    return isinstance(item, dict) and str(item.get("label", "")).upper() in ("THIS_IMAGE", "TOKENIZE")
+
+
 def normalize(v):
     """Drop details that legitimately differ between the servers."""
     if isinstance(v, dict):
@@ -299,8 +329,9 @@ def normalize(v):
         }
     if isinstance(v, list):
         # names not declared under IMPLICIT NONE (hansec #129): zfls only
-        # and unused names: zfls only
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned"))]
+        # and unused names: zfls only; so is the diagnostic on an #include
+        # whose file is not found (#282)
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "include-not-found"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
@@ -356,6 +387,18 @@ def on_include_directive(path: Path, position) -> bool:
     return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
 
 
+INCLUDE_LINE = re.compile(r"\s*(?:#\s*include|include)\s*[\"'<]", re.I)
+
+
+def on_include_line(path: Path, position) -> bool:
+    """Whether the position is on an `#include` or INCLUDE line of the file."""
+    if not position:
+        return False
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line = position.get("line", -1)
+    return 0 <= line < len(lines) and bool(INCLUDE_LINE.match(lines[line]))
+
+
 ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
 
 
@@ -368,6 +411,51 @@ def associate_names(source: str) -> set:
 PP_IF = re.compile(r"\s*#\s*if", re.I)
 PP_ENDIF = re.compile(r"\s*#\s*endif", re.I)
 CONT_ATTRIBUTE = re.compile(r"\s*,\s*(\w+)", re.I)
+
+
+ENTITY_LENGTH = re.compile(
+    r"^\s*(?:character|real|integer|logical|complex)\b.*?[a-z_]\w*\s*"
+    r"(?:\((?:[^()]|\([^()]*\))*\))?\s*\*\s*[\d(]",
+    re.I | re.M,
+)
+TYPE_PARAMS = re.compile(
+    r"\b(CHARACTER|REAL|INTEGER|LOGICAL|COMPLEX)"
+    r"(?:\s*\*\s*(?:\d+|\((?:[^()]|\([^()]*\))*\))|\((?:[^()]|\([^()]*\))*\))+",
+    re.I,
+)
+SEMICOLON_STRINGS = re.compile(r"^[^!\n]*(?:;[^!\n]*['\"]|['\"][^!\n]*;)", re.M)
+PARAM_STRINGS = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([^\n]*)")
+STRING_LITERAL = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'")
+
+
+def ignore_type_params(v):
+    """An entity's own length replaces that of its declaration in zfls
+    (`character*10 b*(len(a))` has the length len(a), #237); fortls puts
+    both. Compare types without their kind and length."""
+    if isinstance(v, dict):
+        return {k: ignore_type_params(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_type_params(x) for x in v]
+    if isinstance(v, str):
+        return TYPE_PARAMS.sub(r"\1", v)
+    return v
+
+
+def ignore_param_strings(v):
+    """fortls shows the strings of a parameter declared on a line with `;`
+    blanked, zfls as they are (#237). Compare such values without the text
+    of their strings and without blanks. (A string continued by a doubled
+    quote, `"a;""b"`, is one literal in zfls and two in fortls, which pairs
+    the `"` from the left (#231): both read as two literals here.)"""
+    if isinstance(v, dict):
+        return {k: ignore_param_strings(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_param_strings(x) for x in v]
+    if isinstance(v, str):
+        return PARAM_STRINGS.sub(
+            lambda m: m.group(1) + STRING_LITERAL.sub('""', m.group(2)).replace(" ", ""), v
+        )
+    return v
 
 
 def conditional_attributes(source: str) -> set:
@@ -414,6 +502,62 @@ def ignore_slice_dimensions(v, names: set):
             return m.group(0) if m.group(3).lower() not in names else m.group(2) + m.group(3)
 
         return re.sub(r"(, )?DIMENSION\([^)\n]*\)( :: )(\w+)", repl, v)
+    return v
+
+
+ASSOC_STMT = re.compile(r"^\s*(?:\w+\s*:\s*)?associate\s*\((.*)$", re.I | re.M)
+ASSOC_NAME = re.compile(r"(\w+)\s*=>")
+
+
+def associate_bound(source: str) -> set:
+    """Lowercase names that ASSOCIATE statements of a source file bind."""
+    out = set()
+    for m in ASSOC_STMT.finditer(source):
+        out |= {n.lower() for n in ASSOC_NAME.findall(m.group(1))}
+    return out
+
+
+def untyped_by_fortls(v, names: set) -> set:
+    """The names of `names` that fortls's answer `v` gives the type UNKNOWN
+    (in a hover, or as the detail of a completion item)."""
+    found = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            label = x.get("label")
+            if isinstance(label, str) and label.lower() in names and x.get("detail") == "UNKNOWN":
+                found.add(label.lower())
+            for y in x.values():
+                walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                walk(y)
+        elif isinstance(x, str):
+            for m in re.finditer(r"UNKNOWN :: (\w+)", x):
+                if m.group(1).lower() in names:
+                    found.add(m.group(1).lower())
+
+    walk(v)
+    return found
+
+
+def forget_associate_types(v, names: set):
+    """fortls gives an ASSOCIATE name bound to a literal or an expression, or
+    spelled like the variable of its selector, the type UNKNOWN; zfls the
+    type of the selector (#230). Compare the types of such names as equal."""
+    if isinstance(v, dict):
+        label = v.get("label")
+        out = {k: forget_associate_types(x, names) for k, x in v.items()}
+        if isinstance(label, str) and label.lower() in names and "detail" in v:
+            out["detail"] = "UNKNOWN"
+        return out
+    if isinstance(v, list):
+        return [forget_associate_types(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return f"UNKNOWN :: {m.group(1)}" if m.group(1).lower() in names else m.group(0)
+
+        return re.sub(r"^[^\n]*? :: (\w+)$", repl, v, flags=re.M)
     return v
 
 
@@ -581,6 +725,43 @@ def separate_procedure_refs(a, b) -> bool:
     return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
 
 
+USE_RENAME = re.compile(r"^\s*use\b.*=>", re.I)
+
+
+def use_alias_refs(a, b) -> bool:
+    """zfls's references to an entity that USE statements rename also list
+    its places under the local names (zfls #233); fortls lists those of
+    one name only: whether `b` is `a` plus places of names that a USE
+    rename (`local => name`) among the places' files has on either side.
+    fortls may have none: for an intrinsic module's entity, say."""
+    if a is None:
+        a = []
+    if not (isinstance(a, list) and isinstance(b, list)):
+        return False
+    ka = {ref_key(r) for r in a}
+    kb = {ref_key(r) for r in b}
+    if not ka < kb:
+        return False
+    renames = set()
+    for u in {u for u, _, _ in kb}:
+        path = unquote(u.removeprefix("file://"))
+        if os.name == "nt":
+            path = path.lstrip("/")
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for t in text.splitlines():
+            if USE_RENAME.match(t):
+                for m in re.finditer(r"(\w+)\s*=>\s*(\w+)", t):
+                    renames.update(x.lower() for x in m.groups())
+    for u, ln, ch in kb - ka:
+        m = re.match(r"\w+", uri_line(u, ln)[ch:])
+        if not m or m.group(0).lower() not in renames:
+            return False
+    return True
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fortls", default=str(REPO.parent / "fortls"))
@@ -595,6 +776,35 @@ def parse_args():
     ap.add_argument("--requests", default=ALL_KINDS)
     ap.add_argument("--args", default="", help="extra server arguments")
     return ap.parse_args()
+
+
+def declared_word(lines: list, line: int, char: int):
+    """The name (lowercase) that ends at the position when it is in the
+    entity list of a declaration (after `::`, or in the old form after the
+    type), not an initialization, else None."""
+    if not (0 <= line < len(lines)):
+        return None
+    code = lines[line].split("!")[0][:char]
+    if "::" not in code and not DECL_START.match(code):
+        return None
+    depth = 0
+    for c in reversed(code.split("::")[-1]):
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            depth -= 1
+        elif depth == 0 and c == ",":
+            break
+        elif depth == 0 and c == "=":
+            return None
+    m = re.search(r"[A-Za-z_][A-Za-z0-9_]*$", code)
+    return m.group(0).lower() if m else None
+
+
+DECL_START = re.compile(
+    r"\s*(integer|real|complex|logical|character|double(\s*)precision|double(\s*)complex|external|type(\s*)\(|class(\s*)\(|procedure(\s*)\().*[\s,)*]\w*$",
+    re.I,
+)
 
 
 def main() -> int:
@@ -639,17 +849,29 @@ def main() -> int:
                     diffs.append((method, None, a, b))
         source = path.read_text(encoding="utf-8", errors="replace")
         assoc = associate_names(source)
+        bound = associate_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
+        entity_lengths = bool(ENTITY_LENGTH.search(source))
+        semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
             if cond_attrs and kind in ("hover", "completion"):
                 a = ignore_conditional_attributes(a, cond_attrs)
                 b = ignore_conditional_attributes(b, cond_attrs)
+            if entity_lengths and kind in ("hover", "completion"):
+                a, b = ignore_type_params(a), ignore_type_params(b)
+            if semicolon_strings and kind in ("hover", "completion"):
+                a, b = ignore_param_strings(a), ignore_param_strings(b)
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
+            if bound and kind in ("hover", "completion"):
+                untyped = untyped_by_fortls(a, bound)
+                if untyped:
+                    a = forget_associate_types(a, untyped)
+                    b = forget_associate_types(b, untyped)
             total += 1
             if kind == "references":
                 # cross-file order follows workspace iteration order
@@ -661,10 +883,25 @@ def main() -> int:
                 # (hansec #62); fortls does not
                 b = [x for x in b if not zfls_only_item(x)]
             if kind == "completion":
+                # an intrinsic with two forms completes to one of them
+                # (#245); fortls's snippet mixes them
+                a = [x for x in a if not two_forms_item(x)] if isinstance(a, list) else a
+                b = [x for x in b if not two_forms_item(x)] if isinstance(b, list) else b
+            if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway
                 if isinstance(a, list) and isinstance(b, list):
                     a, b = sorted(a, key=json.dumps), sorted(b, key=json.dumps)
+            if kind == "completion":
+                # in the entity list of a declaration zfls offers the dummy
+                # arguments not declared yet, and not the name being
+                # declared (#270)
+                p = params.get("position") or {}
+                word = declared_word(src_lines, p.get("line", -1), p.get("character", 0))
+                if word and isinstance(a, list):
+                    a = [x for x in a if str(x.get("label", "")).lower() != word]
+                if isinstance(b, list):
+                    b = [x for x in b if x.get("detail") != "argument not declared" and (not word or str(x.get("label", "")).lower() != word)]
             if is_error(a):
                 # fortls crashed (Python exception): no reference behavior
                 crashes += 1
@@ -677,6 +914,11 @@ def main() -> int:
             ):
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
+                continue
+            if kind == "hover" and on_include_line(path, params.get("position")):
+                # hover on an included file's name shows that file, nothing
+                # when it is not found (#240); fortls has no answer or one
+                # for a character literal
                 continue
             pos = params.get("position") or {}
             if (
@@ -731,6 +973,15 @@ def main() -> int:
                 # the intrinsics fortls's table lacks: specific names
                 # (`DSQRT`) and newer generic ones (`REDUCE`)
                 continue
+            if (
+                kind == "signature"
+                and a is None
+                and isinstance(b, dict)
+                and in_constructor_or_group(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside an array constructor or parentheses, the call
+                # around them (hansec #60); fortls answers null
+                continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
                 # procedure (fortls #6); fortls has none
@@ -744,6 +995,10 @@ def main() -> int:
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
                 # interface and implementation (hansec issue 168)
+                continue
+            if kind == "references" and use_alias_refs(a, b):
+                # references follow names that USE statements rename
+                # (zfls #233)
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with

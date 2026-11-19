@@ -25,6 +25,10 @@ pub const Kw = enum(u8) {
     abstract,
     external,
     codimension,
+    @"volatile",
+    asynchronous,
+    protected,
+    value,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {
@@ -102,6 +106,7 @@ pub const DiagCode = enum {
     argument_mismatch,
     argument_kind,
     intent_in_assigned,
+    include_not_found,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

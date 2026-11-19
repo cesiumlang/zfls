@@ -34,6 +34,8 @@ test("compiler kinds", () => {
   assert.equal(compilerKind("flang-new", "win32").msvc, true);
   assert.equal(compilerKind("flang", "darwin").msvc, false);
   assert.deepEqual(compilerKind("lfortran", "linux").defaultArgs, ["-g"]);
+  // LFortran for Windows refuses -g
+  assert.deepEqual(compilerKind("lfortran", "win32").defaultArgs, []);
 });
 
 test("build arguments, GNU style", () => {
