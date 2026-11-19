@@ -19,6 +19,7 @@ const implicit = @import("../implicit.zig");
 const selection = @import("../selection.zig");
 const unused = @import("../unused.zig");
 const procinterface = @import("../procinterface.zig");
+const extract = @import("../extract.zig");
 const modgraph = @import("../modgraph.zig");
 const argcheck = @import("../argcheck.zig");
 const rewrite = @import("../rewrite.zig");
@@ -52,6 +53,7 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     try addRemoveUnusedActions(self, a, file, ast, sline, eline, params.context.only, &out);
     try addRewriteActions(self, a, file, ast, sline, eline, &out);
     try addStubActions(self, a, file, ast, sline, eline, &out);
+    try addExtractAction(self, a, file, ast, params.range, params.context.only, &out);
     if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
@@ -250,6 +252,37 @@ fn interfaceEdits(a: Allocator, file: *FortranFile, ast: *Ast, unit: *Obj, proc:
     }
     try edits.append(a, .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text.items });
     return edits.items;
+}
+
+/// On a selection of whole statements of a procedure or program: moving
+/// them into a new internal subroutine, called in their place (#222). When
+/// they cannot be moved, and the client asks for refactorings and shows
+/// actions that cannot be taken, the action with why.
+fn addExtractAction(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, range: lsp.Range, only: ?[]const []const u8, out: *std.ArrayList(lsp.CodeAction)) !void {
+    if (only != null and !wants(only, "refactor.extract")) return;
+    const first = range.start.line;
+    // a selection of whole lines ends at the start of the next one
+    const last = if (range.end.line > first and range.end.character == 0) range.end.line - 1 else range.end.line;
+    if (range.start.line == range.end.line and range.start.character == range.end.character) return;
+    const p = (try extract.plan(a, file, ast, first, last)) orelse return;
+    const ok = switch (p) {
+        .refused => |why| {
+            if (only == null or !self.config.client.textDocument.codeAction.disabledSupport) return;
+            var act = try action(a, try paths.pathToUri(a, file.path), "Extract into subroutine", "refactor.extract", &.{});
+            act.disabled = .{ .reason = try a.print("Cannot extract: {s}", .{why}) };
+            return out.append(a, act);
+        },
+        .extracted => |e| e,
+    };
+    const edits = try a.alloc(lsp.TextEdit, ok.edits.len);
+    for (ok.edits, edits) |e, *te| te.* = .{
+        .range = .{
+            .start = .{ .line = e.sl, .character = Server.toLspCol(file, e.sl, e.sc) },
+            .end = .{ .line = e.el, .character = Server.toLspCol(file, e.el, e.ec) },
+        },
+        .newText = e.text,
+    };
+    try out.append(a, try action(a, try paths.pathToUri(a, file.path), try a.print("Extract into subroutine {s}", .{ok.name}), "refactor.extract", edits));
 }
 
 /// Code actions that write declarations from others:

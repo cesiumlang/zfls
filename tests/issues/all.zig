@@ -36,6 +36,7 @@ test {
     _ = @import("openmp.zig");
     _ = @import("outline.zig");
     _ = @import("outside_sources.zig");
+    _ = @import("refactor.zig");
     _ = @import("rename.zig");
     _ = @import("same_name_modules.zig");
     _ = @import("settings.zig");
