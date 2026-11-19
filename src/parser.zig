@@ -8,6 +8,7 @@ const Io = std.Io;
 const str = @import("str.zig");
 const helpers = @import("helpers.zig");
 const patterns = @import("patterns.zig");
+const suffixes = @import("suffixes.zig");
 const regex = @import("regex.zig");
 const C = @import("constants.zig");
 const objects = @import("objects.zig");
@@ -25,10 +26,6 @@ fn R() *const patterns.Patterns {
 const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
 const changes = @import("parser/changes.zig");
-
-/// The suffixes of free-form source, in either case (CUDA Fortran's `.cuf`
-/// too)
-const free_form_suffixes = [_][]const u8{ ".f90", ".f95", ".f03", ".f08", ".f18", ".f23", ".cuf" };
 
 pub const ResultSig = parser_definitions.ResultSig;
 pub const VarInfo = parser_definitions.VarInfo;
@@ -274,8 +271,7 @@ pub const FortranFile = struct {
     /// decides (`detect_fixed_format`).
     fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
         if (self.forced_form) |form| return form == .fixed;
-        const ext = std.Io.Dir.path.extension(self.path);
-        for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
+        if (suffixes.formOf(self.path) == .free) return false;
         return helpers.detectFixedFormat(lines);
     }
 

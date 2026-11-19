@@ -762,6 +762,7 @@ fn preprocessInner(
                 parser.Trace.print(trace, "{s} !!! Could not locate include file ({d})", .{ str.strip(line), i + 1 });
             }
         };
+        line = try macro.removeEmptyComments(a, line);
         // Substitute (if any) read in preprocessor macros
         var it = defs_tmp.iterator();
         while (it.next()) |e| {

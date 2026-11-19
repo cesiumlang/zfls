@@ -47,6 +47,7 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     const eline = params.range.end.line;
     try addUseActions(self, a, file, ast, sline, eline, &out);
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
+    try addDeclareArgActions(self, a, file, ast, sline, eline, &out);
     try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);
     try addRewriteActions(self, a, file, ast, sline, eline, &out);
     try addStubActions(self, a, file, ast, sline, eline, &out);
@@ -516,8 +517,7 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         const key = try a.print("{x}:{s}", .{ @intFromPtr(unit), try std.ascii.allocLowerString(a, name) });
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         const at = try declarationPoint(a, file, unit);
-        const letter = std.ascii.toLower(name[0]);
-        const type_name: []const u8 = if (letter >= 'i' and letter <= 'n') "integer" else "real";
+        const type_name = defaultType(name);
         const edits = try a.alloc(lsp.TextEdit, 1);
         edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}{s} :: {s}\n", .{ at.indent, type_name, name }) };
         const files = try a.alloc(lsp.Changes.File, 1);
@@ -531,6 +531,55 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
             .diagnostics = dv,
         });
     }
+}
+
+/// The type the default IMPLICIT rules give `name`
+fn defaultType(name: []const u8) []const u8 {
+    const letter = std.ascii.toLower(name[0]);
+    return if (letter >= 'i' and letter <= 'n') "integer" else "real";
+}
+
+/// For each dummy argument with no declaration (`argument-not-declared`)
+/// on the procedure headers of 0-based lines `sline`..`eline`: a quick fix
+/// declaring it with the type of the default rules, after the last
+/// declaration of the procedure; and one declaring all of a procedure's
+/// when it has several
+pub fn addDeclareArgActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+    const uri = try paths.pathToUri(a, file.path);
+    const diags = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
+    for (ast.scope_list.items) |proc| {
+        if (proc.kind != .subroutine and proc.kind != .function) continue;
+        if (proc.sline == 0 or proc.sline - 1 < sline or proc.sline - 1 > eline) continue;
+        var names: std.ArrayList([]const u8) = .empty;
+        var text: std.ArrayList(u8) = .empty;
+        var found: std.ArrayList(lsp.Diagnostic) = .empty;
+        const at = try declarationPoint(a, file, proc);
+        const range = Server.rangeOf(file, at.line, 0, at.line, 0);
+        for (diags) |d| {
+            if (d.code != .argument_not_declared or d.sln != proc.sline - 1) continue;
+            const name = d.subject orelse continue;
+            if (name.len == 0) continue;
+            const decl = try a.print("{s}{s} :: {s}\n", .{ at.indent, defaultType(name), name });
+            const dv = try a.alloc(lsp.Diagnostic, 1);
+            dv[0] = try self.diagnosticOf(a, file, d);
+            try out.append(a, try declareAction(a, uri, range, try a.print("Declare {s} as {s}", .{ name, defaultType(name) }), decl, dv));
+            try names.append(a, name);
+            try text.appendSlice(a, decl);
+            try found.append(a, dv[0]);
+        }
+        if (names.items.len < 2) continue;
+        const title = try a.print("Declare the arguments {s}", .{try std.mem.join(a, ", ", names.items)});
+        try out.append(a, try declareAction(a, uri, range, title, text.items, found.items));
+    }
+}
+
+/// A quick fix inserting `text` at `range` of the document `uri`
+fn declareAction(a: Allocator, uri: []const u8, range: lsp.Range, title: []const u8, text: []const u8, diags: []const lsp.Diagnostic) !lsp.CodeAction {
+    const edits = try a.alloc(lsp.TextEdit, 1);
+    edits[0] = .{ .range = range, .newText = text };
+    const files = try a.alloc(lsp.Changes.File, 1);
+    files[0] = .{ .uri = uri, .edits = edits };
+    return .{ .title = title, .kind = "quickfix", .edit = .{ .changes = .{ .files = files } }, .diagnostics = diags };
 }
 
 /// Where a new declaration of `unit` goes: after the last declaration of
