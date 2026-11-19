@@ -22,6 +22,7 @@ const parser = @import("../parser.zig");
 const modgraph = @import("../modgraph.zig");
 const compilers = @import("../compilers.zig");
 const tools = @import("tools.zig");
+const compiler_version = @import("compiler_version.zig");
 const args_mod = @import("compile_args.zig");
 const compilerOf = args_mod.compilerOf;
 const userArgs = args_mod.userArgs;
@@ -372,10 +373,11 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     const ja = job.arena.allocator();
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id));
     Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
-    const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir };
     // the settings of the file's form, for the modules it uses too
     const user = userArgs(self, file.declared_fixed);
     const cmd = try commandOf(self, a, file, user);
+    const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed), cmd);
+    const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = compiler_version.of(self, a, id, exes) };
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
     // Intel's preprocessor output goes into the working directory: one of
     // zfls's per file, not the source tree
@@ -403,7 +405,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .uri = try ja.dupe(u8, uri),
         .path = try ja.dupe(u8, file.path),
         .id = id,
-        .exes = try dupeAll(ja, try executables(self, a, id, compilerPath(self, file.declared_fixed), cmd)),
+        .exes = try dupeAll(ja, exes),
         .compiler_path = if (compilerPath(self, file.declared_fixed)) |p| try ja.dupe(u8, p) else null,
         .cwd = try ja.dupe(u8, run_dir orelse if (cmd) |c| c.dir else paths.dirname(file.path)),
         .deps = dep_args.items,

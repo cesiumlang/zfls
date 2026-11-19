@@ -123,7 +123,7 @@ available.
 | Without building (syntax only) | ✓ | ✓ | ✓ | ✓ | –¹ | ✓ | ✓ |
 | Modules the file uses compiled first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓² |
 | The file's own command of `compile_commands.json` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Warnings on by default | `-Wall` | `-warn all` | `-warn all` | – | `-Minform=warn` | – | – |
+| Warnings on by default | `-Wall` | `-warn all` | `-warn all` | `-Wunused-variable -Wused-undefined-variable`⁴ | `-Minform=warn` | – | – |
 | Preprocessed files | `-cpp` | `-fpp` | `-fpp` | `-cpp` | `-Mpreprocess` | `-fpp` | `--cpp` |
 | Fixed-form line length (`fixed_line_length`) | any | 72, 80, 132 | 72, 80, 132 | any | 132 | 132 | – |
 | Debug lines as zfls reads them (`d_lines`) | ✓ | ✓ | ✓ | ✓⁴ | ✓ | as code | – |
@@ -137,8 +137,12 @@ available.
 3. With `--continue-compilation`. zfls also passes LFortran
    `--implicit-typing --implicit-interface`, which its own dialect rejects,
    unless the options say otherwise.
-4. LLVM Flang reads debug lines as comments by default; as code
-   (`-fd-lines-as-code`) needs Flang 21 or later.
+4. LLVM Flang 22 and later, whose version zfls asks of it once (`flang
+   --version`); Flang 21 knows neither option, Flang 20 has only `-Werror`,
+   and `-Wall` is none of Flang's, so older Flangs get no warnings by
+   default. Flang reads debug lines as comments by default; as code
+   (`-fd-lines-as-code`) needs Flang 21 or later, and zfls passes Flang 20
+   no option, which then reads them as comments.
 
 ### Compiler dialects in the source
 
@@ -764,7 +768,8 @@ a blank. zfls reads the lines so, the compiler check passes the compiler
 the option that reads them so (gfortran `-fd-lines-as-comments` /
 `-fd-lines-as-code`, Intel `-nod-lines` / `-d-lines`, nvfortran
 `-Mnodlines` / `-Mdlines`, nagfor `-d_lines`, flang `-fd-lines-as-code`,
-which needs Flang 21 or later) unless `compiler_args` already has one,
+which needs Flang 21 or later: Flang 20 gets none) unless `compiler_args`
+already has one,
 and a debug line read as a comment is a comment for the editor's
 highlighting (semantic tokens). In VS Code, `zfls.fixedFormDLines` sets
 it.
@@ -886,7 +891,8 @@ elsewhere, which is also stopped when the server shuts down during a run.
   default the compiler on the `PATH`).
 - `compiler_args`: the compiler's own options; by default its warnings
   (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for
-  nvfortran). zfls adds the syntax-only, form, preprocessor and module
+  nvfortran, `-Wunused-variable -Wused-undefined-variable` for Flang 22 and
+  later). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
   for files it preprocesses, `pp_defs` (`-D`). It also has the compiler read
   lines as zfls does: fixed-form lines up to `fixed_line_length` when it is

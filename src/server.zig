@@ -42,6 +42,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const compiler_version = @import("server/compiler_version.zig");
 const convert = @import("server/convert.zig");
 const pending = @import("server/pending.zig");
 const pull = @import("server/pull.zig");
@@ -170,6 +171,9 @@ pub const Server = struct {
     /// The command of each Fortran file in compile_commands.json, for the
     /// compiler check (in `arena`)
     compile_commands: project.Commands = .empty,
+    /// The compiler check's compilers' versions, by executable (in `arena`;
+    /// compiler_version.zig)
+    compiler_versions: std.array_hash_map.String(compiler_version.Known) = .empty,
     /// The formatting problems posted (hashes of their keys), each once
     format_reported: std.ArrayList(u64) = .empty,
     /// The thread that runs fortitude and Codee, once it has a job

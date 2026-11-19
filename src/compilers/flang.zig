@@ -9,9 +9,64 @@ const Severity = compilers.Severity;
 /// How a fixed-form file's debug lines are read. Comments are Flang's
 /// default, so that needs no option: Flang 20 has neither
 /// `-fd-lines-as-comments` nor `-fd-lines-as-code` ("unknown argument"),
-/// which Flang 21 added.
-pub fn dLines(code: bool) []const []const u8 {
+/// which Flang 21 added. A Flang known (`version`) to be older reads them
+/// as comments whatever zfls does: an option would only fail every check.
+pub fn dLines(code: bool, version: ?u32) []const []const u8 {
+    if (version) |v| if (v < 21) return &.{};
     return if (code) &.{"-fd-lines-as-code"} else &.{};
+}
+
+/// The warnings on by default (when `compiler_args` and the file's command
+/// give none), the nearest to gfortran's `-Wall`: Flang 22 and later. Flang
+/// 21 knows neither ("Unknown diagnostic option"), Flang 20 has only
+/// `-Werror`, and `-Wall` is never one of Flang's ("argument unused").
+/// None when the version is not known.
+pub fn warnings(version: ?u32) []const []const u8 {
+    const v = version orelse return &.{};
+    return if (v >= 22) &.{ "-Wunused-variable", "-Wused-undefined-variable" } else &.{};
+}
+
+/// The major version in `flang --version`'s output: `flang version
+/// 23.1.5`, `flang-new version 19.1.7`, `Homebrew flang version 21.1.0`;
+/// null for another compiler's (classic Flang's says `clang version`)
+pub fn parseVersion(output: []const u8) ?u32 {
+    var it = compilers.lines(output);
+    while (it.next()) |raw| {
+        const line = compilers.trimCr(raw);
+        for ([_][]const u8{ "flang version ", "flang-new version " }) |mark| {
+            const at = std.mem.find(u8, line, mark) orelse continue;
+            if (at > 0 and line[at - 1] != ' ') continue;
+            const rest = line[at + mark.len ..];
+            var end: usize = 0;
+            while (end < rest.len and std.ascii.isDigit(rest[end])) end += 1;
+            if (end == 0) continue;
+            return std.fmt.parseInt(u32, rest[0..end], 10) catch null;
+        }
+    }
+    return null;
+}
+
+test "flang's version, and what depends on it" {
+    try std.testing.expectEqual(@as(?u32, 23), parseVersion("flang version 23.1.5\r\nTarget: x86_64-pc-windows-msvc\r\nThread model: posix\r\n"));
+    try std.testing.expectEqual(@as(?u32, 19), parseVersion("flang-new version 19.1.7 (https://github.com/llvm/llvm-project cd70802)\nTarget: x86_64-unknown-linux-gnu\n"));
+    try std.testing.expectEqual(@as(?u32, 21), parseVersion("Homebrew flang version 21.1.0\n"));
+    try std.testing.expectEqual(@as(?u32, 20), parseVersion("Ubuntu flang version 20.1.2 (1ubuntu1)\n"));
+    try std.testing.expectEqual(@as(?u32, null), parseVersion("clang version 7.0.1 (classic flang)\n"));
+    try std.testing.expectEqual(@as(?u32, null), parseVersion("myflang version 3\n"));
+    try std.testing.expectEqual(@as(?u32, null), parseVersion(""));
+    try std.testing.expectEqual(@as(usize, 2), warnings(22).len);
+    try std.testing.expectEqualStrings("-Wused-undefined-variable", warnings(23)[1]);
+    try std.testing.expectEqual(@as(usize, 0), warnings(21).len);
+    try std.testing.expectEqual(@as(usize, 0), warnings(null).len);
+    // as the compiler check's defaults
+    const o22: compilers.Options = .{ .windows = false, .mod_dir = "m", .version = 22 };
+    try std.testing.expectEqualStrings("-Wunused-variable", compilers.defaultArgs(.flang, o22)[0]);
+    try std.testing.expectEqual(@as(usize, 0), compilers.defaultArgs(.flang, .{ .windows = false, .mod_dir = "m" }).len);
+    try std.testing.expectEqual(@as(usize, 0), compilers.dLines(.flang, true, .{ .windows = false, .mod_dir = "m", .version = 20 }).len);
+    // Flang 20 has no -fd-lines-as-code
+    try std.testing.expectEqual(@as(usize, 0), dLines(true, 20).len);
+    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(true, 21)[0]);
+    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(true, null)[0]);
 }
 
 /// Before the file, as its language: the driver knows only `.f`, `.for`,
@@ -65,8 +120,8 @@ pub fn parse(p: *Parser, output: []const u8) !void {
 }
 
 test "debug lines: no option for comments, which Flang 20 rejects" {
-    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(true)[0]);
-    try std.testing.expectEqual(@as(usize, 0), dLines(false).len);
+    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(true, null)[0]);
+    try std.testing.expectEqual(@as(usize, 0), dLines(false, null).len);
     const o: compilers.Options = .{ .windows = false, .mod_dir = "m" };
     try std.testing.expectEqual(@as(usize, 0), compilers.dLines(.flang, false, o).len);
     // gfortran rejects debug lines without an option
