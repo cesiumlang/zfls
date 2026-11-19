@@ -27,8 +27,14 @@
 //! the stack probe `__chkstk`, and the `/GS` stack cookie that Intel's
 //! `for_main.obj` checks. LFortran's programs link with it too, and its
 //! runtime (`lfortran_runtime_static.lib`, built by MSVC) also asks for
-//! `atexit`, `__report_rangecheckfailure` and `__GSHandlerCheck`. It
-//! imports only from the UCRT.
+//! `atexit`, `__report_rangecheckfailure` and `__GSHandlerCheck`. LLVM
+//! Flang's runtime (`flang_rt.runtime.dynamic.lib`, C++ built against
+//! MSVC's `/MD` runtime) needs its static initializers run at startup, and
+//! what src/ifxkit/cxx.zig has. It imports only from the UCRT.
+
+comptime {
+    _ = @import("cxx.zig");
+}
 
 /// The C runtime's marker that floating point is used
 export var _fltused: c_int = 0x9875;
@@ -48,12 +54,31 @@ extern fn _crt_atexit(function: *const fn () callconv(.c) void) callconv(.c) c_i
 /// object's
 extern fn main(argc: c_int, argv: [*:null]?[*:0]u8, envp: [*:null]?[*:0]u8) callconv(.c) c_int;
 
+extern fn _initterm_e(first: [*]const Initializer, last: [*]const Initializer) callconv(.c) c_int;
+extern fn _initterm(first: [*]const Constructor, last: [*]const Constructor) callconv(.c) void;
+
+/// A C initializer (`.CRT$XI*`): nonzero is an error that ends the startup
+const Initializer = ?*const fn () callconv(.c) c_int;
+/// A C++ constructor of static objects (`.CRT$XC*`)
+const Constructor = ?*const fn () callconv(.c) void;
+
+// The ends of the tables of initializers and constructors that the
+// compilers put in `.CRT$XIx` and `.CRT$XCx` (`XCU` for C++'s): the linker
+// puts the sections of a name in the order of what follows the `$`, and
+// merges them; empty entries are skipped
+const xi_a: [1]Initializer linksection(".CRT$XIA") = .{null};
+const xi_z: [1]Initializer linksection(".CRT$XIZ") = .{null};
+const xc_a: [1]Constructor linksection(".CRT$XCA") = .{null};
+const xc_z: [1]Constructor linksection(".CRT$XCZ") = .{null};
+
 /// The console program's entry point
 export fn mainCRTStartup() callconv(.c) noreturn {
     initCookie();
     _set_app_type(1); // _crt_console_app
     _ = _configure_narrow_argv(1); // _crt_argv_unexpanded_arguments
     _ = _initialize_narrow_environment();
+    if (_initterm_e(&xi_a, &xi_z) != 0) exit(255);
+    _initterm(&xc_a, &xc_z);
     exit(main(__p___argc().*, __p___argv().*, __p__environ().*));
 }
 

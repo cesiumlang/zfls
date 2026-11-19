@@ -170,8 +170,8 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 
 | | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Run Fortran File | ✓ | ✓ | ✓ | ○ | ○ | ○ | ✓ |
-| Links on Windows without Visual Studio | ✓⁷ | ✓⁸ | – | – | – | – | ✓⁸ |
+| Run Fortran File | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ✓ |
+| Links on Windows without Visual Studio | ✓⁷ | ✓⁸ | – | ✓⁸ | – | – | ✓⁸ |
 | `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁹ |
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓¹², Windows's partly¹² | – | gdb ○ | –⁹ |
 | `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | –⁹ |
@@ -179,8 +179,8 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
 
 7. MinGW's gfortran needs none.
-8. With `zfls setup-ifx` and zfls's ifx kit, on Windows x64 (see
-   [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
+8. With zfls's ifx kit (and for ifx `zfls setup-ifx`), on Windows x64
+   (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
 9. Not yet. LFortran's debug information has integer and real scalars
    only (no arrays, derived types, CHARACTER lengths or module variables),
    and LFortran for Windows refuses `-g`.
@@ -207,8 +207,10 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 
 CI runs zfls against gfortran (the symbols zfls extracts, compared with
 gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
-Linux and Windows x64, with lldb-dap on macOS) and against LFortran (the compiler check, on Linux
-x64; its programs linking without Visual Studio, on Windows x64). The other
+Linux and Windows x64, with lldb-dap on macOS), against LFortran (the
+compiler check, on Linux x64; its programs linking without Visual Studio,
+on Windows x64) and against LLVM Flang (its programs linking without Visual
+Studio, on Windows x64). The other
 compilers' options and message formats are tested with recorded output, not
 with the compilers.
 
@@ -443,6 +445,23 @@ lfortran hello.f90 -o hello.exe
 ```
 
 The VS Code extension's **Run Fortran File** sets this up itself.
+
+The kit links LLVM Flang's programs too. Flang's runtime
+(`flang_rt.runtime.dynamic.lib`, C++ built against Microsoft's `/MD`
+runtime) needs its static initializers run before the program, which the
+kit's startup code does, and a few functions of Microsoft's static
+libraries, which are in the startup object too. Flang runs `lld-link`
+itself (`-fuse-ld=lld`, with conda-forge's `lld` next to `flang`), and
+`-fms-runtime-lib=dll` has it use the C runtime in DLLs; with `LIB` set,
+neither Flang nor `lld-link` looks for Visual Studio's libraries:
+
+```bat
+set LIB=C:\zfls\ifx-kit
+set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib
+flang -fms-runtime-lib=dll -fuse-ld=lld hello.f90 -o hello.exe
+```
+
+Run Fortran File does this too, outside a Visual Studio environment.
 
 ### A debugger (`zfls dap`)
 
@@ -1709,9 +1728,9 @@ zfls deliberately differs from fortls in a few places:
 ## Licenses
 
 zfls is distributed under the MIT license, see `LICENSE`, except for the ifx
-kit's startup code (`src/ifxkit/shim.zig`), which is under MIT No
-Attribution (MIT-0) because it is linked into the programs ifx builds with
-the kit; the kit's import libraries come from MinGW-w64's public-domain
+kit's startup code (`src/ifxkit/shim.zig`, `src/ifxkit/cxx.zig`), which is
+under MIT No Attribution (MIT-0) because it is linked into the programs
+built with the kit; the kit's import libraries come from MinGW-w64's public-domain
 definition files. ifx itself is Intel's, under Intel's license, which
 `zfls setup-ifx` shows and which the user accepts. zfls is derived from
 fortls and its predecessor fortran-language-server, also MIT licensed, whose

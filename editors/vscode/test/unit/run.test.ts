@@ -10,6 +10,7 @@ import {
   chooseDebugger,
   compilerKind,
   compilerName,
+  flangKitLink,
   fortranLaunch,
   launchConfiguration,
   lfortranLinkEnv,
@@ -219,6 +220,25 @@ test("LFortran on Windows links with lld-link and the ifx kit, unless Visual Stu
   assert.equal(lfortranLinkEnv(kit, "C:\\l", { VCToolsInstallDir: "C:\\VS\\MSVC\\14.4" }), undefined);
   // `link` runs lld-link where it is
   assert.equal(linkScript("C:\\conda\\Library\\bin\\lld-link.exe"), '@"C:\\conda\\Library\\bin\\lld-link.exe" %*\r\n');
+});
+
+test("LLVM Flang on Windows links with lld-link and the ifx kit, unless Visual Studio's environment is set up", () => {
+  const kit = "C:\\zfls\\bin\\ifx-kit";
+  assert.deepEqual(flangKitLink(kit, undefined, { Path: "C:\\Windows", LINK: "/DEBUG" }), {
+    args: ["-fms-runtime-lib=dll", "-fuse-ld=lld"],
+    env: {
+      LIB: kit,
+      LINK: '"C:\\zfls\\bin\\ifx-kit\\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib /DEBUG',
+    },
+  });
+  assert.equal(flangKitLink(kit, ["-g"], { LIB: "C:\\sdk" })?.env.LIB, `${kit};C:\\sdk`);
+  assert.equal(flangKitLink(kit, undefined, { VCToolsInstallDir: "C:\\VS\\MSVC\\14.4" }), undefined);
+  // the build's own choice of linker or C runtime
+  assert.equal(flangKitLink(kit, ["-g", "-fuse-ld=link"], {}), undefined);
+  assert.equal(flangKitLink(kit, ["-fms-runtime-lib=static"], {}), undefined);
+  // after the build's arguments, before the source
+  const kind = compilerKind("flang", "win32");
+  assert.deepEqual(buildArgs(kind, "C:\\w\\a.f90", "C:\\o\\a.exe", undefined, ["-fuse-ld=lld"]).slice(0, 3), ["-g", "-O0", "-fuse-ld=lld"]);
 });
 
 test("entries are replaced by name", () => {

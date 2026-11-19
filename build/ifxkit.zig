@@ -1,9 +1,10 @@
 //! The ifx kit: what Intel's ifx needs from Visual Studio to link a `/MD`
 //! program, made from Zig's own files, so that the VS Code extension can
 //! build with ifx where Visual Studio is not installed (`ifx /MD
-//! /fuse-ld=lld`, with `LIB` on `lib/ifx`), and LFortran too (with
-//! lld-link standing for `link`). It installs to `lib/ifx`:
-//! - `zfls_ifx_shim.obj`: the startup code (src/ifxkit/shim.zig)
+//! /fuse-ld=lld`, with `LIB` on `lib/ifx`), LFortran too (with lld-link
+//! standing for `link`), and LLVM Flang (`-fms-runtime-lib=dll
+//! -fuse-ld=lld`). It installs to `lib/ifx`:
+//! - `zfls_ifx_shim.obj`: the startup code (src/ifxkit/shim.zig, cxx.zig)
 //! - import libraries under the names Intel's objects and libraries ask
 //!   for (`msvcrt`, `ucrt`, `vcruntime`, `kernel32`, ...), made with
 //!   `zig dlltool` from the MinGW-w64 `.def` files that come with Zig
@@ -14,7 +15,9 @@ const std = @import("std");
 /// Import libraries: the name ifx's objects and libraries ask for, and
 /// the MinGW-w64 definition file of its DLL (`lib/libc/mingw/...`).
 /// `msvcrt` and `oldnames` are the UCRT too (with the aliases of the old
-/// names); `uuid` has nothing to import (Intel's COM modules only).
+/// names); `uuid` has nothing to import (Intel's COM modules only), nor
+/// `msvcprt` (LLVM Flang's runtime asks for it; what it uses of it is in
+/// the startup object).
 const libs = [_]struct { []const u8, ?[]const u8 }{
     .{ "msvcrt", "lib-common/ucrtbase.def.in" },
     .{ "ucrt", "lib-common/ucrtbase.def.in" },
@@ -30,6 +33,7 @@ const libs = [_]struct { []const u8, ?[]const u8 }{
     .{ "ws2_32", "lib-common/ws2_32.def.in" },
     .{ "version", "lib-common/version.def" },
     .{ "uuid", null },
+    .{ "msvcprt", null },
 };
 
 /// The step that installs the kit

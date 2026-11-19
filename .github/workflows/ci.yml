@@ -540,7 +540,7 @@ jobs:
         if: matrix.target == 'x86_64-windows'
         run: |
           kit="$(dirname "$ZFLS")/ifx-kit"
-          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib; do
+          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib msvcprt.lib; do
             if [ ! -s "$kit/$f" ]; then
               echo "::error::the Windows x64 package has no ifx-kit/$f"
               exit 1
@@ -575,6 +575,44 @@ jobs:
           PATH="$tmp/lfortran-link:/c/Windows/System32:/c/Windows" LIB="$kit" \
             LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" \
             MSYS2_ARG_CONV_EXCL='*' "$bin/lfortran.exe" p.f90 -o p.exe
+          set +e
+          ./p.exe > p.out 2>&1
+          code=$?
+          set -e
+          cat p.out p.txt
+          grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+
+      # LLVM Flang's programs link with lld-link and the package's ifx kit,
+      # with the environment Run Fortran File gives the build (LIB, LINK,
+      # -fms-runtime-lib=dll -fuse-ld=lld). The runner has Visual Studio:
+      # lld-link's list of what it read shows that no library of Visual
+      # Studio's or of the Windows SDK's was
+      - name: LLVM Flang links with the ifx kit (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            [ -x "$mm/Library/bin/micromamba.exe" ] || curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/flang")" -c conda-forge flang_win-64 lld && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          bin="$tmp/flang/Library/bin"
+          "$bin/flang.exe" --version
+          kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
+          cd "$tmp"
+          printf "program p\n  real :: x(3)\n  integer :: u\n  character(:), allocatable :: s\n  x = 2\n  s = 'linked'\n  open(newunit=u, file='p.txt')\n  write(u, '(f4.1)') sum(x)\n  close(u)\n  print *, s, sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
+          export LIB="$kit" LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" MSYS2_ARG_CONV_EXCL='*'
+          unset VCToolsInstallDir VCINSTALLDIR VSINSTALLDIR WindowsSdkDir UniversalCRTSdkDir
+          PATH="/c/Windows/System32:/c/Windows" "$bin/flang.exe" -fms-runtime-lib=dll -fuse-ld=lld p.f90 -o p.exe -Wl,-verbose > link.log 2>&1 || { cat link.log; exit 1; }
+          grep "Reading [A-Za-z]:" link.log | sed 's/.*Reading //' | sort -u
+          if grep -i -E "Microsoft Visual Studio|Windows Kits" link.log; then
+            echo "::error::lld-link read Visual Studio's or the Windows SDK's files"
+            exit 1
+          fi
           set +e
           ./p.exe > p.out 2>&1
           code=$?
