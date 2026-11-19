@@ -12,6 +12,10 @@
 //!   translation is a package.nls.<language>.json of the same keys. Strings
 //!   already moved are left alone, so this runs again after new settings or
 //!   commands are added.
+//! - the extensions of the FortranFreeForm and FortranFixedForm languages
+//!   in editors/vscode/package.json, from the table of src/suffixes.zig
+//!   (free form and the ones whose text decides, fixed form), in lower and
+//!   upper case.
 //! - editors/vscode/l10n/bundle.l10n.json, the messages the extension shows
 //!   while it runs (each `vscode.l10n.t("...")` of its sources), in the
 //!   format of `@vscode/l10n-dev export`: each message is its own key.
@@ -22,6 +26,7 @@ const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const settings = @import("settings");
 const constants = @import("constants");
+const suffixes = settings.suffixes;
 
 const schema_path = "editors/vscode/schemas/fortls.schema.json";
 const package_path = "editors/vscode/package.json";
@@ -84,9 +89,11 @@ fn generate(io: Io, a: Allocator, root: Io.Dir, where: *[]const u8) ![]const Fil
     var strings = try parseFile(io, a, root, nls_path);
     if (strings == .null) strings = .{ .object = .empty };
     where.* = package_path;
-    // the files are rewritten only when strings are left to move
+    // the files are rewritten only when strings are left to move, or
+    // extensions to set
     const moved = try moveStrings(a, &pkg, &strings.object) > 0;
-    try files.append(a, .{ .path = package_path, .text = try jsonText(a, pkg, false), .changed = moved });
+    const extensions = try languageExtensions(a, &pkg);
+    try files.append(a, .{ .path = package_path, .text = try jsonText(a, pkg, false), .changed = moved or extensions });
     try files.append(a, .{ .path = nls_path, .text = try jsonText(a, strings, false), .changed = moved });
 
     where.* = sources_path;
@@ -115,6 +122,34 @@ fn parseFile(io: Io, a: Allocator, root: Io.Dir, path: []const u8) !Value {
 
 fn parseLiteral(a: Allocator, comptime text: []const u8) !Value {
     return std.json.parseFromSliceLeaky(Value, a, text, .{});
+}
+
+// The languages' extensions
+
+/// Sets the extensions of the Fortran languages of package.json `pkg` from
+/// src/suffixes.zig; whether they changed
+fn languageExtensions(a: Allocator, pkg: *Value) !bool {
+    const contributes = pkg.object.getPtr("contributes") orelse return error.NoLanguages;
+    const languages = contributes.object.getPtr("languages") orelse return error.NoLanguages;
+    var changed = false;
+    for (languages.array.items) |*lang| {
+        const id = (lang.object.get("id") orelse continue).string;
+        const fixed = std.mem.eql(u8, id, "FortranFixedForm");
+        if (!fixed and !std.mem.eql(u8, id, "FortranFreeForm")) continue;
+        var exts: std.json.Array = .init(a);
+        for (suffixes.all) |s| if ((s.form == .fixed) == fixed) {
+            try exts.append(.{ .string = s.ext });
+            try exts.append(.{ .string = try std.ascii.allocUpperString(a, s.ext) });
+        };
+        const old = lang.object.get("extensions");
+        const same = if (old) |o| o == .array and o.array.items.len == exts.items.len and for (o.array.items, exts.items) |x, y| {
+            if (x != .string or !std.mem.eql(u8, x.string, y.string)) break false;
+        } else true else false;
+        if (same) continue;
+        try lang.object.put(a, "extensions", .{ .array = exts });
+        changed = true;
+    }
+    return changed;
 }
 
 // The configuration file schema
