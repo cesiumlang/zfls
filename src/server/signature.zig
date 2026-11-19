@@ -78,10 +78,9 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, sig_char, true)) orelse return null;
     if (R().SCOPE_DEF.match(curr_line) != null or R().END.match(curr_line) != null) return null;
     // get_sub_name
-    const pl = try helpers.getParenLevel(a, line_prefix);
-    if (pl.sections[0].start <= 1) return null;
-    const arg_string = str.slice(line_prefix, pl.sections[0].start, pl.sections[pl.sections.len - 1].end);
-    const pl2 = try helpers.getParenLevel(a, str.slice(line_prefix, 0, pl.sections[0].start - 1));
+    const open = (try argListOpen(a, line_prefix)) orelse return null;
+    const arg_string = line_prefix[open + 1 ..];
+    const pl2 = try helpers.getParenLevel(a, line_prefix[0..open]);
     var sub_name_raw = str.strip(pl2.str);
     // a CUDA Fortran kernel launch, `call k<<<grid, block>>>(args)`
     if (std.mem.endsWith(u8, sub_name_raw, ">>>")) {
@@ -122,6 +121,38 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
         var_obj = p;
     };
     return .{ .obj = var_obj orelse return null, .args = arg_strings };
+}
+
+/// The index in `line` of the bracket that opens the argument list the
+/// end of `line` is in, or null. An array constructor (`[`, `(/`) and a
+/// parenthesis that follows no name (an implied DO, an expression in
+/// parentheses) are not argument lists: the search goes on outside them,
+/// and they are part of the argument they are in (hansec #60).
+pub fn argListOpen(a: Allocator, line: []const u8) !?usize {
+    var end = line.len;
+    while (true) {
+        const pl = try helpers.getParenLevel(a, line[0..end]);
+        if (pl.sections[0].start <= 1) return null;
+        const open: usize = @intCast(pl.sections[0].start - 1);
+        if (line[open] == '(' and !opensConstructor(line, open) and followsName(line[0..open])) return open;
+        end = open;
+    }
+}
+
+/// Whether the `(` at `i` of `line` is the `(/` of an array constructor
+fn opensConstructor(line: []const u8, i: usize) bool {
+    const rest = str.lstrip(line[i + 1 ..]);
+    return rest.len > 0 and rest[0] == '/' and !(rest.len > 1 and rest[1] == '=');
+}
+
+/// Whether `before` ends in what a `(` after it can be the argument list
+/// of: a name, a subscript or coarray subscript (`a(1)(`, `a[2](`) or a
+/// CUDA kernel launch (`k<<<g, b>>>(`)
+fn followsName(before: []const u8) bool {
+    const t = str.rstrip(before);
+    if (t.len == 0) return false;
+    const c = t[t.len - 1];
+    return std.ascii.isAlphanumeric(c) or c == '_' or c == ')' or c == ']' or std.mem.endsWith(u8, t, ">>>");
 }
 
 /// For a call of generic interface `obj` at byte column `col` of 0-based
@@ -227,4 +258,18 @@ pub fn checkOptional(arg: []const u8, params: []const Obj.ArgSig) ?i64 {
         if (std.ascii.eqlIgnoreCase(lbl, opt_arg)) return @intCast(i);
     }
     return null;
+}
+
+test "argListOpen steps out of array constructors and parentheses after no name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s([1, 2, "));
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s((/ 9, "));
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s([(i, i = 1, "));
+    try std.testing.expectEqual(@as(?usize, 9), try argListOpen(a, "call s([f(1, "));
+    try std.testing.expectEqual(@as(?usize, 6), try argListOpen(a, "call s(a(1), "));
+    try std.testing.expectEqual(@as(?usize, 16), try argListOpen(a, "call k<<<1, 2>>>(x, "));
+    try std.testing.expectEqual(@as(?usize, null), try argListOpen(a, "x = [1, 2"));
+    try std.testing.expectEqual(@as(?usize, null), try argListOpen(a, "x = 1"));
 }

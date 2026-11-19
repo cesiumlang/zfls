@@ -95,6 +95,10 @@ pub const Settings = struct {
     /// -ffixed-line-length-n); the rest is a comment. -1: no limit
     fixed_line_length: i64 = -1,
     disable_diagnostics: bool = false,
+    /// The milliseconds a document's text stays unchanged before zfls's
+    /// diagnostics of it are published again (0: with each change;
+    /// negative: not before it is saved)
+    diagnostics_change_delay: i64 = 300,
     /// Publish the diagnostics of every workspace file, not only of the
     /// open ones
     workspace_diagnostics: bool = false,
@@ -177,6 +181,12 @@ pub const Settings = struct {
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
+    // Code lenses
+    /// No lens with the number of references above modules, procedures
+    /// and derived types
+    code_lens_no_references: bool = false,
+    /// No Run and Debug lenses above a program
+    code_lens_no_run: bool = false,
     // Debug options
     debug_filepath: ?[]const u8 = null,
     debug_rootpath: ?[]const u8 = null,
@@ -272,6 +282,7 @@ pub const opts = [_]Opt{
     .{ .long = "max_comment_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum comment line length (default: -1)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "fixed_line_length", .kind = .int, .metavar = "INTEGER", .help = "Columns of code in a fixed-form line, as gfortran's -ffixed-line-length-n (72, 80, 132): the rest is highlighted as a comment and is not read for names (default: -1, no limit)", .group = "Sources file parsing options" },
     .{ .long = "disable_diagnostics", .kind = .flag, .help = "Disable diagnostics", .group = "Diagnostic options (error swigles)" },
+    .{ .long = "diagnostics_change_delay", .kind = .int, .metavar = "MS", .help = "The milliseconds without a change before the diagnostics of a document that is edited are published again (default: 300; 0: with each change; negative: only when it is opened and saved)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "workspace_diagnostics", .kind = .flag, .help = "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
     .{ .long = "disable_bind_c_search", .kind = .flag, .help = "Go to definition of a BIND(C) procedure does not search the workspace's C files for its C declaration (an editor with a C language server can ask that instead)", .group = "Symbols options" },
@@ -313,6 +324,9 @@ pub const opts = [_]Opt{
 
     .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
     .{ .long = "enable_code_actions", .kind = .flag, .help = "Enable experimental code actions (default: false)", .group = "CodeActions options [limited]" },
+
+    .{ .long = "code_lens_no_references", .kind = .flag, .help = "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)", .group = "Code lens options" },
+    .{ .long = "code_lens_no_run", .kind = .flag, .help = "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)", .group = "Code lens options" },
 
     .{ .long = "debug_filepath", .kind = .string, .metavar = "DEBUG_FILEPATH", .help = "File path for language server tests", .debug = true },
     .{ .long = "debug_rootpath", .kind = .string, .metavar = "DEBUG_ROOTPATH", .help = "Root path for language server tests", .debug = true },
@@ -645,6 +659,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
     s.fixed_line_length = jsonInt(json.get(cfg, "fixed_line_length"), s.fixed_line_length);
     s.disable_diagnostics = jsonBool(json.get(cfg, "disable_diagnostics"), s.disable_diagnostics);
+    s.diagnostics_change_delay = jsonInt(json.get(cfg, "diagnostics_change_delay"), s.diagnostics_change_delay);
     s.workspace_diagnostics = jsonBool(json.get(cfg, "workspace_diagnostics"), s.workspace_diagnostics);
     if (json.get(cfg, "diagnostic_severity")) |v| try applyDiagnosticSeverity(a, s, v);
     if (json.get(cfg, "external_modules")) |v| s.external_modules = try jsonList(a, v);
@@ -691,6 +706,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "bind_c_clangd")) |v| s.bind_c_clangd = json.str(v);
     // Code Actions options
     s.enable_code_actions = jsonBool(json.get(cfg, "enable_code_actions"), s.enable_code_actions);
+    // Code lens options
+    s.code_lens_no_references = jsonBool(json.get(cfg, "code_lens_no_references"), s.code_lens_no_references);
+    s.code_lens_no_run = jsonBool(json.get(cfg, "code_lens_no_run"), s.code_lens_no_run);
     // Preprocessor options
     // like every other option, a value in the file replaces the one from the
     // command line, and no value leaves it alone (upstream #536)
@@ -719,6 +737,40 @@ pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
         }
     }
     return out;
+}
+
+/// The names of the configuration file looked for in the root, after the
+/// one `config` names (`-c`), the first found being read
+pub const default_config_files = [_][]const u8{ ".fortlsrc", ".fortls.json", ".fortls" };
+
+pub fn configFileNames(config: []const u8) [1 + default_config_files.len][]const u8 {
+    return .{config} ++ default_config_files;
+}
+
+/// The options as a JSON object, under the configuration file's names,
+/// for the log; without the debug requests' options
+pub fn toJson(a: Allocator, s: *const Settings) Allocator.Error!json.Value {
+    var obj: json.ObjectMap = .empty;
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| {
+        if (comptime !std.mem.startsWith(u8, name, "debug_") or std.mem.eql(u8, name, "debug_log")) {
+            const v = @field(s, name);
+            const out: json.Value = switch (@FieldType(Settings, name)) {
+                StrList => try json.from(a, v.slice()),
+                ?StrList => if (v) |l| try json.from(a, l.slice()) else .null,
+                std.ArrayList(PpDef), std.ArrayList(DiagLevel) => blk: {
+                    var m: json.ObjectMap = .empty;
+                    for (v.items) |x| {
+                        const kv = if (@TypeOf(x) == PpDef) .{ x.name, x.value } else .{ x.code, x.level };
+                        try m.put(a, kv[0], .{ .string = kv[1] });
+                    }
+                    break :blk .{ .object = m };
+                },
+                else => try json.from(a, v),
+            };
+            try obj.put(a, name, out);
+        }
+    }
+    return .{ .object = obj };
 }
 
 /// Whether option `name` has the same value in `x` and `y`
@@ -811,6 +863,21 @@ test "formatter arguments: a string split at spaces, or a list" {
     try std.testing.expectEqualStrings("fprettify", s.formatter.?);
     try std.testing.expectEqual(@as(usize, 4), s.formatter_args.len());
     try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
+}
+
+test "the options as JSON" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{ .debug_filepath = "x.f90" };
+    try s.setPpDef(a, "A", "1");
+    try s.include_dirs.add(a, "inc");
+    const text = try json.stringify(a, try toJson(a, &s));
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_defs\":{\"A\":\"1\"}") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"include_dirs\":[\"inc\"]") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_suffixes\":null") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"debug_log\":false") != null);
+    try std.testing.expect(std.mem.find(u8, text, "debug_filepath") == null);
 }
 
 test "program arguments on the command line: a JSON list keeps an argument with a space whole" {
