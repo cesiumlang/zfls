@@ -272,10 +272,11 @@ fn executables(self: *Server, a: Allocator, formatter: Formatter) ![]const []con
 /// take it, else as zfls detected it from the text (an unindented free-form
 /// file looks fixed form)
 fn isFixedForm(file: *const FortranFile) bool {
-    const ext = std.Io.Dir.path.extension(file.path);
-    for ([_][]const u8{ ".f", ".for", ".ftn", ".f77" }) |x| if (std.ascii.eqlIgnoreCase(ext, x)) return true;
-    for ([_][]const u8{ ".f90", ".f95", ".f03", ".f08", ".f18", ".cuf", ".pf", ".fypp" }) |x| if (std.ascii.eqlIgnoreCase(ext, x)) return false;
-    return file.fixed;
+    return switch (@import("../suffixes.zig").formOf(file.path) orelse .detect) {
+        .fixed => true,
+        .free => false,
+        .detect => file.fixed,
+    };
 }
 
 /// Posts a message, once for each `key` (format on save would repeat it)

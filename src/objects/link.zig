@@ -19,6 +19,7 @@ const Obj = objects.Obj;
 const Env = objects.Env;
 const findInScope = objects.findInScope;
 const climbTypeTree = objects.climbTypeTree;
+const selector = @import("selector.zig");
 
 pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Error!void {
     switch (self.kind) {
@@ -137,20 +138,32 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         },
         .submodule => try self.resolveSubmoduleLink(env),
         .associate => {
+            // the selectors are names of the scope around the construct
+            // (`associate (x => x%field)`: the outer `x`)
+            const outer = self.parent orelse self;
             for (self.assocData().links.items) |*assoc| {
-                assoc.var_.varData().link_obj = null;
-                assoc.link_name = try R().PAREN_CONTENT.sub(self.al(), "", assoc.link_name);
-                const var_stack = try helpers.getVarStack(env.tmp, assoc.link_name);
+                const v = assoc.var_.varData();
+                v.link_obj = null;
+                const name = try R().PAREN_CONTENT.sub(env.tmp, "", assoc.link_name);
                 var var_obj: ?*Obj = null;
-                if (var_stack.len > 1) {
-                    const type_scope = (try climbTypeTree(env, var_stack, self)) orelse continue;
-                    var_obj = try findInScope(env, type_scope, var_stack[var_stack.len - 1], .{});
-                } else {
-                    var_obj = try findInScope(env, self, assoc.link_name, .{});
+                if (selector.isDesignator(name)) {
+                    const var_stack = try helpers.getVarStack(env.tmp, name);
+                    if (var_stack.len > 1) {
+                        if (try climbTypeTree(env, var_stack, outer)) |type_scope| {
+                            var_obj = try findInScope(env, type_scope, var_stack[var_stack.len - 1], .{});
+                        }
+                    } else {
+                        var_obj = try findInScope(env, outer, str.strip(name), .{});
+                    }
                 }
-                if (var_obj) |v| if (!assoc.var_.linkLoops(v)) {
-                    assoc.var_.varData().link_obj = v;
+                if (var_obj) |o| if (!assoc.var_.linkLoops(o)) {
+                    v.link_obj = o;
+                    continue;
                 };
+                // a literal or an expression: its type
+                const t = try selector.typeOf(env, outer, assoc.link_name, self.sline);
+                v.desc = if (t) |typ| try self.al().dupe(u8, typ.desc) else "UNKNOWN";
+                v.vkind = if (t) |typ| if (typ.kind) |k| try self.al().dupe(u8, k) else null else null;
             }
         },
         else => {},
