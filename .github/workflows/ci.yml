@@ -544,8 +544,8 @@ jobs:
           echo "$RUNNER_TEMP/lfortran-bin" >> "$GITHUB_PATH"
 
       # LLVM Flang from conda-forge (on Windows x64, the ifx kit's step below
-      # installs it), for tests/compiler_check.zig; FLANG names it, and the
-      # PATH does not have it
+      # installs it), for tests/compiler_check.zig and tests/dap_gdb.zig;
+      # FLANG names it, and the PATH does not have it
       - name: LLVM Flang (Linux x64)
         if: matrix.target == 'x86_64-linux'
         run: |
@@ -690,6 +690,14 @@ jobs:
         env:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
+
+      # and on an LLVM Flang program (FLANG): on Windows x64 with DWARF,
+      # linked with the package's ifx kit
+      - name: zfls dap with gdb on an LLVM Flang program (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler flang
 
       # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
       # a step, the stack, a runtime error, attaching, a terminal. A debugger

@@ -177,7 +177,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Run Fortran File | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ✓ |
 | Links on Windows without Visual Studio | ✓⁷ | ✓⁸ | – | ✓⁸ | – | – | ✓⁸ |
-| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁹ |
+| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ✓ | gdb ○ | gdb ○ | –⁹ |
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓¹², Windows's partly¹² | – | gdb ○ | –⁹ |
 | `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | –⁹ |
 | Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓¹⁰ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
@@ -203,7 +203,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     format only, with which Windows's engine has breakpoints, the stack
     and stepping but not the variables. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
-    (tested with Flang 23 and MSYS2's gdb 17.2): the variables, a
+    (tested in CI with Flang 23 and MSYS2's gdb): the variables, a
     polymorphic object with its dynamic type's components, and stops at
     Flang's runtime errors and ERROR STOP (not at a plain STOP). Windows's
     engine does not stop at them yet. The VS Code extension's Debug
@@ -217,9 +217,9 @@ CI runs zfls against gfortran (the symbols zfls extracts, compared with
 gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
 Linux and Windows x64, with lldb-dap on macOS), against LFortran (the
 compiler check, on Linux x64; its programs linking without Visual Studio,
-on Windows x64) and against LLVM Flang (the compiler check, on Linux x64
-and Windows x64; its programs linking without Visual Studio, on Windows
-x64). The other
+on Windows x64) and against LLVM Flang (the compiler check and `zfls dap`
+with gdb, on Linux x64 and Windows x64; its programs linking without
+Visual Studio, on Windows x64). The other
 compilers' options and message formats are tested with recorded output, not
 with the compilers.
 
