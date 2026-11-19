@@ -329,9 +329,10 @@ def normalize(v):
         }
     if isinstance(v, list):
         # names not declared under IMPLICIT NONE (hansec #129): zfls only
-        # and unused names: zfls only; so is the diagnostic on an #include
-        # whose file is not found (#282)
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "include-not-found"))]
+        # and unused names: zfls only; so are mismatched ENDs and scopes
+        # left open (#285), and the diagnostic on an #include whose file is
+        # not found (#282)
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "mismatched-end", "unclosed-scope", "include-not-found"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
@@ -385,6 +386,29 @@ def on_include_directive(path: Path, position) -> bool:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     line = position.get("line", -1)
     return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
+
+
+PP_DEFINE = re.compile(r"^\s*#\s*define\s+(\w+)")
+WORD = re.compile(r"[A-Za-z_]\w*")
+
+
+def macro_names(path: Path, source: str) -> set:
+    """The names a preprocessed file (upper-case suffix) `#define`s."""
+    if path.suffix == path.suffix.lower():
+        return set()
+    return {m.group(1) for line in source.splitlines() if (m := PP_DEFINE.match(line))}
+
+
+def on_macro(lines: list, macros: set, line: int, char: int) -> bool:
+    """Whether the position is on the name of a macro of the file: zfls goes
+    to its `#define` and lists its uses and directives (#265); fortls answers
+    the use itself, and nothing on a directive's line."""
+    if not macros or not 0 <= line < len(lines):
+        return False
+    for m in WORD.finditer(lines[line]):
+        if m.start() <= char <= m.end():
+            return m.group(0) in macros
+    return False
 
 
 INCLUDE_LINE = re.compile(r"\s*(?:#\s*include|include)\s*[\"'<]", re.I)
@@ -700,14 +724,17 @@ def ref_key(r: dict):
 PROCEDURE_STMT = re.compile(r"\b(?:subroutine|function|procedure)\b", re.I)
 
 
-def uri_line(uri: str, line: int) -> str:
+def uri_line(uri: str, line: int, whole: bool = False):
+    """Line `line` of the file of `uri`, or with `whole` all its lines"""
     path = unquote(uri.removeprefix("file://"))
     if os.name == "nt":
         path = path.lstrip("/")
     try:
         lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return ""
+        return [] if whole else ""
+    if whole:
+        return lines
     return lines[line] if 0 <= line < len(lines) else ""
 
 
@@ -723,6 +750,28 @@ def separate_procedure_refs(a, b) -> bool:
     if not ka < kb:
         return False
     return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
+
+
+def implicit_result_refs(a, b) -> bool:
+    """zfls's references to a function without RESULT and to its result
+    variable are those of both (zfls #228); fortls lists one or the other:
+    whether `b` is `a` plus places of a name that a FUNCTION statement
+    without RESULT among the places defines."""
+    if not (isinstance(a, list) and isinstance(b, list)) or not a:
+        return False
+    ka = {ref_key(r) for r in a}
+    kb = {ref_key(r) for r in b}
+    if not ka < kb:
+        return False
+    texts = {u: uri_line(u, -1, whole=True) for u, _, _ in kb}
+    for u, ln, ch in kb - ka:
+        m = re.match(r"\w+", uri_line(u, ln)[ch:])
+        if not m:
+            return False
+        fun = re.compile(rf"\bfunction\s+{re.escape(m.group(0))}\s*\(", re.I)
+        if not any(fun.search(t) and "result" not in t.lower() for text in texts.values() for t in text):
+            return False
+    return True
 
 
 USE_RENAME = re.compile(r"^\s*use\b.*=>", re.I)
@@ -856,6 +905,7 @@ def main() -> int:
         bound = associate_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
+        macros = macro_names(path, source)
         entity_lengths = bool(ENTITY_LENGTH.search(source))
         semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
@@ -925,6 +975,13 @@ def main() -> int:
                 # for a character literal
                 continue
             pos = params.get("position") or {}
+            if (
+                (kind in ("definition", "references") or (kind == "hover" and a is None))
+                and on_macro(src_lines, macros, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # a macro: its #define, its places, and hover on a
+                # directive's line (#265)
+                continue
             if (
                 kind in ("hover", "definition", "references")
                 and a is None
@@ -999,6 +1056,10 @@ def main() -> int:
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
                 # interface and implementation (hansec issue 168)
+                continue
+            if kind == "references" and implicit_result_refs(a, b):
+                # a function without RESULT and its result variable are
+                # one name (zfls #228)
                 continue
             if kind == "references" and use_alias_refs(a, b):
                 # references follow names that USE statements rename

@@ -29,6 +29,7 @@ const assignment = @import("assignment.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
+const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
@@ -43,6 +44,13 @@ pub fn hasLinkAttr(o: *const Obj) bool {
 /// it (upstream #322)
 pub fn isImplicitResult(fun: *const Obj, v: *const Obj) bool {
     return fun.kind == .function and v.kind == .variable and v.parent == fun and std.ascii.eqlIgnoreCase(v.name, fun.name);
+}
+
+/// The function whose result variable `obj` is, when it has the function's
+/// name: references and rename on it are those of the function (#228)
+pub fn functionOfResult(obj: *Obj) *Obj {
+    const fun = obj.parent orelse return obj;
+    return if (isImplicitResult(fun, obj)) fun else obj;
 }
 
 /// Whether `x` and `y` are the interface and the implementation of the
@@ -179,9 +187,10 @@ fn seesAliasOf(env: objects.Env, scope: *Obj, alias: []const u8, holder: *Obj) !
     return false;
 }
 
-/// The references to `def_obj`. A rename also takes what only it must change:
-/// the result variable of a function and the original name in a renamed
-/// import; "find references" leaves them out, as fortls does.
+/// The references to `def_obj`, with those of its result variable when it
+/// is a function without a RESULT clause (#228). A rename also takes what
+/// only it must change: the original name in a renamed import; "find
+/// references" leaves it out, as fortls does.
 pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile, for_rename: bool) ![]Server.FileRefs {
     const def_name = try std.ascii.allocLowerString(a, def_obj.name);
     const def_fqsn = def_obj.fqsn;
@@ -220,7 +229,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                 for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                     in_cache = true;
                 };
-                if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def)) or
+                if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def) or
                     isSeparateProcedurePair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
                     (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
@@ -320,9 +329,10 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.assignmentAt(self, a, params)) |b| return assignment.references(self, a, b);
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
+    if (try macros.atPosition(self, a, params)) |m| return macros.references(self, a, m, with_c);
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
     if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
-    const obj = (try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj;
+    const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
     const rs = referenceScope(self, obj) orelse return .null;
     const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);
     var out: std.ArrayList(lsp.Location) = .empty;
@@ -370,7 +380,7 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
     const all = if (try renamedImport(a, d.file, d.line, d.col, d.obj)) |ri|
         try aliasReferences(self, a, d.file, d.obj, ri)
     else blk: {
-        const obj = (try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj;
+        const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
         const rs = referenceScope(self, obj) orelse return .null;
         break :blk try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, true);
     };

@@ -94,7 +94,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.codeLensNoRun` | `false` | No **Run** and **Debug** above a program |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
-| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
+| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change); for other editors only, since VS Code asks zfls for them itself when it wants them |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |

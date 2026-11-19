@@ -22,6 +22,28 @@ const Diagnostic = objects.Diagnostic;
 const BuiltDiag = objects.BuiltDiag;
 const EndError = objects.EndError;
 
+/// Whether a file has `#if`, `#ifdef` or `#ifndef` directives
+fn hasConditionals(file: *const FortranFile) bool {
+    for (0..file.nLines()) |ln| {
+        const t = std.mem.trimStart(u8, file.getLine(ln, false) orelse continue, " \t");
+        if (t.len < 3 or t[0] != '#') continue;
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, t[1..], " \t"), "if")) return true;
+    }
+    return false;
+}
+
+/// An END statement that does not fit the scope open there
+/// (`mismatched-end`), or a scope still open at the end of the file
+/// (`unclosed-scope`)
+pub const ScopeError = struct {
+    code: C.DiagCode,
+    /// 1-based line of the error
+    line: usize,
+    message: []const u8,
+    /// the scope it is about (opened at its `sline`)
+    scope: *Obj,
+};
+
 pub const IncludeInfo = struct {
     line_number: usize,
     path: []const u8,
@@ -93,6 +115,7 @@ pub const Ast = struct {
     end_stack: std.ArrayList(*const regex.Regex) = .empty,
     include_statements: std.ArrayList(*IncludeInfo) = .empty,
     end_errors: std.ArrayList(EndError) = .empty,
+    scope_errors: std.ArrayList(ScopeError) = .empty,
     parse_errors: std.ArrayList(BuiltDiag) = .empty,
     inherit_objs: std.ArrayList(*Obj) = .empty,
     linkable_objs: std.ArrayList(*Obj) = .empty,
@@ -407,7 +430,47 @@ pub const Ast = struct {
         return current;
     }
 
+    /// What an error message calls scope `s`: `IF construct`,
+    /// `SUBROUTINE "name"`
+    pub fn scopeLabel(self: *Ast, s: *Obj) ![]const u8 {
+        const a = self.allocator();
+        const kw: []const u8 = switch (s.kind) {
+            .function => "FUNCTION",
+            .scope => "PROCEDURE",
+            else => try s.getDesc(a),
+        };
+        if (s.kind.isBlock()) return a.print("{s} construct", .{kw});
+        if (s.name.len == 0) return kw;
+        if (s.name[0] == '#') return a.print("{s} block", .{kw});
+        return a.print("{s} \"{s}\"", .{ kw, s.name });
+    }
+
+    /// Whether an error names scope `s` already
+    pub fn scopeReported(self: *const Ast, s: *const Obj) bool {
+        for (self.scope_errors.items) |e| if (e.scope == s) return true;
+        return false;
+    }
+
+    /// A SELECT TYPE or SELECT RANK construct for one of its blocks (the
+    /// parser opens a scope for each), else `s`
+    pub fn constructOf(s: *Obj) *Obj {
+        if (s.kind == .select and s.isTypeRegion()) if (s.parent) |p| return p;
+        return s;
+    }
+
+    /// Records that scope `s` is not closed, unless an error names it
+    /// already
+    pub fn reportUnclosed(self: *Ast, s_in: *Obj) !void {
+        const s = constructOf(s_in);
+        if (s == self.none_scope or self.scopeReported(s)) return;
+        const message = try self.allocator().print("{s} is not closed", .{try self.scopeLabel(s)});
+        try self.scope_errors.append(self.allocator(), .{ .code = .unclosed_scope, .line = s.sline, .message = message, .scope = s });
+    }
+
     pub fn closeFile(self: *Ast, line_number: usize) !void {
+        // the scopes still open, outermost first
+        for (self.scope_stack.items) |s| try self.reportUnclosed(s);
+        if (self.current_scope) |cs| try self.reportUnclosed(cs);
         while (self.current_scope != null) try self.endScope(line_number, false);
         if (self.none_scope) |ns| {
             ns.end(line_number);
@@ -559,6 +622,18 @@ pub const Ast = struct {
             // at the END statement
             try errors.append(a, Diagnostic.init(.unexpected_end, (e.end_line orelse e.scope_line) -| 1, message, 1, "end"));
         }
+        // the parser reads every branch of the preprocessor conditionals of
+        // a file that is not preprocessed: each may open the same scope
+        const unpreprocessed = if (self.file) |f| !f.preproc and hasConditionals(f) else false;
+        if (!unpreprocessed) for (self.scope_errors.items) |e| {
+            // an INCLUDE after its first line may close it
+            if (e.code == .unclosed_scope) if (for (self.include_statements.items) |inc| {
+                if (inc.line_number >= e.scope.sline) break true;
+            } else false) continue;
+            var d = Diagnostic.init(e.code, e.line -| 1, e.message, 1, null);
+            if (e.code == .mismatched_end) d.addRelated(self.path, e.scope.sline -| 1, "Opened here");
+            try errors.append(a, d);
+        };
         for (tmp_list.items) |scope| {
             if (!scope.checkValidParent()) {
                 try errors.append(a, Diagnostic.init(

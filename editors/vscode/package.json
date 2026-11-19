@@ -372,6 +372,8 @@
               "statement-without-scope",
               "multiple-contains",
               "unexpected-end",
+              "mismatched-end",
+              "unclosed-scope",
               "invalid-parent",
               "procedure-before-contains",
               "declared-twice",

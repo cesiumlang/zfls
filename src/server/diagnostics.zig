@@ -733,9 +733,12 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
     if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
+    const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
+        // a file included by another may hold a part of a scope
+        if (included and d.code == .unclosed_scope) continue;
         if (d.code == .module_not_found) if (d.subject) |m| if (isExternalModule(self, m)) continue;
         var dd = d;
         dd.severity = severityOf(self, d.code) orelse d.severity;
@@ -743,6 +746,16 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
         try out.append(a, try self.diagnosticOf(a, file, dd));
     }
     return out.items;
+}
+
+/// Whether an INCLUDE statement or `#include` of a workspace file names
+/// `file`
+fn isIncluded(self: *Server, file: *const FortranFile) bool {
+    for (self.workspace.values()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.include_statements.items) |inc| if (inc.file == file) return true;
+    }
+    return false;
 }
 
 /// The severity `diagnostic_severity` gives the diagnostics of `code`
@@ -796,16 +809,23 @@ pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
 pub fn publishWorkspace(self: *Server, a: Allocator) void {
     if (self.s.disable_diagnostics) return;
     for (self.workspace.values()) |f| {
-        if (f.ast == null) continue;
-        // an included file is a part of others', and diagnosed as a
-        // document only when it is open
-        if (f.included and !self.open_docs.contains(f.path)) continue;
+        if (!publishedInWorkspace(self, f)) continue;
         const uri = paths.pathToUri(a, f.path) catch continue;
         sendDiagnostics(self, a, uri);
     }
 }
 
+/// Whether a file has diagnostics of its own with `workspace_diagnostics`:
+/// a parsed one, but an included file (a part of others') only when it is
+/// open
+pub fn publishedInWorkspace(self: *const Server, f: *const FortranFile) bool {
+    if (f.ast == null) return false;
+    return !f.included or self.open_docs.contains(f.path);
+}
+
 pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
+    // the client asks for them (pull.zig)
+    if (self.pull_diagnostics) return;
     const res = diagnosticsOf(self, a, uri) catch |e| {
         self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
         return;
