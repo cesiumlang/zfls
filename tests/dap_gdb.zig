@@ -298,6 +298,15 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(eql(str(try named(tc, "w"), "value"), "[0.25, 0.25]"), "t%w = {s}", .{str(try named(tc, "w"), "value").?});
     const parent = try variables(c, try named(tc, "point"));
     try check(eql(str(try named(parent, "id"), "value"), "7"), "t%point%id = 7", .{});
+    // ts: class(point) :: ts(:), of labeled: Flang's as its dynamic type
+    // (#429); gfortran's are a class wrapper's
+    if (setup.compiler == .flang) {
+        const ts = try named(args, "ts");
+        try check(eql(str(ts, "type"), "class(point) (2)") and eql(str(ts, "value"), "[labeled(…), labeled(…)]"), "ts: {s} = {s}", .{ str(ts, "type") orelse "?", str(ts, "value").? });
+        const te = try variables(c, ts);
+        try check(te.len == 2 and eql(str(te[1], "name"), "(2)"), "ts's elements: {s}", .{try listed(a, te)});
+        try check(eql(str(try named(try variables(c, te[1]), "label"), "value"), "5"), "ts(2)%label = 5", .{});
+    }
 
     // the module variables of the line: those of grid, its private one too
     var mv = try variables(c, try named(scopes, "Module variables"));

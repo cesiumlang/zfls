@@ -475,6 +475,12 @@ const flang_class_python =
     \\    m = re.search(r'frame base reg \$(\w+) offset (-?\d+)\+(-?\d+)', where)
     \\    if m:
     \\        places.append(int(f.read_register(m.group(1))) + int(m.group(2)) + int(m.group(3)))
+    \\    m = re.search(r'DW_OP_breg\d+ (-?\d+) \[\$(\w+)\]', where)
+    \\    if m:
+    \\        at = int(f.read_register(m.group(2))) + int(m.group(1))
+    \\        if 'DW_OP_deref' in where:
+    \\            at = struct.unpack('<Q', inf.read_memory(at, 8).tobytes())[0]
+    \\        places.append(at)
     \\    m = re.search(r'DW_OP_fbreg (-?\d+)', where)
     \\    if m:
     \\        for r in ('rsp', 'rbp', 'sp', 'x29'):
@@ -499,7 +505,7 @@ const flang_class_python =
     \\                return
     \\            stride *= extent
     \\        found = zfls_type(struct.unpack_from('<Q', h, 24 + 24 * rank)[0], D)
-    \\        if not found or found[0].sizeof != size:
+    \\        if not found or found[0].sizeof != size or getattr(found[0], 'dynamic', True):
     \\            return
     \\        typ = found[0]
     \\        for r in reversed(ranges):
@@ -523,7 +529,9 @@ pub fn flangClassCommand(a: Allocator, expr: []const u8, name: []const u8, decla
 /// The gdb command that finds the dynamic type of LLVM Flang's polymorphic
 /// array `expr` (a variable's name, whose descriptor `info address` locates)
 /// and sets `$name` to the array as one of that type, with the same bounds,
-/// when it is not `declared` and the array is contiguous. Flang's DWARF
+/// when it is not `declared` and the array is contiguous. Not for a type
+/// with allocatable or pointer components (gdb's `dynamic`), as gdb stops
+/// with an internal error on an array of gdb's own of one. Flang's DWARF
 /// gives `class(point) :: ts(:)` as an array of `point` whose stride is the
 /// dynamic type's size.
 pub fn flangClassArrayCommand(a: Allocator, expr: []const u8, name: []const u8, declared: []const u8) ![]const u8 {

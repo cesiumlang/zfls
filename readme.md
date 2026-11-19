@@ -205,7 +205,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     and stepping but not the variables. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
     (tested in CI with Flang 23 and MSYS2's gdb): the variables, a
-    polymorphic object with its dynamic type's components, and stops at
+    polymorphic object or array with its dynamic type's components, and stops at
     Flang's runtime errors and ERROR STOP (not at a plain STOP). Windows's
     engine does not stop at them yet. The VS Code extension's Debug
     Fortran File builds Flang's programs so (where there is an `lld-link`)
