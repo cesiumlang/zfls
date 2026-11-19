@@ -88,6 +88,8 @@ pub const DiagCode = enum {
     statement_without_scope,
     multiple_contains,
     unexpected_end,
+    mismatched_end,
+    unclosed_scope,
     invalid_parent,
     procedure_before_contains,
     declared_twice,

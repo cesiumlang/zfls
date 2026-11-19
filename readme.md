@@ -553,7 +553,8 @@ sets it.
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
 panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
-`multiple-contains`, `unexpected-end`, `invalid-parent`,
+`multiple-contains`, `unexpected-end`, `mismatched-end`, `unclosed-scope`,
+`invalid-parent`,
 `procedure-before-contains`, `declared-twice`, `masks-parent`,
 `import-outside-interface`, `module-not-found`, `use-after-implicit`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
@@ -974,6 +975,14 @@ zfls deliberately differs from fortls in a few places:
   after initialization, and again when a saved or changed file changes
   them, so that editors list the problems of files that are not open; a
   deleted file's are cleared. fortls only checks open files.
+- An END statement that does not fit the construct open there gets a
+  `mismatched-end` error (`END DO does not match the IF construct opened at
+  line 4`); when it fits a scope further out, the scopes inside are closed
+  with it, so that what follows is not read as nested. A program unit or
+  construct still open at the end of the file gets an `unclosed-scope` error
+  at its first line, except in a file that another includes, in a scope with
+  an INCLUDE, and in a file that is not preprocessed but has `#if`
+  directives. fortls reports neither.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
   fortls only checks the types named in declarations. A line with macros is
