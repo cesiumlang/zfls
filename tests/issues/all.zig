@@ -40,6 +40,7 @@ test {
     _ = @import("same_name_modules.zig");
     _ = @import("settings.zig");
     _ = @import("signature.zig");
+    _ = @import("user_config.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
     _ = @import("pull_diagnostics.zig");

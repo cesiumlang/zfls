@@ -101,6 +101,7 @@ pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames
 /// arena), null without one. Problems with it are posted to the client;
 /// only allocation failures are errors.
 pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
+    self.config.file_path = null;
     var config_path: ?[]const u8 = null;
     for (configFileNames(self)) |f| {
         const p = try paths.join(a, &.{ self.root_path, f });
@@ -110,20 +111,28 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
         }
     }
     const cp = config_path orelse return null;
-    const sa = self.arena.allocator();
-    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
+    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, self.arena.allocator(), .limited(1 << 26)) catch {
         self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
         return null;
     };
-    var p: json5.Parser = .{ .a = sa, .src = data };
+    const cfg = try parseConfigFile(self, a, data, self.s.config) orelse return null;
+    self.config.file_path = try self.arena.allocator().dupe(u8, cp);
+    return cfg;
+}
+
+/// The JSON object of a configuration file's text `data` (in the server's
+/// arena), null when it is none: an error then posted, naming the file as
+/// `name`
+pub fn parseConfigFile(self: *Server, a: Allocator, data: []const u8, name: []const u8) Allocator.Error!?Value {
+    var p: json5.Parser = .{ .a = self.arena.allocator(), .src = data };
     const cfg = p.parseDocument() catch {
         const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
+        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, name });
         self.postMessage(a, msg, C.Severity.err);
         return null;
     };
     if (cfg != .object) {
-        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
+        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{name}), C.Severity.err);
         return null;
     }
     return cfg;
@@ -213,6 +222,9 @@ pub fn configLogger(self: *Server) !void {
 /// the configuration file and the build files, in the debug log
 pub fn logOptions(self: *Server, a: Allocator) Allocator.Error!void {
     if (!self.log.enabled(.debug)) return;
+    var read: std.ArrayList([]const u8) = .empty;
+    for ([_]?[]const u8{ self.config.user_path, self.config.file_path }) |p| if (p) |x| try read.append(a, x);
+    self.log.debug("Configuration files read: {s}", .{if (read.items.len == 0) "none" else try std.mem.join(a, ", ", read.items)});
     self.log.debug("Final options: {s}", .{try json.stringify(a, try settings_mod.toJson(a, &self.s))});
 }
 

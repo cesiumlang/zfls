@@ -355,7 +355,12 @@ pub const ClientCapabilities = struct {
         rangeFormatting: Dynamic = .{},
     } = .{},
     workspace: struct {
-        didChangeWatchedFiles: Dynamic = .{},
+        didChangeWatchedFiles: struct {
+            dynamicRegistration: bool = false,
+            /// patterns relative to a directory, which may be outside the
+            /// workspace
+            relativePatternSupport: bool = false,
+        } = .{},
         /// the client takes `workspace/diagnostic/refresh`
         diagnostics: struct { refreshSupport: bool = false } = .{},
         codeLens: struct { refreshSupport: bool = false } = .{},

@@ -244,7 +244,7 @@ pub const Workspace = struct {
                 .rangeFormatting = dynamic,
                 .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
-                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },
                 .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
             }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,
