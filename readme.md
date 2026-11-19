@@ -82,7 +82,10 @@ command line options and configuration files.
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
   macros, `#include`), and Intel's conditional compilation directives
   (`!DEC$ IF DEFINED (X)`, `!DIR$ IF (expr)`; see
-  [Intel conditional compilation](#intel-conditional-compilation))
+  [Intel conditional compilation](#intel-conditional-compilation)); go to
+  definition of a macro goes to the `#define` in effect at the use, in the
+  file or a header, and references and highlights list its uses and the
+  directives that name it
 - Documentation for intrinsic procedures (with the specific names, such as
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
@@ -375,7 +378,11 @@ build files say:
   file, or directory, that the `compile_commands` option names; `""` or
   `disable_compile_commands` for none, as in fortls's pending PR #504): the
   `-I`, `-isystem` and `-D` flags (`/I` and `/D` too) of its Fortran entries.
-  Definitions apply to every file, the first value of a name winning.
+  Definitions apply to every file, the first value of a name winning. The
+  Fortran files it compiles outside the root (a sibling library, a fetched
+  dependency) are indexed too, those that `excl_paths` and `excl_suffixes`
+  leave in; the ones under the root are left to the scan of the source
+  directories.
 - `fpm.toml` in the root: the `include-dir` of `[library]` (`include` by
   default, when it exists) and the `macros` of `[preprocess.cpp]`.
 
@@ -584,6 +591,18 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
   Other open documents that use a changed module follow when it is saved.
   A result of the compiler or a linter for a changed text is published
   with zfls's diagnostics of that text, not before them.
+- A client that pulls diagnostics (its `textDocument.diagnostic`
+  capability, as VS Code's has) asks for zfls's own when it shows a
+  document (`textDocument/diagnostic`), and with `workspace_diagnostics`
+  for every file (`workspace/diagnostic`); zfls then publishes none of
+  them, and `diagnostics_change_delay` does not apply. A report the client
+  already has comes back `unchanged`, computed again only after a change in
+  the workspace; `interFileDependencies` tells the client that a change of
+  a module changes the reports of the files that use it. The compiler's and
+  the linters' diagnostics, which come later from their threads, are still
+  published. After a change of the settings zfls asks the client to pull
+  again (`workspace/diagnostic/refresh`). Turning `workspace_diagnostics`
+  on for such a client takes a restart.
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
   the severities are `off`, `error`, `warning`, `information` and `hint`.
@@ -996,6 +1015,14 @@ zfls deliberately differs from fortls in a few places:
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- Go to definition of a preprocessor macro goes to its `#define` (the one
+  in effect at the use, also in a header an `#include` reads), and null for
+  a macro of `pp_defs` or `-D`; references and document highlights list
+  the macro as a word of the file's code (outside strings and comments)
+  and of its directives, and for a header's macro of the header and the
+  workspace files that include it; hover and definition work on the names
+  of `#ifdef`, `#ifndef`, `#if defined(...)` and `#undef` lines (hansec
+  #115). fortls answers the use itself and lists only it.
 - OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
   Fortran #17); fortls reads them as comments, so its references and
   rename leave them out. `disable_openmp_conditional` reads them as fortls
@@ -1150,6 +1177,9 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- The Fortran files that `compile_commands.json` compiles outside the
+  workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
+  source directories only.
 - `.f23`, `.ftn`, `.pf` and `.fypp` files are indexed by default, besides
   fortls's extensions (FL #299, FL #521).
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed

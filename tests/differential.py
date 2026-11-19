@@ -387,6 +387,29 @@ def on_include_directive(path: Path, position) -> bool:
     return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
 
 
+PP_DEFINE = re.compile(r"^\s*#\s*define\s+(\w+)")
+WORD = re.compile(r"[A-Za-z_]\w*")
+
+
+def macro_names(path: Path, source: str) -> set:
+    """The names a preprocessed file (upper-case suffix) `#define`s."""
+    if path.suffix == path.suffix.lower():
+        return set()
+    return {m.group(1) for line in source.splitlines() if (m := PP_DEFINE.match(line))}
+
+
+def on_macro(lines: list, macros: set, line: int, char: int) -> bool:
+    """Whether the position is on the name of a macro of the file: zfls goes
+    to its `#define` and lists its uses and directives (#265); fortls answers
+    the use itself, and nothing on a directive's line."""
+    if not macros or not 0 <= line < len(lines):
+        return False
+    for m in WORD.finditer(lines[line]):
+        if m.start() <= char <= m.end():
+            return m.group(0) in macros
+    return False
+
+
 INCLUDE_LINE = re.compile(r"\s*(?:#\s*include|include)\s*[\"'<]", re.I)
 
 
@@ -881,6 +904,7 @@ def main() -> int:
         bound = associate_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
+        macros = macro_names(path, source)
         entity_lengths = bool(ENTITY_LENGTH.search(source))
         semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
@@ -950,6 +974,13 @@ def main() -> int:
                 # for a character literal
                 continue
             pos = params.get("position") or {}
+            if (
+                (kind in ("definition", "references") or (kind == "hover" and a is None))
+                and on_macro(src_lines, macros, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # a macro: its #define, its places, and hover on a
+                # directive's line (#265)
+                continue
             if (
                 kind in ("hover", "definition", "references")
                 and a is None

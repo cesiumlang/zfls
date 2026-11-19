@@ -139,6 +139,9 @@ pub const Options = struct {
     client_commands: []const []const u8 = &.{},
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
+    /// the client pulls diagnostics (`textDocument/diagnostic`) and takes
+    /// `workspace/diagnostic/refresh`
+    pull_diagnostics: bool = false,
     /// the `initializationOptions` of the initialize request (JSON)
     init_options: ?[]const u8 = null,
     /// the client registers signature help, code actions and formatting
@@ -239,8 +242,10 @@ pub const Workspace = struct {
                 .codeAction = dynamic,
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
+                .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
             }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
