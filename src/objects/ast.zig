@@ -547,7 +547,8 @@ pub const Ast = struct {
                 try a.print("Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
-            try errors.append(a, Diagnostic.init(.unexpected_end, e.scope_line -| 1, message, 1, null));
+            // at the END statement
+            try errors.append(a, Diagnostic.init(.unexpected_end, (e.end_line orelse e.scope_line) -| 1, message, 1, "end"));
         }
         for (tmp_list.items) |scope| {
             if (!scope.checkValidParent()) {

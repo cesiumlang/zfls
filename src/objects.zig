@@ -143,6 +143,9 @@ pub const Scope = struct {
     use: std.ArrayList(*UseStmt) = .empty,
     inherit: ?[]const u8 = null,
     contains_start: ?usize = null,
+    /// a BLOCK DATA unit, a scope of kind `.block` (a program unit, not
+    /// the BLOCK construct)
+    block_data: bool = false,
     implicit_line: ?usize = null,
     /// the letter ranges of its IMPLICIT statements and their types
     implicit_rules: []const implicit.Rule = &.{},
@@ -517,7 +520,7 @@ pub const Obj = struct {
             .function => if (self.procDataConst().result_type) |rt| (if (rt.len > 0) try std.mem.concat(a, u8, &.{ rt, " FUNCTION" }) else "FUNCTION") else "FUNCTION",
             .type => "TYPE",
             .interface => "INTERFACE",
-            .block => "BLOCK",
+            .block => if (self.isBlockData()) "BLOCK DATA" else "BLOCK",
             .do_ => "DO",
             .if_ => "IF",
             .where => "WHERE",
@@ -689,8 +692,13 @@ pub const Obj = struct {
         return self.kind == .interface and self.ifaceDataConst().abstract;
     }
 
+    /// Whether an END alone cannot end it: a construct, not a BLOCK DATA
     pub fn reqNamedEnd(self: *const Obj) bool {
-        return self.kind.isBlock();
+        return self.kind.isBlock() and !self.isBlockData();
+    }
+
+    pub fn isBlockData(self: *const Obj) bool {
+        return self.kind == .block and self.scopeDataConst().block_data;
     }
 
     pub fn isParameter(self: *const Obj) bool {
