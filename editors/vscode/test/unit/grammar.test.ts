@@ -72,3 +72,23 @@ test("a Fortran code block in documentation comments", () => {
   assert.doesNotMatch("  !> ```", inside);
   assert.doesNotMatch("  y = 1", inside);
 });
+
+const fixedForm = JSON.parse(fs.readFileSync(path.join(root, "syntaxes", "fortran_fixed-form.tmLanguage.json"), "utf8"));
+
+test("a fixed-form debug line: its D is no error (zfls #260)", () => {
+  const debug = new RegExp(fixedForm.repository["debug-line"].match);
+  const header = fixedForm.repository["line-header"];
+  const headerRe = new RegExp(header.match);
+  assert.equal(fixedForm.repository["debug-line"].name, "comment.line.debug.fortran");
+  for (const line of ["D     PRINT *, 'debug', I", "d     I = J"]) {
+    assert.match(line, debug);
+    // the line header, which marks other text in columns 1-5 as an error,
+    // leaves it alone
+    assert.doesNotMatch(line, headerRe);
+  }
+  assert.doesNotMatch("      DO 10 I = 1, N", debug);
+  assert.match("   10 CONTINUE", headerRe);
+  assert.match("     &  B", headerRe);
+  const patterns = fixedForm.patterns.map((p: { include?: string }) => p.include);
+  assert.ok(patterns.indexOf("#debug-line") < patterns.indexOf("#line-header"));
+});

@@ -89,7 +89,11 @@ fn argumentHints(self: *Server, a: Allocator, file: *FortranFile, ln: usize, out
         }
         if (j >= code.len or code[j] != '(') continue;
         const close = matchingParen(code, j) orelse continue;
-        const obj = (try definition.getDefinition(self, a, file, ln, w.start, false)) orelse continue;
+        var obj = (try definition.getDefinition(self, a, file, ln, w.start, false)) orelse continue;
+        // the caller's own declaration of a procedure it calls (#232)
+        if (file.ast) |ast| if (try objects.declaredProcedure(self.env(a), ast, self.workspace.values(), obj, true)) |p| {
+            obj = p;
+        };
         const target = switch (obj.kind) {
             .subroutine, .function, .method => obj,
             .interface => (try signature.genericSpecific(self, a, file, ln, w.start, obj)) orelse continue,

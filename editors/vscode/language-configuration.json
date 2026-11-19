@@ -42,11 +42,11 @@
   "indentationRules": {
     "unIndentedLinePattern": "^\\s*[!#].*",
     "increaseIndentPattern": {
-      "pattern": "then(\\s*|\\s*!.*)$|^\\s*(program|subroutine|function|module|do|block|associate|case|select\\s*case)\\b.*$|\\s*(else|else\\s*if|elsewhere)\\b.*$",
+      "pattern": "^\\s*(?:\\d+\\s+)?(?:program\\b(?!\\s*[=(%])|module\\s+(?!procedure\\b)[a-z]\\w*\\s*(?:!.*)?$|submodule\\s*\\(|block\\s*data\\b|(?:(?:pure|impure|elemental|recursive|non_recursive|module|simple|integer|real|logical|complex|character|byte|double\\s*precision|double\\s*complex|type|class)(?:\\s*\\*\\s*\\d+|\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))?\\s*)*(?:function|subroutine)\\s+[a-z]|type(?:\\s*,[^:]*)?\\s*::\\s*[a-z]|type\\s+(?!is\\b)[a-z]\\w*\\s*(?:\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))?\\s*(?:!.*)?$|(?:abstract\\s+)?interface\\b(?!\\s*[=(%])|enum\\b(?!\\s*[=(%])|(?:[a-z]\\w*\\s*:(?!:)\\s*)?(?:else\\s*)?if\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*then\\b|(?:[a-z]\\w*\\s*:(?!:)\\s*)?do\\b(?!\\s*[=(%])|(?:[a-z]\\w*\\s*:(?!:)\\s*)?block\\b(?!\\s*[=(%])|(?:[a-z]\\w*\\s*:(?!:)\\s*)?associate\\s*\\(|(?:[a-z]\\w*\\s*:(?!:)\\s*)?select\\s*(?:case|type|rank)\\b|(?:[a-z]\\w*\\s*:(?!:)\\s*)?critical\\b(?!\\s*[=%])|(?:[a-z]\\w*\\s*:(?!:)\\s*)?change\\s+team\\s*\\(|(?:[a-z]\\w*\\s*:(?!:)\\s*)?(?:where|forall)\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(?:!.*)?$|else(?:\\s+[a-z]\\w*)?\\s*(?:!.*)?$|else\\s*where(?:\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))?(?:\\s*[a-z]\\w*)?\\s*(?:!.*)?$|(?:case|rank)\\s*(?:\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)|default\\b)|(?:type|class)\\s+is\\s*\\(|class\\s+default\\b|contains\\s*(?:!.*)?$)|^(?![c*]\\s)[^!]*\\)\\s*then\\s*(?:!.*)?$",
       "flags": "i"
     },
     "decreaseIndentPattern": {
-      "pattern": "^\\s*end\\s*(select|if|do|function|subroutine|module|program)\\b.*$|^\\s*(else|case)\\b.*$",
+      "pattern": "^\\s*(?:\\d+\\s+)?(?:end\\s*(?:\\w+)?\\b(?!\\s*[=(%])|(?:else\\s*if|else\\s*where|else)\\b(?!\\s*[=%])|case\\b(?!\\s*[=%])|rank\\s*(?:\\(|default\\b)|(?:type|class)\\s+is\\s*\\(|class\\s+default\\b|contains\\s*(?:!.*)?$)",
       "flags": "i"
     }
   }

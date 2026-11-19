@@ -267,6 +267,43 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     return null;
 }
 
+/// The global subroutine or function that `v`, a caller's own declaration
+/// of the name, stands for (#232): a variable with the EXTERNAL attribute
+/// (`external solve`, `real, external :: twice`), or, when `called` (the
+/// name is called somewhere), one declared with a type and no array shape,
+/// `real twice`, which declares the type of a function. Not a dummy
+/// argument of the caller (a dummy procedure) nor a function's result,
+/// and only when one of `files` (the workspace's `FortranFile`s) alone
+/// defines a global procedure of that name.
+pub fn declaredProcedure(env: Env, ast: *const objects.Ast, files: anytype, v: *const Obj, called: bool) Allocator.Error!?*Obj {
+    if (v.kind != .variable) return null;
+    const vd = v.varDataConst();
+    if (!vd.is_external and (!called or vd.is_const or v.hasKeyword(C.KW.dimension) or v.keyword_info.dimension != null)) return null;
+    const parent = v.parent orelse return null;
+    switch (parent.kind) {
+        .type => return null,
+        .subroutine, .function => {
+            if (parent.kind == .function and std.ascii.eqlIgnoreCase(parent.name, v.name)) return null;
+            for (parent.procDataConst().arg_objs.items) |arg| if (arg == v) return null;
+        },
+        else => {},
+    }
+    const key = try std.ascii.allocLowerString(env.tmp, v.name);
+    const cand = env.global(ast, key) orelse return null;
+    switch (cand.kind) {
+        .function => {},
+        .subroutine => if (!vd.is_external) return null,
+        else => return null,
+    }
+    var defined: usize = 0;
+    for (files) |f| {
+        const fa = f.ast orelse continue;
+        const o = fa.global_dict.get(key) orelse continue;
+        if (o.kind == .subroutine or o.kind == .function) defined += 1;
+    }
+    return if (defined == 1) cand else null;
+}
+
 pub fn findInWorkspace(env: Env, query: []const u8, filter_public: bool, exact_match: bool) ![]*Obj {
     const a = env.tmp;
     var matching: std.ArrayList(*Obj) = .empty;
