@@ -387,7 +387,16 @@ jobs:
     # explicit: a skipped job anywhere upstream (reuse, on pull requests)
     # would otherwise skip the tests too
     if: ${{ !cancelled() && needs.build.result == 'success' }}
-    runs-on: ${{ matrix.os }}
+    # The macOS arm64 leg runs on a self-hosted runner instead when the
+    # repository variable MACOS_ARM64_RUNNER names one (a label of it, such
+    # as `self-hosted`): a switch for the hours when GitHub's own runners
+    # are not handed out. Never for a pull request from a fork, whose
+    # workflow could run anything on that machine.
+    runs-on: >-
+      ${{ (matrix.target == 'aarch64-macos' && vars.MACOS_ARM64_RUNNER != ''
+      && (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository))
+      && vars.MACOS_ARM64_RUNNER || matrix.os }}
     strategy:
       fail-fast: false
       # The macOS arm64 (macos-15) job, the only one of a run, runs only for a
@@ -420,6 +429,16 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
+      # On a self-hosted runner (see runs-on) the caches go to the job's
+      # temporary directory, which the runner empties after each job, so
+      # that runs do not fill the machine
+      - name: Caches in the job's temporary directory (self-hosted)
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-global-cache" >> "$GITHUB_ENV"
+          echo "ZIG_LOCAL_CACHE_DIR=$RUNNER_TEMP/zig-local-cache" >> "$GITHUB_ENV"
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.sha }}
@@ -462,9 +481,19 @@ jobs:
             sudo apt-get update && sudo apt-get install -y gfortran gdb
           fi
 
+      # (a self-hosted runner: Nix's, which installs nothing on the machine
+      # outside the Nix store)
       - name: gfortran (macOS)
         if: runner.os == 'macOS'
         run: |
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+            export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+            gf="$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths nixpkgs#gfortran)/bin/gfortran"
+            mkdir -p "$RUNNER_TEMP/bin"
+            ln -sf "$gf" "$RUNNER_TEMP/bin/gfortran"
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
           gf=$(ls "$(brew --prefix)"/bin/gfortran-* 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$gf" ]; then
             brew install gcc
@@ -648,12 +677,15 @@ jobs:
       # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
       # a step, the stack, a runtime error, attaching, a terminal. A debugger
       # starts a program only with Developer Mode on, which a runner's
-      # session without a desktop does not have
+      # session without a desktop does not have (a self-hosted runner's
+      # machine has it on, and its user in _developer, set up once by hand)
       - name: zfls dap with lldb-dap (macOS)
         if: runner.os == 'macOS'
         run: |
-          sudo DevToolsSecurity -enable
-          sudo dscl . append /Groups/_developer GroupMembership "$(id -un)"
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo DevToolsSecurity -enable
+            sudo dscl . append /Groups/_developer GroupMembership "$(id -un)"
+          fi
           xcrun --find lldb-dap
           zig-out/bin/dap_lldb --zfls "$ZFLS"
 
@@ -746,6 +778,12 @@ jobs:
             echo "::warning::the VS Code test failed; running it once more"
             run_vscode
           fi
+
+      # a self-hosted runner keeps its working directory between jobs: the
+      # downloaded VS Code, the archives and the build outputs go
+      - name: Clean the working directory (self-hosted)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: git clean -ffdxq && git submodule foreach --recursive git clean -ffdxq
 
   conda:
     name: Conda package (${{ matrix.platform }})
