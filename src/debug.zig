@@ -29,6 +29,9 @@ const Out = struct {
     a: Allocator,
     /// What `fail` reported
     fail_msg: []const u8 = "",
+    /// Where the output goes instead of stdout (for tests), with its
+    /// allocator
+    capture: ?Capture = null,
     /// The error of the first write that failed: the output is incomplete
     write_error: ?anyerror = null,
 
@@ -38,12 +41,16 @@ const Out = struct {
     }
 
     fn flush(self: *Out) void {
-        if (self.write_error == null) stdio.stdout().writeStreamingAll(self.io, self.buf.items) catch |e| {
+        if (self.capture) |c| {
+            c.out.appendSlice(c.a, self.buf.items) catch {};
+        } else if (self.write_error == null) stdio.stdout().writeStreamingAll(self.io, self.buf.items) catch |e| {
             self.write_error = e;
         };
         self.buf.clearRetainingCapacity();
     }
 };
+
+pub const Capture = struct { a: Allocator, out: *std.ArrayList(u8) };
 
 fn fail(o: *Out, comptime fmt: []const u8, args: anytype) DebugError {
     o.fail_msg = o.a.print(fmt, args) catch "debug error";
@@ -65,10 +72,15 @@ fn traceTo(o: *Out) parser.Trace {
 
 /// Run the requested debug mode; returns the process exit code
 pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
+    return runTo(gpa, io, s_in, null);
+}
+
+/// `run`, its output in `capture` instead of on stdout
+pub fn runTo(gpa: Allocator, io: Io, s_in: Settings, capture: ?Capture) !u8 {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    var o: Out = .{ .io = io, .a = a };
+    var o: Out = .{ .io = io, .a = a, .capture = capture };
     var s = s_in;
     const result = blk: {
         if (s.debug_parser) break :blk debugParser(a, io, &o, &s);
@@ -107,34 +119,39 @@ const ConfigInfo = struct {
     include_dirs: []const []const u8 = &.{},
 };
 
-fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, input_config: []const u8) !ConfigInfo {
-    var info: ConfigInfo = .{};
-    const r = root orelse return info;
-    const candidates = [_][]const u8{ input_config, ".fortlsrc", ".fortls.json5", ".fortls" };
-    var config_path: ?[]const u8 = null;
-    for (candidates) |f| {
-        const p = try paths.join(a, &.{ r, f });
-        if (paths.isFile(io, p)) {
-            config_path = p;
-            break;
+/// The preprocessor options as the server takes them: the command line's
+/// (`s`), and the configuration file's in `root` over them
+fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settings) !ConfigInfo {
+    var merged = try settings_mod.clone(a, s.*);
+    if (root) |r| {
+        var config_path: ?[]const u8 = null;
+        for (settings_mod.configFileNames(s.config)) |f| {
+            const p = try paths.join(a, &.{ r, f });
+            if (paths.isFile(io, p)) {
+                config_path = p;
+                break;
+            }
         }
+        o.print("  Config file = {s}\n", .{config_path orelse "None"});
+        if (config_path) |cp| if (Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 26))) |data| {
+            var p: json5.Parser = .{ .a = a, .src = data };
+            if (p.parseDocument()) |cfg| {
+                if (cfg == .object) try settings_mod.applyConfig(a, &merged, cfg);
+            } else |_| {
+                const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
+                o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, cp });
+            }
+        } else |_| {};
     }
-    o.print("  Config file = {s}\n", .{config_path orelse "None"});
-    const cp = config_path orelse return info;
-    const data = Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 26)) catch return info;
-    var p: json5.Parser = .{ .a = a, .src = data };
-    const cfg = p.parseDocument() catch {
-        const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, cp });
-        return info;
+    var info: ConfigInfo = .{};
+    // an empty list is the default rule, as in the server
+    if (merged.pp_suffixes) |l| if (l.len() > 0) {
+        info.pp_suffixes = l.slice();
     };
-    var s: Settings = .{};
-    try settings_mod.applyConfig(a, &s, cfg);
-    if (s.pp_suffixes) |l| info.pp_suffixes = l.slice();
-    for (s.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
+    for (merged.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
     var dirs: std.ArrayList([]const u8) = .empty;
-    for (s.include_dirs.slice()) |inc| {
-        for (try glob.resolveGlobs(io, a, inc, r)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
+    for (merged.include_dirs.slice()) |inc| {
+        for (try glob.resolveGlobs(io, a, inc, root)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
     }
     info.include_dirs = dirs.items;
     return info;
@@ -151,7 +168,7 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting parser\n", .{});
     separator(o);
     const fp = try ensureFileAccessible(io, o, s.debug_filepath);
-    const cfg = try readConfig(a, io, o, s.debug_rootpath, s.config);
+    const cfg = try readConfig(a, io, o, s.debug_rootpath, s);
     o.print("  File = \"{s}\"\n", .{fp});
     const file = try parser.FortranFile.create(a, fp, cfg.pp_suffixes);
     _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
@@ -194,7 +211,7 @@ fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     // like Python's readlines(): no empty element after a final newline
     if (lines.len > 0 and lines[lines.len - 1].len == 0) lines = lines[0 .. lines.len - 1];
     const root = s.debug_rootpath orelse paths.dirname(fp);
-    const cfg = try readConfig(a, io, o, root, s.config);
+    const cfg = try readConfig(a, io, o, root, s);
     const sep2 = sep75;
     o.print("\n{s}\nPreprocessor Pass:\n{s}\n", .{ sep2, sep2 });
     const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, traceTo(o));

@@ -84,8 +84,8 @@ pub fn read(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *std.A
             const eq = std.mem.findScalar(u8, item, '=') orelse continue;
             const name = str.strip(item[0..eq]);
             if (name.len == 0) continue;
-            const value = try str.splitWhitespace(a, str.strip(item[eq + 1 ..]));
-            try add(a, out, .{ .scope = scope, .line = ln, .name = name, .kw = .parameter, .text = try std.mem.join(a, " ", value) });
+            const value = try helpers.collapseBlanks(a, item[eq + 1 ..]);
+            try add(a, out, .{ .scope = scope, .line = ln, .name = name, .kw = .parameter, .text = value });
         }
         return true;
     }

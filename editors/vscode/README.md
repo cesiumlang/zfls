@@ -32,6 +32,12 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   and an outline of the groups and the variables they set (from zfls, which
   does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
+- indentation as you type: a line after the start of a program unit,
+  procedure (with its prefixes: `pure`, `integer`, ...), derived type,
+  interface or construct (named or not) is indented, and an END, ELSE,
+  CASE, CONTAINS, TYPE IS, ... is outdented as you type it; keywords in
+  comments and strings are ignored. A `module procedure` line does not
+  indent the next one (in an interface block it has no body)
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))
 - Fortran and C: go to definition of a `BIND(C)` procedure gives its C
@@ -45,6 +51,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   module variables, stopping on Fortran runtime errors (see
   [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the
   other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
+- code lenses: the number of references above each module, procedure and
+  derived type (click it for the references), and **Run** and **Debug**
+  above a program
 - run and debug the current file with one click (see
   [Running and debugging](#running-and-debugging))
 - fpm projects: tasks, running and debugging their targets, and their tests
@@ -68,7 +77,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.incrementalSync` | `true` | Send document changes incrementally |
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
-| `zfls.hoverSignature` | `true` | Procedure signatures in hover |
+| `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
 | `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
@@ -77,8 +86,11 @@ disable Modern Fortran when you install zfls (see
 | `zfls.autocompleteNoAutoUse` | `false` | Do not offer names of modules not used yet (completing one adds its `use` statement) |
 | `zfls.sortKeywords` | `false` | Sort variable keywords in hover |
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
+| `zfls.codeLensNoReferences` | `false` | No reference counts above modules, procedures and types (`editor.codeLens` turns off every lens) |
+| `zfls.codeLensNoRun` | `false` | No **Run** and **Debug** above a program |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
+| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |
@@ -364,7 +376,7 @@ its runtime libraries.
 | --- | --- | --- |
 | `zfls.run.compiler` | `gfortran` | The compiler: `gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`, `nagfor`, `lfortran`, ... |
 | `zfls.run.compilerPath` | empty | The compiler, or its directory, when it is not on the `PATH` |
-| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`). The extension adds the include path, the output file and the source |
+| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`, and none for `lfortran` on Windows: its build from conda-forge lacks the runtime stacktrace that `-g` needs, and refuses it). The extension adds the include path, the output file and the source |
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |
@@ -536,7 +548,8 @@ release from its site); `zfls.fpm.path` says where when it is not on the
   `target`, `example`, `profile`, `compiler`, `flags`, `args`,
   `programArgs` and `cwd` (the project's directory in the folder). The
   compiler's errors appear in the Problems view (the problem matchers
-  `$zfls-gfortran` and `$zfls-intel`).
+  `$zfls-gfortran` and `$zfls-intel`); `build` and `install` run in the C
+  locale (`LC_ALL=C`), so that the compiler writes them in English.
 - **zfls: Run fpm Target** and **zfls: Debug fpm Target** offer the
   executables and examples (and, to debug, the tests) that fpm lists.
   Debugging builds the target with fpm, then starts the debugger of
