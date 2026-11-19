@@ -318,8 +318,26 @@ pub fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
     const trailing = line[m.end(0)..];
     const mc = helpers.findParenMatch(trailing);
     if (mc < 0) return .{ .assoc = &.{} };
-    const words = try helpers.separateDefList(a, str.strip(trailing[0..@intCast(mc)]));
-    return .{ .assoc = words orelse &.{} };
+    // split at the commas outside parentheses and strings, the strings kept
+    // (`s => 'abc'` is typed by its literal)
+    const list = str.strip(trailing[0..@intCast(mc)]);
+    const blanked = try helpers.stripStrings(a, list, true);
+    var words: std.ArrayList([]const u8) = .empty;
+    var depth: usize = 0;
+    var start: usize = 0;
+    for (blanked, 0..) |c, i| switch (c) {
+        '(', '[' => depth += 1,
+        ')', ']' => depth -|= 1,
+        ',' => if (depth == 0) {
+            const w = str.strip(list[start..i]);
+            if (w.len > 0) try words.append(a, w);
+            start = i + 1;
+        },
+        else => {},
+    };
+    const last = str.strip(list[start..]);
+    if (last.len > 0) try words.append(a, last);
+    return .{ .assoc = words.items };
 }
 
 pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {

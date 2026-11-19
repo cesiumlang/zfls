@@ -105,9 +105,11 @@ pub const Worker = struct {
     queue: std.ArrayList(*Job) = .empty,
     stopping: bool = false,
     thread: ?std.Thread = null,
-    /// A missing compiler, or fypp, is reported once
+    /// A missing compiler, or fypp, is reported once, and so is output
+    /// that is not understood
     reported_missing: bool = false,
     reported_missing_fypp: bool = false,
+    reported_unparsed: bool = false,
 
     fn run(w: *Worker) void {
         const io = w.server.io;
@@ -425,8 +427,8 @@ fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
     return out;
 }
 
-/// The compiler's arguments for `file`: syntax only, its form, the
-/// preprocessor and zfls's definitions when zfls preprocesses it, the .mod
+/// The compiler's arguments for `file`: syntax only, its form and line
+/// length, the preprocessor and zfls's definitions when zfls preprocesses it, the .mod
 /// directory, the include directories, then `compiler_args` (or the
 /// compiler's defaults) and the file. Relative directories in
 /// `compiler_args` are relative to `base`, the directory of the file
@@ -435,6 +437,11 @@ fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFil
     var args: std.ArrayList([]const u8) = .empty;
     try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
     try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
+    // the line length zfls reads, unless `compiler_args` sets one
+    const user_sets = if (self.s.compiler_args) |user| for (user.slice()) |x| {
+        if (compilers.isLineLength(id, file.fixed, x)) break true;
+    } else false else false;
+    if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
     // debug lines as zfls reads them, unless compiler_args says
     if (file.fixed) {
         const user: []const []const u8 = if (self.s.compiler_args) |u| u.slice() else &.{};
@@ -514,7 +521,12 @@ fn stale(self: *Server, a: Allocator, file: *const FortranFile, mod_dir: []const
 // On the compiler's thread
 
 const Output = union(enum) {
-    ran: []const u8,
+    ran: struct {
+        /// stdout and stderr
+        text: []const u8,
+        /// It exited with 0
+        ok: bool,
+    },
     /// None of the executables was found
     missing,
     failed: anyerror,
@@ -530,12 +542,14 @@ fn runCompiler(w: *Worker, a: Allocator, job: *const Job, args: []const []const 
         const r = std.process.run(a, io, .{
             .argv = argv,
             .cwd = .{ .path = job.cwd },
+            .environ_map = w.server.toolEnv(),
             .timeout = .{ .duration = .{ .raw = .fromSeconds(timeout_s), .clock = .awake } },
         }) catch |e| switch (e) {
             error.FileNotFound => continue,
             else => return .{ .failed = e },
         };
-        return .{ .ran = std.mem.concat(a, u8, &.{ r.stdout, "\n", r.stderr }) catch |e| return .{ .failed = e } };
+        const text = std.mem.concat(a, u8, &.{ r.stdout, "\n", r.stderr }) catch |e| return .{ .failed = e };
+        return .{ .ran = .{ .text = text, .ok = r.term.success() } };
     }
     return .missing;
 }
@@ -569,6 +583,7 @@ fn runFypp(w: *Worker, a: Allocator, job: *const Job, origin: []const u8, input:
     const r = std.process.run(a, io, .{
         .argv = argv.items,
         .cwd = .{ .path = paths.dirname(origin) },
+        .environ_map = self.toolEnv(),
         .timeout = .{ .duration = .{ .raw = .fromSeconds(timeout_s), .clock = .awake } },
     }) catch |e| switch (e) {
         error.FileNotFound => {
@@ -661,8 +676,8 @@ fn runJob(w: *Worker, job: *Job) !void {
         target = (try runFypp(w, a, job, job.path, target, job.fixed, true)) orelse return;
         try aliases.append(a, target);
     }
-    const output = switch (runCompiler(w, a, job, try withFile(a, job.args, target))) {
-        .ran => |out| out,
+    const ran = switch (runCompiler(w, a, job, try withFile(a, job.args, target))) {
+        .ran => |r| r,
         .missing => {
             if (!w.reported_missing) {
                 w.reported_missing = true;
@@ -679,8 +694,18 @@ fn runJob(w: *Worker, job: *Job) !void {
             return;
         },
     };
+    const output = ran.text;
     self.log.debug("compiler_diagnostics {s}: {s}", .{ job.path, output });
     const msgs = try compilers.parse(a, job.id, output);
+    // a failure without a message zfls understands (a format it does not
+    // know) is said, so that it is not silent
+    if (msgs.len == 0 and !ran.ok and std.mem.trim(u8, output, " \t\r\n").len > 0) {
+        self.log.warn("compiler_diagnostics: {s} failed on {s} with output zfls does not understand: {s}", .{ @tagName(job.id), job.path, output });
+        if (!w.reported_unparsed) {
+            w.reported_unparsed = true;
+            self.postMessage(a, try a.print("compiler_diagnostics: {s} failed on {s}, and zfls did not understand its output (see zfls's log)", .{ @tagName(job.id), std.Io.Dir.path.basename(job.path) }), 2);
+        }
+    }
     const text = job.text orelse Io.Dir.cwd().readFileAlloc(io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
     const diags = try toDiagnostics(a, job, text, msgs, aliases.items);
     try publishCompiler(self, a, job.uri, diags);

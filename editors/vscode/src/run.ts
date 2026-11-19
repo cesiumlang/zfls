@@ -32,7 +32,10 @@ export function compilerKind(compiler: string, platform: NodeJS.Platform): Compi
     return { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] };
   }
   if (name === "lfortran") {
-    return { argStyle: "gnu", msvc: windows, defaultArgs: ["-g"] };
+    // conda-forge's LFortran for Windows is built without its runtime
+    // stacktrace, and refuses -g ("The `runtime stacktrace` is not
+    // enabled")
+    return { argStyle: "gnu", msvc: windows, defaultArgs: windows ? [] : ["-g"] };
   }
   // LLVM Flang targets the MSVC ABI on Windows
   const msvc = windows && (name === "flang" || name === "flang-new");
