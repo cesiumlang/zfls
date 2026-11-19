@@ -598,7 +598,8 @@ pub fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
     return out.items;
 }
 
-fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
+/// Fails unless `output` parses to the messages `want` (as `brief`)
+pub fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();

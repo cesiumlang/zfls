@@ -28,7 +28,7 @@ pub fn parse(p: *Parser, output: []const u8) !void {
     // context lines without a severity (`file:line:column: Declaration
     // of 'x'`), which belong to the message before them
     const r = try p.re("^(?P<file>.+?):(?P<ln>\\d+):(?P<cn>\\d+): (?:(?P<sev>fatal error|error|warning|portability|note|remark|because): )?(?P<msg>.*)$", .{});
-    const summary = try p.re("^error: (?:Semantic errors in|Could not scan) ", .{});
+    const summary = try p.re("^error: (?:Semantic errors in|Could not scan|Could not parse) ", .{});
     var it = compilers.lines(output);
     while (it.next()) |raw| {
         const text = compilers.trimCr(raw);
@@ -50,7 +50,8 @@ pub fn parse(p: *Parser, output: []const u8) !void {
             }
             continue;
         }
-        // "error: Semantic errors in x.f90" repeats the messages above it
+        // "error: Semantic errors in x.f90" (or "Could not scan", "Could
+        // not parse") sums up the messages after it
         if (summary.match(text) != null) continue;
         if (try p.driver(text)) continue;
         if (std.mem.startsWith(u8, text, "error: ")) try p.push(null, 0, null, .@"error", text["error: ".len..], null);
@@ -70,6 +71,29 @@ test "the file's language: -x f95 for flang only" {
     try std.testing.expectEqualStrings("-x", compilers.language(.flang)[0]);
     try std.testing.expectEqualStrings("f95", compilers.language(.flang)[1]);
     try std.testing.expectEqual(@as(usize, 0), compilers.language(.gfortran).len);
+}
+
+test "flang's summary of a syntax error is no message of its own" {
+    // Flang 23.1.5 on Windows; Flang 20 to 22 print the same lines
+    try compilers.expectBrief(.flang,
+        \\error: Could not parse C:\w\parse.f90
+        \\C:\w\parse.f90:5:16: error: expected end of statement
+        \\      print *, i +
+        \\                 ^
+        \\C:\w\parse.f90:5:5: in the context: execution part construct
+        \\      print *, i +
+        \\      ^
+        \\C:\w\parse.f90:4:3: in the context: DO construct
+        \\    do i = 1, 3
+        \\    ^
+        \\error: Could not scan C:\w\ppinc.F90
+        \\C:\w\ppinc.F90:1:10: error: #include: Source file 'bad.inc' was not found
+        \\  #include "bad.inc"
+        \\           ^^^^^^^^^
+    , &.{
+        "C:\\w\\parse.f90:5:16 error: expected end of statement",
+        "C:\\w\\ppinc.F90:1:10 error: #include: Source file 'bad.inc' was not found",
+    });
 }
 
 test "flang messages and their context lines" {
