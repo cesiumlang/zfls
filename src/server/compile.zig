@@ -30,6 +30,8 @@ const executables = args_mod.executables;
 const commandOf = args_mod.commandOf;
 const argsOf = args_mod.argsOf;
 const diagnostics = @import("diagnostics.zig");
+const pending = @import("pending.zig");
+const definition = @import("definition.zig");
 
 const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
@@ -196,16 +198,27 @@ pub fn publish(self: *Server, a: Allocator, uri: []const u8, diags: []const lsp.
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.own_diags, uri, own);
+    _ = pending.settled(self, uri);
     try send(self, a, uri);
 }
 
+/// Publishes what is kept of `uri` if it still waits for zfls's diagnostics
+/// of a changed text, which could not be computed
+pub fn publishKept(self: *Server, a: Allocator, uri: []const u8) void {
+    self.diag_lock.lockUncancelable(self.io);
+    defer self.diag_lock.unlock(self.io);
+    if (pending.settled(self, uri)) send(self, a, uri) catch |e| self.logSendFailure(e);
+}
+
 /// Publishes the diagnostics of `uri` that `source` found with the others'
-/// last ones (on the thread that ran it)
+/// last ones (on the thread that ran it). While zfls's own of a changed
+/// text wait to be computed, they are kept for that publication.
 pub fn publishFrom(self: *Server, a: Allocator, source: Source, uri: []const u8, diags: []const lsp.Diagnostic) !void {
     const mine = try json.stringify(a, try json.from(a, diags));
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.external_diags[@backingInt(source)], uri, mine);
+    if (pending.waiting(self, uri)) return;
     try send(self, a, uri);
 }
 

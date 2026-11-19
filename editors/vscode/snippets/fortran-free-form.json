@@ -58,15 +58,10 @@
     "prefix": "typ",
     "body": [
       "type, public :: ${1:type_name}",
+      "\tprivate",
       "\t${2:integer} :: ${3:var}",
-      "\t$4",
-      "",
-      "private",
-      "\t$5",
-      "",
       "contains",
       "\t$0",
-      "",
       "end type ${1:type_name}"
     ],
     "description": "Derived type with private components and contains"
