@@ -17,6 +17,7 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
 const fortran = @import("fortran.zig");
+const runtime_errors = @import("runtime_errors.zig");
 const Value = json.Value;
 
 const session = @import("session.zig");
@@ -265,7 +266,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         .setExceptionBreakpoints => try setExceptions(s, a, req, args),
         .exceptionInfo => if (s.g.last_error) |f| s.respond(a, req, .{
             .exceptionId = f,
-            .description = if (fortran.isErrorStop(f)) s.text.error_stop else s.text.runtime_error,
+            .description = if (runtime_errors.isErrorStop(f)) s.text.error_stop else s.text.runtime_error,
             .breakMode = "always",
         }) else if (s.g.lldb) try gdb.forward(s, a, req, args) else s.fail(a, req, ""),
         .stackTrace => {
@@ -314,15 +315,16 @@ fn syncFunctions(s: *Session, a: Allocator) !Value {
     const user = if (s.g.user_functions.len > 0) json.items(json.parse(a, s.g.user_functions) catch Value.null) else &.{};
     try list.appendSlice(user);
     if (s.g.lldb) return gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
-    const ours: []const []const u8 = if (s.g.runtime_errors) &fortran.runtime_error_functions else &.{};
-    for (ours) |name| try list.append(try json.from(a, .{ .name = name }));
+    const ours: []const runtime_errors.GdbBreakpoint = if (s.g.runtime_errors) runtime_errors.gdb_breakpoints else &.{};
+    // Flang's STOP functions: only at ERROR STOP
+    for (ours) |b| try list.append(if (b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     s.g.error_breakpoints.clearRetainingCapacity();
     const bps = json.items(json.path(r, &.{ "body", "breakpoints" }));
-    for (ours, 0..) |name, i| {
+    for (ours, 0..) |b, i| {
         if (user.len + i >= bps.len) break;
         const id = json.int(json.get(bps[user.len + i], "id")) orelse continue;
-        try s.g.error_breakpoints.put(s.gpa, id, name);
+        try s.g.error_breakpoints.put(s.gpa, id, b.name);
     }
     return r;
 }
@@ -515,7 +517,7 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
         s.g.pausing = false;
         if (hit) |f| if (body == .object) {
             body.object.put(a, "reason", .{ .string = "exception" }) catch {};
-            body.object.put(a, "description", .{ .string = if (fortran.isErrorStop(f)) s.text.error_stop else s.text.runtime_error }) catch {};
+            body.object.put(a, "description", .{ .string = if (runtime_errors.isErrorStop(f)) s.text.error_stop else s.text.runtime_error }) catch {};
             body.object.put(a, "text", .{ .string = f }) catch {};
         };
     } else if (std.mem.eql(u8, name, "continued")) {

@@ -632,11 +632,16 @@ pub const Engine = struct {
 
     /// A register of the scope's frame, by CodeView's number
     fn frameRegister(self: *Engine, cv: u32) ?u64 {
-        const name: [:0]const u8 = switch (cv) {
+        return self.register(switch (cv) {
             334 => "rbp",
             335 => "rsp",
             else => return null,
-        };
+        });
+    }
+
+    /// A register of the scope's frame (at a stop: of the thread stopped,
+    /// its innermost frame), by its name (`rdx`)
+    pub fn register(self: *Engine, name: [:0]const u8) ?u64 {
         var index: u32 = 0;
         if (!succeeded(self.registers.GetIndexByName(name.ptr, &index))) return null;
         var v: [1]dbg.DEBUG_VALUE = undefined;

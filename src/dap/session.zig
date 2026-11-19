@@ -58,9 +58,11 @@ const is_windows = builtin.target.os.tag == .windows;
 const Engine = if (is_windows) dbgeng.Engine else void;
 
 const breakpoints = @import("breakpoints.zig");
+const runtime_errors = @import("runtime_errors.zig");
 const runtime_errors_filter = breakpoints.runtime_errors_filter;
 const errorFunction = breakpoints.errorFunction;
 const isUserBreakpoint = breakpoints.isUserBreakpoint;
+const isPlainStop = breakpoints.isPlainStop;
 const declarations = @import("declarations.zig");
 const index = declarations.index;
 const memory = @import("memory.zig");
@@ -552,7 +554,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         .setFunctionBreakpoints => s.respond(a, req, .{ .breakpoints = &[_]u8{} }),
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
-            .description = if (std.mem.find(u8, s.last_error, "error_stop") != null) s.text.error_stop else s.text.runtime_error,
+            .description = if (runtime_errors.isErrorStop(s.last_error)) s.text.error_stop else s.text.runtime_error,
             .breakMode = "always",
         }),
         .configurationDone => {
@@ -668,12 +670,14 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             s.event(a, "terminated", null);
         },
         .breakpoint => |b| if (errorFunction(s, b.id)) |f| {
-            s.last_error = f;
+            // LLVM Flang's plain STOP: the program goes on to its end
+            if (isPlainStop(s, f)) return go(s, .go, null) catch {};
+            s.last_error = f.name;
             s.event(a, "stopped", .{
                 .reason = "exception",
                 .threadId = b.thread,
                 .allThreadsStopped = true,
-                .description = if (std.mem.find(u8, f, "error_stop") != null) s.text.error_stop else s.text.runtime_error,
+                .description = if (f.error_stop) s.text.error_stop else s.text.runtime_error,
             });
         } else if (isUserBreakpoint(s, b.id))
             s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} })

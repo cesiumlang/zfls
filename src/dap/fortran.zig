@@ -2,8 +2,8 @@
 //! variables read as Fortran. The bounds of an array from gdb's type
 //! string, the names and expressions of its elements and sections,
 //! previews of values, the hidden arguments to leave out, the dynamic type
-//! of a polymorphic object, and the runtime's error functions. Pure
-//! functions: no gdb here.
+//! of a polymorphic object, the main program's functions. Pure functions:
+//! no gdb here. The runtime's error functions are runtime_errors.zig's.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -403,31 +403,11 @@ pub fn castCommand(a: Allocator, variable: []const u8, address: []const u8, t: D
     });
 }
 
-// Errors at run time
-
-/// The functions of the Fortran runtimes that a program calls on an error
-/// (an array bound exceeded with `-fcheck=bounds`, a failed allocation, an
-/// I/O error without `iostat=`) or `ERROR STOP`: gfortran's, LLVM Flang's,
-/// Intel's
-pub const runtime_error_functions = [_][]const u8{
-    "_gfortran_runtime_error",
-    "_gfortran_runtime_error_at",
-    "_gfortran_os_error",
-    "_gfortran_os_error_at",
-    "_gfortran_error_stop_string",
-    "_gfortran_error_stop_numeric",
-    "_FortranAReportFatalUserError",
-    "for__issue_diagnostic",
-};
+// The start
 
 /// The functions of the main program, where a stop at the start stops
 /// (lldb.zig): gfortran's and Intel's, LLVM Flang's
 pub const main_program_functions = [_][]const u8{ "MAIN__", "_QQmain" };
-
-/// Whether a runtime function is one of `ERROR STOP`
-pub fn isErrorStop(function: []const u8) bool {
-    return std.ascii.findIgnoreCase(function, "error_stop") != null;
-}
 
 // gdb itself
 
@@ -582,8 +562,6 @@ test "the dynamic type of a polymorphic object" {
         "python gdb.set_convenience_variable(\"zfls_1\", gdb.Value(0x10).cast(gdb.lookup_type(\"grid::tagged\").pointer()))",
         try castCommand(a, "zfls_1", "0x10", .{ .module = "grid", .name = "tagged" }),
     );
-    try std.testing.expect(isErrorStop("_gfortran_error_stop_string"));
-    try std.testing.expect(!isErrorStop("_gfortran_runtime_error_at"));
 }
 
 test "gdb's version" {

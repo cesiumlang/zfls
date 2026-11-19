@@ -173,7 +173,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓¹², Windows's partly¹² | – | gdb ○ | –⁹ |
 | `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | –⁹ |
 | Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓¹⁰ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
-| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | – | ○ | ○ | –⁹ |
+| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
 
 7. MinGW's gfortran needs none.
 8. With `zfls setup-ifx` and zfls's ifx kit, on Windows x64 (see
@@ -196,8 +196,9 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     and stepping but not the variables. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
     (tested with Flang 23 and MSYS2's gdb 17.2): the variables, but a
-    polymorphic object with its declared type only. Neither debugger stops
-    at Flang's runtime errors and ERROR STOP yet.
+    polymorphic object with its declared type only, and stops at Flang's
+    runtime errors and ERROR STOP (not at a plain STOP). Windows's engine
+    does not stop at them yet.
 
 ### What is tested with a real compiler
 
@@ -493,7 +494,8 @@ are a scope of their own (zfls indexes the program's sources: `sourceRoot`
 of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
-error without `iostat=`) or at ERROR STOP; not yet LLVM Flang's runtime.
+error without `iostat=`) or at ERROR STOP; LLVM Flang's runtime with gdb
+and lldb-dap, not yet with the engine.
 `--text JSON` translates the words it shows (the VS Code extension passes
 them in VS Code's language).
 

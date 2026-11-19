@@ -572,7 +572,7 @@ the program starts.
 
 On macOS zfls's debugger runs lldb-dap (`"lldb": true` in the
 configuration, or the lldb-dap to run; `xcrun --find lldb-dap` finds
-Xcode's), since gdb does not run on Apple silicon and must be code-signed
+Xcode's), since gdb does not run on Apple Silicon and must be code-signed
 on Intel; `zfls.run.gdbPath` or the configuration's `gdb` choose gdb
 instead. With lldb-dap there are breakpoints, stepping, the stack, the
 program in a terminal and the **Fortran runtime errors** stops, but lldb
