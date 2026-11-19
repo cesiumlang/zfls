@@ -71,6 +71,8 @@ pub const Options = struct {
     windows: bool,
     /// Where the compiler writes .mod (and any object) files
     mod_dir: []const u8,
+    /// The compiler's major version, when known (LLVM Flang's)
+    version: ?u32 = null,
 };
 
 /// The executable names tried, in order
@@ -179,7 +181,7 @@ pub fn lineLength(a: Allocator, id: Id, fixed: bool, fixed_columns: ?usize, o: O
 pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
     return switch (id) {
         .gfortran => if (code) &.{"-fd-lines-as-code"} else &.{"-fd-lines-as-comments"},
-        .flang => flang.dLines(code),
+        .flang => flang.dLines(code, o.version),
         .ifx, .ifort => if (o.windows)
             (if (code) &.{"/d-lines"} else &.{"/nod-lines"})
         else
@@ -225,7 +227,8 @@ pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
         .gfortran => &.{"-Wall"},
         .ifx, .ifort => if (o.windows) &.{"/warn:all"} else &.{ "-warn", "all" },
         .nvfortran => &.{"-Minform=warn"},
-        .nagfor, .lfortran, .flang => &.{},
+        .flang => flang.warnings(o.version),
+        .nagfor, .lfortran => &.{},
     };
 }
 
