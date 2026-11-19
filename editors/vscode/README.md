@@ -10,7 +10,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - document and workspace symbols, with an outline tree for breadcrumbs and
   sticky scroll
 - folding of program units, constructs (each `IF`, `SELECT` and `WHERE`
-  branch on its own), preprocessor conditionals and comment blocks
+  branch on its own too), statements continued over three lines or more,
+  preprocessor conditionals and comment blocks
 - semantic highlighting: names colored by what they stand for (procedures,
   types, dummy arguments, components, variables named like keywords), and
   the branches of preprocessor conditionals that are left out shown as
