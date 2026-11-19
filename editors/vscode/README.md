@@ -10,7 +10,8 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
 - document and workspace symbols, with an outline tree for breadcrumbs and
   sticky scroll
 - folding of program units, constructs (each `IF`, `SELECT` and `WHERE`
-  branch on its own), preprocessor conditionals and comment blocks
+  branch on its own too), statements continued over three lines or more,
+  preprocessor conditionals and comment blocks
 - semantic highlighting: names colored by what they stand for (procedures,
   types, dummy arguments, components, variables named like keywords), and
   the branches of preprocessor conditionals that are left out shown as
@@ -195,13 +196,16 @@ zfls says so once and checks nothing.
 
 | Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
 | --- | --- | --- |
-| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form`/`-ffixed-form -J<dir>`, and `-Wall` by default |
-| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /module:<dir>`, `/warn:all`) |
-| `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed -mdir <dir> -I <dir>` |
+| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -J<dir>`, and `-Wall` by default |
+| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`) |
+| `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
 | `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>` |
-| `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed -module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
-| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -module-dir <dir>` |
+| `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
+| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>` |
 | `Disabled` | | No compiler diagnostics |
+
+`N` is `zfls.fixedFormLineLength` (Intel takes 72, 80 or 132). A
+line-length option of your own in `zfls.linter.extraArgs` replaces zfls's.
 
 Whether a file is free or fixed form follows its language in VS Code
 (`FortranFreeForm` or `FortranFixedForm`, from the file extension or

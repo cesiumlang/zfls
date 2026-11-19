@@ -104,11 +104,42 @@ def substring_symbols_replacement(mod):
     return test
 
 
+def sync_options_replacement(mod):
+    """`test_server::test_init` expects `textDocumentSync` to be the change
+    kind (2); zfls announces it as options, `openClose` and `save` with
+    that kind as `change` (#269), which is checked and turned back into
+    the number here."""
+    original = getattr(mod, "test_init")
+
+    def test():
+        run = mod.run_request
+
+        def sync_number(request, fortls_args=None):
+            errcode, results = run(request, fortls_args)
+            for r in results:
+                caps = r.get("capabilities") if isinstance(r, dict) else None
+                if caps is not None and isinstance(caps.get("textDocumentSync"), dict):
+                    sync = caps["textDocumentSync"]
+                    assert sync["openClose"] is True
+                    assert sync["save"] == {"includeText": False}
+                    caps["textDocumentSync"] = sync["change"]
+            return errcode, results
+
+        mod.run_request = sync_number
+        try:
+            original()
+        finally:
+            mod.run_request = run
+
+    return test
+
+
 # Tests whose expectations zfls deliberately does not match verbatim, with a
 # replacement test implementing the zfls expectation.
 KNOWN_DEVIATIONS = {
     "test_server_hover::test_intrinsics": intrinsic_hover_replacement,
     "test_server::test_workspace_symbols": substring_symbols_replacement,
+    "test_server::test_init": sync_options_replacement,
 }
 
 

@@ -61,6 +61,27 @@ pub fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8,
     return o;
 }
 
+/// Whether the name at byte `col` of 0-based line `ln` is in a selector of
+/// the ASSOCIATE statement that opens `scope`: on that statement, and not an
+/// associate name (which `=>` follows)
+fn inSelector(file: *const FortranFile, scope: *const Obj, ln: usize, col: usize) bool {
+    if (scope.kind != .associate or scope.sline == 0) return false;
+    const st = selection.statementLines(file, scope.sline - 1);
+    if (ln < st.first or ln > st.last) return false;
+    const text = file.getLine(ln, false) orelse return false;
+    var end = @min(col, text.len);
+    while (end < text.len and regex.isWordChar(text[end])) end += 1;
+    const rest = std.mem.trimStart(u8, text[end..], " \t");
+    if (std.mem.startsWith(u8, rest, "=>")) return false;
+    // after the `(` of `associate (`
+    if (ln == scope.sline - 1) {
+        const kw = std.ascii.findIgnoreCase(text, "associate") orelse return false;
+        const open = std.mem.findScalarPos(u8, text, kw, '(') orelse return false;
+        return col > open;
+    }
+    return true;
+}
+
 /// `get_definition` with `def_char` as a byte offset on the line
 pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_line: usize, def_char: usize, hover_req: bool) !?*Obj {
     const ast = def_file.ast orelse return null;
@@ -85,6 +106,11 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
         return try tempVariable(a, ast, def_line + 1, def_name, desc, &.{});
     }
     var curr_scope = ast.getInnerScope(def_line + 1);
+    // a selector of an ASSOCIATE statement names what the scope around it
+    // has (`associate (x => x%field)`: the outer `x`)
+    if (curr_scope) |cs| if (inSelector(def_file, cs, def_line, def_char)) {
+        curr_scope = cs.parent orelse cs;
+    };
     if (is_member) {
         curr_scope = (try objects.climbTypeTree(self.env(a), var_stack, curr_scope)) orelse return null;
     }
