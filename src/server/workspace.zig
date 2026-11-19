@@ -667,7 +667,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     if (!did_close and !self.s.disable_diagnostics) {
         // the compiler and Codee read the file, which an opened document's
         // text may differ from
-        const unsaved = open_text != null and (compile.compilerOf(self) != null or self.s.codee) and differsFromDisk(self, filepath);
+        const unsaved = open_text != null and (compile.anyCompiler(self) or self.s.codee) and differsFromDisk(self, filepath);
         const trigger: compile.Trigger = if (unsaved) .open_unsaved else if (did_open) .open else .save;
         compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
         linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });

@@ -215,6 +215,9 @@ Whether a file is free or fixed form follows its language in VS Code
 | `zfls.linter.compiler` | `gfortran` | The compiler, or `Disabled` |
 | `zfls.linter.compilerPath` | empty | The compiler executable, when it is not the one on the `PATH` |
 | `zfls.linter.extraArgs` | `[]` | Further options, such as `-std=f2018`; when set, they replace the default warning options |
+| `zfls.linter.fixedCompiler` | empty | The compiler of fixed-form files, when it is another (or `Disabled`); empty: `zfls.linter.compiler`. The modules a file uses are compiled with the file's compiler |
+| `zfls.linter.fixedCompilerPath` | empty | Its executable; empty: `zfls.linter.compilerPath` |
+| `zfls.linter.fixedExtraArgs` | `null` | Its options; `null`: `zfls.linter.extraArgs`, `[]`: its default warnings |
 | `zfls.linter.includePaths` | `[]` | Directories for `INCLUDE` and `.mod` files (`-I`); glob patterns such as `${workspaceFolder}/build/**/include` |
 | `zfls.linter.modOutput` | empty | Where the compiler writes `.mod` files; empty means a directory in zfls's cache for the workspace, never the source tree |
 | `zfls.linter.lintOnSave` | `true` | Check files when they are saved |
