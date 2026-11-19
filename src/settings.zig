@@ -69,6 +69,9 @@ pub const Settings = struct {
     excl_paths: StrList = .{},
     /// Further markers that start a comment as `!` does, such as `;*`
     comment_markers: StrList = .{},
+    /// Read OpenMP conditional compilation lines (`!$ x = 1`) as comments,
+    /// as a build without OpenMP does, not as code
+    disable_openmp_conditional: bool = false,
     /// How a fixed-form line with D or d in column 1 (a debug line) is
     /// read: `comment` (null: the default) or `code`
     d_lines: ?[]const u8 = null,
@@ -125,6 +128,12 @@ pub const Settings = struct {
     compiler_path: ?[]const u8 = null,
     /// The compiler's arguments; null: its defaults (gfortran's -Wall)
     compiler_args: ?StrList = null,
+    /// The compiler, its executable and its arguments for fixed-form
+    /// files; null: those of free form (`compiler_diagnostics`,
+    /// `compiler_path`, `compiler_args`)
+    compiler_diagnostics_fixed: ?[]const u8 = null,
+    compiler_path_fixed: ?[]const u8 = null,
+    compiler_args_fixed: ?StrList = null,
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
@@ -138,6 +147,9 @@ pub const Settings = struct {
     compiler_change_delay: i64 = 1000,
     /// Do not compile the workspace modules a file uses first
     compiler_no_dependencies: bool = false,
+    /// Do not check a file with its command from compile_commands.json
+    /// (when `compiler_args` is not set)
+    compiler_no_compile_commands: bool = false,
     /// fypp, run on each file before the compiler checks it; null: none
     compiler_fypp: ?[]const u8 = null,
     /// fypp's further arguments (-I, -D, ...)
@@ -263,6 +275,7 @@ pub const opts = [_]Opt{
     .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
     .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
+    .{ .long = "disable_openmp_conditional", .kind = .flag, .help = "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code", .group = "Sources file parsing options" },
     .{ .long = "d_lines", .kind = .string, .metavar = "READING", .help = "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)", .group = "Sources file parsing options" },
 
     .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
@@ -292,12 +305,16 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_diagnostics", .kind = .string, .metavar = "COMPILER", .help = "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_diagnostics_fixed", .kind = .string, .metavar = "COMPILER", .help = "The compiler that checks fixed-form files, as compiler_diagnostics, or none (default: compiler_diagnostics). The modules a file uses are compiled with the compiler of the file", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_path_fixed", .kind = .string, .metavar = "PATH", .help = "The executable of compiler_diagnostics_fixed, as compiler_path (default: compiler_path)", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_args_fixed", .kind = .string, .metavar = "ARGS", .help = "The arguments of the compiler for fixed-form files, as compiler_args (default: compiler_args; empty: the compiler's defaults)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_on_change", .kind = .flag, .help = "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
+    .{ .long = "compiler_no_compile_commands", .kind = .flag, .help = "Do not check a file with the arguments of its command in compile_commands.json (used when compiler_args is not set)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
 
@@ -581,7 +598,7 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
 /// The options that are arguments of another program: one string, split at
 /// spaces, or a JSON list, on the command line, and a list or a string in a
 /// configuration file
-const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
+const arg_lists = .{ "compiler_args", "compiler_args_fixed", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
 
 fn isArgList(name: []const u8) bool {
     inline for (arg_lists) |n| if (std.mem.eql(u8, name, n)) return true;
@@ -630,6 +647,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "comment_markers")) |v| s.comment_markers = try jsonList(a, v);
+    s.disable_openmp_conditional = jsonBool(json.get(cfg, "disable_openmp_conditional"), s.disable_openmp_conditional);
     if (json.get(cfg, "d_lines")) |v| s.d_lines = json.str(v);
     // General options
     s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
@@ -664,12 +682,16 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "compiler_diagnostics")) |v| s.compiler_diagnostics = json.str(v);
     if (json.get(cfg, "compiler_path")) |v| s.compiler_path = json.str(v);
     if (json.get(cfg, "compiler_args")) |v| s.compiler_args = if (v == .null) null else try argList(a, v) orelse s.compiler_args;
+    if (json.get(cfg, "compiler_diagnostics_fixed")) |v| s.compiler_diagnostics_fixed = json.str(v);
+    if (json.get(cfg, "compiler_path_fixed")) |v| s.compiler_path_fixed = json.str(v);
+    if (json.get(cfg, "compiler_args_fixed")) |v| s.compiler_args_fixed = if (v == .null) null else try argList(a, v) orelse s.compiler_args_fixed;
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
     if (json.get(cfg, "compiler_include_dirs")) |v| s.compiler_include_dirs = try jsonList(a, v);
     s.compiler_no_save = jsonBool(json.get(cfg, "compiler_no_save"), s.compiler_no_save);
     s.compiler_on_change = jsonBool(json.get(cfg, "compiler_on_change"), s.compiler_on_change);
     s.compiler_change_delay = jsonInt(json.get(cfg, "compiler_change_delay"), s.compiler_change_delay);
     s.compiler_no_dependencies = jsonBool(json.get(cfg, "compiler_no_dependencies"), s.compiler_no_dependencies);
+    s.compiler_no_compile_commands = jsonBool(json.get(cfg, "compiler_no_compile_commands"), s.compiler_no_compile_commands);
     if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
     if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
         s.compiler_fypp_args = l;

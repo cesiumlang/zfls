@@ -15,6 +15,7 @@ const str = @import("../str.zig");
 const paths = @import("../paths.zig");
 const parser = @import("../parser.zig");
 const C = @import("../constants.zig");
+const tools = @import("tools.zig");
 
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
@@ -202,51 +203,11 @@ pub fn inputText(a: Allocator, lines: []const []const u8) ![]const u8 {
 // --------------------------------------------------------------------------
 // Running a formatter
 
-pub const Run = struct { term: std.process.Child.Term, stdout: []u8, stderr: []u8 };
+pub const Run = tools.Output;
 
-/// `std.process.run` with `input` on the child's stdin. It is written on a
-/// thread of its own, then closed, so that a child that writes before it
-/// has read all of it cannot block on a full pipe.
+/// Runs a formatter with `input` on its stdin (`tools.run`)
 pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: ?[]const u8, env: ?*const std.process.Environ.Map, input: []const u8, timeout: Io.Timeout) !Run {
-    var writer: ?std.Thread = null;
-    defer if (writer) |t| t.join();
-    var child = try std.process.spawn(io, .{
-        .argv = argv,
-        .cwd = if (cwd) |d| .{ .path = d } else .inherit,
-        .environ_map = env,
-        .create_no_window = true,
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .pipe,
-    });
-    // a child still running (after an error) is killed before the writer
-    // is joined, which ends its write
-    defer child.kill(io);
-    const stdin = child.stdin.?;
-    child.stdin = null;
-    writer = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, writeInput, .{ io, stdin, input }) catch |e| {
-        stdin.close(io);
-        return e;
-    };
-
-    var buffer: Io.File.MultiReader.Buffer(2) = undefined;
-    var multi: Io.File.MultiReader = undefined;
-    multi.init(a, io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
-    defer multi.deinit();
-    const deadline = timeout.toDeadline(io);
-    while (multi.fill(64, deadline)) |_| {} else |err| switch (err) {
-        error.EndOfStream => {},
-        else => |e| return e,
-    }
-    try multi.checkAnyError();
-    const term = try child.wait(io);
-    return .{ .term = term, .stdout = try multi.toOwnedSlice(0), .stderr = try multi.toOwnedSlice(1) };
-}
-
-fn writeInput(io: Io, file: Io.File, input: []const u8) void {
-    defer file.close(io);
-    // a child that ends without reading all of it: its output tells
-    file.writeStreamingAll(io, input) catch {};
+    return tools.run(a, io, .{ .argv = argv, .cwd = cwd, .environ_map = env, .input = input, .timeout = timeout });
 }
 
 /// The executables to try: `formatter_path` (a file, or a directory that

@@ -50,6 +50,11 @@
       "uniqueItems": true,
       "default": []
     },
+    "disable_openmp_conditional": {
+      "description": "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code",
+      "type": "boolean",
+      "default": false
+    },
     "d_lines": {
       "description": "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)",
       "type": [
@@ -259,6 +264,27 @@
         "type": "string"
       }
     },
+    "compiler_diagnostics_fixed": {
+      "description": "The compiler that checks fixed-form files, as compiler_diagnostics, or none (default: compiler_diagnostics). The modules a file uses are compiled with the compiler of the file",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_path_fixed": {
+      "description": "The executable of compiler_diagnostics_fixed, as compiler_path (default: compiler_path)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiler_args_fixed": {
+      "description": "The arguments of the compiler for fixed-form files, as compiler_args (default: compiler_args; empty: the compiler's defaults)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "compiler_mod_dir": {
       "description": "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)",
       "type": [
@@ -292,6 +318,11 @@
     },
     "compiler_no_dependencies": {
       "description": "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved",
+      "type": "boolean",
+      "default": false
+    },
+    "compiler_no_compile_commands": {
+      "description": "Do not check a file with the arguments of its command in compile_commands.json (used when compiler_args is not set)",
       "type": "boolean",
       "default": false
     },
