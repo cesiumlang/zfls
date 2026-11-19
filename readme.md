@@ -14,7 +14,8 @@ command line options and configuration files.
   workspace symbols
 - Beyond fortls: an outline tree of document symbols (for clients that take
   one: breadcrumbs, sticky scroll); folding of program units, constructs
-  and their branches, preprocessor conditionals and comment blocks; semantic
+  and their branches, statements continued over three lines or more,
+  preprocessor conditionals and comment blocks; semantic
   highlighting of modules, types, procedures, dummy arguments, components
   and variables by what they are (a variable named `if` is a variable), with
   the lines that preprocessor conditionals leave out shown inactive, for the
@@ -554,7 +555,7 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
 `argument-not-declared`, `not-imported`, `object-not-found`,
 `undeclared-name`, `unused-name`, `circular-use`, `argument-mismatch`,
-`argument-kind` and `intent-in-assigned`.
+`argument-kind`, `intent-in-assigned` and `include-not-found`.
 
 - zfls publishes its diagnostics of a document when it is opened, when it
   is saved, and while it is edited: once its text has not changed for
@@ -846,6 +847,11 @@ zfls deliberately differs from fortls in a few places:
   points.
 - Inserting text that ends with a newline through an incremental change does
   not add a spurious empty line.
+- `initialize` announces `textDocumentSync` as options (`openClose`,
+  `change`, and `save` without the text), so that every client sends the
+  `didSave` that zfls runs its checks, the compiler and the linters on
+  (hansec PR #183); fortls announces only the change kind, which a client
+  may read as no save notifications.
 - Several requests on which fortls raises an internal error (for example
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
@@ -1106,6 +1112,14 @@ zfls deliberately differs from fortls in a few places:
   `INCLUDE 'file'` whose file is not in the workspace, opens the file
   (searched next to the including file and in `include_dirs`); fortls has no
   answer.
+- `#include <file>` is searched as `#include "file"` is, next to the file and
+  in `include_dirs`; fortls reads only the quoted form. An `#include` whose
+  file is found nowhere gets an `include-not-found` diagnostic (information)
+  on its name, and is taken as an include zfls cannot read: the checks that
+  its macros could make wrong (`argument-not-declared`, `undeclared-name`)
+  are left out in its procedure or, when it is outside procedures, in the
+  scope around it and the procedures after it. fortls says nothing and
+  reports what depends on it as errors.
 - An `INCLUDE 'file'` statement is also searched in `include_dirs`, as
   `#include` is; fortls only looks next to the including file.
 - A file that another file `#include`s into a scope sees the names of that scope

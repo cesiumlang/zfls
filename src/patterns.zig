@@ -108,7 +108,7 @@ const defs = [_]Def{
     .{ "PP_REGEX", "[ ]*#[ ]*(if |ifdef|ifndef|else|elif|endif)", true },
     .{ "PP_DEF", "[ ]*#[ ]*(define|undef|undefined)[ ]*(\\w+)(\\([ ]*([ \\w,]*?)[ ]*\\))?", true },
     .{ "PP_DEF_TEST", "(![ ]*)?defined[ ]*\\([ ]*(\\w*)[ ]*\\)$", true },
-    .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"\\w\\./\\\\]*)", true },
+    .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"<>\\w\\./\\\\-]*)", true },
     .{ "CALL", "[ ]*CALL[ ]+[\\w%]*$", true },
     .{ "INT_STMNT", "^[ ]*[a-z]*$", true },
     .{ "TYPE_STMNT", "[ ]*(TYPE|CLASS)[ ]*(IS)?[ ]*$", true },
