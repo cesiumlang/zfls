@@ -77,16 +77,40 @@ test "flang's version, and what depends on it" {
 /// `.cuf` is still CUDA Fortran (Flang 20 to 23).
 pub const language: []const []const u8 = &.{ "-x", "f95" };
 
-/// The messages of Flang's output
+/// The messages of Flang's output. A message's `[-Wname]` (Flang 22 and
+/// later) becomes its code. After a message come its source line,
+/// indented by two spaces, and a line of carets under its span, in bytes:
+/// the message's range ends at the last caret.
 pub fn parse(p: *Parser, output: []const u8) !void {
     // `file:line:column: severity: message`, as clang; flang adds
     // context lines without a severity (`file:line:column: Declaration
     // of 'x'`), which belong to the message before them
+    const code_re = try p.re("\\s*\\[(-W[\\w=-]+)\\]$", .{});
+    // the message whose source line and carets may follow, and whether
+    // its source line has been seen
+    var caret_for: ?usize = null;
+    var source_seen = false;
     const r = try p.re("^(?P<file>.+?):(?P<ln>\\d+):(?P<cn>\\d+): (?:(?P<sev>fatal error|error|warning|portability|note|remark|because): )?(?P<msg>.*)$", .{});
     const summary = try p.re("^error: (?:Semantic errors in|Could not scan|Could not parse) ", .{});
     var it = compilers.lines(output);
     while (it.next()) |raw| {
         const text = compilers.trimCr(raw);
+        if (caret_for) |i| if (std.mem.startsWith(u8, text, "  ")) {
+            if (!source_seen) {
+                source_seen = true;
+                continue;
+            }
+            caret_for = null;
+            if (caretWidth(text)) |w| {
+                const m = &p.out.items[i];
+                if (m.column) |c| {
+                    m.end_line = m.line;
+                    m.end_column = c + w - 1;
+                }
+                continue;
+            }
+        };
+        caret_for = null;
         if (r.match(text)) |m| {
             const sev_text = m.named(r, "sev");
             const sev: ?Severity = if (sev_text) |s|
@@ -103,8 +127,12 @@ pub fn parse(p: *Parser, output: []const u8) !void {
                 if (last.include_site) |inner| try last.related.append(p.a, inner);
                 last.include_site = .{ .file = m.named(r, "file"), .line = ln, .column = cn, .message = "included here" };
             } else if (sev) |s| {
-                const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try p.a.print("portability: {s}", .{msg}) else msg;
-                try p.push(m.named(r, "file"), ln, cn, s, text_msg, null);
+                const coded = code_re.search(msg);
+                const bare = if (coded) |c| msg[0..c.start(0)] else msg;
+                const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try p.a.print("portability: {s}", .{bare}) else bare;
+                try p.push(m.named(r, "file"), ln, cn, s, text_msg, if (coded) |c| c.group(1) else null);
+                caret_for = p.out.items.len - 1;
+                source_seen = false;
             } else if (p.out.items.len > 0) {
                 // a note, a "because" or a context line
                 try p.out.items[p.out.items.len - 1].related.append(p.a, .{ .file = m.named(r, "file"), .line = ln, .column = cn, .message = std.mem.trim(u8, msg, " \t") });
@@ -117,6 +145,58 @@ pub fn parse(p: *Parser, output: []const u8) !void {
         if (try p.driver(text)) continue;
         if (std.mem.startsWith(u8, text, "error: ")) try p.push(null, 0, null, .@"error", text["error: ".len..], null);
     }
+}
+
+/// The number of carets of a caret line (`   ^^^^`), or null for another
+/// line
+fn caretWidth(line: []const u8) ?usize {
+    const rest = std.mem.trimStart(u8, line, " ");
+    if (rest.len == 0 or rest[0] != '^') return null;
+    const n = std.mem.findNone(u8, rest, "^") orelse rest.len;
+    if (std.mem.trim(u8, rest[n..], " \t").len != 0) return null;
+    return n;
+}
+
+test "flang: the code of a message, and its span from the carets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Flang 23.1.5 on Windows (the carets count bytes: `é` is two)
+    const ms = try compilers.parse(a, .flang,
+        \\../broken/unused.f90:3:14: warning: Value of local variable 'never_used' is never used [-Wunused-variable]
+        \\    integer :: never_used
+        \\               ^^^^^^^^^^
+        \\error: Semantic errors in caret.f90
+        \\caret.f90:5:3: error: No intrinsic or user-defined ASSIGNMENT(=) matches operand types INTEGER(4) and CHARACTER(KIND=1)
+        \\    i = "abc"
+        \\    ^^^^^^^^^
+        \\caret.f90:6:15: error: Actual argument type 'INTEGER(4)' is not compatible with dummy argument type 'REAL(4)'
+        \\    call sub(x, 1)
+        \\                ^
+        \\utf.f90:4:3: error: No intrinsic or user-defined ASSIGNMENT(=) matches operand types INTEGER(4) and CHARACTER(KIND=1)
+        \\    n = s // "Ã©"
+        \\    ^^^^^^^^^^^^^
+        \\x.f90:2:1: portability: nonstandard usage: TYPE*KIND syntax [-Wportability]
+        \\x.f90:9:9: error: no source line
+        \\error: Could not scan y.f90
+    );
+    try std.testing.expectEqual(@as(usize, 6), ms.len);
+    try std.testing.expectEqualStrings("Value of local variable 'never_used' is never used", ms[0].message);
+    try std.testing.expectEqualStrings("-Wunused-variable", ms[0].code.?);
+    try std.testing.expectEqual(@as(?usize, 3), ms[0].end_line);
+    try std.testing.expectEqual(@as(?usize, 23), ms[0].end_column);
+    try std.testing.expectEqual(@as(?[]const u8, null), ms[1].code);
+    try std.testing.expectEqual(@as(?usize, 11), ms[1].end_column);
+    try std.testing.expectEqual(@as(?usize, 15), ms[2].end_column);
+    try std.testing.expectEqual(@as(?usize, 15), ms[3].end_column);
+    try std.testing.expectEqualStrings("portability: nonstandard usage: TYPE*KIND syntax", ms[4].message);
+    try std.testing.expectEqualStrings("-Wportability", ms[4].code.?);
+    // no source line or carets after it: no span
+    try std.testing.expectEqual(@as(?usize, null), ms[5].end_line);
+    try std.testing.expectEqual(@as(?usize, null), ms[4].end_line);
+    try std.testing.expectEqual(@as(?usize, 9), caretWidth("  ^^^^^^^^^"));
+    try std.testing.expectEqual(@as(?usize, null), caretWidth("  x ^"));
+    try std.testing.expectEqual(@as(?usize, null), caretWidth("  ^^ x"));
 }
 
 test "debug lines: no option for comments, which Flang 20 rejects" {
