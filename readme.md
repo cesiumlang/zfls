@@ -14,7 +14,8 @@ command line options and configuration files.
   workspace symbols
 - Beyond fortls: an outline tree of document symbols (for clients that take
   one: breadcrumbs, sticky scroll); folding of program units, constructs
-  and their branches, preprocessor conditionals and comment blocks; semantic
+  and their branches, statements continued over three lines or more,
+  preprocessor conditionals and comment blocks; semantic
   highlighting of modules, types, procedures, dummy arguments, components
   and variables by what they are (a variable named `if` is a variable), with
   the lines that preprocessor conditionals leave out shown inactive, for the
@@ -62,6 +63,12 @@ command line options and configuration files.
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
   documentation comments
+- Sources indexed by default by their extension, in either case: `.f90`,
+  `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit),
+  `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn`
+  (`incl_suffixes` adds more); one table (`src/suffixes.zig`) decides the
+  source form, the Fortran entries of `compile_commands.json` and the
+  VS Code extension's file associations
 - DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and
   `.` between a variable and its component (`rec.field`)
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures,
@@ -532,7 +539,7 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
 `deferred-not-implemented`, `intent-not-in-arguments`,
 `argument-not-declared`, `not-imported`, `object-not-found`,
 `undeclared-name`, `unused-name`, `circular-use`, `argument-mismatch`,
-`argument-kind` and `intent-in-assigned`.
+`argument-kind`, `intent-in-assigned` and `include-not-found`.
 
 - zfls publishes its diagnostics of a document when it is opened, when it
   is saved, and while it is edited: once its text has not changed for
@@ -591,7 +598,14 @@ says so once and logs that output.
   (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for
   nvfortran). zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
-  for files it preprocesses, `pp_defs` (`-D`). On the command line it is one
+  for files it preprocesses, `pp_defs` (`-D`). It also has the compiler read
+  lines as zfls does: fixed-form lines up to `fixed_line_length` when it is
+  set (`-ffixed-line-length-N` for gfortran, `-ffixed-line-length=N` for
+  flang, `-extend-source N` for Intel with 72, 80 or 132, `-Mextend` for
+  nvfortran and `-132` for nagfor with 132), and free-form lines without a
+  limit (`-ffree-line-length-none` for gfortran, whose default is 132
+  columns before GCC 16); a line-length option in `compiler_args` replaces
+  zfls's of that form. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
@@ -817,6 +831,11 @@ zfls deliberately differs from fortls in a few places:
   points.
 - Inserting text that ends with a newline through an incremental change does
   not add a spurious empty line.
+- `initialize` announces `textDocumentSync` as options (`openClose`,
+  `change`, and `save` without the text), so that every client sends the
+  `didSave` that zfls runs its checks, the compiler and the linters on
+  (hansec PR #183); fortls announces only the change kind, which a client
+  may read as no save notifications.
 - Several requests on which fortls raises an internal error (for example
   implementation requests on module names, or completion inside an
   `IMPORT` statement outside an interface) return `null` or an empty result.
@@ -864,9 +883,15 @@ zfls deliberately differs from fortls in a few places:
   a USE statement names a module that is not in the workspace, or in a
   scope with an INCLUDE whose file is not found or that continues a
   statement, as the name could come from those.
+- A dummy argument with no declaration (`argument-not-declared`) has a
+  quick fix declaring it after the procedure's declarations, and one for
+  all of them when a header has several; and while a declaration's names
+  are typed in the procedure, completion offers those arguments first
+  (alone with nothing typed). fortls has neither (FL #323).
 - `fixed_line_length` (as gfortran's `-ffixed-line-length-n`: 72, 80, 132)
   makes the columns past it of a fixed-form line a comment: a `comment`
-  semantic token, and no names there. The VS Code extension passes 72 by
+  semantic token, and no names there; the compiler check is given the same
+  length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
 - On Windows, a folder on a UNC path, as a network share or
@@ -1013,6 +1038,8 @@ zfls deliberately differs from fortls in a few places:
 - The Fortran files that `compile_commands.json` compiles outside the
   workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
   source directories only.
+- `.f23`, `.ftn`, `.pf` and `.fypp` files are indexed by default, besides
+  fortls's extensions (FL #299, FL #521).
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
   or deleted outside the editor (a checkout, generated code) are parsed
   again or dropped, except those open in the editor; fortls ignores it.
@@ -1072,6 +1099,14 @@ zfls deliberately differs from fortls in a few places:
   `INCLUDE 'file'` whose file is not in the workspace, opens the file
   (searched next to the including file and in `include_dirs`); fortls has no
   answer.
+- `#include <file>` is searched as `#include "file"` is, next to the file and
+  in `include_dirs`; fortls reads only the quoted form. An `#include` whose
+  file is found nowhere gets an `include-not-found` diagnostic (information)
+  on its name, and is taken as an include zfls cannot read: the checks that
+  its macros could make wrong (`argument-not-declared`, `undeclared-name`)
+  are left out in its procedure or, when it is outside procedures, in the
+  scope around it and the procedures after it. fortls says nothing and
+  reports what depends on it as errors.
 - An `INCLUDE 'file'` statement is also searched in `include_dirs`, as
   `#include` is; fortls only looks next to the including file.
 - A file that another file `#include`s into a scope sees the names of that scope
@@ -1108,9 +1143,20 @@ zfls deliberately differs from fortls in a few places:
   the statement with its implicit type. fortls ignores these statements.
   A type declaration keeps `VALUE`, `VOLATILE`, `ASYNCHRONOUS` and
   `PROTECTED`, and the attributes after them, which fortls drops.
+- A `BLOCK DATA` unit may end with `END` alone, as FORTRAN 77 sources end
+  it, and the outline lists it (an unnamed one as `BLOCK DATA`); fortls
+  reports the `END` as an unexpected end of scope. That error, where it
+  applies (a `BLOCK` construct closed by `END` alone), is on the `END` line.
 - An `ASSOCIATE` name bound to an array element or section shows the
   dimensions of that element or section; fortls shows those of the whole
   array.
+- An `ASSOCIATE` selector names what the scope around the construct has:
+  in `associate (x => x%field)` the name `x` gets the type of `x%field`,
+  and the selector's `x` is the outer variable in references and rename.
+  A name bound to a literal, an expression of variables and literals or a
+  call of an intrinsic function gets that type (`r => 1.0` is `REAL`)
+  where fortls shows `UNKNOWN`, and a named construct (`outer: associate
+  (...)`) defines its names, which fortls does not see.
 - A variable that is declared with a type and then called, `real fff` and
   `fff(1.2, 3.3)`, shows the signature of the global function of that name in
   hover, and an `EXTERNAL` name shows the interface of its procedure and
@@ -1144,6 +1190,14 @@ zfls deliberately differs from fortls in a few places:
   that name. On the USE line, hover, definition and references on either
   name reach the module's entity (hansec #137); fortls only reads renames
   after `ONLY:` and has no answer on the original name.
+- References and document highlights on a name that USE statements rename
+  (`use base, only: loc => origin`) list its places under every name it
+  has, the original and the local ones. Rename changes only the name it
+  starts on: on a module's local name, also where the modules that use
+  that module name it, renaming it again (`use user, only: far => loc`)
+  or not. A name renamed in two modules in a row resolves with or
+  without `ONLY`. fortls lists only the places of the original name and
+  renames a local name only in the scope of its USE statement (fortls #52).
 - A module passes on the names it has by USE as the Fortran standard says:
   with `private` as its default, only those a `public` statement names, and
   never those a `private` statement names. fortls applies a module's
