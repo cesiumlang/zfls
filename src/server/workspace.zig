@@ -55,6 +55,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
     self.hierarchical_symbols = params.capabilities.textDocument.documentSymbol.hierarchicalDocumentSymbolSupport;
     self.prepare_rename = params.capabilities.textDocument.rename.prepareSupport;
+    self.completion_snippets = params.capabilities.textDocument.completion.completionItem.snippetSupport;
     try self.s.source_dirs.add(sa, self.root_path);
     self.config.client = params.capabilities;
     self.completion_resolve = completion_resolve.wanted(params.capabilities);
@@ -104,6 +105,7 @@ pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames
 /// arena), null without one. Problems with it are posted to the client;
 /// only allocation failures are errors.
 pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
+    self.config.file_path = null;
     var config_path: ?[]const u8 = null;
     for (configFileNames(self)) |f| {
         const p = try paths.join(a, &.{ self.root_path, f });
@@ -113,20 +115,28 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
         }
     }
     const cp = config_path orelse return null;
-    const sa = self.arena.allocator();
-    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
+    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, self.arena.allocator(), .limited(1 << 26)) catch {
         self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
         return null;
     };
-    var p: json5.Parser = .{ .a = sa, .src = data };
+    const cfg = try parseConfigFile(self, a, data, self.s.config) orelse return null;
+    self.config.file_path = try self.arena.allocator().dupe(u8, cp);
+    return cfg;
+}
+
+/// The JSON object of a configuration file's text `data` (in the server's
+/// arena), null when it is none: an error then posted, naming the file as
+/// `name`
+pub fn parseConfigFile(self: *Server, a: Allocator, data: []const u8, name: []const u8) Allocator.Error!?Value {
+    var p: json5.Parser = .{ .a = self.arena.allocator(), .src = data };
     const cfg = p.parseDocument() catch {
         const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
+        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, name });
         self.postMessage(a, msg, C.Severity.err);
         return null;
     };
     if (cfg != .object) {
-        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
+        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{name}), C.Severity.err);
         return null;
     }
     return cfg;
@@ -137,12 +147,14 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
     self.outside_sources = .empty;
+    self.module_dirs = .empty;
     self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
+                self.module_dirs = found.module_dirs;
                 self.compile_commands = found.commands;
                 // those under the root are the scan's
                 for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
@@ -214,6 +226,9 @@ pub fn configLogger(self: *Server) !void {
 /// the configuration file and the build files, in the debug log
 pub fn logOptions(self: *Server, a: Allocator) Allocator.Error!void {
     if (!self.log.enabled(.debug)) return;
+    var read: std.ArrayList([]const u8) = .empty;
+    for ([_]?[]const u8{ self.config.user_path, self.config.file_path }) |p| if (p) |x| try read.append(a, x);
+    self.log.debug("Configuration files read: {s}", .{if (read.items.len == 0) "none" else try std.mem.join(a, ", ", read.items)});
     self.log.debug("Final options: {s}", .{try json.stringify(a, try settings_mod.toJson(a, &self.s))});
 }
 
@@ -456,6 +471,10 @@ pub fn addToTree(self: *Server, f: *FortranFile) !void {
     var it = ast.global_dict.iterator();
     while (it.next()) |e| {
         const gop = try self.obj_tree.getOrPut(self.gpa, e.key_ptr.*);
+        // another file's of the same name: both kept (#187)
+        if (gop.found_existing) if (gop.value_ptr.path) |held| if (!std.mem.eql(u8, held, f.path)) {
+            try self.same_names.add(self.gpa, e.key_ptr.*, gop.value_ptr.*, .{ .obj = e.value_ptr.*, .path = f.path });
+        };
         if (gop.found_existing and !treeOwnerBeats(f.path, gop.value_ptr.path)) continue;
         // the key is the owner's (it lives as long as the owner's AST)
         gop.key_ptr.* = e.key_ptr.*;
@@ -466,6 +485,7 @@ pub fn addToTree(self: *Server, f: *FortranFile) !void {
 /// Drops the names `ast` owns, handing each to the next file (or
 /// intrinsic module) that defines it.
 pub fn removeFromTree(self: *Server, ast: *Ast) void {
+    self.same_names.remove(self.gpa, ast);
     for (ast.global_dict.keys()) |key| {
         const held = self.obj_tree.getEntry(key) orelse continue;
         if (held.value_ptr.obj.file_ast != ast) continue;

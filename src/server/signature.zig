@@ -12,6 +12,7 @@ const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const arguments = @import("../arguments.zig");
+const generic = @import("../argcheck/generic.zig");
 const autouse = @import("../autouse.zig");
 
 const Obj = objects.Obj;
@@ -34,43 +35,76 @@ pub fn serveSignature(self: *Server, a: Allocator, params: lsp.PositionParams) !
     const call = (try callAt(self, a, file, ast, sig_line, sig_char)) orelse return .null;
     const vo = call.obj;
     const arg_strings = call.args;
-    // a generic interface: the signature of each of its procedures, the
-    // first that takes the arguments so far active (fortls #6); an
-    // intrinsic with several forms: the signature of each; a derived type:
-    // the procedures of the generic interface of its name and its
-    // structure constructor (hansec #148)
+    // a generic interface: the signature of each of its procedures, active
+    // the one the arguments so far reference by their type, kind and rank,
+    // else the first that takes them (fortls #6); an intrinsic with several
+    // forms: the signature of each; a derived type: the procedures of the
+    // generic interface of its name and its structure constructor (hansec
+    // #148)
     var forms: std.ArrayList(Obj.Signature) = .empty;
-    var generic = vo.kind == .interface;
+    // the procedure of each form, of a generic interface
+    var form_objs: std.ArrayList(?*Obj) = .empty;
+    var is_generic = vo.kind == .interface;
     switch (vo.kind) {
         .interface => {
-            for (vo.memList()) |member| try forms.append(a, try member.getSignature(a, null));
-            if (arguments.namesake(vo, .type)) |t| if (try constructorSignature(a, ast, sig_line, t)) |s| try forms.append(a, s);
+            for (vo.memList()) |member| {
+                try forms.append(a, try member.getSignature(a, null));
+                try form_objs.append(a, member);
+            }
+            if (arguments.namesake(vo, .type)) |t| {
+                if (try constructorSignature(a, ast, sig_line, t)) |s| {
+                    try forms.append(a, s);
+                    try form_objs.append(a, null);
+                }
+            }
         },
         .type => {
-            generic = true;
-            if (arguments.namesake(vo, .interface)) |g| for (g.memList()) |member| try forms.append(a, try member.getSignature(a, null));
-            if (try constructorSignature(a, ast, sig_line, vo)) |s| try forms.append(a, s);
+            is_generic = true;
+            if (arguments.namesake(vo, .interface)) |g| {
+                for (g.memList()) |member| {
+                    try forms.append(a, try member.getSignature(a, null));
+                    try form_objs.append(a, member);
+                }
+            }
+            if (try constructorSignature(a, ast, sig_line, vo)) |s| {
+                try forms.append(a, s);
+                try form_objs.append(a, null);
+            }
         },
-        else => try forms.appendSlice(a, try vo.getSignatures(a)),
+        else => for (try vo.getSignatures(a)) |sg| {
+            try forms.append(a, sg);
+            try form_objs.append(a, null);
+        },
     }
-    if (forms.items.len > 1 or generic) {
+    if (forms.items.len > 1 or is_generic) {
         var sigs: std.ArrayList(lsp.SignatureInformation) = .empty;
-        var active: ?i64 = null;
+        var members: std.ArrayList(?*Obj) = .empty;
+        var candidates: std.ArrayList(*Obj) = .empty;
+        var active: ?usize = null;
         var active_size: usize = std.math.maxInt(usize);
-        for (forms.items) |form| {
+        for (forms.items, form_objs.items) |form, member| {
             const s = (try signatureFrom(self, a, form, arg_strings)) orelse continue;
             var info = s.info;
             info.activeParameter = s.param;
             // of a generic the smallest procedure, of an intrinsic its
             // first form
-            if (s.fits and (active == null or (generic and s.size < active_size))) {
-                active = @intCast(sigs.items.len);
-                active_size = s.size;
+            if (s.fits) {
+                if (member) |m| try candidates.append(a, m);
+                if (active == null or (is_generic and s.size < active_size)) {
+                    active = sigs.items.len;
+                    active_size = s.size;
+                }
             }
             try sigs.append(a, info);
+            try members.append(a, member);
         }
         if (sigs.items.len == 0) return .null;
-        const chosen: usize = @intCast(active orelse 0);
+        if (candidates.items.len > 1) {
+            if (try generic.resolve(a, self.env(a), ast, ast.getInnerScope(sig_line + 1), sig_line + 1, candidates.items, arg_strings)) |r| {
+                active = std.mem.findScalar(?*Obj, members.items, r);
+            }
+        }
+        const chosen = active orelse 0;
         return json.from(a, lsp.SignatureHelp{
             .signatures = sigs.items,
             .activeParameter = sigs.items[chosen].activeParameter.?,
@@ -168,10 +202,8 @@ pub fn callAt(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sig_li
     if (curr_scope) |cs| var_obj = try objects.findInScope(self.env(a), cs, sub_name, .{});
     if (var_obj == null) {
         const key = try std.ascii.allocLowerString(a, sub_name);
-        if (ast.global_dict.get(key)) |o| {
+        if (self.env(a).global(ast, key)) |o| {
             var_obj = o;
-        } else if (self.obj_tree.get(key)) |e| {
-            var_obj = e.obj;
         } else {
             for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) {
                 var_obj = f;
@@ -225,12 +257,23 @@ fn followsName(before: []const u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == ')' or c == ']' or std.mem.endsWith(u8, t, ">>>");
 }
 
+/// The specific procedure of a generic interface that a call references,
+/// and whether it is the only one the call fits
+pub const Specific = struct { obj: *Obj, unique: bool };
+
 /// For a call of generic interface `obj` at byte column `col` of 0-based
-/// line `line`, `name(args)`: the procedure of the interface that takes
-/// those arguments (their number and keywords), the one with the fewest
-/// parameters if several do; null when it is no such call
+/// line `line`, `name(args)`: the procedure of the interface the call
+/// references, by the type, kind and rank of its arguments when they tell;
+/// else the procedure that takes those arguments (their number and
+/// keywords), the one with the fewest parameters if several do; null when
+/// it is no such call
 pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, obj: *Obj) !?*Obj {
-    _ = self;
+    const s = (try resolved(self, a, file, line, col, obj)) orelse return null;
+    return s.obj;
+}
+
+/// `genericSpecific`, and whether the call fits no other procedure
+pub fn resolved(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, obj: *Obj) !?Specific {
     if (obj.kind != .interface or obj.memList().len == 0) return null;
     const text = file.getLine(line, false) orelse return null;
     var end = @min(col, text.len);
@@ -253,6 +296,7 @@ pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, li
     const args: []const []const u8 = if (inside.len == 0) &.{} else try helpers.splitArgs(a, inside);
     var best: ?*Obj = null;
     var best_size: usize = std.math.maxInt(usize);
+    var candidates: std.ArrayList(*Obj) = .empty;
     for (obj.memList()) |member| {
         const sig = try member.getSignature(a, null);
         if (sig.label == null or args.len > sig.params.len) continue;
@@ -272,12 +316,18 @@ pub fn genericSpecific(self: *Server, a: Allocator, file: *const FortranFile, li
             if (std.mem.find(u8, arg, "==") != null or str.strip(arg[0..eq]).len == 0) continue;
             if (checkOptional(arg, sig.params) == null) break false;
         } else true;
-        if (keywords_ok and sig.params.len < best_size) {
+        if (!keywords_ok) continue;
+        try candidates.append(a, member);
+        if (sig.params.len < best_size) {
             best = member;
             best_size = sig.params.len;
         }
     }
-    return best;
+    const first = best orelse return null;
+    if (candidates.items.len == 1) return .{ .obj = first, .unique = true };
+    const ast = file.ast orelse return .{ .obj = first, .unique = false };
+    if (try generic.resolve(a, self.env(a), ast, ast.getInnerScope(line + 1), line + 1, candidates.items, args)) |r| return .{ .obj = r, .unique = true };
+    return .{ .obj = first, .unique = false };
 }
 
 /// The signature of procedure `vo` for a call whose arguments so far are

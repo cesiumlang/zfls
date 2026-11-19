@@ -309,6 +309,9 @@ def zfls_only_item(item) -> bool:
         return True
     if "additionalTextEdits" in item:
         return True
+    # a construct or program unit at the start of a statement (#264)
+    if "textEdit" in item:
+        return True
     return str(item.get("label", "")).endswith("=") and "filterText" in item
 
 
@@ -329,9 +332,10 @@ def normalize(v):
         }
     if isinstance(v, list):
         # names not declared under IMPLICIT NONE (hansec #129): zfls only
-        # and unused names: zfls only; so is the diagnostic on an #include
-        # whose file is not found (#282)
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "include-not-found"))]
+        # and unused names: zfls only; so are mismatched ENDs and scopes
+        # left open (#285), and the diagnostic on an #include whose file is
+        # not found (#282)
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "mismatched-end", "unclosed-scope", "include-not-found"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
@@ -660,6 +664,22 @@ def on_enumerator_statement(lines: list, line: int) -> bool:
     return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
 
 
+NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
+
+
+def after_non_code_line(lines: list, line: int) -> bool:
+    """Whether the line continues a statement across a preprocessor
+    directive, comment or blank line before it (`REAL &` / `#ifdef X` /
+    `, POINTER &`): zfls reads the statement whole (zfls #259), fortls
+    stops at that line."""
+    if not 0 < line < len(lines) or not NON_CODE.match(lines[line - 1]):
+        return False
+    k = line - 1
+    while k >= 0 and NON_CODE.match(lines[k]):
+        k -= 1
+    return k >= 0 and lines[k].split("!")[0].rstrip().endswith("&")
+
+
 def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     """Whether (line, char) is on a statement label or on a construct name
     that the file defines (`name: do`); zfls answers definition, references
@@ -934,7 +954,11 @@ def main() -> int:
                 # zfls offers the keyword arguments of the call the position
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls does not
+                own_items = [x for x in b if zfls_only_item(x)]
                 b = [x for x in b if not zfls_only_item(x)]
+                if a is None and not b and own_items:
+                    # only zfls's own items (after `end`, its end statement)
+                    b = None
             if kind == "completion":
                 # an intrinsic with two forms completes to one of them
                 # (#245); fortls's snippet mixes them
@@ -1002,6 +1026,14 @@ def main() -> int:
                 and on_enumerator_statement(src_lines, pos.get("line", -1))
             ):
                 # the enumerators of an ENUM, which fortls does not read
+                continue
+            if (
+                kind in ("hover", "definition", "completion", "signature")
+                and not a
+                and after_non_code_line(src_lines, pos.get("line", -1))
+            ):
+                # a statement continued across a directive or comment line
+                # (zfls #259); fortls sees only its part after that line
                 continue
             if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                 # the implicit type of a name that is not declared (hansec

@@ -709,7 +709,7 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
         const at = try autouse.insertionPoint(a, file, unit);
-        for (try autouse.exports(a, try completion.usableModules(self, a), .{ .exact = name }, 10)) |e| {
+        for (try autouse.exports(a, try completion.usableModules(self, a, ast), .{ .exact = name }, 10)) |e| {
             if (autouse.isWithin(unit, e.module)) continue;
             const text = try autouse.statement(a, at.indent, e.module.name, e.obj.name);
             const edits = try a.alloc(lsp.TextEdit, 1);
@@ -733,9 +733,12 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
     if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
+    const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
+        // a file included by another may hold a part of a scope
+        if (included and d.code == .unclosed_scope) continue;
         if (d.code == .module_not_found) if (d.subject) |m| if (isExternalModule(self, m)) continue;
         var dd = d;
         dd.severity = severityOf(self, d.code) orelse d.severity;
@@ -743,6 +746,16 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
         try out.append(a, try self.diagnosticOf(a, file, dd));
     }
     return out.items;
+}
+
+/// Whether an INCLUDE statement or `#include` of a workspace file names
+/// `file`
+fn isIncluded(self: *Server, file: *const FortranFile) bool {
+    for (self.workspace.values()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.include_statements.items) |inc| if (inc.file == file) return true;
+    }
+    return false;
 }
 
 /// The severity `diagnostic_severity` gives the diagnostics of `code`

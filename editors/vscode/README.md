@@ -141,7 +141,11 @@ actions or formatting are turned off.
 
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
 workspace root configures source directories, preprocessor definitions and
-other options.
+other options. zfls also reads a user configuration file of the same format,
+`%APPDATA%\zfls\config.json` on Windows, else
+`~/.config/zfls/config.json` (`$XDG_CONFIG_HOME/zfls/config.json`), for
+other editors; this extension's settings take over from it, and the
+project's file from both.
 VS Code opens these files as JSON with comments and checks them against a
 schema of the options zfls reads from them, with their descriptions and
 defaults in completion and hover. The schema is generated from zfls's option
@@ -450,6 +454,20 @@ offers to set `zfls.run.compiler`, `zfls.run.compilerPath` and
 Windows), and zfls's debugger debugs them. The same is `zfls setup-ifx` on
 the command line (see zfls's readme).
 
+### LFortran without Visual Studio (Windows x64)
+
+LFortran links its programs on Windows with Visual Studio's `link`. Where
+Visual Studio's environment is not set up (no `VCToolsInstallDir`), **Run
+Fortran File** has it link with `lld-link` and zfls's ifx kit instead, when
+there is an `lld-link` next to `lfortran` (conda-forge's `lld` package:
+`conda install -c conda-forge lfortran lld`, or `pixi add lfortran lld`) or
+on the `PATH`. The extension writes a `link.cmd` that runs that `lld-link`
+into its storage, puts it first on the build's `PATH`, and sets `LIB` and
+`LINK` to the kit's directory, startup object and libraries;
+**zfls: Add Build Task and Debug Configuration for Fortran File** writes
+the same into the build task. The programs use Windows's C runtime (UCRT)
+and LFortran's static runtime, so they need nothing else to run.
+
 ### The `fortran` debug type
 
 A launch configuration of type `fortran` is resolved, when it starts, into
@@ -640,18 +658,23 @@ can ask too); the extension builds and runs them.
 
 ## Snippets
 
-Type a prefix and pick the snippet from the completion list:
+At the start of a statement, the server completes the constructs and
+program units that can begin there, each with its end statement:
+`program`, `module`, `submodule`, `subroutine`, `function`, `type`,
+`interface`, `enum`, `if ... then`, `do`, `do while`, `do concurrent`,
+`select case`, `select type`, `select rank`, `associate`, `block`,
+`where`, `forall`, `critical`; inside an open construct its `else`,
+`else if`, `case`, `type is`, `elsewhere` and the like; `then` after
+`if (...)`; and after `end`, the end statement of the scope that is open.
+They follow `zfls.lowercaseIntrinsics` and `zfls.autocompleteNoSnippets`.
+
+The extension adds these: type a prefix and pick the snippet from the
+completion list.
 
 | Prefix | Inserts |
 | --- | --- |
-| `program`, `module`, `submodule` | A program unit with `implicit none` |
-| `fun`, `sub` | A function with a result variable, a subroutine |
-| `interface`, `abstract` | An interface block, an abstract interface |
 | `typ`, `typc`, `proc` | A derived type with `contains`, a type with a type-bound procedure, a type-bound procedure binding |
-| `if`, `ife`, `el`, `else` | A one-line `if`, an `if` block, an `if`/`else` block, `else if` and `else` branches |
-| `do`, `dow`, `doc` | `do`, `do while` and `do concurrent` loops |
-| `selc`, `selt` | `select case`, `select type` |
-| `block`, `associate`, `where`, `enum` | Those constructs |
+| `if`, `ife` | A one-line `if`, an `if`/`else` block |
 | `imp` | `implicit none` |
 | `modoc` | A module documentation header |
 

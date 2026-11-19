@@ -287,6 +287,40 @@ export function runtimeEnv(
   return { [key]: current ? `${dir};${current}` : dir };
 }
 
+/** The libraries of zfls's ifx kit that LFortran's programs need */
+const KIT_LIBS = ["msvcrt.lib", "ucrt.lib", "vcruntime.lib", "kernel32.lib"];
+
+/**
+ * The environment in which LFortran (on Windows) links its program with
+ * lld-link and zfls's ifx kit (`kitDir`) rather than Visual Studio's linker
+ * and libraries: LFortran runs `link` from the PATH, so `linkDir`, put
+ * first, holds a `link` that runs lld-link (`linkScript`); `LINK` (which
+ * lld-link reads as arguments) adds the kit's startup object and import
+ * libraries, and `LIB` the kit's directory. Undefined in a Visual Studio
+ * environment
+ * (`VCToolsInstallDir`), where Visual Studio's linker links.
+ */
+export function lfortranLinkEnv(kitDir: string, linkDir: string, env: NodeJS.ProcessEnv): Record<string, string> | undefined {
+  if (env.VCToolsInstallDir) {
+    return undefined;
+  }
+  const join = (sep: string, ...parts: (string | undefined)[]) => parts.filter((p) => p).join(sep);
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "Path";
+  const shim = path.win32.join(kitDir, "zfls_ifx_shim.obj");
+  return {
+    [pathKey]: join(";", linkDir, env[pathKey]),
+    LIB: join(";", kitDir, env.LIB),
+    LINK: join(" ", `"${shim}"`, ...KIT_LIBS, env.LINK),
+  };
+}
+
+/** The `link.cmd` that stands for Visual Studio's `link` (`lfortranLinkEnv`):
+ * lld-link run where it is, so that it finds its DLLs (a copy of
+ * conda-forge's elsewhere would not) */
+export function linkScript(lldLink: string): string {
+  return `@"${lldLink}" %*\r\n`;
+}
+
 export interface ProcessInfo {
   pid: number;
   name: string;

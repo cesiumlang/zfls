@@ -225,6 +225,7 @@ pub fn main(init: std.process.Init) !void {
     patterns.init();
     paths.init(io);
     paths.initCache(init.arena.allocator(), init.environ_map);
+    paths.initUserConfig(init.arena.allocator(), init.environ_map);
 
     const arena = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(arena);

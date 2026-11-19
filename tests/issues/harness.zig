@@ -150,6 +150,8 @@ pub const Options = struct {
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
+    /// the client takes snippets in completion items
+    snippet_support: bool = false,
     /// the workspace is opened through this machine's administrative share
     /// (`\\localhost\c$\...`, as `file://localhost/c%24/...`), the way a
     /// folder on a network share is (a test is skipped off Windows and
@@ -245,12 +247,15 @@ pub const Workspace = struct {
                 .codeAction = dynamic,
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
-                .completion = .{ .completionItem = .{ .resolveSupport = .{
-                    .properties = @as([]const []const u8, if (opts.completion_resolve) &.{"documentation"} else &.{}),
-                } } },
+                .completion = .{ .completionItem = .{
+                    .snippetSupport = opts.snippet_support,
+                    .resolveSupport = .{
+                        .properties = @as([]const []const u8, if (opts.completion_resolve) &.{"documentation"} else &.{}),
+                    },
+                } },
                 .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
-                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },
                 .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
             }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,

@@ -12,6 +12,22 @@ const str = @import("str.zig");
 
 pub const Def = struct { name: []const u8, value: []const u8 };
 
+/// Where the compile of a file writes its modules, and the directories it
+/// looks for the modules it uses in, in order (absolute; #187)
+pub const ModuleDirs = struct { out: []const u8, search: []const []const u8 };
+
+/// `ModuleDirs` by the `pathKey` of the source file
+pub const ModuleDirsMap = std.array_hash_map.String(ModuleDirs);
+
+/// A path as `ModuleDirsMap` keys it: normalized, and on Windows lowercase
+/// with backslashes
+pub fn pathKey(a: Allocator, path: []const u8) ![]const u8 {
+    const n = try paths.normpath(a, path);
+    if (@import("builtin").target.os.tag == .windows) {
+        for (n) |*c| c.* = if (c.* == '/') '\\' else std.ascii.toLower(c.*);
+    }
+    return n;
+}
 /// The command of one file in a compilation database
 pub const Command = struct {
     /// Where it runs (absolute)
@@ -30,6 +46,8 @@ pub const Found = struct {
     files: std.ArrayList([]const u8) = .empty,
     include_dirs: std.ArrayList([]const u8) = .empty,
     defs: std.ArrayList(Def) = .empty,
+    /// The module directories of each Fortran file
+    module_dirs: ModuleDirsMap = .empty,
     /// The command of each Fortran file (compile_commands.json only)
     commands: Commands = .empty,
 
@@ -91,12 +109,69 @@ pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Fo
             try splitCommand(a, cmd, &args);
         }
         try readFlags(a, dir, args.items, &found);
+        try readModuleDirs(a, dir, args.items, found.files.items[found.files.items.len - 1], &found);
         // the first entry of a file is its command
         const abs = try paths.normpath(a, if (std.Io.Dir.path.isAbsolute(file)) file else try paths.join(a, &.{ dir, file }));
         const gop = try found.commands.getOrPut(a, try fileKey(a, abs));
         if (!gop.found_existing) gop.value_ptr.* = .{ .dir = try paths.normpath(a, dir), .args = args.items, .file = abs };
     }
     return found;
+}
+
+/// The module directory of the compile of `file` (`-J dir`, `-module dir`,
+/// `/module:dir`, ...; its working directory `dir` without one) and its
+/// search path: that directory, the include directories, `dir`. The first
+/// entry of a file is its command.
+fn readModuleDirs(a: Allocator, dir: []const u8, args: []const []const u8, file: []const u8, found: *Found) !void {
+    const gop = try found.module_dirs.getOrPut(a, try pathKey(a, file));
+    if (gop.found_existing) return;
+    const Kind = enum { module, include };
+    const Opt = struct { []const u8, Kind };
+    // followed by their value
+    const separate = [_]Opt{
+        .{ "-J", .module },  .{ "-module", .module }, .{ "-module-dir", .module }, .{ "-mdir", .module },
+        .{ "-I", .include }, .{ "/I", .include },     .{ "-isystem", .include },
+    };
+    // with their value attached
+    const attached = [_]Opt{
+        .{ "-J", .module },  .{ "/module:", .module }, .{ "-module:", .module },  .{ "-fmod=", .module }, .{ "-qmoddir=", .module },
+        .{ "-I", .include }, .{ "/I", .include },      .{ "-isystem", .include },
+    };
+    var out: ?[]const u8 = null;
+    var includes: std.ArrayList([]const u8) = .empty;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        var value: ?[]const u8 = null;
+        var kind: Kind = .include;
+        find: {
+            for (separate) |o| if (std.mem.eql(u8, arg, o[0])) {
+                kind = o[1];
+                if (i + 1 < args.len) {
+                    i += 1;
+                    value = args[i];
+                }
+                break :find;
+            };
+            for (attached) |o| if (arg.len > o[0].len and std.mem.startsWith(u8, arg, o[0])) {
+                kind = o[1];
+                value = arg[o[0].len..];
+                break :find;
+            };
+        }
+        const v = value orelse continue;
+        const abs = try paths.normpath(a, if (std.Io.Dir.path.isAbsolute(v)) v else try paths.join(a, &.{ dir, v }));
+        switch (kind) {
+            .module => out = abs,
+            .include => try includes.append(a, abs),
+        }
+    }
+    const cwd = try paths.normpath(a, dir);
+    var search: std.ArrayList([]const u8) = .empty;
+    try search.append(a, out orelse cwd);
+    try search.appendSlice(a, includes.items);
+    try search.append(a, cwd);
+    gop.value_ptr.* = .{ .out = out orelse cwd, .search = search.items };
 }
 
 /// A path as `Commands` keys it: normalized, and on Windows lowercase with
@@ -356,6 +431,40 @@ test "compile_commands.json: the flags of Fortran entries" {
     const p = if (@import("builtin").target.os.tag == .windows) "C:\\p" else "/p";
     try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "a.F90" }), f.files.items[0]);
     try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "c.f90" }), f.files.items[1]);
+}
+
+test "compile_commands.json: the module directories of each file (#187)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const windows = @import("builtin").target.os.tag == .windows;
+    const root = if (windows) "C:\\\\p" else "/p";
+    const text = try a.print(
+        \\[
+        \\  {{"directory": "{s}", "file": "a.f90", "command": "gfortran -Jmod -Iinc -c a.f90"}},
+        \\  {{"directory": "{s}/b", "file": "b.f90", "arguments": ["ifx", "-module", "../mods", "-c", "b.f90"]}},
+        \\  {{"directory": "{s}", "file": "c.f90", "arguments": ["ifx", "/module:wmods", "/I", "inc", "c.f90"]}},
+        \\  {{"directory": "{s}", "file": "d.f90", "arguments": ["gfortran", "-c", "d.f90"]}}
+        \\]
+    , .{ root, root, root, root });
+    const f = try readCompileCommands(a, text, root);
+    const p = if (windows) "C:\\p" else "/p";
+    const dirsOf = struct {
+        fn get(al: Allocator, found: *const Found, path: []const u8) !ModuleDirs {
+            return found.module_dirs.get(try pathKey(al, path)) orelse error.NoEntry;
+        }
+    }.get;
+    const ad = try dirsOf(a, &f, try paths.join(a, &.{ p, "a.f90" }));
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "mod" }), ad.out);
+    try std.testing.expectEqual(@as(usize, 3), ad.search.len);
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "inc" }), ad.search[1]);
+    try std.testing.expectEqualStrings(p, ad.search[2]);
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "mods" }), (try dirsOf(a, &f, try paths.join(a, &.{ p, "b", "b.f90" }))).out);
+    const cd = try dirsOf(a, &f, try paths.join(a, &.{ p, "c.f90" }));
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "wmods" }), cd.out);
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "inc" }), cd.search[1]);
+    // none: the working directory
+    try std.testing.expectEqualStrings(p, (try dirsOf(a, &f, try paths.join(a, &.{ p, "d.f90" }))).out);
 }
 
 test "a shell command line is split as a shell would" {

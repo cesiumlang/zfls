@@ -100,12 +100,18 @@ pub const Server = struct {
     root_path: []const u8 = "",
     workspace: std.array_hash_map.String(*FortranFile) = .empty,
     obj_tree: objects.ObjTree = .empty,
+    /// Every definition of the global names that several files define
+    same_names: objects.same_name.SameNames = .{},
+    /// The module directories of the compilation database's files
+    module_dirs: project.ModuleDirsMap = .empty,
     link_version: i64 = 0,
     sync_type: i32 = 1,
     /// The client takes `DocumentSymbol` trees, not fortls's flat list
     hierarchical_symbols: bool = false,
     /// the client asks whether a position can be renamed first
     prepare_rename: bool = false,
+    /// the client takes snippets in completion items
+    completion_snippets: bool = false,
     /// The paths of the documents open in the editor, whose text is the
     /// editor's (keys owned by `gpa`)
     open_docs: std.StringHashMapUnmanaged(void) = .empty,
@@ -237,6 +243,7 @@ pub const Server = struct {
         }
         self.workspace.deinit(self.gpa);
         self.obj_tree.deinit(self.gpa);
+        self.same_names.deinit(self.gpa);
         for (self.retired.items) |ast| ast.destroy();
         self.retired.deinit(self.gpa);
         var open_it = self.open_docs.keyIterator();
@@ -292,7 +299,7 @@ pub const Server = struct {
     }
 
     pub fn env(self: *Server, tmp: Allocator) objects.Env {
-        return .{ .tree = &self.obj_tree, .tmp = tmp };
+        return .{ .tree = &self.obj_tree, .tmp = tmp, .same_names = &self.same_names, .module_dirs = &self.module_dirs };
     }
 
     // ----------------------------------------------------------------------

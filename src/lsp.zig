@@ -101,6 +101,7 @@ pub const CompletionItem = struct {
     filterText: ?[]const u8 = null,
     labelDetails: ?struct { detail: ?[]const u8 = null, description: ?[]const u8 = null } = null,
     additionalTextEdits: ?[]const TextEdit = null,
+    textEdit: ?TextEdit = null,
     /// what `completionItem/resolve` finds the object by, for a client
     /// that resolves the documentation (completion_resolve.zig)
     data: ?CompletionData = null,
@@ -366,6 +367,7 @@ pub const ClientCapabilities = struct {
         } = .{},
         completion: struct {
             completionItem: struct {
+                snippetSupport: bool = false,
                 /// the properties that `completionItem/resolve` may fill
                 /// in (read at `initialize` only: not kept)
                 resolveSupport: struct { properties: []const []const u8 = &.{} } = .{},
@@ -379,7 +381,12 @@ pub const ClientCapabilities = struct {
         rangeFormatting: Dynamic = .{},
     } = .{},
     workspace: struct {
-        didChangeWatchedFiles: Dynamic = .{},
+        didChangeWatchedFiles: struct {
+            dynamicRegistration: bool = false,
+            /// patterns relative to a directory, which may be outside the
+            /// workspace
+            relativePatternSupport: bool = false,
+        } = .{},
         /// the client takes `workspace/diagnostic/refresh`
         diagnostics: struct { refreshSupport: bool = false } = .{},
         codeLens: struct { refreshSupport: bool = false } = .{},

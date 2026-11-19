@@ -3,10 +3,13 @@
 //! the config file's names, either as one object or in its `zfls` member.
 //!
 //! The settings come from, each over the previous: the command line, the
-//! editor, the config file (`.fortlsrc`). The config file is the project's
-//! and already takes over from the command line, which is how the VS Code
-//! extension passes its settings; the editor's settings over LSP are the
-//! same user settings, by another way.
+//! user's configuration file (`%APPDATA%\zfls\config.json`,
+//! `~/.config/zfls/config.json`; #271), the editor, the config file
+//! (`.fortlsrc`). The config file is the project's and already takes over
+//! from the command line, which is how the VS Code extension passes its
+//! settings; the editor's settings over LSP are the same user settings, by
+//! another way. The user's file gives defaults for editors that have no
+//! settings for a language server.
 //!
 //! A change applies at once. One of the settings that decide what is
 //! indexed (source directories, include directories, definitions, ...)
@@ -62,10 +65,14 @@ pub const State = struct {
     /// The settings in effect as configured, before the server's own
     /// additions (globs resolved, compile_commands.json, fpm.toml)
     configured: Settings = .{},
-    /// The editor's settings and the config file's, as JSON objects owned
-    /// by the server's arena
+    /// The user's configuration file's settings, the editor's and the
+    /// config file's, as JSON objects owned by the server's arena
+    user: ?Value = null,
     editor: ?Value = null,
     file: ?Value = null,
+    /// The configuration files read: the user's and the project's
+    user_path: ?[]const u8 = null,
+    file_path: ?[]const u8 = null,
     client: lsp.ClientCapabilities = .{},
     /// The providers the client knows of: announced in the `initialize`
     /// answer, or registered since
@@ -105,11 +112,13 @@ fn keep(self: *Server, a: Allocator, v: Value) !Value {
     };
 }
 
-/// At `initialize`: the editor's settings, then the config file's, over the
-/// command line's
+/// At `initialize`: the user's configuration file's settings, then the
+/// editor's, then the config file's, over the command line's
 pub fn load(self: *Server, a: Allocator, init_options: ?Value) !void {
     const sa = self.arena.allocator();
     self.config.cli = try settings_mod.clone(sa, self.s);
+    self.config.user = try readUserConfigFile(self, a);
+    if (self.config.user) |u| try settings_mod.applyConfig(sa, &self.s, u);
     if (section(init_options)) |v| {
         self.config.editor = try keep(self, a, v);
         try settings_mod.applyConfig(sa, &self.s, self.config.editor.?);
@@ -155,11 +164,25 @@ pub fn serveDidChange(self: *Server, a: Allocator, params: Value) !Value {
     return .null;
 }
 
-/// The settings as configured: the command line's, the editor's over them,
-/// the config file's over those
+/// The user's configuration file (`paths.userConfigFile`): its JSON object,
+/// null without one. A syntax error is posted, naming the file; a file
+/// that cannot be read is left out without a message.
+pub fn readUserConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
+    self.config.user_path = null;
+    const p = paths.userConfigFile() orelse return null;
+    const data = std.Io.Dir.cwd().readFileAlloc(self.io, p, self.arena.allocator(), .limited(1 << 26)) catch return null;
+    const cfg = try workspace.parseConfigFile(self, a, data, p) orelse return null;
+    self.config.user_path = p;
+    return cfg;
+}
+
+/// The settings as configured: the command line's, the user's
+/// configuration file's over them, the editor's over those, the config
+/// file's over all
 fn configured(self: *Server) !Settings {
     const sa = self.arena.allocator();
     var next = try settings_mod.clone(sa, self.config.cli);
+    if (self.config.user) |u| try settings_mod.applyConfig(sa, &next, u);
     if (self.config.editor) |e| try settings_mod.applyConfig(sa, &next, e);
     if (self.config.file) |f| try settings_mod.applyConfig(sa, &next, f);
     return next;
@@ -175,6 +198,7 @@ pub const Watched = enum {
 
 /// Whether `path` is one of the files the settings are read from
 pub fn watched(self: *const Server, a: Allocator, path: []const u8) !?Watched {
+    if (paths.userConfigFile()) |u| if (paths.eql(path, u)) return .config;
     for (workspace.configFileNames(self)) |name| {
         if (paths.eql(path, try paths.join(a, &.{ self.root_path, name }))) return .config;
     }
@@ -198,12 +222,14 @@ pub fn watched(self: *const Server, a: Allocator, path: []const u8) !?Watched {
 /// again
 pub fn reload(self: *Server, a: Allocator, project_files: bool) !void {
     self.log.info("a configuration file changed: reading the settings again", .{});
+    self.config.user = try readUserConfigFile(self, a);
     self.config.file = try workspace.readConfigFile(self, a);
     try apply(self, a, try configured(self), project_files);
 }
 
 /// At `initialized`: asks the client to watch the `watched` files, where it
-/// allows that
+/// allows that; the user's configuration file, outside the workspace, where
+/// it takes a pattern relative to a directory
 pub fn watchConfigFiles(self: *Server, a: Allocator) void {
     if (!self.config.client.workspace.didChangeWatchedFiles.dynamicRegistration) return;
     var names: std.ArrayList([]const u8) = .empty;
@@ -214,10 +240,16 @@ pub fn watchConfigFiles(self: *Server, a: Allocator) void {
         } else names.append(a, base) catch return;
     }
     const pattern = std.mem.concat(a, u8, &.{ "**/{", std.mem.join(a, ",", names.items) catch return, "}" }) catch return;
+    var watchers: std.ArrayList(Value) = .empty;
+    watchers.append(a, json.from(a, .{ .globPattern = pattern }) catch return) catch return;
+    if (paths.userConfigFile()) |u| if (self.config.client.workspace.didChangeWatchedFiles.relativePatternSupport) {
+        const base = paths.pathToUri(a, paths.dirname(u)) catch return;
+        watchers.append(a, json.from(a, .{ .globPattern = .{ .baseUri = base, .pattern = std.Io.Dir.path.basename(u) } }) catch return) catch return;
+    };
     const params = json.from(a, .{ .registrations = &[_]lsp.Registration{.{
         .id = "zfls-config-files",
         .method = "workspace/didChangeWatchedFiles",
-        .registerOptions = json.from(a, .{ .watchers = &[_]struct { globPattern: []const u8 }{.{ .globPattern = pattern }} }) catch return,
+        .registerOptions = json.from(a, .{ .watchers = watchers.items }) catch return,
     }} }) catch return;
     self.sendRequest(a, "client/registerCapability", params) catch |e| self.logSendFailure(e);
 }
@@ -286,6 +318,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
     }
     self.workspace.clearRetainingCapacity();
     self.obj_tree.clearRetainingCapacity();
+    self.same_names.clear(self.gpa);
     for (self.retired.items) |ast| ast.destroy();
     self.retired.clearRetainingCapacity();
 
