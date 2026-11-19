@@ -8,6 +8,7 @@ test {
     _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
+    _ = @import("completion_resolve.zig");
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
     _ = @import("convert.zig");

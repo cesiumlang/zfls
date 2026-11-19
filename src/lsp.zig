@@ -104,6 +104,23 @@ pub const CompletionItem = struct {
     labelDetails: ?struct { detail: ?[]const u8 = null, description: ?[]const u8 = null } = null,
     additionalTextEdits: ?[]const TextEdit = null,
     textEdit: ?TextEdit = null,
+    /// what `completionItem/resolve` finds the object by, for a client
+    /// that resolves the documentation (completion_resolve.zig)
+    data: ?CompletionData = null,
+};
+
+/// The object of a completion item, in few bytes (a list has hundreds):
+/// its file and fully qualified name, or its place in the intrinsics
+pub const CompletionData = struct {
+    /// the index of its file in the workspace (searched for the name when
+    /// the files changed)
+    f: ?usize = null,
+    /// its fully qualified name
+    q: ?[]const u8 = null,
+    /// the 1-based line of its declaration
+    l: ?usize = null,
+    /// an intrinsic procedure or keyword: its index among them
+    i: ?usize = null,
 };
 
 pub const Hover = struct { contents: MarkupContent };
@@ -355,6 +372,9 @@ pub const ClientCapabilities = struct {
         completion: struct {
             completionItem: struct {
                 snippetSupport: bool = false,
+                /// the properties that `completionItem/resolve` may fill
+                /// in (read at `initialize` only: not kept)
+                resolveSupport: struct { properties: []const []const u8 = &.{} } = .{},
             } = .{},
         } = .{},
         signatureHelp: Dynamic = .{},

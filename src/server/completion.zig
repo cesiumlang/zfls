@@ -14,7 +14,6 @@ const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
 const arguments = @import("../arguments.zig");
 const autouse = @import("../autouse.zig");
-const docmath = @import("../docmath.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -25,6 +24,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const completion_resolve = @import("completion_resolve.zig");
 const snippets = @import("snippets.zig");
 
 /// The inner scopes and the base type are always left out; `def` is
@@ -200,12 +200,9 @@ pub fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, 
     if (is_member and kind == 3) kind = 2;
     var detail = try candidate.getDesc(a);
     if (call_sig) |cs| detail = try a.print("{s} {s}", .{ detail, cs });
-    var documentation: ?lsp.MarkupContent = null;
-    const hover_msg = try candidate.getHoverMd(a, true, null);
-    if (hover_msg.len > 0) {
-        const md = try str.replaceFirst(a, hover_msg, "```{langid}", try a.print("```{s}", .{self.s.hover_language}));
-        documentation = .{ .value = try docmath.rewrite(a, md, docmath.Mode.of(self.s.doc_math)) };
-    }
+    // left to completionItem/resolve where the client resolves it
+    const data = if (self.completion_resolve) completion_resolve.dataOf(self, candidate) else null;
+    const documentation = if (data == null) try completion_resolve.documentation(self, a, candidate) else null;
     return .{
         .label = label,
         .insertText = insert_text,
@@ -213,6 +210,7 @@ pub fn buildComp(self: *Server, a: Allocator, candidate: *Obj, name_only: bool, 
         .kind = kind,
         .detail = detail,
         .documentation = documentation,
+        .data = data,
     };
 }
 

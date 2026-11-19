@@ -1042,6 +1042,11 @@ zfls deliberately differs from fortls in a few places:
   choosing one adds `use module, only: name` after the unit's last USE
   statement (hansec #62, `autocomplete_no_auto_use` turns it off). A type
   that is not found has a quick fix adding that statement.
+- To a client that resolves completion items (`completionItem/resolve`,
+  as VS Code does), completion sends each item without its documentation,
+  which follows when the item is selected: a list of 2,000 procedures is
+  less than half the size and takes half the time; fortls sends every
+  item's documentation.
 - With nothing typed, completion (Ctrl+Space) lists the names of a module
   after `use m, only:` and after each comma of the list (less those it has
   already), the modules after `use`, the types after `type(`, `class(` and

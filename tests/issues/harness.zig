@@ -163,6 +163,9 @@ pub const Options = struct {
     /// folder on a network share is (a test is skipped off Windows and
     /// where the share cannot be reached)
     unc_root: bool = false,
+    /// the client resolves the documentation of completion items
+    /// (`completionItem/resolve`)
+    completion_resolve: bool = false,
 };
 
 // --------------------------------------------------------------------------
@@ -250,7 +253,12 @@ pub const Workspace = struct {
                 .codeAction = .{ .dynamicRegistration = opts.dynamic_registration, .disabledSupport = opts.disabled_actions },
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
-                .completion = .{ .completionItem = .{ .snippetSupport = opts.snippet_support } },
+                .completion = .{ .completionItem = .{
+                    .snippetSupport = opts.snippet_support,
+                    .resolveSupport = .{
+                        .properties = @as([]const []const u8, if (opts.completion_resolve) &.{"documentation"} else &.{}),
+                    },
+                } },
                 .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },

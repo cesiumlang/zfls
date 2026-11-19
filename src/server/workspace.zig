@@ -39,6 +39,7 @@ const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const configuration = @import("configuration.zig");
+const completion_resolve = @import("completion_resolve.zig");
 const pull = @import("pull.zig");
 const lenses = @import("lenses.zig");
 
@@ -57,6 +58,8 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.completion_snippets = params.capabilities.textDocument.completion.completionItem.snippetSupport;
     try self.s.source_dirs.add(sa, self.root_path);
     self.config.client = params.capabilities;
+    self.completion_resolve = completion_resolve.wanted(params.capabilities);
+    self.config.client.textDocument.completion.completionItem.resolveSupport = .{};
     self.pull_diagnostics = pull.wanted(params.capabilities);
 
     try configuration.load(self, a, params.initializationOptions);
@@ -81,7 +84,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.config.announced = on;
     self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
-        .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
+        .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
         .textDocumentSync = .{ .change = self.sync_type },
         .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
         .codeActionProvider = if (on.code_actions) true else null,
