@@ -8,6 +8,7 @@ const Io = std.Io;
 const str = @import("str.zig");
 const helpers = @import("helpers.zig");
 const patterns = @import("patterns.zig");
+const suffixes = @import("suffixes.zig");
 const regex = @import("regex.zig");
 const C = @import("constants.zig");
 const objects = @import("objects.zig");
@@ -26,10 +27,6 @@ const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
 const openmp = @import("parser/openmp.zig");
 const pp_intel = @import("preprocessor/intel.zig");
-
-/// The suffixes of free-form source, in either case (CUDA Fortran's `.cuf`
-/// too)
-const free_form_suffixes = [_][]const u8{ ".f90", ".f95", ".f03", ".f08", ".f18", ".f23", ".cuf" };
 
 pub const ResultSig = parser_definitions.ResultSig;
 pub const VarInfo = parser_definitions.VarInfo;
@@ -249,8 +246,7 @@ pub const FortranFile = struct {
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
     fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
-        const ext = std.Io.Dir.path.extension(self.path);
-        for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
+        if (suffixes.formOf(self.path) == .free) return false;
         return helpers.detectFixedFormat(lines);
     }
 
@@ -801,6 +797,11 @@ pub const FortranFile = struct {
                 h.update(inc.path);
                 h.update("\x00");
             }
+            for (out.missing) |mi| {
+                h.update(std.mem.asBytes(&mi.line));
+                h.update(mi.name);
+                h.update("\x00");
+            }
         }
         return h.final();
     }
@@ -820,6 +821,8 @@ pub const FortranFile = struct {
             p.pp_defines = out.defines;
             // an `#include` links the file like an INCLUDE statement would
             for (out.includes) |inc| try p.file_ast.addInclude(inc.path, inc.line);
+            // one whose file is not found, like an INCLUDE that zfls cannot read
+            for (out.missing) |mi| try p.file_ast.addMissingInclude(mi.name, mi.line, mi.start, mi.end);
         }
         try p.run();
         return p.file_ast;

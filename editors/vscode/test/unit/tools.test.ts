@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { expandVariables, findExecutable, runProcess, serverExecutable } from "../../src/tools";
+import { FORTRAN_FILES, expandVariables, findExecutable, runProcess, serverExecutable } from "../../src/tools";
 
 const ctx = {
   workspaceFolder: path.join("/ws", "proj"),
@@ -117,4 +117,12 @@ test("a missing program, an exit code and a timeout are reported", async () => {
   assert.equal(failed.stderr, "bad");
   const slow = await runProcess(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { timeout: 200 });
   assert.match(String(slow.error), /timed out/);
+});
+
+test("FORTRAN_FILES has the extensions of the Fortran languages of package.json", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8"));
+  const exts = pkg.contributes.languages
+    .filter((l: { id: string }) => l.id === "FortranFreeForm" || l.id === "FortranFixedForm")
+    .flatMap((l: { extensions: string[] }) => l.extensions.map((e) => e.slice(1)));
+  assert.deepEqual(FORTRAN_FILES, `*.{${exts.join(",")}}`);
 });

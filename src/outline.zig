@@ -6,6 +6,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const helpers = @import("helpers.zig");
+const selection = @import("selection.zig");
 const lsp = @import("lsp.zig");
 const objects = @import("objects.zig");
 const str = @import("str.zig");
@@ -105,7 +106,13 @@ const Outline = struct {
     /// variables of procedures, nor constructs (DO, IF, BLOCK, ...).
     fn append(o: Outline, obj: *Obj, parent: *Obj, out: *std.ArrayList(lsp.DocumentSymbol)) Allocator.Error!void {
         switch (obj.kind) {
-            .include, .block, .do_, .if_, .where, .select, .associate => {},
+            .block => if (obj.isBlockData()) {
+                var sym = o.symbol(obj, Kind.module, null, try o.childrenOf(obj));
+                // without a name, the parser's `#BLOCKDATA<n>`
+                if (std.mem.startsWith(u8, obj.name, "#")) sym.name = "BLOCK DATA";
+                try out.append(o.a, sym);
+            },
+            .include, .do_, .if_, .where, .select, .associate => {},
             .variable, .method => {
                 const in_type = parent.kind == .type;
                 if (!in_type and !isModuleLike(parent)) return;
@@ -159,11 +166,12 @@ const comment_kind = "comment";
 
 /// The folding ranges of a file: each construct and program unit (up to the
 /// line before its END, which stays in view), each branch of IF, SELECT and
-/// WHERE constructs, each branch of preprocessor conditionals, and runs of
-/// comment lines
+/// WHERE constructs, each branch of preprocessor conditionals, statements
+/// continued over three lines or more, and runs of comment lines
 pub fn foldingRanges(a: Allocator, file: *const FortranFile, ast: *Ast) Allocator.Error![]const lsp.FoldingRange {
     var out: std.ArrayList(lsp.FoldingRange) = .empty;
     for (ast.scope_list.items) |scope| try scopeFolds(a, file, ast, scope, &out);
+    try continuedFolds(a, file, &out);
     try preprocessorFolds(a, file, &out);
     try commentFolds(a, file, &out);
     std.mem.sort(lsp.FoldingRange, out.items, {}, struct {
@@ -187,6 +195,8 @@ fn scopeFolds(a: Allocator, file: *const FortranFile, ast: *Ast, scope: *Obj, ou
     if (scope.kind == .select and !opensSelect(file, scope)) return;
     // 1-based: from the opening line to the line before END
     var start = scope.sline;
+    // a SELECT folds as a whole, and branch by branch
+    if (scope.kind == .select) try fold(a, out, scope.sline - 1, scope.eline -| 2, null);
     switch (scope.kind) {
         .if_, .where, .select => {
             var ln = scope.sline + 1;
@@ -246,6 +256,57 @@ fn inNested(file: *const FortranFile, ast: *Ast, scope: *const Obj, ln: usize) b
         if (s.sline <= ln and ln <= s.eline) return true;
     }
     return false;
+}
+
+/// A statement continued over three lines or more (free form `&`, fixed
+/// form column 6), the comment lines between its lines with it; not one
+/// whose first line starts another range already (a procedure, a
+/// construct), as editors keep one range per first line
+fn continuedFolds(a: Allocator, file: *const FortranFile, out: *std.ArrayList(lsp.FoldingRange)) Allocator.Error!void {
+    var starts: std.AutoHashMapUnmanaged(usize, void) = .empty;
+    for (out.items) |r| try starts.put(a, r.startLine, {});
+    const n = file.nLines();
+    var ln: usize = 0;
+    while (ln < n) {
+        const text = file.getLine(ln, false) orelse "";
+        if (!isCode(file, text)) {
+            ln += 1;
+            continue;
+        }
+        const first = ln;
+        var last = ln;
+        while (true) {
+            // the next line of code
+            var next = last + 1;
+            while (next < n and !isCode(file, file.getLine(next, false) orelse "")) next += 1;
+            if (next >= n) break;
+            const goes_on = if (file.fixed)
+                isFixedContinuation(file.getLine(next, false) orelse "")
+            else
+                endsWithAmpersand(file.getLine(last, false) orelse "");
+            if (!goes_on) break;
+            last = next;
+        }
+        if (last - first >= 2 and !starts.contains(first)) try fold(a, out, first, last, null);
+        ln = last + 1;
+    }
+}
+
+/// Whether a line holds code: not a comment, a blank line or a directive
+fn isCode(file: *const FortranFile, text: []const u8) bool {
+    if (helpers.isComment(file.fixed, text)) return false;
+    const t = std.mem.trim(u8, text, " \t\r");
+    return t.len > 0 and t[0] != '#';
+}
+
+/// Whether a fixed-form line continues the statement before it
+fn isFixedContinuation(text: []const u8) bool {
+    return text.len > 5 and text[5] != ' ' and text[5] != '0';
+}
+
+/// Whether the code of a free-form line ends with `&`
+fn endsWithAmpersand(text: []const u8) bool {
+    return std.mem.endsWith(u8, std.mem.trimEnd(u8, text[0..selection.codeEnd(text)], " \t\r"), "&");
 }
 
 /// `#if`/`#ifdef`/`#ifndef` ... `#elif`/`#else` ... `#endif`: each branch;

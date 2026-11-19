@@ -7,6 +7,18 @@ const Allocator = std.mem.Allocator;
 const str = @import("str.zig");
 const json = @import("json.zig");
 const json5 = @import("json5.zig");
+/// The extensions of Fortran sources (also for build/generated.zig)
+pub const suffixes = @import("suffixes.zig");
+
+/// The extensions of Fortran sources indexed by default, in upper case
+const default_suffixes: []const u8 = blk: {
+    var list: []const u8 = "";
+    for (suffixes.all, 0..) |s, i| {
+        if (i > 0) list = list ++ ", ";
+        for (s.ext) |c| list = list ++ &[_]u8{std.ascii.toUpper(c)};
+    }
+    break :blk list;
+};
 
 /// Ordered list of unique strings (stand-in for Python `set[str]`)
 pub const StrList = struct {
@@ -253,7 +265,7 @@ pub const opts = [_]Opt{
     .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
-    .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP, .CUF (lower & upper casing))", .group = "Sources file parsing options" },
+    .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: " ++ default_suffixes ++ " (lower & upper casing))", .group = "Sources file parsing options" },
     .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
     .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },

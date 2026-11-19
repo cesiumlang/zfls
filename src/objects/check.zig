@@ -38,7 +38,14 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             // file that zfls does not read: not found, or a part of a
             // statement's text (json-fortran's argument lists)
             for (self.file_ast.include_statements.items) |inc| {
-                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                if (inc.file != null) continue;
+                if (inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                // the macros of an `#include` not found outside every
+                // procedure may make the declarations of those after it
+                if (inc.missing != null and inc.line_number < self.sline) {
+                    const at = self.file_ast.getInnerScope(inc.line_number);
+                    if (at == null or !at.?.kind.isSubroutine()) return errors.items;
+                }
             }
             for (self.procDataConst().missing_args.items) |m| {
                 try errors.append(a, Diagnostic.init(
@@ -55,13 +62,16 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                 if (arg_obj == null) {
                     const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
-                    try errors.append(a, Diagnostic.init(
+                    var d = Diagnostic.init(
                         .argument_not_declared,
                         self.sline -| 1,
                         try a.print("No matching declaration found for argument \"{s}\"", .{arg_name}),
                         1,
                         arg_name,
-                    ));
+                    );
+                    // for the quick fix declaring it
+                    d.subject = arg_name;
+                    try errors.append(a, d);
                 }
             }
         },
