@@ -48,7 +48,7 @@ let context: vscode.ExtensionContext;
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
-  registerRunCommands(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
+  registerRunCommands(context, output, () => findServer(context, vscode.workspace.workspaceFolders?.[0]).command);
   registerFpm(context, output);
   registerFpmTests(context, output, folderClients);
   registerPfunitTests(context, output, folderClients);
