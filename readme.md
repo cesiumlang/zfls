@@ -150,6 +150,7 @@ the columns say whose dialect each is.
 | [Conditional compilation in directives](#intel-conditional-compilation) (`!DEC$ IF`, `!DIR$ IF`) | – | ✓ | ✓ | – | – | – | – |
 | Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
 | CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | ✓ | ✓ | – | – |
+| `!DIR$ IGNORE_TKR`: no argument checks for the dummy arguments it names | – | – | – | ✓ | ✓ | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 
 5. gfortran's with `-fdec-structure`.
@@ -1404,8 +1405,12 @@ zfls deliberately differs from fortls in a few places:
   PRECISION`, literals (`1d0`, `1_8`), the constants of `ISO_FORTRAN_ENV`
   and `ISO_C_BINDING`, `KIND()`, `SELECTED_REAL_KIND()`,
   `SELECTED_INT_KIND()` and the PARAMETERs set from them; a kind none of
-  these gives is not checked. Assigning to an INTENT(IN) dummy argument (not
-  a pointer) is an `intent-in-assigned` error. fortls checks none of these.
+  these gives is not checked. The dummy arguments that a `!DIR$
+  IGNORE_TKR` of the procedure names (LLVM Flang's and nvfortran's; all of
+  them when it names none) are not checked for what its letters say: type
+  (`t`), kind (`k`), rank (`r`), all three without letters. Assigning to an
+  INTENT(IN) dummy argument (not a pointer) is an `intent-in-assigned`
+  error. fortls checks none of these.
 - The modules and submodules of the workspace form a dependency graph: a
   USE that closes a cycle of modules using each other is a `circular-use`
   error, and the `zfls/compileOrder` request (the VS Code command "zfls: Show

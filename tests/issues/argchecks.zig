@@ -611,3 +611,77 @@ test "an interface block for an external procedure, after the caller's declarati
         return e;
     };
 }
+
+test "argument checks: the dummy arguments of `!dir$ ignore_tkr`" {
+    const w = try h.Workspace.init(&.{.{ .name = "tkr.f90", .text =
+        \\module tkr
+        \\  implicit none
+        \\  interface
+        \\    subroutine ext(buf, n)
+        \\      !DIR$ IGNORE_TKR buf
+        \\      real :: buf(*)
+        \\      integer :: n
+        \\    end subroutine ext
+        \\  end interface
+        \\contains
+        \\  subroutine s(a)
+        \\    !dir$ ignore_tkr a
+        \\    real :: a(*)
+        \\  end subroutine
+        \\  subroutine t(b, c)
+        \\    !dir$ ignore_tkr (tkr) b, (k) c ! the kind of c only
+        \\    real :: b
+        \\    real :: c
+        \\  end subroutine
+        \\  subroutine all(x, y)
+        \\    !dir$ ignore_tkr
+        \\    real :: x, y
+        \\  end subroutine
+        \\  subroutine outer(z)
+        \\    real :: z
+        \\    interface
+        \\      subroutine inner(z)
+        \\        !dir$ ignore_tkr z
+        \\        real :: z
+        \\      end subroutine inner
+        \\    end interface
+        \\  end subroutine
+        \\  subroutine plain(p)
+        \\    real :: p
+        \\  end subroutine
+        \\end module
+        \\program p
+        \\  use tkr
+        \\  implicit none
+        \\  integer :: i(4), n
+        \\  double precision :: d(2,2), e
+        \\  call ext(i, 4)
+        \\  call ext(d, 1.0)
+        \\  call s(i)
+        \\  call s(d)
+        \\  call t(i, e)
+        \\  call t(1.0, n)
+        \\  call all(i, d)
+        \\  call outer(n)
+        \\  call plain(n)
+        \\end program
+        \\
+    }}, .{});
+    defer w.deinit();
+    var msgs: std.ArrayList([]const u8) = .empty;
+    defer msgs.deinit(std.testing.allocator);
+    for (try w.diagnostics("tkr.f90")) |d| {
+        if (std.mem.startsWith(u8, d.message, "Argument ")) try msgs.append(std.testing.allocator, d.message);
+    }
+    const want = [_][]const u8{
+        "Argument n of ext: integer expected, real given",
+        "Argument c of t: real expected, integer given",
+        "Argument z of outer: real expected, integer given",
+        "Argument p of plain: real expected, integer given",
+    };
+    if (msgs.items.len != want.len) {
+        std.debug.print("got: {any}\n", .{msgs.items});
+        return error.TestExpectedEqual;
+    }
+    for (want, msgs.items) |x, y| try std.testing.expectEqualStrings(x, y);
+}
