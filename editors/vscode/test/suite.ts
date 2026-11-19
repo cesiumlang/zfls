@@ -61,7 +61,17 @@ export async function run(): Promise<void> {
   const names = symbols.map((s) => s.name);
   assert.ok(names.includes("shapes"), `symbols ${names}`);
 
-  console.log("zfls answered hover, definition, completion and symbols");
+  // code lenses, resolved: the reference count above the type circle, which
+  // runs the extension's zfls.showReferences
+  const circleLine = at("type, extends(shape) :: circle").line;
+  const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>(
+    "vscode.executeCodeLensProvider", doc.uri, 100);
+  const counted = lenses.find((l) => l.range.start.line === circleLine);
+  const titles = lenses.map((l) => `${l.range.start.line}: ${l.command?.title}`);
+  assert.match(counted?.command?.title ?? "", /^\d+ references?$/, `lenses ${titles}`);
+  assert.strictEqual(counted?.command?.command, "zfls.showReferences");
+
+  console.log("zfls answered hover, definition, completion, symbols and code lenses");
 
   checkSnippets();
   checkLanguageContributions();

@@ -124,11 +124,6 @@ WORD = re.compile(
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
-# the value of a parameter declared on a line with `;`, its strings blanked:
-# a string continued by a doubled quote (`"a;""b"`) is one literal in zfls
-# and two in fortls, which pairs the `"` from the left (#231); compare such
-# values without their quotes and blanks
-BLANKED_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([\" /]+)$", re.M)
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -342,7 +337,6 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
-        v = BLANKED_VALUE.sub(lambda m: m.group(1) + m.group(2).replace('"', "").replace(" ", ""), v)
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -392,6 +386,18 @@ def on_include_directive(path: Path, position) -> bool:
     return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
 
 
+INCLUDE_LINE = re.compile(r"\s*(?:#\s*include|include)\s*[\"'<]", re.I)
+
+
+def on_include_line(path: Path, position) -> bool:
+    """Whether the position is on an `#include` or INCLUDE line of the file."""
+    if not position:
+        return False
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line = position.get("line", -1)
+    return 0 <= line < len(lines) and bool(INCLUDE_LINE.match(lines[line]))
+
+
 ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
 
 
@@ -404,6 +410,51 @@ def associate_names(source: str) -> set:
 PP_IF = re.compile(r"\s*#\s*if", re.I)
 PP_ENDIF = re.compile(r"\s*#\s*endif", re.I)
 CONT_ATTRIBUTE = re.compile(r"\s*,\s*(\w+)", re.I)
+
+
+ENTITY_LENGTH = re.compile(
+    r"^\s*(?:character|real|integer|logical|complex)\b.*?[a-z_]\w*\s*"
+    r"(?:\((?:[^()]|\([^()]*\))*\))?\s*\*\s*[\d(]",
+    re.I | re.M,
+)
+TYPE_PARAMS = re.compile(
+    r"\b(CHARACTER|REAL|INTEGER|LOGICAL|COMPLEX)"
+    r"(?:\s*\*\s*(?:\d+|\((?:[^()]|\([^()]*\))*\))|\((?:[^()]|\([^()]*\))*\))+",
+    re.I,
+)
+SEMICOLON_STRINGS = re.compile(r"^[^!\n]*(?:;[^!\n]*['\"]|['\"][^!\n]*;)", re.M)
+PARAM_STRINGS = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([^\n]*)")
+STRING_LITERAL = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'")
+
+
+def ignore_type_params(v):
+    """An entity's own length replaces that of its declaration in zfls
+    (`character*10 b*(len(a))` has the length len(a), #237); fortls puts
+    both. Compare types without their kind and length."""
+    if isinstance(v, dict):
+        return {k: ignore_type_params(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_type_params(x) for x in v]
+    if isinstance(v, str):
+        return TYPE_PARAMS.sub(r"\1", v)
+    return v
+
+
+def ignore_param_strings(v):
+    """fortls shows the strings of a parameter declared on a line with `;`
+    blanked, zfls as they are (#237). Compare such values without the text
+    of their strings and without blanks. (A string continued by a doubled
+    quote, `"a;""b"`, is one literal in zfls and two in fortls, which pairs
+    the `"` from the left (#231): both read as two literals here.)"""
+    if isinstance(v, dict):
+        return {k: ignore_param_strings(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_param_strings(x) for x in v]
+    if isinstance(v, str):
+        return PARAM_STRINGS.sub(
+            lambda m: m.group(1) + STRING_LITERAL.sub('""', m.group(2)).replace(" ", ""), v
+        )
+    return v
 
 
 def conditional_attributes(source: str) -> set:
@@ -677,12 +728,18 @@ def main() -> int:
         assoc = associate_names(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
+        entity_lengths = bool(ENTITY_LENGTH.search(source))
+        semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
             if cond_attrs and kind in ("hover", "completion"):
                 a = ignore_conditional_attributes(a, cond_attrs)
                 b = ignore_conditional_attributes(b, cond_attrs)
+            if entity_lengths and kind in ("hover", "completion"):
+                a, b = ignore_type_params(a), ignore_type_params(b)
+            if semicolon_strings and kind in ("hover", "completion"):
+                a, b = ignore_param_strings(a), ignore_param_strings(b)
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
@@ -718,6 +775,11 @@ def main() -> int:
             ):
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
+                continue
+            if kind == "hover" and on_include_line(path, params.get("position")):
+                # hover on an included file's name shows that file, nothing
+                # when it is not found (#240); fortls has no answer or one
+                # for a character literal
                 continue
             pos = params.get("position") or {}
             if (
