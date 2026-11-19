@@ -331,7 +331,8 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
     if (try macros.atPosition(self, a, params)) |m| return macros.references(self, a, m, with_c);
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
-    if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
+    // an intrinsic is declared nowhere: none (not an error, #224)
+    if (d.obj.kind == .intrinsic) return .null;
     const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
     const rs = referenceScope(self, obj) orelse return .null;
     const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);

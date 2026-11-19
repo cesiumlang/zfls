@@ -1,19 +1,19 @@
 name: CI
 
-# Every pull request and every push to main is built and tested on all
-# supported platforms, and the tests run on the release binaries themselves.
-# macOS arm64 is the exception: its jobs (in test, conda and install-script)
-# run only for pull requests into main, which is where releases come from,
-# and for a push to main that releases binaries it built itself (see
-# `test`); pull requests into dev, other pushes and runs started by hand
-# leave them out.
-# Pushes to dev are not run: what reaches dev is tested by its pull request,
-# and dev as a whole by the pull request that releases it (to main), so
-# running pushes to dev too would test the same trees twice (start the
-# workflow by hand on dev to test it in between). A pull request that only
-# changes the files listed in no-ci.txt (documentation, editor settings)
-# skips the build and the tests; the "CI" job, the check the rulesets
-# require, passes then too.
+# Every pull request into main and every push to main is built and tested on
+# all supported platforms, and the tests run on the release binaries
+# themselves. macOS arm64 is tested then only: by pull requests into main,
+# which is where releases come from, and by a push to main that releases
+# binaries it built itself (see `test`); runs started by hand leave it out.
+# Pull requests into dev and pushes to dev are not run: their authors run
+# the checks before merging, and dev as a whole is tested by the pull
+# request that releases it (to main), which runs again with each change of
+# dev. To test another branch or pull request, start the workflow by hand
+# on its branch (`gh workflow run ci.yml --ref BRANCH`): the run's checks
+# show on the pull request. A pull request that only changes the files
+# listed in no-ci.txt (documentation, editor settings) skips the build and
+# the tests; the "CI" job, the check the ruleset of main requires, passes
+# then too.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
 # release binaries are built once and packaged without the
@@ -42,6 +42,7 @@ on:
     # (not dev: see the top)
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

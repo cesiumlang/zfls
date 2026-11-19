@@ -674,14 +674,28 @@ pub const Server = struct {
         return str.byteToUtf16(text, col);
     }
 
-    /// `range_json` with optional end values falling back to the start
+    /// `range_json` with optional end values falling back to the start. An
+    /// end column 0 on a later line is the start of that line, not the start
+    /// column (which that line may not have).
     pub fn rangeOf(file: ?*const FortranFile, sln: usize, sch: usize, eln_in: ?usize, ech_in: ?usize) lsp.Range {
         const eln = if (eln_in) |e| (if (e != 0) e else sln) else sln;
-        const ech = if (ech_in) |e| (if (e != 0) e else sch) else sch;
+        const ech = if (ech_in) |e| (if (e != 0 or eln != sln) e else sch) else sch;
         return .{
             .start = .{ .line = sln, .character = toLspCol(file, sln, sch) },
             .end = .{ .line = eln, .character = toLspCol(file, eln, ech) },
         };
+    }
+
+    /// Where whole lines inserted before 0-based line `line` go, and what
+    /// their text starts with: past the last line, at its end after a line
+    /// break, since a line after the last is not in the document
+    pub const LineInsertion = struct { range: lsp.Range, prefix: []const u8 };
+
+    pub fn lineInsertion(file: *const FortranFile, line: usize) LineInsertion {
+        if (line < file.nLines()) return .{ .range = rangeOf(file, line, 0, line, 0), .prefix = "" };
+        const last = file.nLines() -| 1;
+        const len = if (file.getLine(last, false)) |l| l.len else 0;
+        return .{ .range = rangeOf(file, last, len, last, len), .prefix = if (len > 0) "\n" else "" };
     }
 
     pub fn locationOf(uri: []const u8, file: ?*const FortranFile, sln: usize, sch: usize, eln: ?usize, ech: ?usize) lsp.Location {

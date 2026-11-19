@@ -321,7 +321,6 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
     _ = try server.request("initialize", .{
         .rootUri = try zfls.paths.pathToUri(a, work),
         .rootPath = work,
-        // an object (`.{}` would be an empty array)
         .capabilities = struct {}{},
     });
     result.init = seconds(io, start);
@@ -407,7 +406,6 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
     _ = try again.request("initialize", .{
         .rootUri = try zfls.paths.pathToUri(a, work),
         .rootPath = work,
-        // an object (`.{}` would be an empty array)
         .capabilities = struct {}{},
     });
     result.restart = seconds(io, start);

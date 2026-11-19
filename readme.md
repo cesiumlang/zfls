@@ -46,7 +46,7 @@ command line options and configuration files.
   extend it; completion offers the parent components of an extended type
 - Inlay hints: the dummy argument each positional argument of a call goes
   to (`call move(p, dx: 1.0)`), the type of each `ASSOCIATE` name, the
-  implicit type of a name that is not declared, and the value of a named
+  implicit type of each name that is not declared, and the value of a named
   constant where it is used
 - Selection ranges (expand the selection from a name to its parentheses,
   statement, constructs, procedure, module and file), links on the files of
@@ -91,6 +91,110 @@ command line options and configuration files.
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
   MPI modules `mpi` and `mpi_f08`
+- Compiler diagnostics from gfortran, ifx, ifort, LLVM Flang, nvfortran,
+  nagfor or LFortran, next to zfls's own, and the linters fortitude and
+  Codee (see [Compiler diagnostics](#compiler-diagnostics) and
+  [Linters](#linters))
+- A debug adapter, `zfls dap`, that shows a program's variables as Fortran
+  (see [A debugger](#a-debugger-zfls-dap)), and for a debugger of any kind
+  the module variables a line sees, inline values and the tests of a file
+
+What depends on the compiler is in [Compilers](#compilers).
+
+## Compilers
+
+Everything above works on any Fortran source, whatever compiler builds it:
+zfls parses the code itself. A compiler comes in where zfls runs one (the
+compiler check, running a file) or reads what one wrote (a program under
+the debugger), and where the source is in a compiler's own dialect.
+
+✓ is supported; ○ is implemented but not tested with that compiler (see
+[what is tested](#what-is-tested-with-a-real-compiler)); – is not
+available.
+
+### The compiler check
+
+`compiler_diagnostics` (see [Compiler diagnostics](#compiler-diagnostics)).
+
+| | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Errors and warnings as diagnostics | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Without building (syntax only) | ✓ | ✓ | ✓ | ✓ | –¹ | ✓ | ✓ |
+| Modules the file uses compiled first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓² |
+| The file's own command of `compile_commands.json` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Warnings on by default | `-Wall` | `-warn all` | `-warn all` | – | `-Minform=warn` | – | – |
+| Preprocessed files | `-cpp` | `-fpp` | `-fpp` | `-cpp` | `-Mpreprocess` | `-fpp` | `--cpp` |
+| Fixed-form line length (`fixed_line_length`) | any | 72, 80, 132 | 72, 80, 132 | any | 132 | 132 | – |
+| Debug lines as zfls reads them (`d_lines`) | ✓ | ✓ | ✓ | ✓ | ✓ | as code | – |
+| Every error, not only the first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓³ |
+| Messages without a file and line | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+1. nvfortran has no syntax-only mode: it compiles the file, with the
+   object file in zfls's cache.
+2. LFortran's syntax-only mode writes no `.mod` file: the modules are
+   compiled to their symbol tables (`--symtab-only -c`).
+3. With `--continue-compilation`. zfls also passes LFortran
+   `--implicit-typing --implicit-interface`, which its own dialect rejects,
+   unless the options say otherwise.
+
+### Compiler dialects in the source
+
+The parser reads these in every file, whichever compiler is configured;
+the columns say whose dialect each is.
+
+| | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| `STRUCTURE`, `RECORD`, `UNION`/`MAP`, `rec.field` (DEC) | ✓⁴ | ✓ | ✓ | – | ✓ | – | – |
+| [Conditional compilation in directives](#intel-conditional-compilation) (`!DEC$ IF`, `!DIR$ IF`) | – | ✓ | ✓ | – | – | – | – |
+| Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
+| CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | – | ✓ | – | – |
+| [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+
+4. gfortran's with `-fdec-structure`.
+
+Not a compiler's own, and read for all of them: the C preprocessor, fypp
+files, OpenMP conditional compilation lines, kinds written with `*`
+(`real*8`), and comment markers of other preprocessors
+([Comment markers](#comment-markers)).
+
+### Running and debugging
+
+Run Fortran File and Debug Fortran File are the VS Code extension's;
+`zfls dap` is for any editor (see [A debugger](#a-debugger-zfls-dap)).
+
+| | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Run Fortran File | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ✓ |
+| Links on Windows without Visual Studio | ✓⁵ | ✓⁶ | – | – | – | – | ✓⁶ |
+| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁷ |
+| `zfls dap` on Windows | gdb ✓ | Windows's ✓⁸ | Windows's ○ | Windows's ○ | – | gdb ○ | –⁷ |
+| `zfls dap` on macOS | –⁹ | –⁹ | –⁹ | –⁹ | – | –⁹ | –⁷ ⁹ |
+| Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓⁸ | ○ | ○ | ○ | ○ | –⁷ |
+| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ○ | ○ | ○ | –⁷ |
+
+5. MinGW's gfortran needs none.
+6. With `zfls setup-ifx` and zfls's ifx kit, on Windows x64 (see
+   [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
+7. Not yet. LFortran's debug information has integer and real scalars
+   only (no arrays, derived types, CHARACTER lengths or module variables),
+   and LFortran for Windows refuses `-g`.
+8. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
+   Microsoft's format; arrays are read through Intel's descriptors. CI
+   tests the engine on a C program only: it has no ifx.
+9. Not yet: `zfls dap` debugs with gdb there, which does not run on Apple
+   Silicon and which every user must code-sign on an Intel Mac. Debug
+   Fortran File in VS Code uses another extension's lldb instead (C/C++,
+   CodeLLDB), which stops at breakpoints and steps, but has no Fortran
+   support for variables and expressions.
+
+### What is tested with a real compiler
+
+CI runs zfls against gfortran (the symbols zfls extracts, compared with
+gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
+Linux and Windows x64) and against LFortran (the compiler check, on Linux
+x64; its programs linking without Visual Studio, on Windows x64). The other
+compilers' options and message formats are tested with recorded output, not
+with the compilers.
 
 ## Installing
 
@@ -100,7 +204,7 @@ Each [release](https://github.com/cesiumlang/zfls/releases) publishes the
 The executable needs nothing else: it can be run from wherever it is
 unpacked.
 
-The install scripts in `packaging` download the archive for the computer
+The installation scripts in `packaging` download the archive for the computer
 they run on, check it against `SHA256SUMS` and unpack it, by default into
 the current directory, as `zfls-v<version>-<target>/zfls` (`zfls.exe` on
 Windows). They change nothing else, the `PATH` included. On macOS and Linux,
@@ -126,7 +230,7 @@ irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1
 
 zfls is not signed. On macOS, an archive downloaded in a web browser is
 quarantined, and since zfls is not notarized by Apple, macOS then refuses to
-run it ("Apple could not verify "zfls" is free of malware"); Windows can
+run it (*Apple could not verify "zfls" is free of malware*); Windows can
 likewise question an unsigned program downloaded in a browser (SmartScreen,
 Smart App Control). What the scripts download is not marked like that. For
 an archive downloaded in a browser on macOS, remove the quarantine before
@@ -357,8 +461,8 @@ debuggers, chosen by the `launch` or `attach` configuration:
 
 With both, the module variables that the frame's line sees are a scope of
 their own (zfls indexes the program's sources: `sourceRoot` of the
-configuration, else `cwd`), and the **Fortran runtime errors** exception
-filter stops the program where the Fortran runtime reports an error (an
+configuration, else `cwd`), and the exception filter
+**Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
 error without `iostat=`) or at ERROR STOP. `--text JSON` translates the
 words it shows (the VS Code extension passes them in VS Code's language).
@@ -584,7 +688,7 @@ omp_lib`, `!$ call omp_set_num_threads(n)`; in fixed form `!$`, `c$`, `C$`
 or `*$` in columns 1 and 2, then blanks or a label up to column 5) is a
 statement when the file is compiled with OpenMP. zfls reads it as code, the
 sentinel as two blanks: hover, definition, completion, references and rename
-see the names in it, and a variable used only there is not unused. A line
+see the names in it, and a variable used only there counts as used. A line
 continues as any other (`!$ call s(a, &` then `!$ & b)`). The directives
 (`!$omp`, `!$acc`) and a comment such as `!$this` stay comments.
 `disable_openmp_conditional` (`zfls.disableOpenmpConditional` in VS Code)
@@ -746,7 +850,7 @@ elsewhere, which is also stopped when the server shuts down during a run.
 - `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`:
   the compiler, executable and arguments of fixed-form files, for a
   project whose legacy code builds with another compiler or options; each
-  is the free form's when not set (an empty `compiler_args_fixed`: the
+  is that of the free form when not set (an empty `compiler_args_fixed`: the
   compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no
   fixed-form file. The modules a file uses are compiled with the compiler
   of that file, whatever their form (the `.mod` files of two compilers do
@@ -894,7 +998,7 @@ a free-form one as fixed form (`-ifree -ofixed`). The request
 (or `"fixed"`), runs findent on the document's text as the editor has it
 and answers `{ "text": ..., "path": ... }`: the converted text and the file
 it belongs in (`name.f90`, or `name.f`; `.F90`/`.F` for a preprocessed
-file), since zfls takes the form from the extension. On failure it answers
+file), since zfls takes the form from the extension. On failure, it answers
 `{ "error": ... }` with findent's message, or how to install findent. The
 findent of `formatter_path` is used when findent is the formatter, else the
 one on the `PATH`; findent's `formatter_args` (or `formatter_fixed_args`)
@@ -914,6 +1018,7 @@ before they overwrite one, and open it.
 | `zig build test` | Zig unit tests, and the tests of upstream fortls issues |
 | `zig build test-issues` | only the tests of the open issues of upstream fortls (see `tests/issues/README.md`) |
 | `zig build test-fuzz` | mutated programs thrown at an in-process server (crashes, leaks); `--fuzz` runs the fuzzer |
+| `zig build test-damaged` | every line of the test corpus damaged as half-typed code is (cut, deleted, END statements dropped, unbalanced parentheses and quotes, random bytes, mixed line endings, fixed and free form mixed), with the main requests on each version: crashes, error answers, leaks, hangs, ranges outside the document (minutes; a sample of it is part of `zig build test`) |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
@@ -959,31 +1064,29 @@ sits next to the executable. Release archives leave that file out, so a
 released binary reports the plain version.
 
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
-every pull request and every push to `main` once, and tests them as release
-candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test. macOS on ARM64,
-whose GitHub-hosted runners are few and can be unavailable for hours, is
-tested only by pull requests into `main`, which release `dev`, and by a push
-to `main` that releases binaries it built itself (when no pull request run
-tested that tree); pull requests into `dev`, other pushes to `main` and runs
-started by hand leave it out. Pushes to `dev`
-are not run on their own: what reaches `dev` is tested by its pull request,
-and `dev` as a whole by the pull request that releases it, so each tree is
-tested once (start the workflow by hand on `dev` to test it in between). A
-pull request that only changes files listed in
+every pull request into `main` and every push to `main` once, and tests
+them as release candidates on Linux, Windows and macOS, each on x86_64 and
+ARM64: the suites above, longer stress runs and the differential test.
+macOS on ARM64, whose GitHub-hosted runners are few and can be unavailable
+for hours, is left out of runs started by hand. Pull requests into `dev`
+and pushes to `dev` are not run: whoever merges them runs the checks first,
+and `dev` as a whole is tested by the pull request that releases it, which
+runs again with each change of `dev`. To test another branch or pull
+request in between, start the workflow by hand on its branch
+(`gh workflow run ci.yml --ref BRANCH`); the run's checks show on the pull
+request. A pull request that only changes files listed in
 `.github/workflows/no-ci.txt` (documentation, editor settings) skips the
 build and the tests. The "CI" check sums up a run, passing when nothing
 failed, so also when the build and the tests were skipped; it is the check
-the rulesets of `main` and `dev` require, with "Version".
+the ruleset of `main` requires, with "Version".
 
-Changes are collected on the `dev` branch, which pull requests target, and
-released together by merging `dev` into `main`. Both branches take a change
-only when its checks pass (an administrator can override that when merging a
-pull request); `main` also takes changes only through pull requests, while
-`dev` takes pushes from maintainers. CI's own push to `dev` after a release
-uses a deploy key, the `DEV_DEPLOY_KEY` secret, which the ruleset of `dev`
-lets bypass the checks. A separate ruleset keeps `dev` from being deleted,
-with no exceptions, so merging the release pull request does not remove it.
+Changes are collected on the `dev` branch, by pull requests or pushes of
+maintainers, and released together by merging `dev` into `main`. `main`
+takes changes only through pull requests whose checks pass (an administrator
+can override that when merging); `dev` requires no checks, only that its
+history is not rewritten. A separate ruleset keeps `dev` from being
+deleted, with no exceptions, so merging the release pull request does not
+remove it.
 
 The release notes are generated from the pull requests merged since the last
 release, in sections by label (`.github/release.yml`): `fix`, `feature`,
@@ -1000,7 +1103,7 @@ then merges `main` back into `dev` and commits the next patch version to
 `main` that cannot change them are tested but not released. Changes that
 cannot (`.github/workflows/changes.sh` decides, for both) are those to the
 files of `no-ci.txt` and of `ci-only.txt`, which lists the files that CI
-builds or runs but that do not ship (tests, tools, the conda-forge recipe,
+builds or runs, but that do not ship (tests, tools, the conda-forge recipe,
 the workflows themselves); changes to Zig source that only touch whole-line
 comments and blank lines; and changes undone since (such as a version set
 back). A change to how `ci.yml` builds the binaries is released with the
@@ -1467,7 +1570,7 @@ zfls deliberately differs from fortls in a few places:
   and go to definition goes to it (fortls #501, #502); fortls always uses the
   interface. Go to declaration (`textDocument/declaration`, which fortls
   does not answer) always goes to the interface, also from the body; for
-  other names it is go to definition.
+  other names it does what go to definition does.
 - In a function without `RESULT`, the function's name and its result
   variable are one name for references, document highlights and rename,
   started from either (fortls #322); fortls keeps them apart, and its
@@ -1549,14 +1652,14 @@ zfls deliberately differs from fortls in a few places:
   `files.associations` or the language picker) is read in that form while
   it is open, whatever its name and text say, and the compiler checks it
   in that form (Modern Fortran #200, #222, #460, #904, #1131). Any other
-  language id (`fortran`, `fortran90`) leaves the form to the name and the
+  language identifier (`fortran`, `fortran90`) leaves the form to the name and the
   text, and so do the files that are not open. fortls does not read the
-  language id.
+  language identifier.
 - A form feed (a page break of old sources) is read as a blank, as compilers
   read it; fortls drops the statement of a line that starts with one
   (fortls #443).
-- The enumerators of an ENUM are named integer constants of the scope around
-  it, with hover, definition and completion, PUBLIC or PRIVATE by name;
+- The enumerators of an ENUM are named integer constants of the surrounding
+  scope, with hover, definition and completion, PUBLIC or PRIVATE by name;
   fortls does not read them.
 - In each block of a SELECT RANK, its associate name (`select rank (v => a)`)
   is the selector; fortls does not read SELECT RANK.

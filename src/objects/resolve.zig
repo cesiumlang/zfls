@@ -269,7 +269,9 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
                     const saved = inc_ast.enc_scope_name;
                     inc_ast.enc_scope_name = null;
                     defer inc_ast.enc_scope_name = saved;
-                    inc.inc_obj = try Obj.newScope(inc_ast, .include, inc.line_number, inc.path, &.{});
+                    // the included file, from its first line (the line of
+                    // the INCLUDE statement is one of the including file)
+                    inc.inc_obj = try Obj.newScope(inc_ast, .include, 1, inc.path, &.{});
                 }
                 return inc.inc_obj;
             }

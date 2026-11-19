@@ -25,9 +25,10 @@ pub fn around(a: Allocator, file: *const FortranFile, ast: *Ast, line: usize, co
     while (e < text.len and isWord(text[e])) e += 1;
     if (e > s) try push(a, &out, .{ .sline = line, .scol = s, .eline = line, .ecol = e });
     // the parentheses around it on its line, innermost first: their
-    // contents, then with the parentheses
+    // contents, then with the parentheses; those of the code, not of a
+    // comment after it
     const code = codeEnd(text);
-    var open = col;
+    var open = @min(col, code);
     var depth: usize = 0;
     while (open > 0) {
         open -= 1;
