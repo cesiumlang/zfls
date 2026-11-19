@@ -64,7 +64,7 @@ disable Modern Fortran when you install zfls (see
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `zfls.path` | empty | A `zfls` to run instead of the bundled one |
+| `zfls.path` | empty | A `zfls` to run instead of the bundled one, or the directory that holds it |
 | `zfls.incrementalSync` | `true` | Send document changes incrementally |
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
@@ -88,6 +88,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.maxCommentLineLength` | `-1` (off) | Warn about longer comment lines |
 | `zfls.fixedFormLineLength` | `72` | Columns of code in a fixed-form line (80 or 132 for longer cards); the rest is shown as a comment |
 | `zfls.fixedFormCommentCharacter` | `!` | The character **Toggle Line Comment** (`Ctrl+/`) puts in column 1 of a fixed-form line: `C`, `c` or `*` (`!`: VS Code's own toggle) |
+| `zfls.fixedFormDLines` | `comment` | How a fixed-form line with `D` or `d` in column 1 (a debug line) is read: as a `comment`, or as `code`; zfls reads it so, and the compiler check passes the option that reads it so (gfortran `-fd-lines-as-code`, Intel `-d-lines`) unless `zfls.linter.extraArgs` has one |
 | `zfls.configFile` | empty | Configuration file instead of `.fortlsrc` / `.fortls.json` / `.fortls` |
 | `zfls.sourceDirs` | the workspace folder | Folders with source files (globs allowed) |
 | `zfls.includeDirs` | none | Folders searched for `#include` and `INCLUDE` files |
@@ -99,7 +100,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
-| `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling Modern Fortran when both are enabled |
+| `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
 | `zfls.formatting.formatter` | `Disabled` | `findent` or `fprettify` to format Fortran files (see [Formatting](#formatting)) |
 | `zfls.formatting.path` | empty | The formatter, or its directory, when it is not on the `PATH` |
@@ -162,6 +163,15 @@ language server (`fortran.fortls.disabled`) and its compiler linting
 shows the compiler's messages while Modern Fortran keeps its other
 commands. Its grammars still apply alongside zfls's in that case.
 
+zfls recommends disabling these extensions in the same way, as it does
+what they do: Modern Fortran under its old ID (`krvajalm.linter-gfortran`,
+the same languages and grammars, and linting), FORTRAN IntelliSense
+(`hansec.fortran-ls`, a language server of its own, so each completion and
+hover comes twice) and Fortran Breakpoint Support (`ekibun.fortranbreaker`,
+breakpoints in Fortran files). **Don't ask again**
+(`zfls.disableModernFortranCheck`) stops the recommendation for all of
+them.
+
 ## Compiler diagnostics
 
 When a Fortran file is opened or saved, zfls has a compiler check it
@@ -203,9 +213,9 @@ Whether a file is free or fixed form follows its language in VS Code
 | `zfls.linter.fypp.extraArgs` | `[]` | Further fypp options |
 
 Path settings resolve `${workspaceFolder}`, `${workspaceFolder:name}`,
-`${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`,
-`${fileBasenameNoExtension}` and a leading `~`; relative paths are relative
-to the workspace folder.
+`${env:VAR}`, `${userHome}` and a leading `~`; relative paths are relative
+to the workspace folder. There is no `${file}`: these settings are the
+language server's, one per workspace folder, not one per file.
 
 How it behaves:
 
@@ -320,7 +330,7 @@ next formatting; turning formatting off restarts the server, so that
 VS Code stops offering it. In `zfls.formatting.path` and the argument settings,
 `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
 `${env:NAME}` and a leading `~` are expanded; an argument with a space in
-it becomes two.
+it stays one.
 
 **Format Selection** formats the whole lines the selection touches. The
 formatter sees only those lines, not the surrounding code: findent starts
@@ -610,6 +620,10 @@ Type a prefix and pick the snippet from the completion list:
 
 The fixed-form snippets indent with spaces and keep every line at the
 column where the prefix was typed, so type the prefix at column 7 or later.
+Fixed-form files show rulers after columns 5, 6 and 72 (the label, the
+continuation mark and the end of the code), a default of
+`"[FortranFixedForm]": {"editor.rulers": [...]}` that a setting of your
+own replaces.
 Most snippets are adapted from those of Modern Fortran.
 
 ## Commands

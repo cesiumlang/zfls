@@ -312,7 +312,7 @@ fn isDotWord(w: []const u8) bool {
 /// assignments to INTENT(IN) arguments
 pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try argcheck.check(a, self.env(a), file, ast)) |p| try out.append(a, .{
+    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values())) |p| try out.append(a, .{
         .sln = p.line,
         .sch = p.start,
         .eln = p.line,

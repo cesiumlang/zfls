@@ -192,6 +192,9 @@ pub const FortranFile = struct {
     /// `raw_text` (owned by `gpa`), to which changes apply
     raw_lines: std.ArrayList([]const u8) = .empty,
     raw_text: []u8 = &.{},
+    /// `d_lines` is `code`: the D or d in column 1 of a fixed-form line (a
+    /// debug line) is a blank in `lines`, not the start of a comment
+    d_lines_code: bool = false,
 
     pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
         const self = try gpa.create(FortranFile);
@@ -236,10 +239,17 @@ pub const FortranFile = struct {
     /// tell when no line is indented 1 to 4 columns nor ends with `&` (the
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
-    fn detectFixed(self: *const FortranFile) bool {
+    fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
         const ext = std.Io.Dir.path.extension(self.path);
         for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
-        return helpers.detectFixedFormat(self.lines.items);
+        return helpers.detectFixedFormat(lines);
+    }
+
+    /// Whether `lines` is a copy of the editor's lines (`raw_lines`) that
+    /// zfls reads differently: with comment markers, or debug lines read as
+    /// code
+    fn isMarked(self: *const FortranFile) bool {
+        return self.comment_markers.len > 0 or (self.d_lines_code and self.fixed);
     }
 
     fn resetPp(self: *FortranFile) void {
@@ -263,15 +273,16 @@ pub const FortranFile = struct {
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
+        // the form first, which the lines zfls reads depend on
+        if (detect_format) self.fixed = self.detectFixed(fresh.items);
         self.replaceText(buf, fresh);
-        if (detect_format) self.fixed = self.detectFixed();
     }
 
     /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
-    /// With comment markers, they are the raw lines, and `lines` a copy
-    /// with the markers made comments.
+    /// When `isMarked`, they are the raw lines, and `lines` a copy with the
+    /// comment markers made comments and the D of debug lines a blank.
     fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
-        if (self.comment_markers.len > 0) {
+        if (self.isMarked()) {
             if (self.markedCopy(buf, new_lines.items)) |marked| {
                 self.gpa.free(self.raw_text);
                 self.raw_lines.deinit(self.gpa);
@@ -292,7 +303,8 @@ pub const FortranFile = struct {
         self.resetPp();
     }
 
-    /// A copy of `buf` and its lines with the comment markers made `!`
+    /// A copy of `buf` and its lines with the comment markers made `!`,
+    /// and the D or d in column 1 a blank with `d_lines_code`
     fn markedCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
         const text = try self.gpa.dupe(u8, buf);
         errdefer self.gpa.free(text);
@@ -302,7 +314,8 @@ pub const FortranFile = struct {
         for (raw) |l| {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
-            helpers.markComments(line, self.comment_markers);
+            if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
+            if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
             lines.appendAssumeCapacity(line);
         }
         return .{ .text = text, .lines = lines };
@@ -310,7 +323,7 @@ pub const FortranFile = struct {
 
     /// The lines that changes apply to: the editor's
     pub fn editLines(self: *const FortranFile) []const []const u8 {
-        return if (self.comment_markers.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
+        return if (self.isMarked() and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 
     /// The `hash` of a file's text, whose tabs become spaces
@@ -351,8 +364,8 @@ pub const FortranFile = struct {
         }
         try fresh.append(self.gpa, text[start..]);
         self.hash = h;
+        self.fixed = self.detectFixed(fresh.items);
         self.replaceText(text, fresh);
-        self.fixed = self.detectFixed();
         return true;
     }
 
@@ -686,7 +699,10 @@ pub const FortranFile = struct {
                     // held to max_comment_line_length, not to the code limit
                     // (upstream #489)
                     const stripped = try helpers.stripStrings(a, line, true);
-                    const has_comment = std.mem.findScalar(u8, stripped, '!');
+                    // a `!` in column 6 of a fixed-form line marks a
+                    // continuation, not a comment
+                    const from: usize = if (self.fixed and helpers.isFixedCont(line)) 6 else 0;
+                    const has_comment = std.mem.findScalarPos(u8, stripped, from, '!');
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
                     const code_len = str.codepointLen(code);
                     if (0 < max_code and max_code < code_len) {
@@ -734,7 +750,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
@@ -841,4 +857,16 @@ test "comment markers: zfls reads comments, changes apply to the editor's text" 
     try std.testing.expectEqualStrings("  go to 110 !*", f.getLine(1, false).?);
     try std.testing.expectEqualStrings("  x = 1 !* two it's a comment", f.getLine(2, false).?);
     try std.testing.expectEqual(@as(usize, 5), f.nLines());
+}
+
+test "d_lines code: zfls reads the D of a debug line as a blank, changes apply to the editor's text" {
+    const f = try FortranFile.create(std.testing.allocator, "/w/a.f", null);
+    defer f.destroy();
+    f.d_lines_code = true;
+    _ = try f.setText("      I = 1\nD     I = 2\n      END\n");
+    try std.testing.expect(f.fixed);
+    try std.testing.expectEqualStrings("      I = 2", f.getLine(1, false).?);
+    _ = try f.applyChange(.{ .text = "3", .range = .{ .sl = 1, .sc = 10, .el = 1, .ec = 11 } });
+    try std.testing.expectEqualStrings("D     I = 3", f.editLines()[1]);
+    try std.testing.expectEqualStrings("      I = 3", f.getLine(1, false).?);
 }
