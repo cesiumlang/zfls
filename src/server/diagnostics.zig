@@ -312,7 +312,7 @@ fn isDotWord(w: []const u8) bool {
 /// assignments to INTENT(IN) arguments
 pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try argcheck.check(a, self.env(a), file, ast)) |p| try out.append(a, .{
+    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values())) |p| try out.append(a, .{
         .sln = p.line,
         .sch = p.start,
         .eln = p.line,
@@ -666,12 +666,7 @@ pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
         self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
         return;
     };
-    if (res) |diags| {
-        // with the compiler's diagnostics of the file, when there are any
-        if (compile.compilerOf(self) != null) {
-            compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
-            return;
-        }
-        self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
-    }
+    // with the last diagnostics of the file from the compiler and the
+    // linters, whose publications have these with them
+    if (res) |diags| compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
 }
