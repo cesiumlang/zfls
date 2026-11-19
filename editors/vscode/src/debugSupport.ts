@@ -1,10 +1,12 @@
 // What the extension itself needs for debugging with zfls's debugger
-// (`zfls dap`, which runs gdb and shows the program as Fortran): whether a
-// gdb can serve it, to choose the debugger, and the expression under the
-// mouse, for VS Code's hovers. No `vscode` import (see test/unit).
+// (`zfls dap`, which runs gdb and shows the program as Fortran, or
+// lldb-dap on macOS): whether a gdb or an lldb-dap can serve it, to choose
+// the debugger, and the expression under the mouse, for VS Code's hovers.
+// No `vscode` import (see test/unit).
 
 import { execFile } from "node:child_process";
 import * as path from "node:path";
+import { findExecutable } from "./tools";
 
 /** gdb's version of `gdb --version`, the end of its first line:
  * `GNU gdb (GDB) 17.2` -> [17, 2] */
@@ -33,6 +35,23 @@ export function gdbHasDap(gdb: string): Promise<boolean> {
     dapSupport.set(gdb, known);
   }
   return known;
+}
+
+let lldbDap: Promise<string | undefined> | undefined;
+
+/** The lldb-dap of zfls's debugger (`lldb` in the configuration, the
+ * default on macOS), as zfls dap finds it: `configured`, else on macOS
+ * `xcrun --find lldb-dap` (Xcode's command line tools'), else the PATH's
+ * `lldb-dap`, else its `lldb-vscode` (LLVM before 18); asked once */
+export function findLldbDap(configured?: string): Promise<string | undefined> {
+  if (configured) {
+    return Promise.resolve(findExecutable("lldb-dap", configured));
+  }
+  lldbDap ??= (async () => {
+    const xcrun = process.platform === "darwin" ? (await output("xcrun", ["--find", "lldb-dap"])).trim() : "";
+    return (xcrun ? findExecutable("lldb-dap", xcrun) : undefined) ?? findExecutable("lldb-dap") ?? findExecutable("lldb-vscode");
+  })();
+  return lldbDap;
 }
 
 function output(exe: string, args: string[]): Promise<string> {

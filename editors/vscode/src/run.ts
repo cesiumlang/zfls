@@ -162,6 +162,8 @@ export interface LaunchSpec {
   platform: NodeJS.Platform;
   /** gdb for zfls, cppdbg and CDT GDB; empty: the debugger's default */
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap, not gdb (the default on macOS) */
+  lldb?: boolean;
   preLaunchTask?: string;
   /** Where the program's input and output go: the Debug Console (no
    * input), VS Code's terminal, or a terminal of its own */
@@ -189,6 +191,8 @@ export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
       if (spec.msvc) {
         // Windows's Debugger Engine, through zfls dap
         config.dbgeng = true;
+      } else if (spec.lldb) {
+        config.lldb = true;
       } else if (spec.gdbPath) {
         config.gdb = spec.gdbPath;
       }
@@ -375,6 +379,22 @@ export function workspaceRelative(file: string, folder: string | undefined): str
 
 // The `fortran` debug type
 
+/** The debugger's options of `zfls dap`, for a configuration: `--dbgeng`,
+ * `--lldb [PATH]` or `--gdb PATH`; none on macOS without `gdb` (lldb-dap,
+ * zfls dap's default there) */
+export function adapterArgs(config: Record<string, unknown>, platform: NodeJS.Platform): string[] {
+  if (config.dbgeng === true) {
+    return ["--dbgeng"];
+  }
+  if (config.lldb === true || (typeof config.lldb === "string" && config.lldb)) {
+    return typeof config.lldb === "string" ? ["--lldb", config.lldb] : ["--lldb"];
+  }
+  if (typeof config.gdb === "string" && config.gdb) {
+    return ["--gdb", config.gdb];
+  }
+  return platform === "darwin" && config.lldb !== false ? [] : ["--gdb", "gdb"];
+}
+
 /** What a `fortran` launch configuration takes, beyond `name` */
 export const FORTRAN_LAUNCH_KEYS = [
   "type",
@@ -408,6 +428,8 @@ export interface FortranResolution {
   runtimeEnv: Record<string, string>;
   platform: NodeJS.Platform;
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap */
+  lldb?: boolean;
 }
 
 /**
@@ -428,6 +450,7 @@ export function fortranLaunch(config: Record<string, unknown>, r: FortranResolut
     env,
     platform: r.platform,
     gdbPath: r.gdbPath,
+    lldb: r.lldb,
     preLaunchTask: typeof config.preLaunchTask === "string" ? config.preLaunchTask : undefined,
     console: CONSOLES.find((c) => c === config.console),
     msvc: r.msvc,

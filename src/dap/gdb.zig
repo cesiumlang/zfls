@@ -2,6 +2,7 @@
 //! whose Debug Adapter Protocol the gdb backend (gdb_requests.zig) passes
 //! through and reshapes. Here gdb's process: whether a gdb has the
 //! protocol, its environment, starting and stopping it, and its messages.
+//! lldb-dap (lldb.zig) runs as this process too, in gdb's place.
 //! Two threads read gdb's output and its errors; gdb's messages wait in
 //! the session's queue for the session's thread, which handles them in
 //! order: while a request waits for gdb's answer (`request`), the events
@@ -28,8 +29,16 @@ const gdb_variables = @import("gdb_variables.zig");
 /// The state of the gdb backend
 pub const State = struct {
     child: ?std.process.Child = null,
-    /// The gdb running (`gpa`'s)
+    /// The gdb running (`gpa`'s), or the lldb-dap
     path: []u8 = "",
+    /// The process is lldb-dap's (lldb.zig), not gdb's
+    lldb: bool = false,
+    /// lldb's breakpoint of the stop at the start (lldb.zig)
+    entry_breakpoint: ?i64 = null,
+    entry_hit: bool = false,
+    /// The client asked for a pause, which lldb-dap's stop calls an
+    /// exception (the signal SIGSTOP)
+    pausing: bool = false,
     /// Its messages' generation in the queue: those of a gdb stopped are
     /// left out
     gen: u32 = 0,
@@ -137,14 +146,21 @@ pub fn gdbEnv(a: Allocator, base: *const std.process.Environ.Map, gdb: []const u
 pub fn start(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     stop(s);
     if (try checkDap(s, a, gdb)) |why| return why;
+    return spawn(s, a, &.{ gdb, "-q", "-i=dap" }, try gdbEnv(a, s.environ, gdb), false);
+}
+
+/// Starts the debugger's process, gdb's or (`lldb`) lldb-dap's, which
+/// speaks the Debug Adapter Protocol on its standard streams: null, or why
+/// it did not start
+pub fn spawn(s: *Session, a: Allocator, argv: []const []const u8, env: *const std.process.Environ.Map, lldb: bool) !?[]const u8 {
     var child = std.process.spawn(s.io, .{
-        .argv = &.{ gdb, "-q", "-i=dap" },
-        .environ_map = try gdbEnv(a, s.environ, gdb),
+        .argv = argv,
+        .environ_map = env,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
         .create_no_window = true,
-    }) catch |e| return try a.print("{s}: {s}", .{ gdb, @errorName(e) });
+    }) catch |e| return try a.print("{s}: {s}", .{ argv[0], @errorName(e) });
     // the readers own gdb's output: a program that gdb started may keep it
     // open after gdb has gone
     const out = child.stdout.?;
@@ -158,7 +174,9 @@ pub fn start(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     s.g.stderr_done = false;
     s.queue.mutex.unlock(s.io);
     s.g.child = child;
-    s.g.path = try s.gpa.dupe(u8, gdb);
+    s.g.path = try s.gpa.dupe(u8, argv[0]);
+    s.g.lldb = lldb;
+    if (lldb) s.g.runs_at_launch = false;
     if (s.g.exit_message) |m| s.gpa.free(m);
     s.g.exit_message = null;
     (try std.Thread.spawn(.{}, readOutput, .{ s, out, gen })).detach();
@@ -316,9 +334,9 @@ fn exited(s: *Session, a: Allocator) void {
     }
     const tail = said[said.len -| 1000..];
     const message = (if (tail.len > 0)
-        a.print("{s} ({s}): {s}", .{ s.text.gdb_exited, code, tail })
+        a.print("{s} ({s}): {s}", .{ exitedText(s), code, tail })
     else
-        a.print("{s} ({s})", .{ s.text.gdb_exited, code })) catch return;
+        a.print("{s} ({s})", .{ exitedText(s), code })) catch return;
     s.g.exit_message = s.gpa.dupe(u8, message) catch return;
     // the answers awaited: none will come
     var it = s.g.relays.iterator();
@@ -332,6 +350,11 @@ fn exited(s: *Session, a: Allocator) void {
         if (!std.mem.eql(u8, code, "0")) s.event(a, "output", .{ .category = "stderr", .output = a.print("{s}\n", .{message}) catch message });
         s.event(a, "terminated", null);
     }
+}
+
+/// "gdb exited", or lldb-dap's
+fn exitedText(s: *Session) []const u8 {
+    return if (s.g.lldb) s.text.lldb_exited else s.text.gdb_exited;
 }
 
 /// A failed answer, as gdb would give it
@@ -356,12 +379,12 @@ pub fn request(s: *Session, a: Allocator, command: []const u8, args: anytype) !V
     if (s.g.exit_message) |m| return failure(a, command, m);
     const seq = s.g.seq;
     s.g.seq += 1;
-    if (!write(s, a, seq, command, v)) return failure(a, command, s.text.gdb_exited);
+    if (!write(s, a, seq, command, v)) return failure(a, command, exitedText(s));
     while (true) {
         const item = takeGdb(s, null).?;
         const body = item.body orelse {
             exited(s, a);
-            return failure(a, command, s.g.exit_message orelse s.text.gdb_exited);
+            return failure(a, command, s.g.exit_message orelse exitedText(s));
         };
         const msg = parseOwned(s, a, body) orelse continue;
         if (std.mem.eql(u8, json.str(json.get(msg, "type")) orelse "", "response") and json.int(json.get(msg, "request_seq")) == seq) return msg;
@@ -383,7 +406,7 @@ pub fn forward(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     if (!write(s, a, seq, command, args)) {
         const kv = s.g.relays.fetchRemove(seq).?;
         s.gpa.free(kv.value.command);
-        s.fail(a, req, s.text.gdb_exited);
+        s.fail(a, req, exitedText(s));
     }
 }
 

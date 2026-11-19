@@ -581,7 +581,7 @@ jobs:
           cat p.out p.txt
           grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
 
-      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig,
+      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
       # tests/gfortran_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
@@ -602,6 +602,18 @@ jobs:
         env:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
+
+      # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
+      # a step, the stack, a runtime error, attaching, a terminal. A debugger
+      # starts a program only with Developer Mode on, which a runner's
+      # session without a desktop does not have
+      - name: zfls dap with lldb-dap (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          sudo DevToolsSecurity -enable
+          sudo dscl . append /Groups/_developer GroupMembership "$(id -un)"
+          xcrun --find lldb-dap
+          zig-out/bin/dap_lldb --zfls "$ZFLS"
 
       # the compiler check of the release binary with LFortran, on files of
       # tests/compiler

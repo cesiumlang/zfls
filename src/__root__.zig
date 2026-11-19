@@ -60,6 +60,7 @@ pub const dap_values = @import("dap/values.zig");
 pub const dap_fortran = @import("dap/fortran.zig");
 pub const dap_gdb = @import("dap/gdb.zig");
 pub const dap_gdb_variables = @import("dap/gdb_variables.zig");
+pub const dap_lldb = @import("dap/lldb.zig");
 
 test {
     std.testing.refAllDecls(@This());

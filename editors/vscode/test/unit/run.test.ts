@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import {
   buildArgs,
+  adapterArgs,
   chooseDebugger,
   compilerKind,
   compilerName,
@@ -276,4 +277,18 @@ test("a fortran configuration becomes the chosen debugger's", () => {
   assert.deepEqual(z.setupCommands, [{ text: "set print pretty on" }]);
   // resolved again (Debug Fortran File starts a fortran configuration): the same
   assert.deepEqual(fortranLaunch(z, { ...r, type: "zfls" }), z);
+});
+
+test("zfls dap's debugger: lldb-dap by default on macOS, else gdb", () => {
+  assert.deepEqual(adapterArgs({}, "linux"), ["--gdb", "gdb"]);
+  assert.deepEqual(adapterArgs({}, "darwin"), []);
+  assert.deepEqual(adapterArgs({ gdb: "/opt/gdb" }, "darwin"), ["--gdb", "/opt/gdb"]);
+  assert.deepEqual(adapterArgs({ lldb: false }, "darwin"), ["--gdb", "gdb"]);
+  assert.deepEqual(adapterArgs({ lldb: true }, "linux"), ["--lldb"]);
+  assert.deepEqual(adapterArgs({ lldb: "/opt/llvm/bin/lldb-dap", gdb: "gdb" }, "linux"), ["--lldb", "/opt/llvm/bin/lldb-dap"]);
+  assert.deepEqual(adapterArgs({ dbgeng: true, lldb: true }, "win32"), ["--dbgeng"]);
+  // the launch configuration says lldb, not gdb
+  const z = launchConfiguration({ ...spec, type: "zfls", gdbPath: "/opt/gdb", lldb: true });
+  assert.equal(z.lldb, true);
+  assert.equal(z.gdb, undefined);
 });

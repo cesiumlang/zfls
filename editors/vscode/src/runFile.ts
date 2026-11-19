@@ -23,7 +23,7 @@ import {
   upsertByKey,
   workspaceRelative,
 } from "./run";
-import { gdbHasDap } from "./debugSupport";
+import { findLldbDap, gdbHasDap } from "./debugSupport";
 import { expandVariables, findExecutable } from "./tools";
 import { documentVariables } from "./variables";
 
@@ -81,6 +81,8 @@ interface Plan {
   msvc: boolean;
   debuggerPreference: string;
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap (`lldbWanted`) */
+  lldb: boolean;
 }
 
 async function runOrDebug(
@@ -161,6 +163,7 @@ async function runOrDebug(
     env: plan.env,
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    lldb: plan.lldb,
     msvc: plan.msvc,
     sourceRoot: plan.folder?.uri.fsPath ?? path.dirname(plan.source),
   }) as vscode.DebugConfiguration;
@@ -244,6 +247,7 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
     msvc: kind.msvc,
     debuggerPreference: config.get<string>("debugger", "auto"),
     gdbPath,
+    lldb: lldbWanted(document.uri),
   };
 }
 
@@ -305,18 +309,23 @@ function lfortranTaskEnv(context: vscode.ExtensionContext, compiler: string): { 
 
 /** The debugger to use, or undefined (with a message) when none is installed */
 async function pickDebugger(plan: Plan): Promise<DebugType | undefined> {
-  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath);
+  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath, plan.lldb);
 }
 
 /** The debugger of `preference` (zfls.run.debugger) for a program, MSVC-ABI
  * or not, or undefined (with a message) when none is installed; `gdb`: the
- * gdb that zfls's debugger would run */
+ * gdb that zfls's debugger would run, unless it runs lldb-dap (`lldb`:
+ * true, or the lldb-dap configured) */
 export async function chooseInstalledDebugger(
   preference: string,
   msvc: boolean,
   gdb: string | undefined,
+  lldb: boolean | string = false,
 ): Promise<DebugType | undefined> {
-  const dap = !msvc && (preference === "auto" || preference === "zfls") && gdb ? await gdbHasDap(gdb) : false;
+  const own = !msvc && (preference === "auto" || preference === "zfls");
+  const dap = own && lldb
+    ? (await findLldbDap(typeof lldb === "string" ? lldb : undefined)) !== undefined
+    : own && gdb ? await gdbHasDap(gdb) : false;
   // MSVC-ABI programs: Windows's Debugger Engine, which every Windows has
   const dbgeng = msvc && process.platform === "win32";
   const choice = chooseDebugger(
@@ -334,7 +343,9 @@ export async function chooseInstalledDebugger(
     const picked = await vscode.window.showErrorMessage(
       msvc
         ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug MSVC-ABI programs (ifx, ifort, LLVM Flang on Windows); set zfls.run.debugger to cppvsdbg.")
-        : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
+        : lldb
+          ? vscode.l10n.t("zfls: its debugger needs lldb-dap, which Xcode's command line tools have (xcode-select --install); or set zfls.run.gdbPath to debug with gdb, or zfls.run.debugger to another debugger.")
+          : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
       settings,
     );
     if (picked === settings) {
@@ -360,6 +371,13 @@ export async function chooseInstalledDebugger(
     await vscode.commands.executeCommand("workbench.extensions.search", choice.extensions.map((id) => `@id:${id}`).join(" "));
   }
   return undefined;
+}
+
+/** Whether zfls's debugger runs lldb-dap rather than gdb: on macOS, where
+ * gdb does not run on Apple silicon and must be code-signed on Intel,
+ * unless zfls.run.gdbPath names a gdb */
+export function lldbWanted(uri: vscode.Uri): boolean {
+  return process.platform === "darwin" && !vscode.workspace.getConfiguration("zfls.run", uri).get<string>("gdbPath", "").trim();
 }
 
 /** The gdb of zfls.run.gdbPath, else the one next to `compiler`, else on
@@ -458,6 +476,7 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
     ),
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    lldb: plan.lldb,
     preLaunchTask: label,
   });
 

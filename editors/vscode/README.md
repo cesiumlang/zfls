@@ -415,15 +415,16 @@ its runtime libraries.
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |
-| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it, and for the programs of ifx, ifort and LLVM Flang on Windows, else an installed one |
-| `zfls.run.gdbPath` | empty | The `gdb` for `zfls`, `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH` |
+| `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it (on macOS an lldb-dap), and for the programs of ifx, ifort and LLVM Flang on Windows, else an installed one |
+| `zfls.run.gdbPath` | empty | The `gdb` for `zfls`, `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH`. On macOS, set: zfls's debugger runs this gdb, not lldb-dap |
 
 `${workspaceFolder}`, `${env:NAME}`, `${userHome}`, `${file}`,
 `${fileDirname}` and a leading `~` are expanded in these settings.
 
 With `zfls.run.debugger` set to `auto`, debugging uses zfls's own debugger
 when there is a gdb for it (gdb 14 or later, built with Python, as MSYS2's,
-Ubuntu's since 24.04 and most others are), and on Windows for the programs
+Ubuntu's since 24.04 and most others are; on macOS an lldb-dap, which
+Xcode's command line tools have), and on Windows for the programs
 of `ifx`, `ifort` and LLVM Flang, with Windows's own Debugger Engine (see
 [zfls's debugger](#zflss-debugger)); else the first installed of these
 extensions:
@@ -541,7 +542,7 @@ runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb
 -i=dap`: gdb 14 or later, built with Python), or, for the programs of
 `ifx`, `ifort` and LLVM Flang on Windows, Windows's own Debugger Engine
 (`dbgeng.dll`, which every Windows 10 and later has), and shows the program
-as Fortran:
+as Fortran (on macOS it runs lldb-dap instead, see below):
 
 - arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a
   large one in sections (`(1:100)`, ...), with a preview of their first
@@ -568,6 +569,17 @@ as Fortran:
 The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`).
 `setupCommands` (gdb commands, such as `set print elements 0`) run before
 the program starts.
+
+On macOS zfls's debugger runs lldb-dap (`"lldb": true` in the
+configuration, or the lldb-dap to run; `xcrun --find lldb-dap` finds
+Xcode's), since gdb does not run on Apple silicon and must be code-signed
+on Intel; `zfls.run.gdbPath` or the configuration's `gdb` choose gdb
+instead. With lldb-dap there are breakpoints, stepping, the stack, the
+program in a terminal and the **Fortran runtime errors** stops, but lldb
+reads no Fortran: for the programs of gfortran and LLVM Flang the Variables
+view is empty and expressions are not evaluated. Over ssh, macOS lets a
+debugger start a program only with Developer Mode on (`sudo
+DevToolsSecurity -enable`).
 
 With Windows's Debugger Engine, zfls reads the variables itself: dbghelp
 (of the engine) says where each is, zfls's index of the sources (the

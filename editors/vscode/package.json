@@ -1416,6 +1416,13 @@
                 "type": "string",
                 "description": "%debugger.fortran.launch.gdb.description%"
               },
+              "lldb": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "%debugger.fortran.launch.lldb.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
@@ -1447,6 +1454,13 @@
               "gdb": {
                 "type": "string",
                 "description": "%debugger.fortran.attach.gdb.description%"
+              },
+              "lldb": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "%debugger.fortran.attach.lldb.description%"
               },
               "setupCommands": {
                 "type": "array",
@@ -1490,6 +1504,18 @@
               "name": "Debug ${1:target}",
               "fpmTarget": "${1:target}",
               "fpmTargetKind": "executable"
+            }
+          },
+          {
+            "label": "%debugger.fortran.snippet.3.label%",
+            "description": "%debugger.fortran.snippet.3.description%",
+            "body": {
+              "type": "fortran",
+              "request": "launch",
+              "name": "Debug ${1:program} with lldb-dap",
+              "program": "^\"\\${workspaceFolder}/${1:a.out}\"",
+              "args": [],
+              "lldb": true
             }
           },
           {
