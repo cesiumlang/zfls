@@ -371,7 +371,7 @@ its runtime libraries.
 | --- | --- | --- |
 | `zfls.run.compiler` | `gfortran` | The compiler: `gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`, `nagfor`, `lfortran`, ... |
 | `zfls.run.compilerPath` | empty | The compiler, or its directory, when it is not on the `PATH` |
-| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`). The extension adds the include path, the output file and the source |
+| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`, and none for `lfortran` on Windows: its build from conda-forge lacks the runtime stacktrace that `-g` needs, and refuses it). The extension adds the include path, the output file and the source |
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |
