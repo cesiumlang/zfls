@@ -36,6 +36,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const argument_hover = @import("argument_hover.zig");
 const bindc = @import("bindc.zig");
 const macros = @import("macros.zig");
 
@@ -181,13 +182,43 @@ pub fn includeDirs(self: *Server, a: Allocator) ![]const []const u8 {
 /// of the including file and in the include directories (upstream #498,
 /// #301)
 pub fn includeDirectiveTarget(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?[]const u8 {
+    const at = (try includeNameAt(self, a, params, statement)) orelse return null;
+    return resolveInclude(self, a, at.file, at.name);
+}
+
+/// The file name that the `#include` directive (or, with `statement`, the
+/// INCLUDE statement) under the cursor names, when the cursor is on it
+fn includeNameAt(self: *Server, a: Allocator, params: lsp.PositionParams, statement: bool) !?struct { file: *FortranFile, name: []const u8 } {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
     const text = file.getLine(params.position.line, false) orelse return null;
     const re = if (statement) &R().INCLUDE else &R().INCLUDE_DIRECTIVE;
     const m = re.match(text) orelse return null;
     const col = Server.toByteCol(file, params.position.line, params.position.character);
     if (col < m.start(1) or col > m.end(1)) return null;
-    return resolveInclude(self, a, file, m.group(1).?);
+    return .{ .file = file, .name = m.group(1).? };
+}
+
+/// Hover on the file name of an `#include` directive or INCLUDE
+/// statement (#240): the file it reads, relative to the workspace root
+/// when it is inside it, as a link; nothing when it is not found. Null
+/// when the cursor is not on such a name.
+fn includeHover(self: *Server, a: Allocator, params: lsp.PositionParams) !?Value {
+    const at = (try includeNameAt(self, a, params, false)) orelse (try includeNameAt(self, a, params, true)) orelse return null;
+    const target = (try resolveInclude(self, a, at.file, at.name)) orelse return .null;
+    const root = self.root_path;
+    const shown = if (root.len > 0 and target.len > root.len + 1 and paths.eql(target[0..root.len], root) and std.Io.Dir.path.isSep(target[root.len]))
+        try a.dupe(u8, target[root.len + 1 ..])
+    else
+        try a.dupe(u8, target);
+    std.mem.replaceScalar(u8, shown, '\\', '/');
+    const md = try a.print("Included file [{s}]({s})", .{ shown, try paths.pathToUri(a, target) });
+    return try json.from(a, lsp.Hover{ .contents = .{ .value = md } });
+}
+
+/// Whether `text` is a preprocessor line (`#define`, `#if`, ...), whose
+/// strings and numbers are not Fortran literals
+fn isPreprocessorLine(text: []const u8) bool {
+    return std.mem.startsWith(u8, std.mem.trimStart(u8, text, " \t"), "#");
 }
 
 /// The file an `#include` or `INCLUDE` of `name` in `file` reads: next
@@ -458,7 +489,13 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 }
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-    const v = try hoverAt(self, a, params);
+    var v = try hoverAt(self, a, params);
+    // on an actual argument: the dummy it is passed to (#281)
+    if (self.s.hover_signature and v != .null) if (try argument_hover.dummyBlock(self, a, params)) |block| {
+        if (json.str(json.get(json.get(v, "contents"), "value"))) |md| {
+            v = try json.from(a, lsp.Hover{ .contents = .{ .value = try a.print("{s}\n\n-----\n{s}", .{ md, block }) } });
+        }
+    };
     if (!self.s.lowercase_hover) return v;
     const md = json.str(json.get(json.get(v, "contents"), "value")) orelse return v;
     return json.from(a, lsp.Hover{ .contents = .{ .value = try lowercaseKeywords(a, md) } });
@@ -508,11 +545,20 @@ pub fn lowercaseKeywords(a: Allocator, md: []const u8) ![]const u8 {
 fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
     if (try assignmentAt(self, a, params)) |b| return assignment.hover(self, a, b);
+    if (try includeHover(self, a, params)) |v| return v;
+    // the strings and numbers of preprocessor lines are no Fortran literals
+    const pp_line = if (try self.fileFromUri(a, params.textDocument.uri)) |f|
+        isPreprocessorLine(f.getLine(params.position.line, false) orelse "")
+    else
+        false;
     const d = (try definitionAt(self, a, params, true)) orelse {
-        if (try literalHover(self, a, params)) |v| return v;
+        if (!pp_line) if (try literalHover(self, a, params)) |v| return v;
         return implicitHover(self, a, params);
     };
-    if (std.mem.startsWith(u8, d.obj.descOf(), C.FORTRAN_LITERAL)) if (try literalHover(self, a, params)) |v| return v;
+    if (std.mem.startsWith(u8, d.obj.descOf(), C.FORTRAN_LITERAL)) {
+        if (pp_line) return .null;
+        if (try literalHover(self, a, params)) |v| return v;
+    }
     const ast = d.file.ast.?;
     var var_obj = (try externalTarget(self, a, ast, d.obj)) orelse (try calledFunction(self, a, ast, d)) orelse d.obj;
     // the implementation's documentation, or the interface's when it has none

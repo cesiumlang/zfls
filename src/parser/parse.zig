@@ -401,6 +401,7 @@ pub const Parser = struct {
                     name = try a.print("#BLOCKDATA{d}", .{counters.block});
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
+                o.scopeData().block_data = true;
                 try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
                 p.dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
@@ -666,7 +667,7 @@ pub const Parser = struct {
         const m = R().IMPLICIT.match(line) orelse return false;
         const ast = p.file_ast;
         if (ast.current_scope) |cs| {
-            if (ast.inMain()) try ast.addMainError(.statement_without_scope, "IMPLICIT statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
+            if (ast.inMain()) try ast.addMainImplicitError("IMPLICIT statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
             // the types of the letters, for names that are not declared
             var spec = line[m.start(1)..];

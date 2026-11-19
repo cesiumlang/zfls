@@ -124,11 +124,6 @@ WORD = re.compile(
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
-# the value of a parameter declared on a line with `;`, its strings blanked:
-# a string continued by a doubled quote (`"a;""b"`) is one literal in zfls
-# and two in fortls, which pairs the `"` from the left (#231); compare such
-# values without their quotes and blanks
-BLANKED_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([\" /]+)$", re.M)
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -342,7 +337,6 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
-        v = BLANKED_VALUE.sub(lambda m: m.group(1) + m.group(2).replace('"', "").replace(" ", ""), v)
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -415,6 +409,18 @@ def on_macro(lines: list, macros: set, line: int, char: int) -> bool:
     return False
 
 
+INCLUDE_LINE = re.compile(r"\s*(?:#\s*include|include)\s*[\"'<]", re.I)
+
+
+def on_include_line(path: Path, position) -> bool:
+    """Whether the position is on an `#include` or INCLUDE line of the file."""
+    if not position:
+        return False
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line = position.get("line", -1)
+    return 0 <= line < len(lines) and bool(INCLUDE_LINE.match(lines[line]))
+
+
 ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
 
 
@@ -460,7 +466,9 @@ def ignore_type_params(v):
 def ignore_param_strings(v):
     """fortls shows the strings of a parameter declared on a line with `;`
     blanked, zfls as they are (#237). Compare such values without the text
-    of their strings and without blanks."""
+    of their strings and without blanks. (A string continued by a doubled
+    quote, `"a;""b"`, is one literal in zfls and two in fortls, which pairs
+    the `"` from the left (#231): both read as two literals here.)"""
     if isinstance(v, dict):
         return {k: ignore_param_strings(x) for k, x in v.items()}
     if isinstance(v, list):
@@ -683,6 +691,43 @@ def separate_procedure_refs(a, b) -> bool:
     return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
 
 
+USE_RENAME = re.compile(r"^\s*use\b.*=>", re.I)
+
+
+def use_alias_refs(a, b) -> bool:
+    """zfls's references to an entity that USE statements rename also list
+    its places under the local names (zfls #233); fortls lists those of
+    one name only: whether `b` is `a` plus places of names that a USE
+    rename (`local => name`) among the places' files has on either side.
+    fortls may have none: for an intrinsic module's entity, say."""
+    if a is None:
+        a = []
+    if not (isinstance(a, list) and isinstance(b, list)):
+        return False
+    ka = {ref_key(r) for r in a}
+    kb = {ref_key(r) for r in b}
+    if not ka < kb:
+        return False
+    renames = set()
+    for u in {u for u, _, _ in kb}:
+        path = unquote(u.removeprefix("file://"))
+        if os.name == "nt":
+            path = path.lstrip("/")
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for t in text.splitlines():
+            if USE_RENAME.match(t):
+                for m in re.finditer(r"(\w+)\s*=>\s*(\w+)", t):
+                    renames.update(x.lower() for x in m.groups())
+    for u, ln, ch in kb - ka:
+        m = re.match(r"\w+", uri_line(u, ln)[ch:])
+        if not m or m.group(0).lower() not in renames:
+            return False
+    return True
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fortls", default=str(REPO.parent / "fortls"))
@@ -792,6 +837,11 @@ def main() -> int:
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
                 continue
+            if kind == "hover" and on_include_line(path, params.get("position")):
+                # hover on an included file's name shows that file, nothing
+                # when it is not found (#240); fortls has no answer or one
+                # for a character literal
+                continue
             pos = params.get("position") or {}
             if (
                 (kind in ("definition", "references") or (kind == "hover" and a is None))
@@ -874,6 +924,10 @@ def main() -> int:
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
                 # interface and implementation (hansec issue 168)
+                continue
+            if kind == "references" and use_alias_refs(a, b):
+                # references follow names that USE statements rename
+                # (zfls #233)
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with
