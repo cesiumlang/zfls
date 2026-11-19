@@ -35,6 +35,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
+  { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
   { setting: "nthreads", flag: "--nthreads", kind: "int", fallback: 4 },
   { setting: "maxLineLength", flag: "--max_line_length", kind: "int", fallback: -1 },
@@ -45,6 +46,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "includeDirs", flag: "--include_dirs", kind: "list", path: true },
   { setting: "excludePaths", flag: "--excl_paths", kind: "list", path: true },
   { setting: "commentMarkers", flag: "--comment_markers", kind: "list" },
+  { setting: "fixedFormDLines", flag: "--d_lines", kind: "string" },
   { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
   { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
@@ -106,7 +108,8 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
-  args.push(...config.get<string[]>("arguments", []));
+  // the settings editor's "Add Item" leaves empty items easily
+  args.push(...config.get<string[]>("arguments", []).filter((a) => typeof a === "string" && a.trim() !== ""));
   return args;
 }
 
