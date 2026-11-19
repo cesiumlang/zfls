@@ -18,6 +18,14 @@ pub fn rstrip(s: []const u8) []const u8 {
     return std.mem.trimEnd(u8, s, whitespace);
 }
 
+/// `s` without a UTF-8 byte-order mark at its start (Windows PowerShell 5.1's
+/// `Set-Content -Encoding utf8` writes one, and some editors do)
+pub fn withoutBom(s: []const u8) []const u8 {
+    return if (std.mem.startsWith(u8, s, bom)) s[bom.len..] else s;
+}
+
+pub const bom = "\xEF\xBB\xBF";
+
 /// Python `s.split(sep)[0]`
 pub fn beforeFirst(s: []const u8, sep: []const u8) []const u8 {
     const i = std.mem.find(u8, s, sep) orelse return s;

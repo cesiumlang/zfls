@@ -94,7 +94,7 @@ pub fn isFortran(file: []const u8) bool {
 /// `directory`
 pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Found {
     var found: Found = .{};
-    const v = std.json.parseFromSliceLeaky(json.Value, a, text, .{}) catch return error.InvalidJson;
+    const v = std.json.parseFromSliceLeaky(json.Value, a, str.withoutBom(text), .{}) catch return error.InvalidJson;
     if (v != .array) return error.InvalidJson;
     for (v.array.items) |entry| {
         const file = json.str(json.get(entry, "file")) orelse continue;
@@ -309,7 +309,7 @@ pub fn readFpm(io: Io, a: Allocator, root: []const u8, text: []const u8) !Found 
     var found: Found = .{};
     var section: []const u8 = "";
     var include_dirs: std.ArrayList([]const u8) = .empty;
-    var lines = std.mem.splitScalar(u8, text, '\n');
+    var lines = std.mem.splitScalar(u8, str.withoutBom(text), '\n');
     while (lines.next()) |raw| {
         const line = str.strip(stripTomlComment(raw));
         if (line.len == 0) continue;
@@ -511,4 +511,21 @@ test "compile_commands.json: a file's own command, for the compiler check" {
     const other = (try commandFor(a, &f.commands, try paths.join(a, &.{ p, "sub", "new.f90" }))).?;
     try std.testing.expect(std.mem.endsWith(u8, other.file, "b.f90"));
     try std.testing.expect(try commandFor(a, &f.commands, try paths.join(a, &.{ p, "elsewhere", "x.f90" })) == null);
+}
+
+test "compile_commands.json and fpm.toml with a UTF-8 byte-order mark (#407)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const root = if (@import("builtin").target.os.tag == .windows) "C:\\\\p" else "/p";
+    for ([_][]const u8{ "", str.bom }) |mark| {
+        const db = try a.print("{s}[{{\"directory\": \"{s}\", \"file\": \"a.f90\", \"command\": \"gfortran -DFOO -c a.f90\"}}]", .{ mark, root });
+        const f = try readCompileCommands(a, db, root);
+        try std.testing.expectEqual(@as(usize, 1), f.defs.items.len);
+        try std.testing.expectEqualStrings("FOO", f.defs.items[0].name);
+        const fpm = try a.print("{s}[preprocess.cpp]\nmacros = [\"BAR=1\"]\n", .{mark});
+        const g = try readFpm(std.testing.io, a, root, fpm);
+        try std.testing.expectEqual(@as(usize, 1), g.defs.items.len);
+        try std.testing.expectEqualStrings("BAR", g.defs.items[0].name);
+    }
 }

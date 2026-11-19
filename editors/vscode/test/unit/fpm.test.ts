@@ -46,6 +46,13 @@ test("fpm.toml: the name, the targets and the auto-discovery switches", () => {
   assert.deepEqual(m.auto, { executable: true, test: true, example: false });
 });
 
+test("fpm.toml with a UTF-8 byte-order mark (#407)", () => {
+  for (const mark of ["", "\uFEFF"]) {
+    const m = parseManifest(`${mark}[build]\nauto-examples = false\n`);
+    assert.deepEqual(m.auto, { executable: true, test: true, example: false });
+  }
+});
+
 test("the target of a main program", () => {
   const m = parseManifest(MANIFEST);
   const root = path.posix.join("/", "p");

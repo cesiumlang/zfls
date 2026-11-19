@@ -36,6 +36,8 @@ const TABLES: Record<string, TargetKind> = { executable: "executable", test: "te
  * them: `[[kind]]` tables of string keys, and booleans in `[build]`.
  */
 export function parseManifest(text: string): Manifest {
+  // a UTF-8 byte-order mark (Windows PowerShell 5.1 writes one)
+  text = text.replace(/^\uFEFF/, "");
   const manifest: Manifest = { targets: [], auto: { executable: true, test: true, example: true } };
   let table = "";
   let target: Partial<ManifestTarget> | undefined;
