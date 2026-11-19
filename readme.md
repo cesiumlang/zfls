@@ -56,13 +56,15 @@ command line options and configuration files.
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
   `real(8)`, extracting statements into a subroutine, and (Source Actions)
   the keywords of a file in upper, lower or title case
-- Formatting of documents and selections with findent or fprettify (see
+- Formatting of documents and selections with findent, fprettify, Codee's
+  formatter, forformat or a command of the user's (see
   [Formatting](#formatting))
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
-  documentation comments
+  documentation comments, OpenMP conditional compilation lines (`!$ x = 1`)
+  read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`,
   `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit),
   `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn`
@@ -508,6 +510,22 @@ are not names and a quote in it does not start a string.
 In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
 those comments too, after a window reload.
 
+### OpenMP conditional compilation
+
+A line that starts with the OpenMP sentinel `!$` and a blank (`!$ use
+omp_lib`, `!$ call omp_set_num_threads(n)`; in fixed form `!$`, `c$`, `C$`
+or `*$` in columns 1 and 2, then blanks or a label up to column 5) is a
+statement when the file is compiled with OpenMP. zfls reads it as code, the
+sentinel as two blanks: hover, definition, completion, references and rename
+see the names in it, and a variable used only there is not unused. A line
+continues as any other (`!$ call s(a, &` then `!$ & b)`). The directives
+(`!$omp`, `!$acc`) and a comment such as `!$this` stay comments.
+`disable_openmp_conditional` (`zfls.disableOpenmpConditional` in VS Code)
+reads these lines as comments, as a build without OpenMP does. The
+compiler check sees them as code only with the OpenMP flag in
+`compiler_args` (`-fopenmp`, `-qopenmp`). The VS Code grammar still colors
+them as comments, under the semantic highlighting of their names.
+
 ### Debug lines
 
 A fixed-form line with `D` or `d` in column 1 is a debug line (a DEC
@@ -567,17 +585,31 @@ warnings with its own diagnostics of the file, labelled with the compiler's
 name. This works in every editor, not only VS Code.
 
 The compiler runs on a thread of its own, in syntax-only mode, one file at a
-time (a newer save of a file replaces a run that has not started). First it
+time (a newer save of a file replaces a run that has not started), with
+every error (LFortran, which stops at the first one by default, with
+`--continue-compilation`). First it
 compiles the workspace modules that the file uses, and those they use,
 whose `.mod` files are missing or older than their sources, in compile order
-from zfls's module graph; saving a file that defines modules checks again
-the open files that use them.
+from zfls's module graph (LFortran, whose syntax-only mode writes no
+`.mod` file, compiles their symbol tables: `--symtab-only -c`, with the
+object file in the `.mod` directory); saving a file that defines modules
+checks again the open files that use them.
 
 zfls reads the compiler's messages in English, so it runs the compiler (and
 fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a
 compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
-says so once and logs that output.
+says so once and logs that output. A message without a file and line (a bad
+option, a file the compiler cannot open) is published at the top of the
+file; for LFortran that is every line of its output that is not
+`file:lines:columns: severity: message`, such as an internal error and its
+traceback.
+
+A compiler run that takes longer than 120 seconds is stopped, with the
+processes it started (a driver's compiler proper, such as gfortran's
+`f951`): each tool zfls runs, the compiler, fypp, the linters and the
+formatters, runs in a job object of its own on Windows and a process group
+elsewhere, which is also stopped when the server shuts down during a run.
 
 ```json
 {
@@ -601,12 +633,25 @@ says so once and logs that output.
   nvfortran and `-132` for nagfor with 132), and free-form lines without a
   limit (`-ffree-line-length-none` for gfortran, whose default is 132
   columns before GCC 16); a line-length option in `compiler_args` replaces
-  zfls's of that form. On the command line it is one
+  zfls's of that form. For LFortran, whose own dialect (its default
+  `--std=lf`) rejects implicit typing and implicit interfaces, zfls passes
+  `--implicit-typing --implicit-interface`, each unless `compiler_args` (or
+  the project's command) has an option about it, and neither with a
+  `--std`. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
-  other options that are a program's arguments (`compiler_fypp_args`,
-  `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
+  other options that are a program's arguments (`compiler_args_fixed`,
+  `compiler_fypp_args`, `fortitude_args`, `codee_args`, `formatter_args`,
+  `formatter_fixed_args`).
+- `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`:
+  the compiler, executable and arguments of fixed-form files, for a
+  project whose legacy code builds with another compiler or options; each
+  is the free form's when not set (an empty `compiler_args_fixed`: the
+  compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no
+  fixed-form file. The modules a file uses are compiled with the compiler
+  of that file, whatever their form (the `.mod` files of two compilers do
+  not mix).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
@@ -626,6 +671,18 @@ says so once and logs that output.
   they are opened only, not saved.
 - `compiler_no_dependencies`: do not compile the modules a file uses first,
   nor check again the files that use a module when its file is saved.
+- The project's own options: without `compiler_args`, a file that has a
+  command in `compile_commands.json` (or another file of its directory
+  that has one) is checked with that command's arguments in place of the
+  compiler's defaults, in the command's `directory`, and with the
+  command's compiler when its name is the configured compiler's (and
+  `compiler_path` is not set). zfls keeps its syntax-only, form and module
+  directory options, leaves out the command's compiler, `-c`, `-o`, source
+  file, module directory (`-J`, `-module`, `/module:`...), dependency files
+  (`-MD`, `-MF`...) and color options, and does not add `pp_defs` (the
+  command has its own `-D`). The modules a file uses are compiled with
+  their own commands. `compiler_no_compile_commands` turns this off, as
+  `disable_compile_commands` does with the rest of the file.
 - `compiler_fypp`: run [fypp](https://fypp.readthedocs.io) (this executable)
   on each file first, with line markers naming the file, so that the
   compiler's messages point into it; `compiler_fypp_args` are fypp's own
@@ -677,12 +734,21 @@ drops the compiler's diagnostics and zfls's `.mod` files (not those of
 
 ### Formatting
 
-With `formatter` set to `findent` or `fprettify`, zfls answers
-`textDocument/formatting` and `textDocument/rangeFormatting` (format
-document, format selection, format on save) by running that formatter,
-which is installed separately (`pip install findent`, `pip install
-fprettify`, or the same from conda-forge). This works in every editor, not
+With `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or
+`custom`, zfls answers `textDocument/formatting` and
+`textDocument/rangeFormatting` (format document, format selection, format
+on save) by running that formatter, which is installed separately (`pip
+install findent`, `pip install fprettify`, or the same from conda-forge;
+[Codee](https://www.codee.com); forformat). This works in every editor, not
 only VS Code; zfls offers formatting only when a formatter is set.
+
+| `formatter` | Command line |
+| --- | --- |
+| `findent` | `findent -ifree` (or `-ifixed`), `-Ia` for a selection, then `formatter_args` |
+| `fprettify` | `fprettify`, then `formatter_args` |
+| `codee` | `codee format - -o -`, then `formatter_args`; the `codee` of `codee_path` unless `formatter_path` is set |
+| `forformat` | `forformat --stdin-filename=FILE -ifree` (or `-ifixed`), then `formatter_args` |
+| `custom` | `formatter_path` with `formatter_args`, in which `${file}` is the document's path and `${form}` `free` or `fixed` |
 
 zfls gives the formatter the document's text, as the editor has it, on its
 standard input, reads the result from its standard output (no files are
@@ -714,9 +780,11 @@ text. The formatter runs in the file's directory, so fprettify finds the
 - `formatter_path`: the executable, or the directory that holds it (by
   default the formatter on the `PATH`).
 
-A selection is formatted as whole lines, and the formatter sees only those
-lines: select whole constructs for the indentation inside them to come out
-right. When the formatter is missing or fails, the document is left as it
+A selection is formatted as whole lines, and findent, fprettify and a
+custom formatter see only those lines: select whole constructs for the
+indentation inside them to come out right. Codee's formatter and forformat
+format whole files only: zfls gives them the whole file and keeps the
+changes in the selected lines. When the formatter is missing or fails, the document is left as it
 is and zfls shows the error once (`window/showMessage`).
 
 ## Testing
@@ -729,6 +797,7 @@ is and zfls shows the error once (`window/showMessage`).
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
+| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
@@ -747,6 +816,10 @@ default or `-Dfortls=PATH` (the stress test takes its test sources, else
 own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
 required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+The compiler check's test (and `tests/issues/compiler_lfortran.zig`) needs
+`lfortran` on the `PATH` (`--lfortran EXE` or `LFORTRAN` for the driver),
+from conda-forge (`pixi add lfortran`, `conda install -c conda-forge
+lfortran`), and is skipped without it; CI runs it on Linux x64.
 
 `zig build bench` times zfls on a large workspace (workspace
 initialization, request latency, edits, memory), and fortls too when
@@ -893,6 +966,10 @@ zfls deliberately differs from fortls in a few places:
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
+  Fortran #17); fortls reads them as comments, so its references and
+  rename leave them out. `disable_openmp_conditional` reads them as fortls
+  does.
 - On Windows, a folder on a UNC path, as a network share or
   `\\wsl.localhost\...` is, is served: its URIs
   (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`
