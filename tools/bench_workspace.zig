@@ -307,7 +307,7 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
     _ = try server.request("initialize", .{
         .rootUri = try zfls.paths.pathToUri(a, work),
         .rootPath = work,
-        .capabilities = .{},
+        .capabilities = struct {}{},
     });
     result.init = seconds(io, start);
     try server.send("initialized", .{}, null);

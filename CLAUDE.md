@@ -84,7 +84,13 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
 - **Checks before a pull request.** `zig build test`, `zig fmt --check
   build build.zig src tests tools`, `zig build check-generated`, and for the
   extension `npx tsc --noEmit -p .` in `editors/vscode`. Do not run the
-  extension's `npm test` locally: it opens VS Code windows. CI runs it.
+  extension's `npm test` locally: it opens VS Code windows. CI runs it. CI does not
+  run on pull requests into `dev` (only on those into `main`, and when
+  started by hand: `gh workflow run ci.yml --ref BRANCH`), so these checks,
+  with `zig build test-differential` and `zig build test-parity` for
+  changes to the server, are what stands between a change and `dev`: run
+  them after merging `origin/dev` into the branch, and say in the pull
+  request which were run.
 - **File size.** Keep source files under about 900 lines; split larger ones
   by concern, as `src/server/` and `src/dap/` are ("Part of `Server`
   (server.zig): each function takes it as `self`").
