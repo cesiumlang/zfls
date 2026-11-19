@@ -220,7 +220,8 @@ fn eqlAny(word: []const u8, comptime options: []const []const u8) bool {
 /// ...`), not one of the branches the parser opens a scope for
 fn opensSelect(file: *const FortranFile, scope: *const Obj) bool {
     const w = leadingWords(file, scope.sline) orelse return true;
-    return eqlAny(w[0], &.{"select"}) or eqlAny(w[1], &.{"select"});
+    const words = .{ "select", "selectcase", "selecttype", "selectrank" };
+    return eqlAny(w[0], &words) or eqlAny(w[1], &words);
 }
 
 /// Whether 1-based line `ln` starts a new branch of a construct of `kind`
