@@ -125,7 +125,7 @@ available.
 | Warnings on by default | `-Wall` | `-warn all` | `-warn all` | – | `-Minform=warn` | – | – |
 | Preprocessed files | `-cpp` | `-fpp` | `-fpp` | `-cpp` | `-Mpreprocess` | `-fpp` | `--cpp` |
 | Fixed-form line length (`fixed_line_length`) | any | 72, 80, 132 | 72, 80, 132 | any | 132 | 132 | – |
-| Debug lines as zfls reads them (`d_lines`) | ✓ | ✓ | ✓ | ✓ | ✓ | as code | – |
+| Debug lines as zfls reads them (`d_lines`) | ✓ | ✓ | ✓ | ✓⁴ | ✓ | as code | – |
 | Every error, not only the first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓³ |
 | Messages without a file and line | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -136,6 +136,8 @@ available.
 3. With `--continue-compilation`. zfls also passes LFortran
    `--implicit-typing --implicit-interface`, which its own dialect rejects,
    unless the options say otherwise.
+4. LLVM Flang reads debug lines as comments by default; as code
+   (`-fd-lines-as-code`) needs Flang 21 or later.
 
 ### Compiler dialects in the source
 
@@ -144,13 +146,14 @@ the columns say whose dialect each is.
 
 | | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| `STRUCTURE`, `RECORD`, `UNION`/`MAP`, `rec.field` (DEC) | ✓⁴ | ✓ | ✓ | – | ✓ | – | – |
+| `STRUCTURE`, `RECORD`, `UNION`/`MAP`, `rec.field` (DEC) | ✓⁵ | ✓ | ✓ | ✓⁶ | ✓ | – | – |
 | [Conditional compilation in directives](#intel-conditional-compilation) (`!DEC$ IF`, `!DIR$ IF`) | – | ✓ | ✓ | – | – | – | – |
 | Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
-| CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | – | ✓ | – | – |
+| CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | ✓ | ✓ | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 
-4. gfortran's with `-fdec-structure`.
+5. gfortran's with `-fdec-structure`.
+6. LLVM Flang's without `UNION` and `MAP`, which it has not implemented.
 
 Not a compiler's own, and read for all of them: the C preprocessor, fypp
 files, OpenMP conditional compilation lines, kinds written with `*`
@@ -164,29 +167,37 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 
 | | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Run Fortran File | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ✓ |
-| Links on Windows without Visual Studio | ✓⁵ | ✓⁶ | – | – | – | – | ✓⁶ |
-| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁷ |
-| `zfls dap` on Windows | gdb ✓ | Windows's ✓⁸ | Windows's ○ | Windows's ○ | – | gdb ○ | –⁷ |
-| `zfls dap` on macOS | lldb-dap ✓⁹ | – | lldb-dap ○⁹ | lldb-dap ○⁹ | – | lldb-dap ○⁹ | –⁷ |
-| Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓⁸ | ○ | ○ | ○ | ○ | –⁷ |
-| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ○ | ○ | ○ | –⁷ |
+| Run Fortran File | ✓ | ✓ | ✓ | ○ | ○ | ○ | ✓ |
+| Links on Windows without Visual Studio | ✓⁷ | ✓⁸ | – | – | – | – | ✓⁸ |
+| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | gdb ○ | –⁹ |
+| `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓¹², Windows's partly¹² | – | gdb ○ | –⁹ |
+| `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | –⁹ |
+| Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓¹⁰ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
+| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | – | ○ | ○ | –⁹ |
 
-5. MinGW's gfortran needs none.
-6. With `zfls setup-ifx` and zfls's ifx kit, on Windows x64 (see
+7. MinGW's gfortran needs none.
+8. With `zfls setup-ifx` and zfls's ifx kit, on Windows x64 (see
    [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
-7. Not yet. LFortran's debug information has integer and real scalars
+9. Not yet. LFortran's debug information has integer and real scalars
    only (no arrays, derived types, CHARACTER lengths or module variables),
    and LFortran for Windows refuses `-g`.
-8. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
-   Microsoft's format; arrays are read through Intel's descriptors. CI
-   tests the engine on a C program only: it has no ifx.
-9. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
-   Silicon and every user must code-sign it on an Intel Mac: breakpoints,
-   stepping, the stack and the stops at runtime errors and ERROR STOP, but
-   lldb has no Fortran support for variables and expressions, so the
-   Variables view of these programs is empty (the row of variables is
-   gdb's).
+10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
+    Microsoft's format; arrays are read through Intel's descriptors, not
+    yet LLVM Flang's. CI tests the engine on a C program only: it has no
+    ifx.
+11. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
+    Silicon and every user must code-sign it on an Intel Mac: breakpoints,
+    stepping, the stack and the stops at runtime errors and ERROR STOP, but
+    lldb has no Fortran support for variables and expressions, so the
+    Variables view of these programs is empty (the row of variables is
+    gdb's).
+12. LLVM Flang's `-g` on Windows writes debug information of Microsoft's
+    format only, with which Windows's engine has breakpoints, the stack
+    and stepping but not the variables. A program built with `-gdwarf-4`
+    and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
+    (tested with Flang 23 and MSYS2's gdb 17.2): the variables, but a
+    polymorphic object with its declared type only. Neither debugger stops
+    at Flang's runtime errors and ERROR STOP yet.
 
 ### What is tested with a real compiler
 
@@ -454,7 +465,7 @@ on Linux and Windows, lldb-dap on macOS.
   `processId` or a gdbserver's `target`.
 - lldb-dap, LLVM's debug adapter (`"lldb": true` or `"lldb": PATH`, or
   `--lldb [PATH]`; the default on macOS, where gdb does not run on Apple
-  silicon and must be code-signed with a certificate of one's own on
+  Silicon and must be code-signed with a certificate of one's own on
   Intel, and `"gdb": PATH` still chooses gdb): the configured one, else
   `xcrun --find lldb-dap` on macOS (Xcode's command line tools have it,
   signed: `xcode-select --install`), else the `PATH`'s `lldb-dap`, else
@@ -473,15 +484,18 @@ on Linux and Windows, lldb-dap on macOS.
   its own) or attaches to it, stops at breakpoints of source lines, steps
   by lines, and shows the variables as Fortran: dbghelp says where each
   is, and zfls's declarations its type, kind and rank; arrays are read
-  through Intel's descriptors.
+  through Intel's descriptors. For LLVM Flang's programs it has
+  breakpoints, the stack and stepping, not yet the variables; gdb reads
+  them from a build with `-gdwarf-4 -Wl,-debug:dwarf`.
 
 With gdb and the engine, the module variables that the frame's line sees
 are a scope of their own (zfls indexes the program's sources: `sourceRoot`
 of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
-error without `iostat=`) or at ERROR STOP. `--text JSON` translates the
-words it shows (the VS Code extension passes them in VS Code's language).
+error without `iostat=`) or at ERROR STOP; not yet LLVM Flang's runtime.
+`--text JSON` translates the words it shows (the VS Code extension passes
+them in VS Code's language).
 
 With nvim-dap, for instance:
 
