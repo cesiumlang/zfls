@@ -543,6 +543,22 @@ jobs:
           "$RUNNER_TEMP/lfortran-bin/lfortran" --version
           echo "$RUNNER_TEMP/lfortran-bin" >> "$GITHUB_PATH"
 
+      # LLVM Flang from conda-forge (on Windows x64, the ifx kit's step below
+      # installs it), for tests/compiler_check.zig; FLANG names it, and the
+      # PATH does not have it
+      - name: LLVM Flang (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          for wait in 15 30 60 0; do
+            MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/flang" -c conda-forge flang_linux-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/flang/bin/flang" --version
+          echo "FLANG=$RUNNER_TEMP/flang/bin/flang" >> "$GITHUB_ENV"
+
       - name: Unit tests
         run: zig build test --summary failures
 
@@ -634,6 +650,7 @@ jobs:
           done
           bin="$tmp/flang/Library/bin"
           "$bin/flang.exe" --version
+          echo "FLANG=$(cygpath -w "$bin/flang.exe")" >> "$GITHUB_ENV"
           kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
           cd "$tmp"
           printf "program p\n  real :: x(3)\n  integer :: u\n  character(:), allocatable :: s\n  x = 2\n  s = 'linked'\n  open(newunit=u, file='p.txt')\n  write(u, '(f4.1)') sum(x)\n  close(u)\n  print *, s, sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
@@ -694,6 +711,12 @@ jobs:
       - name: The compiler check with LFortran (Linux x64)
         if: matrix.target == 'x86_64-linux'
         run: zig-out/bin/compiler_check --zfls "$ZFLS"
+
+      # and with LLVM Flang (FLANG), also on a .f77 file, a debug line and
+      # an error in an included file
+      - name: The compiler check with LLVM Flang (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler flang
 
       - name: Version under test
         run: |
