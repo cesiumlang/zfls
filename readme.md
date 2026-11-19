@@ -957,7 +957,9 @@ zfls deliberately differs from fortls in a few places:
   for intrinsic types and `class(*)`. fortls has none.
 - Construct names and statement labels have definitions, references and
   renames (fortls #424), and `exit`/`cycle` complete the names of the open
-  constructs (hansec #157); fortls has no answer on them.
+  constructs (hansec #157); fortls has no answer on them. A construct name
+  repeated on an `else`, `case` or `elsewhere` statement is no undeclared
+  name, and `selectcase` written as one word is a SELECT construct.
 - `textDocument/linkedEditingRange` is answered: typing in the name of a
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
@@ -1053,6 +1055,11 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- String literals are found from left to right, a literal ending only at
+  its own quote (`'it''s'` doubled), so two strings that each hold the
+  other quote character (`"it's", "Bob's"`) do not hide the code between
+  them from declaration lists, signature help, hover and the argument
+  checks; fortls removes the `'...'` strings before the `"..."` ones.
 - References to (and renames of) a separate module procedure include both
   its interface and its implementation in a submodule; fortls does not
   relate the two. With the `prefer_implementation` option, hover shows the
