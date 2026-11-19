@@ -1,0 +1,64 @@
+name: Re-run unacquired jobs
+
+# GitHub's hosted macOS arm64 runners are sometimes short ("Due to capacity
+# constraints, jobs targeting macOS arm64 runners may experience longer queue
+# times"). A CI job that no runner picks up is cancelled after about 15
+# minutes with "The job was not acquired by Runner of type hosted even after
+# multiple attempts", and the run fails although nothing was tested. When
+# every job of a failed CI run that failed or was cancelled is such a job
+# (besides the "CI" check, which fails because they did), re-run the failed
+# jobs, up to six times (attempts 2 to 7). A run with any other failure is
+# left alone.
+#
+# A workflow_run workflow runs the copy of this file on the default branch
+# (main), so a change to it takes effect with the next release.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+jobs:
+  rerun:
+    name: Re-run unacquired jobs
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.run_attempt < 7 }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Re-run the failed jobs if no runner picked them up
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          # the jobs that failed or were cancelled, besides the "CI" check
+          bad=$(gh api --paginate "repos/$REPO/actions/runs/$RUN/attempts/$ATTEMPT/jobs?per_page=100"             --jq '.jobs[] | select((.conclusion == "failure" or .conclusion == "cancelled") and .name != "CI") | [.id, .name] | @tsv')
+          unacquired=()
+          other=()
+          while IFS=$'	' read -r id name; do
+            [ -n "$id" ] || continue
+            notes=$(gh api "repos/$REPO/check-runs/$id/annotations" --jq '.[].message')
+            if grep -q "was not acquired by Runner" <<< "$notes"; then
+              unacquired+=("$name")
+            else
+              other+=("$name")
+            fi
+          done <<< "$bad"
+          {
+            echo "Run $RUN, attempt $ATTEMPT"
+            echo "- not picked up by a runner: ${unacquired[*]:-none}"
+            echo "- failed otherwise: ${other[*]:-none}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ ${#other[@]} -gt 0 ] || [ ${#unacquired[@]} -eq 0 ]; then
+            echo "Not re-run: a job failed for another reason, or none was left unacquired." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Re-running the failed jobs (attempt $((ATTEMPT + 1)) of at most 4)." | tee -a "$GITHUB_STEP_SUMMARY"
+          gh run rerun "$RUN" --failed -R "$REPO"
