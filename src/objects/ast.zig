@@ -51,6 +51,9 @@ pub const IncludeInfo = struct {
     scope_objs: std.ArrayList(*Obj) = .empty,
     /// Cached `Include` object returned by `find_in_scope`
     inc_obj: ?*Obj = null,
+    /// For an `#include` whose file the preprocessor found nowhere: the
+    /// byte columns of the name in its line (`include-not-found`)
+    missing: ?[2]usize = null,
     /// The scope the file's USE statements and IMPLICIT state are linked
     /// into (see `Ast.linkIncludeScope`)
     parent: ?*Obj = null,
@@ -306,6 +309,12 @@ pub const Ast = struct {
         const inc = try a.create(IncludeInfo);
         inc.* = .{ .line_number = line_number, .path = try a.dupe(u8, path) };
         try self.include_statements.append(a, inc);
+    }
+
+    /// An `#include` whose file is not found: an include zfls cannot read
+    pub fn addMissingInclude(self: *Ast, name: []const u8, line_number: usize, start: usize, end: usize) !void {
+        try self.addInclude(name, line_number);
+        self.include_statements.items[self.include_statements.items.len - 1].missing = .{ start, end };
     }
 
     pub fn addDoc(self: *Ast, doc_string: []const u8, forward: bool) !void {
@@ -610,7 +619,8 @@ pub const Ast = struct {
                 try a.print("Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
-            try errors.append(a, Diagnostic.init(.unexpected_end, e.scope_line -| 1, message, 1, null));
+            // at the END statement
+            try errors.append(a, Diagnostic.init(.unexpected_end, (e.end_line orelse e.scope_line) -| 1, message, 1, "end"));
         }
         // the parser reads every branch of the preprocessor conditionals of
         // a file that is not preprocessed: each may open the same scope
