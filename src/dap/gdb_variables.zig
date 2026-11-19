@@ -378,6 +378,10 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
             out.value = if (t.allocatable) s.text.not_allocated else s.text.not_associated;
             return out;
         };
+        // LLVM Flang's polymorphic array, of another type than declared
+        if (at) |t| if (sub == null and !s.g.lldb and v.ref != 0) if (evaluate_name) |e| if (isVariableName(e)) if (fortran.derivedTypeName(t.element)) |d| {
+            if (try flangClassArray(s, a, out, e, d, frame)) |shown| return shown;
+        };
         const ctx: ArrayContext = sub orelse .{ .expr = evaluate_name, .dims = at.?.dims };
         const count: u64 = if (v.indexed) |n| @intCast(@max(n, 0)) else fortran.extent(fortran.indexedDim(ctx)) orelse 0;
         out.value = try arrayValue(s, a, v, ctx, count, frame);
@@ -489,6 +493,29 @@ fn flangClass(s: *Session, a: Allocator, v: Variable, out: Variable, expr: []con
     if (!gdb.isSuccess(set) or fortran.flangClassResult(json.str(json.path(set, &.{ "body", "result" })) orelse "") == null) return null;
     const declared: Declared = .{ .expr = expr, .names = try componentNames(s, a, v) };
     return presentAs(s, a, out, variable, frame, declared, try a.print("class({s})", .{declared_name}));
+}
+
+/// LLVM Flang's polymorphic array `expr` (a variable), which its DWARF
+/// gives as an array of its declared type (`declared_name`): when its
+/// descriptor names another type, the array as one of that type, with the
+/// same bounds (fortran.flangClassArrayCommand); else null
+fn flangClassArray(s: *Session, a: Allocator, out: Variable, expr: []const u8, declared_name: []const u8, frame: ?i64) !?Variable {
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try fortran.flangClassArrayCommand(a, expr, variable, declared_name), frame, "repl"));
+    if (!gdb.isSuccess(set) or fortran.flangClassResult(json.str(json.path(set, &.{ "body", "result" })) orelse "") == null) return null;
+    // class(point) and the bounds of gdb's type: `Type point (2:4)`
+    const t = out.type orelse "";
+    const bounds = if (std.mem.findScalarLast(u8, t, '(')) |i| t[i..] else "";
+    return presentAs(s, a, out, variable, frame, null, try a.print("class({s}) {s}", .{ declared_name, bounds }));
+}
+
+/// Whether `e` names a variable (of a module, `m::v`), which `info
+/// address` locates, rather than being a part of one
+fn isVariableName(e: []const u8) bool {
+    if (e.len == 0 or e[0] == '$') return false;
+    for (e) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != ':') return false;
+    return true;
 }
 
 fn find(vs: []const Variable, name: []const u8) ?Variable {
@@ -679,4 +706,39 @@ test "LLVM Flang's polymorphic object: its dynamic type's components" {
     const p = try present(&s2, a, .{ .name = "p", .value = "0x7ff6 <_QMgridEorigin>", .type = "PTR TO -> ( Type point )", .ref = 3 }, "p", "p", 1, null, null);
     try std.testing.expectEqualStrings("point(x=1.5, id=7)", p.value);
     try std.testing.expectEqualStrings("Type point", p.type.?);
+}
+
+test "LLVM Flang's polymorphic array: its elements of the dynamic type, with its bounds" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    const tagged = "[{\"name\":\"point\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":0},{\"name\":\"tag\",\"value\":\"'hello   '\",\"type\":\"character*8\",\"variablesReference\":0}]";
+    const answers = [_]struct { []const u8, []const u8 }{
+        .{ try fortran.flangClassArrayCommand(a, "ts", "zfls_1", "point"), "{\"result\":\"zfls-class tagged\\n\"}" },
+        .{ "$zfls_1", "{\"result\":\"\",\"type\":\"Type tagged (2:3)\",\"variablesReference\":9}" },
+    };
+    var fake: FakeGdb = .{
+        .evaluate = &answers,
+        .variables = &.{
+            .{ 9, "[{\"name\":\"2\",\"value\":\"\",\"type\":\"Type tagged\",\"variablesReference\":10},{\"name\":\"3\",\"value\":\"\",\"type\":\"Type tagged\",\"variablesReference\":11}]" },
+            .{ 10, tagged },
+            .{ 11, tagged },
+        },
+    };
+    var s = testSession(&env, &fake);
+    defer testDeinit(&s);
+    const ts = try present(&s, a, .{ .name = "ts", .value = "", .type = "Type point, allocatable (2:3)", .ref = 3 }, "ts", "ts", 1, null, null);
+    try std.testing.expectEqualStrings("class(point) (2:3)", ts.type.?);
+    try std.testing.expectEqualStrings("ts", ts.evaluate_name.?);
+    try std.testing.expectEqualStrings("[tagged(…), tagged(…)]", ts.value);
+    const elements = try children(&s, a, ts.ref, get(&s, ts.ref).?);
+    try std.testing.expectEqual(@as(usize, 2), elements.len);
+    try std.testing.expectEqualStrings("(2)", elements[0].name);
+    try std.testing.expectEqualStrings("$zfls_1(2)", elements[0].evaluate_name.?);
+    try std.testing.expectEqualStrings("tagged(point=point(…), tag='hello   ')", elements[1].value);
+    // a component's array, or the expression of one: not asked
+    try std.testing.expect(!isVariableName("t%ts"));
+    try std.testing.expect(!isVariableName("$zfls_1"));
+    try std.testing.expect(isVariableName("shapes::mts"));
 }
