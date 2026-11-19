@@ -449,9 +449,11 @@ too and has Flang link with `lld-link`, and `-Wl,-debug:dwarf`, with which
 so zfls's debugger, reads it as it reads gfortran's programs. Without an
 `lld-link` (next to `flang` or on the `PATH`) the build is `-g -O0`, for
 Windows's Debugger Engine. A `fortran` configuration of a program built
-with `-g` takes `"dbgeng": true` for the engine; fpm's builds have DWARF
-when `zfls.fpm.flags` has `-gdwarf-4 -Wl,-debug:dwarf`, and are debugged
-with the engine otherwise.
+with `-g` takes `"dbgeng": true` for the engine. Debugging an fpm target
+built with Flang adds `-gdwarf-4 -Wl,-debug:dwarf` to fpm's flags
+(`--flag`, which fpm passes to the link too) where there is an
+`lld-link`, unless `zfls.fpm.flags` already has a `-gdwarf`, and debugs it
+with gdb; without an `lld-link`, fpm's `-g` build goes to the engine.
 
 With Intel's compilers on Windows, start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
 that the compiler finds the linker and libraries, or set up ifx without

@@ -12,6 +12,7 @@ import {
   Target,
   TargetKind,
   TaskCommand,
+  fpmDwarfFlags,
   isProgram,
   listArgs,
   parseList,
@@ -22,7 +23,7 @@ import {
   taskArgs,
 } from "./fpm";
 import { compilerKind, launchConfiguration, runtimeEnv } from "./run";
-import { addFileRunner, chooseInstalledDebugger, gdbFor, runTask } from "./runFile";
+import { addFileRunner, chooseInstalledDebugger, gdbFor, lldLinkFor, runTask } from "./runFile";
 import { expandVariables, findExecutable, runProcess } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -163,11 +164,23 @@ export function fpmExecutable(project: FpmProject, quiet = false): string | unde
   return fpm;
 }
 
-/** Whether fpm's builds of LLVM Flang on Windows have DWARF, for gdb: fpm's
- * `-g` writes Microsoft's debug information only, so only when zfls.fpm.flags
- * ask for DWARF (`-gdwarf-4 -Wl,-debug:dwarf`) */
+/** Whether the debug builds of fpm targets with LLVM Flang on Windows have
+ * DWARF, for gdb (`debugBuildOptions`): when zfls.fpm.flags ask for it, or
+ * the extension adds it */
 export function fpmFlangDwarf(project: FpmProject): boolean {
-  return /(^|\s)-gdwarf/.test(buildOptions(project).flags ?? "");
+  return /(^|\s)-gdwarf/.test(debugBuildOptions(project).flags ?? "");
+}
+
+/** The build options of a target's debug build: zfls.fpm's, with DWARF for
+ * LLVM Flang on Windows (`fpmDwarfFlags`) where it links with lld-link
+ * (next to `flang` or on the PATH; with `-gdwarf-4` Flang's driver
+ * chooses it) */
+export function debugBuildOptions(project: FpmProject): BuildOptions {
+  const opts = buildOptions(project);
+  const compiler = fpmCompiler(project);
+  const exe = compiler.exe ?? compiler.name;
+  const flags = fpmDwarfFlags(opts.flags, exe, process.platform);
+  return flags !== opts.flags && lldLinkFor(exe) !== undefined ? { ...opts, flags } : opts;
 }
 
 /** zfls.fpm.profile, compiler, flags and args */
@@ -353,8 +366,9 @@ export function fpmCompiler(project: FpmProject): { name: string; exe: string | 
 }
 
 /**
- * Builds a target with fpm, in a terminal where its errors are seen, and
- * gives its program (from `--runner echo`), or undefined after saying why.
+ * Builds a target with fpm for debugging (`debugBuildOptions`), in a
+ * terminal where its errors are seen, and gives its program (from
+ * `--runner echo`), or undefined after saying why.
  */
 export async function buildTarget(
   project: FpmProject,
@@ -365,7 +379,7 @@ export async function buildTarget(
   if (!fpm) {
     return undefined;
   }
-  const echo = runArgs(target, buildOptions(project), [], "echo");
+  const echo = runArgs(target, debugBuildOptions(project), [], "echo");
   log.info(`[fpm] ${fpm} ${echo.join(" ")} (in ${project.root})`);
   const build = new vscode.Task(
     { type: "fpm", command: "build", target: target.name } as FpmTaskDefinition,

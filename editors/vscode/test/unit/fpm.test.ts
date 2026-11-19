@@ -6,6 +6,8 @@ import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
 import {
+  FPM_FLANG_DWARF_FLAGS,
+  fpmDwarfFlags,
   listArgs,
   parseList,
   parseManifest,
@@ -156,4 +158,14 @@ test("test-drive's results", () => {
     { suite: "math", name: "bad_expected", status: "expected-fail", message: "math is broken" },
     { suite: "strings", name: "later", status: "skipped" },
   ]);
+});
+
+test("a debug build's flags: DWARF for LLVM Flang on Windows, unless asked for (#430)", () => {
+  assert.equal(fpmDwarfFlags(undefined, "flang", "win32"), FPM_FLANG_DWARF_FLAGS);
+  assert.equal(fpmDwarfFlags("-O1", "C:\\pixi\\bin\\flang-new.exe", "win32"), "-O1 -gdwarf-4 -Wl,-debug:dwarf");
+  assert.equal(fpmDwarfFlags("-gdwarf-5 -Wl,-debug:dwarf", "flang", "win32"), "-gdwarf-5 -Wl,-debug:dwarf");
+  // elsewhere, and other compilers: as they are
+  assert.equal(fpmDwarfFlags(undefined, "flang", "linux"), undefined);
+  assert.equal(fpmDwarfFlags("-g", "gfortran", "win32"), "-g");
+  assert.equal(fpmDwarfFlags(undefined, "ifx", "win32"), undefined);
 });
