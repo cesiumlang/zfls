@@ -151,6 +151,12 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
             const exe = Io.Dir.cwd().realPathFileAlloc(io, setup.fc, a) catch setup.fc;
             const lib = try std.Io.Dir.path.join(a, &.{ std.Io.Dir.path.dirname(exe) orelse ".", "..", "lib" });
             try argv.append(a, try a.print("-Wl,-rpath,{s}", .{lib}));
+            // conda-forge's Flang 23.1.5 for Linux looks for its intrinsic
+            // modules under its driver's triple (x86_64-conda-linux-gnu),
+            // but has them under x86_64-unknown-linux-gnu: without them,
+            // passing an object to a CLASS dummy stops the compiler
+            // ("runtime derived type info descriptor was not generated")
+            if (try intrinsicModules(io, a, lib)) |dir| try argv.appendSlice(a, &.{ "-fintrinsic-modules-path", dir });
         },
     }
     try argv.appendSlice(a, &.{ "-o", out, src });
@@ -159,6 +165,30 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
         std.debug.print("{s} failed:\n{s}{s}\n", .{ setup.fc, built.stdout, built.stderr });
         return error.BuildFailed;
     }
+}
+
+/// The directory of Flang's intrinsic modules under `lib` (the one with
+/// `__fortran_type_info.mod` of `lib/clang/<version>/finclude/flang/<triple>`),
+/// or null
+fn intrinsicModules(io: Io, a: Allocator, lib: []const u8) !?[]const u8 {
+    const clang = try std.Io.Dir.path.join(a, &.{ lib, "clang" });
+    var versions = Io.Dir.cwd().openDir(io, clang, .{ .iterate = true }) catch return null;
+    defer versions.close(io);
+    var vit = versions.iterate();
+    while (try vit.next(io)) |v| {
+        const flang = try std.Io.Dir.path.join(a, &.{ clang, v.name, "finclude", "flang" });
+        var triples = Io.Dir.cwd().openDir(io, flang, .{ .iterate = true }) catch continue;
+        defer triples.close(io);
+        var tit = triples.iterate();
+        while (try tit.next(io)) |t| {
+            const dir = try std.Io.Dir.path.join(a, &.{ flang, t.name });
+            const mod = try std.Io.Dir.path.join(a, &.{ dir, "__fortran_type_info.mod" });
+            Io.Dir.cwd().access(io, mod, .{}) catch continue;
+            std.debug.print("intrinsic modules: {s}\n", .{dir});
+            return dir;
+        }
+    }
+    return null;
 }
 
 fn firstLine(s: []const u8) []const u8 {
