@@ -222,6 +222,9 @@ pub const Workspace = struct {
         for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
+        // as `main` gives it
+        var environ = try std.testing.environ.createMap(aa);
+        try w.server.setEnviron(&environ);
         w.server.sink = .{ .ctx = w, .sendFn = collect };
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
         _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{

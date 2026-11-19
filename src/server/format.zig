@@ -207,12 +207,13 @@ pub const Run = struct { term: std.process.Child.Term, stdout: []u8, stderr: []u
 /// `std.process.run` with `input` on the child's stdin. It is written on a
 /// thread of its own, then closed, so that a child that writes before it
 /// has read all of it cannot block on a full pipe.
-pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: ?[]const u8, input: []const u8, timeout: Io.Timeout) !Run {
+pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: ?[]const u8, env: ?*const std.process.Environ.Map, input: []const u8, timeout: Io.Timeout) !Run {
     var writer: ?std.Thread = null;
     defer if (writer) |t| t.join();
     var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = if (cwd) |d| .{ .path = d } else .inherit,
+        .environ_map = env,
         .create_no_window = true,
         .stdin = .pipe,
         .stdout = .pipe,
@@ -333,7 +334,7 @@ fn format(self: *Server, a: Allocator, file: *FortranFile, first: usize, last: u
         argv[0] = exe;
         @memcpy(argv[1..], args);
         self.log.debug("[format] {s} {s} (lines {d}-{d})", .{ exe, try std.mem.join(a, " ", args), from + 1, to + 1 });
-        break runWithInput(a, self.io, argv, cwd, input, timeout) catch |e| switch (e) {
+        break runWithInput(a, self.io, argv, cwd, self.toolEnv(), input, timeout) catch |e| switch (e) {
             error.FileNotFound => continue,
             error.OutOfMemory => return e,
             else => {
@@ -487,7 +488,7 @@ test "a formatter gets its input on stdin" {
     for (0..20000) |i| @memcpy(input[i * line.len ..][0..line.len], line);
     // a filter that writes each line as it reads it
     const argv: []const []const u8 = if (is_windows) &.{ "findstr", "x" } else &.{"cat"};
-    const r = try runWithInput(a, testing.io, argv, null, input, .{ .duration = .{ .raw = .fromSeconds(30), .clock = .awake } });
+    const r = try runWithInput(a, testing.io, argv, null, null, input, .{ .duration = .{ .raw = .fromSeconds(30), .clock = .awake } });
     try testing.expect(r.term.success());
     try testing.expectEqual(@as(usize, 20000), (try outputLines(a, r.stdout)).len);
     try testing.expectEqualStrings("      x = 1 ! a line of the input", (try outputLines(a, r.stdout))[19999]);

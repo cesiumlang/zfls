@@ -91,7 +91,7 @@ pub fn convert(self: *Server, a: Allocator, file: *const FortranFile, to: Form) 
         argv[0] = exe;
         @memcpy(argv[1..], args);
         self.log.debug("[convert] {s} {s}", .{ exe, try std.mem.join(a, " ", args) });
-        break format.runWithInput(a, self.io, argv, cwd, input.items, timeout) catch |e| switch (e) {
+        break format.runWithInput(a, self.io, argv, cwd, self.toolEnv(), input.items, timeout) catch |e| switch (e) {
             error.FileNotFound => continue,
             error.OutOfMemory => return e,
             else => return .{ .err = try a.print("running findent failed ({s})", .{@errorName(e)}) },
