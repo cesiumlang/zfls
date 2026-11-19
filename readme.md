@@ -198,12 +198,12 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     format only, with which Windows's engine has breakpoints, the stack
     and stepping but not the variables. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
-    (tested with Flang 23 and MSYS2's gdb 17.2): the variables, but a
-    polymorphic object with its declared type only, and stops at Flang's
-    runtime errors and ERROR STOP (not at a plain STOP). Windows's engine
-    does not stop at them yet. The VS Code extension's Debug Fortran File
-    builds Flang's programs so (where there is an `lld-link`) and debugs
-    them with gdb; the engine is for those built with `-g`
+    (tested with Flang 23 and MSYS2's gdb 17.2): the variables, a
+    polymorphic object with its dynamic type's components, and stops at
+    Flang's runtime errors and ERROR STOP (not at a plain STOP). Windows's
+    engine does not stop at them yet. The VS Code extension's Debug
+    Fortran File builds Flang's programs so (where there is an `lld-link`)
+    and debugs them with gdb; the engine is for those built with `-g`
     (`"dbgeng": true`).
 
 ### What is tested with a real compiler

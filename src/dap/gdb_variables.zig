@@ -353,11 +353,15 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
 
     if (fortran.isClassWrapper(v.type) and v.ref != 0) return presentClass(s, a, v, out, frame);
     // a pointer, as its target
-    if (fortran.pointerTarget(v.type) != null) {
+    if (fortran.pointerTarget(v.type)) |target| {
         if (fortran.isNullPointer(v.value)) {
             out.value = s.text.not_associated;
             return out;
         }
+        // LLVM Flang's polymorphic object, of another type than declared
+        if (!s.g.lldb and v.ref != 0) if (evaluate_name) |e| if (fortran.derivedTypeName(target)) |d| {
+            if (try flangClass(s, a, v, out, e, d, frame)) |shown| return shown;
+        };
         if (v.ref != 0) {
             const kids = try gdbChildren(s, a, v.ref);
             if (kids.len == 1 and std.mem.eql(u8, kids[0].name, "value")) return present(s, a, kids[0], name, evaluate_name, frame, sub, declared);
@@ -445,27 +449,46 @@ fn presentClass(s: *Session, a: Allocator, v: Variable, out_in: Variable, frame:
         const variable = try a.print("zfls_{d}", .{s.g.convenience});
         const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try fortran.castCommand(a, variable, address.?, dynamic.?), frame, "repl"));
         if (gdb.isSuccess(set)) {
-            const pointer = try a.print("${s}", .{variable});
-            const r = try gdb.request(s, a, "evaluate", try evalArgs(a, pointer, frame, "watch"));
-            const ref = json.int(json.path(r, &.{ "body", "variablesReference" })) orelse 0;
-            if (gdb.isSuccess(r) and ref != 0) {
-                const declared: ?Declared = if (data_expr) |e| .{ .expr = e, .names = try componentNames(s, a, data) } else null;
-                var shown = try present(s, a, .{
-                    .name = out.name,
-                    .value = json.str(json.path(r, &.{ "body", "result" })) orelse "",
-                    .type = json.str(json.path(r, &.{ "body", "type" })),
-                    .ref = ref,
-                }, out.name, pointer, frame, null, declared);
-                shown.type = type_name;
-                shown.evaluate_name = out.evaluate_name;
-                return shown;
-            }
+            const declared: ?Declared = if (data_expr) |e| .{ .expr = e, .names = try componentNames(s, a, data) } else null;
+            if (try presentAs(s, a, out, variable, frame, declared, type_name)) |shown| return shown;
         }
     }
     var shown = try present(s, a, data, out.name, data_expr, frame, null, null);
     shown.type = type_name;
     shown.evaluate_name = out.evaluate_name;
     return shown;
+}
+
+/// The object that gdb's pointer `$variable` points to, as `out` with the
+/// type `type_name`: the components of its dynamic type, those of the
+/// declared type with the object's expressions (`declared`)
+fn presentAs(s: *Session, a: Allocator, out: Variable, variable: []const u8, frame: ?i64, declared: ?Declared, type_name: ?[]const u8) !?Variable {
+    const pointer = try a.print("${s}", .{variable});
+    const r = try gdb.request(s, a, "evaluate", try evalArgs(a, pointer, frame, "watch"));
+    const ref = json.int(json.path(r, &.{ "body", "variablesReference" })) orelse 0;
+    if (!gdb.isSuccess(r) or ref == 0) return null;
+    var shown = try present(s, a, .{
+        .name = out.name,
+        .value = json.str(json.path(r, &.{ "body", "result" })) orelse "",
+        .type = json.str(json.path(r, &.{ "body", "type" })),
+        .ref = ref,
+    }, out.name, pointer, frame, null, declared);
+    shown.type = type_name;
+    shown.evaluate_name = out.evaluate_name;
+    return shown;
+}
+
+/// LLVM Flang's polymorphic object `v` (`expr`), which its DWARF gives as
+/// a pointer to its declared type (`declared_name`): when its descriptor
+/// names another type, that type's components, through a pointer of
+/// gdb's to it (fortran.flangClassCommand); else null
+fn flangClass(s: *Session, a: Allocator, v: Variable, out: Variable, expr: []const u8, declared_name: []const u8, frame: ?i64) !?Variable {
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try fortran.flangClassCommand(a, expr, variable, declared_name), frame, "repl"));
+    if (!gdb.isSuccess(set) or fortran.flangClassResult(json.str(json.path(set, &.{ "body", "result" })) orelse "") == null) return null;
+    const declared: Declared = .{ .expr = expr, .names = try componentNames(s, a, v) };
+    return presentAs(s, a, out, variable, frame, declared, try a.print("class({s})", .{declared_name}));
 }
 
 fn find(vs: []const Variable, name: []const u8) ?Variable {
@@ -617,4 +640,43 @@ test "a derived type's preview and components, hidden lengths left out" {
     try std.testing.expect(get(&s, scope) == null);
     try std.testing.expect(try add(&s, .{ .kind = .{ .gdb = 2 } }) > args[1].ref);
     freeRetired(&s);
+}
+
+test "LLVM Flang's polymorphic object: its dynamic type's components" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    const point = "[{\"name\":\"x\",\"value\":\"1.5\",\"type\":\"real(kind=4)\",\"variablesReference\":0},{\"name\":\"id\",\"value\":\"7\",\"type\":\"integer(kind=4)\",\"variablesReference\":0}]";
+    const answers = [_]struct { []const u8, []const u8 }{
+        .{ try fortran.flangClassCommand(a, "t", "zfls_1", "point"), "{\"result\":\"zfls-class tagged\\n\"}" },
+        .{ "$zfls_1", "{\"result\":\"(PTR TO -> ( Type tagged )) 0x7ff6\",\"type\":\"PTR TO -> ( Type tagged )\",\"variablesReference\":9}" },
+    };
+    var fake: FakeGdb = .{
+        .evaluate = &answers,
+        .variables = &.{
+            .{ 3, "[{\"name\":\"value\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":4}]" },
+            .{ 4, point },
+            .{ 9, "[{\"name\":\"value\",\"value\":\"\",\"type\":\"Type tagged\",\"variablesReference\":10}]" },
+            .{ 10, "[{\"name\":\"point\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":11},{\"name\":\"tag\",\"value\":\"'hello   '\",\"type\":\"character*8\",\"variablesReference\":0}]" },
+            .{ 11, point },
+        },
+    };
+    var s = testSession(&env, &fake);
+    defer testDeinit(&s);
+    const t = try present(&s, a, .{ .name = "t", .value = "0x7ff6 <_QFEtg>", .type = "PTR TO -> ( Type point )", .ref = 3 }, "t", "t", 1, null, null);
+    try std.testing.expectEqualStrings("tagged(point=point(…), tag='hello   ')", t.value);
+    try std.testing.expectEqualStrings("class(point)", t.type.?);
+    try std.testing.expectEqualStrings("t", t.evaluate_name.?);
+    const comps = try children(&s, a, t.ref, get(&s, t.ref).?);
+    try std.testing.expectEqual(@as(usize, 2), comps.len);
+    try std.testing.expectEqualStrings("$zfls_1%point", comps[0].evaluate_name.?);
+    try std.testing.expectEqualStrings("$zfls_1%tag", comps[1].evaluate_name.?);
+    // of its declared type, or not Flang's: the target, as before
+    var plain: FakeGdb = .{ .variables = &.{ .{ 3, "[{\"name\":\"value\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":4}]" }, .{ 4, point } } };
+    var s2 = testSession(&env, &plain);
+    defer testDeinit(&s2);
+    const p = try present(&s2, a, .{ .name = "p", .value = "0x7ff6 <_QMgridEorigin>", .type = "PTR TO -> ( Type point )", .ref = 3 }, "p", "p", 1, null, null);
+    try std.testing.expectEqualStrings("point(x=1.5, id=7)", p.value);
+    try std.testing.expectEqualStrings("Type point", p.type.?);
 }
