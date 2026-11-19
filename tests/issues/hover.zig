@@ -915,3 +915,41 @@ test "attribute statements give their attribute to the names they list (#238)" {
     try expectDecl(w, "d.f90", w.pos("d.f90", "x\n", 0, 0), "INTEGER, VALUE, INTENT(IN) :: x");
     try expectDecl(w, "d.f90", w.pos("d.f90", "y = x", 0, 0), "REAL, VOLATILE :: y");
 }
+
+test "`pass ( self )` with blanks names the passed-object argument (#243)" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  type t
+        \\    integer :: v
+        \\  contains
+        \\    procedure, pass ( self ) :: get
+        \\    procedure, pass(self) :: get2 => get
+        \\    procedure, PASS( SELF ), public :: get3 => get
+        \\  end type
+        \\contains
+        \\  integer function get(k, self)
+        \\    integer, intent ( in ) :: k
+        \\    class(t), intent(in) :: self
+        \\    get = self%v + k
+        \\  end function
+        \\  subroutine use_it()
+        \\    type(t) :: o
+        \\    print *, o%get(1)
+        \\    print *, o%get2(1)
+        \\    print *, o%get3(1)
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("a.f90");
+    for ([_][]const u8{ "get(1)", "get2(1)", "get3(1)" }) |call| {
+        const p = w.pos("a.f90", call, 0, 0);
+        try w.expectHoverContains("a.f90", p, "(k) RESULT(get)\n INTEGER, INTENT(IN) :: k");
+        const hv = (try w.hover("a.f90", p)).?;
+        try h.expect(std.mem.find(u8, hv, ":: self") == null, "{s}: the hover lists self: {s}", .{ call, hv });
+        const sig = (try w.signature("a.f90", w.pos("a.f90", call, 0, call.len - 2))) orelse return h.unmet("{s}: no signature help", .{call});
+        try h.expect(std.mem.endsWith(u8, sig.label, "(k)"), "{s}: signature {s}", .{ call, sig.label });
+    }
+}

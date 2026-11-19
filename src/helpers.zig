@@ -663,9 +663,12 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
             if (c > o) info.codimension = kw[o + 1 .. c];
         };
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
-            if (getParenSubstring(kw)) |sub| {
+            // blanks may surround a name: `pass ( self )` names `self`, and
+            // `intent ( in )` is IN (the bounds keep theirs, as fortls)
+            if (getParenSubstring(kw)) |sub_raw| {
+                const sub = str.strip(sub_raw);
                 if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
-                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub;
+                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub_raw;
                 if (std.mem.eql(u8, prefix, "pass")) info.pass = sub;
             }
         }
