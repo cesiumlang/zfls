@@ -869,7 +869,10 @@ jobs:
           echo "$dir" >> "$GITHUB_PATH"
 
       # The conda-forge recipe, built from this run's source archive with
-      # conda-forge's zig; its tests check the installed zfls. Writing it
+      # conda-forge's zig; its tests check the installed zfls where the
+      # package's platform is the runner's own (`--test native`: not for
+      # osx-arm64, cross-built on the Intel runner, whose arm64 zfls it
+      # cannot run). Writing it
       # downloads the packages it pins (retried, like the fetches)
       - name: Build and test the conda package
         run: |
@@ -879,7 +882,7 @@ jobs:
             echo "::warning::writing the recipe failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out" --target-platform "$PLATFORM"
+          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out" --target-platform "$PLATFORM" --test native
 
   # packaging/install.sh and install.ps1 install published releases (not
   # this run's binaries), the way their users run them: piped from curl
