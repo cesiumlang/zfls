@@ -134,6 +134,9 @@ pub const Options = struct {
     diagnostic_severity: []const zfls.settings.DiagLevel = &.{},
     /// the client takes a tree of document symbols (as VS Code does)
     hierarchical_symbols: bool = false,
+    /// the commands the client runs itself (`experimental.commands`), which
+    /// code lenses may name
+    client_commands: []const []const u8 = &.{},
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
     /// the client pulls diagnostics (`textDocument/diagnostic`) and takes
@@ -225,6 +228,9 @@ pub const Workspace = struct {
         for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
+        // as `main` gives it
+        var environ = try std.testing.environ.createMap(aa);
+        try w.server.setEnviron(&environ);
         w.server.sink = .{ .ctx = w, .sendFn = collect };
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
         w.init_result = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
@@ -240,7 +246,7 @@ pub const Workspace = struct {
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
                 .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
-            } },
+            }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
         }));

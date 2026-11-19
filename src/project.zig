@@ -225,6 +225,39 @@ fn tomlStrings(a: Allocator, value: []const u8, out: *std.ArrayList([]const u8))
     }
 }
 
+/// Whether `path` is an interface module that ifort and ifx write beside
+/// each source with `-warn interfaces` or `-gen-interfaces`: a
+/// `<name>__genmod.f90` whose first line is
+/// `!COMPILER-GENERATED INTERFACE MODULE: <date>`. It repeats the external
+/// procedures of the source; a hand-written file of that name is kept.
+pub fn isIfortInterface(io: Io, path: []const u8) bool {
+    const suffix = "__genmod.f90";
+    const base = std.Io.Dir.path.basename(path);
+    if (!std.ascii.endsWithIgnoreCase(base, suffix)) return false;
+    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return false;
+    defer file.close(io);
+    var buf: [128]u8 = undefined;
+    const n = file.readPositionalAll(io, &buf, 0) catch return false;
+    const head = std.mem.trimStart(u8, buf[0..n], " \t");
+    return std.ascii.startsWithIgnoreCase(head, "!COMPILER-GENERATED INTERFACE MODULE");
+}
+
+test "ifort's interface modules are told by their name and first line" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    const generated = "        !COMPILER-GENERATED INTERFACE MODULE: Mon Jan 01 00:00:00 2018\n        MODULE FOO__genmod\n        END MODULE FOO__genmod\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "foo__genmod.f90", .data = generated });
+    try tmp.dir.writeFile(io, .{ .sub_path = "BAR__GENMOD.F90", .data = generated });
+    try tmp.dir.writeFile(io, .{ .sub_path = "x__genmod.f90", .data = "module x__genmod\nend module\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "foo.f90", .data = generated });
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", arena.allocator());
+    const want = [_]struct { []const u8, bool }{ .{ "foo__genmod.f90", true }, .{ "BAR__GENMOD.F90", true }, .{ "x__genmod.f90", false }, .{ "foo.f90", false }, .{ "none__genmod.f90", false } };
+    for (want) |x| try std.testing.expectEqual(x[1], isIfortInterface(io, try paths.join(arena.allocator(), &.{ root, x[0] })));
+}
+
 test "compile_commands.json: the flags of Fortran entries" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
