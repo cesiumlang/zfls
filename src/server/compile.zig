@@ -427,8 +427,8 @@ fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
     return out;
 }
 
-/// The compiler's arguments for `file`: syntax only, its form, the
-/// preprocessor and zfls's definitions when zfls preprocesses it, the .mod
+/// The compiler's arguments for `file`: syntax only, its form and line
+/// length, the preprocessor and zfls's definitions when zfls preprocesses it, the .mod
 /// directory, the include directories, then `compiler_args` (or the
 /// compiler's defaults) and the file. Relative directories in
 /// `compiler_args` are relative to `base`, the directory of the file
@@ -437,6 +437,11 @@ fn argsOf(self: *Server, a: Allocator, id: compilers.Id, file: *const FortranFil
     var args: std.ArrayList([]const u8) = .empty;
     try args.appendSlice(a, try compilers.syntaxOnly(a, id, o));
     try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
+    // the line length zfls reads, unless `compiler_args` sets one
+    const user_sets = if (self.s.compiler_args) |user| for (user.slice()) |x| {
+        if (compilers.isLineLength(id, file.fixed, x)) break true;
+    } else false else false;
+    if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
     // debug lines as zfls reads them, unless compiler_args says
     if (file.fixed) {
         const user: []const []const u8 = if (self.s.compiler_args) |u| u.slice() else &.{};

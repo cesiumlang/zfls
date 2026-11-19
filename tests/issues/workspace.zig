@@ -490,3 +490,19 @@ test "Modern Fortran #1087 a workspace on a UNC path (file://host/share/...) is 
     defer w.deinit();
     try h.checkIn(.modern_fortran, 1087, .fixed, expectUncAnswers(w));
 }
+
+test "textDocumentSync is announced as options: open and close, the change kind, save without text (#269)" {
+    const empty = [_]h.File{.{ .name = "t.f90", .text = "program p\nend program p\n" }};
+    inline for (.{ false, true }) |incremental| {
+        const w = try h.Workspace.init(&empty, .{ .settings = .{ .incremental_sync = incremental } });
+        defer w.deinit();
+        const sync = h.json.path(w.init_result, &.{ "capabilities", "textDocumentSync" }) orelse return error.TestUnexpectedResult;
+        const text = try h.json.stringify(std.testing.allocator, sync);
+        defer std.testing.allocator.free(text);
+        const want = if (incremental)
+            "{\"openClose\":true,\"change\":2,\"save\":{\"includeText\":false}}"
+        else
+            "{\"openClose\":true,\"change\":1,\"save\":{\"includeText\":false}}";
+        try std.testing.expectEqualStrings(want, text);
+    }
+}
