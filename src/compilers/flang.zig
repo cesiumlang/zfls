@@ -41,7 +41,13 @@ pub fn parse(p: *Parser, output: []const u8) !void {
             const ln = compilers.num(m.named(r, "ln"));
             const cn = compilers.num(m.named(r, "cn"));
             const msg = m.named(r, "msg").?;
-            if (sev) |s| {
+            if (sev != null and p.out.items.len > 0 and std.mem.eql(u8, std.mem.trim(u8, msg, " \t"), "included here")) {
+                // where the message before's file is included: an include
+                // between it and the file checked becomes related
+                const last = &p.out.items[p.out.items.len - 1];
+                if (last.include_site) |inner| try last.related.append(p.a, inner);
+                last.include_site = .{ .file = m.named(r, "file"), .line = ln, .column = cn, .message = "included here" };
+            } else if (sev) |s| {
                 const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try p.a.print("portability: {s}", .{msg}) else msg;
                 try p.push(m.named(r, "file"), ln, cn, s, text_msg, null);
             } else if (p.out.items.len > 0) {
@@ -94,6 +100,37 @@ test "flang's summary of a syntax error is no message of its own" {
         "C:\\w\\parse.f90:5:16 error: expected end of statement",
         "C:\\w\\ppinc.F90:1:10 error: #include: Source file 'bad.inc' was not found",
     });
+}
+
+test "flang: \"included here\" is where the message's file is included" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Flang 23.1.5 on Windows; Flang 20 to 22 print the same lines
+    const ms = try compilers.parse(a, .flang,
+        \\inc\warn.inc:1:14: warning: Value of local variable 'unused_v' is never used [-Wunused-variable]
+        \\    integer :: unused_v
+        \\               ^^^^^^^^
+        \\winc.f90:3:1: warning: included here
+        \\    include 'warn.inc'
+        \\  ^^^^^^^^^^^^^^^^^^^^
+        \\error: Could not parse pinc.F90
+        \\inc\perr.inc:1:14: error: expected end of statement
+        \\pinc.F90:4:1: error: included here
+        \\inc\perr.inc:1:3: in the context: execution part construct
+        \\pinc.F90:4:1: in the context: included here
+        \\pinc.F90:1:1: in the context: main program
+    );
+    const got = try compilers.brief(a, ms);
+    try std.testing.expectEqual(@as(usize, 2), got.len);
+    try std.testing.expectEqualStrings("inc\\warn.inc:1:14 warning: Value of local variable 'unused_v' is never used [-Wunused-variable]", got[0]);
+    try std.testing.expectEqualStrings("inc\\perr.inc:1:14 error: expected end of statement", got[1]);
+    try std.testing.expectEqualStrings("winc.f90", ms[0].include_site.?.file.?);
+    try std.testing.expectEqual(@as(usize, 3), ms[0].include_site.?.line);
+    try std.testing.expectEqual(@as(usize, 4), ms[1].include_site.?.line);
+    // the context lines stay with the message
+    try std.testing.expectEqual(@as(usize, 3), ms[1].related.items.len);
+    try std.testing.expectEqualStrings("in the context: execution part construct", ms[1].related.items[0].message);
 }
 
 test "flang messages and their context lines" {

@@ -715,6 +715,25 @@ pub fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line:
     return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
 }
 
+/// Whether a message's file is the file checked (`here`: its names, as
+/// `comparable`); a message without a file is about it
+fn isHere(a: Allocator, job: *const Job, here: []const []const u8, file: ?[]const u8) !bool {
+    const named = try comparable(a, job.cwd, file orelse return true);
+    for (here) |h| if (std.mem.eql(u8, named, h)) return true;
+    return false;
+}
+
+/// A further location of a message, one character at its line and column
+fn relatedInfo(a: Allocator, job: *const Job, r: compilers.Related) !lsp.DiagnosticRelatedInformation {
+    const rpath = if (r.file) |f| (if (std.Io.Dir.path.isAbsolute(f)) f else try paths.join(a, &.{ job.cwd, f })) else job.path;
+    const rl = r.line -| 1;
+    const rc = (r.column orelse 1) -| 1;
+    return .{
+        .location = .{ .uri = try paths.pathToUri(a, try paths.normpath(a, rpath)), .range = .{ .start = .{ .line = rl, .character = rc }, .end = .{ .line = rl, .character = rc + 1 } } },
+        .message = r.message,
+    };
+}
+
 /// The compiler's messages as diagnostics of the file, which they may name
 /// as any of `aliases` (the file, its copy, fypp's output)
 fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const compilers.Message, aliases: []const []const u8) ![]const lsp.Diagnostic {
@@ -723,26 +742,18 @@ fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const 
     for (aliases) |p| try here.append(a, try comparable(a, job.cwd, p));
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (msgs) |m| {
-        const ours = if (m.file) |f| blk: {
-            const named = try comparable(a, job.cwd, f);
-            for (here.items) |h| if (std.mem.eql(u8, named, h)) break :blk true;
-            break :blk false;
-        } else true;
+        const ours = try isHere(a, job, here.items, m.file);
+        // a message in an included file, at the line that includes it
+        const site = if (ours) null else if (m.include_site) |s| (if (try isHere(a, job, here.items, s.file)) s else null) else null;
         var related: std.ArrayList(lsp.DiagnosticRelatedInformation) = .empty;
-        for (m.related.items) |r| {
-            const rpath = if (r.file) |f| (if (std.Io.Dir.path.isAbsolute(f)) f else try paths.join(a, &.{ job.cwd, f })) else job.path;
-            const rl = r.line -| 1;
-            const rc = (r.column orelse 1) -| 1;
-            try related.append(a, .{
-                .location = .{ .uri = try paths.pathToUri(a, try paths.normpath(a, rpath)), .range = .{ .start = .{ .line = rl, .character = rc }, .end = .{ .line = rl, .character = rc + 1 } } },
-                .message = r.message,
-            });
-        }
-        // a message about another file (an included one): at the top, with
-        // its location
+        // its place in that file first
+        if (site != null) try related.append(a, try relatedInfo(a, job, .{ .file = m.file, .line = m.line, .column = m.column, .message = m.message }));
+        for (m.related.items) |r| try related.append(a, try relatedInfo(a, job, r));
+        // a message about another file (an included one): at the line that
+        // includes it or else at the top, with its location
         const message = if (ours) m.message else try a.print("{s}:{d}: {s}", .{ m.file.?, m.line, m.message });
         try out.append(a, .{
-            .range = if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else rangeAt(lines, 0, null, null, null),
+            .range = if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else if (site) |s| rangeAt(lines, s.line, null, null, null) else rangeAt(lines, 0, null, null, null),
             .message = message,
             .severity = m.severity.lsp(),
             .code = m.code,
@@ -813,4 +824,42 @@ test "ranges: the name at the column, the whole line, a span" {
     try std.testing.expectEqual(@as(usize, 3), span.end.character);
     const none = rangeAt(&lines, 0, null, null, null);
     try std.testing.expectEqual(@as(usize, 0), none.end.character);
+}
+
+test "a message in an included file: at the line that includes it, its place related" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cwd = if (is_windows) "C:\\w" else "/w";
+    const path = try paths.join(a, &.{ cwd, "nest.f90" });
+    const job: Job = .{ .arena = arena, .uri = "", .path = path, .id = .flang, .exes = &.{}, .compiler_path = null, .cwd = cwd, .deps = &.{}, .deps_fixed = &.{}, .deps_cwd = &.{}, .args = &.{}, .fixed = false, .work_dir = cwd };
+    // Flang 23.1.5's output for an INCLUDE of an INCLUDE
+    const msgs = try compilers.parse(a, .flang,
+        \\error: Semantic errors in nest.f90
+        \\inc/bad.inc:2:7: error: No explicit type declared for 'undeclared_in_inc'
+        \\    q = undeclared_in_inc
+        \\        ^^^^^^^^^^^^^^^^^
+        \\inc/outer.inc:1:1: error: included here
+        \\    include 'bad.inc'
+        \\  ^^^^^^^^^^^^^^^^^^^
+        \\nest.f90:3:1: error: included here
+        \\    include 'outer.inc'
+        \\  ^^^^^^^^^^^^^^^^^^^^^
+    );
+    const text = "program n\n  implicit none\n  include 'outer.inc'\n  print *, q\nend program n\n";
+    const ds = try toDiagnostics(a, &job, text, msgs, &.{path});
+    try std.testing.expectEqual(@as(usize, 1), ds.len);
+    try std.testing.expectEqualStrings("inc/bad.inc:2: No explicit type declared for 'undeclared_in_inc'", ds[0].message);
+    // the INCLUDE line, from its keyword
+    try std.testing.expectEqual(@as(usize, 2), ds[0].range.start.line);
+    try std.testing.expectEqual(@as(usize, 2), ds[0].range.start.character);
+    try std.testing.expectEqual(@as(usize, 21), ds[0].range.end.character);
+    const rel = ds[0].relatedInformation.?;
+    try std.testing.expectEqual(@as(usize, 2), rel.len);
+    try std.testing.expect(std.mem.endsWith(u8, rel[0].location.uri, "/inc/bad.inc"));
+    try std.testing.expectEqual(@as(usize, 1), rel[0].location.range.start.line);
+    try std.testing.expectEqual(@as(usize, 6), rel[0].location.range.start.character);
+    try std.testing.expectEqualStrings("No explicit type declared for 'undeclared_in_inc'", rel[0].message);
+    try std.testing.expect(std.mem.endsWith(u8, rel[1].location.uri, "/inc/outer.inc"));
+    try std.testing.expectEqualStrings("included here", rel[1].message);
 }
