@@ -666,7 +666,7 @@ pub const Parser = struct {
         const m = R().IMPLICIT.match(line) orelse return false;
         const ast = p.file_ast;
         if (ast.current_scope) |cs| {
-            if (ast.inMain()) try ast.addMainError(.statement_without_scope, "IMPLICIT statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
+            if (ast.inMain()) try ast.addMainImplicitError("IMPLICIT statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
             // the types of the letters, for names that are not declared
             var spec = line[m.start(1)..];
