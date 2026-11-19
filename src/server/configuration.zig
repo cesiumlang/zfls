@@ -39,6 +39,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const diagnostics = @import("diagnostics.zig");
+const pull = @import("pull.zig");
 const compile = @import("compile.zig");
 const format = @import("format.zig");
 const bindc = @import("bindc.zig");
@@ -224,6 +225,7 @@ pub fn watchConfigFiles(self: *Server, a: Allocator) void {
 /// Puts the settings `next` (as configured) in effect; `force_reindex`:
 /// index the workspace again whatever the settings
 fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void {
+    pull.changed(self);
     const prev = self.config.configured;
     self.config.configured = next;
     const same = struct {
@@ -340,6 +342,9 @@ fn announce(self: *Server, a: Allocator) !void {
             self.config.announced.formatting = true;
         } else try restart.append(a, "formatter");
     }
+    // the client pulls the workspace's diagnostics only if told so at
+    // initialize
+    if (self.pull_diagnostics and self.s.workspace_diagnostics and !self.pull_workspace) try restart.append(a, "workspace_diagnostics");
     if (regs.items.len > 0) self.sendRequest(a, "client/registerCapability", try json.from(a, .{ .registrations = regs.items })) catch |e| self.logSendFailure(e);
     if (restart.items.len > 0) {
         const names = try std.mem.join(a, ", ", restart.items);
@@ -353,6 +358,8 @@ fn republish(self: *Server, a: Allocator, was_published: bool, was_workspace: bo
         if (was_published) try clear(self, a, was_workspace, true);
         return;
     }
+    // pulled again, by a client that pulls them
+    if (self.pull_diagnostics) return pull.refresh(self, a);
     // those of the files that are no longer published
     if (was_workspace and !self.s.workspace_diagnostics) try clear(self, a, true, false);
     if (self.s.workspace_diagnostics) {
