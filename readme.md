@@ -63,7 +63,8 @@ command line options and configuration files.
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
-- Fixed and free source form, line continuations, Doxygen and FORD style
+- Fixed and free source form (also switched within a file by LLVM Flang's
+  `!dir$ fixed` and `!dir$ free`), line continuations, Doxygen and FORD style
   documentation comments, OpenMP conditional compilation lines (`!$ x = 1`)
   read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`,
@@ -151,6 +152,7 @@ the columns say whose dialect each is.
 | Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
 | CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | ✓ | ✓ | – | – |
 | `!DIR$ IGNORE_TKR`: no argument checks for the dummy arguments it names | – | – | – | ✓ | ✓ | – | – |
+| `!DIR$ FIXED`, `!DIR$ FREE`: the source form of the lines after them | – | – | – | ✓ | – | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 
 5. gfortran's with `-fdec-structure`.

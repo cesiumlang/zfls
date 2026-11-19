@@ -27,6 +27,7 @@ const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
 const changes = @import("parser/changes.zig");
 const openmp = @import("parser/openmp.zig");
+const form_switch = @import("parser/form_switch.zig");
 const pp_intel = @import("preprocessor/intel.zig");
 
 pub const ResultSig = parser_definitions.ResultSig;
@@ -208,7 +209,13 @@ pub const FortranFile = struct {
     /// the text then, from which the summary of a file is parsed again
     /// (server/summary.zig)
     prepared: ?struct { out: ?pp.Output, hash: ?u64 } = null,
+    /// The form zfls reads `lines` in: free in a file whose `!dir$ fixed`
+    /// or `!dir$ free` switch forms (`form_switched`), whose fixed-form
+    /// lines `lines` has as free-form ones (parser/form_switch.zig)
     fixed: bool = false,
+    /// The file's own form (of its first lines), which compilers are told
+    declared_fixed: bool = false,
+    form_switched: bool = false,
     /// The form the editor gives the document while it is open (its
     /// language: `formOfLanguage`), which comes before the form that its
     /// name and text suggest
@@ -279,13 +286,23 @@ pub const FortranFile = struct {
     /// after which it has to be parsed again.
     pub fn forceForm(self: *FortranFile, form: ?SourceForm) bool {
         self.forced_form = form;
-        const was = self.fixed;
+        const was = self.declared_fixed;
         const lines = self.editLines();
-        self.fixed = self.detectFixed(lines);
-        // debug lines are read as code in fixed form only (`d_lines`): the
-        // editor's lines read again in the new form
-        if (was != self.fixed and self.d_lines_code) self.setContents(lines, false) catch {};
-        return was != self.fixed;
+        self.setForm(lines, true);
+        // debug lines are read as code in fixed form only (`d_lines`), and
+        // the fixed-form lines of a file that switches forms as free ones:
+        // the editor's lines read again in the new form
+        if (was != self.declared_fixed and (self.d_lines_code or self.form_switched)) self.setContents(lines, false) catch {};
+        return was != self.declared_fixed;
+    }
+
+    /// The forms of the file: its own (by `detectFixed` of the lines before
+    /// a `!dir$ fixed` or `!dir$ free`, or as it was), and whether these
+    /// switch it
+    fn setForm(self: *FortranFile, lines: []const []const u8, detect: bool) void {
+        if (detect) self.declared_fixed = self.detectFixed(lines[0 .. form_switch.first(lines) orelse lines.len]);
+        self.form_switched = form_switch.switches(self.declared_fixed, lines);
+        self.fixed = self.declared_fixed and !self.form_switched;
     }
 
     /// Whether the file is in fixed form: as the editor says, if it does
@@ -323,7 +340,7 @@ pub const FortranFile = struct {
             at += l.len;
         }
         // the form first, which the lines zfls reads depend on
-        if (detect_format) self.fixed = self.detectFixed(fresh.items);
+        self.setForm(fresh.items, detect_format);
         self.replaceText(buf, fresh);
     }
 
@@ -352,9 +369,10 @@ pub const FortranFile = struct {
     }
 
     /// Whether a line of the text is read otherwise than it is written:
-    /// comment markers, debug lines read as code, OpenMP conditional lines
+    /// comment markers, debug lines read as code, OpenMP conditional lines,
+    /// fixed-form lines of a file that switches forms
     fn rewrites(self: *const FortranFile) bool {
-        if (self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
+        if (self.form_switched or self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
         if (!self.openmp_conditional) return false;
         for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
         return false;
@@ -364,6 +382,11 @@ pub const FortranFile = struct {
     /// markers made `!`, the D or d in column 1 a blank with
     /// `d_lines_code`, the sentinels of OpenMP conditional lines blanks
     fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+        if (self.form_switched) {
+            const out = try form_switch.asFree(self.gpa, self.declared_fixed, self.d_lines_code, raw);
+            for (out.lines.items) |l| self.rewriteLine(@constCast(l));
+            return .{ .text = out.text, .lines = out.lines };
+        }
         const text = try self.gpa.dupe(u8, buf);
         errdefer self.gpa.free(text);
         var lines: std.ArrayList([]const u8) = .empty;
@@ -372,12 +395,16 @@ pub const FortranFile = struct {
         for (raw) |l| {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
-            if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
-            if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
-            if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
+            self.rewriteLine(line);
             lines.appendAssumeCapacity(line);
         }
         return .{ .text = text, .lines = lines };
+    }
+
+    fn rewriteLine(self: *const FortranFile, line: []u8) void {
+        if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
+        if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
+        if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
     }
 
     /// The lines that changes apply to: the editor's
@@ -424,7 +451,7 @@ pub const FortranFile = struct {
         }
         try fresh.append(self.gpa, text[start..]);
         self.hash = h;
-        self.fixed = self.detectFixed(fresh.items);
+        self.setForm(fresh.items, true);
         self.replaceText(text, fresh);
         return true;
     }
