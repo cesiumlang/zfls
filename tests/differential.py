@@ -668,6 +668,43 @@ def separate_procedure_refs(a, b) -> bool:
     return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
 
 
+USE_RENAME = re.compile(r"^\s*use\b.*=>", re.I)
+
+
+def use_alias_refs(a, b) -> bool:
+    """zfls's references to an entity that USE statements rename also list
+    its places under the local names (zfls #233); fortls lists those of
+    one name only: whether `b` is `a` plus places of names that a USE
+    rename (`local => name`) among the places' files has on either side.
+    fortls may have none: for an intrinsic module's entity, say."""
+    if a is None:
+        a = []
+    if not (isinstance(a, list) and isinstance(b, list)):
+        return False
+    ka = {ref_key(r) for r in a}
+    kb = {ref_key(r) for r in b}
+    if not ka < kb:
+        return False
+    renames = set()
+    for u in {u for u, _, _ in kb}:
+        path = unquote(u.removeprefix("file://"))
+        if os.name == "nt":
+            path = path.lstrip("/")
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for t in text.splitlines():
+            if USE_RENAME.match(t):
+                for m in re.finditer(r"(\w+)\s*=>\s*(\w+)", t):
+                    renames.update(x.lower() for x in m.groups())
+    for u, ln, ch in kb - ka:
+        m = re.match(r"\w+", uri_line(u, ln)[ch:])
+        if not m or m.group(0).lower() not in renames:
+            return False
+    return True
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fortls", default=str(REPO.parent / "fortls"))
@@ -856,6 +893,10 @@ def main() -> int:
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
                 # interface and implementation (hansec issue 168)
+                continue
+            if kind == "references" and use_alias_refs(a, b):
+                # references follow names that USE statements rename
+                # (zfls #233)
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with
