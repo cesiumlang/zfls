@@ -197,6 +197,18 @@ pub fn findThroughUse(env: Env, scope: *Obj, name_lower: []const u8, outside: bo
     return walk.search(scope, name_lower);
 }
 
+/// Whether what `name_lower` stands for in `scope` by USE (as
+/// `findThroughUse` finds it) comes through module `via`, where it is
+/// named `via_name`: through the rename of a USE statement there, say.
+/// Null when the name is not found.
+pub fn comesThrough(env: Env, scope: *Obj, name_lower: []const u8, outside: bool, via: *Obj, via_name: []const u8) Allocator.Error!?bool {
+    if (outside and !exportsUsedName(scope, name_lower)) return null;
+    var walk: UseWalk = .{ .env = env, .name = name_lower, .via = .{ via, via_name } };
+    walk.on_path = scope == via and std.mem.eql(u8, name_lower, via_name);
+    _ = (try walk.search(scope, name_lower)) orelse return null;
+    return walk.found_on_path;
+}
+
 const UseWalk = struct {
     env: Env,
     /// The name looked up, as `scope` has it: a used module of that name is
@@ -204,6 +216,11 @@ const UseWalk = struct {
     name: []const u8,
     /// The modules searched, each with a hash of the name searched there
     seen: std.AutoHashMapUnmanaged(struct { *Obj, u64 }, void) = .empty,
+    /// For `comesThrough`: the module and its name to look for on the way,
+    /// whether the walk is in it, and whether it was when the name was found
+    via: ?struct { *Obj, []const u8 } = null,
+    on_path: bool = false,
+    found_on_path: bool = false,
 
     /// Search the modules `scope` uses for `name`, its name in `scope`
     fn search(w: *UseWalk, scope: *Obj, name: []const u8) Allocator.Error!?*Obj {
@@ -211,15 +228,25 @@ const UseWalk = struct {
         for (scope.scopeDataConst().use.items) |u| {
             if (u.is_import or !w.env.tree.contains(u.mod_name)) continue;
             const mod = w.env.global(scope.file_ast, u.mod_name) orelse continue;
-            if (std.mem.eql(u8, u.mod_name, w.name)) return mod;
+            if (std.mem.eql(u8, u.mod_name, w.name)) return w.found(mod);
             const there = u.nameThere(name) orelse continue;
-            if (try checkScope(w.env, mod, there, true, null)) |v| return v;
+            if (try checkScope(w.env, mod, there, true, null)) |v| return w.found(v);
             if (!exportsUsedName(mod, there)) continue;
             const gop = try w.seen.getOrPut(w.env.tmp, .{ mod, std.hash.Wyhash.hash(0, there) });
             if (gop.found_existing) continue;
+            const was_on_path = w.on_path;
+            defer w.on_path = was_on_path;
+            if (w.via) |v| if (v[0] == mod and std.mem.eql(u8, v[1], there)) {
+                w.on_path = true;
+            };
             if (try w.search(mod, there)) |v| return v;
         }
         return null;
+    }
+
+    fn found(w: *UseWalk, obj: *Obj) *Obj {
+        w.found_on_path = w.on_path;
+        return obj;
     }
 };
 

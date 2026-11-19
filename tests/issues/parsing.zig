@@ -160,6 +160,46 @@ test "#486 a function-like macro with an empty argument list" {
     });
 }
 
+test "token pasting, stringification and empty C comments make names (#226)" {
+    const w = try h.Workspace.init(&.{.{ .name = "cat.F90", .text =
+        \\#define PASTE(a,b) a##b
+        \\#define STR(x) #x
+        \\#define WRAP(P) P , wrap_/**/P
+        \\module cat_m
+        \\  implicit none
+        \\  integer :: PASTE(my,var)
+        \\  integer :: pre/**/fix
+        \\  type :: t
+        \\  contains
+        \\    procedure :: WRAP(abc)
+        \\  end type t
+        \\contains
+        \\  subroutine abc(self)
+        \\    class(t) :: self
+        \\    myvar = 1
+        \\    prefix = 2
+        \\    print *, STR(hello), "a##b", 'x/**/y'
+        \\  end subroutine
+        \\  subroutine wrap_abc(self)
+        \\    class(t) :: self
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    // `hello` of `STR(hello)` is still taken for a name (#227)
+    for (try w.diagnostics("cat.F90")) |d| {
+        if (std.mem.find(u8, d.message, "\"hello\"") == null) return h.unmet("line {d}: {s}", .{ d.line + 1, d.message });
+    }
+    try w.expectHoverContains("cat.F90", w.pos("cat.F90", "myvar = 1", 0, 0), "INTEGER :: myvar");
+    const syms = try w.symbolPaths("cat.F90");
+    for ([_][]const u8{ "cat_m/myvar", "cat_m/prefix", "cat_m/t/wrap_abc" }) |want| {
+        for (syms) |s| {
+            if (std.mem.eql(u8, s, want)) break;
+        } else return h.unmet("no symbol {s} among {d}", .{ want, syms.len });
+    }
+}
+
 test "#236 a continued line that runs into an include directive" {
     const w = try h.Workspace.init(&.{
         .{ .name = "hellomain.F90", .text =
@@ -248,6 +288,127 @@ test "#495 hover and definition inside a file that is #included into a module" {
         const l = def orelse break :blk h.unmet("global_variable is not found from the included file", .{});
         break :blk h.expect(std.mem.endsWith(u8, l.uri, "hello.F90"), "definition is in {s}", .{l.uri});
     });
+}
+
+const include_uses = [_]h.File{
+    .{ .name = "tmod.f90", .text =
+    \\module tmod
+    \\  implicit none
+    \\  type :: tt
+    \\    integer :: comp
+    \\  end type
+    \\  integer :: modvar
+    \\contains
+    \\  subroutine tsub(n)
+    \\    integer, intent(in) :: n
+    \\  end subroutine tsub
+    \\end module tmod
+    \\
+    },
+    .{ .name = "uses.inc", .text =
+    \\      use tmod
+    \\      implicit none
+    \\
+    },
+    .{ .name = "main.f90", .text =
+    \\subroutine s1()
+    \\  include 'uses.inc'
+    \\  type(tt) :: v
+    \\  v%comp = modvar
+    \\  call tsub(1)
+    \\  undeclared = 1
+    \\end subroutine s1
+    \\
+    },
+    .{ .name = "main2.F90", .text =
+    \\subroutine s2()
+    \\#include "uses.inc"
+    \\  type(tt) :: v
+    \\  v%comp = modvar
+    \\  call tsub(1)
+    \\  undeclared = 1
+    \\end subroutine s2
+    \\
+    },
+};
+
+/// The USE and IMPLICIT NONE of uses.inc apply in `name`, which includes it
+fn expectIncludedUses(w: *h.Workspace, name: []const u8) !void {
+    var undeclared = false;
+    for (try w.diagnostics(name)) |d| {
+        if (std.mem.eql(u8, d.code, "object-not-found") or std.mem.eql(u8, d.code, "module-not-found") or std.mem.eql(u8, d.code, "use-after-implicit"))
+            return h.unmet("{s}:{d}: {s}", .{ name, d.line + 1, d.message });
+        if (std.mem.find(u8, d.message, "\"undeclared\" is not declared") != null) undeclared = true;
+    }
+    try h.expect(undeclared, "{s}: undeclared is not reported", .{name});
+    try w.expectHoverContains(name, w.pos(name, "v%comp", 0, 2), "INTEGER :: comp");
+    const at = w.pos(name, "modvar", 0, 0);
+    try w.expectHoverContains(name, at, "INTEGER :: modvar");
+    if (std.mem.find(u8, (try w.hover(name, at)).?, "Implicitly") != null) return h.unmet("{s}: modvar is implicitly typed", .{name});
+    try w.expectHoverContains(name, w.pos(name, "tsub", 0, 0), "tsub");
+    const def = (try w.definition(name, at)) orelse return h.unmet("{s}: no definition of modvar", .{name});
+    try h.expect(std.mem.endsWith(u8, def.uri, "tmod.f90"), "{s}: modvar is defined in {s}", .{ name, def.uri });
+    // completion offers it without adding a USE statement
+    for (try w.completionItems(name, w.pos(name, "modvar", 0, 4))) |item| {
+        if (std.mem.eql(u8, item.label, "modvar") and item.added != null) return h.unmet("{s}: completion adds {s}", .{ name, item.added.? });
+    }
+}
+
+test "USE and IMPLICIT NONE in a file included with INCLUDE or #include apply in the including scope (#249)" {
+    const w = try h.Workspace.init(&include_uses, .{});
+    defer w.deinit();
+    try expectIncludedUses(w, "main.f90");
+    try expectIncludedUses(w, "main2.F90");
+    // its IMPLICIT NONE is not without a scope: it applies in the includer's
+    try w.expectNoDiagnostics("uses.inc");
+    // without the USE in the included file, the type is not found again
+    try w.changeOnDisk("uses.inc", "      integer :: other\n");
+    var not_found = false;
+    for (try w.diagnostics("main.f90")) |d| {
+        if (std.mem.eql(u8, d.code, "object-not-found")) not_found = true;
+    }
+    try h.expect(not_found, "tt is still found after the USE was removed from uses.inc", .{});
+}
+
+test "USE statements in the active branch of an #included header and in a header it #includes apply (#249)" {
+    const files = include_uses ++ [_]h.File{
+        .{ .name = "kmod.f90", .text =
+        \\module kmod
+        \\  implicit none
+        \\  integer :: kvar
+        \\end module kmod
+        \\
+        },
+        .{ .name = "outer.INC", .text =
+        \\#ifdef NOT_DEFINED
+        \\      use nonexistent
+        \\#else
+        \\      use tmod
+        \\#endif
+        \\#include "inner.inc"
+        \\      implicit none
+        \\
+        },
+        .{ .name = "inner.inc", .text =
+        \\      use kmod
+        \\
+        },
+        .{ .name = "main3.F90", .text =
+        \\subroutine s3()
+        \\#include "outer.INC"
+        \\  type(tt) :: v
+        \\  v%comp = modvar + kvar
+        \\  call tsub(1)
+        \\  undeclared = 1
+        \\end subroutine s3
+        \\
+        },
+    };
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    try expectIncludedUses(w, "main3.F90");
+    try w.expectNoDiagnostics("outer.INC");
+    try w.expectHoverContains("main3.F90", w.pos("main3.F90", "kvar", 0, 0), "INTEGER :: kvar");
 }
 
 test "a procedure #included into a submodule is found before another file's of the same name" {
@@ -556,4 +717,62 @@ test "CUDA Fortran: kernels, the launch syntax and .cuf files" {
     const w = try h.Workspace.init(&cuda, .{});
     defer w.deinit();
     try expectCuda(w);
+}
+
+const quotes = [_]h.File{.{ .name = "a.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  character(len=*), parameter :: msg = "it's", tag = 'x'
+    \\  character(len=5) :: m2 = "it's", t2 = "Bob's", u2 = 'z'
+    \\contains
+    \\  subroutine foo(a, b, c)
+    \\    character(len=*) :: a, b
+    \\    integer :: c
+    \\  end subroutine
+    \\  subroutine caller()
+    \\    call foo("it's", "Bob's", 1)
+    \\    call foo("its", "Bobs", 1)
+    \\    call foo('it''s', 'Bob''s', 1)
+    \\    call foo("it""s", "Bob's", 1)
+    \\    call foo('it''s', "Bob's", 1)
+    \\    call foo("it's", 'Bob''s', 1)
+    \\  end subroutine
+    \\end module
+    \\
+}};
+
+fn expectQuotes(w: *h.Workspace) !void {
+    const syms = try w.symbolPaths("a.f90");
+    for ([_][]const u8{ "m/msg", "m/tag", "m/m2", "m/t2", "m/u2" }) |name| {
+        var found = false;
+        for (syms) |s| found = found or std.mem.eql(u8, s, name);
+        try h.expect(found, "{s} is not in the symbols", .{name});
+    }
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "tag", 0, 0), "CHARACTER(len=*), PARAMETER :: tag = 'x'");
+    for (0..6) |i| {
+        const p = w.pos("a.f90", ", 1)", i, 2);
+        const sig = (try w.signature("a.f90", p)) orelse return h.unmet("line {d}: no signature help", .{p.line + 1});
+        try h.expect(sig.active == 2, "line {d}: active parameter {d}, not 2", .{ p.line + 1, sig.active });
+    }
+    try w.expectNoDiagnostics("a.f90");
+}
+
+test "a string holding the other quote character ends where its own quote does (#231)" {
+    const w = try h.Workspace.init(&quotes, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try expectQuotes(w);
+}
+
+test "an undeclared name after strings holding both quote characters is reported (#231)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text =
+        \\program p
+        \\  implicit none
+        \\  print *, 'say "hi"', "it's", x
+        \\end program p
+        \\
+    }}, .{});
+    defer w.deinit();
+    var found = false;
+    for (try w.diagnostics("p.f90")) |d| found = found or (d.line == 2 and std.mem.find(u8, d.message, "x") != null);
+    try std.testing.expect(found);
 }

@@ -12,7 +12,11 @@ their editor title buttons its `fortran.build.run` and
 `src/debug/configuration.ts`, and the compiler linting (the
 `zfls.linter.*` settings, and the compiler options and message formats of
 gfortran, Intel, NAG and LFortran in zfls's `src/compilers.zig`) the design
-of its `src/lint/`. These are used under its MIT license:
+of its `src/lint/`. zfls has changed the grammars since; where a rule
+differs from upstream's in what it matches, its `comment` says so with
+"zfls:" (for example: a type keyword starts a type declaration only where a
+statement starts, not in an expression such as `x = real(a)`). These are
+used under its MIT license:
 
 ```text
 MIT License
