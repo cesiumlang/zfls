@@ -40,6 +40,7 @@ const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const configuration = @import("configuration.zig");
 const completion_resolve = @import("completion_resolve.zig");
+const lenses = @import("lenses.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -67,10 +68,13 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try configLogger(self);
     try loadIntrinsics(self);
     try addSourceDirs(self, a);
+    self.lens_commands = lenses.clientCommands(params.capabilities.experimental);
+    self.config.client.experimental = null;
 
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);
     self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
+    try logOptions(self, a);
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
     const on = configuration.wanted(self);
@@ -88,8 +92,8 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
 }
 
 /// The names of the configuration file, the first found being read
-pub fn configFileNames(self: *const Server) [4][]const u8 {
-    return .{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
+pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames("")) {
+    return settings_mod.configFileNames(self.s.config);
 }
 
 /// Reads the configuration file: its JSON object (owned by the server's
@@ -197,6 +201,13 @@ pub fn configLogger(self: *Server) !void {
     }
 }
 
+/// The options in effect, after the command line, the editor's settings,
+/// the configuration file and the build files, in the debug log
+pub fn logOptions(self: *Server, a: Allocator) Allocator.Error!void {
+    if (!self.log.enabled(.debug)) return;
+    self.log.debug("Final options: {s}", .{try json.stringify(a, try settings_mod.toJson(a, &self.s))});
+}
+
 pub fn loadIntrinsics(self: *Server) !void {
     const new = try intrinsics.load(self.gpa, self.s.lowercase_intrinsics);
     // Remove old intrinsic modules from the tree before freeing them
@@ -254,6 +265,7 @@ pub fn getSourceFiles(self: *Server, a: Allocator) ![][]const u8 {
                 excluded = true;
             };
             if (excluded) continue;
+            if (project.isIfortInterface(self.io, p)) continue;
             try out.append(a, p);
         }
     }
@@ -473,7 +485,13 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             ast.none_scope = inc;
             for (inc.childList()) |c| c.parent = inc;
         }
-        for (ast.include_statements.items) |inc| {
+        // the last linked first, so that each restores the IMPLICIT state
+        // it found
+        var k_inc = ast.include_statements.items.len;
+        while (k_inc > 0) {
+            k_inc -= 1;
+            const inc = ast.include_statements.items[k_inc];
+            inc.unlink();
             inc.inc_obj = null;
             inc.file = null;
         }
@@ -769,14 +787,16 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
 
 /// Whether `path` is a file the workspace indexes: a Fortran file of a
 /// source directory (any directory under the root, without
-/// `source_dirs`) that no exclusion covers
+/// `source_dirs`) that no exclusion covers, and no interface module of
+/// ifort's
 pub fn isSourceFile(self: *const Server, path: []const u8) bool {
     const base = std.Io.Dir.path.basename(path);
     if (self.src_ext_regex.search(base) == null) return false;
     for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
     for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
-    if (self.s.source_dirs.contains(paths.dirname(path))) return true;
-    return self.whole_root and std.mem.startsWith(u8, path, self.root_path);
+    const in_sources = self.s.source_dirs.contains(paths.dirname(path)) or
+        (self.whole_root and std.mem.startsWith(u8, path, self.root_path));
+    return in_sources and !project.isIfortInterface(self.io, path);
 }
 
 /// `didOpen`, `didSave` and `didClose` of a document that is not a file

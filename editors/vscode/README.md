@@ -51,6 +51,9 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   module variables, stopping on Fortran runtime errors (see
   [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the
   other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
+- code lenses: the number of references above each module, procedure and
+  derived type (click it for the references), and **Run** and **Debug**
+  above a program
 - run and debug the current file with one click (see
   [Running and debugging](#running-and-debugging))
 - fpm projects: tasks, running and debugging their targets, and their tests
@@ -74,7 +77,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.incrementalSync` | `true` | Send document changes incrementally |
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
-| `zfls.hoverSignature` | `true` | Procedure signatures in hover |
+| `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
 | `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |
@@ -83,6 +86,8 @@ disable Modern Fortran when you install zfls (see
 | `zfls.autocompleteNoAutoUse` | `false` | Do not offer names of modules not used yet (completing one adds its `use` statement) |
 | `zfls.sortKeywords` | `false` | Sort variable keywords in hover |
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
+| `zfls.codeLensNoReferences` | `false` | No reference counts above modules, procedures and types (`editor.codeLens` turns off every lens) |
+| `zfls.codeLensNoRun` | `false` | No **Run** and **Debug** above a program |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
 | `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
@@ -189,13 +194,16 @@ zfls says so once and checks nothing.
 
 | Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
 | --- | --- | --- |
-| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form`/`-ffixed-form -J<dir>`, and `-Wall` by default |
-| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /module:<dir>`, `/warn:all`) |
-| `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed -mdir <dir> -I <dir>` |
+| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -J<dir>`, and `-Wall` by default |
+| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`) |
+| `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
 | `lfortran` | `lfortran` | `--semantics-only --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>` |
-| `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed -module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
-| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -module-dir <dir>` |
+| `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
+| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>` |
 | `Disabled` | | No compiler diagnostics |
+
+`N` is `zfls.fixedFormLineLength` (Intel takes 72, 80 or 132). A
+line-length option of your own in `zfls.linter.extraArgs` replaces zfls's.
 
 Whether a file is free or fixed form follows its language in VS Code
 (`FortranFreeForm` or `FortranFixedForm`, from the file extension or
@@ -371,7 +379,7 @@ its runtime libraries.
 | --- | --- | --- |
 | `zfls.run.compiler` | `gfortran` | The compiler: `gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`, `nagfor`, `lfortran`, ... |
 | `zfls.run.compilerPath` | empty | The compiler, or its directory, when it is not on the `PATH` |
-| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`). The extension adds the include path, the output file and the source |
+| `zfls.run.buildArgs` | not set | Compiler arguments; not set: `-g -O0` (`/Zi /Od` for `ifx` and `ifort` on Windows, `-g` for `lfortran`, and none for `lfortran` on Windows: its build from conda-forge lacks the runtime stacktrace that `-g` needs, and refuses it). The extension adds the include path, the output file and the source |
 | `zfls.run.outputDirectory` | empty | Where the program and the module files go |
 | `zfls.run.programArgs` | `[]` | Arguments for the program |
 | `zfls.run.cwd` | `${fileDirname}` | The working directory of the program |

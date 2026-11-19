@@ -134,6 +134,9 @@ pub const Options = struct {
     diagnostic_severity: []const zfls.settings.DiagLevel = &.{},
     /// the client takes a tree of document symbols (as VS Code does)
     hierarchical_symbols: bool = false,
+    /// the commands the client runs itself (`experimental.commands`), which
+    /// code lenses may name
+    client_commands: []const []const u8 = &.{},
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
     /// the `initializationOptions` of the initialize request (JSON)
@@ -244,7 +247,7 @@ pub const Workspace = struct {
                 } } },
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
-            } },
+            }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
         }));

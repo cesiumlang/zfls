@@ -192,6 +192,8 @@ pub const ServerCapabilities = struct {
     selectionRangeProvider: bool = true,
     linkedEditingRangeProvider: bool = true,
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
+    /// the reference counts of lenses are counted on resolve
+    codeLensProvider: struct { resolveProvider: bool = true } = .{},
     documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
     inlayHintProvider: bool = true,
     callHierarchyProvider: bool = true,
@@ -232,8 +234,8 @@ pub const TextDocumentIdentifier = struct {
     languageId: ?[]const u8 = null,
 };
 
-/// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange` and
-/// `semanticTokens/full`
+/// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange`,
+/// `semanticTokens/full` and `codeLens`
 pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 
 /// `completion`, `hover`, `signatureHelp`, `definition`, `references`,
@@ -346,7 +348,13 @@ pub const ClientCapabilities = struct {
     } = .{},
     workspace: struct {
         didChangeWatchedFiles: Dynamic = .{},
+        codeLens: struct { refreshSupport: bool = false } = .{},
     } = .{},
+    /// `commands.commands`: the commands the client runs itself (as
+    /// rust-analyzer's clients announce them), which code lenses may name;
+    /// read at `initialize` only, as a value so that any other content
+    /// does not fail it (not kept)
+    experimental: ?json.Value = null,
 
     /// Whether the client takes `client/registerCapability` for a method
     pub const Dynamic = struct { dynamicRegistration: bool = false };
@@ -367,6 +375,24 @@ pub const SelectionRangeParams = struct {
 pub const SelectionRange = struct { range: Range, parent: ?*const SelectionRange = null };
 
 pub const DocumentLink = struct { range: Range, target: []const u8 };
+
+pub const Command = struct {
+    title: []const u8,
+    /// empty: a lens that only shows its title
+    command: []const u8,
+    arguments: ?[]const json.Value = null,
+};
+
+/// A code lens, unresolved without `command` (then with `data`)
+pub const CodeLens = struct {
+    range: Range,
+    command: ?Command = null,
+    data: ?CodeLensData = null,
+};
+
+/// What resolves a lens: the document, and the line of the end statement
+/// of the unit whose name the lens's range is
+pub const CodeLensData = struct { uri: []const u8, end: usize };
 
 pub const PrepareRenameResult = struct { range: Range, placeholder: []const u8 };
 

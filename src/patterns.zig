@@ -83,7 +83,7 @@ const defs = [_]Def{
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
         "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
-        "PASS[ ]*\\(\\w*\\)|SAVE|PARAMETER|EXTERNAL|" ++
+        "PASS[ ]*\\([ ]*\\w*[ ]*\\)|SAVE|PARAMETER|EXTERNAL|" ++
         "CONTIGUOUS|VOLATILE|ASYNCHRONOUS|PROTECTED|VALUE|CODIMENSION[ ]*\\[)", true },
     .{ "PARAMETER_VAL", "\\w*[\\s\\&]*=(([\\s\\&]*[\\w\\.\\-\\+\\*\\/\\'\\\"])*)", true },
     .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS\\(\\w*\\))", true },
