@@ -10,6 +10,7 @@ test {
     _ = @import("constructs.zig");
     _ = @import("compiler_fixed.zig");
     _ = @import("corpus.zig");
+    _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
     _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
@@ -17,12 +18,15 @@ test {
     _ = @import("documents.zig");
     _ = @import("external.zig");
     _ = @import("highlighting.zig");
+    _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
     _ = @import("language.zig");
+    _ = @import("lenses.zig");
     _ = @import("navigation.zig");
     _ = @import("outline.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");
+    _ = @import("signature.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
     _ = @import("use.zig");
