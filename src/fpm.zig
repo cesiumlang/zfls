@@ -49,7 +49,7 @@ pub fn parseManifest(a: Allocator, text: []const u8) !Manifest {
     var name: ?[]const u8 = null;
     var source_dir: ?[]const u8 = null;
     var main: ?[]const u8 = null;
-    var lines = std.mem.splitScalar(u8, text, '\n');
+    var lines = std.mem.splitScalar(u8, str.withoutBom(text), '\n');
     while (true) {
         const raw = lines.next();
         const line = if (raw) |r| str.strip(project.stripTomlComment(r)) else "";
@@ -446,4 +446,14 @@ test "test-drive: a collect procedure that ends with a bare `end`, or is a modul
     try testing.expectEqualStrings("collect_a", tests[0].collect.?);
     try testing.expect(tests[1].collect == null);
     try testing.expect(mainProgram(src.ast) == null);
+}
+
+test "fpm.toml with a UTF-8 byte-order mark (#407)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{ "", str.bom }) |mark| {
+        const text = try arena.allocator().print("{s}[build]\nauto-examples = false\n", .{mark});
+        const m = try parseManifest(arena.allocator(), text);
+        try testing.expect(!m.auto.get(.example) and m.auto.get(.executable));
+    }
 }

@@ -4,6 +4,7 @@
 //! of a syntax error for `settings.json5ErrorMessage`.
 
 const std = @import("std");
+const str = @import("str.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
@@ -23,7 +24,7 @@ pub const Parser = struct {
 
     pub fn parseDocument(p: *Parser) ParseError!Value {
         // skip UTF-8 BOM
-        if (std.mem.startsWith(u8, p.src, "\xEF\xBB\xBF")) p.pos = 3;
+        if (std.mem.startsWith(u8, p.src, str.bom)) p.pos = str.bom.len;
         const v = try p.parseValue();
         try p.skipWs();
         if (p.pos != p.src.len) return p.fail();
@@ -262,4 +263,13 @@ test "json5 parse" {
     var p: Parser = .{ .a = a, .src = "{\n  \"x\": 1,\n  oops\n}" };
     try std.testing.expectError(error.SyntaxError, p.parseDocument());
     try std.testing.expectEqual(@as(usize, 19), p.err_pos);
+}
+
+test "json5: a configuration file with a UTF-8 byte-order mark (#407)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{ "", str.bom }) |mark| {
+        const text = try arena.allocator().print("{s}{{\"pp_defs\": {{}}}}", .{mark});
+        try std.testing.expect((try parse(arena.allocator(), text)) == .object);
+    }
 }
