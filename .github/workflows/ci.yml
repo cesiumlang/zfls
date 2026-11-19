@@ -872,8 +872,8 @@ jobs:
       # conda-forge's zig; its tests check the installed zfls where the
       # package's platform is the runner's own (`--test native`: not for
       # osx-arm64, cross-built on the Intel runner, whose arm64 zfls it
-      # cannot run). Writing it
-      # downloads the packages it pins (retried, like the fetches)
+      # cannot run). Writing it downloads the packages it pins (retried,
+      # like the fetches)
       - name: Build and test the conda package
         run: |
           for wait in 15 30 60 0; do
