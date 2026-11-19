@@ -36,10 +36,14 @@ const libs = [_]struct { []const u8, ?[]const u8 }{
     .{ "msvcprt", null },
 };
 
-/// The step that installs the kit
-pub fn add(b: *std.Build) *std.Build.Step {
+/// The kit: the step that installs it, and its files gathered in a
+/// directory of the cache (for the tests that link with it)
+pub const Kit = struct { step: *std.Build.Step, dir: std.Build.LazyPath };
+
+pub fn add(b: *std.Build) Kit {
     const step = b.step("ifx-kit", "Install what ifx needs to link without Visual Studio (lib/ifx)");
     const dir: std.Build.InstallDir = .{ .custom = "lib/ifx" };
+    const gathered = b.addWriteFiles();
 
     const shim = b.addObject(.{
         .name = "zfls_ifx_shim",
@@ -55,6 +59,7 @@ pub fn add(b: *std.Build) *std.Build.Step {
     });
     shim.bundle_compiler_rt = false;
     step.dependOn(&b.addInstallFileWithDir(shim.getEmittedBin(), dir, "zfls_ifx_shim.obj").step);
+    _ = gathered.addCopyFile(shim.getEmittedBin(), "zfls_ifx_shim.obj");
 
     const mingw = std.Build.LazyPath.zig_lib.path(b, "libc/mingw");
     const empty = b.addWriteFiles().add("empty.def", "LIBRARY \"ucrtbase.dll\"\nEXPORTS\n");
@@ -78,6 +83,7 @@ pub fn add(b: *std.Build) *std.Build.Step {
         tool.addArg("-l");
         const out = tool.addOutputFileArg2(b.fmt("{s}.lib", .{name}), .{});
         step.dependOn(&b.addInstallFileWithDir(out, dir, b.fmt("{s}.lib", .{name})).step);
+        _ = gathered.addCopyFile(out, b.fmt("{s}.lib", .{name}));
     }
-    return step;
+    return .{ .step = step, .dir = gathered.getDirectory() };
 }

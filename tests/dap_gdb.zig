@@ -12,9 +12,11 @@
 //! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
 //! Adapter Protocol (gdb 14 or later).
 //!
-//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB]
+//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB] [--kit DIR]
 //!
-//! GFORTRAN (or FLANG) and GDB in the environment name them too.
+//! GFORTRAN (or FLANG) and GDB in the environment name them too. `--kit`
+//! names the ifx kit for Flang on Windows (`zig build` gives its own, #442);
+//! a link with it must read nothing of Visual Studio's.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -60,6 +62,7 @@ pub fn main(init: std.process.Init) !u8 {
     var gdb: []const u8 = init.environ_map.get("GDB") orelse "gdb";
     var compiler: ?Compiler = .gfortran;
     var fc_arg: ?[]const u8 = null;
+    var kit: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--zfls")) {
@@ -70,10 +73,12 @@ pub fn main(init: std.process.Init) !u8 {
             compiler = std.meta.stringToEnum(Compiler, argv[i + 1]);
         } else if (std.mem.eql(u8, argv[i], "--fc") or std.mem.eql(u8, argv[i], "--gfortran")) {
             fc_arg = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--kit")) {
+            kit = argv[i + 1];
         } else break;
     }
     if (i != argv.len or zfls_exe == null or compiler == null) {
-        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB]\n", .{});
+        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB] [--kit DIR]\n", .{});
         return 2;
     }
     const fc = fc_arg orelse switch (compiler.?) {
@@ -108,7 +113,7 @@ pub fn main(init: std.process.Init) !u8 {
         .gdb = gdb,
         .compiler = compiler.?,
         .fc = fc,
-        .build_env = if (compiler.? == .flang and builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path) else null,
+        .build_env = if (compiler.? == .flang and builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path, kit) else null,
         .dir = tmp,
         .src = src,
         .program = program,
@@ -146,7 +151,8 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
         },
         .flang => if (builtin.target.os.tag == .windows) {
             try argv.appendSlice(a, &.{ "-gdwarf-4", "-O0", "-Wl,-debug:dwarf" });
-            if (setup.build_env != null) try argv.appendSlice(a, &.{ "-fms-runtime-lib=dll", "-fuse-ld=lld" });
+            // lld-link's list of what it read, for the check below
+            if (setup.build_env != null) try argv.appendSlice(a, &.{ "-fms-runtime-lib=dll", "-fuse-ld=lld", "-Wl,-verbose" });
         } else {
             try argv.appendSlice(a, &.{ "-g", "-O0" });
             // <prefix>/bin/flang: <prefix>/lib
@@ -166,6 +172,13 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
     if (!built.term.success()) {
         std.debug.print("{s} failed:\n{s}{s}\n", .{ setup.fc, built.stdout, built.stderr });
         return error.BuildFailed;
+    }
+    // with the kit, nothing of Visual Studio's, where it is installed too
+    if (setup.compiler == .flang and setup.build_env != null) {
+        if (dap.visualStudioRead(built.stderr) orelse dap.visualStudioRead(built.stdout)) |line| {
+            std.debug.print("FAIL: the link with the ifx kit read Visual Studio's files: {s}\n", .{line});
+            return error.BuildFailed;
+        }
     }
 }
 

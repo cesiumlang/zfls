@@ -219,20 +219,51 @@ pub fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
 }
 
 /// Flang's build environment on Windows that links with lld-link and
-/// zfls's ifx kit (`ifx-kit` next to zfls, or `../lib/ifx`), as Run Fortran
-/// File links without Visual Studio; null without the kit
-pub fn flangKitEnv(io: Io, a: Allocator, environ: *const std.process.Environ.Map, zfls_path: []const u8) !?*const std.process.Environ.Map {
+/// zfls's ifx kit (`kit`, given by `zig build`; else `ifx-kit` next to
+/// zfls, or `../lib/ifx`), as Run Fortran File links without Visual
+/// Studio: Visual Studio's variables left out, as CI's check of the kit
+/// does; null without the kit (an error when `kit` has none)
+pub fn flangKitEnv(io: Io, a: Allocator, environ: *const std.process.Environ.Map, zfls_path: []const u8, kit: ?[]const u8) !?*const std.process.Environ.Map {
     const exe_dir = std.Io.Dir.path.dirname(zfls_path) orelse return null;
-    for ([_][]const []const u8{ &.{ exe_dir, "ifx-kit" }, &.{ exe_dir, "..", "lib", "ifx" } }) |parts| {
-        const kit = try std.Io.Dir.path.join(a, parts);
-        const shim = try std.Io.Dir.path.join(a, &.{ kit, "zfls_ifx_shim.obj" });
+    // absolute: the compiler runs elsewhere (`zig build` gives a relative one)
+    const given: ?[]const u8 = if (kit) |k| Io.Dir.cwd().realPathFileAlloc(io, k, a) catch k else null;
+    const places: []const []const []const u8 = if (given) |k| &.{&.{k}} else &.{ &.{ exe_dir, "ifx-kit" }, &.{ exe_dir, "..", "lib", "ifx" } };
+    for (places) |parts| {
+        const dir = try std.Io.Dir.path.join(a, parts);
+        const shim = try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" });
         Io.Dir.cwd().access(io, shim, .{}) catch continue;
         const env = try a.create(std.process.Environ.Map);
         env.* = try environ.clone(a);
-        try env.put("LIB", kit);
+        for (visual_studio_variables) |v| _ = env.swapRemove(v);
+        try env.put("LIB", dir);
         try env.put("LINK", try a.print("\"{s}\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib", .{shim}));
-        std.debug.print("linking with the ifx kit {s}\n", .{kit});
+        std.debug.print("linking with the ifx kit {s}\n", .{dir});
         return env;
     }
+    if (kit) |k| {
+        std.debug.print("no ifx kit in {s}\n", .{k});
+        return error.NoKit;
+    }
     return null;
+}
+
+/// The variables of a Visual Studio developer prompt, by which LLVM's
+/// driver and lld-link find its libraries
+const visual_studio_variables = [_][]const u8{ "VCToolsInstallDir", "VCINSTALLDIR", "VSINSTALLDIR", "WindowsSdkDir", "UniversalCRTSdkDir", "INCLUDE", "LIBPATH" };
+
+/// Whether lld-link's list of what it read (`-Wl,-verbose`) names a file of
+/// Visual Studio's or of the Windows SDK's: what it read, or null
+pub fn visualStudioRead(output: []const u8) ?[]const u8 {
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |line| {
+        for ([_][]const u8{ "Microsoft Visual Studio", "Windows Kits" }) |mark| {
+            if (std.ascii.findIgnoreCase(line, mark) != null) return std.mem.trimEnd(u8, line, "\r");
+        }
+    }
+    return null;
+}
+
+test "lld-link's reading of Visual Studio's files" {
+    try std.testing.expect(visualStudioRead("lld-link: Reading C:\\kit\\msvcrt.lib\r\nlld-link: Reading p.o\r\n") == null);
+    try std.testing.expectEqualStrings("lld-link: Reading C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\ucrt.lib", visualStudioRead("lld-link: Reading C:\\kit\\a.lib\nlld-link: Reading C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\ucrt.lib\r\n").?);
 }
