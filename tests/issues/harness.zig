@@ -134,6 +134,9 @@ pub const Options = struct {
     diagnostic_severity: []const zfls.settings.DiagLevel = &.{},
     /// the client takes a tree of document symbols (as VS Code does)
     hierarchical_symbols: bool = false,
+    /// the commands the client runs itself (`experimental.commands`), which
+    /// code lenses may name
+    client_commands: []const []const u8 = &.{},
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
     /// the `initializationOptions` of the initialize request (JSON)
@@ -164,6 +167,8 @@ pub const Workspace = struct {
     unreadable: []const []const u8,
     /// the notifications the server sent (JSON texts)
     sent: std.ArrayList([]const u8) = .empty,
+    /// the result of the initialize request
+    init_result: Value = .null,
 
     fn collect(ctx: ?*anyopaque, body: []const u8) void {
         const w: *Workspace = @ptrCast(@alignCast(ctx.?));
@@ -187,6 +192,7 @@ pub const Workspace = struct {
         w.files = files;
         w.unreadable = &.{};
         w.sent = .empty;
+        w.init_result = .null;
         for (files) |f| {
             if (std.Io.Dir.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
@@ -219,9 +225,12 @@ pub const Workspace = struct {
         for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
         w.server = try Server.create(gpa, io, settings, &w.log);
         errdefer w.server.destroy();
+        // as `main` gives it
+        var environ = try std.testing.environ.createMap(aa);
+        try w.server.setEnviron(&environ);
         w.server.sink = .{ .ctx = w, .sendFn = collect };
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
-        _ = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
+        w.init_result = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
             .rootPath = if (opts.unc_root) null else w.root,
             .rootUri = if (opts.unc_root) try paths.pathToUri(aa, w.root) else null,
             .capabilities = .{ .textDocument = .{
@@ -232,7 +241,7 @@ pub const Workspace = struct {
                 .rangeFormatting = dynamic,
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
-            } },
+            }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
         }));
@@ -508,13 +517,17 @@ pub const Workspace = struct {
 
     /// A completion item and the text its additional edits insert (the
     /// first one's), with the 0-based line it goes before
-    pub const Item = struct { label: []const u8, detail: []const u8, added: ?[]const u8 = null, added_line: i64 = -1 };
+    pub const Item = struct { label: []const u8, detail: []const u8, insert: []const u8 = "", added: ?[]const u8 = null, added_line: i64 = -1 };
 
     pub fn completionItems(w: *Workspace, name: []const u8, p: Pos) ![]const Item {
         const v = try w.server.dispatchPublic(w.a(), "textDocument/completion", try w.posParams(name, p));
         var out: std.ArrayList(Item) = .empty;
         for (json.items(v)) |item| {
-            var it: Item = .{ .label = json.str(json.get(item, "label")) orelse "", .detail = json.str(json.get(item, "detail")) orelse "" };
+            var it: Item = .{
+                .label = json.str(json.get(item, "label")) orelse "",
+                .detail = json.str(json.get(item, "detail")) orelse "",
+                .insert = json.str(json.get(item, "insertText")) orelse "",
+            };
             const edits = json.items(json.get(item, "additionalTextEdits") orelse .null);
             if (edits.len > 0) {
                 it.added = json.str(json.get(edits[0], "newText"));
