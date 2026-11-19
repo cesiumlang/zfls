@@ -201,7 +201,10 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     (tested with Flang 23 and MSYS2's gdb 17.2): the variables, but a
     polymorphic object with its declared type only, and stops at Flang's
     runtime errors and ERROR STOP (not at a plain STOP). Windows's engine
-    does not stop at them yet.
+    does not stop at them yet. The VS Code extension's Debug Fortran File
+    builds Flang's programs so (where there is an `lld-link`) and debugs
+    them with gdb; the engine is for those built with `-g`
+    (`"dbgeng": true`).
 
 ### What is tested with a real compiler
 
@@ -502,8 +505,9 @@ on Linux and Windows, lldb-dap on macOS.
   program only with Developer Mode on (`sudo DevToolsSecurity -enable`).
 - Windows's own Debugger Engine (`"dbgeng": true`, or `--dbgeng`;
   `dbgeng.dll` of System32, which every Windows 10 and later has), for the
-  programs whose debug information is Microsoft's: those of ifx, ifort and
-  LLVM Flang on Windows. It launches the program (in a console window of
+  programs whose debug information is Microsoft's: those of ifx and ifort
+  on Windows, and LLVM Flang's built with `-g` (with `-gdwarf-4` they are
+  gdb's too). It launches the program (in a console window of
   its own) or attaches to it, stops at breakpoints of source lines, steps
   by lines, and shows the variables as Fortran: dbghelp says where each
   is, and zfls's declarations its type, kind and rank; arrays are read

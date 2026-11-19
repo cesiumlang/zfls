@@ -14,7 +14,7 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { TargetKind } from "./fpm";
-import { FpmProject, buildTarget, findProjects, fpmCompiler, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
+import { FpmProject, buildTarget, findProjects, fpmCompiler, fpmExecutable, fpmFlangDwarf, listTargets, projectOf } from "./fpmCommands";
 import { findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
 import { adapterArgs, compilerKind, fortranLaunch, parseProcesses, runtimeEnv } from "./run";
 import { chooseInstalledDebugger, gdbFor, lldbWanted } from "./runFile";
@@ -131,7 +131,8 @@ async function resolve(
     compilerExe = findExecutable(compilerName) ?? compiler.exe;
     const kind: TargetKind = ["executable", "example", "test"].includes(config.fpmTargetKind) ? config.fpmTargetKind : "executable";
     cwd ??= project.root;
-    const debugType = await pick(run, config, compilerExe ?? compilerName, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
+    const msvc = msvcProgram(config, compilerExe ?? compilerName, fpmFlangDwarf(project));
+    const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
     if (!debugType) {
       return undefined;
     }
@@ -139,7 +140,7 @@ async function resolve(
     if (!program) {
       return undefined;
     }
-    return finish(config, debugType, program, cwd, compilerExe, scope, log, compilerKind(compilerExe ?? compilerName, process.platform).msvc);
+    return finish(config, debugType, program, cwd, compilerExe, scope, log, msvc);
   }
   if (typeof config.program !== "string" || !config.program) {
     void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran launch configuration needs a program or an fpmTarget."));
@@ -150,11 +151,12 @@ async function resolve(
   const configuredPath = expandVariables(run.get<string>("compilerPath", "").trim(), folderVariables(folder));
   compilerExe = findExecutable(compilerName, configuredPath, folder?.uri.fsPath);
   cwd ??= path.dirname(program);
-  const debugType = await pick(run, config, compilerExe ?? compilerName, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
+  const msvc = msvcProgram(config, compilerExe ?? compilerName);
+  const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
   if (!debugType) {
     return undefined;
   }
-  return finish(config, debugType, program, cwd, compilerExe, scope, log, compilerKind(compilerExe ?? compilerName, process.platform).msvc);
+  return finish(config, debugType, program, cwd, compilerExe, scope, log, msvc);
 }
 
 /** An attach configuration: zfls's debugger, attached to a process
@@ -292,19 +294,28 @@ function fpmProjectFor(folder: vscode.WorkspaceFolder | undefined, cwd: string |
   return dir ? projectOf(vscode.Uri.file(path.join(dir, "fpm.toml"))) : undefined;
 }
 
+/** Whether the program has Microsoft's debug information only (ifx's and
+ * ifort's on Windows), for Windows's Debugger Engine or the Visual Studio
+ * debugger: LLVM Flang's when the configuration says `"dbgeng": true`
+ * (built with `-g`, not `-gdwarf-4`), or `flangDwarf` is false */
+function msvcProgram(config: vscode.DebugConfiguration, compiler: string, flangDwarf = true): boolean {
+  return compilerKind(compiler, process.platform, flangDwarf).msvc || (process.platform === "win32" && config.dbgeng === true);
+}
+
 /** The debugger: the configuration's, else zfls.run.debugger's, among
- * those installed; MSVC-ABI programs (ifx, LLVM Flang on Windows) need
- * the Visual Studio debugger */
+ * those installed; programs with Microsoft's debug information only
+ * (`msvcProgram`) need Windows's Debugger Engine or the Visual Studio
+ * debugger */
 function pick(
   run: vscode.WorkspaceConfiguration,
   config: vscode.DebugConfiguration,
-  compiler: string,
+  msvc: boolean,
   gdb: string | undefined,
   lldb: boolean | string,
 ): ReturnType<typeof chooseInstalledDebugger> {
   const preference = typeof config.debugger === "string" ? config.debugger : run.get<string>("debugger", "auto");
   const configured = typeof config.gdb === "string" && config.gdb ? config.gdb : undefined;
-  return chooseInstalledDebugger(preference, compilerKind(compiler, process.platform).msvc, configured ?? gdb, lldb);
+  return chooseInstalledDebugger(preference, msvc, configured ?? gdb, lldb);
 }
 
 function finish(

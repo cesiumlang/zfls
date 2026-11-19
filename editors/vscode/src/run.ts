@@ -10,8 +10,8 @@ export type ArgStyle = "gnu" | "intel-windows";
 
 export interface CompilerKind {
   argStyle: ArgStyle;
-  /** Whether its programs use the MSVC ABI and debug info (PDB), which
-   * needs the cppvsdbg debugger rather than gdb */
+  /** Whether its programs have Microsoft's debug information (PDB) only,
+   * which needs Windows's Debugger Engine or cppvsdbg rather than gdb */
   msvc: boolean;
   /** The arguments when zfls.run.buildArgs is not set: debug info, no
    * optimization */
@@ -25,7 +25,21 @@ export function compilerName(compiler: string): string {
   return base.replace(/\.exe$/, "").replace(/-\d+(\.\d+)*$/, "");
 }
 
-export function compilerKind(compiler: string, platform: NodeJS.Platform): CompilerKind {
+/** LLVM Flang's debug build on Windows (`compilerKind`): `-gdwarf-4` writes
+ * DWARF as well as Microsoft's debug information, and has Flang link with
+ * lld-link, which `-debug:dwarf` has keep the DWARF in the program (and
+ * still write the PDB) */
+export const FLANG_DWARF_ARGS = ["-gdwarf-4", "-O0", "-Wl,-debug:dwarf"];
+
+/**
+ * How `compiler` takes its options and what its programs are, on
+ * `platform`. LLVM Flang's programs on Windows are of the MSVC ABI, but
+ * debugged with gdb (zfls's), for DWARF (`FLANG_DWARF_ARGS`), unless
+ * `flangDwarf` is false: they have only Microsoft's debug information
+ * (`-g`, which Visual Studio's link keeps; there is no lld-link), for
+ * Windows's Debugger Engine.
+ */
+export function compilerKind(compiler: string, platform: NodeJS.Platform, flangDwarf = true): CompilerKind {
   const name = compilerName(compiler);
   const windows = platform === "win32";
   if ((name === "ifx" || name === "ifort") && windows) {
@@ -37,7 +51,10 @@ export function compilerKind(compiler: string, platform: NodeJS.Platform): Compi
     // enabled")
     return { argStyle: "gnu", msvc: windows, defaultArgs: windows ? [] : ["-g"] };
   }
-  // LLVM Flang targets the MSVC ABI on Windows
+  if (windows && (name === "flang" || name === "flang-new") && flangDwarf) {
+    return { argStyle: "gnu", msvc: false, defaultArgs: [...FLANG_DWARF_ARGS] };
+  }
+  // LLVM Flang's `-g` on Windows: Microsoft's debug information only
   const msvc = windows && (name === "flang" || name === "flang-new");
   return { argStyle: "gnu", msvc, defaultArgs: ["-g", "-O0"] };
 }
