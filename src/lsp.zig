@@ -186,13 +186,23 @@ pub const ServerCapabilities = struct {
     workspaceSymbolProvider: bool = true,
     inlineValueProvider: bool = true,
     workspace: WorkspaceCapabilities = .{},
-    textDocumentSync: i64,
+    textDocumentSync: TextDocumentSyncOptions,
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
     semanticTokensProvider: ?SemanticTokensOptions = null,
     /// with a formatter (`formatter`)
     documentFormattingProvider: ?bool = null,
     documentRangeFormattingProvider: ?bool = null,
+};
+
+/// How documents are synchronized: the options form, which says that the
+/// client sends `didOpen`/`didClose` and `didSave` (zfls runs its checks
+/// and the compiler on save, and reads the file then); `change` is 1 (the
+/// whole text) or 2 (incremental)
+pub const TextDocumentSyncOptions = struct {
+    openClose: bool = true,
+    change: i64,
+    save: struct { includeText: bool = false } = .{},
 };
 
 pub const InitializeResult = struct { capabilities: ServerCapabilities };

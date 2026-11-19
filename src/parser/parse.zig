@@ -401,6 +401,7 @@ pub const Parser = struct {
                     name = try a.print("#BLOCKDATA{d}", .{counters.block});
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
+                o.scopeData().block_data = true;
                 try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
                 p.dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
