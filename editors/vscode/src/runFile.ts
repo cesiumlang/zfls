@@ -320,7 +320,7 @@ function kitLink(
 }
 
 /** The lld-link next to `compiler` (conda-forge's `lld`), else on the PATH */
-function lldLinkFor(compiler: string): string | undefined {
+export function lldLinkFor(compiler: string): string | undefined {
   return findExecutable("lld-link", path.dirname(compiler)) ?? findExecutable("lld-link");
 }
 
