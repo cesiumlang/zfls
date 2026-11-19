@@ -997,6 +997,18 @@ def main() -> int:
                 # when it is not found (#240); fortls has no answer or one
                 # for a character literal
                 continue
+            if (
+                kind == "definition"
+                and isinstance(a, dict)
+                and isinstance(b, dict)
+                and a.get("uri") == b.get("uri")
+                and (b.get("range") or {}).get("start") == {"line": 0, "character": 0}
+                and on_include_line(path, params.get("position"))
+            ):
+                # go to definition on an INCLUDE line opens the included
+                # file at its first line; fortls gives the line of the
+                # INCLUDE statement in the including file (#224)
+                continue
             pos = params.get("position") or {}
             if (
                 (kind in ("definition", "references") or (kind == "hover" and a is None))

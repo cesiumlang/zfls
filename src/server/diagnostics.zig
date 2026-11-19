@@ -171,8 +171,9 @@ pub fn addRewriteActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         if (sc.parent) |p| if (p.kind == .interface) continue;
         if (sc.getImplicit() != null) continue;
         const at = try autouse.insertionPoint(a, file, sc);
+        const ins = Server.lineInsertion(file, at.line);
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}implicit none\n", .{at.indent}) };
+        edits[0] = .{ .range = ins.range, .newText = try a.print("{s}{s}implicit none\n", .{ ins.prefix, at.indent }) };
         try out.append(a, try action(a, uri, try a.print("Add IMPLICIT NONE to {s}", .{sc.name}), "quickfix", edits));
     }
     var op_edits: std.ArrayList(lsp.TextEdit) = .empty;
@@ -253,7 +254,8 @@ fn interfaceEdits(a: Allocator, file: *FortranFile, ast: *Ast, unit: *Obj, proc:
         const cuts = (try unused.removal(a, file, l, &.{proc.name})) orelse continue;
         try edits.appendSlice(a, try cutEdits(a, file, cuts));
     }
-    try edits.append(a, .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text.items });
+    const ins = Server.lineInsertion(file, at.line);
+    try edits.append(a, .{ .range = ins.range, .newText = try std.mem.concat(a, u8, &.{ ins.prefix, text.items }) });
     return edits.items;
 }
 
@@ -342,11 +344,13 @@ fn submoduleStub(self: *Server, a: Allocator, file: *FortranFile, proto: *Obj, o
         try out.append(a, try action(a, try paths.pathToUri(a, path), try a.print("Implement {s} in submodule {s}", .{ proto.name, u.name }), "quickfix", edits));
         return;
     }
-    // a new submodule after the module
-    const end_line = file.nLines();
+    // a new submodule after the module, at the end of the last line (a
+    // line after it is not in the document)
+    const end_line = file.nLines() -| 1;
+    const end_col = if (file.getLine(end_line, false)) |l| l.len else 0;
     const edits = try a.alloc(lsp.TextEdit, 1);
     edits[0] = .{
-        .range = Server.rangeOf(file, end_line, 0, end_line, 0),
+        .range = Server.rangeOf(file, end_line, end_col, end_line, end_col),
         .newText = try a.print("\nsubmodule ({s}) {s}_impl\ncontains\n  module procedure {s}\n  end procedure {s}\nend submodule {s}_impl\n", .{ module.name, module.name, proto.name, proto.name, module.name }),
     };
     try out.append(a, try action(a, try paths.pathToUri(a, file.path), try a.print("Implement {s} in a new submodule", .{proto.name}), "quickfix", edits));
@@ -571,13 +575,26 @@ pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, a
 
 fn cutEdits(a: Allocator, file: *const FortranFile, cuts: []const unused.Cut) ![]const lsp.TextEdit {
     const edits = try a.alloc(lsp.TextEdit, cuts.len);
-    for (cuts, edits) |c, *e| e.* = .{
-        .range = .{
-            .start = .{ .line = c.sl, .character = Server.toLspCol(file, c.sl, c.sc) },
-            .end = .{ .line = c.el, .character = Server.toLspCol(file, c.el, c.ec) },
-        },
-        .newText = "",
-    };
+    for (cuts, edits) |c_in, *e| {
+        var c = c_in;
+        // whole lines up to a line after the last, which is not in the
+        // document: to the end of the last, from the end of the line before
+        if (c.el >= file.nLines()) {
+            c.el = file.nLines() -| 1;
+            c.ec = if (file.getLine(c.el, false)) |l| l.len else 0;
+            if (c.sc == 0 and c.sl > 0) {
+                c.sl -= 1;
+                c.sc = if (file.getLine(c.sl, false)) |l| l.len else 0;
+            }
+        }
+        e.* = .{
+            .range = .{
+                .start = .{ .line = c.sl, .character = Server.toLspCol(file, c.sl, c.sc) },
+                .end = .{ .line = c.el, .character = Server.toLspCol(file, c.el, c.ec) },
+            },
+            .newText = "",
+        };
+    }
     return edits;
 }
 
@@ -648,9 +665,10 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         const key = try a.print("{x}:{s}", .{ @intFromPtr(unit), try std.ascii.allocLowerString(a, name) });
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         const at = try declarationPoint(a, file, unit);
+        const ins = Server.lineInsertion(file, at.line);
         const type_name = defaultType(name);
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}{s} :: {s}\n", .{ at.indent, type_name, name }) };
+        edits[0] = .{ .range = ins.range, .newText = try a.print("{s}{s}{s} :: {s}\n", .{ ins.prefix, at.indent, type_name, name }) };
         const files = try a.alloc(lsp.Changes.File, 1);
         files[0] = .{ .uri = uri, .edits = edits };
         const dv = try a.alloc(lsp.Diagnostic, 1);
@@ -685,7 +703,7 @@ pub fn addDeclareArgActions(self: *Server, a: Allocator, file: *FortranFile, ast
         var text: std.ArrayList(u8) = .empty;
         var found: std.ArrayList(lsp.Diagnostic) = .empty;
         const at = try declarationPoint(a, file, proc);
-        const range = Server.rangeOf(file, at.line, 0, at.line, 0);
+        const ins = Server.lineInsertion(file, at.line);
         for (diags) |d| {
             if (d.code != .argument_not_declared or d.sln != proc.sline - 1) continue;
             const name = d.subject orelse continue;
@@ -693,14 +711,14 @@ pub fn addDeclareArgActions(self: *Server, a: Allocator, file: *FortranFile, ast
             const decl = try a.print("{s}{s} :: {s}\n", .{ at.indent, defaultType(name), name });
             const dv = try a.alloc(lsp.Diagnostic, 1);
             dv[0] = try self.diagnosticOf(a, file, d);
-            try out.append(a, try declareAction(a, uri, range, try a.print("Declare {s} as {s}", .{ name, defaultType(name) }), decl, dv));
+            try out.append(a, try declareAction(a, uri, ins.range, try a.print("Declare {s} as {s}", .{ name, defaultType(name) }), try std.mem.concat(a, u8, &.{ ins.prefix, decl }), dv));
             try names.append(a, name);
             try text.appendSlice(a, decl);
             try found.append(a, dv[0]);
         }
         if (names.items.len < 2) continue;
         const title = try a.print("Declare the arguments {s}", .{try std.mem.join(a, ", ", names.items)});
-        try out.append(a, try declareAction(a, uri, range, title, text.items, found.items));
+        try out.append(a, try declareAction(a, uri, ins.range, title, try std.mem.concat(a, u8, &.{ ins.prefix, text.items }), found.items));
     }
 }
 
@@ -745,11 +763,12 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
         const at = try autouse.insertionPoint(a, file, unit);
+        const ins = Server.lineInsertion(file, at.line);
         for (try autouse.exports(a, try completion.usableModules(self, a, ast), .{ .exact = name }, 10)) |e| {
             if (autouse.isWithin(unit, e.module)) continue;
             const text = try autouse.statement(a, at.indent, e.module.name, e.obj.name);
             const edits = try a.alloc(lsp.TextEdit, 1);
-            edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text };
+            edits[0] = .{ .range = ins.range, .newText = try std.mem.concat(a, u8, &.{ ins.prefix, text }) };
             const files = try a.alloc(lsp.Changes.File, 1);
             files[0] = .{ .uri = uri, .edits = edits };
             const dv = try a.alloc(lsp.Diagnostic, 1);

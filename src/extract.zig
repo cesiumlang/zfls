@@ -174,7 +174,8 @@ pub fn analyze(a: Allocator, u: *Uses, t_in: []const u8, conditional: bool) Allo
             if (items.next()) |fmt| {
                 const f = std.mem.trim(u8, fmt, " \t");
                 if (f.len > 0 and std.ascii.isDigit(f[0])) try labelsIn(a, u, f) else try reads(a, u, f, conditional);
-                list = items.t[items.pos..];
+                // nothing after the format: `print *`
+                list = items.t[@min(items.pos, items.t.len)..];
             }
         }
         if (eql(w, "read")) {

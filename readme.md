@@ -998,6 +998,7 @@ before they overwrite one, and open it.
 | `zig build test` | Zig unit tests, and the tests of upstream fortls issues |
 | `zig build test-issues` | only the tests of the open issues of upstream fortls (see `tests/issues/README.md`) |
 | `zig build test-fuzz` | mutated programs thrown at an in-process server (crashes, leaks); `--fuzz` runs the fuzzer |
+| `zig build test-damaged` | every line of the test corpus damaged as half-typed code is (cut, deleted, END statements dropped, unbalanced parentheses and quotes, random bytes, mixed line endings, fixed and free form mixed), with the main requests on each version: crashes, error answers, leaks, hangs, ranges outside the document (minutes; a sample of it is part of `zig build test`) |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
