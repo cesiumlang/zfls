@@ -255,6 +255,9 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
     if (!same(&prev, &next, "compiler_diagnostics")) try compile.checkSetting(self, a);
     if (!same(&prev, &next, "formatter") or !same(&prev, &next, "formatter_fixed")) try format.checkSetting(self, a);
     try announce(self, a);
+    if (!same(&prev, &next, "code_lens_no_references") or !same(&prev, &next, "code_lens_no_run")) {
+        if (self.config.client.workspace.codeLens.refreshSupport) self.sendRequest(a, "workspace/codeLens/refresh", .null) catch |e| self.logSendFailure(e);
+    }
     try republish(self, a, was_published, was_workspace);
 }
 

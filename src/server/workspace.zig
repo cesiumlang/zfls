@@ -39,6 +39,7 @@ const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const configuration = @import("configuration.zig");
+const lenses = @import("lenses.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -64,6 +65,8 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try configLogger(self);
     try loadIntrinsics(self);
     try addSourceDirs(self, a);
+    self.lens_commands = lenses.clientCommands(params.capabilities.experimental);
+    self.config.client.experimental = null;
 
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);

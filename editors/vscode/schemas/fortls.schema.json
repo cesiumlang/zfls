@@ -444,6 +444,16 @@
       "type": "boolean",
       "default": false
     },
+    "code_lens_no_references": {
+      "description": "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)",
+      "type": "boolean",
+      "default": false
+    },
+    "code_lens_no_run": {
+      "description": "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)",
+      "type": "boolean",
+      "default": false
+    },
     "pp_suffixes": {
       "description": "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)",
       "type": [

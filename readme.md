@@ -31,6 +31,15 @@ command line options and configuration files.
 - Completion of the public names of modules not used yet, adding the
   `use module, only: name` statement, and a quick fix adding it for a type
   that is not found
+- Code lenses: the number of references above each module, procedure and
+  derived type, counted when the editor shows the lens
+  (`code_lens_no_references` turns them off), and Run and Debug above a
+  program (`code_lens_no_run`). Clicking runs a command of the client's:
+  zfls names `zfls.showReferences` (URI, position, locations),
+  `zfls.runFile` and `zfls.debugFile` (URI) where the client lists them
+  in its `experimental.commands.commands` capability, as the VS Code
+  extension does; elsewhere a reference lens only shows the count, and a
+  program has none
 - Call hierarchy: the procedures that call a procedure, and those it calls
 - Type hierarchy: the type a derived type extends, and the types that
   extend it; completion offers the parent components of an extended type

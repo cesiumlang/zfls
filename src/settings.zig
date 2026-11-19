@@ -172,6 +172,12 @@ pub const Settings = struct {
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
+    // Code lenses
+    /// No lens with the number of references above modules, procedures
+    /// and derived types
+    code_lens_no_references: bool = false,
+    /// No Run and Debug lenses above a program
+    code_lens_no_run: bool = false,
     // Debug options
     debug_filepath: ?[]const u8 = null,
     debug_rootpath: ?[]const u8 = null,
@@ -306,6 +312,9 @@ pub const opts = [_]Opt{
 
     .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
     .{ .long = "enable_code_actions", .kind = .flag, .help = "Enable experimental code actions (default: false)", .group = "CodeActions options [limited]" },
+
+    .{ .long = "code_lens_no_references", .kind = .flag, .help = "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)", .group = "Code lens options" },
+    .{ .long = "code_lens_no_run", .kind = .flag, .help = "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)", .group = "Code lens options" },
 
     .{ .long = "debug_filepath", .kind = .string, .metavar = "DEBUG_FILEPATH", .help = "File path for language server tests", .debug = true },
     .{ .long = "debug_rootpath", .kind = .string, .metavar = "DEBUG_ROOTPATH", .help = "Root path for language server tests", .debug = true },
@@ -682,6 +691,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "bind_c_clangd")) |v| s.bind_c_clangd = json.str(v);
     // Code Actions options
     s.enable_code_actions = jsonBool(json.get(cfg, "enable_code_actions"), s.enable_code_actions);
+    // Code lens options
+    s.code_lens_no_references = jsonBool(json.get(cfg, "code_lens_no_references"), s.code_lens_no_references);
+    s.code_lens_no_run = jsonBool(json.get(cfg, "code_lens_no_run"), s.code_lens_no_run);
     // Preprocessor options
     // like every other option, a value in the file replaces the one from the
     // command line, and no value leaves it alone (upstream #536)
