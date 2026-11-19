@@ -11,6 +11,7 @@ pub const app_name = "zfls";
 pub const regex = @import("regex.zig");
 pub const str = @import("str.zig");
 pub const patterns = @import("patterns.zig");
+pub const suffixes = @import("suffixes.zig");
 pub const constants = @import("constants.zig");
 pub const helpers = @import("helpers.zig");
 pub const paths = @import("paths.zig");
