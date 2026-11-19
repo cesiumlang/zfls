@@ -1114,6 +1114,11 @@ zfls deliberately differs from fortls in a few places:
   its value, and a macro's value is used as written; fortls reads it as a
   regex template, so `\1` in it and, for `NOARG()`, its digits are lost
   (FL #486).
+- In a macro's value, `a ## b` pastes the two words together and `#x` is the
+  argument in double quotes; `/**/` is removed from macro values and the
+  lines of a preprocessed file, as gfortran's cpp does, so
+  `wrap_/**/P` is the name `wrap_abc`. Character literals and comments are
+  left as they are. fortls keeps `##`, `#x` and `/**/` in the text.
 - A file named as free-form source (`.f90`, `.F90`, `.f08`, ...) is read as
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
