@@ -551,6 +551,12 @@ whose `.mod` files are missing or older than their sources, in compile order
 from zfls's module graph; saving a file that defines modules checks again
 the open files that use them.
 
+zfls reads the compiler's messages in English, so it runs the compiler (and
+fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a
+compiler with translations would otherwise write `Fehler` for `Error`.
+When the compiler fails with output of which zfls understands nothing, zfls
+says so once and logs that output.
+
 ```json
 {
   "compiler_diagnostics": "gfortran",
