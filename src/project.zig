@@ -69,15 +69,9 @@ pub fn findCompileCommands(io: Io, a: Allocator, root: []const u8, setting: ?[]c
     return null;
 }
 
-const fortran_extensions = [_][]const u8{
-    ".f", ".for", ".ftn", ".fpp", ".f77", ".f90", ".f95", ".f03", ".f08", ".f18",
-};
-
 /// Whether a file name has an extension of Fortran sources
 pub fn isFortran(file: []const u8) bool {
-    const ext = std.Io.Dir.path.extension(file);
-    for (fortran_extensions) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;
-    return false;
+    return @import("suffixes.zig").isFortran(file);
 }
 
 /// The files, include directories and definitions of the Fortran entries

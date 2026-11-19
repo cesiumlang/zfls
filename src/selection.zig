@@ -103,7 +103,7 @@ fn trimmedEnd(line: []const u8) usize {
 }
 
 /// Where the code of a line ends: at a `!` comment outside strings
-fn codeEnd(line: []const u8) usize {
+pub fn codeEnd(line: []const u8) usize {
     var quote: u8 = 0;
     for (line, 0..) |c, i| {
         if (quote != 0) {
