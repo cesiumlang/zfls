@@ -25,6 +25,7 @@ fn R() *const patterns.Patterns {
 // The line readers and the parser, in parser/
 const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
+const openmp = @import("parser/openmp.zig");
 
 pub const ResultSig = parser_definitions.ResultSig;
 pub const VarInfo = parser_definitions.VarInfo;
@@ -68,6 +69,9 @@ pub const Trace = struct {
 pub const Options = struct {
     /// Order the keywords of a definition by id (`--sort_keywords`)
     sort_keywords: bool = false,
+    /// Plain comments above or after a declaration are its documentation
+    /// (`--hover_plain_comments`)
+    plain_comments: bool = false,
     trace: ?Trace = null,
 };
 
@@ -159,6 +163,15 @@ fn fixedNoComment(a: Allocator, line: []const u8) ![]const u8 {
     return line;
 }
 
+/// Makes the tabs and form feeds (the page breaks of old sources) of
+/// `text` spaces, as compilers read them (fortls #443); every column stays
+/// where it is
+fn blankSpaces(text: []u8) void {
+    for (text) |*c| {
+        if (c.* == '\t' or c.* == '\x0c') c.* = ' ';
+    }
+}
+
 pub const FortranFile = struct {
     gpa: Allocator,
     path: []const u8,
@@ -185,8 +198,12 @@ pub const FortranFile = struct {
     /// such as `;*`): outside strings, the first byte of one is `!` in
     /// `lines`, the text zfls reads, so that it is a comment there
     comment_markers: []const []const u8 = &.{},
-    /// With `comment_markers`: the lines as the editor has them, slices of
-    /// `raw_text` (owned by `gpa`), to which changes apply
+    /// Read OpenMP conditional compilation lines (`!$ x = 1`) as code: their
+    /// sentinel is two blanks in `lines` (parser/openmp.zig)
+    openmp_conditional: bool = true,
+    /// When `lines` differ from the editor's text (comment markers, OpenMP
+    /// conditional lines): the lines as the editor has them, slices of
+    /// `raw_text` (owned by `gpa`), to which changes apply; else empty
     raw_lines: std.ArrayList([]const u8) = .empty,
     raw_text: []u8 = &.{},
     /// `d_lines` is `code`: the D or d in column 1 of a fixed-form line (a
@@ -241,13 +258,6 @@ pub const FortranFile = struct {
         return helpers.detectFixedFormat(lines);
     }
 
-    /// Whether `lines` is a copy of the editor's lines (`raw_lines`) that
-    /// zfls reads differently: with comment markers, or debug lines read as
-    /// code
-    fn isMarked(self: *const FortranFile) bool {
-        return self.comment_markers.len > 0 or (self.d_lines_code and self.fixed);
-    }
-
     fn resetPp(self: *FortranFile) void {
         self.pp_lines = null;
         self.pp_skips = &.{};
@@ -266,6 +276,7 @@ pub const FortranFile = struct {
         var at: usize = 0;
         for (new_lines) |l| {
             @memcpy(buf[at .. at + l.len], l);
+            blankSpaces(buf[at .. at + l.len]);
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
@@ -275,33 +286,42 @@ pub const FortranFile = struct {
     }
 
     /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
-    /// When `isMarked`, they are the raw lines, and `lines` a copy with the
-    /// comment markers made comments and the D of debug lines a blank.
+    /// When zfls reads them otherwise than they are written (`rewrites`),
+    /// they are the raw lines, and `lines` a copy: comment markers made
+    /// comments, the D of debug lines and the sentinel of OpenMP
+    /// conditional lines blanks.
     fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
-        if (self.isMarked()) {
-            if (self.markedCopy(buf, new_lines.items)) |marked| {
-                self.gpa.free(self.raw_text);
-                self.raw_lines.deinit(self.gpa);
-                self.raw_text = buf;
-                self.raw_lines = new_lines;
-                self.gpa.free(self.text);
-                self.lines.deinit(self.gpa);
-                self.text = marked.text;
-                self.lines = marked.lines;
-                self.resetPp();
-                return;
-            } else |_| {}
-        }
+        self.gpa.free(self.raw_text);
+        self.raw_lines.deinit(self.gpa);
+        self.raw_text = &.{};
+        self.raw_lines = .empty;
         self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
         self.text = buf;
         self.lines = new_lines;
         self.resetPp();
+        if (!self.rewrites()) return;
+        // without memory for the copy, the text is read as it is
+        const code = self.codeCopy(buf, new_lines.items) catch return;
+        self.raw_text = buf;
+        self.raw_lines = new_lines;
+        self.text = code.text;
+        self.lines = code.lines;
     }
 
-    /// A copy of `buf` and its lines with the comment markers made `!`,
-    /// and the D or d in column 1 a blank with `d_lines_code`
-    fn markedCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+    /// Whether a line of the text is read otherwise than it is written:
+    /// comment markers, debug lines read as code, OpenMP conditional lines
+    fn rewrites(self: *const FortranFile) bool {
+        if (self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
+        if (!self.openmp_conditional) return false;
+        for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
+        return false;
+    }
+
+    /// A copy of `buf` and its lines as zfls reads them: the comment
+    /// markers made `!`, the D or d in column 1 a blank with
+    /// `d_lines_code`, the sentinels of OpenMP conditional lines blanks
+    fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
         const text = try self.gpa.dupe(u8, buf);
         errdefer self.gpa.free(text);
         var lines: std.ArrayList([]const u8) = .empty;
@@ -311,6 +331,7 @@ pub const FortranFile = struct {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
             if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
+            if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
             if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
             lines.appendAssumeCapacity(line);
         }
@@ -319,12 +340,13 @@ pub const FortranFile = struct {
 
     /// The lines that changes apply to: the editor's
     pub fn editLines(self: *const FortranFile) []const []const u8 {
-        return if (self.isMarked() and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
+        return if (self.raw_lines.items.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 
-    /// The `hash` of a file's text, whose tabs become spaces
+    /// The `hash` of a file's text, whose tabs and form feeds become
+    /// spaces
     pub fn textHash(text: []u8) u64 {
-        std.mem.replaceScalar(u8, text, '\t', ' ');
+        blankSpaces(text);
         return std.hash.Wyhash.hash(0, text);
     }
 
@@ -746,7 +768,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code), @intFromBool(opts.plain_comments) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
@@ -860,6 +882,17 @@ test "comment markers: zfls reads comments, changes apply to the editor's text" 
     try std.testing.expectEqualStrings("  go to 110 !*", f.getLine(1, false).?);
     try std.testing.expectEqualStrings("  x = 1 !* two it's a comment", f.getLine(2, false).?);
     try std.testing.expectEqual(@as(usize, 5), f.nLines());
+}
+
+test "form feeds and tabs are read as spaces, as loaded and as edited" {
+    const f = try FortranFile.create(std.testing.allocator, "/w/a.f90", null);
+    defer f.destroy();
+    _ = try f.setText("program p\n\x0c\tinteger :: a\nend program p\n");
+    try std.testing.expectEqualStrings("  integer :: a", f.getLine(1, false).?);
+    _ = try f.applyChange(.{ .text = "\x0c\tinteger :: b\n", .range = .{ .sl = 2, .sc = 0, .el = 2, .ec = 0 } });
+    try std.testing.expectEqualStrings("  integer :: b", f.getLine(2, false).?);
+    _ = try f.applyChange(.{ .text = "\x0c", .range = .{ .sl = 1, .sc = 0, .el = 1, .ec = 1 } });
+    try std.testing.expectEqualStrings("  integer :: a", f.getLine(1, false).?);
 }
 
 test "d_lines code: zfls reads the D of a debug line as a blank, changes apply to the editor's text" {

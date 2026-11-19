@@ -56,13 +56,15 @@ command line options and configuration files.
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
   `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
   title case
-- Formatting of documents and selections with findent or fprettify (see
+- Formatting of documents and selections with findent, fprettify, Codee's
+  formatter, forformat or a command of the user's (see
   [Formatting](#formatting))
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
-  documentation comments
+  documentation comments, OpenMP conditional compilation lines (`!$ x = 1`)
+  read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`,
   `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit),
   `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn`
@@ -78,7 +80,9 @@ command line options and configuration files.
   the language `FortranNamelist`): an outline of their groups and the
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
-  macros, `#include`)
+  macros, `#include`); go to definition of a macro goes to the `#define`
+  in effect at the use, in the file or a header, and references and
+  highlights list its uses and the directives that name it
 - Documentation for intrinsic procedures (with the specific names, such as
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
@@ -371,7 +375,11 @@ build files say:
   file, or directory, that the `compile_commands` option names; `""` or
   `disable_compile_commands` for none, as in fortls's pending PR #504): the
   `-I`, `-isystem` and `-D` flags (`/I` and `/D` too) of its Fortran entries.
-  Definitions apply to every file, the first value of a name winning.
+  Definitions apply to every file, the first value of a name winning. The
+  Fortran files it compiles outside the root (a sibling library, a fetched
+  dependency) are indexed too, those that `excl_paths` and `excl_suffixes`
+  leave in; the ones under the root are left to the scan of the source
+  directories.
 - `fpm.toml` in the root: the `include-dir` of `[library]` (`include` by
   default, when it exists) and the `macros` of `[preprocess.cpp]`.
 
@@ -508,6 +516,22 @@ are not names and a quote in it does not start a string.
 In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
 those comments too, after a window reload.
 
+### OpenMP conditional compilation
+
+A line that starts with the OpenMP sentinel `!$` and a blank (`!$ use
+omp_lib`, `!$ call omp_set_num_threads(n)`; in fixed form `!$`, `c$`, `C$`
+or `*$` in columns 1 and 2, then blanks or a label up to column 5) is a
+statement when the file is compiled with OpenMP. zfls reads it as code, the
+sentinel as two blanks: hover, definition, completion, references and rename
+see the names in it, and a variable used only there is not unused. A line
+continues as any other (`!$ call s(a, &` then `!$ & b)`). The directives
+(`!$omp`, `!$acc`) and a comment such as `!$this` stay comments.
+`disable_openmp_conditional` (`zfls.disableOpenmpConditional` in VS Code)
+reads these lines as comments, as a build without OpenMP does. The
+compiler check sees them as code only with the OpenMP flag in
+`compiler_args` (`-fopenmp`, `-qopenmp`). The VS Code grammar still colors
+them as comments, under the semantic highlighting of their names.
+
 ### Debug lines
 
 A fixed-form line with `D` or `d` in column 1 is a debug line (a DEC
@@ -545,6 +569,18 @@ panel): `line-too-long`, `comment-too-long`, `statement-without-scope`,
   Other open documents that use a changed module follow when it is saved.
   A result of the compiler or a linter for a changed text is published
   with zfls's diagnostics of that text, not before them.
+- A client that pulls diagnostics (its `textDocument.diagnostic`
+  capability, as VS Code's has) asks for zfls's own when it shows a
+  document (`textDocument/diagnostic`), and with `workspace_diagnostics`
+  for every file (`workspace/diagnostic`); zfls then publishes none of
+  them, and `diagnostics_change_delay` does not apply. A report the client
+  already has comes back `unchanged`, computed again only after a change in
+  the workspace; `interFileDependencies` tells the client that a change of
+  a module changes the reports of the files that use it. The compiler's and
+  the linters' diagnostics, which come later from their threads, are still
+  published. After a change of the settings zfls asks the client to pull
+  again (`workspace/diagnostic/refresh`). Turning `workspace_diagnostics`
+  on for such a client takes a restart.
 - `diagnostic_severity` (option or configuration file) sets the severity of
   a code, or hides it: `{"masks-parent": "off", "declared-twice": "warning"}`;
   the severities are `off`, `error`, `warning`, `information` and `hint`.
@@ -567,17 +603,31 @@ warnings with its own diagnostics of the file, labelled with the compiler's
 name. This works in every editor, not only VS Code.
 
 The compiler runs on a thread of its own, in syntax-only mode, one file at a
-time (a newer save of a file replaces a run that has not started). First it
+time (a newer save of a file replaces a run that has not started), with
+every error (LFortran, which stops at the first one by default, with
+`--continue-compilation`). First it
 compiles the workspace modules that the file uses, and those they use,
 whose `.mod` files are missing or older than their sources, in compile order
-from zfls's module graph; saving a file that defines modules checks again
-the open files that use them.
+from zfls's module graph (LFortran, whose syntax-only mode writes no
+`.mod` file, compiles their symbol tables: `--symtab-only -c`, with the
+object file in the `.mod` directory); saving a file that defines modules
+checks again the open files that use them.
 
 zfls reads the compiler's messages in English, so it runs the compiler (and
 fypp, the linters and the formatters) in the C locale (`LC_ALL=C`): a
 compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
-says so once and logs that output.
+says so once and logs that output. A message without a file and line (a bad
+option, a file the compiler cannot open) is published at the top of the
+file; for LFortran that is every line of its output that is not
+`file:lines:columns: severity: message`, such as an internal error and its
+traceback.
+
+A compiler run that takes longer than 120 seconds is stopped, with the
+processes it started (a driver's compiler proper, such as gfortran's
+`f951`): each tool zfls runs, the compiler, fypp, the linters and the
+formatters, runs in a job object of its own on Windows and a process group
+elsewhere, which is also stopped when the server shuts down during a run.
 
 ```json
 {
@@ -601,12 +651,25 @@ says so once and logs that output.
   nvfortran and `-132` for nagfor with 132), and free-form lines without a
   limit (`-ffree-line-length-none` for gfortran, whose default is 132
   columns before GCC 16); a line-length option in `compiler_args` replaces
-  zfls's of that form. On the command line it is one
+  zfls's of that form. For LFortran, whose own dialect (its default
+  `--std=lf`) rejects implicit typing and implicit interfaces, zfls passes
+  `--implicit-typing --implicit-interface`, each unless `compiler_args` (or
+  the project's command) has an option about it, and neither with a
+  `--std`. On the command line it is one
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
-  other options that are a program's arguments (`compiler_fypp_args`,
-  `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
+  other options that are a program's arguments (`compiler_args_fixed`,
+  `compiler_fypp_args`, `fortitude_args`, `codee_args`, `formatter_args`,
+  `formatter_fixed_args`).
+- `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`:
+  the compiler, executable and arguments of fixed-form files, for a
+  project whose legacy code builds with another compiler or options; each
+  is the free form's when not set (an empty `compiler_args_fixed`: the
+  compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no
+  fixed-form file. The modules a file uses are compiled with the compiler
+  of that file, whatever their form (the `.mod` files of two compilers do
+  not mix).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
@@ -626,6 +689,18 @@ says so once and logs that output.
   they are opened only, not saved.
 - `compiler_no_dependencies`: do not compile the modules a file uses first,
   nor check again the files that use a module when its file is saved.
+- The project's own options: without `compiler_args`, a file that has a
+  command in `compile_commands.json` (or another file of its directory
+  that has one) is checked with that command's arguments in place of the
+  compiler's defaults, in the command's `directory`, and with the
+  command's compiler when its name is the configured compiler's (and
+  `compiler_path` is not set). zfls keeps its syntax-only, form and module
+  directory options, leaves out the command's compiler, `-c`, `-o`, source
+  file, module directory (`-J`, `-module`, `/module:`...), dependency files
+  (`-MD`, `-MF`...) and color options, and does not add `pp_defs` (the
+  command has its own `-D`). The modules a file uses are compiled with
+  their own commands. `compiler_no_compile_commands` turns this off, as
+  `disable_compile_commands` does with the rest of the file.
 - `compiler_fypp`: run [fypp](https://fypp.readthedocs.io) (this executable)
   on each file first, with line markers naming the file, so that the
   compiler's messages point into it; `compiler_fypp_args` are fypp's own
@@ -677,12 +752,21 @@ drops the compiler's diagnostics and zfls's `.mod` files (not those of
 
 ### Formatting
 
-With `formatter` set to `findent` or `fprettify`, zfls answers
-`textDocument/formatting` and `textDocument/rangeFormatting` (format
-document, format selection, format on save) by running that formatter,
-which is installed separately (`pip install findent`, `pip install
-fprettify`, or the same from conda-forge). This works in every editor, not
+With `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or
+`custom`, zfls answers `textDocument/formatting` and
+`textDocument/rangeFormatting` (format document, format selection, format
+on save) by running that formatter, which is installed separately (`pip
+install findent`, `pip install fprettify`, or the same from conda-forge;
+[Codee](https://www.codee.com); forformat). This works in every editor, not
 only VS Code; zfls offers formatting only when a formatter is set.
+
+| `formatter` | Command line |
+| --- | --- |
+| `findent` | `findent -ifree` (or `-ifixed`), `-Ia` for a selection, then `formatter_args` |
+| `fprettify` | `fprettify`, then `formatter_args` |
+| `codee` | `codee format - -o -`, then `formatter_args`; the `codee` of `codee_path` unless `formatter_path` is set |
+| `forformat` | `forformat --stdin-filename=FILE -ifree` (or `-ifixed`), then `formatter_args` |
+| `custom` | `formatter_path` with `formatter_args`, in which `${file}` is the document's path and `${form}` `free` or `fixed` |
 
 zfls gives the formatter the document's text, as the editor has it, on its
 standard input, reads the result from its standard output (no files are
@@ -714,9 +798,11 @@ text. The formatter runs in the file's directory, so fprettify finds the
 - `formatter_path`: the executable, or the directory that holds it (by
   default the formatter on the `PATH`).
 
-A selection is formatted as whole lines, and the formatter sees only those
-lines: select whole constructs for the indentation inside them to come out
-right. When the formatter is missing or fails, the document is left as it
+A selection is formatted as whole lines, and findent, fprettify and a
+custom formatter see only those lines: select whole constructs for the
+indentation inside them to come out right. Codee's formatter and forformat
+format whole files only: zfls gives them the whole file and keeps the
+changes in the selected lines. When the formatter is missing or fails, the document is left as it
 is and zfls shows the error once (`window/showMessage`).
 
 ## Testing
@@ -729,6 +815,7 @@ is and zfls shows the error once (`window/showMessage`).
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
+| `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
 | `zig build test-differential` | every request type against Python fortls (slow) |
 | `zig build test-all` | all of the above except the differential run |
@@ -747,6 +834,10 @@ default or `-Dfortls=PATH` (the stress test takes its test sources, else
 own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
 required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+The compiler check's test (and `tests/issues/compiler_lfortran.zig`) needs
+`lfortran` on the `PATH` (`--lfortran EXE` or `LFORTRAN` for the driver),
+from conda-forge (`pixi add lfortran`, `conda install -c conda-forge
+lfortran`), and is skipped without it; CI runs it on Linux x64.
 
 `zig build bench` times zfls on a large workspace (workspace
 initialization, request latency, edits, memory), and fortls too when
@@ -844,6 +935,12 @@ zfls deliberately differs from fortls in a few places:
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own
   signature (hansec #60); fortls shows none there.
+- In a structure constructor (`pt(1, 2)`), signature help shows the
+  type's data components, its parent's first, and with them the
+  procedures of a generic interface named like the type (hansec #148);
+  keyword completion offers both. A component with a default value is
+  optional, and outside the type's module a type with a private component
+  has no constructor signature. fortls shows none.
 - Inside a call, completion also offers `name=` for each argument the call
   can name and has not named yet (hansec #133), first in the list; fortls
   offers only the names in scope.
@@ -860,10 +957,14 @@ zfls deliberately differs from fortls in a few places:
   a letter. fortls answers nothing until a letter is typed.
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
-  with a quick fix removing a declaration of that name only. A name counts
-  as used when it appears anywhere else in the scope, contained procedures
-  and inactive preprocessor branches included; dummy arguments, function
-  results and module names are not reported. fortls has no such check.
+  with a quick fix removing it from its declaration: the whole statement
+  when it declares nothing else, otherwise the name with its dimensions and
+  initialization (continuation lines included). The source action "Remove
+  all unused declarations" removes all of a file's. A name counts
+  as used when it appears anywhere else in the scope, contained procedures,
+  inactive preprocessor branches and the values of the macros used there
+  included; dummy arguments, function results and module names are not
+  reported. fortls has no such check.
 - Diagnostics follow the text while a document is edited, after
   `diagnostics_change_delay` milliseconds without a change (see
   [Diagnostics](#diagnostics)); fortls publishes them when a document is
@@ -875,7 +976,9 @@ zfls deliberately differs from fortls in a few places:
   deleted file's are cleared. fortls only checks open files.
 - Under IMPLICIT NONE, a name that is not declared gets an
   `undeclared-name` warning with a quick fix declaring it (hansec #129);
-  fortls only checks the types named in declarations. It is left out where
+  fortls only checks the types named in declarations. A line with macros is
+  read with them expanded, as the compiler reads it, and a name is reported
+  where it is written (`CHECK(nope)`). It is left out where
   a USE statement names a module that is not in the workspace, or in a
   scope with an INCLUDE whose file is not found or that continues a
   statement, as the name could come from those.
@@ -890,6 +993,18 @@ zfls deliberately differs from fortls in a few places:
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- Go to definition of a preprocessor macro goes to its `#define` (the one
+  in effect at the use, also in a header an `#include` reads), and null for
+  a macro of `pp_defs` or `-D`; references and document highlights list
+  the macro as a word of the file's code (outside strings and comments)
+  and of its directives, and for a header's macro of the header and the
+  workspace files that include it; hover and definition work on the names
+  of `#ifdef`, `#ifndef`, `#if defined(...)` and `#undef` lines (hansec
+  #115). fortls answers the use itself and lists only it.
+- OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
+  Fortran #17); fortls reads them as comments, so its references and
+  rename leave them out. `disable_openmp_conditional` reads them as fortls
+  does.
 - On Windows, a folder on a UNC path, as a network share or
   `\\wsl.localhost\...` is, is served: its URIs
   (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`
@@ -965,7 +1080,11 @@ zfls deliberately differs from fortls in a few places:
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
 - Stub actions: on a call of a procedure defined outside any module, an
-  interface block for it in the calling unit; on a separate module procedure
+  interface block for it after the calling unit's declarations, written from
+  the procedure's source (its USE and IMPLICIT statements and the
+  declarations of its arguments and result, in the caller's source form),
+  replacing the caller's EXTERNAL or type declaration of it, and not
+  offered when an interface is visible already; on a separate module procedure
   without implementation, its `module procedure` stub in a submodule of its
   module (a new one at the end of the file when there is none).
 - More code actions: "Add IMPLICIT NONE" on the first line of a program
@@ -1040,6 +1159,9 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- The Fortran files that `compile_commands.json` compiles outside the
+  workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
+  source directories only.
 - `.f23`, `.ftn`, `.pf` and `.fypp` files are indexed by default, besides
   fortls's extensions (FL #299, FL #521).
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed
@@ -1184,9 +1306,30 @@ zfls deliberately differs from fortls in a few places:
   interface. Go to declaration (`textDocument/declaration`, which fortls
   does not answer) always goes to the interface, also from the body; for
   other names it is go to definition.
+- In a function without `RESULT`, the function's name and its result
+  variable are one name for references, document highlights and rename,
+  started from either (fortls #322); fortls keeps them apart, and its
+  rename from inside the body leaves the function statement and the calls
+  with the old name. With `RESULT(r)`, `r` stays separate.
 - With the `lowercase_hover` option, the keywords of hover are in lowercase
   (`real, intent(in) :: x`), names and strings as written (fortls #28);
   fortls's are always uppercase.
+- Hover on a derived type, or on a variable of one, shows the type as it
+  is written: `TYPE, EXTENDS(base) :: name`, its own components, its
+  type-bound procedures and generics after `CONTAINS` (hansec #147).
+  Outside the type's module its private components and bindings are left
+  out, and after 20 lines the block ends with `...`. The
+  `hover_no_type_components` option (`zfls.hoverNoTypeComponents`) turns
+  it off. fortls shows only `TYPE :: name` and the variable's declaration.
+- With the `hover_plain_comments` option (`zfls.hoverPlainComments`),
+  plain `!` comments document a declaration that has no `!>`, `!<` or `!!`
+  documentation, as legacy code (LAPACK and the like) is documented: the
+  block of comment lines directly above a procedure, type, module or
+  variable (`C` and `*` lines in fixed form), a comment at the end of its
+  line, and a block right under a procedure's header line. A blank line
+  between, directives (`!$omp`, `!dir$`) and rulers (`!-----`) are no
+  documentation. Hover, completion and signature help show it (hansec #44,
+  #37); fortls reads only `!>`, `!<` and `!!` comments.
 - A rename without `ONLY` (`use m, local => original`) is read: the local
   name is the module's entity and the original name is not visible under
   that name. On the USE line, hover, definition and references on either
@@ -1233,6 +1376,9 @@ zfls deliberately differs from fortls in a few places:
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
   indented 5) for fixed form. Other files are still told by their text.
+- A form feed (a page break of old sources) is read as a blank, as compilers
+  read it; fortls drops the statement of a line that starts with one
+  (fortls #443).
 - The enumerators of an ENUM are named integer constants of the scope around
   it, with hover, definition and completion, PUBLIC or PRIVATE by name;
   fortls does not read them.

@@ -76,6 +76,7 @@ export async function run(): Promise<void> {
   checkSnippets();
   checkLanguageContributions();
   await checkConfigSchema();
+  await checkPulledDiagnostics();
   await checkCompilerDiagnostics();
 }
 
@@ -138,6 +139,25 @@ async function checkConfigSchema(): Promise<void> {
   assert.ok(messages.some((m) => /integer/i.test(m)), `diagnostics ${messages}`);
   assert.strictEqual(problems.length, 1, `diagnostics ${messages}`);
   console.log(`.fortlsrc checked against the schema: ${messages}`);
+}
+
+// VS Code's client pulls diagnostics (textDocument/diagnostic): zfls's own
+// show once, not published as well.
+async function checkPulledDiagnostics(): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-pull-"));
+  const file = path.join(dir, "pull_me.f90");
+  fs.writeFileSync(file, "program pull_me\n  implicit none\n  i = 1\nend program pull_me\n");
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  const undeclared = () =>
+    vscode.languages.getDiagnostics(doc.uri).filter((d) => d.source === "zfls" && /not declared/.test(d.message));
+  const found = await poll("zfls's diagnostics", async () => (undeclared().length > 0 ? undeclared() : undefined));
+  // a second copy would come with the next publication
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  assert.strictEqual(undeclared().length, 1, `diagnostics ${undeclared().map((d) => d.message)}`);
+  assert.strictEqual(found[0].range.start.line, 2);
+  await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  console.log(`zfls's diagnostics pulled: ${found[0].message}`);
 }
 
 // A file with an error opened: gfortran's message shows in it (where the

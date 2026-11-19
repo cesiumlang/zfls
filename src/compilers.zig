@@ -86,11 +86,26 @@ pub fn syntaxOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
         .ifx, .ifort => if (o.windows) &.{ "/nologo", "/syntax-only" } else &.{"-syntax-only"},
         // -M: produce .mod files only; -quiet: no banner and summary line
         .nagfor => &.{ "-M", "-quiet" },
-        .lfortran => &.{ "--semantics-only", "--error-format=short", "--no-color" },
+        // --continue-compilation: every error, not only the first
+        .lfortran => &.{ "--semantics-only", "--continue-compilation", "--error-format=short", "--no-color" },
         // no syntax-only mode: compile, with the object file next to the
         // .mod files rather than in the source tree
         .nvfortran => try dupeArgs(a, &.{ "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }) }),
         .flang => &.{ "-fsyntax-only", "-fno-color-diagnostics" },
+    };
+}
+
+/// Compile a module that the file checked uses, for its .mod files: as
+/// `syntaxOnly`, except for LFortran, whose --semantics-only writes none
+pub fn moduleOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
+    return switch (id) {
+        // the symbol tables only, without the executable statements: enough
+        // for the users of its type-bound procedures, defined operators and
+        // pure functions. -c and -o: LFortran writes .mod files only when
+        // it compiles, and the object goes next to them, not into the
+        // source tree.
+        .lfortran => try dupeArgs(a, &.{ "--symtab-only", "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }), "--error-format=short", "--no-color" }),
+        else => syntaxOnly(a, id, o),
     };
 }
 
@@ -200,6 +215,30 @@ pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
         .nvfortran => &.{"-Minform=warn"},
         .nagfor, .lfortran, .flang => &.{},
     };
+}
+
+/// Accept implicit typing and implicit interfaces, as the standard does:
+/// LFortran's own dialect (`--std=lf`, its default) rejects them, which
+/// gives standard code without IMPLICIT NONE, and most fixed form, false
+/// errors. Each is left out when `own` (`compiler_args`, or the project's
+/// command) has an option about it, and both when `own` chooses a standard
+/// (`--disable-implicit-typing` with `--implicit-typing` is an error).
+/// Not `--std=f23`: it also casts arguments implicitly, which hides
+/// arguments of the wrong type.
+pub fn implicitRules(id: Id, own: []const []const u8) []const []const u8 {
+    if (id != .lfortran) return &.{};
+    var typing = true;
+    var interface = true;
+    for (own) |x| {
+        if (std.mem.startsWith(u8, x, "--std")) return &.{};
+        if (std.mem.eql(u8, x, "--implicit-typing") or std.mem.eql(u8, x, "--disable-implicit-typing")) typing = false;
+        if (std.mem.eql(u8, x, "--implicit-interface") or std.mem.eql(u8, x, "--disable-implicit-interface")) interface = false;
+    }
+    const both: []const []const u8 = &.{ "--implicit-typing", "--implicit-interface" };
+    if (typing and interface) return both;
+    if (typing) return both[0..1];
+    if (interface) return both[1..];
+    return &.{};
 }
 
 /// Write .mod files to, and read them from, `dir`
@@ -457,9 +496,26 @@ const Parser = struct {
         // `--error-format=short`: `file:line-endline:col-endcol: severity
         // [code]: message`, or without a location `severity: message`
         const r = try p.re("^(?:(?P<file>.+?):(?P<ls>\\d+)-(?P<le>\\d+):(?P<cs>\\d+)-(?P<ce>\\d+): )?(?P<sev>(?:[\\w ]*error)|warning|note|help|style suggestion)(?: \\[(?P<code>[^\\]]+)\\])?: (?P<msg>.*)$", .{});
+        // the other lines are messages too, without a location: about the
+        // command line ("The following argument was not expected: --x",
+        // "Cannot use --disable-implicit-typing and --implicit-typing at
+        // the same time"), a file that cannot be opened, an internal
+        // error. The lines of one (a traceback) go together, up to an
+        // empty line or a message of the format above.
+        var free: std.ArrayList(u8) = .empty;
         var it = lines(output);
         while (it.next()) |raw| {
-            const m = r.match(trimCr(raw)) orelse continue;
+            const text = std.mem.trimEnd(u8, trimCr(raw), " \t");
+            const m = r.match(text) orelse {
+                if (text.len == 0) {
+                    try p.unlocated(&free);
+                } else if (!lfortranNoise(text)) {
+                    if (free.items.len > 0) try free.append(p.a, '\n');
+                    try free.appendSlice(p.a, text);
+                }
+                continue;
+            };
+            try p.unlocated(&free);
             const sev_text = m.named(r, "sev").?;
             const sev: Severity = if (std.mem.eql(u8, sev_text, "warning")) .warning else if (std.mem.eql(u8, sev_text, "note")) .info else if (std.mem.eql(u8, sev_text, "help") or std.mem.eql(u8, sev_text, "style suggestion")) .hint else .@"error";
             try p.push(m.named(r, "file"), if (m.named(r, "ls")) |s| num(s) else 0, numOpt(m.named(r, "cs")), sev, m.named(r, "msg").?, m.named(r, "code"));
@@ -469,6 +525,22 @@ const Parser = struct {
                 last.end_column = numOpt(m.named(r, "ce"));
             }
         }
+        try p.unlocated(&free);
+    }
+
+    /// The lines gathered in `free`, as one error without a location
+    fn unlocated(p: *Parser, free: *std.ArrayList(u8)) !void {
+        if (free.items.len == 0) return;
+        try p.push(null, 0, null, .@"error", try free.toOwnedSlice(p.a), null);
+    }
+
+    /// LFortran's lines that are no message: the advice after a
+    /// command-line error, and the request for reports after the messages
+    /// of its human format
+    fn lfortranNoise(text: []const u8) bool {
+        return std.mem.eql(u8, text, "Run with --help for more information.") or
+            std.mem.startsWith(u8, text, "Note: Please report unclear") or
+            std.mem.startsWith(u8, text, "https://github.com/lfortran/lfortran/issues");
     }
 
     // --- NVIDIA nvfortran -----------------------------------------------------
@@ -654,12 +726,43 @@ test "lfortran messages" {
         \\test.f90:8-8:3-3: warning: The variable 'x' is used before it is set
         \\test.f90:9-9:3-9: style suggestion: Use '**' instead
         \\C preprocessor error: cannot open 'x.h'
+        \\pp.F90:2-2:11-19: C preprocessor error: Include file 'nothere.h' not found.
+        \\C:\w\a b.f90:3-3:3-13: semantic error: Function 'ext' not found (not user defined nor intrinsic)
+        \\semantic error: no main program found; cannot build an executable.
     , &.{
         "test.f90:3:5 error: Variable 'abc' is not declared",
         "test.f90:5:1 error: Token 'end' is unexpected here",
         "test.f90:8:3 warning: The variable 'x' is used before it is set",
         "test.f90:9:3 hint: Use '**' instead",
         "-:0:- error: cannot open 'x.h'",
+        "pp.F90:2:11 error: Include file 'nothere.h' not found.",
+        "C:\\w\\a b.f90:3:3 error: Function 'ext' not found (not user defined nor intrinsic)",
+        "-:0:- error: no main program found; cannot build an executable.",
+    });
+}
+
+test "lfortran messages without a location" {
+    // as LFortran 0.69 prints them
+    try expectBrief(.lfortran, "The following argument was not expected: --bogus\r\nRun with --help for more information.\r\n", &.{
+        "-:0:- error: The following argument was not expected: --bogus",
+    });
+    try expectBrief(.lfortran,
+        \\The option `--std=f77` is not supported
+        \\error: no such file or directory: 'nofile.f90'
+        \\File 'incdir' cannot be opened.
+        \\Cannot use --disable-implicit-typing and --implicit-typing at the same time
+        \\
+        \\Internal Compiler Error: Unhandled exception
+        \\Traceback (most recent call last):
+        \\  File "lfortran.cpp", line 10
+        \\a.f90:1-1:1-1: semantic error: x
+        \\
+    , &.{
+        "-:0:- error: The option `--std=f77` is not supported",
+        "-:0:- error: no such file or directory: 'nofile.f90'",
+        "-:0:- error: File 'incdir' cannot be opened.\nCannot use --disable-implicit-typing and --implicit-typing at the same time",
+        "-:0:- error: Internal Compiler Error: Unhandled exception\nTraceback (most recent call last):\n  File \"lfortran.cpp\", line 10",
+        "a.f90:1:1 error: x",
     });
 }
 
@@ -711,6 +814,38 @@ test "flang messages and their context lines" {
     try std.testing.expectEqual(@as(usize, 1), ms[1].related.items.len);
     try std.testing.expectEqualStrings("Previous declaration of 'y'", ms[1].related.items[0].message);
     try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
+}
+
+test "the modules a file uses: LFortran compiles their symbol tables, which writes .mod files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const o: Options = .{ .windows = false, .mod_dir = "m" };
+    const lf = try moduleOnly(a, .lfortran, o);
+    try std.testing.expectEqualStrings("--symtab-only", lf[0]);
+    try std.testing.expectEqualStrings("-c", lf[1]);
+    try std.testing.expectEqualStrings(try std.Io.Dir.path.join(a, &.{ "m", "zfls-lint.o" }), lf[3]);
+    // the file itself: semantics only, and every error
+    const check = try syntaxOnly(a, .lfortran, o);
+    try std.testing.expectEqualStrings("--semantics-only", check[0]);
+    try std.testing.expectEqualStrings("--continue-compilation", check[1]);
+    try std.testing.expectEqualStrings("-fsyntax-only", (try moduleOnly(a, .gfortran, o))[0]);
+}
+
+fn expectImplicitRules(own: []const []const u8, want: []const []const u8) !void {
+    const got = implicitRules(.lfortran, own);
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "LFortran: implicit typing and interfaces, unless the user's options say" {
+    try expectImplicitRules(&.{}, &.{ "--implicit-typing", "--implicit-interface" });
+    try expectImplicitRules(&.{"--disable-implicit-typing"}, &.{"--implicit-interface"});
+    try expectImplicitRules(&.{"--implicit-interface"}, &.{"--implicit-typing"});
+    try expectImplicitRules(&.{ "--implicit-typing", "--implicit-interface" }, &.{});
+    try expectImplicitRules(&.{"--std=f23"}, &.{});
+    try expectImplicitRules(&.{ "--std", "lf" }, &.{});
+    try std.testing.expectEqual(@as(usize, 0), implicitRules(.gfortran, &.{}).len);
 }
 
 fn expectLineLength(id: Id, fixed: bool, columns: ?usize, windows: bool, want: []const []const u8) !void {

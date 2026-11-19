@@ -39,6 +39,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const diagnostics = @import("diagnostics.zig");
+const pull = @import("pull.zig");
 const compile = @import("compile.zig");
 const format = @import("format.zig");
 const bindc = @import("bindc.zig");
@@ -74,10 +75,10 @@ pub const State = struct {
 /// The settings read when the workspace is indexed: changing one
 /// re-indexes it
 const index_settings = [_][]const u8{
-    "source_dirs",          "incl_suffixes",            "excl_suffixes", "excl_paths",
-    "comment_markers",      "d_lines",                  "sort_keywords", "recursion_limit",
-    "lowercase_intrinsics", "pp_suffixes",              "include_dirs",  "pp_defs",
-    "compile_commands",     "disable_compile_commands",
+    "source_dirs",          "incl_suffixes",            "excl_suffixes",        "excl_paths",
+    "comment_markers",      "d_lines",                  "sort_keywords",        "recursion_limit",
+    "lowercase_intrinsics", "pp_suffixes",              "include_dirs",         "pp_defs",
+    "compile_commands",     "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
 };
 
 fn isIndexSetting(comptime name: []const u8) bool {
@@ -224,6 +225,7 @@ pub fn watchConfigFiles(self: *Server, a: Allocator) void {
 /// Puts the settings `next` (as configured) in effect; `force_reindex`:
 /// index the workspace again whatever the settings
 fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void {
+    pull.changed(self);
     const prev = self.config.configured;
     self.config.configured = next;
     const same = struct {
@@ -253,7 +255,7 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
     if (!same(&prev, &next, "debug_log") and self.s.debug_log) try workspace.configLogger(self);
     try workspace.logOptions(self, a);
     if (!same(&prev, &next, "diagnostic_severity")) try diagnostics.checkDiagnosticSeverity(self, a);
-    if (!same(&prev, &next, "compiler_diagnostics")) try compile.checkSetting(self, a);
+    if (!same(&prev, &next, "compiler_diagnostics") or !same(&prev, &next, "compiler_diagnostics_fixed")) try compile.checkSetting(self, a);
     if (!same(&prev, &next, "formatter") or !same(&prev, &next, "formatter_fixed")) try format.checkSetting(self, a);
     try announce(self, a);
     if (!same(&prev, &next, "code_lens_no_references") or !same(&prev, &next, "code_lens_no_run")) {
@@ -340,6 +342,9 @@ fn announce(self: *Server, a: Allocator) !void {
             self.config.announced.formatting = true;
         } else try restart.append(a, "formatter");
     }
+    // the client pulls the workspace's diagnostics only if told so at
+    // initialize
+    if (self.pull_diagnostics and self.s.workspace_diagnostics and !self.pull_workspace) try restart.append(a, "workspace_diagnostics");
     if (regs.items.len > 0) self.sendRequest(a, "client/registerCapability", try json.from(a, .{ .registrations = regs.items })) catch |e| self.logSendFailure(e);
     if (restart.items.len > 0) {
         const names = try std.mem.join(a, ", ", restart.items);
@@ -353,6 +358,8 @@ fn republish(self: *Server, a: Allocator, was_published: bool, was_workspace: bo
         if (was_published) try clear(self, a, was_workspace, true);
         return;
     }
+    // pulled again, by a client that pulls them
+    if (self.pull_diagnostics) return pull.refresh(self, a);
     // those of the files that are no longer published
     if (was_workspace and !self.s.workspace_diagnostics) try clear(self, a, true, false);
     if (self.s.workspace_diagnostics) {

@@ -5,9 +5,11 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("associate.zig");
+    _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
+    _ = @import("compiler_fixed.zig");
     _ = @import("corpus.zig");
     _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
@@ -17,20 +19,28 @@ test {
     _ = @import("documents.zig");
     _ = @import("extensions.zig");
     _ = @import("external.zig");
+    _ = @import("formatting.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
+    _ = @import("hover_types.zig");
+    _ = @import("plain_comments.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
+    _ = @import("macros.zig");
     _ = @import("navigation.zig");
+    _ = @import("openmp.zig");
     _ = @import("outline.zig");
+    _ = @import("outside_sources.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");
     _ = @import("signature.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
+    _ = @import("pull_diagnostics.zig");
     _ = @import("use.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
+    _ = @import("compiler_lfortran.zig");
 }
