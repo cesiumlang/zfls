@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const helpers = @import("helpers.zig");
 const lsp = @import("lsp.zig");
 const objects = @import("objects.zig");
+const constructs = @import("constructs.zig");
 const str = @import("str.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -112,7 +113,8 @@ const Tokenizer = struct {
 
     /// Collect a name that stands for nothing found, unless it is a word
     /// that is no name: in a specification or END statement, after CALL
-    /// (an external subroutine) or EXIT/CYCLE (a construct), a keyword
+    /// (an external subroutine) or EXIT/CYCLE (a construct), the name of a
+    /// construct repeated on a branch (`else n1`), a keyword
     /// inside a statement (`then`, `while`, `concurrent`, ...), an
     /// intrinsic procedure, a component
     fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool) !void {
@@ -123,6 +125,8 @@ const Tokenizer = struct {
         };
         for (inner_keywords) |k| if (std.ascii.eqlIgnoreCase(w.str, k)) return;
         for (t.intrinsics) |f| if (std.ascii.eqlIgnoreCase(f.name, w.str)) return;
+        // the name of its construct, repeated on a branch (`else n1`)
+        if (try constructs.isConstructUse(t.a, t.file, ln, w.start)) return;
         try list.append(t.a, .{ .line = ln, .start = w.start, .end = w.end, .name = w.str, .scope = scope });
     }
 

@@ -42,6 +42,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const pending = @import("server/pending.zig");
 const format = @import("server/format.zig");
 const linters = @import("server/linters.zig");
 const bindc = @import("server/bindc.zig");
@@ -126,6 +127,13 @@ pub const Server = struct {
     diag_lock: Io.Mutex = .init,
     own_diags: std.StringHashMapUnmanaged([]u8) = .empty,
     external_diags: [@typeInfo(compile.Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8) = @splat(.empty),
+    /// The documents changed since zfls's diagnostics of them were
+    /// published, by URI, and when those are due (pending.zig: the awake
+    /// clock's nanoseconds); keys owned by `gpa`, under `diag_lock`
+    diag_pending: std.StringHashMapUnmanaged(i96) = .empty,
+    /// The client asked for `shutdown`: no diagnostics of a change wait
+    /// or are computed until `exit` (pending.zig; the server's thread)
+    shut_down: bool = false,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
     /// The formatting problems posted (hashes of their keys), each once
@@ -155,6 +163,10 @@ pub const Server = struct {
     /// Where the settings come from, and the providers announced to the
     /// client (configuration.zig)
     config: configuration.State = .{},
+    /// The environment of the programs whose messages zfls reads
+    /// (compilers, fypp, linters, formatters), set by `setEnviron`; null:
+    /// they inherit zfls's
+    tool_env: ?std.process.Environ.Map = null,
     log: *Logger,
 
     pub fn create(gpa: Allocator, io: Io, s: Settings, log: *Logger) !*Server {
@@ -184,6 +196,7 @@ pub const Server = struct {
         compile.stop(self);
         linters.stop(self);
         compile.deinitStore(self);
+        pending.deinit(self);
         clangd.stop(self);
         bindc.deinitIndex(self);
         var c_it = self.c_docs.iterator();
@@ -213,9 +226,23 @@ pub const Server = struct {
         self.post_messages.deinit(self.gpa);
         self.format_reported.deinit(self.gpa);
         self.intr.deinit();
+        if (self.tool_env) |*e| e.deinit();
         self.pp_defs_arena.deinit();
         self.arena.deinit();
         self.gpa.destroy(self);
+    }
+
+    /// Gives the programs zfls runs its environment `base`, with their
+    /// messages in English (`toolEnviron`)
+    pub fn setEnviron(self: *Server, base: *const std.process.Environ.Map) !void {
+        const made = try toolEnviron(self.gpa, base);
+        if (self.tool_env) |*e| e.deinit();
+        self.tool_env = made;
+    }
+
+    /// The environment of the programs zfls runs, null for zfls's own
+    pub fn toolEnv(self: *const Server) ?*const std.process.Environ.Map {
+        return if (self.tool_env) |*e| e else null;
     }
 
     pub fn syncPpDefsFromSettings(self: *Server) !void {
@@ -396,6 +423,7 @@ pub const Server = struct {
         will_rename_files,
         /// accepted and ignored
         ignored,
+        shutdown,
         exit,
     };
 
@@ -452,7 +480,7 @@ pub const Server = struct {
         .{ "workspace/didChangeConfiguration", .did_change_configuration },
         .{ "$/cancelRequest", .ignored },
         .{ "$/setTrace", .ignored },
-        .{ "shutdown", .ignored },
+        .{ "shutdown", .shutdown },
         .{ "exit", .exit },
     });
 
@@ -513,6 +541,10 @@ pub const Server = struct {
             .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
             .did_change_configuration => configuration.serveDidChange(self, a, params),
             .ignored => .null,
+            .shutdown => blk: {
+                pending.shutdown(self);
+                break :blk .null;
+            },
             .exit => blk: {
                 self.serveExit();
                 break :blk .null;
@@ -540,6 +572,19 @@ pub const Server = struct {
 
     pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
         return diagnostics.getDiagnostics(self, a, uri);
+    }
+
+    /// When the diagnostics of a changed document are next due (the awake
+    /// clock's nanoseconds), for the loop that reads the messages to wait
+    /// no longer; null: none are
+    pub fn nextDiagnosticsTime(self: *Server) ?i96 {
+        return pending.next(self);
+    }
+
+    /// Publishes the diagnostics of changed documents due at `now` (null:
+    /// all of them)
+    pub fn publishPendingDiagnostics(self: *Server, a: Allocator, now: ?i96) void {
+        pending.publishDue(self, a, now);
     }
 
     pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
@@ -680,4 +725,32 @@ pub fn pyFormatLangid(a: Allocator, s: []const u8, langid: []const u8) ![]const 
         }
     }
     return out.items;
+}
+
+/// The environment of a program zfls reads the messages of: `base` in the C
+/// locale, so that they are in English (gettext reads LC_ALL before
+/// LC_MESSAGES and LANG, and ignores LANGUAGE in the C locale)
+pub fn toolEnviron(gpa: Allocator, base: *const std.process.Environ.Map) !std.process.Environ.Map {
+    var env = try base.clone(gpa);
+    errdefer env.deinit();
+    try env.put("LC_ALL", "C");
+    _ = env.swapRemove("LANGUAGE");
+    return env;
+}
+
+test "the tools' environment: the C locale, the rest kept" {
+    var base: std.process.Environ.Map = .init(std.testing.allocator);
+    defer base.deinit();
+    try base.put("PATH", "/opt/intel/bin");
+    try base.put("ONEAPI_ROOT", "/opt/intel");
+    try base.put("LANG", "de_DE.UTF-8");
+    try base.put("LC_ALL", "de_DE.UTF-8");
+    try base.put("LANGUAGE", "de");
+    var env = try toolEnviron(std.testing.allocator, &base);
+    defer env.deinit();
+    try std.testing.expectEqualStrings("C", env.get("LC_ALL").?);
+    try std.testing.expect(env.get("LANGUAGE") == null);
+    try std.testing.expectEqualStrings("/opt/intel/bin", env.get("PATH").?);
+    try std.testing.expectEqualStrings("/opt/intel", env.get("ONEAPI_ROOT").?);
+    try std.testing.expectEqualStrings("de_DE.UTF-8", base.get("LC_ALL").?);
 }

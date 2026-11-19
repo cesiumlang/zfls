@@ -5,6 +5,7 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("completion.zig");
+    _ = @import("compiler_locale.zig");
     _ = @import("completion_resolve.zig");
     _ = @import("constructs.zig");
     _ = @import("corpus.zig");
@@ -21,6 +22,7 @@ test {
     _ = @import("outline.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");
+    _ = @import("signature.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
     _ = @import("use.zig");
