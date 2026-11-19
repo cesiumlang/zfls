@@ -4,6 +4,7 @@
 
 test {
     _ = @import("argchecks.zig");
+    _ = @import("associate.zig");
     _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
@@ -16,7 +17,9 @@ test {
     _ = @import("diagnostics.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("extensions.zig");
     _ = @import("external.zig");
+    _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
