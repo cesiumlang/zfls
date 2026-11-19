@@ -62,7 +62,8 @@ command line options and configuration files.
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
 - Fixed and free source form, line continuations, Doxygen and FORD style
-  documentation comments
+  documentation comments, OpenMP conditional compilation lines (`!$ x = 1`)
+  read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`,
   `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit),
   `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn`
@@ -508,6 +509,22 @@ are not names and a quote in it does not start a string.
 In VS Code, `zfls.commentMarkers` sets it, and the extension highlights
 those comments too, after a window reload.
 
+### OpenMP conditional compilation
+
+A line that starts with the OpenMP sentinel `!$` and a blank (`!$ use
+omp_lib`, `!$ call omp_set_num_threads(n)`; in fixed form `!$`, `c$`, `C$`
+or `*$` in columns 1 and 2, then blanks or a label up to column 5) is a
+statement when the file is compiled with OpenMP. zfls reads it as code, the
+sentinel as two blanks: hover, definition, completion, references and rename
+see the names in it, and a variable used only there is not unused. A line
+continues as any other (`!$ call s(a, &` then `!$ & b)`). The directives
+(`!$omp`, `!$acc`) and a comment such as `!$this` stay comments.
+`disable_openmp_conditional` (`zfls.disableOpenmpConditional` in VS Code)
+reads these lines as comments, as a build without OpenMP does. The
+compiler check sees them as code only with the OpenMP flag in
+`compiler_args` (`-fopenmp`, `-qopenmp`). The VS Code grammar still colors
+them as comments, under the semantic highlighting of their names.
+
 ### Debug lines
 
 A fixed-form line with `D` or `d` in column 1 is a debug line (a DEC
@@ -579,6 +596,12 @@ compiler with translations would otherwise write `Fehler` for `Error`.
 When the compiler fails with output of which zfls understands nothing, zfls
 says so once and logs that output.
 
+A compiler run that takes longer than 120 seconds is stopped, with the
+processes it started (a driver's compiler proper, such as gfortran's
+`f951`): each tool zfls runs, the compiler, fypp, the linters and the
+formatters, runs in a job object of its own on Windows and a process group
+elsewhere, which is also stopped when the server shuts down during a run.
+
 ```json
 {
   "compiler_diagnostics": "gfortran",
@@ -605,8 +628,17 @@ says so once and logs that output.
   string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON
   list, which keeps an argument with a space whole:
   `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the
-  other options that are a program's arguments (`compiler_fypp_args`,
-  `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
+  other options that are a program's arguments (`compiler_args_fixed`,
+  `compiler_fypp_args`, `fortitude_args`, `codee_args`, `formatter_args`,
+  `formatter_fixed_args`).
+- `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`:
+  the compiler, executable and arguments of fixed-form files, for a
+  project whose legacy code builds with another compiler or options; each
+  is the free form's when not set (an empty `compiler_args_fixed`: the
+  compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no
+  fixed-form file. The modules a file uses are compiled with the compiler
+  of that file, whatever their form (the `.mod` files of two compilers do
+  not mix).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
   default a directory per project and compiler in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
@@ -626,6 +658,18 @@ says so once and logs that output.
   they are opened only, not saved.
 - `compiler_no_dependencies`: do not compile the modules a file uses first,
   nor check again the files that use a module when its file is saved.
+- The project's own options: without `compiler_args`, a file that has a
+  command in `compile_commands.json` (or another file of its directory
+  that has one) is checked with that command's arguments in place of the
+  compiler's defaults, in the command's `directory`, and with the
+  command's compiler when its name is the configured compiler's (and
+  `compiler_path` is not set). zfls keeps its syntax-only, form and module
+  directory options, leaves out the command's compiler, `-c`, `-o`, source
+  file, module directory (`-J`, `-module`, `/module:`...), dependency files
+  (`-MD`, `-MF`...) and color options, and does not add `pp_defs` (the
+  command has its own `-D`). The modules a file uses are compiled with
+  their own commands. `compiler_no_compile_commands` turns this off, as
+  `disable_compile_commands` does with the rest of the file.
 - `compiler_fypp`: run [fypp](https://fypp.readthedocs.io) (this executable)
   on each file first, with line markers naming the file, so that the
   compiler's messages point into it; `compiler_fypp_args` are fypp's own
@@ -860,7 +904,10 @@ zfls deliberately differs from fortls in a few places:
   a letter. fortls answers nothing until a letter is typed.
 - A local variable of a procedure or program, or a name of a `USE ONLY`
   list, that its scope never uses gets an `unused-name` hint, shown faded,
-  with a quick fix removing a declaration of that name only. A name counts
+  with a quick fix removing it from its declaration: the whole statement
+  when it declares nothing else, otherwise the name with its dimensions and
+  initialization (continuation lines included). The source action "Remove
+  all unused declarations" removes all of a file's. A name counts
   as used when it appears anywhere else in the scope, contained procedures
   and inactive preprocessor branches included; dummy arguments, function
   results and module names are not reported. fortls has no such check.
@@ -890,6 +937,10 @@ zfls deliberately differs from fortls in a few places:
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
+  Fortran #17); fortls reads them as comments, so its references and
+  rename leave them out. `disable_openmp_conditional` reads them as fortls
+  does.
 - On Windows, a folder on a UNC path, as a network share or
   `\\wsl.localhost\...` is, is served: its URIs
   (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`
@@ -965,7 +1016,11 @@ zfls deliberately differs from fortls in a few places:
 - With the `workDoneToken` of the initialize request, indexing reports its
   progress (`$/progress`, files parsed); fortls reports none.
 - Stub actions: on a call of a procedure defined outside any module, an
-  interface block for it in the calling unit; on a separate module procedure
+  interface block for it after the calling unit's declarations, written from
+  the procedure's source (its USE and IMPLICIT statements and the
+  declarations of its arguments and result, in the caller's source form),
+  replacing the caller's EXTERNAL or type declaration of it, and not
+  offered when an interface is visible already; on a separate module procedure
   without implementation, its `module procedure` stub in a submodule of its
   module (a new one at the end of the file when there is none).
 - More code actions: "Add IMPLICIT NONE" on the first line of a program
