@@ -701,6 +701,11 @@ pub const FortranFile = struct {
                 h.update(inc.path);
                 h.update("\x00");
             }
+            for (out.missing) |mi| {
+                h.update(std.mem.asBytes(&mi.line));
+                h.update(mi.name);
+                h.update("\x00");
+            }
         }
         return h.final();
     }
@@ -720,6 +725,8 @@ pub const FortranFile = struct {
             p.pp_defines = out.defines;
             // an `#include` links the file like an INCLUDE statement would
             for (out.includes) |inc| try p.file_ast.addInclude(inc.path, inc.line);
+            // one whose file is not found, like an INCLUDE that zfls cannot read
+            for (out.missing) |mi| try p.file_ast.addMissingInclude(mi.name, mi.line, mi.start, mi.end);
         }
         try p.run();
         return p.file_ast;
