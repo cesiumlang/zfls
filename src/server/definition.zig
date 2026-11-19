@@ -13,6 +13,7 @@ const regex = @import("../regex.zig");
 const paths = @import("../paths.zig");
 const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
+const objects_hover = @import("../objects/hover.zig");
 const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
 const selection = @import("../selection.zig");
@@ -596,7 +597,11 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     var hover_array: std.ArrayList([]const u8) = .empty;
     const vt = var_obj.getType(false);
-    if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
+    const components = !self.s.hover_no_type_components;
+    if (components and var_obj.kind == .type and !var_obj.typeDataConst().dec_structure) {
+        const block = try objects_hover.getTypeBlock(var_obj, a, sameModule(ast.getInnerScope(d.line + 1), var_obj));
+        try hover_array.append(a, try createHover(self, a, block, var_obj.getDocumentation()));
+    } else if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
         try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
     } else if (vt == C.TypeId.interface) {
         for (var_obj.memList()) |member| {
@@ -606,6 +611,11 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     } else if (vt == C.TypeId.variable) {
         if (!std.mem.startsWith(u8, var_obj.descOf(), C.FORTRAN_LITERAL)) {
             try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
+            // and what its derived type holds (#268)
+            if (components) if (try derivedTypeOf(self, a, var_obj)) |t| if (!t.typeDataConst().dec_structure) {
+                const block = try objects_hover.getTypeBlock(t, a, sameModule(ast.getInnerScope(d.line + 1), t));
+                try hover_array.append(a, try createHover(self, a, block, null));
+            };
         } else if (std.mem.endsWith(u8, var_obj.descOf(), "REAL")) {
             try hover_array.append(a, try createHover(self, a, "REAL", null));
         } else if (std.mem.endsWith(u8, var_obj.descOf(), "INTEGER")) {
@@ -619,6 +629,16 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     }
     if (hover_array.items.len == 0) return .null;
     return json.from(a, lsp.Hover{ .contents = .{ .value = try std.mem.join(a, "\n", hover_array.items) } });
+}
+
+/// Whether `scope` is in the program unit that declares `obj` (the module
+/// of a type, whose private components it sees)
+fn sameModule(scope: ?*Obj, obj: *const Obj) bool {
+    var s = scope orelse return false;
+    while (s.parent) |p| s = p;
+    var o = obj;
+    while (o.parent) |p| o = p;
+    return s == o;
 }
 
 /// `fortran_md(...).format(langid=...)`
