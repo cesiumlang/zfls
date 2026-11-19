@@ -5,6 +5,9 @@ name: CI
 # themselves. macOS arm64 is tested then only: by pull requests into main,
 # which is where releases come from, and by a push to main that releases
 # binaries it built itself (see `test`); runs started by hand leave it out.
+# A run needs a single macOS arm64 runner, for Test (aarch64-macos): the
+# conda package for osx-arm64 is cross-built on the Intel runner, and the
+# install script's macOS arm64 check is a step of that test job.
 # Pull requests into dev and pushes to dev are not run: their authors run
 # the checks before merging, and dev as a whole is tested by the pull
 # request that releases it (to main), which runs again with each change of
@@ -202,9 +205,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
-          # the test matrix (6) and the conda package matrix (5), macOS arm64
-          # included: only runs of pull requests into main have those (see
-          # test), so only they count
+          # the test matrix (6, macOS arm64 included: only runs of pull
+          # requests into main have it, see test, so only they count) and
+          # the conda package matrix (5)
           JOBS: 11
         run: |
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
@@ -387,7 +390,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # The macOS arm64 (macos-15) job, here and in conda, runs only for a
+      # The macOS arm64 (macos-15) job, the only one of a run, runs only for a
       # pull request into main and for a run that releases (a push to main
       # that found no pull request run to reuse, see reuse, so builds and
       # tests the release itself): GitHub's hosted macOS arm64 runners can
@@ -697,6 +700,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # packaging/install.sh on macOS arm64 (the install-script job's two
+      # installs, here so that a run needs one macOS arm64 runner): it
+      # installs published releases, not this run's binaries
+      - name: Install script, latest and a given release (macOS arm64)
+        if: matrix.target == 'aarch64-macos'
+        run: |
+          mkdir "$RUNNER_TEMP/here"
+          (cd "$RUNNER_TEMP/here" && sh -s < "$GITHUB_WORKSPACE/packaging/install.sh" && ./zfls-v*/zfls --version)
+          sh -s -- --dir "$RUNNER_TEMP/there/zfls" --version 0.4.0 < packaging/install.sh
+          "$RUNNER_TEMP"/there/zfls/zfls-v0.4.0-*/zfls --version
+
       - name: VS Code's libraries and a display (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -740,21 +754,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # (macOS arm64 only for pull requests into main and releasing runs:
-      # see test)
+      # osx-arm64 is cross-built on the Intel runner, as conda-forge builds
+      # it (the recipe's build.sh builds for target_platform): GitHub's
+      # macOS arm64 runners are few, and a run should need as few of them
+      # as it can (see test). Its tests, which would run the arm64 zfls,
+      # are skipped there; the macOS arm64 test job runs the binaries
       matrix:
-        include: >-
-          ${{ fromJSON(format('[{0}{1}]',
-          '{"os": "ubuntu-24.04", "platform": "linux-64", "rattler": "x86_64-unknown-linux-musl"},
-          {"os": "ubuntu-24.04-arm", "platform": "linux-aarch64", "rattler": "aarch64-unknown-linux-musl"},
-          {"os": "windows-2025", "platform": "win-64", "rattler": "x86_64-pc-windows-msvc.exe"},
-          {"os": "macos-15-intel", "platform": "osx-64", "rattler": "x86_64-apple-darwin"}',
-          ((github.event_name == 'pull_request' && github.base_ref == 'main')
-          || needs.version.outputs.release == 'true')
-          && ', {"os": "macos-15", "platform": "osx-arm64", "rattler": "aarch64-apple-darwin"}'
-          || '')) }}
+        include:
+          - {os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl}
+          - {os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl}
+          - {os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe}
+          - {os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin}
+          - {os: macos-15-intel, platform: osx-arm64, rattler: x86_64-apple-darwin}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PLATFORM: ${{ matrix.platform }}
       RATTLER_BUILD_VERSION: v0.76.1
     steps:
       - uses: actions/checkout@v7
@@ -794,7 +808,7 @@ jobs:
             echo "::warning::writing the recipe failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
+          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out" --target-platform "$PLATFORM"
 
   # packaging/install.sh and install.ps1 install published releases (not
   # this run's binaries), the way their users run them: piped from curl
@@ -808,14 +822,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # (macOS arm64 only for pull requests into main, see test; these test
-      # published releases, not this run's binaries, so a releasing run
-      # does not need it)
+      # macOS: on the Intel runner here; on macOS arm64 the same two
+      # installs are steps of the test job (Test (aarch64-macos)), so that a
+      # run needs one macOS arm64 runner, not two
       matrix:
-        os: >-
-          ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref == 'main'
-          && '["ubuntu-24.04", "macos-15", "windows-2025"]'
-          || '["ubuntu-24.04", "windows-2025"]') }}
+        os: [ubuntu-24.04, macos-15-intel, windows-2025]
     steps:
       - uses: actions/checkout@v7
         with:
