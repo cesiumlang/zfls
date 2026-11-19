@@ -779,3 +779,29 @@ test "the flat outline lists BLOCK DATA units (#234)" {
     try std.testing.expectEqualStrings("BLOCK DATA", names[0]);
     try std.testing.expectEqualStrings("BD2", names[1]);
 }
+
+test "fixed form: a continuation line with ! in column 6 is held to max_line_length (#239)" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f", .text =
+        \\      program p
+        \\      implicit none
+        \\      integer :: aaaa,
+        \\     !  bbbbbbbbb1, bbbbbbbbb2, bbbbbbbbb3, bbbbbbbbb4, bbbbbbbbb5, bbbbbbbbb6, bbbb7,
+        \\     &  ccccccccc1, ccccccccc2, ccccccccc3, ccccccccc4, ccccccccc5, ccccccccc6, cccc7,
+        \\     !  dddd1, ! a comment after the code, which runs on and on past the hundredth column of the line
+        \\     !  eeee1
+        \\!     a comment in column 1, longer than eighty columns but within the comment limit
+        \\      ! a comment in column 7, longer than eighty columns but within the comment limit
+        \\      end program p
+        \\
+    }}, .{ .settings = .{ .max_line_length = 80, .max_comment_line_length = 100 } });
+    defer w.deinit();
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(std.testing.allocator);
+    for (try w.diagnostics("a.f")) |d| {
+        const kind: u8 = if (std.mem.startsWith(u8, d.message, "Line length")) 'L' else if (std.mem.startsWith(u8, d.message, "Comment line length")) 'C' else continue;
+        try got.print(std.testing.allocator, "{d}{c} ", .{ d.line, kind });
+    }
+    // the code of lines 4 and 5 is too long, the comment after the code of
+    // line 6; the comment lines are within their limit
+    try std.testing.expectEqualStrings("3L 4L 5C ", got.items);
+}
