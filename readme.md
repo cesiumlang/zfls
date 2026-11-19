@@ -46,7 +46,7 @@ command line options and configuration files.
   extend it; completion offers the parent components of an extended type
 - Inlay hints: the dummy argument each positional argument of a call goes
   to (`call move(p, dx: 1.0)`), the type of each `ASSOCIATE` name, the
-  implicit type of a name that is not declared, and the value of a named
+  implicit type of each name that is not declared, and the value of a named
   constant where it is used
 - Selection ranges (expand the selection from a name to its parentheses,
   statement, constructs, procedure, module and file), links on the files of
@@ -145,10 +145,10 @@ the columns say whose dialect each is.
 | | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | `STRUCTURE`, `RECORD`, `UNION`/`MAP`, `rec.field` (DEC) | ✓⁴ | ✓ | ✓ | – | ✓ | – | – |
-| Conditional compilation in directives (`!DEC$ IF`, `!DIR$ IF`; [more](#intel-conditional-compilation)) | – | ✓ | ✓ | – | – | – | – |
+| [Conditional compilation in directives](#intel-conditional-compilation) (`!DEC$ IF`, `!DIR$ IF`) | – | ✓ | ✓ | – | – | – | – |
 | Generated interface modules (`<name>__genmod.f90`) left out of the index | – | ✓ | ✓ | – | – | – | – |
 | CUDA Fortran (`attributes(device)`, `call k<<<g, b>>>(...)`, `.cuf`) | – | – | – | – | ✓ | – | – |
-| Debug lines (`D` in column 1 of fixed form; [more](#debug-lines)) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 
 4. gfortran's with `-fdec-structure`.
 
@@ -182,7 +182,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
    Microsoft's format; arrays are read through Intel's descriptors. CI
    tests the engine on a C program only: it has no ifx.
 9. Not yet: `zfls dap` debugs with gdb there, which does not run on Apple
-   silicon and which every user must code-sign on an Intel Mac. Debug
+   Silicon and which every user must code-sign on an Intel Mac. Debug
    Fortran File in VS Code uses another extension's lldb instead (C/C++,
    CodeLLDB), which stops at breakpoints and steps, but has no Fortran
    support for variables and expressions.
@@ -204,7 +204,7 @@ Each [release](https://github.com/cesiumlang/zfls/releases) publishes the
 The executable needs nothing else: it can be run from wherever it is
 unpacked.
 
-The install scripts in `packaging` download the archive for the computer
+The installation scripts in `packaging` download the archive for the computer
 they run on, check it against `SHA256SUMS` and unpack it, by default into
 the current directory, as `zfls-v<version>-<target>/zfls` (`zfls.exe` on
 Windows). They change nothing else, the `PATH` included. On macOS and Linux,
@@ -230,7 +230,7 @@ irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1
 
 zfls is not signed. On macOS, an archive downloaded in a web browser is
 quarantined, and since zfls is not notarized by Apple, macOS then refuses to
-run it ("Apple could not verify "zfls" is free of malware"); Windows can
+run it (*Apple could not verify "zfls" is free of malware*); Windows can
 likewise question an unsigned program downloaded in a browser (SmartScreen,
 Smart App Control). What the scripts download is not marked like that. For
 an archive downloaded in a browser on macOS, remove the quarantine before
@@ -461,8 +461,8 @@ debuggers, chosen by the `launch` or `attach` configuration:
 
 With both, the module variables that the frame's line sees are a scope of
 their own (zfls indexes the program's sources: `sourceRoot` of the
-configuration, else `cwd`), and the **Fortran runtime errors** exception
-filter stops the program where the Fortran runtime reports an error (an
+configuration, else `cwd`), and the exception filter
+**Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
 error without `iostat=`) or at ERROR STOP. `--text JSON` translates the
 words it shows (the VS Code extension passes them in VS Code's language).
@@ -668,7 +668,7 @@ omp_lib`, `!$ call omp_set_num_threads(n)`; in fixed form `!$`, `c$`, `C$`
 or `*$` in columns 1 and 2, then blanks or a label up to column 5) is a
 statement when the file is compiled with OpenMP. zfls reads it as code, the
 sentinel as two blanks: hover, definition, completion, references and rename
-see the names in it, and a variable used only there is not unused. A line
+see the names in it, and a variable used only there counts as used. A line
 continues as any other (`!$ call s(a, &` then `!$ & b)`). The directives
 (`!$omp`, `!$acc`) and a comment such as `!$this` stay comments.
 `disable_openmp_conditional` (`zfls.disableOpenmpConditional` in VS Code)
@@ -830,7 +830,7 @@ elsewhere, which is also stopped when the server shuts down during a run.
 - `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`:
   the compiler, executable and arguments of fixed-form files, for a
   project whose legacy code builds with another compiler or options; each
-  is the free form's when not set (an empty `compiler_args_fixed`: the
+  is that of the free form when not set (an empty `compiler_args_fixed`: the
   compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no
   fixed-form file. The modules a file uses are compiled with the compiler
   of that file, whatever their form (the `.mod` files of two compilers do
@@ -978,7 +978,7 @@ a free-form one as fixed form (`-ifree -ofixed`). The request
 (or `"fixed"`), runs findent on the document's text as the editor has it
 and answers `{ "text": ..., "path": ... }`: the converted text and the file
 it belongs in (`name.f90`, or `name.f`; `.F90`/`.F` for a preprocessed
-file), since zfls takes the form from the extension. On failure it answers
+file), since zfls takes the form from the extension. On failure, it answers
 `{ "error": ... }` with findent's message, or how to install findent. The
 findent of `formatter_path` is used when findent is the formatter, else the
 one on the `PATH`; findent's `formatter_args` (or `formatter_fixed_args`)
@@ -1083,7 +1083,7 @@ then merges `main` back into `dev` and commits the next patch version to
 `main` that cannot change them are tested but not released. Changes that
 cannot (`.github/workflows/changes.sh` decides, for both) are those to the
 files of `no-ci.txt` and of `ci-only.txt`, which lists the files that CI
-builds or runs but that do not ship (tests, tools, the conda-forge recipe,
+builds or runs, but that do not ship (tests, tools, the conda-forge recipe,
 the workflows themselves); changes to Zig source that only touch whole-line
 comments and blank lines; and changes undone since (such as a version set
 back). A change to how `ci.yml` builds the binaries is released with the
@@ -1547,7 +1547,7 @@ zfls deliberately differs from fortls in a few places:
   and go to definition goes to it (fortls #501, #502); fortls always uses the
   interface. Go to declaration (`textDocument/declaration`, which fortls
   does not answer) always goes to the interface, also from the body; for
-  other names it is go to definition.
+  other names it does what go to definition does.
 - In a function without `RESULT`, the function's name and its result
   variable are one name for references, document highlights and rename,
   started from either (fortls #322); fortls keeps them apart, and its
@@ -1629,14 +1629,14 @@ zfls deliberately differs from fortls in a few places:
   `files.associations` or the language picker) is read in that form while
   it is open, whatever its name and text say, and the compiler checks it
   in that form (Modern Fortran #200, #222, #460, #904, #1131). Any other
-  language id (`fortran`, `fortran90`) leaves the form to the name and the
+  language identifier (`fortran`, `fortran90`) leaves the form to the name and the
   text, and so do the files that are not open. fortls does not read the
-  language id.
+  language identifier.
 - A form feed (a page break of old sources) is read as a blank, as compilers
   read it; fortls drops the statement of a line that starts with one
   (fortls #443).
-- The enumerators of an ENUM are named integer constants of the scope around
-  it, with hover, definition and completion, PUBLIC or PRIVATE by name;
+- The enumerators of an ENUM are named integer constants of the surrounding
+  scope, with hover, definition and completion, PUBLIC or PRIVATE by name;
   fortls does not read them.
 - In each block of a SELECT RANK, its associate name (`select rank (v => a)`)
   is the selector; fortls does not read SELECT RANK.
