@@ -61,22 +61,113 @@ pub fn substitute(a: Allocator, c: *const Compiled, value: []const u8, line: []c
 
 /// Append the value of macro `c` with the arguments of use `m` in place of
 /// its parameters. The value is taken as it is, never as a regex template.
+/// Outside character literals and `!` comments, `a ## b` pastes `a` and `b`
+/// together (Intel fpp, flang, ISO cpp), `#param` is the argument in double
+/// quotes and `/**/` is removed (gfortran's traditional cpp joins the words
+/// around it).
 fn appendValue(a: Allocator, out: *std.ArrayList(u8), c: *const Compiled, v: []const u8, m: regex.Match) !void {
-    const params = c.params orelse return out.appendSlice(a, v);
+    const params = c.params orelse &.{};
+    const value_start = out.items.len;
+    var quote: ?u8 = null;
+    var comment = false;
     var i: usize = 0;
     while (i < v.len) {
-        if (!regex.isWordChar(v[i])) {
-            try out.append(a, v[i]);
-            i += 1;
+        const ch = v[i];
+        if (regex.isWordChar(ch)) {
+            const start = i;
+            while (i < v.len and regex.isWordChar(v[i])) i += 1;
+            const word = v[start..i];
+            try out.appendSlice(a, argument(params, m, word) orelse word);
             continue;
         }
-        const start = i;
-        while (i < v.len and regex.isWordChar(v[i])) i += 1;
-        const word = v[start..i];
-        try out.appendSlice(a, for (params, 0..) |p, k| {
-            if (std.mem.eql(u8, p, word)) break m.group(@intCast(k + 1)) orelse "";
-        } else word);
+        i += 1;
+        if (comment) {
+            try out.append(a, ch);
+            continue;
+        }
+        if (quote) |q| {
+            if (ch == q) quote = null;
+            try out.append(a, ch);
+            continue;
+        }
+        switch (ch) {
+            '\'', '"' => quote = ch,
+            '!' => comment = true,
+            '/' => if (std.mem.startsWith(u8, v[i..], "**/")) {
+                i += 3;
+                continue;
+            },
+            '#' => {
+                if (i < v.len and v[i] == '#') {
+                    while (out.items.len > value_start and isBlank(out.items[out.items.len - 1])) out.items.len -= 1;
+                    i += 1;
+                    while (i < v.len and isBlank(v[i])) i += 1;
+                    continue;
+                }
+                var j = i;
+                while (j < v.len and isBlank(v[j])) j += 1;
+                const name_start = j;
+                while (j < v.len and regex.isWordChar(v[j])) j += 1;
+                if (argument(params, m, v[name_start..j])) |arg| {
+                    try appendQuoted(a, out, arg);
+                    i = j;
+                    continue;
+                }
+            },
+            else => {},
+        }
+        try out.append(a, ch);
     }
+}
+
+/// The argument of use `m` for parameter `word`, without the white space
+/// around it; null when `word` is no parameter
+fn argument(params: []const []const u8, m: regex.Match, word: []const u8) ?[]const u8 {
+    for (params, 0..) |p, k| {
+        if (std.mem.eql(u8, p, word)) return str.strip(m.group(@intCast(k + 1)) orelse "");
+    }
+    return null;
+}
+
+fn isBlank(ch: u8) bool {
+    return ch == ' ' or ch == '\t';
+}
+
+/// Append `text` as a Fortran character literal in double quotes
+fn appendQuoted(a: Allocator, out: *std.ArrayList(u8), text: []const u8) !void {
+    try out.append(a, '"');
+    for (text) |ch| {
+        if (ch == '"') try out.append(a, '"');
+        try out.append(a, ch);
+    }
+    try out.append(a, '"');
+}
+
+/// `line` without the empty C comments (`/**/`) outside its character
+/// literals and its `!` comment: gfortran preprocesses in cpp's traditional
+/// mode, which joins the words around them (`pre/**/fix` is `prefix`)
+pub fn removeEmptyComments(a: Allocator, line: []const u8) ![]const u8 {
+    if (std.mem.find(u8, line, "/**/") == null) return line;
+    var out: std.ArrayList(u8) = .empty;
+    var quote: ?u8 = null;
+    var i: usize = 0;
+    while (i < line.len) {
+        const ch = line[i];
+        if (quote) |q| {
+            if (ch == q) quote = null;
+        } else if (ch == '!') {
+            break;
+        } else if (ch == '\'' or ch == '"') {
+            quote = ch;
+        } else if (std.mem.startsWith(u8, line[i..], "/**/")) {
+            i += 4;
+            continue;
+        }
+        try out.append(a, ch);
+        i += 1;
+    }
+    try out.appendSlice(a, line[i..]);
+    return out.items;
 }
 
 const testing = std.testing;
@@ -108,5 +199,26 @@ test "a macro's value is not read as a regex template" {
 test "a function-like macro's parameters are replaced as whole words" {
     try expectSubstituted("ONE", "x", "(x + 1)", "i = ONE(i)", "i = (i + 1)");
     try expectSubstituted("SQ", "x", "((x)*(x)) + xx + x1", "y = SQ(z)", "y = ((z)*(z)) + xx + x1");
-    try expectSubstituted("ADD", "a, b", "a + b", "y = ADD(p, q)", "y = p +  q");
+    try expectSubstituted("ADD", "a, b", "a + b", "y = ADD(p, q)", "y = p + q");
+}
+
+test "token pasting and stringification in a macro's value (#226)" {
+    try expectSubstituted("PASTE", "a,b", "a##b", "integer :: PASTE(my,var)", "integer :: myvar");
+    try expectSubstituted("PASTE", "a,b", "a ## b", "x = PASTE(my, var)", "x = myvar");
+    try expectSubstituted("WRAP", "P", "P , wrap_/**/P", "procedure :: WRAP(abc)", "procedure :: abc , wrap_abc");
+    try expectSubstituted("STR", "x", "#x", "print *, STR(hello)", "print *, \"hello\"");
+    try expectSubstituted("STR", "x", "# x", "print *, STR( a\"b )", "print *, \"a\"\"b\"");
+    try expectSubstituted("CAT", null, "pre##fix /**/", "x = CAT", "x = prefix ");
+    // not in character literals and comments, and `#` before no parameter stays
+    try expectSubstituted("Q", "x", "'x##y', \"#x/**/\" ! a##b", "print *, Q(1)", "print *, '1##y', \"#1/**/\" ! a##b");
+    try expectSubstituted("H", "x", "#y + x", "z = H(1)", "z = #y + 1");
+}
+
+test "empty C comments are removed outside character literals and comments (#226)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("integer :: prefix", try removeEmptyComments(a, "integer :: pre/**/fix"));
+    try testing.expectEqualStrings("print *, \"a##b\", 'x/**/y'", try removeEmptyComments(a, "print *, \"a##b\", 'x/**/y'"));
+    try testing.expectEqualStrings("x = ab ! c/**/d", try removeEmptyComments(a, "x = a/**/b ! c/**/d"));
 }
