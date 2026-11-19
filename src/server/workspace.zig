@@ -470,7 +470,13 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             ast.none_scope = inc;
             for (inc.childList()) |c| c.parent = inc;
         }
-        for (ast.include_statements.items) |inc| {
+        // the last linked first, so that each restores the IMPLICIT state
+        // it found
+        var k_inc = ast.include_statements.items.len;
+        while (k_inc > 0) {
+            k_inc -= 1;
+            const inc = ast.include_statements.items[k_inc];
+            inc.unlink();
             inc.inc_obj = null;
             inc.file = null;
         }
