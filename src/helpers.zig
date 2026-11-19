@@ -321,6 +321,29 @@ pub fn parameterValue(after_name: []const u8) ?[]const u8 {
     return str.strip(v[0..end]);
 }
 
+/// `text` with each run of white space outside strings made one blank (a
+/// value written over continuation lines), and its strings as they are
+pub fn collapseBlanks(a: Allocator, text: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var quote: u8 = 0;
+    var blank = false;
+    for (str.strip(text)) |c| {
+        if (quote == 0 and std.ascii.isWhitespace(c)) {
+            blank = true;
+            continue;
+        }
+        if (blank) try out.append(a, ' ');
+        blank = false;
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+        } else if (c == '\'' or c == '"') {
+            quote = c;
+        }
+        try out.append(a, c);
+    }
+    return out.items;
+}
+
 /// Split an argument list at its own commas: not those inside parentheses,
 /// brackets or string literals, as in `arr(2, 3), 'a,b'` (upstream #87). The
 /// pieces are slices of `s`.
@@ -663,9 +686,12 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
             if (c > o) info.codimension = kw[o + 1 .. c];
         };
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
-            if (getParenSubstring(kw)) |sub| {
+            // blanks may surround a name: `pass ( self )` names `self`, and
+            // `intent ( in )` is IN (the bounds keep theirs, as fortls)
+            if (getParenSubstring(kw)) |sub_raw| {
+                const sub = str.strip(sub_raw);
                 if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
-                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub;
+                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub_raw;
                 if (std.mem.eql(u8, prefix, "pass")) info.pass = sub;
             }
         }
