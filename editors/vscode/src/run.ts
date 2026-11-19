@@ -52,13 +52,14 @@ export function buildArgs(
   source: string,
   exe: string,
   userArgs: readonly string[] | undefined,
+  linkArgs: readonly string[] = [],
 ): string[] {
   const args = userArgs ?? kind.defaultArgs;
   const dir = path.dirname(source);
   if (kind.argStyle === "intel-windows") {
-    return ["/nologo", ...args, `/I${dir}`, `/exe:${exe}`, source];
+    return ["/nologo", ...args, ...linkArgs, `/I${dir}`, `/exe:${exe}`, source];
   }
-  return [...args, `-I${dir}`, "-o", exe, source];
+  return [...args, ...linkArgs, `-I${dir}`, "-o", exe, source];
 }
 
 /**
@@ -291,7 +292,8 @@ export function runtimeEnv(
   return { [key]: current ? `${dir};${current}` : dir };
 }
 
-/** The libraries of zfls's ifx kit that LFortran's programs need */
+/** The libraries of zfls's ifx kit that LFortran's and LLVM Flang's
+ * programs need */
 const KIT_LIBS = ["msvcrt.lib", "ucrt.lib", "vcruntime.lib", "kernel32.lib"];
 
 /**
@@ -315,6 +317,41 @@ export function lfortranLinkEnv(kitDir: string, linkDir: string, env: NodeJS.Pro
     [pathKey]: join(";", linkDir, env[pathKey]),
     LIB: join(";", kitDir, env.LIB),
     LINK: join(" ", `"${shim}"`, ...KIT_LIBS, env.LINK),
+  };
+}
+
+/** LLVM Flang's arguments for linking with zfls's ifx kit (`flangKitLink`):
+ * the C runtime in DLLs (`/MD`, which the kit's import libraries are;
+ * Flang's default is the static `/MT`), and lld-link */
+export const FLANG_KIT_ARGS = ["-fms-runtime-lib=dll", "-fuse-ld=lld"];
+
+/**
+ * How LLVM Flang (on Windows) links its program with lld-link and zfls's
+ * ifx kit (`kitDir`) rather than Visual Studio's linker and libraries: the
+ * arguments (`FLANG_KIT_ARGS`), and the environment, in which `LIB` is the
+ * kit's directory and `LINK` (which lld-link reads as arguments) adds the
+ * kit's startup object and import libraries. With `LIB` set, neither Flang
+ * nor lld-link looks for Visual Studio's libraries. Undefined in a Visual
+ * Studio environment (`VCToolsInstallDir`), where Visual Studio's linker
+ * links, and when the build's arguments (`userArgs`) choose the linker or
+ * the C runtime.
+ */
+export function flangKitLink(
+  kitDir: string,
+  userArgs: readonly string[] | undefined,
+  env: NodeJS.ProcessEnv,
+): { args: string[]; env: Record<string, string> } | undefined {
+  if (env.VCToolsInstallDir || userArgs?.some((a) => /^-f(use-ld|ms-runtime-lib)=/.test(a))) {
+    return undefined;
+  }
+  const join = (sep: string, ...parts: (string | undefined)[]) => parts.filter((p) => p).join(sep);
+  const shim = path.win32.join(kitDir, "zfls_ifx_shim.obj");
+  return {
+    args: [...FLANG_KIT_ARGS],
+    env: {
+      LIB: join(";", kitDir, env.LIB),
+      LINK: join(" ", `"${shim}"`, ...KIT_LIBS, env.LINK),
+    },
   };
 }
 

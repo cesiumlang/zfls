@@ -475,6 +475,24 @@ into its storage, puts it first on the build's `PATH`, and sets `LIB` and
 the same into the build task. The programs use Windows's C runtime (UCRT)
 and LFortran's static runtime, so they need nothing else to run.
 
+### LLVM Flang without Visual Studio (Windows x64)
+
+LLVM Flang too links with Visual Studio's `link` and libraries, which it
+finds by itself. Where Visual Studio's environment is not set up (no
+`VCToolsInstallDir`), **Run Fortran File** has it link with `lld-link` and
+zfls's ifx kit instead, when there is an `lld-link` next to `flang`
+(conda-forge's `flang_win-64` brings `lld`: `conda install -c conda-forge
+flang_win-64`, or `pixi add flang_win-64`) or on the `PATH`. It adds
+`-fms-runtime-lib=dll -fuse-ld=lld` to the build (Windows's C runtime in
+DLLs, and `lld-link`), and sets `LIB` and `LINK` to the kit's directory,
+startup object and libraries, as the build task of
+**zfls: Add Build Task and Debug Configuration for Fortran File** does.
+With `LIB` set, neither Flang nor `lld-link` looks for Visual Studio's
+libraries. The programs use Windows's C runtime, and Flang's runtime is
+linked into them, so they need nothing else to run. When `zfls.run.buildArgs` choose the
+linker (`-fuse-ld=`) or the C runtime (`-fms-runtime-lib=`), the extension
+leaves the link to them.
+
 ### The `fortran` debug type
 
 A launch configuration of type `fortran` is resolved, when it starts, into
