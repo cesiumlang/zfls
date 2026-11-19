@@ -13,6 +13,7 @@ const regex = @import("../regex.zig");
 const paths = @import("../paths.zig");
 const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
+const objects_hover = @import("../objects/hover.zig");
 const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
 const selection = @import("../selection.zig");
@@ -38,6 +39,7 @@ const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
 const argument_hover = @import("argument_hover.zig");
 const bindc = @import("bindc.zig");
+const macros = @import("macros.zig");
 
 /// A temporary variable allocated in `a` (not owned by any AST)
 pub fn tempVariable(a: Allocator, file_ast: *Ast, line: usize, name: []const u8, desc: []const u8, keywords: []const C.Kw) !*Obj {
@@ -84,6 +86,10 @@ fn inSelector(file: *const FortranFile, scope: *const Obj, ln: usize, col: usize
 /// `get_definition` with `def_char` as a byte offset on the line
 pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_line: usize, def_char: usize, hover_req: bool) !?*Obj {
     const ast = def_file.ast orelse return null;
+    // a macro named in a directive's line (`#ifdef X`)
+    if (helpers.isPpDirective(def_file.getLine(def_line, false) orelse "")) {
+        if (try macros.at(self, a, def_file, def_line, def_char)) |m| return macros.directiveObj(self, a, m);
+    }
     const cl = try def_file.getCodeLine(a, def_line, false, true, false, true);
     const curr_line = cl.curr orelse return null;
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, curr_line, def_char, false)) orelse return null;
@@ -95,14 +101,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     if (try useRenameTarget(self, a, ast, curr_line, def_char, def_name)) |o| return o;
     // Search in Preprocessor defined variables
     if (def_file.pp_defs.get(def_name)) |d| {
-        var arg_str: []const u8 = "";
-        if (d.args) |args| {
-            var parts: std.ArrayList([]const u8) = .empty;
-            for (try str.split(a, args, ",")) |p| try parts.append(a, str.strip(p));
-            arg_str = try a.print("({s})", .{try std.mem.join(a, ", ", parts.items)});
-        }
-        const desc = try a.print("#define {s}{s} {s}", .{ def_name, arg_str, d.value });
-        return try tempVariable(a, ast, def_line + 1, def_name, desc, &.{});
+        return try tempVariable(a, ast, def_line + 1, def_name, try macros.describe(a, def_name, d), &.{});
     }
     var curr_scope = ast.getInnerScope(def_line + 1);
     // a selector of an ASSOCIATE statement names what the scope around it
@@ -342,6 +341,8 @@ pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) 
     if (try includeDirectiveTarget(self, a, params, false)) |target| {
         return json.from(a, lsp.Location{ .uri = try paths.pathToUri(a, target), .range = .{ .start = start, .end = start } });
     }
+    // a macro: its #define
+    if (try macros.atPosition(self, a, params)) |m| return macros.definitionOf(self, a, m);
     if (try definitionAt(self, a, params, false)) |d| {
         if (try signature.genericSpecific(self, a, d.file, d.line, d.col, d.obj)) |s| if (s.file_ast.file != null) return createRefLink(self, a, preferredBody(self, s));
         const target = preferredBody(self, d.obj);
@@ -596,7 +597,11 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const lang_fence = try a.print("```{s}", .{self.s.hover_language});
     var hover_array: std.ArrayList([]const u8) = .empty;
     const vt = var_obj.getType(false);
-    if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
+    const components = !self.s.hover_no_type_components;
+    if (components and var_obj.kind == .type and !var_obj.typeDataConst().dec_structure) {
+        const block = try objects_hover.getTypeBlock(var_obj, a, sameModule(ast.getInnerScope(d.line + 1), var_obj));
+        try hover_array.append(a, try createHover(self, a, block, var_obj.getDocumentation()));
+    } else if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
         try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
     } else if (vt == C.TypeId.interface) {
         for (var_obj.memList()) |member| {
@@ -606,6 +611,11 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     } else if (vt == C.TypeId.variable) {
         if (!std.mem.startsWith(u8, var_obj.descOf(), C.FORTRAN_LITERAL)) {
             try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
+            // and what its derived type holds (#268)
+            if (components) if (try derivedTypeOf(self, a, var_obj)) |t| if (!t.typeDataConst().dec_structure) {
+                const block = try objects_hover.getTypeBlock(t, a, sameModule(ast.getInnerScope(d.line + 1), t));
+                try hover_array.append(a, try createHover(self, a, block, null));
+            };
         } else if (std.mem.endsWith(u8, var_obj.descOf(), "REAL")) {
             try hover_array.append(a, try createHover(self, a, "REAL", null));
         } else if (std.mem.endsWith(u8, var_obj.descOf(), "INTEGER")) {
@@ -619,6 +629,16 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     }
     if (hover_array.items.len == 0) return .null;
     return json.from(a, lsp.Hover{ .contents = .{ .value = try std.mem.join(a, "\n", hover_array.items) } });
+}
+
+/// Whether `scope` is in the program unit that declares `obj` (the module
+/// of a type, whose private components it sees)
+fn sameModule(scope: ?*Obj, obj: *const Obj) bool {
+    var s = scope orelse return false;
+    while (s.parent) |p| s = p;
+    var o = obj;
+    while (o.parent) |p| o = p;
+    return s == o;
 }
 
 /// `fortran_md(...).format(langid=...)`

@@ -100,6 +100,10 @@ const Tokenizer = struct {
     constants: ?*std.ArrayList(ConstantUse) = null,
     /// the innermost scope of each line, found once (see `innerScope`)
     inner: ?objects.InnerScopes = null,
+    /// The line as written, while the tokenizer reads the text the
+    /// preprocessor made of it (macros expanded): the unknown names are
+    /// those of the expanded text that are also written there
+    written: ?[]const u8 = null,
 
     /// The scope `Ast.getInnerScope` gives line `ln` (0-based), from the
     /// scopes of every line, found once (`Ast.innerScopes`)
@@ -125,9 +129,33 @@ const Tokenizer = struct {
         };
         for (inner_keywords) |k| if (std.ascii.eqlIgnoreCase(w.str, k)) return;
         for (t.intrinsics) |f| if (std.ascii.eqlIgnoreCase(f.name, w.str)) return;
+        const at = if (t.written) |text| writtenWord(t.file, list.items, ln, text, w.str) orelse return else w;
         // the name of its construct, repeated on a branch (`else n1`)
-        if (try constructs.isConstructUse(t.a, t.file, ln, w.start)) return;
-        try list.append(t.a, .{ .line = ln, .start = w.start, .end = w.end, .name = w.str, .scope = scope });
+        if (try constructs.isConstructUse(t.a, t.file, ln, at.start)) return;
+        try list.append(t.a, .{ .line = ln, .start = at.start, .end = at.end, .name = at.str, .scope = scope });
+    }
+
+    /// Where a name of the expanded text of line `ln` is written in `text`,
+    /// the line as written: the first place not taken by a name already
+    /// collected, out of character literals, comments and macro names
+    fn writtenWord(file: *const FortranFile, collected: []const Unknown, ln: usize, text: []const u8, name: []const u8) ?helpers.Word {
+        var it = helpers.words(text);
+        var quote: ?u8 = null;
+        var scanned: usize = 0;
+        next: while (it.next()) |w| {
+            for (text[scanned..w.start]) |c| {
+                if (quote) |q| {
+                    if (c == q) quote = null;
+                } else if (c == '\'' or c == '"') {
+                    quote = c;
+                } else if (c == '!') return null;
+            }
+            scanned = w.end;
+            if (quote != null or !std.ascii.eqlIgnoreCase(w.str, name) or file.pp_defs.contains(w.str)) continue;
+            for (collected) |u| if (u.line == ln and u.start == w.start) continue :next;
+            return w;
+        }
+        return null;
     }
 
     fn add(t: *Tokenizer, line: usize, text: []const u8, start: usize, end: usize, kind: Kind) !void {
@@ -194,7 +222,11 @@ const Tokenizer = struct {
     }
 
     fn tokenizeLine(t: *Tokenizer, ln: usize) !void {
-        const raw = t.file.getLine(ln, false) orelse return;
+        const written = t.file.getLine(ln, false) orelse return;
+        // the names of a line with macros are found in the text the
+        // compiler reads, with the macros expanded (see `written`)
+        const raw = if (t.unknown != null) t.file.getLine(ln, true) orelse written else written;
+        t.written = if (std.mem.eql(u8, raw, written)) null else written;
         if (helpers.isComment(t.file.fixed, raw)) {
             // a debug line read as a comment (`d_lines`), which the grammar
             // colors as code: a comment token over it

@@ -12,9 +12,26 @@ const str = @import("str.zig");
 
 pub const Def = struct { name: []const u8, value: []const u8 };
 
+/// The command of one file in a compilation database
+pub const Command = struct {
+    /// Where it runs (absolute)
+    dir: []const u8,
+    /// The compiler, then its arguments
+    args: []const []const u8,
+    /// The source file (absolute)
+    file: []const u8,
+};
+
+/// The commands of a compilation database's Fortran files, by `fileKey`
+pub const Commands = std.array_hash_map.String(Command);
+
 pub const Found = struct {
+    /// The Fortran files a compilation database compiles (absolute)
+    files: std.ArrayList([]const u8) = .empty,
     include_dirs: std.ArrayList([]const u8) = .empty,
     defs: std.ArrayList(Def) = .empty,
+    /// The command of each Fortran file (compile_commands.json only)
+    commands: Commands = .empty,
 
     fn addDir(self: *Found, a: Allocator, dir: []const u8) !void {
         for (self.include_dirs.items) |d| if (std.mem.eql(u8, d, dir)) return;
@@ -53,9 +70,10 @@ pub fn isFortran(file: []const u8) bool {
     return @import("suffixes.zig").isFortran(file);
 }
 
-/// The include directories and definitions of the Fortran entries of a
-/// compilation database; a relative `directory` is relative to `base`, the
-/// directory of the database
+/// The files, include directories and definitions of the Fortran entries
+/// of a compilation database; a relative `directory` is relative to
+/// `base`, the directory of the database, and a relative `file` to its
+/// `directory`
 pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Found {
     var found: Found = .{};
     const v = std.json.parseFromSliceLeaky(json.Value, a, text, .{}) catch return error.InvalidJson;
@@ -65,6 +83,7 @@ pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Fo
         if (!isFortran(file)) continue;
         const entry_dir = json.str(json.get(entry, "directory")) orelse ".";
         const dir = if (std.Io.Dir.path.isAbsolute(entry_dir)) entry_dir else try paths.join(a, &.{ base, entry_dir });
+        try found.files.append(a, try paths.normpath(a, if (std.Io.Dir.path.isAbsolute(file)) file else try paths.join(a, &.{ dir, file })));
         var args: std.ArrayList([]const u8) = .empty;
         if (json.get(entry, "arguments")) |arr| {
             for (json.items(arr)) |x| if (json.str(x)) |s| try args.append(a, s);
@@ -72,8 +91,66 @@ pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Fo
             try splitCommand(a, cmd, &args);
         }
         try readFlags(a, dir, args.items, &found);
+        // the first entry of a file is its command
+        const abs = try paths.normpath(a, if (std.Io.Dir.path.isAbsolute(file)) file else try paths.join(a, &.{ dir, file }));
+        const gop = try found.commands.getOrPut(a, try fileKey(a, abs));
+        if (!gop.found_existing) gop.value_ptr.* = .{ .dir = try paths.normpath(a, dir), .args = args.items, .file = abs };
     }
     return found;
+}
+
+/// A path as `Commands` keys it: normalized, and on Windows lowercase with
+/// backslashes
+pub fn fileKey(a: Allocator, path: []const u8) ![]const u8 {
+    const n = try paths.normpath(a, path);
+    if (@import("builtin").target.os.tag != .windows) return n;
+    for (n) |*c| c.* = if (c.* == '/') '\\' else std.ascii.toLower(c.*);
+    return n;
+}
+
+/// The command of the file at `path` (absolute), else that of another file
+/// in its directory, else null
+pub fn commandFor(a: Allocator, commands: *const Commands, path: []const u8) !?Command {
+    const key = try fileKey(a, path);
+    if (commands.get(key)) |c| return c;
+    const dir = paths.dirname(key);
+    for (commands.keys(), commands.values()) |k, c| if (std.mem.eql(u8, paths.dirname(k), dir)) return c;
+    return null;
+}
+
+/// The arguments of `cmd` for checking another run of its compiler: without
+/// the compiler, `-c`, the output file, the source file, the module
+/// directory (the checker has its own) and the dependency files, nor
+/// colors and carets in the messages
+pub fn compilerArgs(a: Allocator, cmd: Command) ![]const []const u8 {
+    // dropped with the argument after them (or attached to them)
+    const with_value = [_][]const u8{ "-o", "-J", "-module", "-module-dir", "-mdir", "-MF", "-MT", "-MQ" };
+    // dropped when the argument starts with them
+    const prefixed = [_][]const u8{ "/module:", "-module:", "-fmod=", "-qmoddir=", "/Fo", "-Fo", "/object:", "/Fe", "/exe:", "-fdiagnostics-color", "-fcolor-diagnostics", "-fno-color-diagnostics", "-fdiagnostics-show-caret", "-fno-diagnostics-show-caret" };
+    // dropped as they are
+    const alone = [_][]const u8{ "-c", "/c", "-M", "-MM", "-MD", "-MMD", "-MP" };
+    const source = try fileKey(a, cmd.file);
+    var out: std.ArrayList([]const u8) = .empty;
+    var i: usize = if (cmd.args.len > 0) 1 else 0;
+    outer: while (i < cmd.args.len) : (i += 1) {
+        const x = cmd.args[i];
+        for (alone) |o| if (std.mem.eql(u8, x, o)) continue :outer;
+        for (with_value) |o| if (std.mem.eql(u8, x, o)) {
+            i += 1;
+            continue :outer;
+        };
+        for (prefixed) |o| if (std.mem.startsWith(u8, x, o)) continue :outer;
+        // -Jdir, -MFfile; -ofile only as an object file (-o is the start of
+        // other options too)
+        for ([_][]const u8{ "-J", "-MF", "-MT", "-MQ" }) |o| if (std.mem.startsWith(u8, x, o)) continue :outer;
+        if (std.mem.startsWith(u8, x, "-o") and (std.mem.endsWith(u8, x, ".o") or std.mem.endsWith(u8, x, ".obj"))) continue;
+        if (x.len > 0 and x[0] != '-' and isFortran(x)) {
+            const abs = if (std.Io.Dir.path.isAbsolute(x)) x else try paths.join(a, &.{ cmd.dir, x });
+            if (std.mem.eql(u8, try fileKey(a, abs), source)) continue;
+        }
+        try out.append(a, x);
+    }
+    return out.items;
 }
 
 /// `-I dir`, `-Idir`, `-isystem dir`, `-D NAME[=VALUE]`, and the `/I`, `/D`
@@ -274,6 +351,11 @@ test "compile_commands.json: the flags of Fortran entries" {
     try std.testing.expectEqualStrings("", f.defs.items[0].value);
     try std.testing.expectEqualStrings("2", f.defs.items[1].value);
     try std.testing.expectEqualStrings("\"x y\"", f.defs.items[2].value);
+    // the Fortran files, absolute
+    try std.testing.expectEqual(@as(usize, 2), f.files.items.len);
+    const p = if (@import("builtin").target.os.tag == .windows) "C:\\p" else "/p";
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "a.F90" }), f.files.items[0]);
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ p, "c.f90" }), f.files.items[1]);
 }
 
 test "a shell command line is split as a shell would" {
@@ -285,4 +367,39 @@ test "a shell command line is split as a shell would" {
     try std.testing.expectEqualStrings("-DA=b c", out.items[1]);
     try std.testing.expectEqualStrings("d e", out.items[2]);
     try std.testing.expectEqualStrings("f g", out.items[3]);
+}
+
+test "compile_commands.json: a file's own command, for the compiler check" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const windows = @import("builtin").target.os.tag == .windows;
+    const root = if (windows) "C:\\\\p" else "/p";
+    const text = try a.print(
+        \\[
+        \\  {{"directory": "{s}", "file": "a.f90",
+        \\   "command": "gfortran -std=f2008 -fdefault-real-8 -Jmod -Iinc -DX=1 -c a.f90 -o a.o -MD -MF a.d"}},
+        \\  {{"directory": "{s}/sub", "file": "b.f90",
+        \\   "arguments": ["gfortran", "-std=f2008", "-fdefault-real-8", "-J", "mod", "-Iinc", "-DX=1", "-c", "b.f90", "-o", "b.o", "-MD", "-MF", "b.d", "-fdiagnostics-color=always"]}},
+        \\  {{"directory": "{s}", "file": "{s}/c.f90",
+        \\   "arguments": ["ifx", "/nologo", "/module:mods", "/c", "{s}/c.f90", "/Foc.obj", "/warn:all"]}}
+        \\]
+    , .{ root, root, root, root, root });
+    const f = try readCompileCommands(a, text, root);
+    const expectArgs = struct {
+        fn check(al: Allocator, cmds: *const Commands, path: []const u8, want: []const []const u8) !void {
+            const cmd = (try commandFor(al, cmds, path)) orelse return error.NoCommand;
+            const got = try compilerArgs(al, cmd);
+            try std.testing.expectEqual(want.len, got.len);
+            for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+        }
+    }.check;
+    const p = if (windows) "C:\\p" else "/p";
+    try expectArgs(a, &f.commands, try paths.join(a, &.{ p, "a.f90" }), &.{ "-std=f2008", "-fdefault-real-8", "-Iinc", "-DX=1" });
+    try expectArgs(a, &f.commands, try paths.join(a, &.{ p, "sub", "b.f90" }), &.{ "-std=f2008", "-fdefault-real-8", "-Iinc", "-DX=1" });
+    try expectArgs(a, &f.commands, try paths.join(a, &.{ p, "c.f90" }), &.{ "/nologo", "/warn:all" });
+    // a file without an entry: another one's in its directory
+    const other = (try commandFor(a, &f.commands, try paths.join(a, &.{ p, "sub", "new.f90" }))).?;
+    try std.testing.expect(std.mem.endsWith(u8, other.file, "b.f90"));
+    try std.testing.expect(try commandFor(a, &f.commands, try paths.join(a, &.{ p, "elsewhere", "x.f90" })) == null);
 }

@@ -40,6 +40,7 @@ const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const configuration = @import("configuration.zig");
 const completion_resolve = @import("completion_resolve.zig");
+const pull = @import("pull.zig");
 const lenses = @import("lenses.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
@@ -58,6 +59,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.config.client = params.capabilities;
     self.completion_resolve = completion_resolve.wanted(params.capabilities);
     self.config.client.textDocument.completion.completionItem.resolveSupport = .{};
+    self.pull_diagnostics = pull.wanted(params.capabilities);
 
     try configuration.load(self, a, params.initializationOptions);
     try loadProjectFiles(self, a);
@@ -79,6 +81,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
     const on = configuration.wanted(self);
     self.config.announced = on;
+    self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
         .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
         .textDocumentSync = .{ .change = self.sync_type },
@@ -88,6 +91,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
         .documentFormattingProvider = if (on.formatting) true else null,
         .documentRangeFormattingProvider = if (on.formatting) true else null,
+        .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
     } });
 }
 
@@ -132,12 +136,17 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 /// project's compile_commands.json and fpm.toml to the options' own
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
+    self.outside_sources = .empty;
+    self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
-                self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
+                self.compile_commands = found.commands;
+                // those under the root are the scan's
+                for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
+                self.log.info("{s}: {d} include directories, {d} definitions, {d} files outside the root", .{ p, found.include_dirs.items.len, found.defs.items.len, self.outside_sources.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => self.postMessage(a, try a.print("Could not read \"{s}\": not a compilation database", .{p}), C.Severity.warn),
@@ -228,7 +237,7 @@ pub fn loadIntrinsics(self: *Server) !void {
 }
 
 pub fn parseOptions(self: *const Server) parser.Options {
-    return .{ .sort_keywords = self.s.sort_keywords };
+    return .{ .sort_keywords = self.s.sort_keywords, .plain_comments = self.s.hover_plain_comments };
 }
 
 pub fn addSourceDirs(self: *Server, a: Allocator) !void {
@@ -269,7 +278,18 @@ pub fn getSourceFiles(self: *Server, a: Allocator) ![][]const u8 {
             try out.append(a, p);
         }
     }
+    for (self.outside_sources.items) |p| if (isOutsideSource(self, p)) try out.append(a, p);
     return out.items;
+}
+
+/// Whether `path`, a file of the compilation database outside the root, is
+/// indexed: neither in a source directory (which has it already) nor
+/// excluded
+fn isOutsideSource(self: *const Server, path: []const u8) bool {
+    if (self.s.source_dirs.contains(paths.dirname(path))) return false;
+    for (self.s.excl_paths.slice()) |ex| if (paths.eql(path, ex) or paths.isUnder(path, ex)) return false;
+    for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, path, ext)) return false;
+    return paths.isFile(self.io, path) and !project.isIfortInterface(self.io, path);
 }
 
 pub fn ppSuffixes(self: *const Server) ?[]const []const u8 {
@@ -296,6 +316,7 @@ pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
 pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
     f.comment_markers = self.s.comment_markers.slice();
+    f.openmp_conditional = !self.s.disable_openmp_conditional;
     f.d_lines_code = self.s.dLinesCode();
     errdefer f.destroy();
     // from the index cache during initialization
@@ -540,6 +561,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
         if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
     }
     self.link_version = @mod(self.link_version + 1, 1000);
+    pull.changed(self);
     var tmp = std.heap.ArenaAllocator.init(self.gpa);
     defer tmp.deinit();
     for (self.workspace.values()) |f| {
@@ -553,6 +575,7 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
 }
 
 pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
+    pull.changed(self);
     const path = try self.pathFromUri(a, params.textDocument.uri);
     if (self.c_docs.get(path) orelse self.nml_docs.get(path)) |doc| {
         for (params.contentChanges) |c| _ = doc.applyChange(toChange(c)) catch {};
@@ -668,7 +691,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     if (!did_close and !self.s.disable_diagnostics) {
         // the compiler and Codee read the file, which an opened document's
         // text may differ from
-        const unsaved = open_text != null and (compile.compilerOf(self) != null or self.s.codee) and differsFromDisk(self, filepath);
+        const unsaved = open_text != null and (compile.anyCompiler(self) or self.s.codee) and differsFromDisk(self, filepath);
         const trigger: compile.Trigger = if (unsaved) .open_unsaved else if (did_open) .open else .save;
         compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
         linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });
@@ -690,6 +713,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8) parser.Fi
         const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
         errdefer nf.destroy();
         nf.comment_markers = self.s.comment_markers.slice();
+        nf.openmp_conditional = !self.s.disable_openmp_conditional;
         nf.d_lines_code = self.s.dLinesCode();
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
@@ -787,15 +811,18 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
 
 /// Whether `path` is a file the workspace indexes: a Fortran file of a
 /// source directory (any directory under the root, without
-/// `source_dirs`) that no exclusion covers, and no interface module of
-/// ifort's
+/// `source_dirs`) or of the compilation database outside the root, that no
+/// exclusion covers, and no interface module of ifort's
 pub fn isSourceFile(self: *const Server, path: []const u8) bool {
     const base = std.Io.Dir.path.basename(path);
     if (self.src_ext_regex.search(base) == null) return false;
     for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
     for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
     const in_sources = self.s.source_dirs.contains(paths.dirname(path)) or
-        (self.whole_root and std.mem.startsWith(u8, path, self.root_path));
+        (self.whole_root and std.mem.startsWith(u8, path, self.root_path)) or
+        for (self.outside_sources.items) |p| {
+            if (paths.eql(p, path)) break true;
+        } else false;
     return in_sources and !project.isIfortInterface(self.io, path);
 }
 
@@ -811,6 +838,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
@@ -840,6 +868,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         if (file == null) {
             const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
@@ -879,6 +908,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
     }
     if (f.ast) |old| removeFromTree(self, old);
     f.ast = ast_new;
+    pull.changed(self);
     try addToTree(self, f);
     if (update_links) {
         self.link_version = @mod(self.link_version + 1, 1000);

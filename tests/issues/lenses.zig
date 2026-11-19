@@ -88,12 +88,13 @@ test "reference lenses above modules, procedures and types, counted on resolve a
     try std.testing.expectEqual(true, json.path(w.init_result, &.{ "capabilities", "codeLensProvider", "resolveProvider" }).?.bool);
     const got = try lenses(w, a, "geometry.f90");
     // module geometry, type point, move and norm: not the procedure of the
-    // interface block
+    // interface block. norm has no RESULT, so its result variable's
+    // assignment is one of its references too (#228).
     const want = [_]struct { line: i64, char: i64, end: i64, count: usize }{
         .{ .line = 0, .char = 7, .end = 20, .count = 1 },
         .{ .line = 2, .char = 10, .end = 4, .count = 3 },
         .{ .line = 11, .char = 13, .end = 15, .count = 2 },
-        .{ .line = 16, .char = 16, .end = 19, .count = 1 },
+        .{ .line = 16, .char = 16, .end = 19, .count = 2 },
     };
     try std.testing.expectEqual(want.len, got.len);
     for (want, got) |wl, lens| {
