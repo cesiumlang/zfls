@@ -25,6 +25,7 @@ test {
     _ = @import("extensions.zig");
     _ = @import("external.zig");
     _ = @import("formatting.zig");
+    _ = @import("form_switch.zig");
     _ = @import("generics.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");

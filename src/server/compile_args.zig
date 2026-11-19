@@ -152,14 +152,14 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
         .check => try compilers.syntaxOnly(a, id, o),
         .dependency => try compilers.moduleOnly(a, id, o),
     });
-    try args.appendSlice(a, if (file.fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
+    try args.appendSlice(a, if (file.declared_fixed) compilers.fixedForm(id, o) else compilers.freeForm(id, o));
     // the line length zfls reads, unless `compiler_args` sets one
     const user_sets = if (user) |u| for (u) |x| {
-        if (compilers.isLineLength(id, file.fixed, x)) break true;
+        if (compilers.isLineLength(id, file.declared_fixed, x)) break true;
     } else false else false;
-    if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.fixed, self.fixedLimit(), o));
+    if (!user_sets) try args.appendSlice(a, try compilers.lineLength(a, id, file.declared_fixed, self.fixedLimit(), o));
     // debug lines as zfls reads them, unless `user` says
-    if (file.fixed) {
+    if (file.declared_fixed) {
         for (user orelse &.{}) |x| {
             if (compilers.isDLinesArg(x)) break;
         } else try args.appendSlice(a, compilers.dLines(id, self.s.dLinesCode(), o));

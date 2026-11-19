@@ -60,6 +60,7 @@ pub fn applyChange(self: *FortranFile, change: Change) !bool {
             const hi = lo + self.text.len;
             for (pl, raw) |l, *r| r.* = @intFromPtr(l.ptr) >= lo and @intFromPtr(l.ptr) < hi;
         }
+        const switched = self.form_switched;
         try self.setContents(replaced, false);
         if (old_pp) |pl| {
             for (pl, raw, 0..) |*l, r, i| {
@@ -69,6 +70,8 @@ pub fn applyChange(self: *FortranFile, change: Change) !bool {
             self.pp_lines = pl;
             self.pp_skips = old_skips;
         }
+        // `!dir$ fixed` or `!dir$ free` may have changed how lines are read
+        if (switched or self.form_switched) return true;
         return checkChangeReparse(self, @intCast(rng.sl));
     }
 
