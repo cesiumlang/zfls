@@ -1113,6 +1113,11 @@ zfls deliberately differs from fortls in a few places:
   `CONTAINS` or an `END` statement, instead of waiting for the next object.
 - A blank line follows a parameter whose documentation ends in a Markdown
   list in hover, so the next parameter is not shown as part of the list.
+- String literals are found from left to right, a literal ending only at
+  its own quote (`'it''s'` doubled), so two strings that each hold the
+  other quote character (`"it's", "Bob's"`) do not hide the code between
+  them from declaration lists, signature help, hover and the argument
+  checks; fortls removes the `'...'` strings before the `"..."` ones.
 - References to (and renames of) a separate module procedure include both
   its interface and its implementation in a submodule; fortls does not
   relate the two. With the `prefer_implementation` option, hover shows the
