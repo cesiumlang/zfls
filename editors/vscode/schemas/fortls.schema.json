@@ -123,7 +123,7 @@
       "default": false
     },
     "hover_signature": {
-      "description": "Show signature information in hover for arguments",
+      "description": "Hover on an actual argument of a call also shows the dummy argument it is passed to",
       "type": "boolean",
       "default": false
     },
@@ -161,6 +161,11 @@
       "description": "Disable diagnostics",
       "type": "boolean",
       "default": false
+    },
+    "diagnostics_change_delay": {
+      "description": "The milliseconds without a change before the diagnostics of a document that is edited are published again (default: 300; 0: with each change; negative: only when it is opened and saved)",
+      "type": "integer",
+      "default": 300
     },
     "workspace_diagnostics": {
       "description": "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)",
@@ -438,6 +443,16 @@
     },
     "enable_code_actions": {
       "description": "Enable experimental code actions (default: false)",
+      "type": "boolean",
+      "default": false
+    },
+    "code_lens_no_references": {
+      "description": "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)",
+      "type": "boolean",
+      "default": false
+    },
+    "code_lens_no_run": {
+      "description": "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)",
       "type": "boolean",
       "default": false
     },

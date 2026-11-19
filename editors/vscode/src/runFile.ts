@@ -39,12 +39,17 @@ export function addFileRunner(runner: FileRunner): void {
 
 export function registerRunCommands(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, false)),
-    vscode.commands.registerCommand("zfls.debugFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, true)),
+    // a code lens above a program gives the URI as a string
+    vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri | string) => runOrDebug(context, log, asUri(uri), false)),
+    vscode.commands.registerCommand("zfls.debugFile", (uri?: vscode.Uri | string) => runOrDebug(context, log, asUri(uri), true)),
     vscode.commands.registerCommand("zfls.generateLaunchConfig", (uri?: vscode.Uri) =>
       generateLaunchConfig(context, uri),
     ),
   );
+}
+
+function asUri(uri: vscode.Uri | string | undefined): vscode.Uri | undefined {
+  return typeof uri === "string" ? vscode.Uri.parse(uri) : uri;
 }
 
 /** Everything about building and running one file */
