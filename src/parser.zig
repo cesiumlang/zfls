@@ -755,7 +755,7 @@ pub const FortranFile = struct {
         // the Intel conditionals alone: no macros, no includes
         _ = self.pp_arena.reset(.free_all);
         self.pp_defs = .empty;
-        var out: pp.Output = .{ .lines = self.lines.items, .skips = &.{}, .defines = &.{}, .includes = &.{}, .defs = .empty };
+        var out: pp.Output = .{ .lines = self.lines.items, .skips = &.{}, .defines = &.{}, .includes = &.{}, .missing = &.{}, .defs = .empty };
         try self.addIntelSkips(&out, defs);
         return if (out.skips.len > 0) out else null;
     }
