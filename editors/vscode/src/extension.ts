@@ -24,9 +24,10 @@ import { registerConvertCommands } from "./convertForm";
 
 import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
 import { appliesLive, ServerSettings } from "./settingsSync";
-import { FORTRAN_FILES } from "./tools";
+import { checkSuperseded } from "./superseded";
+import { FORTRAN_FILES, serverExecutable } from "./tools";
+import { folderVariables } from "./variables";
 
-const MODERN_FORTRAN = "fortran-lang.linter-gfortran";
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 /** The languages zfls serves: Fortran's, and namelist files (their outline) */
 const SERVED_LANGUAGES = [...LANGUAGES, "FortranNamelist"];
@@ -51,8 +52,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFpm(context, output);
   registerFpmTests(context, output, folderClients);
   registerPfunitTests(context, output, folderClients);
-  registerIfxSetup(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
-  registerDebugType(context, output, () => findServer(context, vscode.workspace.getConfiguration("zfls").get<string>("path", "")));
+  registerIfxSetup(context, output, () => findServer(context, vscode.workspace.workspaceFolders?.[0]).command);
+  registerDebugType(context, output, () => findServer(context, vscode.workspace.workspaceFolders?.[0]).command);
   registerModuleVariables(context, clientForUri);
   registerConvertCommands(context, clientForUri);
   context.subscriptions.push(
@@ -96,7 +97,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   for (const doc of vscode.workspace.textDocuments) {
     await ensureClient(doc);
   }
-  void checkModernFortran();
+  void checkSuperseded();
 }
 
 /** The C declarations of the BIND(C) procedure at a position
@@ -576,11 +577,12 @@ async function startClient(
   folder: vscode.WorkspaceFolder | undefined,
   untitled: boolean,
 ): Promise<LanguageClient | undefined> {
-  const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
-  const command = findServer(context, config.get<string>("path", ""));
+  const { command, tried } = findServer(context, folder);
   if (!command) {
     const choice = await vscode.window.showErrorMessage(
-      vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."),
+      tried
+        ? vscode.l10n.t("zfls: there is no zfls at {0}, which zfls.path names.", tried)
+        : vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."),
       vscode.l10n.t("Open Settings"),
     );
     if (choice) {
@@ -644,25 +646,31 @@ async function startClient(
   return client;
 }
 
-/** The zfls to run: the configured one, else the bundled one, else `zfls`
- * on the PATH. */
-function findServer(context: vscode.ExtensionContext, configured: string): string | undefined {
-  const exe = process.platform === "win32" ? "zfls.exe" : "zfls";
+/** The zfls to run for `folder`: the one `zfls.path` names (see
+ * `serverExecutable`; `tried`: the path it names, when there is no zfls
+ * there), else the bundled one, else `zfls` on the PATH. */
+function findServer(context: vscode.ExtensionContext, folder: vscode.WorkspaceFolder | undefined): { command?: string; tried?: string } {
+  const configured = vscode.workspace.getConfiguration("zfls", folder?.uri).get<string>("path", "").trim();
   if (configured) {
-    return configured;
+    const found = serverExecutable(configured, folderVariables(folder));
+    if (found.tried) {
+      output?.error(`zfls.path: there is no zfls at ${found.tried}`);
+    }
+    return found;
   }
+  const exe = process.platform === "win32" ? "zfls.exe" : "zfls";
   const bundled = context.asAbsolutePath(path.join("bin", exe));
   if (fs.existsSync(bundled)) {
     ensureExecutable(bundled);
-    return bundled;
+    return { command: bundled };
   }
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     const candidate = path.join(dir, exe);
     if (dir && fs.existsSync(candidate)) {
-      return candidate;
+      return { command: candidate };
     }
   }
-  return undefined;
+  return {};
 }
 
 /** Restores the executable bit of the bundled zfls should unpacking the
@@ -679,68 +687,5 @@ function ensureExecutable(file: string): void {
     } catch (err) {
       output?.warn(`cannot make ${file} executable: ${String(err)}`);
     }
-  }
-}
-
-/** zfls replaces the Modern Fortran extension: both register the same
- * Fortran languages, grammars and snippets, Modern Fortran starts its own
- * language server (fortls), and both lint with a compiler. Recommend
- * disabling it; extensions cannot disable one another, so this opens its
- * page where the user can. Keeping it with its fortls and linter turned off
- * stays possible. */
-async function checkModernFortran(): Promise<void> {
-  const config = vscode.workspace.getConfiguration("zfls");
-  if (config.get<boolean>("disableModernFortranCheck", false)) {
-    return;
-  }
-  // only an enabled extension is found
-  if (!vscode.extensions.getExtension(MODERN_FORTRAN)) {
-    return;
-  }
-  const fortran = vscode.workspace.getConfiguration("fortran");
-  const fortlsOn = !fortran.get<boolean>("fortls.disabled", false);
-  // both linting would show each compiler message twice
-  const lintOn = config.get<string>("linter.compiler", "gfortran") !== "Disabled" &&
-    fortran.get<string>("linter.compiler", "gfortran") !== "Disabled";
-  if (!fortlsOn && !lintOn) {
-    // kept on purpose, with its language server and linter off
-    return;
-  }
-  const disable = vscode.l10n.t("Disable Modern Fortran...");
-  const keep = vscode.l10n.t("Keep it, turn off its fortls and linter");
-  const never = vscode.l10n.t("Don't ask again");
-  const choice = await vscode.window.showWarningMessage(
-    vscode.l10n.t(
-      "The Modern Fortran extension is also enabled. zfls replaces it: the language server, formatting, " +
-        "compiler diagnostics, run and debug, syntax highlighting, snippets and breakpoints. With both, two " +
-        "language servers, two linters and two sets of grammars compete for Fortran files, so " +
-        "disable Modern Fortran.",
-    ),
-    disable,
-    keep,
-    never,
-  );
-  if (choice === disable) {
-    await vscode.commands.executeCommand("extension.open", MODERN_FORTRAN);
-    void vscode.window.showInformationMessage(
-      vscode.l10n.t('Select "Disable" on the Modern Fortran page, then reload the window.'),
-    );
-  } else if (choice === keep) {
-    if (lintOn) {
-      await fortran.update("linter.compiler", "Disabled", vscode.ConfigurationTarget.Global);
-    }
-    if (!fortlsOn) {
-      return;
-    }
-    await fortran.update("fortls.disabled", true, vscode.ConfigurationTarget.Global);
-    const reload = await vscode.window.showInformationMessage(
-      vscode.l10n.t("Modern Fortran's fortls is turned off; reload the window to stop it."),
-      vscode.l10n.t("Reload Window"),
-    );
-    if (reload) {
-      await vscode.commands.executeCommand("workbench.action.reloadWindow");
-    }
-  } else if (choice === never) {
-    await config.update("disableModernFortranCheck", true, vscode.ConfigurationTarget.Global);
   }
 }

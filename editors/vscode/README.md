@@ -64,7 +64,7 @@ disable Modern Fortran when you install zfls (see
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `zfls.path` | empty | A `zfls` to run instead of the bundled one |
+| `zfls.path` | empty | A `zfls` to run instead of the bundled one, or the directory that holds it |
 | `zfls.incrementalSync` | `true` | Send document changes incrementally |
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
@@ -79,6 +79,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
+| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |
@@ -99,7 +100,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
-| `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling Modern Fortran when both are enabled |
+| `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
 | `zfls.formatting.formatter` | `Disabled` | `findent`, `fprettify`, `codee`, `forformat` or `custom` to format Fortran files (see [Formatting](#formatting)) |
 | `zfls.formatting.path` | empty | The formatter, or its directory, when it is not on the `PATH` |
@@ -165,6 +166,15 @@ language server (`fortran.fortls.disabled`) and its compiler linting
 shows the compiler's messages while Modern Fortran keeps its other
 commands. Its grammars still apply alongside zfls's in that case.
 
+zfls recommends disabling these extensions in the same way, as it does
+what they do: Modern Fortran under its old ID (`krvajalm.linter-gfortran`,
+the same languages and grammars, and linting), FORTRAN IntelliSense
+(`hansec.fortran-ls`, a language server of its own, so each completion and
+hover comes twice) and Fortran Breakpoint Support (`ekibun.fortranbreaker`,
+breakpoints in Fortran files). **Don't ask again**
+(`zfls.disableModernFortranCheck`) stops the recommendation for all of
+them.
+
 ## Compiler diagnostics
 
 When a Fortran file is opened or saved, zfls has a compiler check it
@@ -206,9 +216,9 @@ Whether a file is free or fixed form follows its language in VS Code
 | `zfls.linter.fypp.extraArgs` | `[]` | Further fypp options |
 
 Path settings resolve `${workspaceFolder}`, `${workspaceFolder:name}`,
-`${env:VAR}`, `${userHome}`, `${file}`, `${fileDirname}`,
-`${fileBasenameNoExtension}` and a leading `~`; relative paths are relative
-to the workspace folder.
+`${env:VAR}`, `${userHome}` and a leading `~`; relative paths are relative
+to the workspace folder. There is no `${file}`: these settings are the
+language server's, one per workspace folder, not one per file.
 
 How it behaves:
 
@@ -616,6 +626,10 @@ Type a prefix and pick the snippet from the completion list:
 
 The fixed-form snippets indent with spaces and keep every line at the
 column where the prefix was typed, so type the prefix at column 7 or later.
+Fixed-form files show rulers after columns 5, 6 and 72 (the label, the
+continuation mark and the end of the code), a default of
+`"[FortranFixedForm]": {"editor.rulers": [...]}` that a setting of your
+own replaces.
 Most snippets are adapted from those of Modern Fortran.
 
 ## Commands

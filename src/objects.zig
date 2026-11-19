@@ -511,15 +511,29 @@ pub const Obj = struct {
         };
     }
 
-    /// The argument list of a procedure or intrinsic, "" for others
+    /// The argument list of a procedure or intrinsic, "" for others; of an
+    /// intrinsic with several forms, the first one's
     pub fn argList(self: *const Obj) []const u8 {
         return switch (self.data) {
             .scope => |s| switch (s.ext) {
                 .procedure => |p| p.args,
                 else => "",
             },
-            .intrinsic => |i| i.args,
+            .intrinsic => |i| str.beforeFirst(i.args, "|"),
             .variable => "",
+        };
+    }
+
+    /// The argument lists of the forms of an intrinsic (`THIS_IMAGE` has
+    /// two); the one of `argList` for others
+    pub fn argForms(self: *const Obj, a: Allocator) ![]const []const u8 {
+        return switch (self.data) {
+            .intrinsic => |i| str.split(a, i.args, "|"),
+            else => {
+                const one = try a.alloc([]const u8, 1);
+                one[0] = self.argList();
+                return one;
+            },
         };
     }
 
@@ -871,6 +885,7 @@ pub const Obj = struct {
     pub const getDocsFull = objects_hover.getDocsFull;
     const endsInListItem = objects_hover.endsInListItem;
     pub const getSignature = objects_hover.getSignature;
+    pub const getSignatures = objects_hover.getSignatures;
     pub const getInterfaceArray = objects_hover.getInterfaceArray;
     pub const getInterface = objects_hover.getInterface;
 

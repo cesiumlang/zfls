@@ -315,6 +315,13 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.workspaceDiagnostics.markdownDescription%"
         },
+        "zfls.diagnosticsChangeDelay": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.diagnosticsChangeDelay.markdownDescription%"
+        },
         "zfls.diagnosticSeverity": {
           "type": "object",
           "propertyNames": {
@@ -1143,6 +1150,11 @@
     ],
     "configurationDefaults": {
       "[FortranFixedForm]": {
+        "editor.rulers": [
+          5,
+          6,
+          72
+        ],
         "editor.semanticHighlighting.enabled": true,
         "editor.autoIndentOnPaste": false,
         "editor.formatOnType": true
@@ -1481,6 +1493,8 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
   }
 }

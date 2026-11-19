@@ -669,12 +669,7 @@ pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
         self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
         return;
     };
-    if (res) |diags| {
-        // with the compiler's diagnostics of the file, when there are any
-        if (compile.compilerOf(self) != null) {
-            compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
-            return;
-        }
-        self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
-    }
+    // with the last diagnostics of the file from the compiler and the
+    // linters, whose publications have these with them
+    if (res) |diags| compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
 }
