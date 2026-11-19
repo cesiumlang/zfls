@@ -404,98 +404,96 @@ pub const FortranFile = struct {
         return self.lines.items[line_no];
     }
 
-    /// Get full code line from file including any adjacent continuations
+    /// Whether line `i` (0-based), `line`, holds no part of a statement: a
+    /// blank or comment line, a preprocessor directive, or a line of an
+    /// inactive conditional branch (hansec #203). Such lines may come
+    /// between the lines of a continued statement without ending it.
+    fn isNonCode(self: *const FortranFile, line: []const u8, i: usize) bool {
+        return std.mem.trim(u8, line, " \t\r").len == 0 or helpers.isComment(self.fixed, line) or
+            helpers.isPpDirective(line) or self.ppSkipped(i);
+    }
+
+    /// The statement that line `line_no` (0-based) is part of: the line,
+    /// and the lines of the statement before it (`backward`) and after it
+    /// (`forward`). `pre` and `post` hold a line for each line of the
+    /// file, from the statement's first to its last: an empty one for a
+    /// line that is no code (`isNonCode`).
     pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: usize, forward: bool, backward: bool, pp_content: bool, strip_comment: bool) !CodeLine {
         var curr_line = self.getLine(line_no, pp_content) orelse return .{ .pre = &.{}, .curr = null, .post = &.{} };
-        const n = self.nLines();
-        var line_ind = line_no -| 1;
         var pre_lines: std.ArrayList([]const u8) = .empty;
+        // the lines that are no code since the last line of the statement
+        var skipped: usize = 0;
         if (backward) {
+            // a fixed-form line continues a statement by its column 6, a
+            // free-form one when the code line before it ends with `&`
+            const continued = if (self.fixed) helpers.isFixedCont(curr_line) else true;
             if (self.fixed) {
-                var tmp_line = curr_line;
-                while (line_ind > 0) {
-                    if (helpers.isFixedCont(tmp_line)) {
-                        const prev_line = tmp_line;
-                        tmp_line = self.getLine(line_ind, pp_content) orelse "";
-                        if (line_ind == line_no -| 1) {
-                            curr_line = try std.mem.concat(a, u8, &.{ "      ", str.from(curr_line, 6) });
-                        } else {
-                            pre_lines.items[pre_lines.items.len - 1] = try std.mem.concat(a, u8, &.{ "      ", str.from(prev_line, 6) });
-                        }
-                        try pre_lines.append(a, tmp_line);
-                    } else break;
-                    line_ind -= 1;
+                if (continued) curr_line = try std.mem.concat(a, u8, &.{ "      ", str.from(curr_line, 6) });
+            } else if (helpers.freeContEnd(curr_line)) |e| {
+                curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), curr_line[e..] });
+            }
+            var i = line_no;
+            while (continued and i > 0) {
+                i -= 1;
+                const raw = self.getLine(i, pp_content) orelse "";
+                if (self.isNonCode(raw, i)) {
+                    skipped += 1;
+                    continue;
                 }
-            } else {
-                if (helpers.freeContEnd(curr_line)) |e| {
-                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), curr_line[e..] });
-                }
-                while (line_ind > 0) {
-                    const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
-                    var tmp_no_comm = str.beforeFirst(tmp_line, "!");
-                    const cont_ind = std.mem.findScalarLast(u8, tmp_no_comm, '&');
-                    if (helpers.freeContEnd(tmp_no_comm)) |e| {
+                var part: []const u8 = undefined;
+                var first = false;
+                if (self.fixed) {
+                    first = !helpers.isFixedCont(raw);
+                    part = try fixedNoComment(a, raw);
+                    if (!first) part = try std.mem.concat(a, u8, &.{ "      ", str.from(part, 6) });
+                } else {
+                    const no_comm = str.beforeFirst(try helpers.stripStrings(a, raw, true), "!");
+                    const cont_ind = std.mem.findScalarLast(u8, no_comm, '&') orelse break;
+                    part = no_comm[0..cont_ind];
+                    if (helpers.freeContEnd(no_comm)) |e| {
                         if (cont_ind == e - 1) break;
-                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), tmp_no_comm[e..] });
+                        part = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), part[e..] });
                     }
-                    if (cont_ind) |ci| {
-                        try pre_lines.append(a, tmp_no_comm[0..ci]);
-                    } else break;
-                    line_ind -= 1;
                 }
+                try pre_lines.appendNTimes(a, "", skipped);
+                skipped = 0;
+                try pre_lines.append(a, part);
+                if (first) break;
             }
         }
-        line_ind = line_no + 1;
         var post_lines: std.ArrayList([]const u8) = .empty;
         if (forward) {
-            if (self.fixed) {
-                if (line_ind < n) {
-                    var next_line = self.getLine(line_ind, pp_content) orelse "";
-                    line_ind += 1;
-                    var cont = helpers.isFixedCont(next_line);
+            // the statement's last line so far: null for `curr_line`, else
+            // an index of `post_lines`
+            var last: ?usize = null;
+            var i = line_no + 1;
+            skipped = 0;
+            while (true) {
+                const line = if (last) |l| post_lines.items[l] else curr_line;
+                var cut = line;
+                if (!self.fixed) {
+                    const amper = continuationAmpersand(try helpers.stripStrings(a, line, true)) orelse break;
+                    cut = str.upto(line, amper);
+                    if (last) |l| post_lines.items[l] = cut else curr_line = cut;
+                }
+                const next = while (self.getLine(i, pp_content)) |l| : (i += 1) {
+                    if (!self.isNonCode(l, i)) break l;
+                    skipped += 1;
+                } else break;
+                i += 1;
+                var part = next;
+                if (self.fixed) {
+                    if (!helpers.isFixedCont(next)) break;
                     // a comment ends its line only: one before a continuation
                     // must not cut off the rest of the statement (hansec #202)
-                    if (cont) curr_line = try fixedNoComment(a, curr_line);
-                    while (cont and line_ind < n) {
-                        try post_lines.append(a, try std.mem.concat(a, u8, &.{ "      ", str.from(next_line, 6) }));
-                        next_line = self.getLine(line_ind, pp_content) orelse "";
-                        line_ind += 1;
-                        cont = helpers.isFixedCont(next_line);
-                        if (cont) {
-                            const last = &post_lines.items[post_lines.items.len - 1];
-                            last.* = try fixedNoComment(a, last.*);
-                        }
-                    }
-                }
-            } else {
-                var line_stripped = try helpers.stripStrings(a, curr_line, true);
-                var cont_amper = continuationAmpersand(line_stripped);
-                var next_line: []const u8 = "";
-                while (cont_amper) |amper| {
-                    if (line_ind == line_no + 1) {
-                        curr_line = str.upto(curr_line, amper);
-                    } else if (next_line.len > 0) {
-                        post_lines.items[post_lines.items.len - 1] = str.upto(next_line, amper);
-                    }
-                    next_line = self.getLine(line_ind, pp_content) orelse break;
-                    line_ind += 1;
-                    // a line of an inactive conditional branch is not part of
-                    // the statement (hansec #203)
-                    if (helpers.isPpDirective(next_line) or (pp_content and self.ppSkipped(line_ind - 1))) {
-                        next_line = "";
-                        try post_lines.append(a, "");
-                        continue;
-                    }
-                    if (str.rstrip(next_line).len == 0 or helpers.isFreeComment(next_line)) {
-                        next_line = "";
-                        try post_lines.append(a, "");
-                        continue;
-                    }
-                    if (helpers.freeContEnd(next_line)) |e| next_line = next_line[e..];
-                    try post_lines.append(a, next_line);
-                    line_stripped = try helpers.stripStrings(a, next_line, true);
-                    cont_amper = continuationAmpersand(line_stripped);
-                }
+                    cut = try fixedNoComment(a, line);
+                    if (last) |l| post_lines.items[l] = cut else curr_line = cut;
+                    part = try std.mem.concat(a, u8, &.{ "      ", str.from(next, 6) });
+                } else if (helpers.freeContEnd(next)) |e| part = next[e..];
+                try post_lines.appendNTimes(a, "", skipped);
+                skipped = 0;
+                try post_lines.append(a, part);
+                last = post_lines.items.len - 1;
             }
         }
         if (strip_comment) curr_line = self.stripComment(curr_line);
@@ -882,6 +880,32 @@ test "comment markers: zfls reads comments, changes apply to the editor's text" 
     try std.testing.expectEqualStrings("  go to 110 !*", f.getLine(1, false).?);
     try std.testing.expectEqualStrings("  x = 1 !* two it's a comment", f.getLine(2, false).?);
     try std.testing.expectEqual(@as(usize, 5), f.nLines());
+}
+
+test "getCodeLine: lines that are no code do not end a statement, and keep their place" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const f = try FortranFile.create(std.testing.allocator, "/w/a.f90", null);
+    defer f.destroy();
+    _ = try f.setText("call foo(a, & ! one\n  ! two\n\n#if 1\n  b, &\n#endif\n  c)\nx = 1\n");
+    const back = try f.getCodeLine(a, 6, false, true, false, false);
+    try std.testing.expectEqual(@as(usize, 6), back.pre.len);
+    try std.testing.expectEqualStrings("call foo(a, ", back.pre[0]);
+    try std.testing.expectEqualStrings("  b, ", back.pre[4]);
+    const fwd = try f.getCodeLine(a, 0, true, false, false, false);
+    try std.testing.expectEqualStrings("call foo(a, ", fwd.curr.?);
+    try std.testing.expectEqual(@as(usize, 6), fwd.post.len);
+    try std.testing.expectEqualStrings("  c)", fwd.post[5]);
+    // fixed form; line 0 is part of the statement too
+    _ = try f.setText("      x = f(a,\nc two\n     & b)\nc three\n      y = 1\n");
+    f.fixed = true;
+    const fb = try f.getCodeLine(a, 2, false, true, false, false);
+    try std.testing.expectEqual(@as(usize, 2), fb.pre.len);
+    try std.testing.expectEqualStrings("      x = f(a,", fb.pre[0]);
+    const ff = try f.getCodeLine(a, 0, true, false, false, false);
+    try std.testing.expectEqual(@as(usize, 2), ff.post.len);
 }
 
 test "form feeds and tabs are read as spaces, as loaded and as edited" {

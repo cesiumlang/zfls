@@ -661,6 +661,22 @@ def on_enumerator_statement(lines: list, line: int) -> bool:
     return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
 
 
+NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
+
+
+def after_non_code_line(lines: list, line: int) -> bool:
+    """Whether the line continues a statement across a preprocessor
+    directive, comment or blank line before it (`REAL &` / `#ifdef X` /
+    `, POINTER &`): zfls reads the statement whole (zfls #259), fortls
+    stops at that line."""
+    if not 0 < line < len(lines) or not NON_CODE.match(lines[line - 1]):
+        return False
+    k = line - 1
+    while k >= 0 and NON_CODE.match(lines[k]):
+        k -= 1
+    return k >= 0 and lines[k].split("!")[0].rstrip().endswith("&")
+
+
 def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     """Whether (line, char) is on a statement label or on a construct name
     that the file defines (`name: do`); zfls answers definition, references
@@ -1003,6 +1019,14 @@ def main() -> int:
                 and on_enumerator_statement(src_lines, pos.get("line", -1))
             ):
                 # the enumerators of an ENUM, which fortls does not read
+                continue
+            if (
+                kind in ("hover", "definition", "completion", "signature")
+                and not a
+                and after_non_code_line(src_lines, pos.get("line", -1))
+            ):
+                # a statement continued across a directive or comment line
+                # (zfls #259); fortls sees only its part after that line
                 continue
             if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                 # the implicit type of a name that is not declared (hansec

@@ -1407,6 +1407,12 @@ zfls deliberately differs from fortls in a few places:
 - The lines of an inactive preprocessor branch inside a continued statement
   (`REAL &` / `#ifdef X` / `, POINTER &` / `#endif`) are left out of it; fortls
   joins them, so the declaration gets the attributes of every branch.
+- Comment lines, blank lines and preprocessor directives between the lines
+  of a continued statement (`call foo(a, &` / `! the rest` / `b)`) do not
+  end it, in either source form: signature help, completion and hover see
+  the whole statement, and a fixed-form declaration continued after a
+  comment line declares all its names. fortls ends the statement at such a
+  line.
 - A function-like macro without parameters (`#define NOARG() 42`) expands to
   its value, and a macro's value is used as written; fortls reads it as a
   regex template, so `\1` in it and, for `NOARG()`, its digits are lost
