@@ -88,6 +88,54 @@ test "hansec #133 completion of keyword arguments inside a call" {
     try h.checkIn(.hansec, 133, .fixed, expectKeywordArguments(w));
 }
 
+const two_forms = [_]h.File{.{ .name = "p.f90", .text =
+    \\program p
+    \\  implicit none
+    \\  character(:), allocatable :: t(:)
+    \\  integer :: n
+    \\  n = this_im
+    \\  call tokeni
+    \\  n = this_image(
+    \\  call tokenize(
+    \\end program
+    \\
+}};
+
+/// The completion item `label` at `needle` + `plus` of p.f90
+fn itemAt(w: *h.Workspace, needle: []const u8, plus: usize, label: []const u8) !h.Workspace.Item {
+    for (try w.completionItems("p.f90", w.pos("p.f90", needle, 0, plus))) |i| {
+        if (std.ascii.eqlIgnoreCase(i.label, label)) return i;
+    }
+    return h.unmet("{s}: no {s}", .{ needle, label });
+}
+
+fn expectOneForm(w: *h.Workspace) !void {
+    const this_image = try itemAt(w, "this_im\n", 7, "THIS_IMAGE");
+    try h.expect(std.mem.eql(u8, this_image.insert, "THIS_IMAGE(${1:COARRAY}, DIM=${2:dim})"), "THIS_IMAGE inserts {s}", .{this_image.insert});
+    try h.expect(std.mem.findScalar(u8, this_image.detail, '|') == null, "THIS_IMAGE: {s}", .{this_image.detail});
+    const tokenize = try itemAt(w, "tokeni\n", 6, "TOKENIZE");
+    try h.expect(std.mem.eql(u8, tokenize.insert, "TOKENIZE(${1:STRING}, ${2:SET}, ${3:TOKENS}, SEPARATORS=${4:separators})"), "TOKENIZE inserts {s}", .{tokenize.insert});
+    try h.expect(std.mem.findScalar(u8, tokenize.detail, '|') == null, "TOKENIZE: {s}", .{tokenize.detail});
+}
+
+fn expectBothForms(w: *h.Workspace) !void {
+    for ([_][]const u8{ "this_image(", "tokenize(" }) |call| {
+        const sig = (try w.signature("p.f90", w.pos("p.f90", call, 0, call.len))) orelse return h.unmet("{s}: no signature help", .{call});
+        try h.expect(sig.count == 2 and std.mem.findScalar(u8, sig.label, '|') == null, "{s}: {d} signatures, {s}", .{ call, sig.count, sig.label });
+    }
+}
+
+test "#245 an intrinsic with two forms completes to the first, and signature help shows both" {
+    {
+        const w = try h.Workspace.init(&two_forms, .{});
+        defer w.deinit();
+        try expectOneForm(w);
+    }
+    const w = try h.Workspace.init(&two_forms, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    try expectBothForms(w);
+}
+
 const modules = [_]h.File{
     .{ .name = "consts.f90", .text =
     \\module consts
@@ -185,6 +233,104 @@ test "an intrinsic module's names are offered with their USE statement, after th
     const o = find(items, "output_unit") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("  use iso_fortran_env, only: output_unit\n", o.added.?);
     try std.testing.expectEqual(@as(i64, 2), o.added_line);
+}
+
+const enums = [_]h.File{
+    .{ .name = "em.f90", .text =
+    \\module em
+    \\  implicit none
+    \\  enum, bind(c)
+    \\    enumerator :: red_color, green_color
+    \\    enumerator :: blue_color = 5
+    \\  end enum
+    \\  integer, parameter :: grey_color = 7
+    \\contains
+    \\  subroutine s()
+    \\    integer :: k
+    \\    k = gre
+    \\    k = green_color
+    \\  end subroutine
+    \\end module
+    \\program p
+    \\  use em
+    \\  implicit none
+    \\  integer :: j
+    \\  j = blu
+    \\end program p
+    \\
+    },
+    .{ .name = "only.f90", .text =
+    \\program q
+    \\  use em, only: blue_color
+    \\  implicit none
+    \\  integer :: j
+    \\  j = b
+    \\  j = r
+    \\end program q
+    \\program r
+    \\  use em, only: b => blue_color
+    \\  implicit none
+    \\  integer :: j
+    \\  j = b
+    \\end program r
+    \\
+    },
+    .{ .name = "hid.f90", .text =
+    \\module hid
+    \\  implicit none
+    \\  private
+    \\  enum, bind(c)
+    \\    enumerator :: red_one, red_two
+    \\  end enum
+    \\  public :: red_one
+    \\end module hid
+    \\program t
+    \\  use hid
+    \\  implicit none
+    \\  integer :: j
+    \\  j = red
+    \\end program t
+    \\
+    },
+};
+
+fn count(items: []const []const u8, label: []const u8) usize {
+    var n: usize = 0;
+    for (items) |i| n += @intFromBool(std.mem.eql(u8, i, label));
+    return n;
+}
+
+fn expectEnumerators(w: *h.Workspace) !void {
+    // in the scope that declares them, beside a named constant
+    var items = try w.completion("em.f90", w.pos("em.f90", "k = gre", 0, 7));
+    try h.expect(count(items, "green_color") == 1 and count(items, "grey_color") == 1, "k = gre: {any}", .{items});
+    // through USE
+    items = try w.completion("em.f90", w.pos("em.f90", "j = blu", 0, 7));
+    try h.expect(count(items, "blue_color") == 1, "j = blu: {any}", .{items});
+    // as a named constant is
+    const gre = try w.completionItems("em.f90", w.pos("em.f90", "k = gre", 0, 7));
+    const green = find(gre, "green_color") orelse return h.unmet("no green_color", .{});
+    const grey = find(gre, "grey_color") orelse return h.unmet("no grey_color", .{});
+    try h.expect(std.mem.eql(u8, green.detail, grey.detail), "green_color: {s}, grey_color: {s}", .{ green.detail, grey.detail });
+    // an ONLY list, and a rename
+    items = try w.completion("only.f90", w.pos("only.f90", "j = b\n", 0, 5));
+    try h.expect(count(items, "blue_color") == 1, "only: blue_color: {any}", .{items});
+    items = try w.completion("only.f90", w.pos("only.f90", "j = r", 0, 5));
+    try h.expect(count(items, "red_color") == 0, "red_color is not in the ONLY list: {any}", .{items});
+    items = try w.completion("only.f90", w.pos("only.f90", "j = b\n", 1, 5));
+    try h.expect(count(items, "b") == 1 and count(items, "blue_color") == 0, "only: b => blue_color: {any}", .{items});
+    // a PRIVATE module, PUBLIC by name
+    items = try w.completion("hid.f90", w.pos("hid.f90", "j = red", 0, 7));
+    try h.expect(count(items, "red_one") == 1 and count(items, "red_two") == 0, "j = red: {any}", .{items});
+    // inside the ENUM, each once
+    items = try w.completion("hid.f90", w.pos("hid.f90", "red_two", 0, 3));
+    try h.expect(count(items, "red_one") <= 1 and count(items, "red_two") <= 1, "enumerator :: red: {any}", .{items});
+}
+
+test "#252 completion offers enumerators, in their scope and through USE" {
+    const w = try h.Workspace.init(&enums, .{});
+    defer w.deinit();
+    try expectEnumerators(w);
 }
 
 const features = [_]h.File{.{ .name = "test.f90", .text =

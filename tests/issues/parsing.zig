@@ -557,3 +557,61 @@ test "CUDA Fortran: kernels, the launch syntax and .cuf files" {
     defer w.deinit();
     try expectCuda(w);
 }
+
+const quotes = [_]h.File{.{ .name = "a.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  character(len=*), parameter :: msg = "it's", tag = 'x'
+    \\  character(len=5) :: m2 = "it's", t2 = "Bob's", u2 = 'z'
+    \\contains
+    \\  subroutine foo(a, b, c)
+    \\    character(len=*) :: a, b
+    \\    integer :: c
+    \\  end subroutine
+    \\  subroutine caller()
+    \\    call foo("it's", "Bob's", 1)
+    \\    call foo("its", "Bobs", 1)
+    \\    call foo('it''s', 'Bob''s', 1)
+    \\    call foo("it""s", "Bob's", 1)
+    \\    call foo('it''s', "Bob's", 1)
+    \\    call foo("it's", 'Bob''s', 1)
+    \\  end subroutine
+    \\end module
+    \\
+}};
+
+fn expectQuotes(w: *h.Workspace) !void {
+    const syms = try w.symbolPaths("a.f90");
+    for ([_][]const u8{ "m/msg", "m/tag", "m/m2", "m/t2", "m/u2" }) |name| {
+        var found = false;
+        for (syms) |s| found = found or std.mem.eql(u8, s, name);
+        try h.expect(found, "{s} is not in the symbols", .{name});
+    }
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "tag", 0, 0), "CHARACTER(len=*), PARAMETER :: tag = 'x'");
+    for (0..6) |i| {
+        const p = w.pos("a.f90", ", 1)", i, 2);
+        const sig = (try w.signature("a.f90", p)) orelse return h.unmet("line {d}: no signature help", .{p.line + 1});
+        try h.expect(sig.active == 2, "line {d}: active parameter {d}, not 2", .{ p.line + 1, sig.active });
+    }
+    try w.expectNoDiagnostics("a.f90");
+}
+
+test "a string holding the other quote character ends where its own quote does (#231)" {
+    const w = try h.Workspace.init(&quotes, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try expectQuotes(w);
+}
+
+test "an undeclared name after strings holding both quote characters is reported (#231)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text =
+        \\program p
+        \\  implicit none
+        \\  print *, 'say "hi"', "it's", x
+        \\end program p
+        \\
+    }}, .{});
+    defer w.deinit();
+    var found = false;
+    for (try w.diagnostics("p.f90")) |d| found = found or (d.line == 2 and std.mem.find(u8, d.message, "x") != null);
+    try std.testing.expect(found);
+}

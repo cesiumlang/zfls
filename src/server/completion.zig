@@ -35,7 +35,6 @@ pub fn setTypeMask(def: bool) Server.TypeMask {
 }
 
 pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, req_abstract: bool, out: *std.ArrayList(*Obj)) !void {
-    const nonly = if (only_list) |o| o.len() else 0;
     for (try scope.getChildren(a, filter_public)) |child| {
         if (req_abstract) {
             if (child.isAbstract()) try childCandidates(a, child, only_list, filter_public, false, out);
@@ -43,18 +42,32 @@ pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.Str
             if (child.isExternalInt()) {
                 try childCandidates(a, child, only_list, filter_public, false, out);
             } else {
-                if (nonly > 0) {
-                    var buf: [256]u8 = undefined;
-                    const lname = if (child.name.len <= buf.len)
-                        std.ascii.lowerString(&buf, child.name)
-                    else
-                        try std.ascii.allocLowerString(a, child.name);
-                    if (!only_list.?.contains(lname)) continue;
-                }
+                if (!try inOnlyList(a, only_list, child.name)) continue;
                 try out.append(a, child);
             }
         }
     }
+    if (req_abstract) return;
+    // the enumerators of an ENUM are names of the scope around it, public
+    // or not as its own names (as `checkScope` finds them)
+    for (scope.childList()) |child| {
+        if (child.kind != .enum_) continue;
+        for (child.childList()) |e| {
+            const private = e.vis == .private or (scope.def_vis == .private and e.vis != .public);
+            if (filter_public and private) continue;
+            if (!try inOnlyList(a, only_list, e.name)) continue;
+            try out.append(a, e);
+        }
+    }
+}
+
+/// Whether `name` passes an ONLY list (an empty or no list passes all)
+fn inOnlyList(a: Allocator, only_list: ?*const objects.StrSet, name: []const u8) !bool {
+    const only = only_list orelse return true;
+    if (only.len() == 0) return true;
+    var buf: [256]u8 = undefined;
+    const lname = if (name.len <= buf.len) std.ascii.lowerString(&buf, name) else try std.ascii.allocLowerString(a, name);
+    return only.contains(lname);
 }
 
 pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_prefix: []const u8, inc_globals: bool, public_only: bool, abstract_only: bool, no_use: bool) !Server.Candidates {
@@ -66,6 +79,16 @@ pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_
         try childCandidates(a, scope, null, public_only, abstract_only, &var_list);
         if (!no_use) try objects.getUseTree(self.env(a), scope, &use_dict, null, null, &.{});
     }
+    // inside an ENUM its enumerators are names of it and of the scope
+    // around it: each once
+    var seen: std.AutoHashMapUnmanaged(*Obj, void) = .empty;
+    var n: usize = 0;
+    for (var_list.items) |o| {
+        if ((try seen.getOrPut(a, o)).found_existing) continue;
+        var_list.items[n] = o;
+        n += 1;
+    }
+    var_list.shrinkRetainingCapacity(n);
     var rename_list: std.ArrayList(?[]const u8) = .empty;
     try rename_list.appendNTimes(a, null, var_list.items.len);
     var import_var_list: std.ArrayList(*Obj) = .empty;

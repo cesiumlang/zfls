@@ -32,6 +32,12 @@ of the [fortls](https://github.com/fortran-lang/fortls) language server:
   and an outline of the groups and the variables they set (from zfls, which
   does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
+- indentation as you type: a line after the start of a program unit,
+  procedure (with its prefixes: `pure`, `integer`, ...), derived type,
+  interface or construct (named or not) is indented, and an END, ELSE,
+  CASE, CONTAINS, TYPE IS, ... is outdented as you type it; keywords in
+  comments and strings are ignored. A `module procedure` line does not
+  indent the next one (in an interface block it has no body)
 - formatting of documents and selections with findent or fprettify (see
   [Formatting](#formatting))
 - Fortran and C: go to definition of a `BIND(C)` procedure gives its C
@@ -79,6 +85,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.symbolSkipMembers` | `false` | Leave type members out of document symbols |
 | `zfls.disableDiagnostics` | `false` | Turn off zfls's diagnostics |
 | `zfls.workspaceDiagnostics` | `false` | Problems of every workspace file, not only the open ones |
+| `zfls.diagnosticsChangeDelay` | `300` | Milliseconds without a change before the problems of a file that is edited are updated (0: with each change) |
 | `zfls.diagnosticSeverity` | none | Severity of diagnostics by code, `off` to hide them |
 | `zfls.externalModules` | none | Modules from outside the project (MPI, ...) that `USE` may name |
 | `zfls.notifyInit` | `false` | Notify when the workspace has been indexed |

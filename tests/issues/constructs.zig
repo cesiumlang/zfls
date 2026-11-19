@@ -193,3 +193,85 @@ test "#264 constructs in lowercase, and without snippets" {
         try std.testing.expectEqual(@as(i64, 14), dow.kind);
     }
 }
+
+const branch_names =
+    \\subroutine s(i, a)
+    \\  implicit none
+    \\  integer :: i
+    \\  real :: a(3)
+    \\  n1: if (i > 0) then
+    \\    i = 1
+    \\  else if (i < -1) then n1
+    \\    i = 2
+    \\  else n1
+    \\    i = 3
+    \\  end if n1
+    \\  n2: select case (i)
+    \\  case (1) n2
+    \\    i = 4
+    \\  case default n2
+    \\    i = 5
+    \\  end select n2
+    \\  n6: where (a > 0)
+    \\    a = 1
+    \\  elsewhere (a < -1) n6
+    \\    a = 2
+    \\  elsewhere n6
+    \\    a = 3
+    \\  end where n6
+    \\  n7: if (i > 0) then
+    \\  else if (j < 0) then n7
+    \\  end if n7
+    \\end subroutine
+    \\
+;
+
+test "construct names on ELSE, CASE and ELSEWHERE statements are no undeclared names (#241)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text = branch_names }}, .{});
+    defer w.deinit();
+    const diags = try w.diagnostics("s.f90");
+    // only the truly undeclared `j`
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(i64, 25), diags[0].line);
+    try std.testing.expect(std.mem.find(u8, diags[0].message, "\"j\"") != null);
+}
+
+const selectcase_one_word =
+    \\subroutine one(i)
+    \\  integer :: i
+    \\  selectcase (i)
+    \\  case (1)
+    \\    i = 2
+    \\  case default
+    \\    i = 3
+    \\  endselect
+    \\end subroutine
+    \\subroutine named(i)
+    \\  integer :: i
+    \\  n1: selectcase (i)
+    \\  case (1) n1
+    \\    i = 2
+    \\  endselect n1
+    \\end subroutine
+    \\
+;
+
+fn hasFold(folds: []const h.Fold, start: i64, end: i64) bool {
+    for (folds) |f| if (f.start == start and f.end == end) return true;
+    return false;
+}
+
+test "SELECT CASE written as one word: its branches fold and its name has references (#241)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text = selectcase_one_word }}, .{});
+    defer w.deinit();
+    const folds = try w.foldingRanges("s.f90");
+    try std.testing.expect(hasFold(folds, 3, 4));
+    try std.testing.expect(hasFold(folds, 5, 6));
+    for ([_]h.Pos{ .{ .line = 11, .col = 2 }, .{ .line = 14, .col = 12 } }) |p| {
+        const refs = try w.references("s.f90", p);
+        try std.testing.expectEqual(@as(usize, 3), refs.len);
+        const def = (try w.definition("s.f90", p)) orelse return error.NoDefinition;
+        try std.testing.expectEqual(@as(i64, 11), def.line);
+        try std.testing.expectEqual(@as(usize, 3), (try w.linkedEditing("s.f90", p)).len);
+    }
+}
