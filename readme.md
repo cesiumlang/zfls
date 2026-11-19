@@ -754,7 +754,12 @@ released binary reports the plain version.
 GitHub Actions (`.github/workflows/ci.yml`) builds the release binaries for
 every pull request and every push to `main` once, and tests them as release
 candidates on Linux, Windows and macOS, each on x86_64 and ARM64: the
-suites above, longer stress runs and the differential test. Pushes to `dev`
+suites above, longer stress runs and the differential test. macOS on ARM64,
+whose GitHub-hosted runners are few and can be unavailable for hours, is
+tested only by pull requests into `main`, which release `dev`, and by a push
+to `main` that releases binaries it built itself (when no pull request run
+tested that tree); pull requests into `dev`, other pushes to `main` and runs
+started by hand leave it out. Pushes to `dev`
 are not run on their own: what reaches `dev` is tested by its pull request,
 and `dev` as a whole by the pull request that releases it, so each tree is
 tested once (start the workflow by hand on `dev` to test it in between). A
