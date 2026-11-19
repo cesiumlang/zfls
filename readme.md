@@ -138,7 +138,7 @@ available.
    `--implicit-typing --implicit-interface`, which its own dialect rejects,
    unless the options say otherwise.
 4. LLVM Flang 22 and later, whose version zfls asks of it once (`flang
-   --version`); Flang 21 knows neither option, Flang 20 has only `-Werror`,
+   --version`), and again when the executable's file changes; Flang 21 knows neither option, Flang 20 has only `-Werror`,
    and `-Wall` is none of Flang's, so older Flangs get no warnings by
    default. Flang reads debug lines as comments by default; as code
    (`-fd-lines-as-code`) needs Flang 21 or later, and zfls passes Flang 20
