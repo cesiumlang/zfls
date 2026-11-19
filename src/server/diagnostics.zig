@@ -36,6 +36,7 @@ const Server = srv.Server;
 const completion = @import("completion.zig");
 const compile = @import("compile.zig");
 const linters = @import("linters.zig");
+const convert = @import("convert.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     var out: std.ArrayList(lsp.CodeAction) = .empty;
@@ -55,6 +56,8 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     try addStubActions(self, a, file, ast, sline, eline, &out);
     try addExtractAction(self, a, file, ast, params.range, params.context.only, &out);
     if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
+    // findent runs only when source actions are asked for
+    if (wants(params.context.only, "source")) if (try convert.freeFormAction(self, a, file)) |act| try out.append(a, act);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     for (actions) |act| {

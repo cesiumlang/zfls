@@ -57,7 +57,9 @@ pub const Changes = struct {
     }
 };
 
-pub const WorkspaceEdit = struct { changes: Changes };
+/// A workspace edit: text edits by file (`changes`), or (`documentChanges`)
+/// resource operations and text edits in order
+pub const WorkspaceEdit = struct { changes: ?Changes = null, documentChanges: ?json.Value = null };
 
 // --------------------------------------------------------------------------
 // Responses
@@ -372,6 +374,11 @@ pub const ClientCapabilities = struct {
             /// patterns relative to a directory, which may be outside the
             /// workspace
             relativePatternSupport: bool = false,
+        } = .{},
+        workspaceEdit: struct {
+            /// `create`, `rename`, `delete`: the file operations of a
+            /// workspace edit the client performs
+            resourceOperations: []const []const u8 = &.{},
         } = .{},
         /// the client takes `workspace/diagnostic/refresh`
         diagnostics: struct { refreshSupport: bool = false } = .{},

@@ -153,6 +153,9 @@ pub const Options = struct {
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
+    /// the client creates files in workspace edits
+    /// (`workspace.workspaceEdit.resourceOperations`)
+    create_files: bool = false,
     /// the client takes snippets in completion items
     snippet_support: bool = false,
     /// the workspace is opened through this machine's administrative share
@@ -251,6 +254,7 @@ pub const Workspace = struct {
                 .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },
+                .workspaceEdit = .{ .resourceOperations = if (opts.create_files) &[_][]const u8{"create"} else &[_][]const u8{} },
                 .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
             }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,

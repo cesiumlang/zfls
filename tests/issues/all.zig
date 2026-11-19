@@ -10,6 +10,7 @@ test {
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
+    _ = @import("convert.zig");
     _ = @import("compiler_fixed.zig");
     _ = @import("corpus.zig");
     _ = @import("debug_options.zig");

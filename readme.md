@@ -58,7 +58,8 @@ command line options and configuration files.
   the keywords of a file in upper, lower or title case
 - Formatting of documents and selections with findent, fprettify, Codee's
   formatter, forformat or a command of the user's (see
-  [Formatting](#formatting))
+  [Formatting](#formatting)), and conversion of a file between fixed and
+  free form with findent (see [Converting the source form](#converting-the-source-form))
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
   [Build files](#build-files))
@@ -864,6 +865,27 @@ indentation inside them to come out right. Codee's formatter and forformat
 format whole files only: zfls gives them the whole file and keeps the
 changes in the selected lines. When the formatter is missing or fails, the document is left as it
 is and zfls shows the error once (`window/showMessage`).
+
+### Converting the source form
+
+findent rewrites a fixed-form source as free form (`-ifixed -ofree`), and
+a free-form one as fixed form (`-ifree -ofixed`). The request
+`zfls/convertForm`, with `{ "textDocument": { "uri": ... }, "to": "free" }`
+(or `"fixed"`), runs findent on the document's text as the editor has it
+and answers `{ "text": ..., "path": ... }`: the converted text and the file
+it belongs in (`name.f90`, or `name.f`; `.F90`/`.F` for a preprocessed
+file), since zfls takes the form from the extension. On failure it answers
+`{ "error": ... }` with findent's message, or how to install findent. The
+findent of `formatter_path` is used when findent is the formatter, else the
+one on the `PATH`; findent's `formatter_args` (or `formatter_fixed_args`)
+come first. For clients that can create files in a workspace edit
+(`workspace.workspaceEdit.resourceOperations` with `create`), a fixed-form
+file has the source action "Convert to free form (new file name.f90)",
+whose edit creates that file with the converted text (it needs
+`enable_code_actions`). The old file is left; deleting it is the user's
+choice. In VS Code, **Fortran: Convert to Free Form** and **Fortran:
+Convert to Fixed Form** write the new file beside the old one, asking
+before they overwrite one, and open it.
 
 ## Testing
 

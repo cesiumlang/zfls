@@ -709,3 +709,9 @@ Most snippets are adapted from those of Modern Fortran.
 - **zfls: Lint Current File with Compiler**
 - **zfls: Clear Compiler Diagnostics**
 - **zfls: Fix All Safe fortitude Problems**
+- **Fortran: Convert to Free Form** (in a fixed-form file), **Fortran:
+  Convert to Fixed Form** (in a free-form file): findent converts the file,
+  and the result goes to `name.f90` (or `name.f`) beside it, which opens;
+  an existing file is overwritten only when you agree. The old file is left.
+  Needs findent (`pip install findent`); `zfls.formatting.path` is used
+  when findent is the formatter.

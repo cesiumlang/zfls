@@ -41,6 +41,7 @@ const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const convert = @import("server/convert.zig");
 const pending = @import("server/pending.zig");
 const pull = @import("server/pull.zig");
 const format = @import("server/format.zig");
@@ -428,6 +429,7 @@ pub const Server = struct {
         compile_order,
         compiler_check,
         compiler_clear,
+        convert_form,
         bind_c,
         bind_c_targets,
         bind_c_references,
@@ -494,6 +496,7 @@ pub const Server = struct {
         .{ "zfls/pfunitTests", .pfunit_tests },
         .{ "zfls/compilerCheck", .compiler_check },
         .{ "zfls/compilerClear", .compiler_clear },
+        .{ "zfls/convertForm", .convert_form },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -555,6 +558,7 @@ pub const Server = struct {
             .pfunit_tests => tests.servePfunitTests(self, a),
             .compiler_check => compile.serveCheck(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .compiler_clear => compile.serveClear(self, a),
+            .convert_form => convert.serveConvertForm(self, a, try json.decode(convert.Params, a, params)),
             .initialized => blk: {
                 configuration.watchConfigFiles(self, a);
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
