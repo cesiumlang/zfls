@@ -707,7 +707,10 @@ pub const FortranFile = struct {
                     // held to max_comment_line_length, not to the code limit
                     // (upstream #489)
                     const stripped = try helpers.stripStrings(a, line, true);
-                    const has_comment = std.mem.findScalar(u8, stripped, '!');
+                    // a `!` in column 6 of a fixed-form line marks a
+                    // continuation, not a comment
+                    const from: usize = if (self.fixed and helpers.isFixedCont(line)) 6 else 0;
+                    const has_comment = std.mem.findScalarPos(u8, stripped, from, '!');
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
                     const code_len = str.codepointLen(code);
                     if (0 < max_code and max_code < code_len) {
