@@ -129,6 +129,30 @@ pub fn fixedForm(id: Id, o: Options) []const []const u8 {
     };
 }
 
+/// The line length of the file's form: for fixed form `fixed_columns`
+/// (`fixed_line_length`; null: the compiler's default), for free form no
+/// limit. Nothing when the compiler has no option for it, or that is its
+/// default.
+pub fn lineLength(a: Allocator, id: Id, fixed: bool, fixed_columns: ?usize, o: Options) ![]const []const u8 {
+    if (!fixed) return switch (id) {
+        // gfortran cuts free-form lines at 132 columns
+        .gfortran => &.{"-ffree-line-length-none"},
+        .ifx, .ifort, .nagfor, .lfortran, .nvfortran, .flang => &.{},
+    };
+    const n = fixed_columns orelse return &.{};
+    return switch (id) {
+        .gfortran => dupeArgs(a, &.{try a.print("-ffixed-line-length-{d}", .{n})}),
+        .flang => dupeArgs(a, &.{try a.print("-ffixed-line-length={d}", .{n})}),
+        .ifx, .ifort => switch (n) {
+            72, 80, 132 => if (o.windows) dupeArgs(a, &.{try a.print("/extend-source:{d}", .{n})}) else dupeArgs(a, &.{ "-extend-source", try a.print("{d}", .{n}) }),
+            else => &.{},
+        },
+        .nvfortran => if (n == 132) &.{"-Mextend"} else &.{},
+        .nagfor => if (n == 132) &.{"-132"} else &.{},
+        .lfortran => &.{},
+    };
+}
+
 /// How a fixed-form file's debug lines (D or d in column 1) are read, as
 /// zfls reads them (`d_lines`): as code or as comments. gfortran rejects
 /// them without an option; LFortran has none.
@@ -144,6 +168,20 @@ pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
         .nagfor => if (code) &.{"-d_lines"} else &.{},
         .lfortran => &.{},
     };
+}
+
+/// Whether `arg` sets the line length of the form (the user's then wins
+/// over `lineLength`)
+pub fn isLineLength(id: Id, fixed: bool, arg: []const u8) bool {
+    const prefixes: []const []const u8 = switch (id) {
+        .gfortran, .flang => if (fixed) &.{"-ffixed-line-length"} else &.{"-ffree-line-length"},
+        .ifx, .ifort => if (fixed) &.{ "-extend-source", "-extend_source", "/extend-source", "/extend_source", "/4L" } else &.{},
+        .nvfortran => if (fixed) &.{ "-Mextend", "-Mnoextend" } else &.{},
+        .nagfor => if (fixed) &.{"-132"} else &.{},
+        .lfortran => &.{},
+    };
+    for (prefixes) |p| if (std.mem.startsWith(u8, arg, p)) return true;
+    return false;
 }
 
 /// Whether `arg` of `compiler_args` says how debug lines are read, which
@@ -673,6 +711,45 @@ test "flang messages and their context lines" {
     try std.testing.expectEqual(@as(usize, 1), ms[1].related.items.len);
     try std.testing.expectEqualStrings("Previous declaration of 'y'", ms[1].related.items[0].message);
     try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
+}
+
+fn expectLineLength(id: Id, fixed: bool, columns: ?usize, windows: bool, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const got = try lineLength(arena.allocator(), id, fixed, columns, .{ .windows = windows, .mod_dir = "m" });
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "line lengths: fixed form as fixed_line_length, free form without a limit" {
+    try expectLineLength(.gfortran, true, 132, false, &.{"-ffixed-line-length-132"});
+    try expectLineLength(.gfortran, true, null, false, &.{});
+    try expectLineLength(.gfortran, false, null, false, &.{"-ffree-line-length-none"});
+    try expectLineLength(.gfortran, false, 72, false, &.{"-ffree-line-length-none"});
+    try expectLineLength(.flang, true, 80, false, &.{"-ffixed-line-length=80"});
+    try expectLineLength(.flang, false, null, false, &.{});
+    try expectLineLength(.ifx, true, 132, false, &.{ "-extend-source", "132" });
+    try expectLineLength(.ifort, true, 80, true, &.{"/extend-source:80"});
+    try expectLineLength(.ifx, true, 100, false, &.{});
+    try expectLineLength(.ifx, false, null, true, &.{});
+    try expectLineLength(.nvfortran, true, 132, false, &.{"-Mextend"});
+    try expectLineLength(.nvfortran, true, 80, false, &.{});
+    try expectLineLength(.nagfor, true, 132, false, &.{"-132"});
+    try expectLineLength(.nagfor, true, 72, false, &.{});
+    try expectLineLength(.lfortran, true, 132, false, &.{});
+}
+
+test "line lengths: the user's options of the same form" {
+    try std.testing.expect(isLineLength(.gfortran, true, "-ffixed-line-length-none"));
+    try std.testing.expect(!isLineLength(.gfortran, false, "-ffixed-line-length-none"));
+    try std.testing.expect(isLineLength(.gfortran, false, "-ffree-line-length-200"));
+    try std.testing.expect(isLineLength(.flang, true, "-ffixed-line-length=132"));
+    try std.testing.expect(isLineLength(.ifx, true, "/extend-source:132"));
+    try std.testing.expect(isLineLength(.ifort, true, "-extend-source"));
+    try std.testing.expect(isLineLength(.ifort, true, "/4L132"));
+    try std.testing.expect(isLineLength(.nvfortran, true, "-Mextend"));
+    try std.testing.expect(isLineLength(.nagfor, true, "-132"));
+    try std.testing.expect(!isLineLength(.gfortran, true, "-Wall"));
 }
 
 test "repeated messages are dropped" {
