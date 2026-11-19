@@ -74,7 +74,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.incrementalSync` | `true` | Send document changes incrementally |
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
-| `zfls.hoverSignature` | `true` | Procedure signatures in hover |
+| `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
 | `zfls.preferImplementation` | `false` | Hover and go to definition use a separate module procedure's body in its submodule, not its interface |
 | `zfls.lowercaseIntrinsics` | `true` | Complete intrinsics and keywords in lowercase |

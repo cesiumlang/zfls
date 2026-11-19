@@ -255,7 +255,7 @@ pub const opts = [_]Opt{
     .{ .long = "use_signature_help", .kind = .flag, .help = "Use signature help instead of subroutine/function snippets. This effectively sets --autocomplete_no_snippets", .group = "Autocomplete options" },
 
     .{ .long = "variable_hover", .kind = .flag, .help = "DEPRECATED: This option is always on. Show hover information for variables", .group = "Hover options" },
-    .{ .long = "hover_signature", .kind = .flag, .help = "Show signature information in hover for arguments ", .group = "Hover options" },
+    .{ .long = "hover_signature", .kind = .flag, .help = "Hover on an actual argument of a call also shows the dummy argument it is passed to", .group = "Hover options" },
     .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
     .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
     .{ .long = "prefer_implementation", .kind = .flag, .help = "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface", .group = "Hover options" },

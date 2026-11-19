@@ -36,6 +36,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
+const argument_hover = @import("argument_hover.zig");
 const bindc = @import("bindc.zig");
 
 /// A temporary variable allocated in `a` (not owned by any AST)
@@ -488,7 +489,13 @@ fn keywordHover(self: *Server, a: Allocator, file: *FortranFile, line: usize, co
 }
 
 pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
-    const v = try hoverAt(self, a, params);
+    var v = try hoverAt(self, a, params);
+    // on an actual argument: the dummy it is passed to (#281)
+    if (self.s.hover_signature and v != .null) if (try argument_hover.dummyBlock(self, a, params)) |block| {
+        if (json.str(json.get(json.get(v, "contents"), "value"))) |md| {
+            v = try json.from(a, lsp.Hover{ .contents = .{ .value = try a.print("{s}\n\n-----\n{s}", .{ md, block }) } });
+        }
+    };
     if (!self.s.lowercase_hover) return v;
     const md = json.str(json.get(json.get(v, "contents"), "value")) orelse return v;
     return json.from(a, lsp.Hover{ .contents = .{ .value = try lowercaseKeywords(a, md) } });

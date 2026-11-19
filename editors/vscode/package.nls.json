@@ -6,7 +6,7 @@
   "config.zfls.incrementalSync.markdownDescription": "Send document changes incrementally (`--incremental_sync`).",
   "config.zfls.signatureHelp.markdownDescription": "Show signature help while typing procedure arguments, instead of argument snippets in completions (`--use_signature_help`).",
   "config.zfls.codeActions.markdownDescription": "Offer code actions, such as implementing deferred type-bound procedures (`--enable_code_actions`).",
-  "config.zfls.hoverSignature.markdownDescription": "Show the signature of procedures in hover (`--hover_signature`).",
+  "config.zfls.hoverSignature.markdownDescription": "Hover on an actual argument of a call also shows the dummy argument it is passed to: the procedure's signature and the dummy's declaration and documentation (`--hover_signature`).",
   "config.zfls.preferImplementation.markdownDescription": "Hover and go to definition use the implementation of a procedure declared in an interface, such as a separate module procedure's body in a submodule, instead of the interface (`--prefer_implementation`). Go to Implementation reaches the body either way.",
   "config.zfls.lowercaseHover.markdownDescription": "Show the keywords of hover in lowercase, `real, intent(in) :: x` instead of `REAL, INTENT(IN) :: x` (`--lowercase_hover`).",
   "config.zfls.lowercaseIntrinsics.markdownDescription": "Complete intrinsics and keywords in lowercase (`--lowercase_intrinsics`).",
