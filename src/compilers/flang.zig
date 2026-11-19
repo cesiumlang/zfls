@@ -14,6 +14,14 @@ pub fn dLines(code: bool) []const []const u8 {
     return if (code) &.{"-fd-lines-as-code"} else &.{};
 }
 
+/// Before the file, as its language: the driver knows only `.f`, `.for`,
+/// `.fpp`, `.f90`, `.f95`, `.f03` and `.f08` (in either case), and takes a
+/// file of another suffix (`.cuf`, `.f77`, `.ftn`, `.f18`, `.pf`) for a
+/// linker input, which it does not check ("'linker' input unused"). With
+/// `-x f95`, `-cpp` still preprocesses, the form options still hold, and
+/// `.cuf` is still CUDA Fortran (Flang 20 to 23).
+pub const language: []const []const u8 = &.{ "-x", "f95" };
+
 /// The messages of Flang's output
 pub fn parse(p: *Parser, output: []const u8) !void {
     // `file:line:column: severity: message`, as clang; flang adds
@@ -56,6 +64,12 @@ test "debug lines: no option for comments, which Flang 20 rejects" {
     try std.testing.expectEqual(@as(usize, 0), compilers.dLines(.flang, false, o).len);
     // gfortran rejects debug lines without an option
     try std.testing.expectEqualStrings("-fd-lines-as-comments", compilers.dLines(.gfortran, false, o)[0]);
+}
+
+test "the file's language: -x f95 for flang only" {
+    try std.testing.expectEqualStrings("-x", compilers.language(.flang)[0]);
+    try std.testing.expectEqualStrings("f95", compilers.language(.flang)[1]);
+    try std.testing.expectEqual(@as(usize, 0), compilers.language(.gfortran).len);
 }
 
 test "flang messages and their context lines" {

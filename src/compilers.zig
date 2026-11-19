@@ -188,6 +188,12 @@ pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
     };
 }
 
+/// The option for the file's language, right before it: Flang's driver
+/// checks only the suffixes it knows (`flang.language`)
+pub fn language(id: Id) []const []const u8 {
+    return if (id == .flang) flang.language else &.{};
+}
+
 /// Whether `arg` sets the line length of the form (the user's then wins
 /// over `lineLength`)
 pub fn isLineLength(id: Id, fixed: bool, arg: []const u8) bool {
