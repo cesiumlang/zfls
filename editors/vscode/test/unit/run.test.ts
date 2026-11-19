@@ -11,6 +11,8 @@ import {
   compilerName,
   fortranLaunch,
   launchConfiguration,
+  lfortranLinkEnv,
+  linkScript,
   outputDirFor,
   parseProcesses,
   programPath,
@@ -202,6 +204,20 @@ test("the compiler's directory goes on the PATH on Windows", () => {
   assert.deepEqual(runtimeEnv(compiler, "linux", { PATH: "/usr/bin" }), {});
   assert.deepEqual(runtimeEnv(compiler, "win32", { Path: "C:\\Windows" }), { Path: "C:\\mingw64\\bin;C:\\Windows" });
   assert.deepEqual(runtimeEnv(compiler, "win32", { Path: "C:\\MinGW64\\bin\\;C:\\Windows" }), {});
+});
+
+test("LFortran on Windows links with lld-link and the ifx kit, unless Visual Studio's environment is set up", () => {
+  const kit = "C:\\zfls\\bin\\ifx-kit";
+  const env = lfortranLinkEnv(kit, "C:\\store\\link", { Path: "C:\\Windows", LINK: "/DEBUG" });
+  assert.deepEqual(env, {
+    Path: "C:\\store\\link;C:\\Windows",
+    LIB: kit,
+    LINK: '"C:\\zfls\\bin\\ifx-kit\\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib /DEBUG',
+  });
+  assert.equal(lfortranLinkEnv(kit, "C:\\l", { PATH: "C:\\x", LIB: "C:\\sdk" })?.LIB, `${kit};C:\\sdk`);
+  assert.equal(lfortranLinkEnv(kit, "C:\\l", { VCToolsInstallDir: "C:\\VS\\MSVC\\14.4" }), undefined);
+  // `link` runs lld-link where it is
+  assert.equal(linkScript("C:\\conda\\Library\\bin\\lld-link.exe"), '@"C:\\conda\\Library\\bin\\lld-link.exe" %*\r\n');
 });
 
 test("entries are replaced by name", () => {

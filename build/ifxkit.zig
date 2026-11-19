@@ -1,7 +1,8 @@
 //! The ifx kit: what Intel's ifx needs from Visual Studio to link a `/MD`
 //! program, made from Zig's own files, so that the VS Code extension can
 //! build with ifx where Visual Studio is not installed (`ifx /MD
-//! /fuse-ld=lld`, with `LIB` on `lib/ifx`). It installs to `lib/ifx`:
+//! /fuse-ld=lld`, with `LIB` on `lib/ifx`), and LFortran too (with
+//! lld-link standing for `link`). It installs to `lib/ifx`:
 //! - `zfls_ifx_shim.obj`: the startup code (src/ifxkit/shim.zig)
 //! - import libraries under the names Intel's objects and libraries ask
 //!   for (`msvcrt`, `ucrt`, `vcruntime`, `kernel32`, ...), made with

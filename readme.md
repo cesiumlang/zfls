@@ -292,6 +292,26 @@ runtime) does not link; CMake, which runs the linker itself, needs
 directories. The VS Code extension's **zfls: Set Up ifx** does the same,
 showing Intel's license first.
 
+The kit links LFortran's programs too (its startup object also has the
+`atexit`, `__report_rangecheckfailure` and `__GSHandlerCheck` that
+LFortran's runtime asks of Visual Studio's). LFortran runs `link` from the
+`PATH`, so a `link.cmd` that runs `lld-link` (conda-forge's `lld`, next to
+`lfortran`) stands for Visual Studio's, and `LINK`, which `lld-link` reads
+as arguments, names the kit's files:
+
+```bat
+rem link.cmd, in a directory of its own put first on the PATH
+@"C:\conda\envs\lf\Library\bin\lld-link.exe" %*
+```
+
+```bat
+set LIB=C:\zfls\ifx-kit
+set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib
+lfortran hello.f90 -o hello.exe
+```
+
+The VS Code extension's **Run Fortran File** sets this up itself.
+
 ### A debugger (`zfls dap`)
 
 `zfls dap` is a debug adapter (the Debug Adapter Protocol on standard input

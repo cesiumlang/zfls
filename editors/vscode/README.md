@@ -450,6 +450,20 @@ offers to set `zfls.run.compiler`, `zfls.run.compilerPath` and
 Windows), and zfls's debugger debugs them. The same is `zfls setup-ifx` on
 the command line (see zfls's readme).
 
+### LFortran without Visual Studio (Windows x64)
+
+LFortran links its programs on Windows with Visual Studio's `link`. Where
+Visual Studio's environment is not set up (no `VCToolsInstallDir`), **Run
+Fortran File** has it link with `lld-link` and zfls's ifx kit instead, when
+there is an `lld-link` next to `lfortran` (conda-forge's `lld` package:
+`conda install -c conda-forge lfortran lld`, or `pixi add lfortran lld`) or
+on the `PATH`. The extension writes a `link.cmd` that runs that `lld-link`
+into its storage, puts it first on the build's `PATH`, and sets `LIB` and
+`LINK` to the kit's directory, startup object and libraries;
+**zfls: Add Build Task and Debug Configuration for Fortran File** writes
+the same into the build task. The programs use Windows's C runtime (UCRT)
+and LFortran's static runtime, so they need nothing else to run.
+
 ### The `fortran` debug type
 
 A launch configuration of type `fortran` is resolved, when it starts, into
