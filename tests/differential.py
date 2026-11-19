@@ -329,8 +329,9 @@ def normalize(v):
         }
     if isinstance(v, list):
         # names not declared under IMPLICIT NONE (hansec #129): zfls only
-        # and unused names: zfls only
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned"))]
+        # and unused names: zfls only; so is the diagnostic on an #include
+        # whose file is not found (#282)
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "include-not-found"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
@@ -501,6 +502,62 @@ def ignore_slice_dimensions(v, names: set):
             return m.group(0) if m.group(3).lower() not in names else m.group(2) + m.group(3)
 
         return re.sub(r"(, )?DIMENSION\([^)\n]*\)( :: )(\w+)", repl, v)
+    return v
+
+
+ASSOC_STMT = re.compile(r"^\s*(?:\w+\s*:\s*)?associate\s*\((.*)$", re.I | re.M)
+ASSOC_NAME = re.compile(r"(\w+)\s*=>")
+
+
+def associate_bound(source: str) -> set:
+    """Lowercase names that ASSOCIATE statements of a source file bind."""
+    out = set()
+    for m in ASSOC_STMT.finditer(source):
+        out |= {n.lower() for n in ASSOC_NAME.findall(m.group(1))}
+    return out
+
+
+def untyped_by_fortls(v, names: set) -> set:
+    """The names of `names` that fortls's answer `v` gives the type UNKNOWN
+    (in a hover, or as the detail of a completion item)."""
+    found = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            label = x.get("label")
+            if isinstance(label, str) and label.lower() in names and x.get("detail") == "UNKNOWN":
+                found.add(label.lower())
+            for y in x.values():
+                walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                walk(y)
+        elif isinstance(x, str):
+            for m in re.finditer(r"UNKNOWN :: (\w+)", x):
+                if m.group(1).lower() in names:
+                    found.add(m.group(1).lower())
+
+    walk(v)
+    return found
+
+
+def forget_associate_types(v, names: set):
+    """fortls gives an ASSOCIATE name bound to a literal or an expression, or
+    spelled like the variable of its selector, the type UNKNOWN; zfls the
+    type of the selector (#230). Compare the types of such names as equal."""
+    if isinstance(v, dict):
+        label = v.get("label")
+        out = {k: forget_associate_types(x, names) for k, x in v.items()}
+        if isinstance(label, str) and label.lower() in names and "detail" in v:
+            out["detail"] = "UNKNOWN"
+        return out
+    if isinstance(v, list):
+        return [forget_associate_types(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return f"UNKNOWN :: {m.group(1)}" if m.group(1).lower() in names else m.group(0)
+
+        return re.sub(r"^[^\n]*? :: (\w+)$", repl, v, flags=re.M)
     return v
 
 
@@ -737,6 +794,35 @@ def parse_args():
     return ap.parse_args()
 
 
+def declared_word(lines: list, line: int, char: int):
+    """The name (lowercase) that ends at the position when it is in the
+    entity list of a declaration (after `::`, or in the old form after the
+    type), not an initialization, else None."""
+    if not (0 <= line < len(lines)):
+        return None
+    code = lines[line].split("!")[0][:char]
+    if "::" not in code and not DECL_START.match(code):
+        return None
+    depth = 0
+    for c in reversed(code.split("::")[-1]):
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            depth -= 1
+        elif depth == 0 and c == ",":
+            break
+        elif depth == 0 and c == "=":
+            return None
+    m = re.search(r"[A-Za-z_][A-Za-z0-9_]*$", code)
+    return m.group(0).lower() if m else None
+
+
+DECL_START = re.compile(
+    r"\s*(integer|real|complex|logical|character|double(\s*)precision|double(\s*)complex|external|type(\s*)\(|class(\s*)\(|procedure(\s*)\().*[\s,)*]\w*$",
+    re.I,
+)
+
+
 def main() -> int:
     args = parse_args()
     fortls_root = Path(args.fortls).resolve()
@@ -779,6 +865,7 @@ def main() -> int:
                     diffs.append((method, None, a, b))
         source = path.read_text(encoding="utf-8", errors="replace")
         assoc = associate_names(source)
+        bound = associate_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
         entity_lengths = bool(ENTITY_LENGTH.search(source))
@@ -796,6 +883,11 @@ def main() -> int:
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
+            if bound and kind in ("hover", "completion"):
+                untyped = untyped_by_fortls(a, bound)
+                if untyped:
+                    a = forget_associate_types(a, untyped)
+                    b = forget_associate_types(b, untyped)
             total += 1
             if kind == "references":
                 # cross-file order follows workspace iteration order
@@ -816,6 +908,16 @@ def main() -> int:
                 # hash-randomized in fortls; clients sort completions anyway
                 if isinstance(a, list) and isinstance(b, list):
                     a, b = sorted(a, key=json.dumps), sorted(b, key=json.dumps)
+            if kind == "completion":
+                # in the entity list of a declaration zfls offers the dummy
+                # arguments not declared yet, and not the name being
+                # declared (#270)
+                p = params.get("position") or {}
+                word = declared_word(src_lines, p.get("line", -1), p.get("character", 0))
+                if word and isinstance(a, list):
+                    a = [x for x in a if str(x.get("label", "")).lower() != word]
+                if isinstance(b, list):
+                    b = [x for x in b if x.get("detail") != "argument not declared" and (not word or str(x.get("label", "")).lower() != word)]
             if is_error(a):
                 # fortls crashed (Python exception): no reference behavior
                 crashes += 1

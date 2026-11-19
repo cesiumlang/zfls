@@ -40,6 +40,17 @@ pub const Include = struct {
     path: []const u8,
 };
 
+/// An `#include` directive of the file itself whose file is found nowhere
+pub const Missing = struct {
+    /// 1-based line of the directive
+    line: usize,
+    /// The file's name, as written
+    name: []const u8,
+    /// Byte columns of the name (with its quotes or angle brackets)
+    start: usize,
+    end: usize,
+};
+
 pub const Output = struct {
     lines: [][]const u8,
     /// 1-based line ranges excluded by conditionals
@@ -47,6 +58,8 @@ pub const Output = struct {
     /// 1-based line numbers of #define/#undef statements
     defines: []usize,
     includes: []Include,
+    /// `#include` directives (of the file itself) whose file is not found
+    missing: []Missing,
     defs: Defs,
 };
 
@@ -580,6 +593,7 @@ fn preprocessInner(
     var pp_skips: std.ArrayList(Skip) = .empty;
     var pp_defines: std.ArrayList(usize) = .empty;
     var pp_includes: std.ArrayList(Include) = .empty;
+    var pp_missing: std.ArrayList(Missing) = .empty;
     var pp_stack: std.ArrayList(StackEntry) = .empty;
     var pp_stack_group: std.ArrayList(struct { usize, bool }) = .empty;
     var defs_tmp: Defs = if (pp_defs) |d| try cloneDefs(a, d) else .empty;
@@ -730,7 +744,9 @@ fn preprocessInner(
         // Handle include files
         if (R().PP_INCLUDE.match(line)) |m| if (stack_is_true) {
             parser.Trace.print(trace, "{s} !!! Include statement({d})", .{ str.strip(line), i + 1 });
-            const include_filename = try std.mem.replaceOwned(u8, a, m.group(1).?, "\"", "");
+            // `"file"` or `<file>`, both searched in the file's directory
+            // and in the include directories
+            const include_filename = std.mem.trim(u8, m.group(1).?, "\"<>");
             var include_path: ?[]const u8 = null;
             for (include_dirs.items) |dir| {
                 const candidate = try paths.join(a, &.{ dir, include_filename });
@@ -760,6 +776,7 @@ fn preprocessInner(
                 }
             } else {
                 parser.Trace.print(trace, "{s} !!! Could not locate include file ({d})", .{ str.strip(line), i + 1 });
+                if (depth == 0 and include_filename.len > 0) try pp_missing.append(a, .{ .line = i + 1, .name = try a.dupe(u8, include_filename), .start = m.start(1), .end = m.end(1) });
             }
         };
         line = try macro.removeEmptyComments(a, line);
@@ -791,6 +808,7 @@ fn preprocessInner(
         .skips = pp_skips.items,
         .defines = pp_defines.items,
         .includes = pp_includes.items,
+        .missing = pp_missing.items,
         .defs = defs_tmp,
     };
 }
