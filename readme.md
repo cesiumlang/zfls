@@ -375,7 +375,11 @@ build files say:
   file, or directory, that the `compile_commands` option names; `""` or
   `disable_compile_commands` for none, as in fortls's pending PR #504): the
   `-I`, `-isystem` and `-D` flags (`/I` and `/D` too) of its Fortran entries.
-  Definitions apply to every file, the first value of a name winning.
+  Definitions apply to every file, the first value of a name winning. The
+  Fortran files it compiles outside the root (a sibling library, a fetched
+  dependency) are indexed too, those that `excl_paths` and `excl_suffixes`
+  leave in; the ones under the root are left to the scan of the source
+  directories.
 - `fpm.toml` in the root: the `include-dir` of `[library]` (`include` by
   default, when it exists) and the `macros` of `[preprocess.cpp]`.
 
@@ -1146,6 +1150,9 @@ zfls deliberately differs from fortls in a few places:
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the
   name), and a construct name changes at all its places; fortls has none.
+- The Fortran files that `compile_commands.json` compiles outside the
+  workspace root are indexed (hansec #40, hansec PR #99); fortls indexes the
+  source directories only.
 - `.f23`, `.ftn`, `.pf` and `.fypp` files are indexed by default, besides
   fortls's extensions (FL #299, FL #521).
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed

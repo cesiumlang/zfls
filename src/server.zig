@@ -111,6 +111,9 @@ pub const Server = struct {
     /// Every directory under the root is a source directory (no
     /// `source_dirs` option), so new ones are too
     whole_root: bool = false,
+    /// The Fortran files of the compilation database outside the root,
+    /// indexed with the source directories' (#267)
+    outside_sources: std.ArrayList([]const u8) = .empty,
     /// The commands of code lenses that the client runs (lenses.zig)
     lens_commands: lenses.Commands = .{},
     post_messages: std.ArrayList(PostMessage) = .empty,

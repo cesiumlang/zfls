@@ -32,6 +32,7 @@ test {
     _ = @import("navigation.zig");
     _ = @import("openmp.zig");
     _ = @import("outline.zig");
+    _ = @import("outside_sources.zig");
     _ = @import("rename.zig");
     _ = @import("settings.zig");
     _ = @import("signature.zig");

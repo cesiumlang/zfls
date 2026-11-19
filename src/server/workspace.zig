@@ -133,6 +133,7 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 /// project's compile_commands.json and fpm.toml to the options' own
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
+    self.outside_sources = .empty;
     self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
@@ -140,7 +141,9 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
                 self.compile_commands = found.commands;
-                self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
+                // those under the root are the scan's
+                for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
+                self.log.info("{s}: {d} include directories, {d} definitions, {d} files outside the root", .{ p, found.include_dirs.items.len, found.defs.items.len, self.outside_sources.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => self.postMessage(a, try a.print("Could not read \"{s}\": not a compilation database", .{p}), C.Severity.warn),
@@ -272,7 +275,18 @@ pub fn getSourceFiles(self: *Server, a: Allocator) ![][]const u8 {
             try out.append(a, p);
         }
     }
+    for (self.outside_sources.items) |p| if (isOutsideSource(self, p)) try out.append(a, p);
     return out.items;
+}
+
+/// Whether `path`, a file of the compilation database outside the root, is
+/// indexed: neither in a source directory (which has it already) nor
+/// excluded
+fn isOutsideSource(self: *const Server, path: []const u8) bool {
+    if (self.s.source_dirs.contains(paths.dirname(path))) return false;
+    for (self.s.excl_paths.slice()) |ex| if (paths.eql(path, ex) or paths.isUnder(path, ex)) return false;
+    for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, path, ext)) return false;
+    return paths.isFile(self.io, path) and !project.isIfortInterface(self.io, path);
 }
 
 pub fn ppSuffixes(self: *const Server) ?[]const []const u8 {
@@ -794,15 +808,18 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
 
 /// Whether `path` is a file the workspace indexes: a Fortran file of a
 /// source directory (any directory under the root, without
-/// `source_dirs`) that no exclusion covers, and no interface module of
-/// ifort's
+/// `source_dirs`) or of the compilation database outside the root, that no
+/// exclusion covers, and no interface module of ifort's
 pub fn isSourceFile(self: *const Server, path: []const u8) bool {
     const base = std.Io.Dir.path.basename(path);
     if (self.src_ext_regex.search(base) == null) return false;
     for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
     for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
     const in_sources = self.s.source_dirs.contains(paths.dirname(path)) or
-        (self.whole_root and std.mem.startsWith(u8, path, self.root_path));
+        (self.whole_root and std.mem.startsWith(u8, path, self.root_path)) or
+        for (self.outside_sources.items) |p| {
+            if (paths.eql(p, path)) break true;
+        } else false;
     return in_sources and !project.isIfortInterface(self.io, path);
 }
 
