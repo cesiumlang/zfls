@@ -56,7 +56,8 @@ command line options and configuration files.
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
   `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
   title case
-- Formatting of documents and selections with findent or fprettify (see
+- Formatting of documents and selections with findent, fprettify, Codee's
+  formatter, forformat or a command of the user's (see
   [Formatting](#formatting))
 - Include directories and preprocessor definitions from the project's
   `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see
@@ -721,12 +722,21 @@ drops the compiler's diagnostics and zfls's `.mod` files (not those of
 
 ### Formatting
 
-With `formatter` set to `findent` or `fprettify`, zfls answers
-`textDocument/formatting` and `textDocument/rangeFormatting` (format
-document, format selection, format on save) by running that formatter,
-which is installed separately (`pip install findent`, `pip install
-fprettify`, or the same from conda-forge). This works in every editor, not
+With `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or
+`custom`, zfls answers `textDocument/formatting` and
+`textDocument/rangeFormatting` (format document, format selection, format
+on save) by running that formatter, which is installed separately (`pip
+install findent`, `pip install fprettify`, or the same from conda-forge;
+[Codee](https://www.codee.com); forformat). This works in every editor, not
 only VS Code; zfls offers formatting only when a formatter is set.
+
+| `formatter` | Command line |
+| --- | --- |
+| `findent` | `findent -ifree` (or `-ifixed`), `-Ia` for a selection, then `formatter_args` |
+| `fprettify` | `fprettify`, then `formatter_args` |
+| `codee` | `codee format - -o -`, then `formatter_args`; the `codee` of `codee_path` unless `formatter_path` is set |
+| `forformat` | `forformat --stdin-filename=FILE -ifree` (or `-ifixed`), then `formatter_args` |
+| `custom` | `formatter_path` with `formatter_args`, in which `${file}` is the document's path and `${form}` `free` or `fixed` |
 
 zfls gives the formatter the document's text, as the editor has it, on its
 standard input, reads the result from its standard output (no files are
@@ -758,9 +768,11 @@ text. The formatter runs in the file's directory, so fprettify finds the
 - `formatter_path`: the executable, or the directory that holds it (by
   default the formatter on the `PATH`).
 
-A selection is formatted as whole lines, and the formatter sees only those
-lines: select whole constructs for the indentation inside them to come out
-right. When the formatter is missing or fails, the document is left as it
+A selection is formatted as whole lines, and findent, fprettify and a
+custom formatter see only those lines: select whole constructs for the
+indentation inside them to come out right. Codee's formatter and forformat
+format whole files only: zfls gives them the whole file and keeps the
+changes in the selected lines. When the formatter is missing or fails, the document is left as it
 is and zfls shows the error once (`window/showMessage`).
 
 ## Testing

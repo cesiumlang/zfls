@@ -19,6 +19,7 @@ test {
     _ = @import("documents.zig");
     _ = @import("extensions.zig");
     _ = @import("external.zig");
+    _ = @import("formatting.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
     _ = @import("hover_arguments.zig");
