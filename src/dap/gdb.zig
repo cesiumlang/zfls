@@ -66,6 +66,13 @@ pub const State = struct {
     held_launch: ?[]u8 = null,
     /// The session is ending (`disconnect`): gdb's exit is not news
     ended: bool = false,
+    /// The adapter is ending the program (`disconnect`, `terminate`): the
+    /// signal that ends it is not news (gdb_exit.zig)
+    stopping: bool = false,
+    /// The program's `exited` is being made, and gdb's `terminated` after
+    /// it is held (gdb_exit.zig)
+    exit_pending: bool = false,
+    terminated_held: bool = false,
     /// In place of gdb, for tests: its answers to requests
     fake: ?Fake = null,
     /// gdb's message of the last request that failed (the request's)

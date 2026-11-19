@@ -5,7 +5,8 @@
 //! Fortran (subscripts, sections, previews, not allocated, pointers, a
 //! polymorphic argument, hidden lengths left out), the module variables of
 //! a line, setting values, expressions, a Fortran runtime error, stopping
-//! at the start with gdb commands, the program's exit, and (on Linux, with
+//! at the start with gdb commands, the program's exit, a program that a
+//! signal ends (its exit code and the signal named), and (on Linux, with
 //! script(1)) the program in a terminal (`zig build test-dap-gdb`). Skipped
 //! without the compiler or a gdb of the Debug Adapter Protocol (gdb 14 or
 //! later).
@@ -117,7 +118,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a crash", crash }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -410,10 +411,50 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
         _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
     }
     const exited = get(try c.event("exited"), "body").?;
-    // (gdb's exitCode of a program that a signal ended, as SIGABRT ends
-    // Flang's on Linux, is 0)
-    const by_signal = setup.compiler == .flang and builtin.target.os.tag != .windows;
-    try check(by_signal or (int(exited, "exitCode") orelse 0) != 0, "the program exited with {?d}", .{int(exited, "exitCode")});
+    try check((int(exited, "exitCode") orelse 0) != 0, "the program exited with {?d}", .{int(exited, "exitCode")});
+    // SIGABRT ends Flang's on Linux: gdb's exitCode is 0, zfls's 128 + 6,
+    // and the signal is named (#440)
+    if (setup.compiler == .flang and builtin.target.os.tag == .linux) {
+        const said = try c.outputText(arena.allocator());
+        try check(int(exited, "exitCode") == 134 and contains(said, "SIGABRT (6)"), "ended by SIGABRT: {?d}, said: {s}", .{ int(exited, "exitCode"), said[said.len -| 200..] });
+    }
+    _ = try c.event("terminated");
+}
+
+/// A program that a signal ends (SIGSEGV): its exit code is 128 + 11, and
+/// the signal is named (#440). gfortran's runtime on Windows catches the
+/// signal and exits with 3 (MinGW's C runtime).
+fn crash(io: Io, gpa: Allocator, setup: Setup) !void {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src = try std.Io.Dir.path.join(a, &.{ setup.dir, "crash.f90" });
+    const exe = try std.Io.Dir.path.join(a, &.{ setup.dir, if (builtin.target.os.tag == .windows) "crash.exe" else "crash" });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = "program crash\n  integer, pointer :: p => null()\n  p = 1\n  print *, p\nend program\n" });
+    try build(io, a, setup, src, exe, &.{});
+
+    const c = try start(io, gpa, setup);
+    defer c.deinit();
+    defer end(c);
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path" });
+    const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir });
+    _ = try c.event("initialized");
+    _ = try c.request("setExceptionBreakpoints", .{ .filters = [_][]const u8{} });
+    _ = try c.request("configurationDone", .{});
+    _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+    // gdb stops at the signal (on Windows at its first and second chance,
+    // and gfortran's runtime raises it again): on to the end
+    const exited = for (0..6) |_| {
+        const e = try c.eventOf(&.{ "stopped", "exited" });
+        const body = get(e, "body").?;
+        if (eql(str(e, "event"), "exited")) break body;
+        _ = try c.request("continue", .{ .threadId = int(body, "threadId").? });
+    } else return check(false, "the program ended", .{});
+    const code = int(exited, "exitCode") orelse 0;
+    const said = try c.outputText(a);
+    if (setup.compiler == .gfortran and builtin.target.os.tag == .windows) {
+        try check(code == 3, "the program exited with 3 ({d})", .{code});
+    } else try check(code == 128 + 11 and contains(said, "SIGSEGV (11)"), "ended by SIGSEGV: {d}, said: {s}", .{ code, said[said.len -| 200..] });
     _ = try c.event("terminated");
 }
 

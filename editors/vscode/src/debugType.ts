@@ -237,6 +237,7 @@ function adapterText(): Record<string, string> {
     errorStop: "ERROR STOP",
     gdbExited: vscode.l10n.t("gdb exited"),
     lldbExited: vscode.l10n.t("lldb-dap exited"),
+    endedBySignal: vscode.l10n.t("The program was ended by a signal"),
   };
 }
 

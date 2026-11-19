@@ -160,6 +160,12 @@ pub const Client = struct {
 
     /// The next event named `name` (the events before it are dropped)
     pub fn event(c: *Client, name: []const u8) !Value {
+        return c.eventOf(&.{name});
+    }
+
+    /// The next event named one of `names` (the events before it are
+    /// dropped)
+    pub fn eventOf(c: *Client, names: []const []const u8) !Value {
         const deadline = Io.Clock.awake.now(c.io).addDuration(c.timeout);
         c.mutex.lockUncancelable(c.io);
         defer c.mutex.unlock(c.io);
@@ -167,9 +173,9 @@ pub const Client = struct {
             while (c.seen < c.events.items.len) {
                 const e = c.events.items[c.seen];
                 c.seen += 1;
-                if (std.mem.eql(u8, str(e, "event") orelse "", name)) return e;
+                for (names) |name| if (std.mem.eql(u8, str(e, "event") orelse "", name)) return e;
             }
-            try c.wait(deadline, name);
+            try c.wait(deadline, names[0]);
         }
     }
 
