@@ -678,7 +678,9 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
         pending.cancel(self, uri);
     }
-    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, did_open, did_close);
+    // the form the editor's language names, while the document is open
+    const form: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
         // a document that was never saved, or whose file is gone: it leaves
         // the workspace, and its problems with it
@@ -686,8 +688,10 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         if (f.ast == null) return .null;
         try retireFileAst(self, f);
         f.ast = null;
-        // so that the same text, opened again, is parsed again
+        // so that the same text, opened again, is parsed again (in the form
+        // its language names then)
         f.hash = null;
+        f.forced_form = null;
         try fullRelink(self, a);
         if (!self.s.disable_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
         return .null;
@@ -696,9 +700,17 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     // file's: unsaved changes restored, or a new file not saved yet. Only a
     // didOpen without a text (and a save or a close) reads the file.
     const open_text = if (did_open) params.textDocument.text else null;
-    const changed = (if (open_text) |t| openDocument(self, filepath, t) else updateWorkspaceFile(self, filepath, true, did_open, false)) catch |e| {
+    var changed = (if (open_text) |t| openDocument(self, filepath, t, form) else updateWorkspaceFile(self, filepath, true, did_open, false)) catch |e| {
         self.postMessage(a, try a.print("{s} request failed for file '{s}': {s}", .{ if (did_open) "Open" else "Save", filepath, parser.describeFileError(e) }), C.Severity.err);
         return .null;
+    };
+    // read in the other form than before: parsed again (an opened text
+    // was read in its form by openDocument)
+    if (open_text == null and (did_open or did_close)) if (self.workspace.get(filepath)) |f| if (f.forceForm(form)) {
+        changed = updateWorkspaceFile(self, filepath, false, true, false) catch |e| {
+            self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
+            return .null;
+        };
     };
     if (changed) {
         _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
@@ -725,7 +737,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
 /// `didOpen` of a file's document with its text: the text is the document's,
 /// whatever the file holds (if there is one). Returns whether it changed:
 /// a text equal to the one the workspace has of the file is not parsed again.
-fn openDocument(self: *Server, filepath: []const u8, text: []const u8) parser.FileError!bool {
+fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?parser.SourceForm) parser.FileError!bool {
     const file = self.workspace.get(filepath) orelse blk: {
         const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
         errdefer nf.destroy();
@@ -735,8 +747,10 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8) parser.Fi
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
     };
+    // the form first, so that a new text is read in it
+    const reformed = file.forceForm(form);
     const changed = try file.setText(text);
-    if (!changed and file.ast != null) return false;
+    if (!changed and !reformed and file.ast != null) return false;
     return updateWorkspaceFile(self, filepath, false, true, false);
 }
 
@@ -846,7 +860,7 @@ pub fn isSourceFile(self: *const Server, path: []const u8) bool {
 /// `didOpen`, `didSave` and `didClose` of a document that is not a file
 /// (an untitled one): its text comes with `didOpen` and its changes,
 /// and it leaves the workspace when it is closed
-pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, did_open: bool, did_close: bool) !Value {
+pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
     if (did_close) {
         if (self.workspace.get(path)) |f| if (f.ast) |ast| removeFromTree(self, ast);
         return .null;
@@ -862,6 +876,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
             break :blk nf;
         };
         _ = try file.setText(text orelse "");
+        _ = file.forceForm(form);
         const changed = updateWorkspaceFile(self, path, false, true, false) catch |e| {
             self.postMessage(a, try a.print("Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
             return .null;

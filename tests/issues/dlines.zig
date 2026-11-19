@@ -87,3 +87,31 @@ test "Modern Fortran #253 debug lines are code with d_lines set to code (#260)" 
     defer w.deinit();
     try h.checkIn(.modern_fortran, 253, .fixed, expectCode(w));
 }
+
+// a debug line of a document whose form the editor changes (#247)
+const debug_lines_free_name = [_]h.File{
+    .{ .name = "legacy.f90", .text =
+    \\      PROGRAM P
+    \\      IMPLICIT NONE
+    \\      INTEGER I
+    \\      I = 1
+    \\D     PRINT *, 'debug', I
+    \\      END
+    \\
+    },
+};
+
+test "a .f90 opened as FortranFixedForm reads its debug lines as code with d_lines set to code" {
+    const w = try h.Workspace.init(&debug_lines_free_name, .{ .settings = .{ .d_lines = "code" } });
+    defer w.deinit();
+    // indexed as free form (its name), the line is no code of the program
+    try h.expect(!try w.isFixed("legacy.f90"), "legacy.f90 is indexed as fixed form", .{});
+    // opened with the same text in fixed form: the D is a blank
+    try w.open("legacy.f90", "FortranFixedForm");
+    try h.expect(try w.isFixed("legacy.f90"), "legacy.f90 opened as FortranFixedForm is read as free form", .{});
+    try w.expectHoverContains("legacy.f90", .{ .line = 4, .col = 24 }, "INTEGER :: I");
+    var refs: std.ArrayList(i64) = .empty;
+    defer refs.deinit(std.testing.allocator);
+    for (try w.references("legacy.f90", .{ .line = 3, .col = 6 })) |r| try refs.append(std.testing.allocator, r.line);
+    try h.expect(has(refs.items, 4), "references of I on lines {any}", .{refs.items});
+}

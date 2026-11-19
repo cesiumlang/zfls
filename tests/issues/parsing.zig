@@ -811,6 +811,90 @@ test "CUDA Fortran: kernels, the launch syntax and .cuf files" {
     try expectCuda(w);
 }
 
+// The form the editor says a document has (its language)
+
+const forms = [_]h.File{
+    // fixed-form source with a free-form extension
+    .{ .name = "legacy.f90", .text =
+    \\C     a fixed-form file with a free-form extension
+    \\      subroutine s(aaa)
+    \\      integer aaa,
+    \\     &        bbb
+    \\      bbb = aaa
+    \\      end
+    \\
+    },
+    // free-form source with a fixed-form extension, whose text does not
+    // tell: as fixed form, the line of the call is a comment
+    .{ .name = "x.f", .text =
+    \\      module m
+    \\      contains
+    \\      subroutine callee()
+    \\      end subroutine
+    \\      subroutine caller()
+    \\call callee()
+    \\      end subroutine
+    \\      end module
+    \\
+    },
+};
+
+fn expectFixedByLanguage(w: *h.Workspace) !void {
+    try w.open("legacy.f90", "FortranFixedForm");
+    try h.expect(try w.isFixed("legacy.f90"), "legacy.f90 opened as FortranFixedForm is read as free form", .{});
+    try w.expectHoverContains("legacy.f90", w.pos("legacy.f90", "bbb = aaa", 0, 0), "INTEGER :: bbb");
+    // after a change and a save too
+    const changed =
+        \\C     a fixed-form file with a free-form extension
+        \\      subroutine s(aaa)
+        \\      integer aaa,
+        \\     &        bbb,
+        \\     &        ccc
+        \\      ccc = aaa
+        \\      end
+        \\
+    ;
+    try w.replaceText("legacy.f90", changed);
+    try h.expect(try w.isFixed("legacy.f90"), "legacy.f90 is free form after a change", .{});
+    const hover = (try w.hover("legacy.f90", .{ .line = 5, .col = 6 })) orelse return h.unmet("no hover after the change", .{});
+    try h.expect(std.mem.find(u8, hover, "INTEGER :: ccc") != null, "after the change, hover gives {s}", .{hover});
+    // closed, it is what its name says again
+    try w.close("legacy.f90");
+    try h.expect(!try w.isFixed("legacy.f90"), "legacy.f90 stays fixed form when closed", .{});
+}
+
+fn expectFreeByLanguage(w: *h.Workspace) !void {
+    const call = w.pos("x.f", "callee()", 1, 0);
+    // not open: by its text, fixed form
+    try h.expect(try w.isFixed("x.f"), "x.f is indexed as free form", .{});
+    try w.open("x.f", "FortranFreeForm");
+    try h.expect(!try w.isFixed("x.f"), "x.f opened as FortranFreeForm is read as fixed form", .{});
+    const def = (try w.definition("x.f", call)) orelse return h.unmet("the call in x.f is not read (a comment in fixed form)", .{});
+    try h.expect(def.line == 2, "callee is defined in line {d}", .{def.line});
+}
+
+test "Modern Fortran #200 a document opened as FortranFixedForm is read as fixed form, whatever its extension" {
+    const w = try h.Workspace.init(&forms, .{});
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 200, .fixed, expectFixedByLanguage(w));
+}
+
+test "Modern Fortran #200 a document opened as FortranFreeForm is read as free form, whatever its extension" {
+    const w = try h.Workspace.init(&forms, .{});
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 200, .fixed, expectFreeByLanguage(w));
+}
+
+test "a document opened as fortran (other editors) has the form of its name and text" {
+    const w = try h.Workspace.init(&forms, .{});
+    defer w.deinit();
+    try w.open("legacy.f90", "fortran");
+    try w.open("x.f", "fortran90");
+    try std.testing.expect(!try w.isFixed("legacy.f90"));
+    try std.testing.expect(try w.isFixed("x.f"));
+    try std.testing.expect((try w.definition("x.f", w.pos("x.f", "callee()", 1, 0))) == null);
+}
+
 // `\x0c` is a form feed, a page break of old sources: compilers read it as
 // white space
 const form_feed = [_]h.File{

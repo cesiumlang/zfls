@@ -1447,6 +1447,14 @@ zfls deliberately differs from fortls in a few places:
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
   indented 5) for fixed form. Other files are still told by their text.
+- A document the editor opens as `FortranFixedForm` or `FortranFreeForm`
+  (the languages of the VS Code extension, also set there with
+  `files.associations` or the language picker) is read in that form while
+  it is open, whatever its name and text say, and the compiler checks it
+  in that form (Modern Fortran #200, #222, #460, #904, #1131). Any other
+  language id (`fortran`, `fortran90`) leaves the form to the name and the
+  text, and so do the files that are not open. fortls does not read the
+  language id.
 - A form feed (a page break of old sources) is read as a blank, as compilers
   read it; fortls drops the statement of a line that starts with one
   (fortls #443).
