@@ -8,6 +8,7 @@ test {
     _ = @import("compiler_locale.zig");
     _ = @import("constructs.zig");
     _ = @import("corpus.zig");
+    _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
     _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");

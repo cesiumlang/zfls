@@ -239,7 +239,13 @@ The fortls debug options work as well, for instance
 `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and
 the resulting object tree, and `--debug_hover --debug_filepath file.f90
 --debug_line 10 --debug_char 5` runs a single hover request. Their output
-is meant for testing zfls and may differ from fortls's.
+is meant for testing zfls and may differ from fortls's. They take the
+options as the server does: the command line's, with the configuration
+file's (`.fortlsrc`, `.fortls.json`, `.fortls` or `-c`) in
+`--debug_rootpath` over them. With `--debug_log`, `fortls_debug.log` has a
+`Final options` line with the options in effect, after the command line,
+the editor's settings, the configuration file and the build files, at
+start-up and after each change of the settings.
 
 ### ifx without Visual Studio (Windows x64)
 
@@ -1004,6 +1010,11 @@ zfls deliberately differs from fortls in a few places:
   configuration file, `fpm.toml` and `compile_commands.json` are read again
   when they change (see [Usage](#usage)); fortls reads its settings once,
   from its command line and configuration file.
+- `--debug_parser` and `--debug_preproc` take the command line's
+  preprocessor options (`--pp_defs`, `--include_dirs`, `--pp_suffixes`)
+  with the configuration file's over them, and find `.fortls.json`, as the
+  server does; fortls's take them from a configuration file only. The
+  debug log names the final options.
 - Renaming or moving a file or directory in the editor
   (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and
   `#include` directives that name a file that moves, and the relative ones

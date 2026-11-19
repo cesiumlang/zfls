@@ -724,6 +724,40 @@ pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
     return out;
 }
 
+/// The names of the configuration file looked for in the root, after the
+/// one `config` names (`-c`), the first found being read
+pub const default_config_files = [_][]const u8{ ".fortlsrc", ".fortls.json", ".fortls" };
+
+pub fn configFileNames(config: []const u8) [1 + default_config_files.len][]const u8 {
+    return .{config} ++ default_config_files;
+}
+
+/// The options as a JSON object, under the configuration file's names,
+/// for the log; without the debug requests' options
+pub fn toJson(a: Allocator, s: *const Settings) Allocator.Error!json.Value {
+    var obj: json.ObjectMap = .empty;
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| {
+        if (comptime !std.mem.startsWith(u8, name, "debug_") or std.mem.eql(u8, name, "debug_log")) {
+            const v = @field(s, name);
+            const out: json.Value = switch (@FieldType(Settings, name)) {
+                StrList => try json.from(a, v.slice()),
+                ?StrList => if (v) |l| try json.from(a, l.slice()) else .null,
+                std.ArrayList(PpDef), std.ArrayList(DiagLevel) => blk: {
+                    var m: json.ObjectMap = .empty;
+                    for (v.items) |x| {
+                        const kv = if (@TypeOf(x) == PpDef) .{ x.name, x.value } else .{ x.code, x.level };
+                        try m.put(a, kv[0], .{ .string = kv[1] });
+                    }
+                    break :blk .{ .object = m };
+                },
+                else => try json.from(a, v),
+            };
+            try obj.put(a, name, out);
+        }
+    }
+    return .{ .object = obj };
+}
+
 /// Whether option `name` has the same value in `x` and `y`
 pub fn sameValue(x: *const Settings, y: *const Settings, comptime name: []const u8) bool {
     return eqlValue(@FieldType(Settings, name), @field(x, name), @field(y, name));
@@ -814,6 +848,21 @@ test "formatter arguments: a string split at spaces, or a list" {
     try std.testing.expectEqualStrings("fprettify", s.formatter.?);
     try std.testing.expectEqual(@as(usize, 4), s.formatter_args.len());
     try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
+}
+
+test "the options as JSON" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{ .debug_filepath = "x.f90" };
+    try s.setPpDef(a, "A", "1");
+    try s.include_dirs.add(a, "inc");
+    const text = try json.stringify(a, try toJson(a, &s));
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_defs\":{\"A\":\"1\"}") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"include_dirs\":[\"inc\"]") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_suffixes\":null") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"debug_log\":false") != null);
+    try std.testing.expect(std.mem.find(u8, text, "debug_filepath") == null);
 }
 
 test "program arguments on the command line: a JSON list keeps an argument with a space whole" {
