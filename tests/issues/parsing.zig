@@ -895,6 +895,33 @@ test "a document opened as fortran (other editors) has the form of its name and 
     try std.testing.expect((try w.definition("x.f", w.pos("x.f", "callee()", 1, 0))) == null);
 }
 
+// `\x0c` is a form feed, a page break of old sources: compilers read it as
+// white space
+const form_feed = [_]h.File{
+    .{ .name = "a.f90", .text = "program p\n  implicit none\n  integer :: abc\n\x0c  integer :: def\n  integer \x0c:: ghi\n\x0c\n  abc = 1\n  def = abc + ghi\nend program\n" },
+    .{ .name = "b.f", .text = "      program q\n      implicit none\n\x0c     integer zz\n      zz = 1\n      end\n" },
+    .{ .name = "c.f90", .text = "module m\n\x0c  integer :: mv\nend module m\n" },
+};
+
+fn expectFormFeed(w: *h.Workspace) !void {
+    try w.expectNoDiagnostics("a.f90");
+    try w.expectNoDiagnostics("b.f");
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "def = abc", 0, 0), "INTEGER :: def");
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "ghi\nend", 0, 0), "INTEGER :: ghi");
+    try w.expectHoverContains("b.f", w.pos("b.f", "zz = 1", 0, 0), "INTEGER :: zz");
+    // the outline lists module variables
+    const symbols = try w.symbolPaths("c.f90");
+    for (symbols) |sym| {
+        if (std.mem.eql(u8, sym, "m/mv")) break;
+    } else return h.unmet("mv is not in the outline: {any}", .{symbols});
+}
+
+test "fortls #443 a form feed at the start of a line" {
+    const w = try h.Workspace.init(&form_feed, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try h.check(443, .fixed, expectFormFeed(w));
+}
+
 const quotes = [_]h.File{.{ .name = "a.f90", .text =
     \\module m
     \\  implicit none

@@ -66,3 +66,111 @@ test "#253 signature help inside an array constructor argument" {
     defer w.deinit();
     try h.checkIn(.hansec, 60, .fixed, expectInConstructors(w));
 }
+
+const structures = [_]h.File{
+    .{ .name = "m.f90", .text =
+    \\module m
+    \\   implicit none
+    \\   type :: pt
+    \\      integer :: x, y
+    \\   end type
+    \\   type :: vec
+    \\      real :: u, v = 0.0
+    \\   end type
+    \\   type, extends(vec) :: vec3
+    \\      real :: w
+    \\   end type
+    \\   type :: hidden
+    \\      integer, private :: secret
+    \\      integer :: shown
+    \\   end type
+    \\   interface pt
+    \\      module procedure make_pt
+    \\   end interface
+    \\contains
+    \\   function make_pt(a) result(r)
+    \\      integer, intent(in) :: a
+    \\      type(pt) :: r
+    \\      r%x = a
+    \\      r%y = a
+    \\   end function
+    \\   subroutine inside()
+    \\      type(hidden) :: hh
+    \\      hh = hidden(1, 2)
+    \\   end subroutine
+    \\end module
+    \\program p
+    \\   use m
+    \\   implicit none
+    \\   type(pt) :: q
+    \\   type(vec) :: w
+    \\   type(vec3) :: w3
+    \\   type(hidden) :: hh
+    \\   q = make_pt(1)
+    \\   q = pt(1)
+    \\   w = vec(1.0, 2.0)
+    \\   q = pt(x=1, y=2)
+    \\   w3 = vec3(1.0, 2.0, 3.0)
+    \\   hh = hidden(1, 2)
+    \\   w3 = vec3(u
+    \\end program
+    \\
+    },
+};
+
+/// All the signatures at `needle` + `plus` of m.f90, and the active one
+fn allSigs(w: *h.Workspace, needle: []const u8, plus: usize) !?struct { labels: []const []const u8, active: i64, param: i64 } {
+    const aa = w.arena.allocator();
+    const p = w.pos("m.f90", needle, 0, plus);
+    const v = try w.server.dispatchPublic(aa, "textDocument/signatureHelp", try h.json.from(aa, .{
+        .textDocument = .{ .uri = try w.uri("m.f90") },
+        .position = .{ .line = p.line, .character = p.col },
+    }));
+    if (v == .null) return null;
+    var labels: std.ArrayList([]const u8) = .empty;
+    for (h.json.items(h.json.get(v, "signatures"))) |s| try labels.append(aa, h.json.str(h.json.get(s, "label")) orelse "");
+    return .{
+        .labels = labels.items,
+        .active = h.json.int(h.json.get(v, "activeSignature")) orelse 0,
+        .param = h.json.int(h.json.get(v, "activeParameter")) orelse -1,
+    };
+}
+
+fn hasLabel(labels: []const []const u8, label: []const u8) bool {
+    for (labels) |l| if (std.ascii.eqlIgnoreCase(l, label)) return true;
+    return false;
+}
+
+fn expectConstructorSignatures(w: *h.Workspace) !void {
+    // a procedure: as before
+    var s = (try allSigs(w, "make_pt(1)\n", 8)) orelse return h.unmet("make_pt(1): null", .{});
+    try h.expect(s.labels.len == 1 and hasLabel(s.labels, "make_pt(a)"), "make_pt(1): {any}", .{s.labels});
+    // the generic interface of the type's name and the structure constructor
+    s = (try allSigs(w, "= pt(1)", 5)) orelse return h.unmet("pt(1): null", .{});
+    try h.expect(s.labels.len == 2 and hasLabel(s.labels, "make_pt(a)") and hasLabel(s.labels, "pt(x, y)"), "pt(1): {any}", .{s.labels});
+    // a structure constructor alone; a component with a default value is optional
+    s = (try allSigs(w, "vec(1.0, 2.0)", 4)) orelse return h.unmet("vec(: null", .{});
+    try h.expect(s.labels.len == 1 and hasLabel(s.labels, "vec(u, v=v)"), "vec(: {any}", .{s.labels});
+    // a keyword: the constructor, at that component
+    s = (try allSigs(w, "y=2)", 2)) orelse return h.unmet("pt(x=1, y=: null", .{});
+    const active = s.labels[@intCast(s.active)];
+    try h.expect(std.ascii.eqlIgnoreCase(active, "pt(x, y)") and s.param == 1, "pt(x=1, y=: {s} parameter {d}", .{ active, s.param });
+    // an extended type: the parent's components first
+    s = (try allSigs(w, "vec3(1.0", 5)) orelse return h.unmet("vec3(: null", .{});
+    try h.expect(s.labels.len == 1 and hasLabel(s.labels, "vec3(u, v=v, w)"), "vec3(: {any}", .{s.labels});
+    // a private component: none outside the module, one inside
+    if (try allSigs(w, "hidden(1, 2)\n   w3", 7)) |x| return h.unmet("hidden( outside: {any}", .{x.labels});
+    s = (try allSigs(w, "hidden(1, 2)\n   end subroutine", 7)) orelse return h.unmet("hidden( inside: null", .{});
+    try h.expect(hasLabel(s.labels, "hidden(secret, shown)"), "hidden( inside: {any}", .{s.labels});
+    // keyword arguments: the parent's components too
+    const items = try w.completion("m.f90", w.pos("m.f90", "vec3(u", 0, 6));
+    try h.expect(hasLabel(items, "u="), "vec3(u: {any}", .{items});
+    // a type and an interface of one name are not declared twice
+    for (try w.diagnostics("m.f90")) |d| try h.expect(std.mem.find(u8, d.message, "twice") == null, "{s}", .{d.message});
+}
+
+test "#266 signature help for structure constructors and a generic interface named like its type" {
+    const w = try h.Workspace.init(&structures, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    try h.checkIn(.hansec, 148, .fixed, expectConstructorSignatures(w));
+}
