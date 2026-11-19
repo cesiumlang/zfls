@@ -141,7 +141,11 @@ actions or formatting are turned off.
 
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
 workspace root configures source directories, preprocessor definitions and
-other options.
+other options. zfls also reads a user configuration file of the same format,
+`%APPDATA%\zfls\config.json` on Windows, else
+`~/.config/zfls/config.json` (`$XDG_CONFIG_HOME/zfls/config.json`), for
+other editors; this extension's settings take over from it, and the
+project's file from both.
 VS Code opens these files as JSON with comments and checks them against a
 schema of the options zfls reads from them, with their descriptions and
 defaults in completion and hover. The schema is generated from zfls's option

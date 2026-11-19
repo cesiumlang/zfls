@@ -211,6 +211,13 @@ root, `.fortlsrc`, `.fortls.json` or `.fortls` by default (or the file named
 with `-c`/`--config`). The option names are those of the
 [fortls documentation](https://fortls.fortran-lang.org/options.html).
 
+Personal defaults for every project go in a user configuration file of the
+same format: `%APPDATA%\zfls\config.json` on Windows, else
+`$XDG_CONFIG_HOME/zfls/config.json` (`~/.config/zfls/config.json` without
+that variable). Relative paths in it are relative to the workspace root, as
+in the project's file. It is read again when it changes, where the editor
+watches files outside the workspace, else at the next start.
+
 The editor can also send them over LSP, under the same names, as one
 object or in its `zfls` member: in the `initializationOptions` of the
 `initialize` request, and in `workspace/didChangeConfiguration` when they
@@ -226,8 +233,9 @@ vim.lsp.config("zfls", {
 vim.lsp.enable("zfls")
 ```
 
-Each source takes over from the one before: the command line, the editor's
-settings, the configuration file. A change applies at once:
+Each source takes over from the one before: the command line, the user
+configuration file, the editor's settings, the project's configuration
+file. A change applies at once:
 
 - One of the options that decide what is indexed (`source_dirs`,
   `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`,
@@ -1249,6 +1257,10 @@ zfls deliberately differs from fortls in a few places:
   with the configuration file's over them, and find `.fortls.json`, as the
   server does; fortls's take them from a configuration file only. The
   debug log names the final options.
+- A user configuration file (`%APPDATA%\zfls\config.json`,
+  `~/.config/zfls/config.json`) gives defaults for every project, under
+  the editor's settings and the project's file (see [Usage](#usage));
+  fortls has none (FL #408).
 - Renaming or moving a file or directory in the editor
   (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and
   `#include` directives that name a file that moves, and the relative ones

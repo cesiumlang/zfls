@@ -247,7 +247,7 @@ pub const Workspace = struct {
                 .rangeFormatting = dynamic,
                 .diagnostic = if (opts.pull_diagnostics) dynamic else null,
             }, .workspace = .{
-                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration },
+                .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },
                 .workspaceEdit = .{ .resourceOperations = if (opts.create_files) &[_][]const u8{"create"} else &[_][]const u8{} },
                 .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
             }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },

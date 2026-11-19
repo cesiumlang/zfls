@@ -357,7 +357,12 @@ pub const ClientCapabilities = struct {
         rangeFormatting: Dynamic = .{},
     } = .{},
     workspace: struct {
-        didChangeWatchedFiles: Dynamic = .{},
+        didChangeWatchedFiles: struct {
+            dynamicRegistration: bool = false,
+            /// patterns relative to a directory, which may be outside the
+            /// workspace
+            relativePatternSupport: bool = false,
+        } = .{},
         workspaceEdit: struct {
             /// `create`, `rename`, `delete`: the file operations of a
             /// workspace edit the client performs
