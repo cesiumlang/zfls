@@ -33,8 +33,11 @@ pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u
 pub const Known = struct { found: bool, version: ?u32 };
 
 fn ask(self: *Server, a: Allocator, exe: []const u8) Known {
+    // in the workspace, not zfls's own directory: a compiler (or a script
+    // standing for one) may write files where it runs
     const r = tools.run(a, self.io, .{
         .argv = &.{ exe, "--version" },
+        .cwd = if (self.root_path.len > 0) self.root_path else null,
         .environ_map = self.toolEnv(),
         .timeout = tools.seconds(10),
     }) catch |e| return .{ .found = e != error.FileNotFound, .version = null };
