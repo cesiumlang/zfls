@@ -110,6 +110,7 @@ pub const Worker = struct {
     reported_missing: bool = false,
     reported_missing_fypp: bool = false,
     reported_unparsed: bool = false,
+    reported_silent: bool = false,
     /// The compiler (or fypp) running, stopped at a shutdown
     running: tools.Running = .{},
 
@@ -487,6 +488,9 @@ const Output = union(enum) {
         text: []const u8,
         /// It exited with 0
         ok: bool,
+        /// The executable run, and how it ended when not `ok`
+        exe: []const u8,
+        exit: []const u8,
     },
     /// None of the executables was found
     missing,
@@ -511,7 +515,8 @@ fn runCompiler(w: *Worker, a: Allocator, job: *const Job, cwd: []const u8, args:
             else => return .{ .failed = e },
         };
         const text = std.mem.concat(a, u8, &.{ r.stdout, "\n", r.stderr }) catch |e| return .{ .failed = e };
-        return .{ .ran = .{ .text = text, .ok = r.term.success() } };
+        const exit = if (r.term.success()) "" else tools.describeExit(a, r) catch |e| return .{ .failed = e };
+        return .{ .ran = .{ .text = text, .ok = r.term.success(), .exe = exe, .exit = exit } };
     }
     return .missing;
 }
@@ -661,14 +666,22 @@ fn runJob(w: *Worker, job: *Job) !void {
     self.log.debug("compiler_diagnostics {s}: {s}", .{ job.path, output });
     const msgs = try compilers.parse(a, job.id, output);
     // a failure without a message zfls understands (a format it does not
-    // know) is said, so that it is not silent
-    if (msgs.len == 0 and !ran.ok and std.mem.trim(u8, output, " \t\r\n").len > 0) {
+    // know), or without any output (a compiler that cannot start: a DLL
+    // not found), is said, so that it is not silent
+    if (msgs.len == 0 and !ran.ok) if (std.mem.trim(u8, output, " \t\r\n").len > 0) {
         self.log.warn("compiler_diagnostics: {s} failed on {s} with output zfls does not understand: {s}", .{ @tagName(job.id), job.path, output });
         if (!w.reported_unparsed) {
             w.reported_unparsed = true;
             self.postMessage(a, try a.print("compiler_diagnostics: {s} failed on {s}, and zfls did not understand its output (see zfls's log)", .{ @tagName(job.id), std.Io.Dir.path.basename(job.path) }), 2);
         }
-    }
+    } else {
+        const said = try a.print("compiler_diagnostics: {s} ({s}) failed on {s} without any output: {s}", .{ @tagName(job.id), ran.exe, std.Io.Dir.path.basename(job.path), ran.exit });
+        self.log.warn("{s}", .{said});
+        if (!w.reported_silent) {
+            w.reported_silent = true;
+            self.postMessage(a, said, 2);
+        }
+    };
     const text = job.text orelse Io.Dir.cwd().readFileAlloc(io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
     const diags = try toDiagnostics(a, job, text, msgs, aliases.items);
     try publishCompiler(self, a, job.uri, diags);

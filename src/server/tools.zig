@@ -14,7 +14,14 @@ const Allocator = std.mem.Allocator;
 
 const is_windows = builtin.target.os.tag == .windows;
 
-pub const Output = struct { term: std.process.Child.Term, stdout: []u8, stderr: []u8 };
+pub const Output = struct {
+    term: std.process.Child.Term,
+    stdout: []u8,
+    stderr: []u8,
+    /// Windows: the whole exit status, of which `term` has the low byte
+    /// only (`0xC0000135`, a DLL not found)
+    status: ?u32 = null,
+};
 
 pub const Options = struct {
     argv: []const []const u8,
@@ -150,14 +157,33 @@ pub fn run(a: Allocator, io: Io, o: Options) !Output {
         else => |e| return e,
     }
     try multi.checkAnyError();
+    const status = if (is_windows) win.exitStatus(child.id.?) else null;
     const term = try child.wait(io);
-    return .{ .term = term, .stdout = try multi.toOwnedSlice(0), .stderr = try multi.toOwnedSlice(1) };
+    return .{ .term = term, .stdout = try multi.toOwnedSlice(0), .stderr = try multi.toOwnedSlice(1), .status = status };
 }
 
 fn writeInput(io: Io, file: Io.File, input: []const u8) void {
     defer file.close(io);
     // a program that ends without reading all of it: its output tells
     file.writeStreamingAll(io, input) catch {};
+}
+
+/// How a program ended, for a message: `exit code 3`, `exit status
+/// 0xC0000135 (a DLL it needs was not found)`, `signal SEGV`
+pub fn describeExit(a: Allocator, out: Output) ![]const u8 {
+    if (out.status) |s| if (s > 0xff) {
+        const known: []const u8 = switch (s) {
+            0xC0000135 => " (a DLL it needs was not found)",
+            0xC0000139 => " (a procedure it needs was not found in a DLL)",
+            else => "",
+        };
+        return a.print("exit status 0x{X}{s}", .{ s, known });
+    };
+    return switch (out.term) {
+        .exited => |code| a.print("exit code {d}", .{code}),
+        .signal, .stopped => |sig| a.print("signal {t}", .{sig}),
+        .unknown => |s| a.print("exit status 0x{X}", .{s}),
+    };
 }
 
 /// A timeout of `s` seconds
@@ -204,6 +230,15 @@ const win = struct {
     extern "kernel32" fn AssignProcessToJobObject(job: HANDLE, process: HANDLE) callconv(.winapi) i32;
     extern "kernel32" fn TerminateJobObject(job: HANDLE, code: u32) callconv(.winapi) i32;
     extern "kernel32" fn ResumeThread(thread: HANDLE) callconv(.winapi) u32;
+    extern "kernel32" fn WaitForSingleObject(handle: HANDLE, ms: u32) callconv(.winapi) u32;
+    extern "kernel32" fn GetExitCodeProcess(process: HANDLE, code: *u32) callconv(.winapi) i32;
+
+    /// The exit status of a process, once it has ended
+    fn exitStatus(process: HANDLE) ?u32 {
+        if (WaitForSingleObject(process, 0xFFFFFFFF) != 0) return null;
+        var code: u32 = 0;
+        return if (GetExitCodeProcess(process, &code) != 0) code else null;
+    }
 };
 
 test "a timeout kills the program and the processes it started" {
@@ -250,4 +285,29 @@ test "a stopped thread starts no program" {
     r.stop(io);
     const argv: []const []const u8 = if (is_windows) &.{ "cmd", "/c", "exit" } else &.{"true"};
     try std.testing.expectError(error.Stopped, run(std.testing.allocator, io, .{ .argv = argv, .running = &r }));
+}
+
+test "how a program ended, for a message" {
+    const a = std.testing.allocator;
+    const cases = [_]struct { out: Output, want: []const u8 }{
+        .{ .out = .{ .term = .{ .exited = 0x35 }, .stdout = &.{}, .stderr = &.{}, .status = 0xC0000135 }, .want = "exit status 0xC0000135 (a DLL it needs was not found)" },
+        .{ .out = .{ .term = .{ .exited = 0x39 }, .stdout = &.{}, .stderr = &.{}, .status = 0xC0000139 }, .want = "exit status 0xC0000139 (a procedure it needs was not found in a DLL)" },
+        .{ .out = .{ .term = .{ .exited = 0x34 }, .stdout = &.{}, .stderr = &.{}, .status = 0xC0001234 }, .want = "exit status 0xC0001234" },
+        .{ .out = .{ .term = .{ .exited = 3 }, .stdout = &.{}, .stderr = &.{}, .status = 3 }, .want = "exit code 3" },
+        .{ .out = .{ .term = .{ .exited = 1 }, .stdout = &.{}, .stderr = &.{} }, .want = "exit code 1" },
+    };
+    for (cases) |c| {
+        const got = try describeExit(a, c.out);
+        defer a.free(got);
+        try std.testing.expectEqualStrings(c.want, got);
+    }
+}
+
+test "the whole exit status on Windows" {
+    if (!is_windows) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const r = try run(arena.allocator(), std.testing.io, .{ .argv = &.{ "cmd", "/c", "exit", "-1073741515" }, .timeout = seconds(30) });
+    try std.testing.expectEqual(@as(?u32, 0xC0000135), r.status);
+    try std.testing.expect(!r.term.success());
 }
