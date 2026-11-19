@@ -28,6 +28,7 @@ test {
     _ = @import("plain_comments.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
+    _ = @import("macros.zig");
     _ = @import("navigation.zig");
     _ = @import("openmp.zig");
     _ = @import("outline.zig");

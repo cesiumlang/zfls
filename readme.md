@@ -80,7 +80,9 @@ command line options and configuration files.
   the language `FortranNamelist`): an outline of their groups and the
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
-  macros, `#include`)
+  macros, `#include`); go to definition of a macro goes to the `#define`
+  in effect at the use, in the file or a header, and references and
+  highlights list its uses and the directives that name it
 - Documentation for intrinsic procedures (with the specific names, such as
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
@@ -987,6 +989,14 @@ zfls deliberately differs from fortls in a few places:
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.
+- Go to definition of a preprocessor macro goes to its `#define` (the one
+  in effect at the use, also in a header an `#include` reads), and null for
+  a macro of `pp_defs` or `-D`; references and document highlights list
+  the macro as a word of the file's code (outside strings and comments)
+  and of its directives, and for a header's macro of the header and the
+  workspace files that include it; hover and definition work on the names
+  of `#ifdef`, `#ifndef`, `#if defined(...)` and `#undef` lines (hansec
+  #115). fortls answers the use itself and lists only it.
 - OpenMP conditional compilation lines (`!$ x = 1`) are code (Modern
   Fortran #17); fortls reads them as comments, so its references and
   rename leave them out. `disable_openmp_conditional` reads them as fortls
