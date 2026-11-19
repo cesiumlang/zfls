@@ -160,6 +160,15 @@ fn fixedNoComment(a: Allocator, line: []const u8) ![]const u8 {
     return line;
 }
 
+/// Makes the tabs and form feeds (the page breaks of old sources) of
+/// `text` spaces, as compilers read them (fortls #443); every column stays
+/// where it is
+fn blankSpaces(text: []u8) void {
+    for (text) |*c| {
+        if (c.* == '\t' or c.* == '\x0c') c.* = ' ';
+    }
+}
+
 pub const FortranFile = struct {
     gpa: Allocator,
     path: []const u8,
@@ -264,6 +273,7 @@ pub const FortranFile = struct {
         var at: usize = 0;
         for (new_lines) |l| {
             @memcpy(buf[at .. at + l.len], l);
+            blankSpaces(buf[at .. at + l.len]);
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
@@ -330,9 +340,10 @@ pub const FortranFile = struct {
         return if (self.raw_lines.items.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
     }
 
-    /// The `hash` of a file's text, whose tabs become spaces
+    /// The `hash` of a file's text, whose tabs and form feeds become
+    /// spaces
     pub fn textHash(text: []u8) u64 {
-        std.mem.replaceScalar(u8, text, '\t', ' ');
+        blankSpaces(text);
         return std.hash.Wyhash.hash(0, text);
     }
 
@@ -892,6 +903,17 @@ test "getCodeLine: lines that are no code do not end a statement, and keep their
     try std.testing.expectEqualStrings("      x = f(a,", fb.pre[0]);
     const ff = try f.getCodeLine(a, 0, true, false, false, false);
     try std.testing.expectEqual(@as(usize, 2), ff.post.len);
+}
+
+test "form feeds and tabs are read as spaces, as loaded and as edited" {
+    const f = try FortranFile.create(std.testing.allocator, "/w/a.f90", null);
+    defer f.destroy();
+    _ = try f.setText("program p\n\x0c\tinteger :: a\nend program p\n");
+    try std.testing.expectEqualStrings("  integer :: a", f.getLine(1, false).?);
+    _ = try f.applyChange(.{ .text = "\x0c\tinteger :: b\n", .range = .{ .sl = 2, .sc = 0, .el = 2, .ec = 0 } });
+    try std.testing.expectEqualStrings("  integer :: b", f.getLine(2, false).?);
+    _ = try f.applyChange(.{ .text = "\x0c", .range = .{ .sl = 1, .sc = 0, .el = 1, .ec = 1 } });
+    try std.testing.expectEqualStrings("  integer :: a", f.getLine(1, false).?);
 }
 
 test "d_lines code: zfls reads the D of a debug line as a blank, changes apply to the editor's text" {

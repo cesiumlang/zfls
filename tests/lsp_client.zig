@@ -1,5 +1,6 @@
 //! A language server process driven over stdio, for the benchmark
-//! (tools/bench_workspace.zig) and the stress test (tests/stress_edit.zig).
+//! (tools/bench_workspace.zig), the stress test (tests/stress_edit.zig) and
+//! the compiler check's test (tests/compiler_check.zig).
 //! A thread reads the server's messages, so that the server never blocks on
 //! a full pipe while the client is sending, and keeps the responses and the
 //! latest diagnostics of each document; another collects its stderr.
@@ -36,6 +37,11 @@ pub const Client = struct {
 
     /// Starts the server `argv`; `log_path` receives the messages sent
     pub fn start(io: Io, gpa: Allocator, argv: []const []const u8, log_path: ?[]const u8) !*Client {
+        return startEnv(io, gpa, argv, log_path, null);
+    }
+
+    /// `start`, with the environment `env` (null: this process's)
+    pub fn startEnv(io: Io, gpa: Allocator, argv: []const []const u8, log_path: ?[]const u8, env: ?*const std.process.Environ.Map) !*Client {
         const c = try gpa.create(Client);
         errdefer gpa.destroy(c);
         c.* = .{
@@ -48,6 +54,7 @@ pub const Client = struct {
                 .stdout = .pipe,
                 .stderr = .pipe,
                 .create_no_window = true,
+                .environ_map = env,
             }),
         };
         if (log_path) |p| c.log = try Io.Dir.cwd().createFile(io, p, .{});
