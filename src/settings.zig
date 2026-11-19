@@ -7,6 +7,18 @@ const Allocator = std.mem.Allocator;
 const str = @import("str.zig");
 const json = @import("json.zig");
 const json5 = @import("json5.zig");
+/// The extensions of Fortran sources (also for build/generated.zig)
+pub const suffixes = @import("suffixes.zig");
+
+/// The extensions of Fortran sources indexed by default, in upper case
+const default_suffixes: []const u8 = blk: {
+    var list: []const u8 = "";
+    for (suffixes.all, 0..) |s, i| {
+        if (i > 0) list = list ++ ", ";
+        for (s.ext) |c| list = list ++ &[_]u8{std.ascii.toUpper(c)};
+    }
+    break :blk list;
+};
 
 /// Ordered list of unique strings (stand-in for Python `set[str]`)
 pub const StrList = struct {
@@ -172,6 +184,12 @@ pub const Settings = struct {
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
+    // Code lenses
+    /// No lens with the number of references above modules, procedures
+    /// and derived types
+    code_lens_no_references: bool = false,
+    /// No Run and Debug lenses above a program
+    code_lens_no_run: bool = false,
     // Debug options
     debug_filepath: ?[]const u8 = null,
     debug_rootpath: ?[]const u8 = null,
@@ -241,7 +259,7 @@ pub const opts = [_]Opt{
     .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
 
     .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
-    .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP, .CUF (lower & upper casing))", .group = "Sources file parsing options" },
+    .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: " ++ default_suffixes ++ " (lower & upper casing))", .group = "Sources file parsing options" },
     .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
     .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
     .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
@@ -255,7 +273,7 @@ pub const opts = [_]Opt{
     .{ .long = "use_signature_help", .kind = .flag, .help = "Use signature help instead of subroutine/function snippets. This effectively sets --autocomplete_no_snippets", .group = "Autocomplete options" },
 
     .{ .long = "variable_hover", .kind = .flag, .help = "DEPRECATED: This option is always on. Show hover information for variables", .group = "Hover options" },
-    .{ .long = "hover_signature", .kind = .flag, .help = "Show signature information in hover for arguments ", .group = "Hover options" },
+    .{ .long = "hover_signature", .kind = .flag, .help = "Hover on an actual argument of a call also shows the dummy argument it is passed to", .group = "Hover options" },
     .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
     .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
     .{ .long = "prefer_implementation", .kind = .flag, .help = "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface", .group = "Hover options" },
@@ -306,6 +324,9 @@ pub const opts = [_]Opt{
 
     .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
     .{ .long = "enable_code_actions", .kind = .flag, .help = "Enable experimental code actions (default: false)", .group = "CodeActions options [limited]" },
+
+    .{ .long = "code_lens_no_references", .kind = .flag, .help = "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)", .group = "Code lens options" },
+    .{ .long = "code_lens_no_run", .kind = .flag, .help = "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)", .group = "Code lens options" },
 
     .{ .long = "debug_filepath", .kind = .string, .metavar = "DEBUG_FILEPATH", .help = "File path for language server tests", .debug = true },
     .{ .long = "debug_rootpath", .kind = .string, .metavar = "DEBUG_ROOTPATH", .help = "Root path for language server tests", .debug = true },
@@ -682,6 +703,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "bind_c_clangd")) |v| s.bind_c_clangd = json.str(v);
     // Code Actions options
     s.enable_code_actions = jsonBool(json.get(cfg, "enable_code_actions"), s.enable_code_actions);
+    // Code lens options
+    s.code_lens_no_references = jsonBool(json.get(cfg, "code_lens_no_references"), s.code_lens_no_references);
+    s.code_lens_no_run = jsonBool(json.get(cfg, "code_lens_no_run"), s.code_lens_no_run);
     // Preprocessor options
     // like every other option, a value in the file replaces the one from the
     // command line, and no value leaves it alone (upstream #536)
@@ -710,6 +734,40 @@ pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
         }
     }
     return out;
+}
+
+/// The names of the configuration file looked for in the root, after the
+/// one `config` names (`-c`), the first found being read
+pub const default_config_files = [_][]const u8{ ".fortlsrc", ".fortls.json", ".fortls" };
+
+pub fn configFileNames(config: []const u8) [1 + default_config_files.len][]const u8 {
+    return .{config} ++ default_config_files;
+}
+
+/// The options as a JSON object, under the configuration file's names,
+/// for the log; without the debug requests' options
+pub fn toJson(a: Allocator, s: *const Settings) Allocator.Error!json.Value {
+    var obj: json.ObjectMap = .empty;
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| {
+        if (comptime !std.mem.startsWith(u8, name, "debug_") or std.mem.eql(u8, name, "debug_log")) {
+            const v = @field(s, name);
+            const out: json.Value = switch (@FieldType(Settings, name)) {
+                StrList => try json.from(a, v.slice()),
+                ?StrList => if (v) |l| try json.from(a, l.slice()) else .null,
+                std.ArrayList(PpDef), std.ArrayList(DiagLevel) => blk: {
+                    var m: json.ObjectMap = .empty;
+                    for (v.items) |x| {
+                        const kv = if (@TypeOf(x) == PpDef) .{ x.name, x.value } else .{ x.code, x.level };
+                        try m.put(a, kv[0], .{ .string = kv[1] });
+                    }
+                    break :blk .{ .object = m };
+                },
+                else => try json.from(a, v),
+            };
+            try obj.put(a, name, out);
+        }
+    }
+    return .{ .object = obj };
 }
 
 /// Whether option `name` has the same value in `x` and `y`
@@ -802,6 +860,21 @@ test "formatter arguments: a string split at spaces, or a list" {
     try std.testing.expectEqualStrings("fprettify", s.formatter.?);
     try std.testing.expectEqual(@as(usize, 4), s.formatter_args.len());
     try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
+}
+
+test "the options as JSON" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{ .debug_filepath = "x.f90" };
+    try s.setPpDef(a, "A", "1");
+    try s.include_dirs.add(a, "inc");
+    const text = try json.stringify(a, try toJson(a, &s));
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_defs\":{\"A\":\"1\"}") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"include_dirs\":[\"inc\"]") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_suffixes\":null") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"debug_log\":false") != null);
+    try std.testing.expect(std.mem.find(u8, text, "debug_filepath") == null);
 }
 
 test "program arguments on the command line: a JSON list keeps an argument with a space whole" {

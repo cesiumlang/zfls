@@ -14,6 +14,11 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const intrinsics = @import("../intrinsics.zig");
 const constructs = @import("../constructs.zig");
+const patterns = @import("../patterns.zig");
+
+fn R() *const patterns.Patterns {
+    return patterns.get();
+}
 
 const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
@@ -112,10 +117,66 @@ pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj:
             try refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
         }
     }
-    if (refs.items.len == 0) return &.{};
-    const out = try a.alloc(Server.FileRefs, 1);
-    out[0] = .{ .path = file.path, .file = file, .refs = refs };
-    return out;
+    var out: std.ArrayList(Server.FileRefs) = .empty;
+    // a module's local name is one of its users' names too (#233)
+    if (ri.scope.kind == .module) for (self.workspace.values()) |other| {
+        const users = try aliasUses(self, a, other, def_obj, ri, &name_re, if (other == file) ri.scope else null);
+        if (other == file) {
+            try refs.appendSlice(a, users.items);
+        } else if (users.items.len > 0) try out.append(a, .{ .path = other.path, .file = other, .refs = users });
+    };
+    if (refs.items.len > 0) try out.append(a, .{ .path = file.path, .file = file, .refs = refs });
+    return out.items;
+}
+
+/// The places in `file`, outside `skip`, of the local name `ri.alias` that
+/// module `ri.scope` gives `def_obj` by a rename: in the scopes that have
+/// the name from it by USE, and in the USE statements that name it (in a
+/// rename again, `use m, only: other => alias`) in a module that has it
+fn aliasUses(self: *Server, a: Allocator, file: *FortranFile, def_obj: *Obj, ri: Server.RenamedImport, name_re: *regex.Regex, skip: ?*const Obj) !std.ArrayList(Server.Ref) {
+    var refs: std.ArrayList(Server.Ref) = .empty;
+    const ast = file.ast orelse return refs;
+    const env = self.env(a);
+    for (file.lines.items, 0..) |raw_line, i| {
+        if (skip) |s| if (i + 1 >= s.sline and i + 1 <= s.eline) continue;
+        const line = file.stripComment(raw_line);
+        if (line.len == 0 or line[0] == '#') continue;
+        if (std.ascii.findIgnoreCase(line, ri.alias) == null) continue;
+        const scope = ast.getInnerScope(i + 1) orelse continue;
+        const use_stmt = R().USE.match(line);
+        const used_mod: ?[]const u8 = if (use_stmt) |u| u.group(2) else null;
+        var it = name_re.iterator(line);
+        while (it.next()) |m| {
+            // not the module name of a USE statement
+            if (use_stmt) |u| if (m.start(1) < u.end(0)) continue;
+            const after = str.lstrip(line[m.end(1)..]);
+            const ok = if (used_mod != null and !std.mem.startsWith(u8, after, "=>")) blk: {
+                // the name in the module the statement uses
+                const mod = env.global(ast, try std.ascii.allocLowerString(a, used_mod.?)) orelse break :blk false;
+                if (mod == ri.scope) break :blk true;
+                break :blk (try objects.comesThrough(env, mod, ri.alias, true, ri.scope, ri.alias)) orelse false;
+            } else blk: {
+                const var_def = (try definition.getDefinition(self, a, file, i, m.start(1) + 1, false)) orelse break :blk false;
+                if (!std.mem.eql(u8, def_obj.fqsn, var_def.fqsn)) break :blk false;
+                break :blk try seesAliasOf(env, scope, ri.alias, ri.scope);
+            };
+            if (ok) try refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+        }
+    }
+    return refs;
+}
+
+/// Whether `scope` has the name `alias` from module `holder`, the module
+/// whose USE statement makes it a local name: inside it, as its submodule,
+/// or by USE through it
+fn seesAliasOf(env: objects.Env, scope: *Obj, alias: []const u8, holder: *Obj) !bool {
+    var cur: ?*Obj = scope;
+    while (cur) |x| : (cur = x.parent) {
+        if (x == holder) return true;
+        for (try x.getAncestors(env.tmp)) |anc| if (anc == holder) return true;
+        if (try objects.comesThrough(env, x, alias, false, holder, alias)) |via| return via;
+    }
+    return false;
 }
 
 /// The references to `def_obj`. A rename also takes what only it must change:
@@ -124,8 +185,16 @@ pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj:
 pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile, for_rename: bool) ![]Server.FileRefs {
     const def_name = try std.ascii.allocLowerString(a, def_obj.name);
     const def_fqsn = def_obj.fqsn;
-    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
-    defer name_re.deinit();
+    // the entity's own name, and for references the local names USE
+    // statements give it (#233): a rename changes only the name it starts on
+    const names = if (for_rename) &[_][]const u8{def_name} else try useAliases(self, a, def_obj, def_name);
+    const name_res = try a.alloc(regex.Regex, names.len);
+    var n_res: usize = 0;
+    defer for (name_res[0..n_res]) |*re| re.deinit();
+    for (names) |name| {
+        name_res[n_res] = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{name}), regex.I) catch return &.{};
+        n_res += 1;
+    }
     var files: std.ArrayList(*FortranFile) = .empty;
     if (restrict) |f| try files.append(a, f) else try files.appendSlice(a, self.workspace.values());
     var override_cache: std.ArrayList([]const u8) = .empty;
@@ -133,11 +202,11 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
     for (files.items) |file| {
         var file_refs: std.ArrayList(Server.Ref) = .empty;
         const filename = file.path;
-        for (file.lines.items, 0..) |raw_line, i| {
+        for (names, name_res) |name, *name_re| for (file.lines.items, 0..) |raw_line, i| {
             if (raw_line.len == 0) continue;
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
-            if (std.ascii.findIgnoreCase(line, def_name) == null) continue;
+            if (std.ascii.findIgnoreCase(line, name) == null) continue;
             var it = name_re.iterator(line);
             while (it.next()) |m| {
                 if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
@@ -186,10 +255,42 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                 }
                 if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
             }
-        }
+        };
         if (file_refs.items.len > 0) try out.append(a, .{ .path = filename, .file = file, .refs = file_refs });
     }
     return out.items;
+}
+
+/// `def_name` (the lowercase name of `def_obj`) and, for an entity of a
+/// module, the local names that the USE statements of the workspace give
+/// it, or a name of it, by a rename (`use m, only: local => name`).
+/// Names that only coincide are among them: each place is still checked.
+fn useAliases(self: *Server, a: Allocator, def_obj: *const Obj, def_name: []const u8) ![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    try names.append(a, def_name);
+    const parent = def_obj.parent orelse return names.items;
+    if (parent.kind != .module) return names.items;
+    var grew = true;
+    while (grew) {
+        grew = false;
+        for (self.workspace.values()) |file| {
+            const ast = file.ast orelse continue;
+            for (ast.scope_list.items) |scope| for (scope.scopeDataConst().use.items) |u| {
+                if (u.is_import) continue;
+                for (u.rename_map.keys.items, u.rename_map.values.items) |local, original| {
+                    if (!containsName(names.items, original) or containsName(names.items, local)) continue;
+                    try names.append(a, local);
+                    grew = true;
+                }
+            };
+        }
+    }
+    return names.items;
+}
+
+fn containsName(names: []const []const u8, name: []const u8) bool {
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
 }
 
 pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, restrict: ?*FortranFile } {
