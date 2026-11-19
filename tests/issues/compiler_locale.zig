@@ -1,6 +1,7 @@
 //! The compiler check (`compiler_diagnostics`) reads the compiler's messages
-//! as English words, so the compiler runs in the C locale (#254); output it
-//! does not understand is said rather than dropped.
+//! as English words, so the compiler runs in the C locale (#254); a failure
+//! with output it does not understand, or with none (#406), is said rather
+//! than dropped.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -47,4 +48,20 @@ test "a failure whose output zfls does not understand is said (#254)" {
     defer w.deinit();
     const shown = (try w.waitForSent("window/showMessage", "did not understand", 60)) orelse return error.NothingSaid;
     try std.testing.expect(std.mem.find(u8, shown, "a.f90") != null);
+}
+
+/// A stand-in for gfortran that fails without any output: on Windows with
+/// the exit status of a program whose DLL is not found
+const silent_compiler: h.File = if (is_windows)
+    .{ .name = "silent.cmd", .text = "@exit /b -1073741515\r\n" }
+else
+    .{ .name = "silent.sh", .text = "#!/bin/sh\nexit 3\n" };
+
+test "a failure without any output is said, with how the compiler ended (#406)" {
+    const w = try start(silent_compiler);
+    defer w.deinit();
+    const shown = (try w.waitForSent("window/showMessage", "without any output", 60)) orelse return error.NothingSaid;
+    try std.testing.expect(std.mem.find(u8, shown, "a.f90") != null);
+    try std.testing.expect(std.mem.find(u8, shown, silent_compiler.name) != null);
+    try std.testing.expect(std.mem.find(u8, shown, if (is_windows) "exit status 0xC0000135 (a DLL it needs was not found)" else "exit code 3") != null);
 }
