@@ -1225,6 +1225,15 @@ zfls deliberately differs from fortls in a few places:
   constructs (hansec #157); fortls has no answer on them. A construct name
   repeated on an `else`, `case` or `elsewhere` statement is no undeclared
   name, and `selectcase` written as one word is a SELECT construct.
+- At the start of a statement, completion offers the constructs and
+  program units that can begin there, as snippets with their end
+  statement for clients that take snippets (hansec #47): program units
+  outside them and procedures after `contains`, `type`, `interface` and
+  `enum` in a specification part, `do while`, `select case` and the other
+  constructs in an executable part, the blocks of the open construct
+  (`else`, `case`), `then` after `if (...)`, and after `end` only the end
+  statement of the scope that is open. They follow `lowercase_intrinsics`
+  and `autocomplete_no_snippets`. fortls offers none of them.
 - `textDocument/linkedEditingRange` is answered: typing in the name of a
   program unit, derived type or named interface changes it in its END
   statement too, and the other way round (when the END statement has the

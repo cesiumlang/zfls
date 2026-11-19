@@ -78,6 +78,122 @@ test "statement labels: definition and references" {
     try std.testing.expectEqual(@as(usize, 2), (try w.references("old.f", w.pos("old.f", "DO 10", 0, 3))).len);
 }
 
+// Completion of constructs and program units (#264)
+
+const starts = [_]h.File{
+    .{ .name = "m.f90", .text =
+    \\module m
+    \\  implicit none
+    \\contains
+    \\  subr
+    \\  subroutine s(n)
+    \\    integer :: n, x
+    \\    sel
+    \\    if (n > 0) th
+    \\    x = sel
+    \\    do wh
+    \\  end subroutine
+    \\end module
+    \\
+    },
+    .{ .name = "e.f90", .text = "module e\n" ++
+        "contains\n" ++
+        "  subroutine s(n)\n" ++
+        "    integer :: n, i\n" ++
+        "    do i = 1, n\n" ++
+        "      print *, i\n" ++
+        "    end \n" ++
+        "  end subroutine s\n" ++
+        "  subroutine s2(n)\n" ++
+        "    integer :: n, i\n" ++
+        "    do i = 1, n\n" ++
+        "    end do\n" ++
+        "    end \n" ++
+        "end module e\n" },
+};
+
+const Snip = struct { label: []const u8, text: []const u8, kind: i64 };
+
+/// The completion items at `needle` + `plus`: their labels, the text
+/// they insert and their kinds
+fn snipsAt(w: *h.Workspace, name: []const u8, needle: []const u8, nth: usize, plus: usize) ![]const Snip {
+    const aa = w.arena.allocator();
+    const p = w.pos(name, needle, nth, plus);
+    const v = try w.server.dispatchPublic(aa, "textDocument/completion", try h.json.from(aa, .{
+        .textDocument = .{ .uri = try w.uri(name) },
+        .position = .{ .line = p.line, .character = p.col },
+    }));
+    var out: std.ArrayList(Snip) = .empty;
+    for (h.json.items(v)) |item| {
+        const edit = h.json.str(h.json.path(item, &.{ "textEdit", "newText" }));
+        try out.append(aa, .{
+            .label = h.json.str(h.json.get(item, "label")) orelse "",
+            .text = edit orelse h.json.str(h.json.get(item, "insertText")) orelse "",
+            .kind = h.json.int(h.json.get(item, "kind")) orelse 0,
+        });
+    }
+    return out.items;
+}
+
+fn snip(items: []const Snip, label: []const u8) ?Snip {
+    for (items) |i| if (std.mem.eql(u8, i.label, label)) return i;
+    return null;
+}
+
+fn expectConstructs(w: *h.Workspace) !void {
+    // a procedure after CONTAINS, with its end statement
+    var items = try snipsAt(w, "m.f90", "subr\n", 0, 4);
+    const sub = snip(items, "SUBROUTINE") orelse return h.unmet("subr: {any}", .{items});
+    try h.expect(sub.kind == 15 and std.mem.find(u8, sub.text, "END SUBROUTINE ${1:name}") != null, "subr: {s}", .{sub.text});
+    // a construct of more than one word
+    items = try snipsAt(w, "m.f90", "do wh", 0, 5);
+    const dow = snip(items, "DO WHILE") orelse return h.unmet("do wh: {any}", .{items});
+    try h.expect(std.mem.startsWith(u8, dow.text, "DO WHILE ("), "do wh: {s}", .{dow.text});
+    // before the intrinsics
+    items = try snipsAt(w, "m.f90", "    sel", 0, 7);
+    try h.expect(items.len > 2 and std.mem.eql(u8, items[0].label, "SELECT CASE") and std.mem.eql(u8, items[1].label, "SELECT TYPE"), "sel: {any}", .{items});
+    // THEN after the condition
+    items = try snipsAt(w, "m.f90", "if (n > 0) th", 0, 13);
+    try h.expect(snip(items, "THEN") != null, "th: {any}", .{items});
+    // not where an expression goes
+    items = try snipsAt(w, "m.f90", "x = sel", 0, 7);
+    try h.expect(snip(items, "SELECT CASE") == null, "x = sel: {any}", .{items});
+    // after END, only the end statement of the open scope
+    items = try snipsAt(w, "e.f90", "    end \n", 0, 8);
+    try h.expect(items.len == 1 and std.mem.eql(u8, items[0].label, "END DO"), "end in the DO: {any}", .{items});
+    items = try snipsAt(w, "e.f90", "    end \n", 1, 8);
+    try h.expect(items.len == 1 and std.mem.eql(u8, items[0].label, "END SUBROUTINE s2"), "end after the DO: {any}", .{items});
+}
+
+test "#264 completion of constructs and program units, with their end statements" {
+    const w = try h.Workspace.init(&starts, .{ .snippet_support = true });
+    defer w.deinit();
+    expectConstructs(w) catch |e| {
+        std.debug.print("{s}\n", .{h.lastNote()});
+        return e;
+    };
+}
+
+test "#264 constructs in lowercase, and without snippets" {
+    {
+        const w = try h.Workspace.init(&starts, .{ .snippet_support = true, .settings = .{ .lowercase_intrinsics = true } });
+        defer w.deinit();
+        const items = try snipsAt(w, "m.f90", "subr\n", 0, 4);
+        const sub = snip(items, "subroutine") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(std.mem.find(u8, sub.text, "end subroutine ${1:name}") != null);
+        const end = try snipsAt(w, "e.f90", "    end \n", 1, 8);
+        try std.testing.expectEqualStrings("end subroutine s2", end[0].label);
+    }
+    inline for (.{ h.Options{}, h.Options{ .snippet_support = true, .settings = .{ .autocomplete_no_snippets = true } } }) |opts| {
+        const w = try h.Workspace.init(&starts, opts);
+        defer w.deinit();
+        const items = try snipsAt(w, "m.f90", "do wh", 0, 5);
+        const dow = snip(items, "DO WHILE") orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqualStrings("DO WHILE", dow.text);
+        try std.testing.expectEqual(@as(i64, 14), dow.kind);
+    }
+}
+
 const branch_names =
     \\subroutine s(i, a)
     \\  implicit none

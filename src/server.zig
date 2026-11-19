@@ -110,6 +110,8 @@ pub const Server = struct {
     hierarchical_symbols: bool = false,
     /// the client asks whether a position can be renamed first
     prepare_rename: bool = false,
+    /// the client takes snippets in completion items
+    completion_snippets: bool = false,
     /// The paths of the documents open in the editor, whose text is the
     /// editor's (keys owned by `gpa`)
     open_docs: std.StringHashMapUnmanaged(void) = .empty,
