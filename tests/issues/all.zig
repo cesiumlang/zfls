@@ -16,6 +16,7 @@ test {
     _ = @import("debugging.zig");
     _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
+    _ = @import("doc_math.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
     _ = @import("ends.zig");

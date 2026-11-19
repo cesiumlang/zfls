@@ -25,6 +25,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "signatureHelp", flag: "--use_signature_help", kind: "flag" },
   { setting: "codeActions", flag: "--enable_code_actions", kind: "flag" },
   { setting: "hoverSignature", flag: "--hover_signature", kind: "flag" },
+  { setting: "docMath", flag: "--doc_math", kind: "string" },
   { setting: "preferImplementation", flag: "--prefer_implementation", kind: "flag" },
   { setting: "lowercaseHover", flag: "--lowercase_hover", kind: "flag" },
   { setting: "hoverNoTypeComponents", flag: "--hover_no_type_components", kind: "flag" },

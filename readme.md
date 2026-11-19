@@ -1131,6 +1131,15 @@ zfls deliberately differs from fortls in a few places:
   arguments, the passed-object argument of a type-bound procedure, the
   specific of a generic that the arguments fit and nested calls are
   followed. fortls reads the option and does nothing with it.
+- The `doc_math` option rewrites the formulas of documentation comments,
+  Doxygen's `\f$ x \f$`, `\f[ x \f]` and `\f{env}{ x \f}` and FORD's
+  `\( x \)` and `\[ x \]`, in hover, completion and signature help (fortls
+  #70): `keep` (the default) leaves them as written, `dollar` writes `$x$`
+  and `$$x$$` (on lines of their own) for clients that render KaTeX or
+  MathJax, and `plain` puts the formula in backticks without its markers,
+  so Markdown does not eat its `_`, `*` and `\`. The VS Code extension's
+  `zfls.docMath` is `plain` by default, as VS Code's hover renders no math.
+  fortls passes the markers on.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
   ...) shows its documentation (fortls #547), and so does hover on a word of
   an OpenMP or OpenACC directive (`!$omp parallel do`, `reduction`,

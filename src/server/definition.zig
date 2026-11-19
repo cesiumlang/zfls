@@ -23,6 +23,7 @@ const directives = @import("../data/directives.zig");
 const operators = @import("operators.zig");
 const assignment = @import("assignment.zig");
 const literals = @import("../literals.zig");
+const docmath = @import("../docmath.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -522,9 +523,13 @@ pub fn serveHover(self: *Server, a: Allocator, params: lsp.PositionParams) !Valu
             v = try json.from(a, lsp.Hover{ .contents = .{ .value = try a.print("{s}\n\n-----\n{s}", .{ md, block }) } });
         }
     };
-    if (!self.s.lowercase_hover) return v;
-    const md = json.str(json.get(json.get(v, "contents"), "value")) orelse return v;
-    return json.from(a, lsp.Hover{ .contents = .{ .value = try lowercaseKeywords(a, md) } });
+    // the formulas of the documentation (#272)
+    const math = docmath.Mode.of(self.s.doc_math);
+    if (!self.s.lowercase_hover and math == .keep) return v;
+    var md = json.str(json.get(json.get(v, "contents"), "value")) orelse return v;
+    md = try docmath.rewrite(a, md, math);
+    if (self.s.lowercase_hover) md = try lowercaseKeywords(a, md);
+    return json.from(a, lsp.Hover{ .contents = .{ .value = md } });
 }
 
 /// The keywords in the code blocks of hover Markdown in lowercase (fortls

@@ -261,6 +261,17 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.hoverSignature.markdownDescription%"
         },
+        "zfls.docMath": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "dollar",
+            "keep"
+          ],
+          "default": "plain",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.docMath.markdownDescription%"
+        },
         "zfls.preferImplementation": {
           "type": "boolean",
           "default": false,
