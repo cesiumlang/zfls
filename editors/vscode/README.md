@@ -78,6 +78,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.incrementalSync` | `true` | Send document changes incrementally |
 | `zfls.signatureHelp` | `true` | Signature help while typing arguments, instead of argument snippets |
 | `zfls.codeActions` | `true` | Code actions, such as implementing deferred type-bound procedures |
+| `zfls.docMath` | `plain` | Formulas of documentation comments (`\f$ x \f$`) in backticks without their markers; `dollar` writes `$x$` for a renderer with math, `keep` leaves them |
 | `zfls.hoverSignature` | `true` | Hover on an argument of a call also shows the dummy argument it is passed to |
 | `zfls.lowercaseHover` | `false` | Keywords in hover in lowercase (`real, intent(in) :: x`) |
 | `zfls.hoverNoTypeComponents` | `false` | Hover on a derived type or a variable of one does not list the type's components and type-bound procedures |
@@ -114,6 +115,7 @@ disable Modern Fortran when you install zfls (see
 | `zfls.excludeSuffixes` | none | File extensions not to index |
 | `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
+| `zfls.disableIntelDirectives` | `false` | Read Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`) as comments, every branch included |
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
@@ -218,7 +220,11 @@ line-length option of your own in `zfls.linter.extraArgs` replaces zfls's.
 
 Whether a file is free or fixed form follows its language in VS Code
 (`FortranFreeForm` or `FortranFixedForm`, from the file extension or
-`files.associations`), not the compiler's guess from the extension.
+`files.associations`), not the compiler's guess from the extension. The
+server reads an open document in that form too. A file that is not open
+has the form of its name and text, so give a fixed-form source a
+fixed-form extension, or one that says neither (`.inc`), when other files
+use what it declares.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

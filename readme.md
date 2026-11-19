@@ -54,8 +54,8 @@ command line options and configuration files.
   keywords before a new name is typed
 - Code actions: implementing deferred type-bound procedures, adding
   `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as
-  `real(8)`, and (Source Actions) the keywords of a file in upper, lower or
-  title case
+  `real(8)`, extracting statements into a subroutine, and (Source Actions)
+  the keywords of a file in upper, lower or title case
 - Formatting of documents and selections with findent, fprettify, Codee's
   formatter, forformat or a command of the user's (see
   [Formatting](#formatting))
@@ -80,9 +80,12 @@ command line options and configuration files.
   the language `FortranNamelist`): an outline of their groups and the
   variables each sets; they are never parsed as Fortran nor diagnosed
 - C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like
-  macros, `#include`); go to definition of a macro goes to the `#define`
-  in effect at the use, in the file or a header, and references and
-  highlights list its uses and the directives that name it
+  macros, `#include`), and Intel's conditional compilation directives
+  (`!DEC$ IF DEFINED (X)`, `!DIR$ IF (expr)`; see
+  [Intel conditional compilation](#intel-conditional-compilation)); go to
+  definition of a macro goes to the `#define` in effect at the use, in the
+  file or a header, and references and highlights list its uses and the
+  directives that name it
 - Documentation for intrinsic procedures (with the specific names, such as
   `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements,
   keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the
@@ -586,6 +589,25 @@ sets it.
 { "d_lines": "code" }
 ```
 
+### Intel conditional compilation
+
+Intel Fortran has conditional compilation in directive comments, which the
+compiler honors without `-fpp`: `!DEC$ IF DEFINED (sym)`, `!DIR$ IF (expr)`,
+`ELSEIF (expr)` (or `ELSE IF`), `ELSE`, `ENDIF` (or `END IF`), and
+`DEFINE sym [= value]` and `UNDEFINE sym`, which change the symbols for the
+rest of the file. The prefix is `!DEC$` or `!DIR$` in any case (in fixed form
+`!`, `C`, `c` or `*` in column 1: `CDEC$`). zfls skips the branches they
+leave out, in every Fortran file and after the C preprocessor's `#if`, as it
+does those of `#if`: they are not parsed (no false "declared twice", the
+declaration in effect in hover), are shown inactive, and fold. Conditions
+take the Fortran operators (`.AND.`, `.OR.`, `.NOT.`, `.EQ.` ... `.GE.`,
+`==`, `/=`, ...) and `DEFINED(sym)`. Symbols come from `pp_defs` and the
+`-D` flags of `compile_commands.json`, and are not case-sensitive.
+`#define` does not define them, as for the compiler. Other directives
+(`!DIR$ ATTRIBUTES`, `!DIR$ IVDEP`) stay comments.
+`disable_intel_directives` (`zfls.disableIntelDirectives` in VS Code) reads
+every branch, as before.
+
 ### Diagnostics
 
 Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems
@@ -1067,6 +1089,11 @@ zfls deliberately differs from fortls in a few places:
   Fortran #17); fortls reads them as comments, so its references and
   rename leave them out. `disable_openmp_conditional` reads them as fortls
   does.
+- Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`,
+  `!DIR$ IF (expr)`) leave their branches not taken out of parsing, as
+  `#if` does, in every file (FL #309); fortls reads every branch, which
+  gives false "declared twice" errors. `disable_intel_directives` reads
+  them as fortls does.
 - On Windows, a folder on a UNC path, as a network share or
   `\\wsl.localhost\...` is, is served: its URIs
   (`file://host/share/dir/file.f90`) are read as `\\host\share\dir\file.f90`
@@ -1109,6 +1136,15 @@ zfls deliberately differs from fortls in a few places:
   arguments, the passed-object argument of a type-bound procedure, the
   specific of a generic that the arguments fit and nested calls are
   followed. fortls reads the option and does nothing with it.
+- The `doc_math` option rewrites the formulas of documentation comments,
+  Doxygen's `\f$ x \f$`, `\f[ x \f]` and `\f{env}{ x \f}` and FORD's
+  `\( x \)` and `\[ x \]`, in hover, completion and signature help (fortls
+  #70): `keep` (the default) leaves them as written, `dollar` writes `$x$`
+  and `$$x$$` (on lines of their own) for clients that render KaTeX or
+  MathJax, and `plain` puts the formula in backticks without its markers,
+  so Markdown does not eat its `_`, `*` and `\`. The VS Code extension's
+  `zfls.docMath` is `plain` by default, as VS Code's hover renders no math.
+  fortls passes the markers on.
 - Hover on a statement or attribute keyword (`ALLOCATE`, `CALL`, `INTENT`,
   ...) shows its documentation (fortls #547), and so does hover on a word of
   an OpenMP or OpenACC directive (`!$omp parallel do`, `reduction`,
@@ -1156,6 +1192,17 @@ zfls deliberately differs from fortls in a few places:
   Actions putting the keywords of a file in upper, lower or title case
   (hansec #226, Modern Fortran #234), names spelled like keywords excepted.
   fortls only implements deferred procedures.
+- Refactoring (`refactor.extract`): selected statements of a procedure or
+  program move into a new internal subroutine after `CONTAINS` (of the
+  procedure, or of its host when it is an internal procedure itself), and a
+  CALL replaces them. The procedure's variables they use become its
+  arguments: `intent(in)` when only read, `intent(out)` when first assigned
+  whole and unconditionally and not read, `intent(inout)` otherwise (also
+  when passed to a procedure); arrays of assumed shape (lower bounds kept),
+  characters of assumed length. Refused, with the reason where the editor
+  shows it, when the statements return, EXIT or CYCLE a construct around
+  them, refer to a label outside them or are jumped into, or do not make up
+  whole constructs; free form only.
 - Calls of workspace procedures are checked (`argument-mismatch`): too
   many arguments, a keyword the procedure does not have, an argument given
   twice, a required (not OPTIONAL) argument missing, and the kind of type
@@ -1452,6 +1499,14 @@ zfls deliberately differs from fortls in a few places:
   free form, as compilers read it. fortls decides from the text alone, and
   takes a file with no line indented 1 to 4 columns (the Fortran stdlib's,
   indented 5) for fixed form. Other files are still told by their text.
+- A document the editor opens as `FortranFixedForm` or `FortranFreeForm`
+  (the languages of the VS Code extension, also set there with
+  `files.associations` or the language picker) is read in that form while
+  it is open, whatever its name and text say, and the compiler checks it
+  in that form (Modern Fortran #200, #222, #460, #904, #1131). Any other
+  language id (`fortran`, `fortran90`) leaves the form to the name and the
+  text, and so do the files that are not open. fortls does not read the
+  language id.
 - A form feed (a page break of old sources) is read as a blank, as compilers
   read it; fortls drops the statement of a line that starts with one
   (fortls #443).

@@ -137,6 +137,11 @@
       "type": "string",
       "default": "fortran90"
     },
+    "doc_math": {
+      "description": "The formulas of documentation comments (\\f$ x \\f$, \\( x \\), \\f[ x \\f]) in hover, completion and signature help: keep (as written), dollar ($x$ and $$x$$, for clients that render math) or plain (in backticks, without the markers) (default: keep)",
+      "type": "string",
+      "default": "keep"
+    },
     "prefer_implementation": {
       "description": "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface",
       "type": "boolean",
@@ -546,6 +551,11 @@
     },
     "disable_compile_commands": {
       "description": "Do not read a compile_commands.json",
+      "type": "boolean",
+      "default": false
+    },
+    "disable_intel_directives": {
+      "description": "Read Intel's conditional compilation directives (!DEC$ IF DEFINED (X), !DIR$ IF (expr), ELSEIF, ELSE, ENDIF, DEFINE, UNDEFINE) as comments; by default the branches they leave out are skipped, in every Fortran file",
       "type": "boolean",
       "default": false
     },

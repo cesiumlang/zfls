@@ -88,6 +88,9 @@ pub const Settings = struct {
     variable_hover: bool = false,
     hover_signature: bool = false,
     hover_language: []const u8 = "fortran90",
+    /// How the formulas of documentation comments (`\f$ x \f$`) reach the
+    /// client: `keep`, `dollar` (`$x$`) or `plain` (in backticks)
+    doc_math: []const u8 = "keep",
     /// Hover and go to definition use the implementation of a procedure
     /// declared in an interface (a separate module procedure's body in a
     /// submodule) rather than the interface
@@ -199,6 +202,9 @@ pub const Settings = struct {
     /// read no compilation database (the name of fortls's option, its
     /// upstream PR #504)
     disable_compile_commands: bool = false,
+    /// Read Intel's conditional compilation directives (`!DEC$ IF DEFINED
+    /// (X)`, `!DIR$ IF (expr)`) as comments, all branches included
+    disable_intel_directives: bool = false,
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
@@ -294,6 +300,7 @@ pub const opts = [_]Opt{
     .{ .long = "variable_hover", .kind = .flag, .help = "DEPRECATED: This option is always on. Show hover information for variables", .group = "Hover options" },
     .{ .long = "hover_signature", .kind = .flag, .help = "Hover on an actual argument of a call also shows the dummy argument it is passed to", .group = "Hover options" },
     .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
+    .{ .long = "doc_math", .kind = .string, .metavar = "MODE", .help = "The formulas of documentation comments (\\f$ x \\f$, \\( x \\), \\f[ x \\f]) in hover, completion and signature help: keep (as written), dollar ($x$ and $$x$$, for clients that render math) or plain (in backticks, without the markers) (default: keep)", .group = "Hover options" },
     .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
     .{ .long = "hover_no_type_components", .kind = .flag, .help = "Hover on a derived type or a variable of one does not list the type's components and type-bound procedures", .group = "Hover options" },
     .{ .long = "hover_plain_comments", .kind = .flag, .help = "Plain comments directly above a declaration, at the end of its line or right under a procedure's header are its documentation when it has no !>, !< or !! documentation", .group = "Hover options" },
@@ -345,6 +352,7 @@ pub const opts = [_]Opt{
     .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
     .{ .long = "compile_commands", .kind = .string, .metavar = "PATH", .help = "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root, root/build or root/builddir)", .group = "Preprocessor options" },
     .{ .long = "disable_compile_commands", .kind = .flag, .help = "Do not read a compile_commands.json", .group = "Preprocessor options" },
+    .{ .long = "disable_intel_directives", .kind = .flag, .help = "Read Intel's conditional compilation directives (!DEC$ IF DEFINED (X), !DIR$ IF (expr), ELSEIF, ELSE, ENDIF, DEFINE, UNDEFINE) as comments; by default the branches they leave out are skipped, in every Fortran file", .group = "Preprocessor options" },
     .{ .long = "pp_defs", .kind = .json, .metavar = "JSON", .help = "A dictionary with additional preprocessor definitions. Preprocessor definitions are normally included via INCLUDE_DIRS", .group = "Preprocessor options" },
 
     .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
@@ -675,6 +683,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Hover options
     s.hover_signature = jsonBool(json.get(cfg, "hover_signature"), s.hover_signature);
     if (json.str(json.get(cfg, "hover_language"))) |hl| s.hover_language = hl;
+    if (json.str(json.get(cfg, "doc_math"))) |dm| s.doc_math = dm;
     s.prefer_implementation = jsonBool(json.get(cfg, "prefer_implementation"), s.prefer_implementation);
     s.lowercase_hover = jsonBool(json.get(cfg, "lowercase_hover"), s.lowercase_hover);
     s.hover_no_type_components = jsonBool(json.get(cfg, "hover_no_type_components"), s.hover_no_type_components);
@@ -746,6 +755,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "include_dirs")) |v| s.include_dirs = try jsonList(a, v);
     if (json.get(cfg, "compile_commands")) |v| s.compile_commands = json.str(v);
     s.disable_compile_commands = jsonBool(json.get(cfg, "disable_compile_commands"), s.disable_compile_commands);
+    s.disable_intel_directives = jsonBool(json.get(cfg, "disable_intel_directives"), s.disable_intel_directives);
     // Debug options
     if (jsonBool(json.get(cfg, "debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
 }

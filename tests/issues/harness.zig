@@ -147,6 +147,9 @@ pub const Options = struct {
     /// the client registers signature help, code actions and formatting
     /// when the server asks (`client/registerCapability`)
     dynamic_registration: bool = false,
+    /// the client shows code actions that cannot be taken, with why
+    /// (`codeAction.disabledSupport`)
+    disabled_actions: bool = false,
     /// the client watches the files the server asks it to
     /// (`workspace/didChangeWatchedFiles`)
     watch_registration: bool = false,
@@ -244,7 +247,7 @@ pub const Workspace = struct {
             .capabilities = .{ .textDocument = .{
                 .documentSymbol = .{ .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols },
                 .signatureHelp = dynamic,
-                .codeAction = dynamic,
+                .codeAction = .{ .dynamicRegistration = opts.dynamic_registration, .disabledSupport = opts.disabled_actions },
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
                 .completion = .{ .completionItem = .{
@@ -454,6 +457,17 @@ pub const Workspace = struct {
             .version = 1,
             .text = w.text(name),
         } }));
+    }
+
+    /// `textDocument/didClose`
+    pub fn close(w: *Workspace, name: []const u8) !void {
+        _ = try w.server.dispatchPublic(w.a(), "textDocument/didClose", try w.docParams(name));
+    }
+
+    /// Whether the server reads a file as fixed form
+    pub fn isFixed(w: *Workspace, name: []const u8) !bool {
+        const file = w.server.workspace.get(try w.server.pathFromUri(w.a(), try w.uri(name))) orelse return error.FileNotInWorkspace;
+        return file.fixed;
     }
 
     pub fn implementation(w: *Workspace, name: []const u8, p: Pos) !?Location {

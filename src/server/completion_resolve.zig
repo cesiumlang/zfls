@@ -12,6 +12,7 @@ const str = @import("../str.zig");
 const json = @import("../json.zig");
 const lsp = @import("../lsp.zig");
 const objects = @import("../objects.zig");
+const docmath = @import("../docmath.zig");
 
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -27,11 +28,13 @@ pub fn wanted(caps: lsp.ClientCapabilities) bool {
     return false;
 }
 
-/// The documentation of an item for `obj`: its hover text
+/// The documentation of an item for `obj`: its hover text, its formulas
+/// written as `doc_math` says
 pub fn documentation(self: *Server, a: Allocator, obj: *const Obj) !?lsp.MarkupContent {
     const hover_msg = try obj.getHoverMd(a, true, null);
     if (hover_msg.len == 0) return null;
-    return .{ .value = try str.replaceFirst(a, hover_msg, "```{langid}", try a.print("```{s}", .{self.s.hover_language})) };
+    const md = try str.replaceFirst(a, hover_msg, "```{langid}", try a.print("```{s}", .{self.s.hover_language}));
+    return .{ .value = try docmath.rewrite(a, md, docmath.Mode.of(self.s.doc_math)) };
 }
 
 /// What finds `obj` again, null for an object that cannot be found (its

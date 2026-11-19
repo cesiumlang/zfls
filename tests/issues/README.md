@@ -61,6 +61,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#443](https://github.com/fortran-lang/fortls/issues/443) | a form feed at the start of a line hides its statement | parsing | fixed (patched) | fails (per the issue) |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
+| [#309](https://github.com/fortran-lang/fortls/issues/309) | Intel's `!DEC$ IF DEFINED` / `!DIR$ IF` branches not taken are skipped: no false "declared twice", hover shows the declaration in effect | intel_directives | fixed (feature) | every branch read |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
 | [#301](https://github.com/fortran-lang/fortls/issues/301) | `INCLUDE` statement searched in `include_dirs`, go to definition on it | workspace | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
@@ -153,5 +154,6 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | [#617](https://github.com/fortran-lang/vscode-fortran-support/issues/617) | fypp: inline `${...}$`, `$:` and `@:` are no Fortran names (no warnings, no tokens); the extension highlights them | highlighting | fixed (feature) | read as Fortran |
 | [#234](https://github.com/fortran-lang/vscode-fortran-support/issues/234) | keywords in title case (a Source Action) | diagnostics | fixed (feature) | none |
 | [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |
+| [#200](https://github.com/fortran-lang/vscode-fortran-support/issues/200) | a document opened as `FortranFixedForm` or `FortranFreeForm` is read in that form, whatever its extension (also #222, #460, #904, #1131) | parsing | fixed (patched) | the language id is not read |
 | [#1087](https://github.com/fortran-lang/vscode-fortran-support/issues/1087) | a workspace on a UNC path (`file://host/share/...`; Windows only, through `\\localhost\c$`, skipped where that share cannot be reached) answers hover, definition and workspace symbols | workspace | fixed (patched) | not checked |
 | [#1296](https://github.com/fortran-lang/vscode-fortran-support/issues/1296) | the outline of a namelist file (`.nml`, or a document opened as `FortranNamelist`): its groups and the variables they set, never parsed as Fortran | outline | fixed (feature) | not served |

@@ -148,6 +148,8 @@ pub const CodeAction = struct {
     edit: WorkspaceEdit,
     diagnostics: []const Diagnostic,
     isPreferred: ?bool = null,
+    /// why the action cannot be taken (its edit then changes nothing)
+    disabled: ?struct { reason: []const u8 } = null,
 };
 
 pub const PublishDiagnosticsParams = struct {
@@ -376,7 +378,11 @@ pub const ClientCapabilities = struct {
         signatureHelp: Dynamic = .{},
         /// present: the client pulls diagnostics (`textDocument/diagnostic`)
         diagnostic: ?Dynamic = null,
-        codeAction: Dynamic = .{},
+        codeAction: struct {
+            dynamicRegistration: bool = false,
+            /// it shows actions that cannot be taken, with why
+            disabledSupport: bool = false,
+        } = .{},
         formatting: Dynamic = .{},
         rangeFormatting: Dynamic = .{},
     } = .{},

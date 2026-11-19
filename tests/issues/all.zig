@@ -17,6 +17,7 @@ test {
     _ = @import("debugging.zig");
     _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
+    _ = @import("doc_math.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
     _ = @import("ends.zig");
@@ -29,6 +30,7 @@ test {
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
     _ = @import("hover_types.zig");
+    _ = @import("intel_directives.zig");
     _ = @import("plain_comments.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
@@ -37,6 +39,7 @@ test {
     _ = @import("openmp.zig");
     _ = @import("outline.zig");
     _ = @import("outside_sources.zig");
+    _ = @import("refactor.zig");
     _ = @import("rename.zig");
     _ = @import("same_name_modules.zig");
     _ = @import("settings.zig");

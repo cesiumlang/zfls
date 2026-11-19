@@ -82,10 +82,11 @@ pub const State = struct {
 /// The settings read when the workspace is indexed: changing one
 /// re-indexes it
 const index_settings = [_][]const u8{
-    "source_dirs",          "incl_suffixes",            "excl_suffixes",        "excl_paths",
-    "comment_markers",      "d_lines",                  "sort_keywords",        "recursion_limit",
-    "lowercase_intrinsics", "pp_suffixes",              "include_dirs",         "pp_defs",
-    "compile_commands",     "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
+    "source_dirs",              "incl_suffixes",            "excl_suffixes",        "excl_paths",
+    "comment_markers",          "d_lines",                  "sort_keywords",        "recursion_limit",
+    "lowercase_intrinsics",     "pp_suffixes",              "include_dirs",         "pp_defs",
+    "compile_commands",         "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
+    "disable_intel_directives",
 };
 
 fn isIndexSetting(comptime name: []const u8) bool {

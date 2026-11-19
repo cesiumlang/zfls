@@ -14,6 +14,7 @@ const C = @import("constants.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
 const FortranFile = @import("parser.zig").FortranFile;
+const intel = @import("preprocessor/intel.zig");
 
 /// LSP `SymbolKind`s
 const Kind = struct {
@@ -308,11 +309,23 @@ fn endsWithAmpersand(text: []const u8) bool {
     return std.mem.endsWith(u8, std.mem.trimEnd(u8, text[0..selection.codeEnd(text)], " \t\r"), "&");
 }
 
-/// `#if`/`#ifdef`/`#ifndef` ... `#elif`/`#else` ... `#endif`: each branch
+/// `#if`/`#ifdef`/`#ifndef` ... `#elif`/`#else` ... `#endif`: each branch;
+/// and those of Intel's `!DEC$ IF` ... `!DEC$ ENDIF`
 fn preprocessorFolds(a: Allocator, file: *const FortranFile, out: *std.ArrayList(lsp.FoldingRange)) Allocator.Error!void {
     var open: std.ArrayList(usize) = .empty;
+    var open_intel: std.ArrayList(usize) = .empty;
     for (0..file.nLines()) |ln| {
         const text = file.getLine(ln, false) orelse continue;
+        if (intel.directive(file.fixed, text)) |d| switch (d.kind) {
+            .if_ => try open_intel.append(a, ln),
+            .elseif, .else_ => if (open_intel.items.len > 0) {
+                const top = &open_intel.items[open_intel.items.len - 1];
+                try fold(a, out, top.*, ln -| 1, null);
+                top.* = ln;
+            },
+            .endif => if (open_intel.pop()) |start| try fold(a, out, start, ln -| 1, null),
+            .define, .undefine => {},
+        };
         const t = std.mem.trimStart(u8, text, " \t");
         if (t.len == 0 or t[0] != '#') continue;
         var it = helpers.words(t[1..]);

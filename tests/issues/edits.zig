@@ -27,6 +27,23 @@ pub fn applyAction(w: *h.Workspace, name: []const u8, first: i64, last: i64, onl
     return try apply(a, w.text(name), json.items(edits));
 }
 
+/// Why the code action titled `title`, asked for on 0-based lines
+/// `first`..`last` with the kinds `only`, cannot be taken (its `disabled`
+/// reason); null when there is no such action or it can be taken
+pub fn disabledReason(w: *h.Workspace, name: []const u8, first: i64, last: i64, only: ?[]const []const u8, title: []const u8) !?[]const u8 {
+    const a = w.arena.allocator();
+    const v = try w.server.dispatchPublic(a, "textDocument/codeAction", try json.from(a, .{
+        .textDocument = .{ .uri = try w.uri(name) },
+        .range = .{ .start = .{ .line = first, .character = 0 }, .end = .{ .line = last, .character = 0 } },
+        .context = .{ .only = only },
+    }));
+    for (json.items(v)) |act| {
+        if (!std.mem.eql(u8, json.str(json.get(act, "title")) orelse "", title)) continue;
+        if (json.str(json.path(act, &.{ "disabled", "reason" }) orelse .null)) |r| return r;
+    }
+    return null;
+}
+
 /// `text` with the LSP text `edits` made (ASCII text)
 pub fn apply(a: std.mem.Allocator, text: []const u8, edits: []const Value) ![]const u8 {
     var starts: std.ArrayList(usize) = .empty;
