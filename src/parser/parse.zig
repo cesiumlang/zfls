@@ -25,6 +25,7 @@ const Trace = parser.Trace;
 const Options = parser.Options;
 const DefResult = @import("definitions.zig").DefResult;
 const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
+const attributes = @import("attributes.zig");
 
 pub fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
     if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
@@ -80,6 +81,8 @@ pub const Parser = struct {
     comment_re: *const regex.Regex = undefined,
     cur_line: usize = 0,
     doc_re: *const regex.Regex = undefined,
+    /// what the attribute statements say, applied at the end
+    attrs: std.ArrayList(attributes.Attr) = .empty,
 
     pub fn dbg(p: *const Parser, comptime fmt: []const u8, args: anytype) void {
         Trace.print(p.opts.trace, fmt, args);
@@ -186,6 +189,7 @@ pub const Parser = struct {
                 line_stripped = line;
                 line_no_comment = line;
             }
+            try p.placeMain(a, line, line_no_comment, line_no);
             // UNION and MAP in a DEC structure only overlay its fields: `END
             // MAP` ends no scope
             if (ast.current_scope) |cs| if (cs.kind == .type and R().DEC_UNION_MAP.match(line_no_comment) != null) {
@@ -221,7 +225,8 @@ pub const Parser = struct {
                 ast.pending_doc = null;
                 continue;
             }
-            if (try p.parseParameterStmt(a, line_no_comment)) {
+            if (try attributes.read(sa, line_no_comment, ast.current_scope, line_no, &p.attrs)) {
+                p.dbg("{s} !!! ATTRIBUTE statement - Ln:{d}", .{ str.strip(line_no_comment), line_no });
                 ast.pending_doc = null;
                 continue;
             }
@@ -236,6 +241,7 @@ pub const Parser = struct {
             const obj_read = (try getFortranDefinition(a, line)) orelse continue;
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
         }
+        try attributes.apply(ast, sa, p.attrs.items, p.opts.sort_keywords);
         try ast.closeFile(line_no);
     }
 
@@ -490,6 +496,7 @@ pub const Parser = struct {
             },
             .vis => |info| {
                 if (ast.current_scope) |cs| {
+                    if (ast.inMain()) try ast.addMainError(.statement_without_scope, "Visibility statement without enclosing scope", line_no, 0, null);
                     if (info.obj_names.len == 0 and info.private) {
                         cs.def_vis = .private;
                     } else if (info.private) {
@@ -507,14 +514,54 @@ pub const Parser = struct {
         }
     }
 
+    /// A statement outside every program unit is in the unnamed scope: of a
+    /// main program without a PROGRAM statement, or the text of an include
+    /// (`Ast.openMain`). A program unit that starts there leaves it, but for
+    /// a procedure after its CONTAINS.
+    fn placeMain(p: *Parser, a: Allocator, line: []const u8, code: []const u8, ln: usize) !void {
+        const ast = p.file_ast;
+        const in_main = ast.inMain();
+        if (ast.current_scope != null and !in_main) return;
+        if (str.strip(code).len == 0 or helpers.isPpDirective(line) or R().END_WORD.match(code) != null) return;
+        if (continuesDirective(p.file, ln -| 1)) return;
+        const unit = if (try getFortranDefinition(a, line)) |def| switch (def) {
+            .mod, .smod, .prog, .block_data => true,
+            .sub, .fun => !in_main or ast.none_scope.?.scopeData().contains_start == null,
+            // an INCLUDE may bring in whole program units
+            .inc => !in_main,
+            else => false,
+        } else false;
+        if (!unit and !in_main) {
+            try ast.openMain(ln);
+        } else if (unit and in_main) ast.leaveMain();
+    }
+
+    /// Whether line `i` (0-based) is a part of a preprocessor directive
+    /// continued with `\` (a macro's body), which a file that is not
+    /// preprocessed has as is
+    fn continuesDirective(f: *const FortranFile, i: usize) bool {
+        var k = i;
+        while (k > 0) {
+            k -= 1;
+            const l = str.rstrip(f.getLine(k, false) orelse return false);
+            if (!std.mem.endsWith(u8, l, "\\")) return false;
+            if (helpers.isPpDirective(l)) return true;
+        }
+        return false;
+    }
+
     fn parseEndScopeWord(p: *Parser, line: []const u8, ln: usize, match: ?regex.Match) !bool {
         const m = match orelse return false;
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
         var end_scope_word: ?[]const u8 = null;
-        // a main program without a PROGRAM statement: its statements are
-        // outside any scope, and END ends it
-        if (m.group(1) == null and cs == ast.none_scope and ast.scope_stack.items.len == 0) return true;
+        // END or END PROGRAM after statements outside every program unit:
+        // they are a main program without a PROGRAM statement
+        if (ast.inMain()) if (m.group(1) == null or std.ascii.eqlIgnoreCase(m.group(1).?, "PROGRAM")) {
+            ast.endMain(ln);
+            p.dbg("{s} !!! END main program - Ln:{d}", .{ line, ln });
+            return true;
+        };
         if (m.group(1) == null) {
             end_scope_word = "";
             if (cs.reqNamedEnd() and cs != ast.none_scope) {
@@ -552,8 +599,6 @@ pub const Parser = struct {
         return did_close;
     }
 
-    /// `PARAMETER (name = value, ...)`: makes variables already declared in
-    /// the current scope constants, with their values (upstream #203)
     /// DEC structures (fortls #171, hansec #230): STRUCTURE defines a
     /// derived type (a nested one with a name list also declares those
     /// fields of the structure around it), RECORD declares variables of one
@@ -588,32 +633,11 @@ pub const Parser = struct {
         return true;
     }
 
-    fn parseParameterStmt(p: *Parser, a: Allocator, line: []const u8) !bool {
-        const m = R().PARAMETER_STMT.match(line) orelse return false;
-        const ast = p.file_ast;
-        const cs = ast.current_scope orelse return false;
-        const pa = ast.allocator();
-        for (try helpers.splitArgs(a, m.group(1) orelse "")) |item| {
-            const eq = std.mem.findScalar(u8, item, '=') orelse continue;
-            const name = str.strip(item[0..eq]);
-            for (cs.childList()) |child| {
-                if (child.kind != .variable or !std.ascii.eqlIgnoreCase(child.name, name)) continue;
-                if (!child.varData().is_const) {
-                    child.varData().is_const = true;
-                    try child.keywords.append(pa, C.KW.parameter);
-                }
-                const words = try str.splitWhitespace(a, str.strip(item[eq + 1 ..]));
-                child.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
-            }
-        }
-        p.dbg("{s} !!! PARAMETER statement - Ln:{d}", .{ str.strip(line), p.cur_line });
-        return true;
-    }
-
     fn parseImplicit(p: *Parser, line: []const u8, ln: usize) !bool {
         const m = R().IMPLICIT.match(line) orelse return false;
         const ast = p.file_ast;
         if (ast.current_scope) |cs| {
+            if (ast.inMain()) try ast.addMainError(.statement_without_scope, "IMPLICIT statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
             // the types of the letters, for names that are not declared
             var spec = line[m.start(1)..];
@@ -637,6 +661,7 @@ pub const Parser = struct {
         var msg: ?[]const u8 = null;
         var code: C.DiagCode = .statement_without_scope;
         if (ast.current_scope) |cs| {
+            if (ast.inMain()) try ast.addMainError(.statement_without_scope, "CONTAINS statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
             cs.markContains(ln) catch {
                 msg = "Multiple CONTAINS statements in scope";
                 code = .multiple_contains;

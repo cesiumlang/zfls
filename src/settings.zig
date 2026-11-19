@@ -86,6 +86,10 @@ pub const Settings = struct {
     /// -ffixed-line-length-n); the rest is a comment. -1: no limit
     fixed_line_length: i64 = -1,
     disable_diagnostics: bool = false,
+    /// The milliseconds a document's text stays unchanged before zfls's
+    /// diagnostics of it are published again (0: with each change;
+    /// negative: not before it is saved)
+    diagnostics_change_delay: i64 = 300,
     /// Publish the diagnostics of every workspace file, not only of the
     /// open ones
     workspace_diagnostics: bool = false,
@@ -269,6 +273,7 @@ pub const opts = [_]Opt{
     .{ .long = "max_comment_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum comment line length (default: -1)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "fixed_line_length", .kind = .int, .metavar = "INTEGER", .help = "Columns of code in a fixed-form line, as gfortran's -ffixed-line-length-n (72, 80, 132): the rest is highlighted as a comment and is not read for names (default: -1, no limit)", .group = "Sources file parsing options" },
     .{ .long = "disable_diagnostics", .kind = .flag, .help = "Disable diagnostics", .group = "Diagnostic options (error swigles)" },
+    .{ .long = "diagnostics_change_delay", .kind = .int, .metavar = "MS", .help = "The milliseconds without a change before the diagnostics of a document that is edited are published again (default: 300; 0: with each change; negative: only when it is opened and saved)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "workspace_diagnostics", .kind = .flag, .help = "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)", .group = "Diagnostic options (error swigles)" },
     .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
     .{ .long = "disable_bind_c_search", .kind = .flag, .help = "Go to definition of a BIND(C) procedure does not search the workspace's C files for its C declaration (an editor with a C language server can ask that instead)", .group = "Symbols options" },
@@ -643,6 +648,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
     s.fixed_line_length = jsonInt(json.get(cfg, "fixed_line_length"), s.fixed_line_length);
     s.disable_diagnostics = jsonBool(json.get(cfg, "disable_diagnostics"), s.disable_diagnostics);
+    s.diagnostics_change_delay = jsonInt(json.get(cfg, "diagnostics_change_delay"), s.diagnostics_change_delay);
     s.workspace_diagnostics = jsonBool(json.get(cfg, "workspace_diagnostics"), s.workspace_diagnostics);
     if (json.get(cfg, "diagnostic_severity")) |v| try applyDiagnosticSeverity(a, s, v);
     if (json.get(cfg, "external_modules")) |v| s.external_modules = try jsonList(a, v);
