@@ -889,6 +889,11 @@ zfls deliberately differs from fortls in a few places:
   `LOGICAL(1)`, `dp_'x'` `CHARACTER(LEN=1, KIND=dp)`, and `z'ff'` a BOZ
   constant of value 255 (fortls #125). fortls shows the type without its
   kind, and nothing on `1d0`, `7_8` or BOZ constants.
+- Hover on the file name of an `#include` directive or `INCLUDE` statement
+  links the file it reads (relative to the workspace root when it is
+  inside it), and is empty when the file is not found; fortls answers as
+  for a character literal. Strings and numbers on other preprocessor lines
+  (`#define X "text"`) are no literals and get no hover.
 - Hover on a name that is not declared shows the type that the IMPLICIT
   statements of its scope and the surrounding scopes, or the default rules
   (I to N INTEGER, other letters REAL), give it (hansec #201); fortls has
