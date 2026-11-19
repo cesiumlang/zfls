@@ -940,7 +940,18 @@ zfls deliberately differs from fortls in a few places:
 - On a call of a generic interface, signature help shows the signature of
   each of its procedures, the one the arguments so far fit active (fortls
   #6), and go to definition goes to that procedure (hansec #135); fortls
-  shows no signature and goes to the interface.
+  shows no signature and goes to the interface. The procedure is the one
+  the arguments fit by their type, kind and rank (#273), when zfls can type
+  them (literals, variables, expressions of these): `area(k)` with an
+  integer `k` takes `area_i`, `twice(1.0d0)` the `REAL(8)` one, `total(a)`
+  with an array `a` the one with an array argument, a call with an array
+  an elemental procedure unless a nonelemental one takes the array, and
+  derived types (an extension for a `CLASS`). Type-bound generics resolve
+  the same way. When the types do not tell (an argument of unknown type, or
+  several procedures still fit), it is the first that takes as many
+  arguments with those keywords. Go to implementation, the inlay hints,
+  the call hierarchy and hover (which shows only that procedure when the
+  call fits no other) take the same procedure.
 - Signature help stays on the call while the cursor is inside an array
   constructor argument (`call s([1, 2, ...`, `(/ ... /)`, an implied DO):
   the constructor is one argument, and a call inside it has its own

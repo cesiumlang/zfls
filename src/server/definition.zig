@@ -603,7 +603,13 @@ fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     } else if (vt == C.TypeId.subroutine or vt == C.TypeId.function or vt == C.TypeId.module or vt == C.TypeId.class) {
         try hover_array.append(a, try str.replaceFirst(a, try var_obj.getHoverMd(a, true, null), "```{langid}", lang_fence));
     } else if (vt == C.TypeId.interface) {
-        for (var_obj.memList()) |member| {
+        // a call of a generic interface: the procedure it references, when
+        // the arguments fit no other
+        var members = var_obj.memList();
+        if (try signature.resolved(self, a, d.file, d.line, d.col, var_obj)) |s| if (s.unique) {
+            members = try a.dupe(*Obj, &.{s.obj});
+        };
+        for (members) |member| {
             const h = try member.getHover(a, true, null);
             if (h.msg != null) try hover_array.append(a, try createHover(self, a, h.msg, h.docs));
         }
@@ -713,7 +719,8 @@ fn interfaceOf(self: *Server, a: Allocator, obj: *Obj) !?*Obj {
 
 pub fn serveImplementation(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const d = (try definitionAt(self, a, params, false)) orelse return .null;
-    const var_obj = d.obj;
+    // a call of a generic interface: the procedure it references
+    const var_obj = (try signature.genericSpecific(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj;
     if (var_obj.kind == .intrinsic) return .null;
     if (try externalTarget(self, a, d.file.ast.?, var_obj)) |target| {
         if (target.file_ast.file != null) return createRefLink(self, a, target);
