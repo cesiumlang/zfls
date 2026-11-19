@@ -626,6 +626,18 @@ says so once and logs that output.
   they are opened only, not saved.
 - `compiler_no_dependencies`: do not compile the modules a file uses first,
   nor check again the files that use a module when its file is saved.
+- The project's own options: without `compiler_args`, a file that has a
+  command in `compile_commands.json` (or another file of its directory
+  that has one) is checked with that command's arguments in place of the
+  compiler's defaults, in the command's `directory`, and with the
+  command's compiler when its name is the configured compiler's (and
+  `compiler_path` is not set). zfls keeps its syntax-only, form and module
+  directory options, leaves out the command's compiler, `-c`, `-o`, source
+  file, module directory (`-J`, `-module`, `/module:`...), dependency files
+  (`-MD`, `-MF`...) and color options, and does not add `pp_defs` (the
+  command has its own `-D`). The modules a file uses are compiled with
+  their own commands. `compiler_no_compile_commands` turns this off, as
+  `disable_compile_commands` does with the rest of the file.
 - `compiler_fypp`: run [fypp](https://fypp.readthedocs.io) (this executable)
   on each file first, with line markers naming the file, so that the
   compiler's messages point into it; `compiler_fypp_args` are fypp's own

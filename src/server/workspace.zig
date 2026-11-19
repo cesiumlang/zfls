@@ -129,11 +129,13 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
 /// project's compile_commands.json and fpm.toml to the options' own
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
+    self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
+                self.compile_commands = found.commands;
                 self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
