@@ -16,9 +16,18 @@ fn R() *const patterns.Patterns {
 
 /// Get full word containing given cursor position
 pub fn expandName(line: []const u8, char_pos: usize) []const u8 {
-    const regexs = [_]*const @import("regex.zig").Regex{
-        &R().LOGICAL, &R().SQ_STRING, &R().DQ_STRING, &R().WORD, &R().NUMBER,
-    };
+    var logicals = R().LOGICAL.iterator(line);
+    while (logicals.next()) |m| {
+        if (m.start(0) <= char_pos and char_pos <= m.end(0)) return m.str();
+    }
+    // the string literals, found from left to right (#231)
+    var from: usize = 0;
+    while (std.mem.findAnyPos(u8, line, from, "'\"")) |open| {
+        const close = stringEnd(line, open) orelse break;
+        if (open <= char_pos and char_pos <= close + 1) return line[open .. close + 1];
+        from = close + 1;
+    }
+    const regexs = [_]*const @import("regex.zig").Regex{ &R().WORD, &R().NUMBER };
     for (regexs) |r| {
         var it = r.iterator(line);
         while (it.next()) |m| {
@@ -237,40 +246,44 @@ pub fn stripLineLabel(a: Allocator, line: []const u8) !LabelResult {
     return .{ .line = out, .label = line[start..end] };
 }
 
-/// Strips string literals from code line: each '...', then each "..." in
-/// what is left (SQ_STRING, DQ_STRING). `maintain_len` blanks their contents
-/// instead of removing them.
+/// The index of the quote that closes the string literal opened by the
+/// quote at `s[open]`: the next quote of the same kind that is not doubled
+/// (`'it''s'`); a quote of the other kind is text. Null when the line ends
+/// inside the literal.
+pub fn stringEnd(s: []const u8, open: usize) ?usize {
+    const q = s[open];
+    var i = open + 1;
+    while (std.mem.findScalarPos(u8, s, i, q)) |close| {
+        if (close + 1 < s.len and s[close + 1] == q) {
+            i = close + 2;
+            continue;
+        }
+        return close;
+    }
+    return null;
+}
+
+/// Strips string literals from code line, found from left to right: the
+/// first quote opens a literal and only the same kind closes it.
+/// `maintain_len` blanks their contents instead of removing them. A literal
+/// the line ends in is left as it is.
 pub fn stripStrings(a: Allocator, in_line: []const u8, maintain_len: bool) ![]const u8 {
     if (std.mem.findAny(u8, in_line, "'\"") == null) return in_line;
-    if (maintain_len) {
-        const out = try a.dupe(u8, in_line);
-        blankQuoted(out, '\'');
-        blankQuoted(out, '"');
-        return out;
-    }
-    return removeQuoted(a, try removeQuoted(a, in_line, '\''), '"');
-}
-
-/// Blank the inside of each `q...q` in `s`, pairing quotes left to right
-fn blankQuoted(s: []u8, q: u8) void {
-    var i: usize = 0;
-    while (std.mem.findScalarPos(u8, s, i, q)) |open| {
-        const close = std.mem.findScalarPos(u8, s, open + 1, q) orelse return;
-        @memset(s[open + 1 .. close], ' ');
-        i = close + 1;
-    }
-}
-
-/// `s` without each `q...q`, pairing quotes left to right
-fn removeQuoted(a: Allocator, s: []const u8, q: u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
+    try out.ensureTotalCapacity(a, in_line.len);
     var last: usize = 0;
-    while (std.mem.findScalarPos(u8, s, last, q)) |open| {
-        const close = std.mem.findScalarPos(u8, s, open + 1, q) orelse break;
-        try out.appendSlice(a, s[last..open]);
+    while (std.mem.findAnyPos(u8, in_line, last, "'\"")) |open| {
+        const close = stringEnd(in_line, open) orelse break;
+        if (maintain_len) {
+            out.appendSliceAssumeCapacity(in_line[last .. open + 1]);
+            out.appendNTimesAssumeCapacity(' ', close - open - 1);
+            out.appendAssumeCapacity(in_line[close]);
+        } else {
+            out.appendSliceAssumeCapacity(in_line[last..open]);
+        }
         last = close + 1;
     }
-    try out.appendSlice(a, s[last..]);
+    out.appendSliceAssumeCapacity(in_line[last..]);
     return out.items;
 }
 
@@ -650,9 +663,12 @@ pub fn mapKeywords(a: Allocator, keywords: []const []const u8, sort: bool) !Mapp
             if (c > o) info.codimension = kw[o + 1 .. c];
         };
         if (std.mem.eql(u8, prefix, "intent") or std.mem.eql(u8, prefix, "dimension") or std.mem.eql(u8, prefix, "pass")) {
-            if (getParenSubstring(kw)) |sub| {
+            // blanks may surround a name: `pass ( self )` names `self`, and
+            // `intent ( in )` is IN (the bounds keep theirs, as fortls)
+            if (getParenSubstring(kw)) |sub_raw| {
+                const sub = str.strip(sub_raw);
                 if (std.mem.eql(u8, prefix, "intent")) info.intent = sub;
-                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub;
+                if (std.mem.eql(u8, prefix, "dimension")) info.dimension = sub_raw;
                 if (std.mem.eql(u8, prefix, "pass")) info.pass = sub;
             }
         }
@@ -743,6 +759,18 @@ test "helper functions" {
     try testing.expect(!detectFixedFormat(&.{ "#if defined(A) \\\\", "&& \\\\", "!defined(B)", " free format", "#endif" }));
 
     try testing.expectEqualStrings("print *, '   '", try stripStrings(a, "print *, 'abc'", true));
+    // the first quote opens a literal, only the same kind closes it (#231)
+    try testing.expectEqualStrings("x = \"    \", t = ' '", try stripStrings(a, "x = \"it's\", t = 'x'", true));
+    try testing.expectEqualStrings("f(\"    \", \"     \", 1)", try stripStrings(a, "f(\"it's\", \"Bob's\", 1)", true));
+    try testing.expectEqualStrings("f(, , 1)", try stripStrings(a, "f(\"it's\", \"Bob's\", 1)", false));
+    try testing.expectEqualStrings("print *, '        ', \"    \", x", try stripStrings(a, "print *, 'say \"hi\"', \"it's\", x", true));
+    // a doubled quote stays inside
+    try testing.expectEqualStrings("f('     ', \"    \", '', 1)", try stripStrings(a, "f('it''s', \"a\"\"b\", '', 1)", true));
+    try testing.expectEqualStrings("f(, 1)", try stripStrings(a, "f('it''s', 1)", false));
+    // a literal the line ends in is left as it is
+    try testing.expectEqualStrings("a = , b = \"it's", try stripStrings(a, "a = 'x', b = \"it's", false));
+    try testing.expectEqual(@as(?usize, 6), stringEnd("'it''s'", 0));
+    try testing.expectEqual(@as(?usize, null), stringEnd("'it''s", 0));
     try testing.expect((try getLinePrefix(a, &.{""}, "#pragma once", 0, true)) == null);
 }
 
@@ -791,10 +819,6 @@ test "the line scanners agree with the patterns they replace" {
     defer free_format_test.deinit();
     var line_label = try Regex.compile(ta, "[ ]*([0-9]+)[ ]+", regex.I);
     defer line_label.deinit();
-    var sq_string = try Regex.compile(ta, "\\'[^\\']*\\'", regex.I);
-    defer sq_string.deinit();
-    var dq_string = try Regex.compile(ta, "\\\"[^\\\"]*\\\"", regex.I);
-    defer dq_string.deinit();
 
     var arena = std.heap.ArenaAllocator.init(ta);
     defer arena.deinit();
@@ -842,18 +866,6 @@ test "the line scanners agree with the patterns they replace" {
             try testing.expect(lr.label == null);
             try testing.expectEqualStrings(line, lr.line);
         }
-
-        const removed = try dq_string.sub(a, "", try sq_string.sub(a, "", line));
-        try testing.expectEqualStrings(removed, try stripStrings(a, line, false));
-        const blank = struct {
-            fn f(q: u8, ba: Allocator, out: *std.ArrayList(u8), m: regex.Match) Allocator.Error!void {
-                try out.append(ba, q);
-                try out.appendNTimes(ba, ' ', m.str().len - 2);
-                try out.append(ba, q);
-            }
-        }.f;
-        const blanked = try dq_string.subFn(a, try sq_string.subFn(a, line, @as(u8, '\''), blank), @as(u8, '"'), blank);
-        try testing.expectEqualStrings(blanked, try stripStrings(a, line, true));
 
         var want_words = R().WORD.iterator(line);
         var got_words = words(line);

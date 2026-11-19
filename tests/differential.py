@@ -124,6 +124,11 @@ WORD = re.compile(
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
+# the value of a parameter declared on a line with `;`, its strings blanked:
+# a string continued by a doubled quote (`"a;""b"`) is one literal in zfls
+# and two in fortls, which pairs the `"` from the left (#231); compare such
+# values without their quotes and blanks
+BLANKED_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = )([\" /]+)$", re.M)
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
     re.S,
@@ -272,6 +277,30 @@ def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
     return False
 
 
+def in_constructor_or_group(lines: list, line: int, char: int) -> bool:
+    """Whether the innermost bracket open before the position is an array
+    constructor (`[`, `(/`) or a parenthesis that follows no name (an
+    implied DO, an expression in parentheses), where zfls's signature help
+    looks for the call outside it (hansec #60) and fortls answers null."""
+    if not (0 <= line < len(lines)):
+        return False
+    text = lines[line][:char]
+    depth = 0
+    for i in range(len(text) - 1, -1, -1):
+        c = text[i]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth > 0:
+                depth -= 1
+                continue
+            if c == "[" or text[i + 1 :].lstrip().startswith("/"):
+                return True
+            before = text[:i].rstrip()
+            return not before or not (before[-1].isalnum() or before[-1] in "_)]>")
+    return False
+
+
 def zfls_only_item(item) -> bool:
     """A zfls completion item of its own: `name=` for a keyword argument
     (hansec #133), a name of a module not used yet that adds the USE
@@ -313,6 +342,7 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
+        v = BLANKED_VALUE.sub(lambda m: m.group(1) + m.group(2).replace('"', "").replace(" ", ""), v)
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -803,6 +833,15 @@ def main() -> int:
             ):
                 # the intrinsics fortls's table lacks: specific names
                 # (`DSQRT`) and newer generic ones (`REDUCE`)
+                continue
+            if (
+                kind == "signature"
+                and a is None
+                and isinstance(b, dict)
+                and in_constructor_or_group(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside an array constructor or parentheses, the call
+                # around them (hansec #60); fortls answers null
                 continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
