@@ -2,7 +2,8 @@
 //! Fortran, read otherwise: a CHARACTER of kind 4, whose type gdb gives as
 //! an array (`character(kind=4) (5)`) and whose text it cuts short at a
 //! character beyond ASCII, read from memory; a module's deferred-length
-//! CHARACTER, whose length gfortran keeps apart.
+//! CHARACTER, whose length gfortran keeps apart; a module's COMMON
+//! variable, which gfortran's DWARF leaves out.
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -15,6 +16,7 @@ const Session = session.Session;
 const gdb = @import("gdb.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const Variable = gdb_variables.Variable;
+const declarations = @import("declarations.zig");
 
 /// The longest string read from memory
 const max_len = 4096;
@@ -79,6 +81,48 @@ pub fn lengthResult(output: []const u8) ?u64 {
         if (std.mem.startsWith(u8, l, "zfls-len ")) return std.fmt.parseInt(u64, l["zfls-len ".len..], 10) catch null;
     }
     return null;
+}
+
+/// A module's variable in its COMMON block (`common /blk/ cx, cy` in the
+/// module), of which gdb knows only the block's symbol (`blk_`): a
+/// convenience variable of its declared type at the block plus its offset
+/// (zfls's declarations), gdb's variable of it named `name`; null when it
+/// is in no block, or its type or shape is not one written here
+pub fn commonMember(s: *Session, a: Allocator, module: []const u8, name: []const u8, frame: ?i64) !?Variable {
+    const mod = declarations.moduleNamed(s, module) orelse return null;
+    const place = declarations.commonPlace(a, mod, name) orelse return null;
+    if (place.block.len == 0) return null;
+    const t = gdbType(a, declarations.moduleDecl(s, a, module, name) orelse return null) orelse return null;
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const py = try a.print("python v=gdb.Value(int(gdb.parse_and_eval('&{s}_'))+{d}).cast(({s}).pointer()).dereference();gdb.set_convenience_variable('{s}',v);print('zfls-common')", .{ try std.ascii.allocLowerString(a, place.block), place.offset, t, variable });
+    const r = try gdb.request(s, a, "evaluate", try gdb_variables.evalArgs(a, py, frame, "repl"));
+    if (std.mem.find(u8, json.str(json.path(r, &.{ "body", "result" })) orelse "", "zfls-common") == null) return null;
+    const expr = try a.print("${s}", .{variable});
+    const v = try gdb.request(s, a, "evaluate", try gdb_variables.evalArgs(a, expr, frame, "watch"));
+    if (!gdb.isSuccess(v)) return null;
+    return .{
+        .name = name,
+        .value = json.str(json.path(v, &.{ "body", "result" })) orelse return null,
+        .type = json.str(json.path(v, &.{ "body", "type" })),
+        .ref = json.int(json.path(v, &.{ "body", "variablesReference" })) orelse 0,
+        .evaluate_name = expr,
+    };
+}
+
+/// gdb's Python of a declaration's type (`gdb.lookup_type('real(kind=4)')`,
+/// `.array(1,3)` for one dimension): integers, reals and complexes; null
+/// for another type or more dimensions
+fn gdbType(a: Allocator, d: declarations.Decl) ?[]const u8 {
+    const t = switch (d.t.kind) {
+        .integer => a.print("gdb.lookup_type('integer(kind={d})')", .{d.t.size}),
+        .real => a.print("gdb.lookup_type('real(kind={d})')", .{d.t.size}),
+        .complex => a.print("gdb.lookup_type('complex(kind={d})')", .{d.t.size / 2}),
+        else => return null,
+    } catch return null;
+    if (d.dims.len == 0) return t;
+    if (d.dims.len > 1 or d.dims[0].lo == null or d.dims[0].hi == null) return null;
+    return a.print("{s}.array({d},{d})", .{ t, d.dims[0].lo.?, d.dims[0].hi.? }) catch null;
 }
 
 /// The kind of gdb's CHARACTER type (`character(kind=4)`): 4; 1 for

@@ -349,7 +349,11 @@ fn moduleVariable(s: *Session, a: Allocator, v: ModuleVariable, frame: ?i64) !Va
     const expr = try a.print("{s}::{s}", .{ try std.ascii.allocLowerString(a, v.module), try std.ascii.allocLowerString(a, v.name) });
     const r = try gdb.request(s, a, "evaluate", try evalArgs(a, expr, frame, "watch"));
     const result = json.str(json.path(r, &.{ "body", "result" }));
-    if (!gdb.isSuccess(r) or result == null) return .{ .name = label, .value = s.text.not_available, .type = v.type };
+    if (!gdb.isSuccess(r) or result == null) {
+        // a variable of the module's COMMON block, which gdb does not know
+        if (try gdb_values.commonMember(s, a, v.module, v.name, frame)) |cv| return present(s, a, cv, label, cv.evaluate_name, frame, null, null);
+        return .{ .name = label, .value = s.text.not_available, .type = v.type };
+    }
     const got: Variable = .{
         .name = label,
         .value = result.?,

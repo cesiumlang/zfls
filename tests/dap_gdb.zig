@@ -403,6 +403,11 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(eql(str(try named(grid, "gname"), "value"), "'grid name'"), "grid::gname = {s}", .{str(try named(grid, "gname"), "value").?});
     const gname = try c.request("evaluate", .{ .expression = "gname", .frameId = int(stack[0], "id").?, .context = "watch" });
     try check(eql(str(gname, "result"), "'grid name'"), "evaluate gname = {s}", .{str(gname, "result") orelse "?"});
+    // the module's COMMON block (`common /blk/ cx, cy`), of which gfortran's
+    // DWARF has nothing
+    try check(eql(str(try named(grid, "cx"), "value"), "1.5") and eql(str(try named(grid, "cy"), "value"), "2.5"), "grid::cx, cy = {s}, {s}", .{ str(try named(grid, "cx"), "value").?, str(try named(grid, "cy"), "value").? });
+    const cy = try c.request("evaluate", .{ .expression = "cy", .frameId = int(stack[0], "id").?, .context = "watch" });
+    try check(eql(str(cy, "result"), "2.5"), "evaluate cy = {s}", .{str(cy, "result") orelse "?"});
     const counters = try named(mv, "counters");
     const hits = try named(try variables(c, counters), "nhits => hits");
     try check(eql(str(hits, "value"), "3") and eql(str(hits, "evaluateName"), "counters::hits"), "nhits => hits = 3", .{});
