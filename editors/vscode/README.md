@@ -633,8 +633,7 @@ workspace folder) its type, kind and rank, and the array descriptors
 its dynamic type's components, which the descriptor names. Of LLVM
 Flang's programs built with `-g`, the engine shows the variables (the
 main program's that Flang makes static too) and stops at Flang's runtime
-errors and ERROR STOP. Of ifx's programs (ifx 2026), not yet: REAL(16)
-values. The program runs in a console window of its own (`"console":
+errors and ERROR STOP. The program runs in a console window of its own (`"console":
 "internalConsole"`: none, its output is then lost). Hovers, watches and
 the Debug Console take a variable, its components, elements and
 substrings (`p%x`, `a(2,-1)`, `s(2:4)`), and a module's variable by the
