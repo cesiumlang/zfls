@@ -206,7 +206,8 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
     const start = std.mem.find(u8, out, "Object Tree") orelse return null;
     var tree = out[start + "Object Tree".len ..];
     if (std.mem.find(u8, tree, "Exportable Objects")) |end| tree = tree[0..end];
-    const Row = struct { kind: i64, fqsn: []const u8 };
+    // `group`: a COMMON block or NAMELIST group, which the tree marks
+    const Row = struct { kind: i64, fqsn: []const u8, group: ?Kind = null };
     var rows: std.ArrayList(Row) = .empty;
     // the paths that are interfaces, and those that are something else:
     // a generic and its specific of the same name are both (#469)
@@ -217,9 +218,22 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
         const line = std.mem.trim(u8, raw, " \t\r");
         const colon = std.mem.find(u8, line, ": ") orelse continue;
         const kind = std.fmt.parseInt(i64, line[0..colon], 10) catch continue;
-        const fqsn = try std.ascii.allocLowerString(a, line[colon + 2 ..]);
+        var fqsn = try std.ascii.allocLowerString(a, line[colon + 2 ..]);
+        var group: ?Kind = null;
+        if (std.mem.endsWith(u8, fqsn, " common")) {
+            // `m::/blk/`: Flang's `m::blk`, and `m::` of blank common
+            fqsn = fqsn[0 .. fqsn.len - " common".len];
+            const last = lastPart(fqsn);
+            if (last.len >= 2 and last[0] == '/' and last[last.len - 1] == '/') {
+                fqsn = try std.mem.concat(a, u8, &.{ fqsn[0 .. fqsn.len - last.len], last[1 .. last.len - 1] });
+            }
+            group = .common;
+        } else if (std.mem.endsWith(u8, fqsn, " namelist")) {
+            fqsn = fqsn[0 .. fqsn.len - " namelist".len];
+            group = .namelist;
+        }
         if (fqsn.len == 0) continue;
-        try rows.append(a, .{ .kind = kind, .fqsn = fqsn });
+        try rows.append(a, .{ .kind = kind, .fqsn = fqsn, .group = group });
         if (kind == 5) try interfaces.put(a, fqsn, {}) else try others.put(a, fqsn, kind);
     }
     var res: Entities = .empty;
@@ -229,7 +243,7 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
         // OPERATOR, ASSIGNMENT), are no entities
         if (!top and r.kind >= 9 and r.kind <= 15) continue;
         if (r.kind == 5 and std.mem.startsWith(u8, lastPart(r.fqsn), "#")) continue;
-        const kind = zflsKind(r.kind, top) orelse continue;
+        const kind = r.group orelse zflsKind(r.kind, top) orelse continue;
         // the path without the constructs and interface blocks it is in
         var kept: std.ArrayList(u8) = .empty;
         var parts = std.mem.splitSequence(u8, r.fqsn, "::");

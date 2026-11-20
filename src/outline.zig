@@ -27,6 +27,8 @@ const Kind = struct {
     const function: i64 = 12;
     const variable: i64 = 13;
     const constant: i64 = 14;
+    const array: i64 = 18;
+    const struct_: i64 = 23;
 };
 
 /// The `SymbolKind` of an object in fortls's flat symbol list
@@ -97,6 +99,11 @@ const Outline = struct {
             if (child.file_ast != scope.file_ast) continue;
             try o.append(child, scope, &out);
         }
+        // its COMMON blocks, in the order of the lines
+        if (scope.data == .scope and scope.scopeData().commons.items.len > 0) {
+            for (scope.scopeData().commons.items) |c| try out.append(o.a, o.symbol(c, Kind.struct_, c.varData().members, &.{}));
+            std.mem.sort(lsp.DocumentSymbol, out.items, {}, byLine);
+        }
         return out.items;
     }
 
@@ -114,6 +121,7 @@ const Outline = struct {
             },
             .include, .do_, .if_, .where, .select, .associate => {},
             .variable, .method => {
+                if (obj.isGroup()) return out.append(o.a, o.symbol(obj, Kind.array, obj.varData().members, &.{}));
                 const in_type = parent.kind == .type;
                 if (!in_type and !isModuleLike(parent)) return;
                 const kind = if (in_type)
@@ -163,12 +171,12 @@ pub fn documentSymbols(a: Allocator, file: *const FortranFile, ast: *Ast, skip_m
         try o.append(e, e, &out);
         entry_added = true;
     };
-    if (entry_added) std.mem.sort(lsp.DocumentSymbol, out.items, {}, struct {
-        fn lt(_: void, x: lsp.DocumentSymbol, y: lsp.DocumentSymbol) bool {
-            return x.range.start.line < y.range.start.line;
-        }
-    }.lt);
+    if (entry_added) std.mem.sort(lsp.DocumentSymbol, out.items, {}, byLine);
     return out.items;
+}
+
+fn byLine(_: void, x: lsp.DocumentSymbol, y: lsp.DocumentSymbol) bool {
+    return x.range.start.line < y.range.start.line;
 }
 
 // --------------------------------------------------------------------------

@@ -34,6 +34,7 @@ fn R() *const patterns.Patterns {
     return patterns.get();
 }
 
+const groups = @import("groups.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
@@ -105,6 +106,11 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
         return try tempVariable(a, ast, def_line + 1, def_name, try macros.describe(a, def_name, d), &.{});
     }
     var curr_scope = ast.getInnerScope(def_line + 1);
+    // a COMMON block, named between slashes (#556)
+    const first_line = for (cl.pre) |l| {
+        if (l.len > 0) break l;
+    } else curr_line;
+    if (groups.blockNameAt(first_line, curr_line, def_char)) |n| if (groups.find(curr_scope, n)) |o| return o;
     // a selector of an ASSOCIATE statement names what the scope around it
     // has (`associate (x => x%field)`: the outer `x`)
     if (curr_scope) |cs| if (inSelector(def_file, cs, def_line, def_char)) {

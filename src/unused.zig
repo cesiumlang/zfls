@@ -41,7 +41,8 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
         const last = @min(@max(scope.eline, scope.sline) - 1, file.nLines() - 1);
         const counts = (try wordCounts(a, file, first, last)) orelse continue;
         for (scope.childList()) |c| {
-            if (c.kind != .variable or c.file_ast != ast or c.sline == 0) continue;
+            // a NAMELIST group is no variable (#556)
+            if (c.kind != .variable or c.isGroup() or c.file_ast != ast or c.sline == 0) continue;
             if (isArgOrResult(scope, c)) continue;
             const lower = try std.ascii.allocLowerString(a, c.name);
             if ((counts.get(lower) orelse 0) > 1) continue;

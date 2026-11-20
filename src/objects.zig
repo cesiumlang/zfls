@@ -169,6 +169,8 @@ pub const Scope = struct {
     ext: ScopeExt = .none,
     /// `children` by name, for lookups (objects/index.zig)
     index: objects_index.ChildIndex = .{},
+    /// Its COMMON blocks (parser/groups.zig), which are no names of it
+    commons: std.ArrayList(*Obj) = .empty,
 };
 
 pub const Submodule = struct {
@@ -257,7 +259,13 @@ pub const Variable = struct {
     callable: bool = false,
     drop_arg: ?usize = null,
     pass_name: ?[]const u8 = null,
+    /// A COMMON block or NAMELIST group (parser/groups.zig), not a variable
+    group: Group = .none,
+    /// Of a group: the names it lists, as written (`a, b(10)`)
+    members: []const u8 = "",
 };
+
+pub const Group = enum { none, common, namelist };
 
 /// A built-in procedure, keyword or statement
 pub const Intrinsic = struct {
@@ -738,6 +746,11 @@ pub const Obj = struct {
 
     pub fn isParameter(self: *const Obj) bool {
         return self.varDataConst().is_const;
+    }
+
+    /// A COMMON block or NAMELIST group
+    pub fn isGroup(self: *const Obj) bool {
+        return self.kind == .variable and self.varDataConst().group != .none;
     }
 
     pub fn setExternalAttr(self: *Obj) !void {

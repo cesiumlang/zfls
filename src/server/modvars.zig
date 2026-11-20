@@ -45,7 +45,7 @@ const Found = struct {
 
 /// A module's variables (not its named constants)
 fn isModuleVariable(o: *const Obj) bool {
-    return o.kind == .variable and !o.varDataConst().is_const;
+    return o.kind == .variable and !o.varDataConst().is_const and !o.isGroup();
 }
 
 pub fn serveModuleVariables(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {

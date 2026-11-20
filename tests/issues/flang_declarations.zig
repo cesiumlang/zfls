@@ -291,3 +291,76 @@ test "an ENTRY is a procedure of the scope that has its procedure, with its argu
     // the names on the ENTRY line are the procedure's
     try w.expectHoverContains("e.f90", w.pos("e.f90", "y)", 0, 0), "INTEGER :: y");
 }
+
+test "COMMON blocks are symbols: hover lists their variables, references across program units (#556)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "c1.f90", .text =
+        \\subroutine s1()
+        \\  implicit none
+        \\  real :: a, b, c, x
+        \\  common /blk/ a, b(10), /other/ c
+        \\  common /x/ x
+        \\  a = b(1) + c + x
+        \\end subroutine s1
+        \\
+        },
+        .{ .name = "c2.f", .text =
+        \\      SUBROUTINE S2()
+        \\      REAL A2
+        \\      COMMON /BLK/ A2
+        \\      SAVE /BLK/
+        \\      A2 = 0
+        \\      END
+        \\
+        },
+    }, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try w.expectNoDiagnostics("c1.f90");
+    try w.expectNoDiagnostics("c2.f");
+    try w.expectHoverContains("c1.f90", w.pos("c1.f90", "blk/", 0, 0), "COMMON /blk/ a, b(10)");
+    try w.expectHoverContains("c1.f90", w.pos("c1.f90", "other/", 0, 0), "COMMON /other/ c");
+    // the block x and the variable x
+    try w.expectHoverContains("c1.f90", w.pos("c1.f90", "x/ x", 0, 0), "COMMON /x/ x");
+    try w.expectHoverContains("c1.f90", w.pos("c1.f90", "+ x", 0, 2), "REAL :: x");
+    // the bounds a COMMON statement gives
+    try w.expectHoverContains("c1.f90", w.pos("c1.f90", "b(1)", 0, 0), "DIMENSION(10)");
+    const def = (try w.definition("c2.f", w.pos("c2.f", "BLK/ A2", 0, 0))) orelse return h.unmet("no definition of /BLK/", .{});
+    try h.expect(def.line == 2, "/BLK/ defined on line {d}", .{def.line});
+    const refs = try w.references("c1.f90", w.pos("c1.f90", "blk/", 0, 0));
+    try h.expect(refs.len == 3, "{d} references of /blk/: {any}", .{ refs.len, refs });
+    const symbols = try w.symbolPaths("c1.f90");
+    for ([_][]const u8{ "s1//blk/", "s1//other/", "s1//x/" }) |want| {
+        for (symbols) |s| {
+            if (std.mem.eql(u8, s, want)) break;
+        } else return h.unmet("{s} not in {any}", .{ want, symbols });
+    }
+    const found = try w.workspaceSymbols("blk");
+    try h.expect(found.len == 2, "workspace symbols of blk: {any}", .{found});
+}
+
+test "NAMELIST groups are symbols; WRITE (*, NL) names the group (#556, #520)" {
+    const w = try h.Workspace.init(&.{.{ .name = "n.f90", .text =
+        \\program p
+        \\  implicit none
+        \\  integer :: a = 1
+        \\  real :: r = 2.0
+        \\  namelist /nl/ a, r
+        \\  write (*, nl)
+        \\  write (*, nml=nl)
+        \\  read (*, nl)
+        \\end program p
+        \\
+    }}, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try w.expectNoDiagnostics("n.f90");
+    try w.expectHoverContains("n.f90", w.pos("n.f90", "nl)", 0, 0), "NAMELIST /nl/ a, r");
+    try w.expectHoverContains("n.f90", w.pos("n.f90", "nml=nl", 0, 4), "NAMELIST /nl/ a, r");
+    const def = (try w.definition("n.f90", w.pos("n.f90", "nl)", 0, 0))) orelse return h.unmet("no definition of nl", .{});
+    try h.expect(def.line == 4, "nl defined on line {d}", .{def.line});
+    const refs = try w.references("n.f90", w.pos("n.f90", "nl/", 0, 0));
+    try h.expect(refs.len == 4, "{d} references of nl: {any}", .{ refs.len, refs });
+    const symbols = try w.symbolPaths("n.f90");
+    for (symbols) |s| {
+        if (std.mem.eql(u8, s, "p/nl")) break;
+    } else return h.unmet("p/nl not in {any}", .{symbols});
+}

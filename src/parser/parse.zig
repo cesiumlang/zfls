@@ -29,6 +29,7 @@ const plain_docs = @import("plain_docs.zig");
 const attributes = @import("attributes.zig");
 const stmt_functions = @import("stmt_functions.zig");
 const entries = @import("entries.zig");
+const groups = @import("groups.zig");
 const doc_comments = @import("doc_comments.zig");
 const entities = @import("entities.zig");
 const entityLength = entities.entityLength;
@@ -271,6 +272,10 @@ pub const Parser = struct {
                 continue;
             }
             const obj_read = (try getFortranDefinition(a, line)) orelse {
+                if (try groups.read(ast, sa, &p.attrs, line_no_comment, line_no)) {
+                    p.dbg("{s} !!! COMMON/NAMELIST - Ln:{d}", .{ str.strip(line_no_comment), line_no });
+                    continue;
+                }
                 if (try entries.read(ast, sa, line_no_comment, line_no)) {
                     p.dbg("{s} !!! ENTRY - Ln:{d}", .{ str.strip(line_no_comment), line_no });
                     continue;

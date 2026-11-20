@@ -174,9 +174,21 @@ fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8
 
 fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {
     for (try obj.getChildren(a, false)) |child| {
-        o.print("  {s}{d}: {s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn });
+        o.print("  {s}{d}: {s}{s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn, groupMark(child) });
         try printChildren(a, o, child, try std.mem.concat(a, u8, &.{ indent, "  " }));
     }
+    // its COMMON blocks (#556)
+    if (obj.data == .scope) for (obj.scopeData().commons.items) |c| o.print("  {s}{d}: {s}{s}\n", .{ indent, @backingInt(c.getType(false)), c.fqsn, groupMark(c) });
+}
+
+/// After a COMMON block or NAMELIST group in the object tree: what it is
+fn groupMark(obj: *const objects.Obj) []const u8 {
+    if (obj.kind != .variable) return "";
+    return switch (obj.varDataConst().group) {
+        .none => "",
+        .common => " COMMON",
+        .namelist => " NAMELIST",
+    };
 }
 
 fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {

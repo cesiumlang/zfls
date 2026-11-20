@@ -121,6 +121,12 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
         },
         .variable => {
             const doc_str = self.getDocumentation();
+            const v = self.varDataConst();
+            switch (v.group) {
+                .none => {},
+                .common => return .{ .msg = try a.print("COMMON {s} {s}", .{ self.name, v.members }), .docs = doc_str },
+                .namelist => return .{ .msg = try a.print("NAMELIST /{s}/ {s}", .{ self.name, v.members }), .docs = doc_str },
+            }
             var parts: std.ArrayList([]const u8) = .empty;
             try parts.append(a, try self.getDesc(a));
             try parts.appendSlice(a, try self.getKeywordStrings(a));

@@ -1397,6 +1397,14 @@ zfls deliberately differs from fortls in a few places:
   definition, signature help, references and symbols, and its dummy
   arguments and result are the procedure's variables of their names.
   fortls declares nothing for it.
+- COMMON blocks and NAMELIST groups are symbols (in the outline and
+  workspace symbols). Hover on one lists its variables
+  (`COMMON /blk/ a, b(10)`, `NAMELIST /nl/ a, r`), and it has a
+  definition and references. The references of a block are those of all
+  the program units that name it, in COMMON and SAVE statements. A block's
+  name is no name of the scope (`common /x/ x` is allowed), and the bounds a
+  COMMON statement gives are its variables' dimensions. A group is the name
+  that `write (*, nl)` and `nml=nl` name. fortls has neither.
 - A user-defined operator (`.ord.`) has a definition (its `interface
   operator (.ord.)`), a hover (the procedures of that interface) and
   references (its uses in the workspace) (hansec #95); fortls has none. So

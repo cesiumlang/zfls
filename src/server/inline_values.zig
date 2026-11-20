@@ -35,7 +35,7 @@ pub fn serveInlineValues(self: *Server, a: Allocator, params: lsp.InlineValuePar
     var scope: ?*Obj = unit;
     while (scope) |s| : (scope = s.parent) {
         if (s.kind == .module or s.kind == .submodule) break;
-        for (s.childList()) |c| if (c.kind == .variable and !c.isParameter())
+        for (s.childList()) |c| if (c.kind == .variable and !c.isParameter() and !c.isGroup())
             try names.put(a, try std.ascii.allocLowerString(a, c.name), {});
     }
     for (try modvars.visibleModuleVariables(self, a, ast, stop)) |v|
