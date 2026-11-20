@@ -22,7 +22,13 @@ export interface CompilerKind {
  * `C:\x\ifx.exe` -> `ifx`, `gfortran-14` -> `gfortran`. */
 export function compilerName(compiler: string): string {
   const base = path.basename(compiler.replace(/\\/g, "/")).toLowerCase();
-  return base.replace(/\.exe$/, "").replace(/-\d+(\.\d+)*$/, "");
+  const name = base.replace(/\.exe$/, "").replace(/-\d+(\.\d+)*$/, "").replace(/-mp$/, "");
+  // a target before it (`x86_64-w64-mingw32-gfortran`,
+  // `x86_64-conda-linux-gnu-gfortran`), as toolchains name their compilers
+  for (const known of ["gfortran", "flang-new", "flang", "ifx", "ifort", "lfortran", "nvfortran", "nagfor"]) {
+    if (name.endsWith(`-${known}`) && name.length > known.length + 1) return known;
+  }
+  return name;
 }
 
 /** LLVM Flang's debug build on Windows (`compilerKind`): `-gdwarf-4` writes

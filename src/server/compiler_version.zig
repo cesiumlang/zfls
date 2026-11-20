@@ -1,9 +1,11 @@
 //! The version of the compiler of the compiler check (compile.zig), for
-//! the options that differ between its releases: LLVM Flang's, from
-//! `flang --version`, asked once for each executable, and again when the
-//! file at its path changes (its size or modification time: a compiler
-//! upgraded in place, #427). With it, where Flang's intrinsic modules are
-//! when its driver does not find them (compilers/flang_modules.zig, #438).
+//! the options that differ between its releases and for the .mod files,
+//! which those of another release may not read: LLVM Flang's and
+//! gfortran's, from `--version`, asked once for each executable, and again
+//! when the file at its path changes (its size or modification time: a
+//! compiler upgraded in place, #427). With it, where Flang's intrinsic
+//! modules are when its driver does not find them
+//! (compilers/flang_modules.zig, #438).
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -13,27 +15,29 @@ const Allocator = std.mem.Allocator;
 const compilers = @import("../compilers.zig");
 const flang = @import("../compilers/flang.zig");
 const flang_modules = @import("../compilers/flang_modules.zig");
+const gfortran = @import("../compilers/gfortran.zig");
 const intel = @import("../compilers/intel.zig");
 const tools = @import("tools.zig");
 
 const Server = @import("../server.zig").Server;
 
 /// What is known of the compiler that the check runs, the first of `exes`
-/// that runs: for LLVM Flang only, else nothing. Nothing too when none
+/// that runs: for LLVM Flang and gfortran (Intel's: `intelOf`), else
+/// nothing. Nothing too when none
 /// runs or it does not say (no version-dependent options then). An
 /// executable that did not run is asked again next time: it may run then
 /// (a script made executable after zfls first asked at the start, #395).
 pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u8) Known {
     const none: Known = .{ .found = false, .version = null };
     if (id == .ifx or id == .ifort) return intelOf(self, a, exes);
-    if (id != .flang) return none;
+    if (id != .flang and id != .gfortran) return none;
     for (exes) |exe| {
         const stamp = stampOf(self.io, a, exe, self.toolEnv());
         if (self.compiler_versions.get(exe)) |known| if (std.meta.eql(known.stamp, stamp)) {
             if (known.found) return known;
             continue;
         };
-        var found = ask(self, a, exe);
+        var found = ask(self, a, id, exe);
         found.stamp = stamp;
         if (!found.ran) {
             if (found.found) return found;
@@ -105,7 +109,7 @@ fn fileOf(io: Io, a: Allocator, path: []const u8, suffixes: []const []const u8) 
     return null;
 }
 
-fn ask(self: *Server, a: Allocator, exe: []const u8) Known {
+fn ask(self: *Server, a: Allocator, id: compilers.Id, exe: []const u8) Known {
     // in the workspace, not zfls's own directory: a compiler (or a script
     // standing for one) may write files where it runs
     const r = tools.run(a, self.io, .{
@@ -114,6 +118,11 @@ fn ask(self: *Server, a: Allocator, exe: []const u8) Known {
         .environ_map = self.toolEnv(),
         .timeout = tools.seconds(10),
     }) catch |e| return .{ .found = e != error.FileNotFound, .version = null, .ran = e == error.Timeout };
+    if (id == .gfortran) {
+        const version = gfortran.parseVersion(r.stdout) orelse gfortran.parseVersion(r.stderr);
+        self.log.info("compiler_diagnostics: {s} is gfortran {?d}", .{ exe, version });
+        return .{ .found = true, .version = version };
+    }
     const version = flang.parseVersion(r.stdout) orelse flang.parseVersion(r.stderr);
     self.log.info("compiler_diagnostics: {s} is LLVM Flang {?d}", .{ exe, version });
     const modules = flang_modules.intrinsicModules(self.io, a, r.stdout) catch null;
