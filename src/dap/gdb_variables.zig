@@ -22,6 +22,7 @@ const session = @import("session.zig");
 const Session = session.Session;
 const gdb = @import("gdb.zig");
 const gdb_children = @import("gdb_children.zig");
+const gdb_values = @import("gdb_values.zig");
 
 /// A frame of a stack trace: its file and line
 pub const FrameInfo = struct { file: ?[]const u8, line: i64 };
@@ -378,6 +379,11 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         return out;
     }
     const at = try fortran.arrayType(a, v.type);
+    // a CHARACTER of kind 4, whose type reads as an array
+    if (at) |t| if (sub == null) if (try gdb_values.wideCharacter(s, a, t, evaluate_name, frame)) |text| {
+        out.value = text;
+        return out;
+    };
     // a string whose type reads as an array of characters (a dummy's of
     // assumed length, in gdb 15): gdb's value is the string
     if (at != null and sub == null and v.value.len > 0 and v.value[0] == '\'') return out;
