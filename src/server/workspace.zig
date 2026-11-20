@@ -42,6 +42,7 @@ const completion_resolve = @import("completion_resolve.zig");
 const pull = @import("pull.zig");
 const lenses = @import("lenses.zig");
 const linking = @import("linking.zig");
+const modfiles = @import("modfiles.zig");
 const summary = @import("summary.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
@@ -389,6 +390,16 @@ pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
     return added;
 }
 
+/// The files that are none of the workspace's sources but that its files
+/// need: those they include (`addIncludedFiles`) and the module files of
+/// LLVM Flang's of the modules they use (modfiles.zig). Whether one was
+/// added (which a relink then links in).
+pub fn addNeededFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
+    const included = try addIncludedFiles(self, a, of);
+    const modules = try modfiles.add(self, a, of);
+    return included or modules;
+}
+
 /// Parse the workspace's files; with the `workDoneToken` of the
 /// initialize request, report the progress (FL #417, MF #757)
 pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
@@ -441,7 +452,7 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
             },
         }
     }
-    _ = try addIncludedFiles(self, a, null);
+    _ = try addNeededFiles(self, a, null);
     try linking.fullRelink(self, a);
     try summary.wakeIncluded(self, a);
 }
@@ -485,7 +496,7 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
         // a file not read yet that a new INCLUDE names is linked in by a
         // full relink, as is the memory of replaced ASTs reclaimed
-        if (try addIncludedFiles(self, a, file) or self.retired.items.len >= 16) try linking.fullRelink(self, a);
+        if (try addNeededFiles(self, a, file) or self.retired.items.len >= 16) try linking.fullRelink(self, a);
     } else if (file.preproc) {
         const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
         try self.mergePpDefs(&out.defs);
@@ -573,7 +584,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     // one, whose diagnostics are of its full AST
     const slept = !did_close and try summary.sleepAll(self, a);
     if (changed or slept) {
-        if (changed) _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
+        if (changed) _ = try addNeededFiles(self, a, self.workspace.get(filepath));
         try linking.fullRelink(self, a);
         try summary.wakeIncluded(self, a);
     }
@@ -693,7 +704,7 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         changed = changed or updated;
     }
     if (try summary.sleepAll(self, a) or changed) {
-        _ = try addIncludedFiles(self, a, null);
+        _ = try addNeededFiles(self, a, null);
         try linking.fullRelink(self, a);
         try summary.wakeIncluded(self, a);
     }

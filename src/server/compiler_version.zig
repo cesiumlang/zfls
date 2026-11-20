@@ -43,8 +43,9 @@ pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u
 }
 
 /// What `exe --version` said, whether `exe` was there, and the file it
-/// was; the directory of Flang's intrinsic modules to pass (the server's)
-pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null, intrinsic_modules: ?[]const u8 = null };
+/// was; the directory of Flang's intrinsic modules to pass (the server's),
+/// and where they are, passed or not (modfiles.zig)
+pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null, intrinsic_modules: ?[]const u8 = null, module_dir: ?[]const u8 = null };
 
 /// The size and modification time of an executable's file
 pub const Stamp = struct { size: u64, mtime: i96 };
@@ -88,7 +89,14 @@ fn ask(self: *Server, a: Allocator, exe: []const u8) Known {
     self.log.info("compiler_diagnostics: {s} is LLVM Flang {?d}", .{ exe, version });
     const modules = flang_modules.intrinsicModules(self.io, a, r.stdout) catch null;
     if (modules) |d| self.log.info("compiler_diagnostics: {s}'s intrinsic modules are not where its driver looks: -fintrinsic-modules-path {s}", .{ exe, d });
-    return .{ .found = true, .version = version, .intrinsic_modules = if (modules) |d| self.arena.allocator().dupe(u8, d) catch null else null };
+    const module_dir = flang_modules.moduleDir(self.io, a, r.stdout) catch null;
+    const sa = self.arena.allocator();
+    return .{
+        .found = true,
+        .version = version,
+        .intrinsic_modules = if (modules) |d| sa.dupe(u8, d) catch null else null,
+        .module_dir = if (module_dir) |d| sa.dupe(u8, d) catch null else null,
+    };
 }
 
 test "an executable's stamp: its file, on the PATH, and none" {
