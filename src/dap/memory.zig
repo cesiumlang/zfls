@@ -50,10 +50,7 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj };
     if (d.t.kind == .derived) val.type_index = try structure(s, a, v.mod_base, elementType(s, v.mod_base, type_index), d.t.name);
     if (d.t.kind == .derived and d.t.polymorphic and d.dims.len == 0) {
-        var words: [4]u64 = undefined;
-        if (s.engine.read(box, std.mem.sliceAsBytes(&words)) == @sizeOf(@TypeOf(words))) if (values.Descriptor.parse(&words)) |desc| {
-            if (desc.rank == 0) try toDynamic(s, a, &val, desc.type_info, d);
-        };
+        if (try classTypeInfo(s, box, v.parameter, address)) |info| try toDynamic(s, a, &val, info, d);
     }
     if (d.dims.len == 0) {
         // a deferred-length CHARACTER of Intel's (`character(len=:),
@@ -100,7 +97,10 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         }
         val.address = desc.base;
         if (val.t.kind == .character) val.t.size = @intCast(desc.elem_len);
-        if (d.t.kind == .derived and d.t.polymorphic) try toDynamic(s, a, &val, desc.type_info, d);
+        if (d.t.kind == .derived and d.t.polymorphic) {
+            const info = if (desc.type_info != 0) desc.type_info else values.Descriptor.intelTypeInfo(words[0 .. got / 8], desc.rank) orelse 0;
+            try toDynamic(s, a, &val, info, d);
+        }
         const extents = try a.dupe(values.Extent, desc.dims[0..desc.rank]);
         // an assumed-shape array's lower bounds are its declaration's (1
         // unless `a(0:)`), not those of the actual argument, which LLVM
@@ -128,19 +128,56 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     return val;
 }
 
-/// A CLASS object of LLVM Flang's as its dynamic type, whose description
-/// its descriptor's addendum points at (`_QMgridEXdtXtagged`): dbghelp's
+/// The address of the dynamic type's description of a CLASS scalar whose
+/// data is at `data`, from its descriptor at `box`: LLVM Flang's (the box
+/// itself, its addendum), or Intel's (at the address in `box` for a dummy
+/// argument, else the box), told by its rank 0 and its data's address;
+/// null when neither
+fn classTypeInfo(s: *Session, box: u64, parameter: bool, data: u64) !?u64 {
+    var words: [values.Descriptor.header_words + 1]u64 = undefined;
+    if (s.engine.read(box, std.mem.sliceAsBytes(words[0..4])) == 32) if (values.Descriptor.parse(words[0..4])) |desc| {
+        if (desc.rank == 0 and desc.type_info != 0) return desc.type_info;
+    };
+    var at = box;
+    if (parameter) {
+        var p: [8]u8 = undefined;
+        if (s.engine.read(box, &p) != 8) return null;
+        at = std.mem.readInt(u64, &p, .little);
+    }
+    if (s.engine.read(at, std.mem.sliceAsBytes(&words)) != @sizeOf(@TypeOf(words))) return null;
+    const desc = values.Descriptor.parse(&words) orelse return null;
+    if (desc.rank != 0 or desc.base != data) return null;
+    return values.Descriptor.intelTypeInfo(&words, 0);
+}
+
+/// A CLASS object as its dynamic type, whose description its descriptor
+/// points at: LLVM Flang's symbol (`_QMgridEXdtXtagged`), or Intel's,
+/// whose first word points to its name (`GRID#TAGGED`). dbghelp's
 /// structure of that name, and zfls's definition, for its components
 fn toDynamic(s: *Session, a: Allocator, val: *Val, type_info: u64, d: Decl) !void {
     if (type_info == 0) return;
-    const symbol = s.engine.symbolAt(a, type_info) orelse return;
-    const name = values.Descriptor.flangTypeName(symbol) orelse return;
+    const name = (if (s.engine.symbolAt(a, type_info)) |symbol| values.Descriptor.flangTypeName(symbol) else null) orelse
+        (try intelTypeName(s, a, type_info)) orelse return;
     if (std.ascii.eqlIgnoreCase(name, val.t.name)) return;
     val.type_index = (try s.engine.typeNamed(a, val.mod_base, name)) orelse return;
     val.t.name = name;
     if (d.obj) |o| if (o.parent) |scope| {
         val.dynamic = typeDefinition(s, scope, name);
+        // as the source spells it (Intel's names are upper case)
+        if (val.dynamic) |def| val.t.name = def.name;
     };
+}
+
+/// The name of the derived type that Intel's description at `info`
+/// describes: its first word points to `MODULE#TYPE`
+fn intelTypeName(s: *Session, a: Allocator, info: u64) !?[]const u8 {
+    var p: [8]u8 = undefined;
+    if (s.engine.read(info, &p) != 8) return null;
+    var text: [128]u8 = undefined;
+    const got = s.engine.read(std.mem.readInt(u64, &p, .little), &text);
+    const end = std.mem.findScalar(u8, text[0..got], 0) orelse return null;
+    const name = values.Descriptor.intelTypeName(text[0..end]) orelse return null;
+    return try a.dupe(u8, name);
 }
 
 fn dimsDeferred(dims: []const values.Dim) bool {

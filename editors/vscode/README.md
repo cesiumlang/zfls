@@ -629,8 +629,8 @@ DevToolsSecurity -enable`).
 With Windows's Debugger Engine, zfls reads the variables itself: dbghelp
 (of the engine) says where each is, zfls's index of the sources (the
 workspace folder) its type, kind and rank, and the array descriptors
-(Intel's, LLVM Flang's) their bounds; a polymorphic object shows its
-declared type's components (LLVM Flang's, its dynamic type's). Of LLVM
+(Intel's, LLVM Flang's) their bounds; a polymorphic object or array shows
+its dynamic type's components, which the descriptor names. Of LLVM
 Flang's programs built with `-g`, the engine shows the variables (the
 main program's that Flang makes static too) and stops at Flang's runtime
 errors and ERROR STOP. Of ifx's programs (ifx 2026), not yet: a module
