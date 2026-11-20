@@ -52,7 +52,7 @@ pub const LineContext = parser_definitions.LineContext;
 pub const getLineContext = parser_definitions.getLineContext;
 const firstWord = parser_definitions.firstWord;
 const Parser = parser_parse.Parser;
-const Split = parser_parse.Split;
+const Split = @import("parser/entities.zig").Split;
 
 /// Receives parser/preprocessor trace lines (debug CLI)
 pub const Trace = struct {
