@@ -194,6 +194,8 @@ pub const Procedure = struct {
     result_obj: ?*Obj = null,
     /// Set when `copyInterface` imported data from a submodule prototype
     linked_from_interface: bool = false,
+    /// A statement function, `f(x) = x**2` (parser/stmt_functions.zig)
+    stmt_function: bool = false,
 };
 
 /// A derived type

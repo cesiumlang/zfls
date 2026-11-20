@@ -1382,6 +1382,14 @@ zfls deliberately differs from fortls in a few places:
   declares the fields its name list gives. `.` separates a component when it
   follows a name or `)` and does not start an operator (`a.and.b`), as in
   `rec.field` or `arr(i).field` (hansec #45). fortls reads none of these.
+- A statement function (`f(x) = x**2 + 1` in the specification part of a
+  procedure or main program) is a function of its scope, with its dummy
+  arguments: hover, definition, signature help, references. Its result and
+  arguments have the types the scope gives their names. A statement of that
+  form is an assignment to an array element when its name is an array, and
+  when an executable statement came before it in the scope. The same goes
+  for a name that is not declared where a USE, an INCLUDE or a host scope
+  could declare it. fortls reads every such statement as an assignment.
 - A user-defined operator (`.ord.`) has a definition (its `interface
   operator (.ord.)`), a hover (the procedures of that interface) and
   references (its uses in the workspace) (hansec #95); fortls has none. So

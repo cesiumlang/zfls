@@ -144,3 +144,87 @@ test "fixed form: a continued statement past fixed_line_length, also in a file t
     try w.expectHoverContains("s.f", w.pos("s.f", "SECOND", 0, 1), "INTEGER");
     try w.expectHoverContains("s.f", w.pos("s.f", "kept", 0, 1), "INTEGER");
 }
+
+test "a statement function is a function of its scope, with its dummy arguments (#555)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text =
+        \\subroutine s(n)
+        \\  implicit none
+        \\  integer, intent(inout) :: n
+        \\  integer :: i, j
+        \\  integer :: sf
+        \\  real :: area, r
+        \\  sf(i, j) = i * 2 + j
+        \\  area(r) = 3.14159 * r**2
+        \\  n = sf(n, 1) + int(area(2.0))
+        \\end subroutine s
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("s.f90");
+    try w.expectHoverContains("s.f90", w.pos("s.f90", "sf(n, 1)", 0, 0), "FUNCTION sf(i, j)");
+    try w.expectHoverContains("s.f90", w.pos("s.f90", "sf(n, 1)", 0, 0), "INTEGER :: sf");
+    try w.expectHoverContains("s.f90", w.pos("s.f90", "area(2.0)", 0, 0), "FUNCTION area(r)");
+    try w.expectHoverContains("s.f90", w.pos("s.f90", "area(2.0)", 0, 0), "REAL :: area");
+    const def = (try w.definition("s.f90", w.pos("s.f90", "sf(n, 1)", 0, 0))) orelse return h.unmet("no definition of sf", .{});
+    try h.expect(def.line == w.pos("s.f90", "sf(i, j) =", 0, 0).line, "sf defined on line {d}", .{def.line});
+    // its dummy argument, of the type of the scope's variable of its name
+    try w.expectHoverContains("s.f90", w.pos("s.f90", "i * 2", 0, 0), "INTEGER");
+}
+
+test "a statement function without a declaration, under implicit typing (#555)" {
+    const w = try h.Workspace.init(&.{.{ .name = "f.f", .text =
+        \\      SUBROUTINE F77(Y)
+        \\      REAL Y
+        \\      SQ(X) = X*X
+        \\      Y = SQ(2.0)
+        \\      END
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("f.f");
+    try w.expectHoverContains("f.f", w.pos("f.f", "SQ(2.0)", 0, 0), "FUNCTION SQ(x)");
+    try w.expectHoverContains("f.f", w.pos("f.f", "SQ(2.0)", 0, 0), "REAL :: SQ");
+    try w.expectHoverContains("f.f", w.pos("f.f", "X*X", 0, 0), "REAL :: X");
+}
+
+test "an assignment to an array element is no statement function (#555)" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text =
+        \\module a
+        \\  implicit none
+        \\  real :: marr(10)
+        \\contains
+        \\  subroutine first(i)
+        \\    integer, intent(in) :: i
+        \\    marr(i) = 0
+        \\  end subroutine first
+        \\end module a
+        \\subroutine second(i)
+        \\  integer, intent(in) :: i
+        \\  real :: v
+        \\  dimension v(10)
+        \\  real :: w(10), u
+        \\  common /c/ cv(10)
+        \\  v(i) = 1
+        \\  w(i) = 2
+        \\  cv(i) = 3
+        \\  u = 4
+        \\end subroutine second
+        \\
+    }}, .{});
+    defer w.deinit();
+    const symbols = try w.documentSymbols("a.f90");
+    for (symbols) |s| for ([_][]const u8{ "marr", "v", "w", "cv" }) |n| {
+        if (!std.mem.eql(u8, s, n)) continue;
+        // as a variable it is there once, from its declaration
+        var count: usize = 0;
+        for (symbols) |t| if (std.mem.eql(u8, t, n)) {
+            count += 1;
+        };
+        try h.expect(count == 1, "{s} {d} times in {any}", .{ n, count, symbols });
+    };
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "marr(i) = 0", 0, 0), "DIMENSION(10)");
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "v(i) = 1", 0, 0), "DIMENSION(10)");
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "w(i) = 2", 0, 0), "DIMENSION(10)");
+    const cv = try w.hover("a.f90", w.pos("a.f90", "cv(i) = 3", 0, 0));
+    if (cv) |text| try h.expect(std.mem.find(u8, text, "FUNCTION") == null, "cv: {s}", .{text});
+}

@@ -68,19 +68,6 @@ pub const rules = [_]Rule{
         .kind = .procedure,
         .why = "zfls declares no procedure of an ENTRY statement (in the module file Flang writes it as a procedure of its own, which zfls reads)",
     },
-    .{
-        .file = "tests/flang/extensions.f90",
-        .entity = "extensions::cray::sf",
-        .diff = .kind,
-        .kind = .procedure,
-        .why = "a statement function: zfls reads `sf(i) = i * 2` as an assignment to the variable its type declaration declares",
-    },
-    .{
-        .file = "tests/flang/extensions.f90",
-        .entity = "extensions::cray::sf::*",
-        .diff = .missing,
-        .why = "a statement function's dummy argument and result, which zfls does not read (it has no scope)",
-    },
     // what zfls reads in another place
     .{
         .file = "tests/fortran/submodules.f90",
