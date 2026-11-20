@@ -27,11 +27,15 @@ fn severity(sev: []const u8) Severity {
     return .@"error";
 }
 
-/// Splits gfortran's trailing `[-Wflag]` off into the code
+/// Splits gfortran's trailing `[-Wflag]` off into the code: the warning's
+/// option, also when `-Werror` makes it an error (`[-Werror=conversion]`
+/// is `-Wconversion`)
 fn message(p: *Parser, file: ?[]const u8, ln: usize, cn: ?usize, sev: []const u8, msg: []const u8) !void {
     const r = try p.re("\\s*\\[(-W[\\w=-]+)\\]$", .{});
     if (r.search(msg)) |m| {
-        try p.push(file, ln, cn, severity(sev), msg[0..m.start(0)], m.group(1));
+        const flag = m.group(1).?;
+        const code = if (std.mem.startsWith(u8, flag, "-Werror=")) try p.a.print("-W{s}", .{flag["-Werror=".len..]}) else flag;
+        try p.push(file, ln, cn, severity(sev), msg[0..m.start(0)], code);
     } else try p.push(file, ln, cn, severity(sev), msg, null);
 }
 
@@ -181,6 +185,16 @@ test "gfortran's -Wtabs at the TAB-format line" {
         \\f951: Error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]
     , &.{
         "-:4:1 warning: Nonconforming tab character in column 1 of line 4 [-Wtabs]",
-        "-:6:3 error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]",
+        "-:6:3 error: Nonconforming tab character in column 3 of line 6 [-Wtabs]",
+    });
+}
+
+test "gfortran: the code of a warning made an error by -Werror is the warning's" {
+    // MSYS2's gfortran 16.1 (and Nix's 9.5 to 15.3), -Wall -Werror
+    try compilers.expectBrief(.gfortran,
+        \\warn.f90:6:6: Error: Possible change of value in conversion from REAL(4) to INTEGER(4) at (1) [-Werror=conversion]
+        \\f951.exe: all warnings being treated as errors
+    , &.{
+        "warn.f90:6:6 error: Possible change of value in conversion from REAL(4) to INTEGER(4) at (1) [-Wconversion]",
     });
 }
