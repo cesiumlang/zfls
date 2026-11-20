@@ -123,7 +123,7 @@ available.
 | Without building (syntax only) | ✓ | ✓ | ✓ | ✓ | –¹ | ✓ | ✓ |
 | Modules the file uses compiled first | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓² |
 | The file's own command of `compile_commands.json` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Warnings on by default | `-Wall` | `-warn all` | `-warn all` | `-Wunused-variable -Wused-undefined-variable`⁴ | `-Minform=warn` | – | – |
+| Options by default: warnings, coarrays, OpenMP ([`compiler_args`](#compiler-diagnostics)) | `-Wall -fcoarray=single -fopenmp` | `-warn all,nodeclarations,noexternals -coarray=single -qopenmp` | `-warn all,nodeclarations,noexternals -coarray=single -qopenmp` | `-Wunused-variable -Wused-undefined-variable`⁴ `-fopenmp` | `-Minform=warn` | – | – |
 | Preprocessed files | `-cpp` | `-fpp` | `-fpp` | `-cpp` | `-Mpreprocess` | `-fpp` | `--cpp` |
 | Fixed-form line length (`fixed_line_length`) | any | 72, 80, 132 | 72, 80, 132 | any | 132 | 132 | – |
 | Debug lines as zfls reads them (`d_lines`) | ✓ | ✓ | ✓ | ✓⁴ | ✓ | as code | – |
@@ -550,7 +550,7 @@ are a scope of their own (zfls indexes the program's sources: `sourceRoot`
 of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
-error without `iostat=`) or at ERROR STOP, LLVM Flang's and LFortran's
+error without `iostat=`, `err=` or `end=`) or at ERROR STOP, LLVM Flang's and LFortran's
 runtimes' too.
 `--text JSON` translates the words it shows (the VS Code extension passes
 them in VS Code's language).
@@ -927,9 +927,14 @@ elsewhere, which is also stopped when the server shuts down during a run.
 - `compiler_path`: the executable, or the directory that holds it (by
   default the compiler on the `PATH`).
 - `compiler_args`: the compiler's own options; by default its warnings
-  (`-Wall` for gfortran, `-warn all` for Intel, `-Minform=warn` for
+  (`-Wall` for gfortran, `-warn all,nodeclarations,noexternals` for Intel, `-Minform=warn` for
   nvfortran, `-Wunused-variable -Wused-undefined-variable` for Flang 22 and
-  later). zfls adds the syntax-only, form, preprocessor and module
+  later), one image of coarrays (`-fcoarray=single` for gfortran,
+  `-coarray=single` for Intel; without it gfortran, ifx and ifort stop at
+  the first coarray, and Flang needs none), and OpenMP while zfls reads its
+  conditional lines (`-fopenmp`, Intel's `-qopenmp`; not with
+  `disable_openmp_conditional`). On Windows Intel's are
+  `/warn:all,nodeclarations,noexternals /Qcoarray:single /Qopenmp`. zfls adds the syntax-only, form, preprocessor and module
   directory options, the file's directory and `include_dirs` (`-I`), and,
   for files it preprocesses, `pp_defs` (`-D`). It also has the compiler read
   lines as zfls does: fixed-form lines up to `fixed_line_length` when it is
