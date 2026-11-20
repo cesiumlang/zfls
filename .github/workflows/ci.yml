@@ -682,8 +682,8 @@ jobs:
         run: zig build test-tools
 
       # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
-      # (with the runner's Visual Studio libraries): Fortran's need ifx.
-      # And on LLVM Flang's, built with -g and the package's ifx kit
+      # and linked with the package's ifx kit (the runner's Visual Studio
+      # hidden). And on LLVM Flang's, built with -g and the package's ifx kit
       # (FLANG): its breakpoints, stack and stepping
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
