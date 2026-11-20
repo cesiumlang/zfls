@@ -47,6 +47,9 @@ pub fn parseVersion(output: []const u8) ?u32 {
 }
 
 test "flang's version, and what depends on it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
     try std.testing.expectEqual(@as(?u32, 23), parseVersion("flang version 23.1.5\r\nTarget: x86_64-pc-windows-msvc\r\nThread model: posix\r\n"));
     try std.testing.expectEqual(@as(?u32, 19), parseVersion("flang-new version 19.1.7 (https://github.com/llvm/llvm-project cd70802)\nTarget: x86_64-unknown-linux-gnu\n"));
     try std.testing.expectEqual(@as(?u32, 21), parseVersion("Homebrew flang version 21.1.0\n"));
@@ -60,8 +63,8 @@ test "flang's version, and what depends on it" {
     try std.testing.expectEqual(@as(usize, 0), warnings(null).len);
     // as the compiler check's defaults
     const o22: compilers.Options = .{ .windows = false, .mod_dir = "m", .version = 22 };
-    try std.testing.expectEqualStrings("-Wunused-variable", compilers.defaultArgs(.flang, o22)[0]);
-    try std.testing.expectEqual(@as(usize, 0), compilers.defaultArgs(.flang, .{ .windows = false, .mod_dir = "m" }).len);
+    try std.testing.expectEqualStrings("-Wunused-variable", (try compilers.defaultArgs(a, .flang, o22))[0]);
+    try std.testing.expectEqual(@as(usize, 0), (try compilers.defaultArgs(a, .flang, .{ .windows = false, .mod_dir = "m" })).len);
     try std.testing.expectEqual(@as(usize, 0), compilers.dLines(.flang, true, .{ .windows = false, .mod_dir = "m", .version = 20 }).len);
     // Flang 20 has no -fd-lines-as-code
     try std.testing.expectEqual(@as(usize, 0), dLines(true, 20).len);

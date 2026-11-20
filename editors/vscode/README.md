@@ -207,12 +207,12 @@ zfls says so once and checks nothing.
 
 | Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
 | --- | --- | --- |
-| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -fdiagnostics-color=never -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -fd-lines-as-comments` (or `-fd-lines-as-code`), `-cpp` for a preprocessed file, `-J<dir>`, and `-Wall` by default, then `-x f95 <file>`, which checks a file of any suffix (`.f77`, `.f18`, `.pf`, ...) |
-| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default, then `-Tf <file>`, which checks a file of any suffix (`.f08`, `.f77`, `.pf`, ...) (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`, `/Tf <file>`) |
+| `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -fdiagnostics-color=never -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -fd-lines-as-comments` (or `-fd-lines-as-code`), `-cpp` for a preprocessed file, `-J<dir>`, and `-Wall -fcoarray=single -fopenmp` by default (`-fopenmp` while OpenMP's conditional lines are read as code), then `-x f95 <file>`, which checks a file of any suffix (`.f77`, `.f18`, `.pf`, ...) |
+| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all -coarray=single -qopenmp` by default, then `-Tf <file>`, which checks a file of any suffix (`.f08`, `.f77`, `.pf`, ...) (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all /Qcoarray:single /Qopenmp`, `/Tf <file>`) |
 | `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
 | `lfortran` | `lfortran` | `--semantics-only --continue-compilation --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>`, `--implicit-typing --implicit-interface` unless your options say otherwise or choose a `--std`; the modules a file uses are compiled with `--symtab-only -c -o <dir>/zfls-lint.o`, which writes their `.mod` files |
 | `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |
-| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>`, and `-Wunused-variable -Wused-undefined-variable` by default with Flang 22 and later (older Flangs have neither), then `-x f95 <file>`, which checks a file of any suffix (`.cuf`, `.f77`, `.f18`, ...) |
+| `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>`, and `-Wunused-variable -Wused-undefined-variable` by default with Flang 22 and later (older Flangs have neither) and `-fopenmp`, then `-x f95 <file>`, which checks a file of any suffix (`.cuf`, `.f77`, `.f18`, ...) |
 | `Disabled` | | No compiler diagnostics |
 
 `N` is `zfls.fixedFormLineLength` (Intel takes 72, 80 or 132). A

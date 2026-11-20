@@ -386,7 +386,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     const known = compiler_version.of(self, a, id, exes);
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id, known.version));
     Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
-    const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = known.version, .intrinsic_modules = known.intrinsic_modules };
+    const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = known.version, .intrinsic_modules = known.intrinsic_modules, .openmp = !self.s.disable_openmp_conditional };
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
     // Intel's preprocessor output goes into the working directory: one of
     // zfls's per file, not the source tree
