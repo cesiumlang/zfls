@@ -28,7 +28,13 @@ test("compiler names", () => {
   assert.equal(compilerName("/usr/bin/gfortran-14"), "gfortran");
   assert.equal(compilerName("C:\\oneAPI\\bin\\ifx.exe"), "ifx");
   assert.equal(compilerName("flang-new-19"), "flang-new");
-  assert.equal(compilerName("x86_64-w64-mingw32-gfortran.exe"), "x86_64-w64-mingw32-gfortran");
+  // toolchains' names, with the target before it
+  assert.equal(compilerName("x86_64-w64-mingw32-gfortran.exe"), "gfortran");
+  assert.equal(compilerName("/opt/conda/bin/x86_64-conda-linux-gnu-gfortran"), "gfortran");
+  assert.equal(compilerName("/usr/bin/x86_64-linux-gnu-gfortran-13"), "gfortran");
+  assert.equal(compilerName("/opt/local/bin/gfortran-mp-14"), "gfortran");
+  assert.equal(compilerName("x86_64-conda-linux-gnu-flang-new"), "flang-new");
+  assert.equal(compilerName("mygfortran"), "mygfortran");
 });
 
 test("compiler kinds", () => {
