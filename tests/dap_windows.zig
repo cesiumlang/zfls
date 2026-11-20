@@ -7,11 +7,12 @@
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
 //! tests/dap/grid.f90 built with `-g` (linked with zfls's ifx kit: `--kit`,
 //! which `zig build` gives, else the one next to zfls): what the engine does with Flang's programs today, the
-//! breakpoints, the stack, a main program's variable, stepping and the stop
-//! at Flang's runtime error. What it does not do yet is printed as known
-//! gaps and not checked: the dummy arguments (#381, #382, #384), most of
-//! the main program's variables (#383), the module variables and the
-//! filter of Fortran runtime errors (#380).
+//! breakpoints, stopAtEntry, the stack, a main program's variable, the
+//! module variables, stepping and the filter of Fortran runtime errors (at
+//! a runtime error; tests/dap/stops.f90: at ERROR STOP, not at STOP). What
+//! it does not do yet is printed as known gaps and not checked: the dummy
+//! arguments (#381, #382, #384), most of the main program's variables
+//! (#383), the caller's line (#441).
 //!
 //!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]
 
@@ -108,12 +109,41 @@ fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.E
         return 0;
     };
     std.debug.print("-- {s}", .{version.stdout[0 .. (std.mem.findScalar(u8, version.stdout, '\n') orelse version.stdout.len - 1) + 1]});
-    const cwd = Io.Dir.cwd();
-    const text = try cwd.readFileAlloc(io, grid_source, a, .limited(1 << 20));
-    const src = try std.Io.Dir.path.join(a, &.{ tmp, "grid.f90" });
-    try cwd.writeFile(io, .{ .sub_path = src, .data = text });
-    const exe = try std.Io.Dir.path.join(a, &.{ tmp, "grid.exe" });
     const env = try dap.flangKitEnv(io, a, environ, exe_zfls, kit);
+    const grid = (try buildFlang(io, a, fc, env, tmp, "grid")) orelse return 1;
+    {
+        const c = try Client.start(io, gpa, &.{ exe_zfls, "dap" });
+        defer c.deinit();
+        runFlang(c, grid.exe, tmp, grid.src, lineOf(grid.text, "stop here: work"), lineOf(grid.text, "stop here: main"), lineOf(grid.text, "call work(")) catch |e| {
+            std.debug.print("zfls dap, LLVM Flang's program: {s}\n", .{@errorName(e)});
+            if (c.child.id != null) c.child.kill(io);
+            return 1;
+        };
+    }
+    // ERROR STOP and STOP: one function of Flang's runtime, told apart by
+    // its argument
+    const stops = (try buildFlang(io, a, fc, env, tmp, "stops")) orelse return 1;
+    for ([_]bool{ false, true }) |plain| {
+        const c = try Client.start(io, gpa, &.{ exe_zfls, "dap" });
+        defer c.deinit();
+        runStops(c, stops.exe, tmp, plain) catch |e| {
+            std.debug.print("zfls dap, LLVM Flang's STOP and ERROR STOP: {s}\n", .{@errorName(e)});
+            if (c.child.id != null) c.child.kill(io);
+            return 1;
+        };
+    }
+    std.debug.print("zfls dap, LLVM Flang's program: all good (but the known gaps)\n", .{});
+    return 0;
+}
+
+/// tests/dap/NAME.f90, copied to `tmp` and built there with `-g`: its
+/// text, its copy and the program; null when it does not build
+fn buildFlang(io: Io, a: Allocator, fc: []const u8, env: ?*const std.process.Environ.Map, tmp: []const u8, name: []const u8) !?struct { text: []const u8, src: []const u8, exe: []const u8 } {
+    const cwd = Io.Dir.cwd();
+    const text = try cwd.readFileAlloc(io, try a.print("tests/dap/{s}.f90", .{name}), a, .limited(1 << 20));
+    const src = try std.Io.Dir.path.join(a, &.{ tmp, try a.print("{s}.f90", .{name}) });
+    try cwd.writeFile(io, .{ .sub_path = src, .data = text });
+    const exe = try std.Io.Dir.path.join(a, &.{ tmp, try a.print("{s}.exe", .{name}) });
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(a, &.{ fc, "-g", "-O0" });
     if (env != null) try argv.appendSlice(a, &.{ "-fms-runtime-lib=dll", "-fuse-ld=lld" });
@@ -121,20 +151,32 @@ fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.E
     const built = try std.process.run(a, io, .{ .argv = argv.items, .cwd = .{ .path = tmp }, .environ_map = env });
     if (!built.term.success()) {
         std.debug.print("{s} failed:\n{s}{s}\n", .{ fc, built.stdout, built.stderr });
-        return 1;
+        return null;
     }
-    const c = try Client.start(io, gpa, &.{ exe_zfls, "dap" });
-    defer c.deinit();
-    runFlang(c, exe, tmp, src, lineOf(text, "stop here: work"), lineOf(text, "stop here: main"), lineOf(text, "call work(")) catch |e| {
-        std.debug.print("zfls dap, LLVM Flang's program: {s}\n", .{@errorName(e)});
-        if (c.child.id != null) c.child.kill(io);
-        return 1;
-    };
-    std.debug.print("zfls dap, LLVM Flang's program: all good (but the known gaps)\n", .{});
-    return 0;
+    return .{ .text = text, .src = src, .exe = exe };
 }
 
-const grid_source = "tests/dap/grid.f90";
+/// tests/dap/stops.f90 with the filter of Fortran runtime errors: its
+/// ERROR STOP stops; its plain STOP (`plain`) does not
+fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool) !void {
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
+    _ = try c.request("launch", .{ .program = exe, .args = if (plain) &[_][]const u8{"plain"} else &[_][]const u8{}, .cwd = tmp, .console = "internalConsole", .sourceRoot = tmp, .dbgeng = true });
+    _ = try c.event("initialized");
+    _ = try c.request("setExceptionBreakpoints", .{ .filters = .{"fortranRuntimeErrors"} });
+    _ = try c.request("configurationDone", .{});
+    if (plain) {
+        const exited = get(try c.event("exited"), "body").?;
+        try check(int(exited, "exitCode") == 0, "STOP: no stop, exit code 0 ({?d})", .{int(exited, "exitCode")});
+    } else {
+        const stopped = get(try c.event("stopped"), "body").?;
+        try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "exception") and std.mem.eql(u8, str(stopped, "description") orelse "", "ERROR STOP"), "ERROR STOP: stopped ({s}: {s})", .{ str(stopped, "reason") orelse "?", str(stopped, "description") orelse "?" });
+        _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
+        const exited = get(try c.event("exited"), "body").?;
+        try check(int(exited, "exitCode") == 3, "ERROR STOP: then exit code 3 ({?d})", .{int(exited, "exitCode")});
+    }
+    _ = try c.request("disconnect", .{ .terminateDebuggee = true });
+    _ = try c.child.wait(c.io);
+}
 
 /// The 1-based line of a marker of the source
 fn lineOf(text: []const u8, marker: []const u8) i64 {
@@ -159,24 +201,42 @@ fn scopeVariables(c: *Client, scopes: []Value, name: []const u8) ![]Value {
     return items(try c.request("variables", .{ .variablesReference = int(scope, "variablesReference").? }), "variables");
 }
 
+/// The variables of the module `module` of a frame's "Module variables"
+fn moduleVariables(c: *Client, scopes: []Value, module: []const u8) ![]Value {
+    const node = named(try scopeVariables(c, scopes, "Module variables"), module) orelse return &.{};
+    return items(try c.request("variables", .{ .variablesReference = int(node, "variablesReference").? }), "variables");
+}
+
+/// The value of the variable `name` of `vars`, or "(none)"
+fn valueOf(vars: []Value, name: []const u8) []const u8 {
+    const v = named(vars, name) orelse return "(none)";
+    return str(v, "value") orelse "?";
+}
+
 fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_line: i64, main_line: i64, call_line: i64) !void {
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
-    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .sourceRoot = tmp, .dbgeng = true });
+    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .sourceRoot = tmp, .dbgeng = true, .stopAtEntry = true });
     _ = try c.event("initialized");
     const bps = items(try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{ .{ .line = work_line }, .{ .line = main_line } } }), "breakpoints");
     var verified: usize = 0;
     for (bps) |b| verified += @intFromBool((get(b, "verified") orelse Value{ .bool = false }).bool);
     try check(verified == 2, "two verified breakpoints ({d})", .{verified});
-    // (the filter of Fortran runtime errors does not find Flang's runtime
-    // functions yet, #380: the stop at the error is the engine's own)
-    _ = try c.request("setExceptionBreakpoints", .{ .filters = .{} });
+    // the filter of Fortran runtime errors: on Flang's runtime functions
+    // (`_FortranAStopStatement`, `Fortran::runtime::Terminator::CrashHeader`)
+    _ = try c.request("setExceptionBreakpoints", .{ .filters = .{"fortranRuntimeErrors"} });
     _ = try c.request("configurationDone", .{});
 
-    // in work, called by the main program
+    // stopAtEntry: in the main program (`_QQmain`), before its statements
     var stopped = get(try c.event("stopped"), "body").?;
-    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint"), "stopped at a breakpoint", .{});
     const thread = int(stopped, "threadId").?;
     var frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
+    try check(frames.len > 0 and std.mem.eql(u8, str(frames[0], "name") orelse "", "MAIN") and (int(frames[0], "line") orelse main_line) < call_line, "stopAtEntry: in MAIN ({s}:{?d})", .{ if (frames.len > 0) str(frames[0], "name") orelse "?" else "none", if (frames.len > 0) int(frames[0], "line") else null });
+    _ = try c.request("continue", .{ .threadId = thread });
+
+    // in work, called by the main program
+    stopped = get(try c.event("stopped"), "body").?;
+    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint"), "stopped at a breakpoint", .{});
+    frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(frames.len > 1 and contains(str(frames[0], "name"), "work") and int(frames[0], "line") == work_line, "in grid::work at line {d} ({s}:{?d})", .{ work_line, str(frames[0], "name") orelse "?", int(frames[0], "line") });
     // the caller's line: that of its return address, the line after the
     // CALL when the call is the line's last instruction
@@ -185,7 +245,12 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     if (caller_line != call_line) std.debug.print("known gap: the caller's line is that of the return address ({d}), not the CALL's ({d})\n", .{ caller_line, call_line });
     var scopes = items(try c.request("scopes", .{ .frameId = int(frames[0], "id").? }), "scopes");
     gap("work's arguments (#381, #382, #384)", try scopeVariables(c, scopes, "Locals"));
-    gap("work's module variables (#380)", try scopeVariables(c, scopes, "Module variables"));
+    // the module variables, by Flang's public names (`_QMgridEncells`)
+    // with the types of CodeView's own (`ncells`)
+    const grid = try moduleVariables(c, scopes, "grid");
+    try check(std.mem.eql(u8, valueOf(grid, "ncells"), "42"), "grid::ncells = 42 ({s})", .{valueOf(grid, "ncells")});
+    try check(std.mem.eql(u8, valueOf(grid, "secret"), "99"), "grid::secret = 99 ({s})", .{valueOf(grid, "secret")});
+    try check(std.mem.eql(u8, valueOf(grid, "origin"), "point(x=9.0, y=-2.0, id=7)"), "grid::origin = point(x=9.0, y=-2.0, id=7) ({s})", .{valueOf(grid, "origin")});
 
     // in the main program: a variable of it, a step
     _ = try c.request("continue", .{ .threadId = thread });
@@ -198,24 +263,25 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     const k = named(locals, "k");
     try check(k != null and std.mem.eql(u8, str(k.?, "value") orelse "", "2"), "k = 2 ({s})", .{if (k) |x| str(x, "value") orelse "?" else "none"});
     gap("the main program's variables, v, big, tg, goal, none, nothing among them (#383)", locals);
+    // a module variable by its local name (`use counters, only: nhits => hits`)
+    const counters = try moduleVariables(c, scopes, "counters");
+    try check(std.mem.eql(u8, valueOf(counters, "nhits => hits"), "3"), "nhits => hits = 3 ({s})", .{valueOf(counters, "nhits => hits")});
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "step") and int(frames[0], "line") == main_line + 1, "next: line {d} ({?d})", .{ main_line + 1, int(frames[0], "line") });
 
-    // the OPEN of a missing file: Flang's runtime aborts, where the engine
-    // stops (0xc0000409, a fast fail)
+    // the OPEN of a missing file: the filter stops where Flang's runtime
+    // reports the error, before it aborts
     _ = try c.request("continue", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
-    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "exception"), "stopped by an exception ({s}: {s})", .{ str(stopped, "reason") orelse "?", str(stopped, "text") orelse "?" });
+    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "exception") and std.mem.eql(u8, str(stopped, "description") orelse "", "Fortran runtime error"), "stopped by the filter: a Fortran runtime error ({s}: {s})", .{ str(stopped, "reason") orelse "?", str(stopped, "description") orelse "?" });
+    const info = try c.request("exceptionInfo", .{ .threadId = thread });
+    try check(contains(str(info, "exceptionId"), "CrashHeader"), "at Flang's CrashHeader ({s})", .{str(info, "exceptionId") orelse "?"});
     frames = items(try c.request("stackTrace", .{ .threadId = thread, .levels = 40 }), "stackFrames");
-    var in_runtime = false;
     var at_open = false;
-    for (frames) |f| {
-        in_runtime = in_runtime or contains(str(f, "name"), "Fortran::runtime::");
-        at_open = at_open or (std.mem.eql(u8, str(f, "name") orelse "", "MAIN") and int(f, "line") == main_line + 2);
-    }
-    try check(in_runtime and at_open, "in Flang's runtime, called at line {d} of MAIN", .{main_line + 2});
+    for (frames) |f| at_open = at_open or (std.mem.eql(u8, str(f, "name") orelse "", "MAIN") and int(f, "line") == main_line + 2);
+    try check(contains(str(frames[0], "name"), "Fortran::runtime::Terminator::CrashHeader") and at_open, "in Flang's runtime ({s}), called at line {d} of MAIN", .{ str(frames[0], "name") orelse "?", main_line + 2 });
     _ = try c.request("disconnect", .{ .terminateDebuggee = true });
     _ = try c.child.wait(c.io);
 }

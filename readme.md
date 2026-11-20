@@ -181,7 +181,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓¹², Windows's partly¹² | – | gdb ○ | –⁹ |
 | `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | –⁹ |
 | Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓¹⁰ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
-| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | gdb ✓¹² | ○ | ○ | –⁹ |
+| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ✓¹² | ○ | ○ | –⁹ |
 
 7. MinGW's gfortran needs none.
 8. With zfls's ifx kit (and for ifx `zfls setup-ifx`), on Windows x64
@@ -192,8 +192,9 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
     Microsoft's format; arrays are read through Intel's descriptors, not
     yet LLVM Flang's. CI tests the engine on a C program, and on LLVM
-    Flang's built with `-g` (breakpoints, the stack and stepping): it has
-    no ifx.
+    Flang's built with `-g` (breakpoints, `stopAtEntry`, the stack,
+    stepping, the module variables, and the stops at a runtime error and
+    at ERROR STOP, not at STOP): it has no ifx.
 11. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
     Silicon and every user must code-sign it on an Intel Mac: breakpoints,
     stepping, the stack and the stops at runtime errors and ERROR STOP, but
@@ -201,13 +202,13 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     Variables view of these programs is empty (the row of variables is
     gdb's).
 12. LLVM Flang's `-g` on Windows writes debug information of Microsoft's
-    format only, with which Windows's engine has breakpoints, the stack
-    and stepping but not the variables. A program built with `-gdwarf-4`
+    format only, with which Windows's engine has breakpoints, the stack,
+    stepping, the module variables and the stops at Flang's runtime errors
+    and ERROR STOP, but not yet the other variables. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
     (tested in CI with Flang 23 and MSYS2's gdb): the variables, a
     polymorphic object or array with its dynamic type's components, and stops at
-    Flang's runtime errors and ERROR STOP (not at a plain STOP). Windows's
-    engine does not stop at them yet. The VS Code extension's Debug
+    Flang's runtime errors and ERROR STOP (not at a plain STOP). The VS Code extension's Debug
     Fortran File builds Flang's programs so (where there is an `lld-link`)
     and debugs them with gdb; the engine is for those built with `-g`
     (`"dbgeng": true`).
@@ -525,16 +526,16 @@ on Linux and Windows, lldb-dap on macOS.
   by lines, and shows the variables as Fortran: dbghelp says where each
   is, and zfls's declarations its type, kind and rank; arrays are read
   through Intel's descriptors. For LLVM Flang's programs it has
-  breakpoints, the stack and stepping, not yet the variables; gdb reads
-  them from a build with `-gdwarf-4 -Wl,-debug:dwarf`.
+  breakpoints, the stack, stepping, the module variables and the stops at
+  runtime errors, not yet the other variables; gdb reads them from a build
+  with `-gdwarf-4 -Wl,-debug:dwarf`.
 
 With gdb and the engine, the module variables that the frame's line sees
 are a scope of their own (zfls indexes the program's sources: `sourceRoot`
 of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
-error without `iostat=`) or at ERROR STOP; LLVM Flang's runtime with gdb
-and lldb-dap, not yet with the engine.
+error without `iostat=`) or at ERROR STOP, LLVM Flang's runtime's too.
 `--text JSON` translates the words it shows (the VS Code extension passes
 them in VS Code's language).
 

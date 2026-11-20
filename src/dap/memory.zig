@@ -158,12 +158,18 @@ pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
     return out.items;
 }
 
-/// A module variable's place: by the names Intel and LLVM Flang give it
+/// A module variable's place: by the names Intel and LLVM Flang give it.
+/// LLVM Flang's (`_QMgridEncells`) is a public symbol, without a type: the
+/// variable's type is that of the variable of its own name (`ncells`) at
+/// its address
 pub fn moduleGlobal(s: *Session, a: Allocator, module: []const u8, name: []const u8) !?dbgeng.Variable {
     const intel = try a.print("{s}_mp_{s}", .{ try std.ascii.allocUpperString(a, module), try std.ascii.allocUpperString(a, name) });
     if (try s.engine.global(a, intel)) |v| return v;
-    const flang = try a.print("_QM{s}E{s}", .{ try std.ascii.allocLowerString(a, module), try std.ascii.allocLowerString(a, name) });
-    return s.engine.global(a, flang);
+    const lower = try std.ascii.allocLowerString(a, name);
+    const flang = try a.print("_QM{s}E{s}", .{ try std.ascii.allocLowerString(a, module), lower });
+    const v = (try s.engine.global(a, flang)) orelse return null;
+    if (v.type_index == 0) if (try s.engine.dataAt(a, v.mod_base, lower, v.address)) |typed| return typed;
+    return v;
 }
 
 /// An expression of a frame: a variable, its components and elements
