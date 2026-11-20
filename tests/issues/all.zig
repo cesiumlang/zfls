@@ -52,6 +52,7 @@ test {
     _ = @import("settings.zig");
     _ = @import("signature.zig");
     _ = @import("summaries.zig");
+    _ = @import("tab_format.zig");
     _ = @import("user_config.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");

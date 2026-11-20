@@ -247,13 +247,13 @@ const Tokenizer = struct {
         var stmt_start = !t.continued;
         if (t.file.fixed) {
             // the label and continuation columns
-            if (line.len > 5 and line[5] != ' ' and line[5] != '0') stmt_start = false;
+            if (helpers.fixedContMark(line) != null) stmt_start = false;
         } else if (std.mem.startsWith(u8, trimmed, "&")) stmt_start = false;
         const continues = !stmt_start;
         // a character literal the line before left open goes on after the
         // `&` that starts this one (free form), or in column 7 (fixed form)
         const quote = if (continues) t.quote else null;
-        const from = if (t.file.fixed) @min(line.len, 6) else if (quote != null and trimmed.len > 0 and trimmed[0] == '&') raw.len - trimmed.len + 1 else 0;
+        const from = if (t.file.fixed) helpers.fixedStmtStart(line) else if (quote != null and trimmed.len > 0 and trimmed[0] == '&') raw.len - trimmed.len + 1 else 0;
         const lit = try blankLiterals(t.a, line, from, quote);
         var code = lit.code[0 .. lit.comment orelse lit.code.len];
         t.quote = lit.open;
@@ -267,7 +267,7 @@ const Tokenizer = struct {
         code = try blankFyppInline(t.a, code);
         const scope = try t.innerScope(ln);
         var it = helpers.words(code);
-        if (t.file.fixed) it.pos = @min(code.len, 6);
+        if (t.file.fixed) it.pos = @min(code.len, from);
         var st: Stmt = .{
             .start = stmt_start or t.stmt_next,
             .depth = if (continues) t.depth else 0,
@@ -769,7 +769,7 @@ fn statementStart(file: *const FortranFile, ln: usize) usize {
     while (true) {
         if (file.fixed) {
             const l = file.getLine(start, false) orelse return start;
-            const continuation = l.len > 5 and !helpers.isFixedComment(l) and l[0] != '#' and l[5] != ' ' and l[5] != '0';
+            const continuation = helpers.fixedContMark(l) != null and !helpers.isFixedComment(l) and l[0] != '#';
             if (!continuation) return start;
         }
         // the code line before

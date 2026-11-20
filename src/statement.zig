@@ -87,7 +87,7 @@ pub fn of(a: Allocator, lines: []const []const u8, fixed: bool) !?Code {
     for (lines, 0..) |line, l| {
         var i: usize = 0;
         if (l > 0) {
-            if (fixed) i = @min(6, line.len) else if (helpers.freeContEnd(line)) |e| i = e;
+            if (fixed) i = @min(helpers.fixedContStart(line) orelse 6, line.len) else if (helpers.freeContEnd(line)) |e| i = e;
         }
         const end = if (fixed) @min(line.len, 72) else line.len;
         const first = text.items.len;

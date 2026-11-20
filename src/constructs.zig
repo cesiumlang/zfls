@@ -104,15 +104,16 @@ fn analyze(a: Allocator, code: []const u8, fixed: bool) !LineInfo {
     var info: LineInfo = .{};
     var from: usize = 0;
     if (fixed) {
-        // the label field, then code from column 7
-        const field = code[0..@min(code.len, 5)];
+        // the label field, then code from column 7 (or after the TAB of a
+        // TAB-format line)
+        from = helpers.fixedStmtStart(code);
+        const field = code[0..@min(code.len, 5, from)];
         const trimmed = std.mem.trim(u8, field, " ");
-        const cont = code.len > 5 and code[5] != ' ' and code[5] != '0';
+        const cont = helpers.fixedContMark(code) != null;
         if (trimmed.len > 0 and !cont and std.mem.findNone(u8, trimmed, "0123456789") == null) {
             const s = std.mem.find(u8, field, trimmed).?;
             info.label_def = .{ .kind = .number, .start = s, .end = s + trimmed.len, .depth = 0 };
         }
-        from = @min(code.len, 6);
     }
     var toks = try tokenize(a, code, from);
     // ; separates statements: only the first is looked at here
