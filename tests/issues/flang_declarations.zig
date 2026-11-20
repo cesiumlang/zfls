@@ -104,3 +104,43 @@ test "RECORD with :: (as LLVM Flang writes it in a module file)" {
     try w.expectNoDiagnostics("r.f90");
     try w.expectHoverContains("r.f90", w.pos("r.f90", "origin%x", 0, 0), "point");
 }
+
+// a fixed-form declaration whose last name starts in column 75
+const long_line_files = [_]h.File{.{ .name = "l.f", .text = "      SUBROUTINE LONGL(A)\n" ++
+    "      IMPLICIT NONE\n" ++
+    "      REAL A\n" ++
+    "      INTEGER SHORT1, SHORT2                                            , PAST72\n" ++
+    "      SHORT1 = 1\n" ++
+    "      A = SHORT1 + SHORT2\n" ++
+    "      END SUBROUTINE\n" }};
+
+test "fixed form: the names past fixed_line_length declare nothing (#553)" {
+    const w = try h.Workspace.init(&long_line_files, .{ .settings = .{ .fixed_line_length = 72 } });
+    defer w.deinit();
+    const symbols = try w.documentSymbols("l.f");
+    for (symbols) |s| try h.expect(std.ascii.findIgnoreCase(s, "past72") == null, "{s} in {any}", .{ s, symbols });
+    try h.expect(try w.hover("l.f", w.pos("l.f", "PAST72", 0, 1)) == null, "a hover on PAST72", .{});
+    try w.expectHoverContains("l.f", w.pos("l.f", "SHORT2  ", 0, 0), "INTEGER");
+    // without a limit (and with one past the name) it is declared
+    const all = try h.Workspace.init(&long_line_files, .{ .settings = .{ .fixed_line_length = 132 } });
+    defer all.deinit();
+    try all.expectHoverContains("l.f", all.pos("l.f", "PAST72", 0, 1), "INTEGER");
+}
+
+test "fixed form: a continued statement past fixed_line_length, also in a file that switches forms (#553)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f", .text = "      MODULE S\n" ++
+        "      IMPLICIT NONE\n" ++
+        "      INTEGER FIRST,                                                    CUT1\n" ++
+        "     &        SECOND                                                    , CUT2\n" ++
+        "      END MODULE\n" ++
+        "!dir$ free\n" ++
+        "module t\n" ++
+        "  implicit none\n" ++
+        "  integer :: free_names_are_not_cut_past_column_72_in_free_form_lines, kept\n" ++
+        "end module t\n" }}, .{ .settings = .{ .fixed_line_length = 72 } });
+    defer w.deinit();
+    const symbols = try w.documentSymbols("s.f");
+    for (symbols) |s| try h.expect(std.ascii.findIgnoreCase(s, "cut") == null, "{s} in {any}", .{ s, symbols });
+    try w.expectHoverContains("s.f", w.pos("s.f", "SECOND", 0, 1), "INTEGER");
+    try w.expectHoverContains("s.f", w.pos("s.f", "kept", 0, 1), "INTEGER");
+}

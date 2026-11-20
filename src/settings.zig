@@ -248,6 +248,11 @@ pub const Settings = struct {
     pub fn dLinesCode(self: *const Settings) bool {
         return if (self.d_lines) |v| std.ascii.eqlIgnoreCase(std.mem.trim(u8, v, " "), "code") else false;
     }
+
+    /// `fixed_line_length` when it limits fixed-form lines
+    pub fn fixedColumns(self: *const Settings) ?usize {
+        return if (self.fixed_line_length > 0) @intCast(self.fixed_line_length) else null;
+    }
 };
 
 /// Store a JSON `pp_defs` value (object, or list of names) into settings

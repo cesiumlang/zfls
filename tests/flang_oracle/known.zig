@@ -157,12 +157,6 @@ pub const rules = [_]Rule{
         .kind = .variable,
         .why = "zfls reads a DEC tab-format file (a tab before the statement, a digit after it continuing the line) as free form, and loses the continuation's names",
     },
-    .{
-        .file = "tests/flang/line_length.f",
-        .entity = "longl::past72",
-        .diff = .extra,
-        .why = "zfls reads a declaration's names past fixed_line_length (the setting limits highlighting and the not-declared check only); Flang reads 72 columns",
-    },
 };
 
 /// Whether `text` matches `pattern`, in which `*` is any characters

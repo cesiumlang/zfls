@@ -19,6 +19,7 @@ pub const objects = @import("objects.zig");
 pub const parser = @import("parser.zig");
 pub const parser_openmp = @import("parser/openmp.zig");
 pub const parser_form_switch = @import("parser/form_switch.zig");
+pub const parser_fixed_columns = @import("parser/fixed_columns.zig");
 pub const preprocessor = @import("preprocessor.zig");
 pub const preprocessor_intel = @import("preprocessor/intel.zig");
 pub const json = @import("json.zig");

@@ -336,6 +336,7 @@ pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileErro
     f.comment_markers = self.s.comment_markers.slice();
     f.openmp_conditional = !self.s.disable_openmp_conditional;
     f.d_lines_code = self.s.dLinesCode();
+    f.fixed_columns = self.s.fixedColumns();
     errdefer f.destroy();
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
@@ -620,6 +621,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?pa
         nf.comment_markers = self.s.comment_markers.slice();
         nf.openmp_conditional = !self.s.disable_openmp_conditional;
         nf.d_lines_code = self.s.dLinesCode();
+        nf.fixed_columns = self.s.fixedColumns();
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
     };
@@ -748,6 +750,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
             nf.comment_markers = self.s.comment_markers.slice();
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
+            nf.fixed_columns = self.s.fixedColumns();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
@@ -779,6 +782,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
             nf.comment_markers = self.s.comment_markers.slice();
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
+            nf.fixed_columns = self.s.fixedColumns();
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;

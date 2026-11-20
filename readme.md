@@ -1333,7 +1333,8 @@ zfls deliberately differs from fortls in a few places:
   (alone with nothing typed). fortls has neither (FL #323).
 - `fixed_line_length` (as gfortran's `-ffixed-line-length-n`: 72, 80, 132)
   makes the columns past it of a fixed-form line a comment: a `comment`
-  semantic token, and no names there; the compiler check is given the same
+  semantic token, and no names there (they declare nothing, and have no
+  hover, definition or references); the compiler check is given the same
   length. The VS Code extension passes 72 by
   default (`zfls.fixedFormLineLength`), as its grammar no longer stops the
   code at column 72 itself (Modern Fortran #87). fortls has no such option.

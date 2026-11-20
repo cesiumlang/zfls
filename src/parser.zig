@@ -28,6 +28,7 @@ const parser_parse = @import("parser/parse.zig");
 const changes = @import("parser/changes.zig");
 const openmp = @import("parser/openmp.zig");
 const form_switch = @import("parser/form_switch.zig");
+const fixed_columns = @import("parser/fixed_columns.zig");
 const pp_intel = @import("preprocessor/intel.zig");
 
 pub const ResultSig = parser_definitions.ResultSig;
@@ -242,6 +243,9 @@ pub const FortranFile = struct {
     /// `d_lines` is `code`: the D or d in column 1 of a fixed-form line (a
     /// debug line) is a blank in `lines`, not the start of a comment
     d_lines_code: bool = false,
+    /// `fixed_line_length`: the columns of a fixed-form code line past it
+    /// are blanks in `lines` (parser/fixed_columns.zig); null: no limit
+    fixed_columns: ?usize = null,
 
     pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
         const self = try gpa.create(FortranFile);
@@ -370,9 +374,11 @@ pub const FortranFile = struct {
 
     /// Whether a line of the text is read otherwise than it is written:
     /// comment markers, debug lines read as code, OpenMP conditional lines,
-    /// fixed-form lines of a file that switches forms
+    /// fixed-form lines of a file that switches forms or past
+    /// `fixed_columns`
     fn rewrites(self: *const FortranFile) bool {
         if (self.form_switched or self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
+        if (self.fixed) if (self.fixed_columns) |n| if (fixed_columns.anyLong(self.lines.items, n)) return true;
         if (!self.openmp_conditional) return false;
         for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
         return false;
@@ -380,10 +386,11 @@ pub const FortranFile = struct {
 
     /// A copy of `buf` and its lines as zfls reads them: the comment
     /// markers made `!`, the D or d in column 1 a blank with
-    /// `d_lines_code`, the sentinels of OpenMP conditional lines blanks
+    /// `d_lines_code`, the sentinels of OpenMP conditional lines blanks,
+    /// the columns past `fixed_columns` blanks
     fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
         if (self.form_switched) {
-            const out = try form_switch.asFree(self.gpa, self.declared_fixed, self.d_lines_code, raw);
+            const out = try form_switch.asFree(self.gpa, self.declared_fixed, self.d_lines_code, self.fixed_columns, raw);
             for (out.lines.items) |l| self.rewriteLine(@constCast(l));
             return .{ .text = out.text, .lines = out.lines };
         }
@@ -404,6 +411,7 @@ pub const FortranFile = struct {
     fn rewriteLine(self: *const FortranFile, line: []u8) void {
         if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
         if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
+        if (self.fixed) if (self.fixed_columns) |n| fixed_columns.blank(line, n);
         if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
     }
 

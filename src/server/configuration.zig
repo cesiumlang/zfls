@@ -87,7 +87,7 @@ const index_settings = [_][]const u8{
     "comment_markers",          "d_lines",                  "sort_keywords",        "recursion_limit",
     "lowercase_intrinsics",     "pp_suffixes",              "include_dirs",         "pp_defs",
     "compile_commands",         "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
-    "disable_intel_directives",
+    "disable_intel_directives", "fixed_line_length",
 };
 
 fn isIndexSetting(comptime name: []const u8) bool {
