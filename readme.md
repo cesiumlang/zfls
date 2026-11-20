@@ -165,7 +165,8 @@ the columns say whose dialect each is.
 
 Not a compiler's own, and read for all of them: the C preprocessor, fypp
 files, OpenMP conditional compilation lines, kinds written with `*`
-(`real*8`), and comment markers of other preprocessors
+(`real*8`), `BYTE`, old-style initial values (`integer :: k /3/`), Cray
+pointers (`pointer (p, b)`), and comment markers of other preprocessors
 ([Comment markers](#comment-markers)).
 
 ### Running and debugging
@@ -1127,6 +1128,7 @@ before they overwrite one, and open it.
 | `zig build test-damaged` | every line of the test corpus damaged as half-typed code is (cut, deleted, END statements dropped, unbalanced parentheses and quotes, random bytes, mixed line endings, fixed and free form mixed), with the main requests on each version: crashes, error answers, leaks, hangs, ranges outside the document (minutes; a sample of it is part of `zig build test`) |
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` against gfortran parse trees |
+| `zig build test-flang-oracle` | symbols of `tests/fortran` and `tests/flang` (LLVM Flang's dialect and quirks), of the module files Flang writes of them and of Flang's intrinsic modules, against Flang's scope trees (`-fc1 -fdebug-dump-symbols`); the differences known, each with its reason, are in `tests/flang_oracle/known.zig` |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
 | `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran (`-- --compiler flang`: LLVM Flang; `--path EXE` names the compiler) |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
@@ -1138,7 +1140,7 @@ with saves, close/reopen and requests mixed in, and then checks that every
 edited file's symbols and diagnostics match a fresh server's. Run it on a
 Debug build so memory errors and leaks are caught; for longer runs, `zig
 build test-stress -- --seeds N --steps M` (`--help` lists the options).
-`zig build test-tools` installs the oracle and stress test drivers in
+`zig build test-tools` installs the oracles and the stress test drivers in
 `zig-out/bin`, to run them against a server built elsewhere (`--zfls EXE`).
 
 The parity, differential and stress tests need a fortls checkout, `../fortls` by
@@ -1147,6 +1149,10 @@ default or `-Dfortls=PATH` (the stress test takes its test sources, else
 own code, need Python 3 (`-Dpython=EXE`); no third-party Python packages are
 required. The oracle test needs `gfortran` on the `PATH`
 or in the MSYS2 UCRT64 installation; it is skipped when gfortran is missing.
+The Flang oracle needs LLVM Flang (`FLANG`, `-- --flang EXE`, or `flang` or
+`flang-new` on the `PATH`), with its intrinsic modules (conda-forge's
+`flang_linux-64`, `flang_win-64`); it is skipped without one, and CI runs it
+on Linux x64 and Windows x64.
 The compiler check's test (and `tests/issues/compiler_lfortran.zig`) needs
 `lfortran` on the `PATH` (`--lfortran EXE` or `LFORTRAN` for the driver),
 from conda-forge (`pixi add lfortran`, `conda install -c conda-forge

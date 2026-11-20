@@ -1,0 +1,28 @@
+! CUDA Fortran: a prefix before ATTRIBUTES (zfls #411), in interface
+! bodies and module procedures
+module cuda_prefix
+  use iso_c_binding, only: c_int
+  implicit none
+  interface
+    pure attributes(device) function f(x) bind(c) result(y)
+      import :: c_int
+      integer(c_int), intent(in) :: x
+      integer(c_int) :: y
+    end function
+    attributes(device) pure function g(x) result(y)
+      import :: c_int
+      integer(c_int), intent(in) :: x
+      integer(c_int) :: y
+    end function
+  end interface
+contains
+  elemental attributes(device) real function h(x)
+    real, intent(in) :: x
+    h = x
+  end function
+  attributes(device) pure subroutine r(n)
+    integer, value :: n
+    integer :: m
+    m = n
+  end subroutine
+end module cuda_prefix

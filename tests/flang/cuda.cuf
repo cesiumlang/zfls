@@ -1,0 +1,40 @@
+! CUDA Fortran (.cuf), which LLVM Flang reads by the suffix: kernels,
+! device, managed, constant and shared data, a kernel launch, and Flang's
+! module cudadevice (zfls #395, #401)
+module cuda_kernels
+  use cudadevice
+  implicit none
+  real, constant :: scale_c
+  real, device, allocatable :: dev_buf(:)
+  real, managed :: shared_total
+contains
+  attributes(global) subroutine add(a, n)
+    real, device :: a(*)
+    integer, value :: n
+    integer :: i
+    real, shared :: tile(32)
+    i = blockDim%x * (blockIdx%x - 1) + threadIdx%x
+    tile(threadIdx%x) = 0.0
+    call syncthreads()
+    if (i <= n) a(i) = a(i) + scale_c + tile(1)
+  end subroutine
+  attributes(device) function twice(x) result(y)
+    real, value :: x
+    real :: y
+    y = 2 * x
+  end function
+  attributes(host, device) function both(x)
+    real, intent(in) :: x
+    real :: both
+    both = x
+  end function
+end module cuda_kernels
+
+program run_cuda
+  use cuda_kernels
+  implicit none
+  real, device, allocatable :: d(:)
+  real, pinned, allocatable :: h(:)
+  allocate(d(100), h(100))
+  call add<<<1, 100>>>(d, 100)
+end program run_cuda

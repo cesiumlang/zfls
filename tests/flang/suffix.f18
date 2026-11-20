@@ -1,0 +1,11 @@
+! A free-form file of suffix .f18, which LLVM Flang's driver reads as Fortran
+! only with -x f95 (zfls #401)
+module suffix_f18
+  implicit none
+  integer :: count_f18
+contains
+  subroutine fill_f18(n)
+    integer, intent(in) :: n
+    count_f18 = n
+  end subroutine
+end module suffix_f18

@@ -541,6 +541,8 @@ pub const FortranFile = struct {
                 const line = if (last) |l| post_lines.items[l] else curr_line;
                 var cut = line;
                 if (!self.fixed) {
+                    // a preprocessor directive's `&&` continues nothing
+                    if (std.mem.startsWith(u8, std.mem.trimStart(u8, line, " \t"), "#")) break;
                     const amper = continuationAmpersand(try helpers.stripStrings(a, line, true)) orelse break;
                     cut = str.upto(line, amper);
                     if (last) |l| post_lines.items[l] = cut else curr_line = cut;

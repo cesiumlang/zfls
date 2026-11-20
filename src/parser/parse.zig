@@ -297,7 +297,7 @@ pub const Parser = struct {
                         const ln = str.strip(str.beforeFirst(parts[1], "("));
                         link_name = if (std.ascii.eqlIgnoreCase(ln, "null")) null else ln;
                     } else {
-                        name = str.beforeFirst(var_name, "=");
+                        name = helpers.entityBeforeInit(var_name);
                     }
                     var var_keywords: std.ArrayList([]const u8) = .empty;
                     try var_keywords.appendSlice(a, info.keywords);
@@ -701,7 +701,10 @@ pub const Parser = struct {
         const ast = p.file_ast;
         const in_type = if (ast.current_scope) |cs| cs.kind == .type else false;
         if (R().RECORD_STMT.match(line)) |m| {
-            const decl = try a.print("TYPE({s}) :: {s}", .{ m.group(1).?, m.group(2) orelse "" });
+            // `record/point/::from`, as LLVM Flang writes it in a module file
+            var names = str.strip(m.group(2) orelse "");
+            if (std.mem.startsWith(u8, names, "::")) names = str.strip(names[2..]);
+            const decl = try a.print("TYPE({s}) :: {s}", .{ m.group(1).?, names });
             if (try getFortranDefinition(a, decl)) |def| try p.handleDef(a, def, decl, ln, counters, block_id_stack);
             p.dbg("{s} !!! RECORD - Ln:{d}", .{ line, ln });
             return true;

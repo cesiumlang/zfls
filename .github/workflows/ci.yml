@@ -549,8 +549,8 @@ jobs:
           echo "$RUNNER_TEMP/lfortran-bin" >> "$GITHUB_PATH"
 
       # LLVM Flang from conda-forge (on Windows x64, the ifx kit's step below
-      # installs it), for tests/compiler_check.zig and tests/dap_gdb.zig;
-      # FLANG names it, and the PATH does not have it
+      # installs it), for tests/compiler_check.zig, tests/dap_gdb.zig and
+      # tests/flang_oracle.zig; FLANG names it, and the PATH does not have it
       - name: LLVM Flang (Linux x64)
         if: matrix.target == 'x86_64-linux'
         run: |
@@ -675,7 +675,7 @@ jobs:
           grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
 
       # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
-      # tests/gfortran_oracle.zig, tests/stress_edit.zig)
+      # tests/gfortran_oracle.zig, tests/flang_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
 
@@ -778,6 +778,13 @@ jobs:
 
       - name: gfortran oracle
         run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
+
+      # LLVM Flang is the oracle of the corpus, of its own dialect and quirks
+      # (tests/flang), of the module files it writes and of its intrinsic
+      # modules (FLANG, installed above for the compiler check)
+      - name: Flang oracle (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/flang_oracle --zfls "$ZFLS" --flang "$FLANG"
 
       - name: Stress sessions
         run: |

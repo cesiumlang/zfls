@@ -131,7 +131,7 @@ pub fn build(b: *std.Build) !void {
 fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step, damaged_step: *std.Build.Step, kit: std.Build.LazyPath) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
-    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
+    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran and Flang oracles and the stress test");
     all.dependOn(b.getInstallStep());
     all.dependOn(test_step);
     all.dependOn(damaged_step);
@@ -140,7 +140,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .root_source_file = b.path("tests/lsp_client.zig"),
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap with the engine, gdb and lldb-dap, the compiler check)");
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran and Flang oracles, stress test, zfls dap with the engine, gdb and lldb-dap, the compiler check)");
     const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false, needs_kit: bool = false };
     const tools = [_]Tool{
         .{
@@ -148,6 +148,13 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .root = "tests/gfortran_oracle.zig",
             .step = "test-oracle",
             .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "flang_oracle",
+            .root = "tests/flang_oracle.zig",
+            .step = "test-flang-oracle",
+            .desc = "Compare zfls symbols with LLVM Flang's of tests/fortran, tests/flang, their module files and Flang's intrinsic modules (skipped without Flang; FLANG names it)",
             .needs_fortls = false,
         },
         .{
