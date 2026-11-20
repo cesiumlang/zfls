@@ -29,6 +29,7 @@ const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
 const workspace = @import("server/workspace.zig");
+const initialization = @import("server/initialization.zig");
 const symbols = @import("server/symbols.zig");
 const completion = @import("server/completion.zig");
 const completion_resolve = @import("server/completion_resolve.zig");
@@ -109,6 +110,8 @@ pub const Server = struct {
     module_dirs: project.ModuleDirsMap = .empty,
     link_version: i64 = 0,
     sync_type: i32 = 1,
+    /// Whether `initialize` has succeeded, or failed (initialization.zig)
+    init_state: initialization.State = .none,
     /// The client takes `DocumentSymbol` trees, not fortls's flat list
     hierarchical_symbols: bool = false,
     /// the client asks whether a position can be renamed first
@@ -388,6 +391,12 @@ pub const Server = struct {
         const method = json.str(json.get(request, "method")) orelse "";
         self.log.debug("REQUEST {s} {s}", .{ if (id) |i| (json.stringify(a, i) catch "?") else "None", method });
         const params = json.get(request, "params") orelse .null;
+        // before a successful `initialize`: ServerNotInitialized, and the
+        // notifications dropped
+        if (initialization.waits(self, method)) {
+            if (id) |i| self.writeError(a, i, -32002, "server not initialized", null) catch |e| self.logSendFailure(e);
+            return;
+        }
         const result = self.dispatch(a, method, params);
         if (id == null) {
             if (result) |_| {} else |e| self.log.err("error handling request: {s} ({s})", .{ method, @errorName(e) });
@@ -542,7 +551,7 @@ pub const Server = struct {
             else => try summary.beforeRequest(self, a, method, params),
         }
         return switch (m) {
-            .initialize => workspace.serveInitialize(self, a, try json.decode(lsp.InitializeParams, a, params)),
+            .initialize => initialization.initialize(self, a, params),
             .document_symbol => symbols.serveDocumentSymbols(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .folding_range => symbols.serveFoldingRanges(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .semantic_tokens => symbols.serveSemanticTokens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
