@@ -110,6 +110,13 @@ pub const FindOpts = struct {
 };
 
 pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!?*Obj {
+    return checkScopeOf(env, local_scope, local_scope, name_lower, filter_public, var_line_number);
+}
+
+/// `checkScope` of `local_scope`, whose names are those of `owner`, public
+/// or not as its: `owner` is the scope around an interface block, whose
+/// interface bodies are names of it (#474)
+fn checkScopeOf(env: Env, local_scope: *Obj, owner: *const Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!?*Obj {
     // the children `getChildren` lists, without copying them: a procedure's
     // and a type's own, then those inherited (`in_children`)
     const inherited: []const *Obj = switch (local_scope.kind) {
@@ -121,15 +128,15 @@ pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_pu
     if (try index.of(local_scope)) |idx| {
         // only the children where the name can be
         var it = idx.find(name_lower);
-        while (it.next()) |i| switch (try checkChild(env, local_scope, own[i], name_lower, filter_public, var_line_number)) {
+        while (it.next()) |i| switch (try checkChild(env, local_scope, owner, own[i], name_lower, filter_public, var_line_number)) {
             .next => {},
             .found => |v| return v,
         };
-    } else for (own) |child| switch (try checkChild(env, local_scope, child, name_lower, filter_public, var_line_number)) {
+    } else for (own) |child| switch (try checkChild(env, local_scope, owner, child, name_lower, filter_public, var_line_number)) {
         .next => {},
         .found => |v| return v,
     };
-    for (inherited) |child| switch (try checkChild(env, local_scope, child, name_lower, filter_public, var_line_number)) {
+    for (inherited) |child| switch (try checkChild(env, local_scope, owner, child, name_lower, filter_public, var_line_number)) {
         .next => {},
         .found => |v| return v,
     };
@@ -139,18 +146,22 @@ pub fn checkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_pu
 /// What `checkScope` makes of one child: go on to the next, or answer
 const Step = union(enum) { next, found: ?*Obj };
 
-fn checkChild(env: Env, local_scope: *Obj, child: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!Step {
-    if (std.mem.startsWith(u8, child.name, "#GEN_INT")) {
-        if (try checkScope(env, child, name_lower, filter_public, null)) |v| return .{ .found = v };
+/// `owner`: whose names the children are, public or not as its (see
+/// `checkScopeOf`)
+fn checkChild(env: Env, local_scope: *Obj, owner: *const Obj, child: *Obj, name_lower: []const u8, filter_public: bool, var_line_number: ?usize) Allocator.Error!Step {
+    // the interface bodies of an interface block are names of this scope,
+    // public or not as its own (#474)
+    if (child.bodiesAreNames(name_lower)) {
+        if (try checkScopeOf(env, child, owner, name_lower, filter_public, null)) |v| return .{ .found = v };
     }
     // the enumerators of an ENUM are names of this scope, public or
     // not as its own
     if (child.kind == .enum_) for (child.childList()) |e| {
-        const e_private = e.vis == .private or (local_scope.def_vis == .private and e.vis != .public);
+        const e_private = e.vis == .private or (owner.def_vis == .private and e.vis != .public);
         if (filter_public and e_private) continue;
         if (std.ascii.eqlIgnoreCase(e.name, name_lower)) return .{ .found = e };
     };
-    const is_private = child.vis == .private or (local_scope.def_vis == .private and child.vis != .public);
+    const is_private = child.vis == .private or (owner.def_vis == .private and child.vis != .public);
     if (filter_public and is_private) return .next;
     if (std.ascii.eqlIgnoreCase(child.name, name_lower)) {
         if (local_scope.kind == .function and std.ascii.eqlIgnoreCase(local_scope.name, child.name)) {
@@ -438,6 +449,12 @@ test "checkScope finds through a scope's index what walking its children finds (
         \\    subroutine ext_s()
         \\    end subroutine
         \\  end interface
+        \\  interface gen
+        \\    subroutine gen()
+        \\    end subroutine
+        \\    subroutine gen_a()
+        \\    end subroutine
+        \\  end interface
         \\
     );
     for (0..40) |i| try src.print(gpa, "  integer :: v{d}\n", .{i});
@@ -493,6 +510,10 @@ test "checkScope finds through a scope's index what walking its children finds (
     const public = (try checkScope(env, mod, "dup", true, null)).?;
     try std.testing.expectEqualStrings("dup", first.name);
     try std.testing.expectEqualStrings("DUP", public.name);
+    // an interface body of a named generic (#474), but for the one that
+    // has the generic's name
+    try std.testing.expect((try checkScope(env, mod, "gen_a", false, null)).?.kind == .subroutine);
+    try std.testing.expect((try checkScope(env, mod, "gen", false, null)).?.kind == .interface);
     // a child added or removed after a lookup
     try std.testing.expect(try checkScope(env, mod, "late", false, null) == null);
     try mod.addChild(try Obj.newScope(ast, .scope, 1, "late", &.{}));
@@ -514,7 +535,7 @@ fn walkScope(env: Env, local_scope: *Obj, name_lower: []const u8, filter_public:
         else => &.{},
     };
     for ([_][]const *Obj{ local_scope.childList(), inherited }) |list| for (list) |child| {
-        switch (try checkChild(env, local_scope, child, name_lower, filter_public, var_line_number)) {
+        switch (try checkChild(env, local_scope, local_scope, child, name_lower, filter_public, var_line_number)) {
             .next => {},
             .found => |v| return v,
         }

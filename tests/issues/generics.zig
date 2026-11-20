@@ -449,3 +449,109 @@ test "a generic whose specifics are interface bodies: hover, signature help, def
     try w.expectNoDiagnostics("m.f90");
     try w.expectNoDiagnostics("u.f90");
 }
+
+const named_bodies = h.File{ .name = "m.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  private
+    \\  public :: f, f1, ext
+    \\  interface f
+    \\    subroutine f1(x)
+    \\      integer, intent(in) :: x
+    \\    end subroutine f1
+    \\    subroutine f2(x)
+    \\      real, intent(in) :: x
+    \\    end subroutine
+    \\  end interface f
+    \\  interface
+    \\    subroutine ext(k)
+    \\      integer, intent(in) :: k
+    \\    end subroutine
+    \\    subroutine hid(k)
+    \\      integer, intent(in) :: k
+    \\    end subroutine
+    \\  end interface
+    \\contains
+    \\  subroutine inside()
+    \\    call f1(1)
+    \\    call f2(2.0)
+    \\    call hid(3)
+    \\  end subroutine
+    \\end module
+    \\
+};
+
+const named_bodies_user = h.File{ .name = "u.f90", .text =
+    \\program p
+    \\  use m
+    \\  implicit none
+    \\  call f1(4)
+    \\  call ext(5)
+    \\  call f2(6.0)
+    \\  call hid(7)
+    \\  call f
+    \\  call e
+    \\end program
+    \\
+};
+
+/// The number of the locations in `locs` in file `name`
+fn countIn(locs: []const h.Location, name: []const u8) usize {
+    var n: usize = 0;
+    for (locs) |l| if (std.mem.endsWith(u8, l.uri, name)) {
+        n += 1;
+    };
+    return n;
+}
+
+test "the interface bodies of a named generic are names of the module, public or not as its other names (#474)" {
+    const w = try h.Workspace.init(&.{ named_bodies, named_bodies_user }, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    // a specific called by its own name: hover, definition, signature help
+    try expectHoverOnly(w, "u.f90", "f1(4)", 0, "SUBROUTINE f1(x)", "f2");
+    try expectDefIn(w, "u.f90", "f1(4)", 0, 6);
+    const sig = (try w.signature("u.f90", w.pos("u.f90", "f1(4)", 0, 3))) orelse return h.unmet("no signature help on f1(4)", .{});
+    try h.expect(sig.count == 1 and std.mem.startsWith(u8, sig.label, "f1("), "signature help on f1(4): {d}, {s}", .{ sig.count, sig.label });
+    // inside the module, private ones too
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "f1(1)", 0, 0), "SUBROUTINE f1(x)");
+    try expectDefIn(w, "m.f90", "f2(2.0)", 0, 9);
+    try expectDefIn(w, "m.f90", "hid(3)", 0, 17);
+    // outside it, only the public ones: of a named generic and of an
+    // unnamed interface block alike
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "ext(5)", 0, 0), "SUBROUTINE ext(k)");
+    for ([_][]const u8{ "f2(6.0)", "hid(7)" }) |needle| {
+        const got = try w.hover("u.f90", w.pos("u.f90", needle, 0, 0));
+        try h.expect(got == null, "hover on the private {s}: {?s}", .{ needle, got });
+    }
+    // references and rename: the module's name, in every file that uses it
+    for ([_]struct { []const u8, []const u8, usize, usize, usize }{
+        .{ "u.f90", "f1(4)", 0, 4, 1 },
+        .{ "m.f90", "subroutine f1", 11, 4, 1 },
+        .{ "u.f90", "ext(5)", 0, 2, 1 },
+        .{ "m.f90", "subroutine ext", 11, 2, 1 },
+    }) |c| {
+        const refs = try w.references(c[0], w.pos(c[0], c[1], 0, c[2]));
+        try h.expect(countIn(refs, "m.f90") == c[3] and countIn(refs, "u.f90") == c[4], "references from {s}: {d} in m.f90, {d} in u.f90", .{ c[1], countIn(refs, "m.f90"), countIn(refs, "u.f90") });
+    }
+    const edits = try w.rename("u.f90", w.pos("u.f90", "f1(4)", 0, 0), "first");
+    var in_user: usize = 0;
+    for (edits) |e| if (std.mem.endsWith(u8, e.uri, "u.f90")) {
+        in_user += 1;
+    };
+    try h.expect(edits.len == 5 and in_user == 1, "rename of f1: {d} edits, {d} in u.f90", .{ edits.len, in_user });
+    // completion: the public ones
+    var offered: [3]bool = @splat(false);
+    for (try w.completion("u.f90", w.pos("u.f90", "call f\n", 0, 6))) |label| {
+        for ([_][]const u8{ "f", "f1", "f2" }, &offered) |want, *o| if (std.mem.eql(u8, label, want)) {
+            o.* = true;
+        };
+    }
+    try h.expect(offered[0] and offered[1] and !offered[2], "call f offers f {}, f1 {}, f2 {}", .{ offered[0], offered[1], offered[2] });
+    var ext_offered = false;
+    for (try w.completion("u.f90", w.pos("u.f90", "call e\n", 0, 6))) |label| {
+        if (std.mem.eql(u8, label, "ext")) ext_offered = true;
+    }
+    try h.expect(ext_offered, "call e does not offer the public ext", .{});
+    try w.expectNoDiagnostics("m.f90");
+    try w.expectNoDiagnostics("u.f90");
+}
