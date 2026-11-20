@@ -203,18 +203,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
    not found"), so it stops there as a signal; and on Apple Silicon the
    stop at ERROR STOP is left out (the string that tells it from STOP is
    on the stack there, untested). LFortran for Windows refuses `-g`.
-10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
-    Microsoft's format; arrays are read through Intel's descriptors and
-    LLVM Flang's. CI tests the engine on C programs (also a break
-    instruction of the program's own, which stops as an exception, as the
-    Intel runtime's at a runtime error does once), on LLVM Flang's built
-    with `-g`, and on ifx 2026's built with `/Zi` (conda-forge's, linked
-    with zfls's ifx kit): breakpoints, `stopAtEntry`, the stack, stepping,
-    the variables, and the stops at a runtime error and at ERROR STOP
-    (ifx's `for_error_stop_quiet`), not at STOP; a polymorphic object or
-    array with its dynamic type's components (Flang's and ifx's), a
-    module's variables by their own names in an expression (`ncells`,
-    `grid::ncells`) and those of its COMMON blocks, and REAL(16) values.
+10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of Microsoft's format; arrays are read through Intel's descriptors and LLVM Flang's. CI tests the engine on C programs (also a break instruction of the program's own, which stops as an exception, as the Intel runtime's at a runtime error does once), on LLVM Flang's built with `-g`, and on ifx 2026's built with `/Zi` (conda-forge's, linked with zfls's ifx kit): breakpoints, `stopAtEntry`, the stack, stepping, the variables, and the stops at a runtime error and at ERROR STOP (ifx's `for_error_stop_quiet`), not at STOP. The variables include a polymorphic object or array with its dynamic type's components (Flang's and ifx's), a module's variables by their own names in an expression (`ncells`, `grid::ncells`) and those of its COMMON blocks, and REAL(16) values.
 11. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
     Silicon and every user must code-sign it on an Intel Mac: breakpoints,
     stepping, the stack and the stops at runtime errors and ERROR STOP, but

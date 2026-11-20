@@ -626,18 +626,7 @@ view is empty and expressions are not evaluated. Over ssh, macOS lets a
 debugger start a program only with Developer Mode on (`sudo
 DevToolsSecurity -enable`).
 
-With Windows's Debugger Engine, zfls reads the variables itself: dbghelp
-(of the engine) says where each is, zfls's index of the sources (the
-workspace folder) its type, kind and rank, and the array descriptors
-(Intel's, LLVM Flang's) their bounds; a polymorphic object or array shows
-its dynamic type's components, which the descriptor names. Of LLVM
-Flang's programs built with `-g`, the engine shows the variables (the
-main program's that Flang makes static too) and stops at Flang's runtime
-errors and ERROR STOP. The program runs in a console window of its own (`"console":
-"internalConsole"`: none, its output is then lost). Hovers, watches and
-the Debug Console take a variable, its components, elements and
-substrings (`p%x`, `a(2,-1)`, `s(2:4)`), and a module's variable by the
-name the line sees (`cells`) or by its module's (`grid::cells`).
+With Windows's Debugger Engine, zfls reads the variables itself: dbghelp (of the engine) says where each is, zfls's index of the sources (the workspace folder) its type, kind and rank, and the array descriptors (Intel's, LLVM Flang's) their bounds; a polymorphic object or array shows its dynamic type's components, which the descriptor names. Of LLVM Flang's programs built with `-g`, the engine shows the variables (the main program's that Flang makes static too) and stops at Flang's runtime errors and ERROR STOP. The program runs in a console window of its own (`"console": "internalConsole"`: none, its output is then lost). Hovers, watches and the Debug Console take a variable, its components, elements and substrings (`p%x`, `a(2,-1)`, `s(2:4)`), and a module's variable by the name the line sees (`cells`) or by its module's (`grid::cells`).
 
 **zfls: Add Build Task and Debug Configuration for Fortran File** writes
 the same build as a task in `.vscode/tasks.json` and a debug configuration
