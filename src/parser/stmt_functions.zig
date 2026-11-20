@@ -29,9 +29,6 @@ fn R() *const patterns.Patterns {
 pub const State = struct {
     /// The scopes that have had an executable statement
     exec: std.AutoHashMapUnmanaged(*const Obj, void) = .empty,
-    /// The names (lowercase) that a COMMON statement of a scope gives
-    /// bounds (`common /c/ a(10)`), which are arrays
-    common_arrays: std.ArrayList(struct { scope: *const Obj, name: []const u8 }) = .empty,
 
     /// The current scope's specification part is over: at an executable
     /// statement, or a construct
@@ -135,29 +132,6 @@ pub fn isExecutable(code: []const u8) bool {
     return false;
 }
 
-/// The names that a COMMON statement gives bounds, kept in `state`
-pub fn readCommon(state: *State, a: Allocator, ast: *const Ast, code: []const u8) !void {
-    const cs = ast.current_scope orelse return;
-    const s = std.mem.trimStart(u8, code, " \t");
-    if (!std.ascii.startsWithIgnoreCase(s, "common")) return;
-    var i: usize = "common".len;
-    if (i < s.len and isNameChar(s[i])) return;
-    var depth: usize = 0;
-    while (i < s.len) : (i += 1) {
-        const c = s[i];
-        if (c == '(') {
-            if (depth == 0) {
-                var k = i;
-                while (k > 0 and s[k - 1] == ' ') k -= 1;
-                const end = k;
-                while (k > 0 and isNameChar(s[k - 1])) k -= 1;
-                if (end > k) try state.common_arrays.append(a, .{ .scope = cs, .name = try std.ascii.allocLowerString(a, s[k..end]) });
-            }
-            depth += 1;
-        } else if (c == ')') depth -|= 1;
-    }
-}
-
 /// Whether a scope of this kind has statement functions
 fn takes(scope: *const Obj) bool {
     return switch (scope.kind) {
@@ -190,15 +164,15 @@ fn isDummy(a: Allocator, scope: *const Obj, name: []const u8) !bool {
 
 /// Whether `name` could be an array of `scope` that zfls does not see while
 /// it parses: by USE, from an INCLUDE file or the host
-fn mayBeHidden(state: *const State, ast: *const Ast, scope: *const Obj, name: []const u8) bool {
+fn mayBeHidden(ast: *const Ast, scope: *const Obj) bool {
     if (scope.parent != null and scope != ast.none_scope) return true;
     if (scope.scopeDataConst().use.items.len > 0) return true;
     for (ast.include_statements.items) |inc| if (inc.line_number >= scope.sline) return true;
-    for (state.common_arrays.items) |c| if (c.scope == scope and std.ascii.eqlIgnoreCase(c.name, name)) return true;
     return false;
 }
 
 /// Whether an attribute statement of the scope says `name` is an array
+/// (also the bounds of a COMMON statement: parser/groups.zig)
 fn arrayByAttribute(attrs: []const attributes.Attr, scope: *const Obj, name: []const u8) bool {
     for (attrs) |at| {
         if (at.scope != scope or !std.ascii.eqlIgnoreCase(at.name, name)) continue;
@@ -214,7 +188,6 @@ fn arrayByAttribute(attrs: []const attributes.Attr, scope: *const Obj, name: []c
 /// statement function if it is one: true when it is. Else, an
 /// assignment ends the scope's specification part.
 pub fn read(state: *State, a: Allocator, ast: *Ast, attrs: []const attributes.Attr, code: []const u8, line_no: usize) !bool {
-    try readCommon(state, a, ast, code);
     const sh = (try shape(a, code)) orelse {
         if (isExecutable(code)) try state.markExec(a, ast);
         return false;
@@ -230,7 +203,7 @@ pub fn read(state: *State, a: Allocator, ast: *Ast, attrs: []const attributes.At
     const decl = declared(cs, sh.name);
     if (decl) |d| {
         if (isArray(d.obj) or d.obj.varDataConst().is_external) return try notOne(state, a, ast);
-    } else if (mayBeHidden(state, ast, cs, sh.name)) return try notOne(state, a, ast);
+    } else if (mayBeHidden(ast, cs)) return try notOne(state, a, ast);
     // the declaration of its name is the type of its result
     var result_type: ?[]const u8 = implicit.typeOf(cs, sh.name);
     var result_kind: ?[]const u8 = null;

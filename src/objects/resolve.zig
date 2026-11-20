@@ -438,11 +438,14 @@ pub fn findSymbolsInWorkspace(a: Allocator, files: anytype) ![]*Obj {
 fn collectSymbols(a: Allocator, obj: *Obj, out: *std.ArrayList(*Obj), seen: *std.AutoHashMapUnmanaged(*Obj, void)) !void {
     if ((try seen.getOrPut(a, obj)).found_existing) return;
     if (obj.name.len > 0 and obj.name[0] != '#') try out.append(a, obj);
+    // its COMMON blocks (#556)
+    if (obj.data == .scope) for (obj.scopeData().commons.items) |c| try collectSymbols(a, c, out, seen);
     switch (obj.getType(false)) {
         .module, .submodule, .interface => {},
-        // the internal procedures after CONTAINS, but no local variables
+        // the internal procedures after CONTAINS and the NAMELIST groups,
+        // but no local variables
         .subroutine, .function => {
-            for (obj.childList()) |child| if (child.kind.isSubroutine()) try collectSymbols(a, child, out, seen);
+            for (obj.childList()) |child| if (child.kind.isSubroutine() or child.isGroup()) try collectSymbols(a, child, out, seen);
             return;
         },
         .class => {

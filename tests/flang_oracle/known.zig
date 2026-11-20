@@ -28,20 +28,6 @@ pub const rules = [_]Rule{
     // what zfls has no entity for
     .{
         .file = "*",
-        .entity = "*",
-        .diff = .missing,
-        .kind = .common,
-        .why = "zfls lists no COMMON block names (their objects are variables of the scope)",
-    },
-    .{
-        .file = "*",
-        .entity = "*",
-        .diff = .missing,
-        .kind = .namelist,
-        .why = "zfls lists no NAMELIST group names",
-    },
-    .{
-        .file = "*",
         .entity = "*::operator(*)",
         .diff = .missing,
         .kind = .generic,

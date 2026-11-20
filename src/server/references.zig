@@ -31,6 +31,7 @@ const Server = srv.Server;
 const definition = @import("definition.zig");
 const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
+const groups = @import("groups.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
     return switch (o.kind) {
@@ -242,7 +243,8 @@ fn seesAliasOf(env: objects.Env, scope: *Obj, alias: []const u8, holder: *Obj) !
 /// only it must change: the original name in a renamed import; "find
 /// references" leaves it out, as fortls does.
 pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile, for_rename: bool) ![]Server.FileRefs {
-    const def_name = try std.ascii.allocLowerString(a, def_obj.name);
+    // a COMMON block is found by its name between the slashes
+    const def_name = try std.ascii.allocLowerString(a, if (groups.isCommon(def_obj)) groups.bareName(def_obj) else def_obj.name);
     const def_fqsn = def_obj.fqsn;
     // the entity's own name, and for references the local names USE
     // statements give it (#233): a rename changes only the name it starts on
@@ -280,6 +282,8 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     in_cache = true;
                 };
                 if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def) or
+                    // the blocks of one name of all program units (#556)
+                    groups.sameBlock(def_obj, var_def) or
                     isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
                     isExtendedGenericPair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
@@ -357,6 +361,8 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
     _ = self;
     var type_mem = false;
     var restrict: ?*FortranFile = null;
+    // a COMMON block is one of the program's, wherever it is named
+    if (groups.isCommon(def_obj)) return .{ .type_mem = false, .restrict = null };
     if (std.mem.count(u8, def_obj.fqsn, ":") > 2) {
         const parent = def_obj.parent orelse return null;
         // the implementation of a separate module procedure may be in

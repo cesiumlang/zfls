@@ -740,10 +740,12 @@ const block_data_end = [_]h.File{
 fn expectBlockDataEnd(w: *h.Workspace) !void {
     try w.expectNoDiagnostics("a.f90");
     try w.expectNoDiagnostics("b.f");
+    // the units, with their COMMON blocks (#556)
     const paths = try w.symbolPaths("a.f90");
-    try h.expect(paths.len == 1 and std.mem.eql(u8, paths[0], "bd"), "a.f90 outline: {any}", .{paths});
+    try h.expect(paths.len == 2 and std.mem.eql(u8, paths[0], "bd") and std.mem.eql(u8, paths[1], "bd//blk/"), "a.f90 outline: {any}", .{paths});
     const fixed = try w.symbolPaths("b.f");
-    try h.expect(fixed.len == 2 and std.mem.eql(u8, fixed[0], "BLOCK DATA") and std.mem.eql(u8, fixed[1], "BD2"), "b.f outline: {any}", .{fixed});
+    try h.expect(fixed.len == 4 and std.mem.eql(u8, fixed[0], "BLOCK DATA") and std.mem.eql(u8, fixed[2], "BD2") and
+        std.mem.eql(u8, fixed[3], "BD2//OTHER/"), "b.f outline: {any}", .{fixed});
 }
 
 test "hansec #182 a BLOCK DATA unit closed by END alone (#234)" {
