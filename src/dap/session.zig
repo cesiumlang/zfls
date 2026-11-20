@@ -173,6 +173,8 @@ pub const Session = struct {
     launched: bool = false,
     done: bool = false,
     stop_at_entry: bool = false,
+    /// The engine's step under way from a line it takes for another
+    step_from: ?StepFrom = null,
     /// The breakpoints on the Fortran runtime's errors, each with its
     /// function
     error_breakpoints: std.ArrayList(runtime_errors.EngineBreakpoint) = .empty,
@@ -629,6 +631,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         .next, .stepIn, .stepOut => {
             const thread: ?u32 = if (json.int(json.get(args, "threadId"))) |t| @intCast(t) else null;
             s.respond(a, req, null);
+            s.step_from = if (cmd == .stepOut) null else stepFrom(s, a, cmd == .stepIn, thread);
             try go(s, switch (cmd) {
                 .next => .over,
                 .stepIn => .into,
@@ -653,7 +656,35 @@ fn initialized(s: *Session, a: Allocator) void {
     s.event(a, "initialized", null);
 }
 
+/// Where a step starts, when the engine's line there is not the one shown:
+/// LLVM Flang's line tables have empty records before a statement's (an
+/// END statement after the declarations'), the first of which the engine
+/// steps by, so that it stops again on the line shown (#441)
+pub const StepFrom = struct { into: bool, thread: u32, line: u32, function: u64, again: u8 = 0 };
+
+fn stepFrom(s: *Session, a: Allocator, into: bool, thread: ?u32) ?StepFrom {
+    const t = thread orelse return null;
+    const frames = s.engine.stack(a, t, 1) catch return null;
+    if (frames.len == 0 or frames[0].engine_line == frames[0].line) return null;
+    return .{ .into = into, .thread = t, .line = frames[0].line, .function = std.hash.Wyhash.hash(0, frames[0].name) };
+}
+
+/// A step's stop on the line it started from, in the same function, from
+/// where the engine's line was another (`StepFrom`): the step goes on
+fn stepAgain(s: *Session, a: Allocator, thread: u32) bool {
+    if (s.step_from == null) return false;
+    const from = &s.step_from.?;
+    if (from.again >= 4 or from.thread != thread) return false;
+    const frames = s.engine.stack(a, thread, 1) catch return false;
+    if (frames.len == 0 or frames[0].line != from.line or std.hash.Wyhash.hash(0, frames[0].name) != from.function) return false;
+    from.again += 1;
+    s.engine.resumeThread(if (from.into) .into else .over, thread) catch return false;
+    s.running = true;
+    return true;
+}
+
 fn go(s: *Session, how: Engine.Resume, thread: ?u32) !void {
+    if (how == .go or how == .out) s.step_from = null;
     s.nodes.clearRetainingCapacity();
     _ = s.nodes_arena.reset(.retain_capacity);
     try s.engine.resumeThread(how, thread);
@@ -691,7 +722,10 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
         else
             // the engine's own (step out, stop at entry)
             s.event(a, "stopped", .{ .reason = "step", .threadId = b.thread, .allThreadsStopped = true }),
-        .step => |t| s.event(a, "stopped", .{ .reason = "step", .threadId = t, .allThreadsStopped = true }),
+        .step => |t| if (!stepAgain(s, a, t)) {
+            s.step_from = null;
+            s.event(a, "stopped", .{ .reason = "step", .threadId = t, .allThreadsStopped = true });
+        },
         .pause => |t| s.event(a, "stopped", .{ .reason = "pause", .threadId = t, .allThreadsStopped = true }),
         .exception => |e| s.event(a, "stopped", .{
             .reason = "exception",
