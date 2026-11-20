@@ -47,6 +47,7 @@ pub const modgraph = @import("modgraph.zig");
 pub const compilers = @import("compilers.zig");
 pub const compilers_flang = @import("compilers/flang.zig");
 pub const compilers_flang_modules = @import("compilers/flang_modules.zig");
+pub const compilers_intel = @import("compilers/intel.zig");
 pub const argcheck = @import("argcheck.zig");
 pub const argcheck_typing = @import("argcheck/typing.zig");
 pub const argcheck_ignore_tkr = @import("argcheck/ignore_tkr.zig");
