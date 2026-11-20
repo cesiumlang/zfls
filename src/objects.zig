@@ -196,6 +196,12 @@ pub const Procedure = struct {
     linked_from_interface: bool = false,
     /// A statement function, `f(x) = x**2` (parser/stmt_functions.zig)
     stmt_function: bool = false,
+    /// Of an ENTRY (parser/entries.zig): the procedure whose ENTRY statement
+    /// it is, whose variables its dummy arguments and result are
+    entry_of: ?*Obj = null,
+    /// The dummy arguments and results of the procedure's ENTRY statements
+    /// (lowercase, comma-separated), which its summary keeps
+    entry_names: []const u8 = "",
 };
 
 /// A derived type

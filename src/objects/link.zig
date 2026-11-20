@@ -136,7 +136,7 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             try self.resolveArgLink(env.tmp);
             const proc = self.procData();
             const rn = proc.result_name orelse self.name;
-            for (self.childList()) |child| {
+            for ((proc.entry_of orelse self).childList()) |child| {
                 if (std.ascii.eqlIgnoreCase(child.name, rn)) {
                     proc.result_obj = child;
                     proc.result_name = child.name;
@@ -261,7 +261,9 @@ pub fn resolveArgLink(self: *Obj, t: Allocator) !void {
     proc.arg_objs.clearRetainingCapacity();
     try proc.arg_objs.appendNTimes(a, null, arg_list.len);
     proc.missing_args.clearRetainingCapacity();
-    for (self.childList()) |child| {
+    // an ENTRY's are the variables of the procedure it is an entry of
+    const owner = proc.entry_of orelse self;
+    for (owner.childList()) |child| {
         var ind: ?usize = null;
         for (arg_list_lower, 0..) |arg, i| {
             if (std.ascii.eqlIgnoreCase(arg, child.name)) {
@@ -279,7 +281,7 @@ pub fn resolveArgLink(self: *Obj, t: Allocator) !void {
         if (ind) |i| {
             proc.arg_objs.items[i] = child;
             if (child.isOptional()) arg_list[i] = try t.print("{s}={s}", .{ arg_list[i], arg_list[i] });
-        } else if (child.hasKeyword(KW.intent)) {
+        } else if (child.hasKeyword(KW.intent) and owner == self) {
             try proc.missing_args.append(a, child);
         }
     }

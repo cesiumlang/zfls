@@ -156,6 +156,18 @@ pub fn documentSymbols(a: Allocator, file: *const FortranFile, ast: *Ast, skip_m
         if (scope.kind == .include) continue;
         try o.append(scope, scope, &out);
     }
+    // an ENTRY of an external procedure, which is in no scope's lines: in
+    // the order of the lines
+    var entry_added = false;
+    for (ast.entry_list.items) |e| if (e.parent == null) {
+        try o.append(e, e, &out);
+        entry_added = true;
+    };
+    if (entry_added) std.mem.sort(lsp.DocumentSymbol, out.items, {}, struct {
+        fn lt(_: void, x: lsp.DocumentSymbol, y: lsp.DocumentSymbol) bool {
+            return x.range.start.line < y.range.start.line;
+        }
+    }.lt);
     return out.items;
 }
 
