@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const compilers = @import("../compilers.zig");
 const flang = @import("../compilers/flang.zig");
 const flang_modules = @import("../compilers/flang_modules.zig");
+const intel = @import("../compilers/intel.zig");
 const tools = @import("tools.zig");
 
 const Server = @import("../server.zig").Server;
@@ -24,6 +25,7 @@ const Server = @import("../server.zig").Server;
 /// (a script made executable after zfls first asked at the start, #395).
 pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u8) Known {
     const none: Known = .{ .found = false, .version = null };
+    if (id == .ifx or id == .ifort) return intelOf(self, a, exes);
     if (id != .flang) return none;
     for (exes) |exe| {
         const stamp = stampOf(self.io, a, exe, self.toolEnv());
@@ -48,6 +50,18 @@ pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u
     return none;
 }
 
+/// Intel's: where the modules of the first of `exes` that is there are,
+/// when its driver does not look there (`intel.moduleDir`)
+fn intelOf(self: *Server, a: Allocator, exes: []const []const u8) Known {
+    for (exes) |exe| {
+        const path = pathOf(self.io, a, exe, self.toolEnv()) orelse continue;
+        const dir = intel.moduleDir(self.io, a, path) catch null;
+        if (dir) |d| self.log.info("compiler_diagnostics: {s}'s modules are not where its driver looks: {s}", .{ path, d });
+        return .{ .found = true, .version = null, .intrinsic_modules = dir };
+    }
+    return .{ .found = false, .version = null };
+}
+
 /// What `exe --version` said, whether `exe` was there, and the file it
 /// was; the directory of Flang's intrinsic modules to pass (the server's),
 /// and where they are, passed or not (modfiles.zig); `ran`: false when
@@ -58,28 +72,35 @@ pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null, int
 /// The size and modification time of an executable's file
 pub const Stamp = struct { size: u64, mtime: i96 };
 
-/// The stamp of the file that runs as `exe`: the path itself (with
-/// `.exe`, `.cmd` or `.bat` on Windows), else, for a name without a
-/// directory, the first of the `PATH` of `env` that is a file; null when
-/// none is (or there is no environment to search)
+/// The stamp of the file that runs as `exe` (`pathOf`)
 pub fn stampOf(io: Io, a: Allocator, exe: []const u8, env: ?*const std.process.Environ.Map) ?Stamp {
+    const p = pathOf(io, a, exe, env) orelse return null;
+    const st = Io.Dir.cwd().statFile(io, p, .{}) catch return null;
+    return .{ .size = st.size, .mtime = st.mtime.nanoseconds };
+}
+
+/// The file that runs as `exe`: the path itself (with `.exe`, `.cmd` or
+/// `.bat` on Windows), else, for a name without a directory, the first of
+/// the `PATH` of `env` that is a file; null when none is (or there is no
+/// environment to search)
+pub fn pathOf(io: Io, a: Allocator, exe: []const u8, env: ?*const std.process.Environ.Map) ?[]const u8 {
     const suffixes: []const []const u8 = if (builtin.target.os.tag == .windows) &.{ "", ".exe", ".cmd", ".bat" } else &.{""};
-    if (std.mem.findAny(u8, exe, "/\\") != null) return stampOfFile(io, a, exe, suffixes);
+    if (std.mem.findAny(u8, exe, "/\\") != null) return fileOf(io, a, exe, suffixes);
     const e = env orelse return null;
     var it = std.mem.tokenizeScalar(u8, e.get("PATH") orelse "", std.Io.Dir.path.delimiter);
     while (it.next()) |dir| {
         const p = std.Io.Dir.path.join(a, &.{ dir, exe }) catch return null;
-        if (stampOfFile(io, a, p, suffixes)) |st| return st;
+        if (fileOf(io, a, p, suffixes)) |f| return f;
     }
     return null;
 }
 
-fn stampOfFile(io: Io, a: Allocator, path: []const u8, suffixes: []const []const u8) ?Stamp {
+fn fileOf(io: Io, a: Allocator, path: []const u8, suffixes: []const []const u8) ?[]const u8 {
     for (suffixes) |x| {
         const p = if (x.len == 0) path else a.print("{s}{s}", .{ path, x }) catch return null;
         const st = Io.Dir.cwd().statFile(io, p, .{}) catch continue;
         if (st.kind != .file) continue;
-        return .{ .size = st.size, .mtime = st.mtime.nanoseconds };
+        return p;
     }
     return null;
 }
