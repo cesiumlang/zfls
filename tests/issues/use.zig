@@ -290,3 +290,27 @@ test "two modules that rename a name to the same local name (#233)" {
     try std.testing.expect((try w.references("c.f90", at)).len >= 4);
     try std.testing.expect((try w.rename("c.f90", at, "z")).len >= 1);
 }
+
+test "ISO_FORTRAN_ENV and IEEE_ARITHMETIC names that gfortran has (#536)" {
+    const w = try h.Workspace.init(&.{.{ .name = "i.f90", .text =
+        \\program imods
+        \\  use iso_fortran_env
+        \\  use ieee_arithmetic
+        \\  implicit none
+        \\  type(event_type) :: ev[*]
+        \\  type(team_type) :: tm
+        \\  integer :: k(8)
+        \\  type(ieee_round_type) :: rt
+        \\  k = [real16, logical8, logical16, logical32, logical64, current_team, initial_team, parent_team]
+        \\  rt = ieee_away
+        \\  print *, k
+        \\end program imods
+        \\
+    }}, .{});
+    defer w.deinit();
+    for (try w.diagnostics("i.f90")) |d| try h.expect(!std.mem.eql(u8, d.code, "undeclared-name"), "{s}", .{d.message});
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "event_type)", 0, 0), "event_type");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "team_type)", 0, 0), "team_type");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "real16", 0, 0), "INTEGER");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_away", 0, 0), "TYPE(ieee_round_type)");
+}
