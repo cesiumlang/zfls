@@ -1,6 +1,6 @@
 //! Values in a program's memory for `zfls dap`: a variable's, as its
-//! declaration says (scalars, derived types, arrays through Intel's
-//! descriptors or of explicit shape), a derived type's components, a
+//! declaration says (scalars, derived types, arrays through Intel's or
+//! LLVM Flang's descriptors or of explicit shape), a derived type's components, a
 //! module's variables, and the expressions of `evaluate`.
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
@@ -48,10 +48,23 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj };
     if (d.t.kind == .derived) val.type_index = elementType(s, v.mod_base, type_index);
     if (d.dims.len == 0) {
-        if (d.t.kind == .character and d.t.size == 0) val.t.size = s.engine.typeInfo(u32, v.mod_base, type_index, .length) orelse 0;
+        // a POINTER or ALLOCATABLE scalar of LLVM Flang's: a pointer to it
+        // (a derived type's is followed above)
+        if ((d.pointer or d.allocatable) and d.t.kind != .derived and s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) == @backingInt(dbgeng.SymTag.pointer)) {
+            var p: [8]u8 = undefined;
+            if (s.engine.read(address, &p) != 8) return error.Unreadable;
+            val.address = std.mem.readInt(u64, &p, .little);
+            val.type_index = s.engine.typeInfo(u32, v.mod_base, type_index, .type) orelse type_index;
+        }
+        if ((d.pointer or d.allocatable) and val.address == 0) {
+            val.empty = true;
+            return val;
+        }
+        if (d.t.kind == .character and d.t.size == 0) val.t.size = s.engine.typeInfo(u32, v.mod_base, val.type_index, .length) orelse 0;
         return val;
     }
-    // arrays: Intel's descriptor for those of deferred or assumed shape
+    // arrays: Intel's or LLVM Flang's descriptor for those of deferred or
+    // assumed shape
     if (d.allocatable or d.pointer or (!values.constantShape(d.dims) and dimsDeferred(d.dims))) {
         var words: [6 + 3 * 7]u64 = undefined;
         const got = s.engine.read(address, std.mem.sliceAsBytes(words[0..]));
@@ -63,7 +76,14 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         }
         val.address = desc.base;
         if (val.t.kind == .character) val.t.size = @intCast(desc.elem_len);
-        val.extents = try a.dupe(values.Extent, desc.dims[0..desc.rank]);
+        const extents = try a.dupe(values.Extent, desc.dims[0..desc.rank]);
+        // an assumed-shape array's lower bounds are its declaration's (1
+        // unless `a(0:)`), not those of the actual argument, which LLVM
+        // Flang's descriptor keeps
+        if (!d.allocatable and !d.pointer) for (extents, 0..) |*e, i| {
+            if (i < d.dims.len) e.lo = d.dims[i].lo orelse 1;
+        };
+        val.extents = extents;
         val.rank = desc.rank;
         val.count = val.extents[val.rank - 1].count;
         return val;
