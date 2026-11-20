@@ -552,6 +552,8 @@ of the configuration, else `cwd`). With all three, the exception filter
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
 error without `iostat=`, `err=` or `end=`) or at ERROR STOP, LLVM Flang's and LFortran's
 runtimes' too.
+
+On Windows, MSYS2's gdb reads no symbols of `libgfortran-5.dll`, so it stops only at the runtime's functions that the program calls itself (a bound exceeded, ERROR STOP), not at the errors the runtime raises inside the DLL (an I/O error, `RANDOM_SEED`, `MATMUL`'s shapes). A program linked with `-static-libgfortran -static-libquadmath` has them all; Debug Fortran File builds gfortran's programs so on Windows.
 `--text JSON` translates the words it shows (the VS Code extension passes
 them in VS Code's language).
 

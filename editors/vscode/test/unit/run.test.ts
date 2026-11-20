@@ -41,6 +41,10 @@ test("compiler kinds", () => {
   assert.deepEqual(compilerKind("ifx", "win32"), { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] });
   assert.deepEqual(compilerKind("ifx", "linux"), { argStyle: "gnu", msvc: false, defaultArgs: ["-g", "-O0"] });
   assert.equal(compilerKind("gfortran.exe", "win32").msvc, false);
+  // MinGW's gfortran: its runtime linked in, for gdb's stops in it
+  assert.deepEqual(compilerKind("C:/msys64/ucrt64/bin/gfortran.exe", "win32").defaultArgs, ["-g", "-O0", "-static-libgfortran", "-static-libquadmath"]);
+  assert.deepEqual(compilerKind("x86_64-w64-mingw32-gfortran.exe", "win32").defaultArgs, ["-g", "-O0", "-static-libgfortran", "-static-libquadmath"]);
+  assert.deepEqual(compilerKind("gfortran", "linux").defaultArgs, ["-g", "-O0"]);
   // LLVM Flang on Windows: DWARF for gdb, kept by lld-link; without an
   // lld-link, Microsoft's debug information only
   assert.deepEqual(compilerKind("flang-new", "win32"), {
