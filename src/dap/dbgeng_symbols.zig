@@ -363,6 +363,24 @@ pub fn typeNamed(self: *Engine, a: Allocator, mod_base: u64, name: []const u8) !
     return null;
 }
 
+/// The structure with members of a derived type's type: itself, or, for a
+/// forward reference, the definition of the same name (Intel's descriptor
+/// of an allocatable or pointer array, CodeView's `LF_OEM`, names the
+/// forward reference `GRID::POINT` as its elements' type, and dbghelp does
+/// not resolve it); `type_index` when there is none
+pub fn definition(self: *Engine, a: Allocator, mod_base: u64, type_index: u32) !u32 {
+    if ((self.typeInfo(u32, mod_base, type_index, .childrencount) orelse 0) > 0) return type_index;
+    if (self.typeInfo(u32, mod_base, type_index, .symtag) != @backingInt(SymTag.udt)) return type_index;
+    const name = self.typeName(a, mod_base, type_index) orelse return type_index;
+    var ctx: Collect = .{ .a = a, .engine = self };
+    _ = SymEnumTypesByName(self.process, mod_base, try a.dupeSentinel(u8, name, 0), &Collect.onSymbol, &ctx);
+    if (ctx.failed) return error.OutOfMemory;
+    for (ctx.out.items) |t| {
+        if ((self.typeInfo(u32, mod_base, t.type_index, .childrencount) orelse 0) > 0) return t.type_index;
+    }
+    return type_index;
+}
+
 /// dbghelp's answer about a type (`u32` and `u64` ones)
 pub fn typeInfo(self: *Engine, comptime T: type, mod_base: u64, type_index: u32, q: TypeQuery) ?T {
     var v: T = 0;
