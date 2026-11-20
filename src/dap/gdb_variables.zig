@@ -5,8 +5,8 @@
 //! previews of arrays and derived types, "not allocated" and "not
 //! associated", pointers as their targets, a polymorphic object (CLASS)
 //! with the components of its dynamic type, gfortran's hidden lengths of
-//! CHARACTER arguments left out, and the module variables that a frame's
-//! line sees (zfls's index of the sources).
+//! CHARACTER arguments and LFortran's temporaries left out, and the module
+//! variables that a frame's line sees (zfls's index of the sources).
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
 const fortran = @import("fortran.zig");
+const lfortran = @import("lfortran.zig");
 const ArrayContext = fortran.ArrayContext;
 const Value = json.Value;
 
@@ -222,11 +223,17 @@ fn gdbChildren(s: *Session, a: Allocator, ref: i64) ![]Variable {
     return out;
 }
 
-fn hiddenFilter(a: Allocator, kids: []const Variable) ![]Variable {
+/// `kids` without gfortran's hidden lengths, and without LFortran's
+/// temporaries in an LFortran program
+fn hiddenFilter(a: Allocator, kids: []const Variable, lfortran_program: bool) ![]Variable {
     const named = try a.alloc(fortran.Named, kids.len);
     for (kids, named) |k, *n| n.* = .{ .name = k.name, .type = k.type };
     var out: std.ArrayList(Variable) = .empty;
-    for (kids) |k| if (!fortran.isHiddenLength(k.name, named)) try out.append(a, k);
+    for (kids) |k| {
+        if (fortran.isHiddenLength(k.name, named)) continue;
+        if (lfortran_program and lfortran.isTemporary(k.name)) continue;
+        try out.append(a, k);
+    }
     return out.items;
 }
 
@@ -291,7 +298,7 @@ pub fn children(s: *Session, a: Allocator, ref: i64, node: Node) anyerror![]Vari
 }
 
 fn convertAndRecord(s: *Session, a: Allocator, ref: i64, kids: []const Variable, node: Node) ![]Variable {
-    const shown = try hiddenFilter(a, kids);
+    const shown = try hiddenFilter(a, kids, s.g.lfortran);
     const out = try a.alloc(Variable, shown.len);
     const names = try a.alloc([]const u8, shown.len);
     for (shown, out, names) |k, *o, *n| {
@@ -390,7 +397,7 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         return out;
     }
     if (fortran.derivedTypeName(v.type)) |type_name| if (v.ref != 0) {
-        const shown = try hiddenFilter(a, try gdbChildren(s, a, v.ref));
+        const shown = try hiddenFilter(a, try gdbChildren(s, a, v.ref), s.g.lfortran);
         const comps = try a.alloc(fortran.Component, shown.len);
         for (shown, comps) |k, *c| c.* = .{ .name = k.name, .value = try short(a, k) };
         out.value = try fortran.structPreview(a, type_name, comps);

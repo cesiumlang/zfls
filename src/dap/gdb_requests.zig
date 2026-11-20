@@ -26,6 +26,7 @@ const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
 const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
+const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
@@ -97,6 +98,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     try prepare(s, a, args);
     const program = json.str(json.get(args, "program"));
     const cwd = json.str(json.get(args, "cwd"));
+    s.g.lfortran = lfortran.isProgram(s.io, a, program, cwd);
     if (s.g.source_root) |r| s.gpa.free(r);
     const root = json.str(json.get(args, "sourceRoot")) orelse cwd orelse if (program) |p| std.Io.Dir.path.dirname(p) else null;
     s.g.source_root = if (root) |r| try s.gpa.dupe(u8, r) else null;
@@ -242,7 +244,8 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     };
     // lldb reads no Fortran: its own variables and expressions
     if (s.g.lldb) switch (cmd) {
-        .scopes, .variables, .evaluate, .setVariable => return gdb.forward(s, a, req, args),
+        .variables => if (s.g.lfortran) return lldb.variables(s, a, req, args) else return gdb.forward(s, a, req, args),
+        .scopes, .evaluate, .setVariable => return gdb.forward(s, a, req, args),
         else => {},
     };
     switch (cmd) {
@@ -394,6 +397,8 @@ fn scopes(s: *Session, a: Allocator, frame: ?i64, r: Value) !void {
         _ = sc.object.orderedRemove("namedVariables");
         _ = sc.object.orderedRemove("indexedVariables");
     }
+    // LFortran's debug information has no module variables (#366)
+    if (s.g.lfortran) return;
     const f = s.g.frames.get(frame orelse return) orelse return;
     const modvars = try moduleVariablesAt(s, a, f.file orelse return, f.line);
     if (modvars.len == 0) return;

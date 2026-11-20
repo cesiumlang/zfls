@@ -177,18 +177,30 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Run Fortran File | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ✓ |
 | Links on Windows without Visual Studio | ✓⁷ | ✓⁸ | – | ✓⁸ | – | – | ✓⁸ |
-| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ✓ | gdb ○ | gdb ○ | –⁹ |
+| `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ✓ | gdb ○ | gdb ○ | gdb ✓⁹ |
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓, Windows's ✓¹² | – | gdb ○ | –⁹ |
-| `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | –⁹ |
+| `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | lldb-dap ✓⁹ |
 | Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓¹⁰ | ○ | ✓¹² | ○ | ○ | –⁹ |
-| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ✓¹² | ○ | ○ | –⁹ |
+| Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ✓¹² | ○ | ○ | ✓⁹ |
 
 7. MinGW's gfortran needs none.
 8. With zfls's ifx kit (and for ifx `zfls setup-ifx`), on Windows x64
    (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
-9. Not yet. LFortran's debug information has integer and real scalars
-   only (no arrays, derived types, CHARACTER lengths or module variables),
-   and LFortran for Windows refuses `-g`.
+9. Programs built with `lfortran -g` (which runs `llvm-dwarfdump` and
+   Python: build with LFortran's environment on the `PATH`; conda-forge's
+   LFortran for Linux needs `llvm-tools` beside it), tested in CI with gdb on
+   Linux x64 and lldb-dap on macOS x64: breakpoints, stepping, the stack,
+   the stops at LFortran's runtime errors (a bound exceeded, which it
+   checks by default) and at ERROR STOP, not at STOP. LFortran's debug
+   information (LFortran 0.69) says its language is C and has integer and
+   real scalars only, which the Variables view shows (without the
+   compiler's temporaries, with lldb-dap too); arrays, derived types,
+   CHARACTER lengths and module variables are not in it, and there is no
+   module variables scope. LFortran 0.69's ERROR STOP in a `-g` program
+   aborts on macOS before its runtime is called ("The stack address was
+   not found"), so it stops there as a signal; and on Apple Silicon the
+   stop at ERROR STOP is left out (the string that tells it from STOP is
+   on the stack there, untested). LFortran for Windows refuses `-g`.
 10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
     Microsoft's format; arrays are read through Intel's descriptors and
     LLVM Flang's. CI tests the engine on a C program, and on LLVM
@@ -220,8 +232,9 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 CI runs zfls against gfortran (the symbols zfls extracts, compared with
 gfortran's own, on Linux, macOS and Windows x64; `zfls dap` with gdb on
 Linux and Windows x64, with lldb-dap on macOS), against LFortran (the
-compiler check, on Linux x64; its programs linking without Visual Studio,
-on Windows x64) and against LLVM Flang (the compiler check and `zfls dap`
+compiler check and `zfls dap` with gdb, on Linux x64; `zfls dap` with
+lldb-dap on macOS x64; its programs linking without Visual Studio, on
+Windows x64) and against LLVM Flang (the compiler check and `zfls dap`
 with gdb, on Linux x64 and Windows x64; its programs linking without
 Visual Studio, and `zfls dap` with Windows's Debugger Engine, on Windows
 x64). The other
@@ -486,15 +499,16 @@ type, Neovim's nvim-dap, Emacs's dape, Helix). It debugs with one of three
 debuggers, chosen by the `launch` or `attach` configuration: by default gdb
 on Linux and Windows, lldb-dap on macOS.
 
-- gdb, for the programs of gfortran, LLVM Flang and the others with DWARF
-  debug information: gdb 14 or later, built with Python (`gdb -i=dap`),
+- gdb, for the programs of gfortran, LLVM Flang, LFortran and the others
+  with DWARF debug information: gdb 14 or later, built with Python (`gdb -i=dap`),
   the configuration's `gdb`, else `--gdb PATH`, else the `PATH`'s. zfls
   passes gdb's protocol through and reshapes its variables: arrays by their
   subscripts and bounds (`(2,-1)`), large ones in sections (`(1:100)`),
   previews of arrays and derived types (`[1.0, 2.0, …]`, `[2×3]`,
   `point(x=9.0, id=7)`), "not allocated" and "not associated", pointers as
   their targets, a polymorphic object with its dynamic type's components,
-  gfortran's hidden CHARACTER lengths left out, and a Fortran expression
+  gfortran's hidden CHARACTER lengths and LFortran's temporaries left
+  out, and a Fortran expression
   for each (`a(2)`, `p%x`, `grid::cells`) for watches and setting values.
   `console` (`integratedTerminal`, `externalTerminal`) runs the program in
   a terminal for its input; `setupCommands` are gdb commands run first;
@@ -512,7 +526,9 @@ on Linux and Windows, lldb-dap on macOS.
   reads no Fortran ("no plugin for the language fortran95"): for the
   programs of gfortran and LLVM Flang its Variables view is empty (its
   globals show without values), expressions are not evaluated, and there
-  is no module variables scope. Not on Windows: lldb-dap there (LLVM 21's,
+  is no module variables scope. LFortran's debug information says its
+  language is C, so lldb shows their integer and real scalars (without
+  LFortran's temporaries). Not on Windows: lldb-dap there (LLVM 21's,
   the Swift toolchain's) stops the program but tells the stop only when it
   is asked something else, so zfls refuses it and names gdb and the
   Debugger Engine. A debugger that does not answer `initialize`,
@@ -537,7 +553,8 @@ are a scope of their own (zfls indexes the program's sources: `sourceRoot`
 of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
-error without `iostat=`) or at ERROR STOP, LLVM Flang's runtime's too.
+error without `iostat=`) or at ERROR STOP, LLVM Flang's and LFortran's
+runtimes' too.
 `--text JSON` translates the words it shows (the VS Code extension passes
 them in VS Code's language).
 

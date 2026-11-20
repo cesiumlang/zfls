@@ -70,6 +70,7 @@ pub const dap_gdb_children = @import("dap/gdb_children.zig");
 pub const dap_lldb = @import("dap/lldb.zig");
 pub const dap_gdb_entry = @import("dap/gdb_entry.zig");
 pub const dap_gdb_exit = @import("dap/gdb_exit.zig");
+pub const dap_lfortran = @import("dap/lfortran.zig");
 
 test {
     std.testing.refAllDecls(@This());

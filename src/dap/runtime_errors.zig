@@ -1,6 +1,7 @@
 //! The functions of the Fortran runtimes that a program calls on an error
-//! at run time (an array bound exceeded under `-fcheck=bounds`, a failed
-//! allocation, an I/O error without `iostat=`) or on `ERROR STOP`, where
+//! at run time (an array bound exceeded under `-fcheck=bounds` or by
+//! LFortran's checks, a failed allocation, an I/O error without `iostat=`)
+//! or on `ERROR STOP`, where
 //! the exception filter **Fortran runtime errors** stops: gdb's and
 //! lldb-dap's (`gdb_functions`), Windows's Debugger Engine's
 //! (`engine_functions`). Pure: no debugger here.
@@ -17,6 +18,17 @@ pub const Function = struct {
     /// (from 0) is the C `bool` that is true for `ERROR STOP`. The
     /// debugger stops only then: not at a plain `STOP`
     error_stop_argument: ?u2 = null,
+    /// A function of `ERROR STOP` among other uses: the C strings that its
+    /// arguments begin with at `ERROR STOP`. The debugger stops only then
+    error_stop_strings: []const StringArgument = &.{},
+};
+
+/// An argument (from 0) that points to a C string beginning with `text`;
+/// `variadic` when it is among the `...` of a variadic function
+pub const StringArgument = struct {
+    argument: u2,
+    text: []const u8,
+    variadic: bool = false,
 };
 
 /// LLVM Flang's `STOP` and `ERROR STOP`:
@@ -28,7 +40,21 @@ const flang_stops = [_]Function{
     .{ .name = "_FortranAStopStatementText", .error_stop = true, .error_stop_argument = 2 },
 };
 
-/// gdb's and lldb-dap's: gfortran's, LLVM Flang's, Intel's.
+/// LFortran's (its runtime's, liblfortran_runtime): its errors at run time
+/// (an array bound exceeded, which it checks by default) end in
+/// `_lcompilers_runtime_error_exit(format, ...)`. STOP and ERROR STOP both
+/// print through `_lcompilers_print_error(format, "STOP" or "ERROR STOP",
+/// ...)`, of a format `%s %d%s`, `%s%s` or `%s %.*s%s`, then call `exit`
+/// (LFortran 0.69.0): stopped at only for "ERROR STOP"
+const lfortran_functions = [_]Function{
+    .{ .name = "_lcompilers_runtime_error_exit" },
+    .{ .name = "_lcompilers_print_error", .error_stop = true, .error_stop_strings = &.{
+        .{ .argument = 0, .text = "%s" },
+        .{ .argument = 1, .text = "ERROR STOP\x00", .variadic = true },
+    } },
+};
+
+/// gdb's and lldb-dap's: gfortran's, LLVM Flang's, Intel's, LFortran's.
 ///
 /// Every error of Flang's runtime (an I/O error, a failed allocation,
 /// `_FortranAReportFatalUserError`) prints its message through
@@ -47,7 +73,7 @@ pub const gdb_functions = [_]Function{
     .{ .name = "?CrashHeader@Terminator@runtime@Fortran@@QEBAXXZ" },
     .{ .name = "Fortran::runtime::Terminator::CrashHeader" },
     .{ .name = "for__issue_diagnostic" },
-};
+} ++ lfortran_functions;
 
 /// Windows's Debugger Engine's: Intel's (what its runtime calls on a severe
 /// error and on `ERROR STOP`), LLVM Flang's (the engine undecorates
@@ -124,6 +150,54 @@ pub fn argumentRegister(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag, index:
     };
 }
 
+/// The register of a pointer argument (from 0) at a function's entry, as
+/// gdb and lldb name it in an expression (all of it); null where the
+/// argument is not in a register: for a target whose convention zfls does
+/// not know, and for a variadic one on Apple's arm64, which passes those
+/// on the stack
+pub fn pointerRegister(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag, index: u2, variadic: bool) ?[]const u8 {
+    return switch (arch) {
+        .x86_64 => if (os == .windows)
+            ([_][]const u8{ "$rcx", "$rdx", "$r8", "$r9" })[index]
+        else
+            ([_][]const u8{ "$rdi", "$rsi", "$rdx", "$rcx" })[index],
+        .aarch64 => if (variadic and os.isDarwin()) null else ([_][]const u8{ "$x0", "$x1", "$x2", "$x3" })[index],
+        else => null,
+    };
+}
+
+/// The condition that the arguments `strings` begin with their texts: in C
+/// (the language of LFortran's debug information), each text compared by
+/// pieces of 8, 4, 2 and 1 bytes read through the argument's register
+/// (little-endian), the first piece first, so that a string that does not
+/// begin so is read no further; null when an argument has no register
+pub fn stringCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag, comptime strings: []const StringArgument) ?[]const u8 {
+    comptime {
+        var out: []const u8 = "";
+        for (strings) |p| {
+            const reg = pointerRegister(arch, os, p.argument, p.variadic) orelse return null;
+            var at: usize = 0;
+            while (at < p.text.len) {
+                const left = p.text.len - at;
+                const size: usize = if (left >= 8) 8 else if (left >= 4) 4 else if (left >= 2) 2 else 1;
+                var v: u64 = 0;
+                for (0..size) |k| v |= @as(u64, p.text[at + k]) << @intCast(8 * k);
+                const c_type = switch (size) {
+                    8 => "unsigned long long",
+                    4 => "unsigned int",
+                    2 => "unsigned short",
+                    else => "unsigned char",
+                };
+                const place = if (at == 0) reg else std.fmt.comptimePrint("({s} + {d})", .{ reg, at });
+                out = out ++ (if (out.len > 0) " && " else "") ++ std.fmt.comptimePrint("*({s} *){s} == 0x{x}", .{ c_type, place, v });
+                at += size;
+            }
+        }
+        const final = out[0..out.len].*;
+        return &final;
+    }
+}
+
 /// A register of an argument: gdb's and lldb's of its low byte (on arm64,
 /// which has none, of its low 32 bits: LLVM extends a `bool` argument to
 /// them), as in an expression; the engine's name of all of it (of which
@@ -138,7 +212,8 @@ pub const GdbBreakpoint = struct {
     name: []const u8,
     /// For a function of `STOP` and `ERROR STOP`: that its argument of
     /// `ERROR STOP` is true (a register, true when not 0, in C as in
-    /// Fortran, gdb's language of the program)
+    /// Fortran, gdb's language of the program), or that its strings are
+    /// those of `ERROR STOP` (`stringCondition`, in C)
     condition: ?[]const u8 = null,
 };
 
@@ -151,6 +226,9 @@ pub fn gdbBreakpoints(comptime arch: std.Target.Cpu.Arch, comptime os: std.Targe
             if (f.error_stop_argument) |i| {
                 const r = argumentRegister(arch, os, i) orelse continue;
                 out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = r.gdb }};
+            } else if (f.error_stop_strings.len > 0) {
+                const c = stringCondition(arch, os, f.error_stop_strings) orelse continue;
+                out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = c }};
             } else out = out ++ [_]GdbBreakpoint{.{ .name = f.name }};
         }
         const final = out[0..out.len].*;
@@ -172,6 +250,10 @@ test "the functions of the runtimes' errors and ERROR STOP" {
     try std.testing.expect(!isErrorStop("Fortran::runtime::Terminator::CrashHeader"));
     try std.testing.expect(!isErrorStop("for__issue_diagnostic"));
     try std.testing.expect(!isErrorStop("main"));
+    // LFortran's: an error at run time, and the function of STOP and ERROR
+    // STOP, which tells them apart by a string
+    try std.testing.expect(!isErrorStop("_lcompilers_runtime_error_exit"));
+    try std.testing.expect(isErrorStop("_lcompilers_print_error"));
     // Flang's STOP functions take ERROR STOP as an argument; its errors
     // only through CrashHeader (not twice)
     try std.testing.expectEqual(@as(?u2, 1), find("_FortranAStopStatement").?.error_stop_argument);
@@ -235,11 +317,32 @@ test "the register of ERROR STOP's argument of Flang's STOP functions" {
             try std.testing.expectEqualStrings("$dl", b.condition.?);
         } else if (std.mem.eql(u8, b.name, "_FortranAStopStatementText")) {
             try std.testing.expectEqualStrings("$r8l", b.condition.?);
+        } else if (std.mem.eql(u8, b.name, "_lcompilers_print_error")) {
+            try std.testing.expect(std.mem.startsWith(u8, b.condition.?, "*(unsigned short *)$rcx == 0x7325 && "));
         } else try std.testing.expect(b.condition == null);
     }
     for (comptime gdbBreakpoints(.x86_64, .linux)) |b| if (std.mem.eql(u8, b.name, "_FortranAStopStatement"))
         try std.testing.expectEqualStrings("$sil", b.condition.?);
     // a target of no known convention: without Flang's STOP functions
-    try std.testing.expectEqual(gdb_functions.len - 2, (comptime gdbBreakpoints(.riscv64, .linux)).len);
+    // and LFortran's
+    try std.testing.expectEqual(gdb_functions.len - 3, (comptime gdbBreakpoints(.riscv64, .linux)).len);
     for (comptime gdbBreakpoints(.riscv64, .linux)) |b| try std.testing.expect(b.condition == null);
+}
+
+test "LFortran's ERROR STOP: the strings of _lcompilers_print_error" {
+    const strings = comptime find("_lcompilers_print_error").?.error_stop_strings;
+    // as lldb 1700 read it on macOS x86_64 (LFortran 0.69.0): `STOP 0`
+    // went on, `ERROR STOP 3` stopped
+    const linux = comptime stringCondition(.x86_64, .linux, strings).?;
+    try std.testing.expectEqualStrings(
+        "*(unsigned short *)$rdi == 0x7325 && *(unsigned long long *)$rsi == 0x545320524f525245 && *(unsigned short *)($rsi + 8) == 0x504f && *(unsigned char *)($rsi + 10) == 0x0",
+        linux,
+    );
+    try std.testing.expectEqualStrings(linux, comptime stringCondition(.x86_64, .macos, strings).?);
+    try std.testing.expect(std.mem.startsWith(u8, comptime stringCondition(.aarch64, .linux, strings).?, "*(unsigned short *)$x0 == 0x7325 && *(unsigned long long *)$x1 == "));
+    // Apple's arm64 passes the string on the stack: no breakpoint there
+    try std.testing.expect(comptime stringCondition(.aarch64, .macos, strings) == null);
+    for (comptime gdbBreakpoints(.aarch64, .macos)) |b| try std.testing.expect(!std.mem.eql(u8, b.name, "_lcompilers_print_error"));
+    // no ' in it: lldb's command quotes the condition so (lldb.zig)
+    try std.testing.expect(std.mem.findScalar(u8, linux, '\'') == null);
 }

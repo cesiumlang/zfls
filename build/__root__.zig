@@ -170,7 +170,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_gdb",
             .root = "tests/dap_gdb.zig",
             .step = "test-dap-gdb",
-            .desc = "Debug a gfortran program (or LLVM Flang's, with -- --compiler flang, linked with the ifx kit on Windows x64) with zfls dap and gdb (skipped without the compiler or gdb 14+)",
+            .desc = "Debug a gfortran program (or LLVM Flang's, with -- --compiler flang, linked with the ifx kit on Windows x64; LFortran's with -- --compiler lfortran, not on Windows) with zfls dap and gdb (skipped without the compiler or gdb 14+)",
             .needs_fortls = false,
             .needs_kit = true,
         },
@@ -178,7 +178,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_lldb",
             .root = "tests/dap_lldb.zig",
             .step = "test-dap-lldb",
-            .desc = "Debug a gfortran program with zfls dap and lldb-dap (skipped without gfortran or lldb-dap)",
+            .desc = "Debug a gfortran program (or LFortran's, with -- --compiler lfortran) with zfls dap and lldb-dap (skipped without the compiler or lldb-dap)",
             .needs_fortls = false,
         },
         .{

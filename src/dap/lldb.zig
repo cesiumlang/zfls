@@ -27,6 +27,7 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
 const fortran = @import("fortran.zig");
+const lfortran = @import("lfortran.zig");
 const runtime_errors = @import("runtime_errors.zig");
 const Value = json.Value;
 
@@ -99,6 +100,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         return gdb.forward(s, a, req, o);
     }
     s.stop_at_entry = flag(args, "stopAtEntry");
+    s.g.lfortran = lfortran.isProgram(s.io, a, json.str(json.get(args, "program")), json.str(json.get(args, "cwd")));
     var tty: ?[]const u8 = null;
     const console = json.str(json.get(args, "console")) orelse "internalConsole";
     if (!std.mem.eql(u8, console, "internalConsole") and builtin.target.os.tag != .windows and s.g.run_in_terminal) {
@@ -172,8 +174,9 @@ fn attachArguments(a: Allocator, args: ?Value) !Value {
 
 /// Before `configurationDone` runs the program: the stop at the start, a
 /// breakpoint on the main program of gfortran's, LLVM Flang's and Intel's
-/// programs, deleted once it has stopped it (`afterEntry`; one of lldb's
-/// `--one-shot` is gone before lldb-dap tells its id)
+/// programs, else (LFortran's, whose main program is C's `main`, or a C
+/// program) on `main`, deleted once it has stopped it (`afterEntry`; one
+/// of lldb's `--one-shot` is gone before lldb-dap tells its id)
 pub fn beforeRun(s: *Session, a: Allocator) !void {
     s.g.entry_breakpoint = null;
     s.g.entry_hit = false;
@@ -181,7 +184,29 @@ pub fn beforeRun(s: *Session, a: Allocator) !void {
     var cmd: std.ArrayList(u8) = .empty;
     try cmd.appendSlice(a, "breakpoint set");
     for (fortran.main_program_functions) |name| try cmd.print(a, " --name {s}", .{name});
-    s.g.entry_breakpoint = try run(s, a, cmd.items);
+    const output = try runOutput(s, a, cmd.items);
+    s.g.entry_breakpoint = breakpointId(output);
+    if (!hasNoLocations(output)) return;
+    if (s.g.entry_breakpoint) |id| _ = try run(s, a, try a.print("breakpoint delete {d}", .{id}));
+    s.g.entry_breakpoint = try run(s, a, "breakpoint set --name main");
+}
+
+/// Whether lldb's `breakpoint set` found nothing in the program:
+/// `Breakpoint 1: no locations (pending).`
+fn hasNoLocations(output: []const u8) bool {
+    return std.mem.find(u8, output, "no locations") != null;
+}
+
+/// `variables` of an LFortran program: lldb-dap's, without LFortran's
+/// temporaries
+pub fn variables(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
+    const r = try gdb.request(s, a, "variables", args orelse Value.null);
+    if (r == .object) if (r.object.getPtr("body")) |body| if (body.* == .object) if (body.object.getPtr("variables")) |list| if (list.* == .array) {
+        var kept: json.Array = .init(a);
+        for (list.array.items) |v| if (!lfortran.isTemporary(json.str(json.get(v, "name")) orelse "")) try kept.append(v);
+        list.* = .{ .array = kept };
+    };
+    gdb.respondWith(s, a, req, r);
 }
 
 /// After the stop at the start: its breakpoint deleted
@@ -280,8 +305,13 @@ fn listedName(listing: []const u8, id: i64) ?[]const u8 {
 /// command whatever the REPL's mode): the id of the breakpoint it set, if
 /// it set one
 fn run(s: *Session, a: Allocator, command: []const u8) !?i64 {
+    return breakpointId(try runOutput(s, a, command));
+}
+
+/// Runs an lldb command in lldb-dap's REPL: what it printed
+fn runOutput(s: *Session, a: Allocator, command: []const u8) ![]const u8 {
     const r = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("`{s}", .{command}), .context = "repl" });
-    return breakpointId(json.str(json.path(r, &.{ "body", "result" })) orelse "");
+    return json.str(json.path(r, &.{ "body", "result" })) orelse "";
 }
 
 /// The id of the breakpoint that lldb's `breakpoint set` reports:
@@ -308,6 +338,9 @@ test "the ids of lldb's breakpoints" {
     try std.testing.expectEqual(@as(?i64, 12), breakpointId("Breakpoint 12: where = libgfortran.5.dylib`_gfortran_runtime_error_at, address = 0x0000000100372c20\n"));
     try std.testing.expectEqual(@as(?i64, null), breakpointId("error: invalid combination of options for the given command\n"));
     try std.testing.expectEqual(@as(?i64, null), breakpointId(""));
+    // the stop at the start of an LFortran program: on `main` (lldb 1700)
+    try std.testing.expect(hasNoLocations("Breakpoint 1: no locations (pending).\nWARNING:  Unable to resolve breakpoint to any actual locations.\n"));
+    try std.testing.expect(!hasNoLocations("Breakpoint 1: where = grid`MAIN__ + 25 at grid.f90:41:1, address = 0x0000000100001379\n"));
 }
 
 test "lldb-dap's function breakpoints in the order of the request" {
