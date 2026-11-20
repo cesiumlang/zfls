@@ -68,19 +68,6 @@ pub const rules = [_]Rule{
         .kind = .procedure,
         .why = "zfls declares no procedure of an ENTRY statement (in the module file Flang writes it as a procedure of its own, which zfls reads)",
     },
-    .{
-        .file = "tests/flang/extensions.f90",
-        .entity = "extensions::cray::sf",
-        .diff = .kind,
-        .kind = .procedure,
-        .why = "a statement function: zfls reads `sf(i) = i * 2` as an assignment to the variable its type declaration declares",
-    },
-    .{
-        .file = "tests/flang/extensions.f90",
-        .entity = "extensions::cray::sf::*",
-        .diff = .missing,
-        .why = "a statement function's dummy argument and result, which zfls does not read (it has no scope)",
-    },
     // what zfls reads in another place
     .{
         .file = "tests/fortran/submodules.f90",
@@ -148,14 +135,6 @@ pub const rules = [_]Rule{
         .diff = .extra,
         .kind = .variable,
         .why = "zfls preprocesses only the upper-case suffixes by default (pp_suffixes); Flang, gfortran and ifx preprocess .fpp too",
-    },
-    // zfls's own limitations, reported with #399
-    .{
-        .file = "tests/flang/tab_format.f",
-        .entity = "tabbed::tab_cont",
-        .diff = .missing,
-        .kind = .variable,
-        .why = "zfls reads a DEC tab-format file (a tab before the statement, a digit after it continuing the line) as free form, and loses the continuation's names",
     },
 };
 

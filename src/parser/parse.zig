@@ -27,6 +27,7 @@ const DefResult = @import("definitions.zig").DefResult;
 const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
 const plain_docs = @import("plain_docs.zig");
 const attributes = @import("attributes.zig");
+const stmt_functions = @import("stmt_functions.zig");
 const doc_comments = @import("doc_comments.zig");
 const entities = @import("entities.zig");
 const entityLength = entities.entityLength;
@@ -92,6 +93,8 @@ pub const Parser = struct {
     doc_re: *const regex.Regex = undefined,
     /// what the attribute statements say, applied at the end
     attrs: std.ArrayList(attributes.Attr) = .empty,
+    /// where the specification parts end, for statement functions
+    stmt_fns: stmt_functions.State = .{},
 
     pub fn dbg(p: *const Parser, comptime fmt: []const u8, args: anytype) void {
         Trace.print(p.opts.trace, fmt, args);
@@ -236,6 +239,7 @@ pub const Parser = struct {
                     continue;
                 }
                 if (try p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) {
+                    try p.stmt_fns.markExec(sa, ast);
                     ast.pending_doc = null;
                     continue;
                 }
@@ -248,6 +252,7 @@ pub const Parser = struct {
             // cannot have documentation: it must not wait for a later
             // procedure (upstream #237)
             if (R().NON_DEF.match(line_no_comment) != null) {
+                try p.stmt_fns.markExec(sa, ast);
                 ast.pending_doc = null;
                 continue;
             }
@@ -264,7 +269,16 @@ pub const Parser = struct {
                 ast.pending_doc = null;
                 continue;
             }
-            const obj_read = (try getFortranDefinition(a, line)) orelse continue;
+            const obj_read = (try getFortranDefinition(a, line)) orelse {
+                if (try stmt_functions.read(&p.stmt_fns, sa, ast, p.attrs.items, line_no_comment, line_no)) {
+                    p.dbg("{s} !!! STATEMENT FUNCTION - Ln:{d}", .{ str.strip(line_no_comment), line_no });
+                }
+                continue;
+            };
+            switch (obj_read) {
+                .do_, .where, .assoc, .if_, .select, .block => try p.stmt_fns.markExec(sa, ast),
+                else => {},
+            }
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
         }
         try attributes.apply(ast, sa, p.attrs.items, p.opts.sort_keywords);
