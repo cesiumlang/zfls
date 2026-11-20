@@ -37,6 +37,12 @@ export function compilerName(compiler: string): string {
  * still write the PDB) */
 export const FLANG_DWARF_ARGS = ["-gdwarf-4", "-O0", "-Wl,-debug:dwarf"];
 
+/** gfortran's debug build on Windows (`compilerKind`): libgfortran and
+ * libquadmath linked statically, so that the Fortran runtime errors filter
+ * stops at errors that the runtime raises itself (`RANDOM_SEED`, `MATMUL`,
+ * I/O), whose functions gdb finds in the program but not in the DLL */
+export const GFORTRAN_WINDOWS_ARGS = ["-g", "-O0", "-static-libgfortran", "-static-libquadmath"];
+
 /**
  * How `compiler` takes its options and what its programs are, on
  * `platform`. LLVM Flang's programs on Windows are of the MSVC ABI, but
@@ -59,6 +65,11 @@ export function compilerKind(compiler: string, platform: NodeJS.Platform, flangD
   }
   if (windows && (name === "flang" || name === "flang-new") && flangDwarf) {
     return { argStyle: "gnu", msvc: false, defaultArgs: [...FLANG_DWARF_ARGS] };
+  }
+  // MinGW's gfortran: its runtime linked in, since gdb reads no symbols of
+  // libgfortran-5.dll and so cannot stop at the errors raised inside it
+  if (windows && name === "gfortran") {
+    return { argStyle: "gnu", msvc: false, defaultArgs: [...GFORTRAN_WINDOWS_ARGS] };
   }
   // LLVM Flang's `-g` on Windows: Microsoft's debug information only
   const msvc = windows && (name === "flang" || name === "flang-new");
