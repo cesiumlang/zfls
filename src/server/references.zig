@@ -59,6 +59,29 @@ pub fn isSeparateProcedurePair(x: *const Obj, y: *const Obj) bool {
     return isSeparateInterfaceOf(x, y) or isSeparateInterfaceOf(y, x);
 }
 
+/// Whether `x` and `y` are a generic interface and a specific of it that
+/// has its name, in either order: one name, as a generic and a module
+/// procedure of its name in its module are (#469). The specific is an
+/// interface body of the generic (`interface h` with `subroutine h(n)`,
+/// #475) or a procedure of another module (`use a, only: s1` with
+/// `interface s1` / `module procedure s1`).
+pub fn isSelfNamedSpecificPair(x: *const Obj, y: *const Obj) bool {
+    return isSelfNamedSpecificOf(x, y) or isSelfNamedSpecificOf(y, x);
+}
+
+fn isSelfNamedSpecificOf(generic: *const Obj, specific: *const Obj) bool {
+    if (generic.kind != .interface or generic == specific or !std.ascii.eqlIgnoreCase(generic.name, specific.name)) return false;
+    for (generic.memList()) |m| if (m == specific) return true;
+    return false;
+}
+
+/// The scope that `o` is a name of: its parent, or for an interface body
+/// the scope around its interface block (#474)
+fn ownerOf(o: *const Obj) ?*const Obj {
+    const p = o.parent orelse return null;
+    return if (p.kind == .interface) p.parent else p;
+}
+
 pub fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
     const p = iface.parent orelse return false;
     return p.kind == .interface and iface.isModScope() and iface.linkObj() == impl;
@@ -69,7 +92,7 @@ pub fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
 /// original name is not visible under that name in the importing scope,
 /// so the definition lookup cannot find it (upstream #52).
 pub fn isRenamedOriginal(line: []const u8, col: usize, def_obj: *const Obj) bool {
-    const parent = def_obj.parent orelse return false;
+    const parent = ownerOf(def_obj) orelse return false;
     if (parent.kind != .module) return false;
     if (!std.mem.endsWith(u8, str.rstrip(line[0..col]), "=>")) return false;
     const t = str.lstrip(line);
@@ -230,7 +253,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     in_cache = true;
                 };
                 if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def) or
-                    isSeparateProcedurePair(def_obj, var_def) or
+                    isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
                     (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
                 {
@@ -277,7 +300,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
 pub fn useAliases(self: *Server, a: Allocator, def_obj: *const Obj, def_name: []const u8) ![]const []const u8 {
     var names: std.ArrayList([]const u8) = .empty;
     try names.append(a, def_name);
-    const parent = def_obj.parent orelse return names.items;
+    const parent = ownerOf(def_obj) orelse return names.items;
     if (parent.kind != .module) return names.items;
     var grew = true;
     while (grew) {
