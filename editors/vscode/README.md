@@ -594,12 +594,19 @@ as Fortran (on macOS it runs lldb-dap instead, see below):
   workspace folder) finds them;
 - each variable with its Fortran expression, for **Add to Watch**, **Copy
   as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
-- gfortran's hidden lengths of CHARACTER arguments left out;
+- gfortran's hidden lengths of CHARACTER arguments, and LFortran's
+  temporaries, left out;
 - **Fortran runtime errors**, an exception breakpoint of the Breakpoints
   view, on by default: the program stops where the runtime reports an
   error (an array bound exceeded under `-fcheck=bounds`, an allocation that
   failed, an I/O error without `iostat=`) or at ERROR STOP, at the line of
   the program, before it ends.
+
+LFortran's programs (built with `-g`, not on Windows, where LFortran
+refuses it) have breakpoints, stepping, the stack and the **Fortran runtime
+errors** stops, with gdb and with lldb-dap; their debug information has
+integer and real scalars only, so the Variables view shows those, and no
+arrays, derived types, CHARACTER lengths or module variables.
 
 The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`).
 `setupCommands` (gdb commands, such as `set print elements 0`) run before
