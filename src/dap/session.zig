@@ -182,6 +182,9 @@ pub const Session = struct {
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     last_error: []const u8 = "",
+    /// The last stop was the filter's at a runtime error: the Intel
+    /// runtime's break instruction that follows it is no stop of its own
+    after_runtime_error: bool = false,
     attached: bool = false,
     /// Breakpoints by source file: the engine's ids
     breakpoints: std.StringHashMapUnmanaged(std.ArrayList(u32)) = .empty,
@@ -693,6 +696,8 @@ fn go(s: *Session, how: Engine.Resume, thread: ?u32) !void {
 
 fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
     s.running = false;
+    const after_runtime_error = s.after_runtime_error;
+    s.after_runtime_error = false;
     // breakpoints resolved since (a module loaded): the client is told
     var it = s.unverified.iterator();
     var resolved: std.ArrayList(u32) = .empty;
@@ -711,6 +716,7 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             // LLVM Flang's plain STOP: the program goes on to its end
             if (isPlainStop(s, f)) return go(s, .go, null) catch {};
             s.last_error = f.name;
+            s.after_runtime_error = !f.error_stop;
             s.event(a, "stopped", .{
                 .reason = "exception",
                 .threadId = b.thread,
@@ -727,6 +733,21 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             s.event(a, "stopped", .{ .reason = "step", .threadId = t, .allThreadsStopped = true });
         },
         .pause => |t| s.event(a, "stopped", .{ .reason = "pause", .threadId = t, .allThreadsStopped = true }),
+        .trap => |t| {
+            // the Intel runtime's `int 3` in `for__issue_diagnostic`, after
+            // the filter's stop there: the program goes on (#493)
+            if (after_runtime_error) return go(s, .go, null) catch {};
+            // without the filter: the runtime error, as the filter says it
+            const intel = inIntelDiagnostic(s, a, t.thread);
+            if (intel) s.last_error = intel_diagnostic;
+            s.event(a, "stopped", .{
+                .reason = "exception",
+                .threadId = t.thread,
+                .allThreadsStopped = true,
+                .description = if (intel) s.text.runtime_error else t.description,
+                .text = "0x80000003",
+            });
+        },
         .exception => |e| s.event(a, "stopped", .{
             .reason = "exception",
             .threadId = e.thread,
@@ -735,6 +756,29 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             .text = a.print("0x{x}", .{e.code}) catch "",
         }),
     }
+}
+
+/// The function of the Intel runtime that reports a runtime error
+const intel_diagnostic = "for__issue_diagnostic";
+
+/// Whether thread `thread` stopped in `for__issue_diagnostic` (the engine
+/// names it `libifcoremd!for__issue_diagnostic+0x8a3`)
+fn inIntelDiagnostic(s: *Session, a: Allocator, thread: u32) bool {
+    const frames = s.engine.stack(a, thread, 1) catch return false;
+    return frames.len > 0 and isIntelDiagnostic(frames[0].name);
+}
+
+fn isIntelDiagnostic(name: []const u8) bool {
+    const at = std.mem.find(u8, name, intel_diagnostic) orelse return false;
+    const end = at + intel_diagnostic.len;
+    return (at == 0 or name[at - 1] == '!') and (end == name.len or name[end] == '+');
+}
+
+test "the Intel runtime's function of runtime errors, as the engine names a place in it" {
+    try std.testing.expect(isIntelDiagnostic("libifcoremd!for__issue_diagnostic+0x8a3"));
+    try std.testing.expect(isIntelDiagnostic("for__issue_diagnostic"));
+    try std.testing.expect(!isIntelDiagnostic("libifcoremd!for__issue_diagnostic_x+0x10"));
+    try std.testing.expect(!isIntelDiagnostic("hello!main+0x20"));
 }
 
 fn frameOf(id: i64) Frame {
