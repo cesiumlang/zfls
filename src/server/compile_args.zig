@@ -186,7 +186,7 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
     // the standard's implicit typing and interfaces, unless `own` says
     try args.appendSlice(a, compilers.implicitRules(id, own));
     for (own) |x| try args.append(a, try a.dupe(u8, x));
-    try args.appendSlice(a, compilers.language(id));
+    try args.appendSlice(a, compilers.language(id, o));
     try args.append(a, try a.dupe(u8, file.path));
     return args.items;
 }

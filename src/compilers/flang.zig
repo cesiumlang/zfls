@@ -208,10 +208,11 @@ test "debug lines: no option for comments, which Flang 20 rejects" {
     try std.testing.expectEqualStrings("-fd-lines-as-comments", compilers.dLines(.gfortran, false, o)[0]);
 }
 
-test "the file's language: -x f95 for flang only" {
-    try std.testing.expectEqualStrings("-x", compilers.language(.flang)[0]);
-    try std.testing.expectEqualStrings("f95", compilers.language(.flang)[1]);
-    try std.testing.expectEqual(@as(usize, 0), compilers.language(.gfortran).len);
+test "the file's language: -x f95 for flang" {
+    const o: compilers.Options = .{ .windows = false, .mod_dir = "m" };
+    try std.testing.expectEqualStrings("-x", compilers.language(.flang, o)[0]);
+    try std.testing.expectEqualStrings("f95", compilers.language(.flang, o)[1]);
+    try std.testing.expectEqual(@as(usize, 0), compilers.language(.gfortran, o).len);
 }
 
 test "flang's summary of a syntax error is no message of its own" {
