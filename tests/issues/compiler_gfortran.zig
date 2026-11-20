@@ -1,6 +1,7 @@
 //! The compiler check (`compiler_diagnostics`) with gfortran's command
 //! line, through a stand-in gfortran that logs its arguments: the files of
-//! suffixes its driver does not know (#521).
+//! suffixes its driver does not know (#521), and a missing `#include`
+//! (#524).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -42,4 +43,24 @@ test "gfortran: the file and the modules it uses with -x f95 right before them, 
         }
     }
     try std.testing.expectEqual(@as(usize, 2), files);
+}
+
+/// A stand-in gfortran that says what gfortran's cpp says of a missing
+/// `#include` on line 3: on line 4
+const missing_include: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho p.F90:4:2: Fatal Error: missing.h: No such file or directory 1>&2\r\necho compilation terminated. 1>&2\r\nexit /b 1\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\necho 'p.F90:4:2: Fatal Error: missing.h: No such file or directory' >&2\necho 'compilation terminated.' >&2\nexit 1\n" };
+
+test "gfortran: a missing #include is on its line, not the next (#524)" {
+    const pp = h.File{ .name = "p.F90", .text = "program p\n  implicit none\n#include \"missing.h\"\nend program p\n" };
+    const w = try h.Workspace.init(&.{ pp, missing_include }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ missing_include.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, missing_include.name, .executable_file, .{});
+    try w.open("p.F90", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"missing.h: No such file or directory\"", 60)) orelse return error.NoCompilerDiagnostics;
+    const at = std.mem.find(u8, sent, "\"message\":\"missing.h: No such file or directory\"").?;
+    const mark = "\"range\":{\"start\":{\"line\":";
+    const r = std.mem.findLast(u8, sent[0..at], mark) orelse return h.unmet("no range in {s}", .{sent});
+    try h.expect(std.mem.startsWith(u8, sent[r + mark.len ..], "2,"), "the missing #include is not on line 3: {s}", .{sent[r..at]});
 }
