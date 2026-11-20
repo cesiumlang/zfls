@@ -274,6 +274,9 @@ How it behaves:
 - **Included files.** An error in a file brought in by `INCLUDE` or
   `#include` shows at that `INCLUDE` line, prefixed with the included
   file's name and line, with a link to the place in the included file.
+  For a file included by an included file, the line is the outer
+  `INCLUDE`, with a link to each one in between. Flang says which line
+  includes the file; for gfortran, ifx and ifort, zfls finds it.
 - **One compiler at a time.** Checks run one after another, and a newer
   check of a file replaces one that has not started, so that autosave does
   not pile up compiler processes. A check of edits waits for

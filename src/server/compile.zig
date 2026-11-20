@@ -36,6 +36,7 @@ const definition = @import("definition.zig");
 const messages = @import("compile_messages.zig");
 pub const rangeAt = messages.rangeAt;
 const toDiagnostics = messages.toDiagnostics;
+const include_site = @import("include_site.zig");
 
 const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
@@ -689,6 +690,8 @@ fn runJob(w: *Worker, job: *Job) !void {
         }
     };
     const text = job.text orelse Io.Dir.cwd().readFileAlloc(io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
+    // a message in an included file, at the line that includes it (#496)
+    try include_site.fill(a, io, job, try splitLines(a, text), aliases.items, msgs);
     const diags = try toDiagnostics(a, job, text, msgs, aliases.items);
     try publishCompiler(self, a, job.uri, diags);
 }

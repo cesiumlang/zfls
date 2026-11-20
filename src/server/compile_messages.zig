@@ -45,7 +45,7 @@ pub fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line:
 /// given the file's path, and Intel's compilers run in a directory of
 /// zfls's (`compilers.writesToWorkDir`): a name without a directory is the
 /// file checked when it is the name of the file.
-fn isHere(a: Allocator, job: *const Job, here: []const []const u8, file: ?[]const u8) !bool {
+pub fn isHere(a: Allocator, job: *const Job, here: []const []const u8, file: ?[]const u8) !bool {
     const named = try comparable(a, job.cwd, file orelse return true);
     for (here) |h| if (std.mem.eql(u8, named, h)) return true;
     if (compilers.writesToWorkDir(job.id) and std.mem.findAny(u8, file.?, "/\\") == null) {
