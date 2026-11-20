@@ -406,9 +406,11 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             type_mask = setTypeMask(true);
             type_mask.remove(.class);
             type_mask.remove(.variable);
-            // the abstract interfaces of the host (#481), and its procedures
+            // the abstract interfaces of the host (#481), its procedures and
+            // its generics
             type_mask.remove(.subroutine);
             type_mask.remove(.function);
+            type_mask.remove(.interface);
             abstract = .too;
         },
         .vis => {
@@ -420,6 +422,8 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             type_mask.remove(.variable);
             type_mask.remove(.subroutine);
             type_mask.remove(.function);
+            // a named generic, which a PUBLIC or PRIVATE statement can name
+            type_mask.remove(.interface);
         },
         .int_only => {
             abstract = .only;
@@ -481,7 +485,9 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
         for (listed) |l| if (std.ascii.eqlIgnoreCase(l, cand.name)) continue :next;
         if (req_callable and !cand.isCallable()) continue;
         var name_replace = rename;
-        if (ctype == C.TypeId.interface and lc.ctx != .mod_mems) {
+        // a generic is offered as its specifics, except where only its own
+        // name can stand (an IMPORT, PUBLIC or PRIVATE statement)
+        if (ctype == C.TypeId.interface and lc.ctx != .mod_mems and lc.ctx != .vis and lc.ctx != .import) {
             var seen: std.ArrayList([]const u8) = .empty;
             if (name_replace == null) name_replace = cand.name;
             for (cand.memList()) |member| {

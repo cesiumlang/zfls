@@ -559,6 +559,38 @@ test "completion of a USE ONLY list, a PUBLIC and an IMPORT statement offers abs
     if (try labelsAtEnd(w, "u.f90", 20)) |calls_c| try h.expect(!has(calls_c, "cb"), "call c: {any}", .{calls_c});
 }
 
+const generic_names = [_]h.File{
+    .{ .name = "g.f90", .text = "module g\n" ++
+        "  private\n" ++
+        "  public :: \n" ++
+        "  interface gen\n" ++
+        "    module procedure gs\n" ++
+        "  end interface\n" ++
+        "  interface\n" ++
+        "    subroutine q()\n" ++
+        "      import :: \n" ++
+        "    end subroutine\n" ++
+        "  end interface\n" ++
+        "contains\n" ++
+        "  subroutine gs()\n" ++
+        "  end subroutine\n" ++
+        "end module g\n" },
+};
+
+test "completion of a PUBLIC and an IMPORT statement offers a named generic by its own name" {
+    const w = try h.Workspace.init(&generic_names, .{});
+    defer w.deinit();
+    for ([_]i64{ 2, 8 }) |line| {
+        const got = (try labelsAtEnd(w, "g.f90", line)) orelse return h.unmet("line {d}: null", .{line});
+        try h.expect(has(got, "gen") and has(got, "gs"), "line {d}: {any}", .{ line, got });
+        var n: usize = 0;
+        for (got) |l| if (std.mem.eql(u8, l, "gs")) {
+            n += 1;
+        };
+        try h.expect(n == 1, "line {d}: gs offered {d} times: {any}", .{ line, n, got });
+    }
+}
+
 /// The labels completion gives at the end of 0-based line `line`, or
 /// null when it answers null
 fn labelsAtEnd(w: *h.Workspace, name: []const u8, line: i64) !?[]const []const u8 {
