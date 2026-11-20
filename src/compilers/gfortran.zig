@@ -76,7 +76,9 @@ pub fn parse(p: *Parser, output: []const u8) !void {
     var place: ?compilers.Related = null;
     var it = compilers.lines(output);
     while (it.next()) |raw| {
-        const text = compilers.trimCr(raw);
+        // (without trailing blanks, which a script standing for gfortran
+        // may add)
+        const text = std.mem.trimEnd(u8, compilers.trimCr(raw), " \t");
         if (one.match(text)) |m| {
             const msg = m.named(one, "msg").?;
             locus = null;
@@ -169,13 +171,21 @@ test "gfortran: a message about two places, its place (1) related" {
 }
 
 test "gfortran driver messages" {
-    try compilers.expectBrief(.gfortran,
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // MSYS2's gfortran 16.1
+    const ms = try compilers.parse(a, .gfortran,
         \\gfortran: error: unrecognized command-line option '-Wbogus'
         \\f951.exe: Warning: Nonexistent include directory 'nope' [-Wmissing-include-dirs]
-    , &.{
-        "-:0:- error: gfortran: unrecognized command-line option '-Wbogus'",
-        "-:0:- warning: f951.exe: Nonexistent include directory 'nope' [-Wmissing-include-dirs]",
-    });
+    );
+    try std.testing.expectEqual(@as(usize, 2), ms.len);
+    try std.testing.expectEqualStrings("gfortran: unrecognized command-line option '-Wbogus'", ms[0].message);
+    try std.testing.expectEqual(@as(?[]const u8, null), ms[0].code);
+    // the warning's option is its code, not in its text
+    try std.testing.expectEqualStrings("f951.exe: Nonexistent include directory 'nope'", ms[1].message);
+    try std.testing.expectEqualStrings("-Wmissing-include-dirs", ms[1].code.?);
+    try std.testing.expectEqual(compilers.Severity.warning, ms[1].severity);
 }
 
 test "gfortran's -Wtabs at the TAB-format line" {

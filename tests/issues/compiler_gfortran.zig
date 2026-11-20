@@ -1,7 +1,7 @@
 //! The compiler check (`compiler_diagnostics`) with gfortran's command
 //! line, through a stand-in gfortran that logs its arguments: the files of
-//! suffixes its driver does not know (#521), and a missing `#include`
-//! (#524).
+//! suffixes its driver does not know (#521), a missing `#include` (#524),
+//! and the messages without a file (#525).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -63,4 +63,27 @@ test "gfortran: a missing #include is on its line, not the next (#524)" {
     const mark = "\"range\":{\"start\":{\"line\":";
     const r = std.mem.findLast(u8, sent[0..at], mark) orelse return h.unmet("no range in {s}", .{sent});
     try h.expect(std.mem.startsWith(u8, sent[r + mark.len ..], "2,"), "the missing #include is not on line 3: {s}", .{sent[r..at]});
+}
+
+/// A stand-in gfortran that gives what gfortran 16.1 says of a TAB-format
+/// fixed-form file with -Wall, and of an include directory that is not
+/// there: messages without a file and line
+const tabs: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho f951.exe: Warning: Nonconforming tab character in column 1 of line 2 [-Wtabs] 1>&2\r\necho f951.exe: Warning: Nonexistent include directory 'nope' [-Wmissing-include-dirs] 1>&2\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\necho 'f951: Warning: Nonconforming tab character in column 1 of line 2 [-Wtabs]' >&2\necho \"f951: Warning: Nonexistent include directory 'nope' [-Wmissing-include-dirs]\" >&2\n" };
+
+test "gfortran: -Wtabs of fixed form at the TAB's line, and the driver's warning option as its code (#525)" {
+    const tab = h.File{ .name = "t.f", .text = "C     tab format\n\tPROGRAM T\n\tEND\n" };
+    const w = try h.Workspace.init(&.{ tab, tabs }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ tabs.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, tabs.name, .executable_file, .{});
+    try w.open("t.f", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "Nonexistent include directory", 60)) orelse return error.NoCompilerDiagnostics;
+    const at = std.mem.find(u8, sent, "\"message\":\"Nonconforming tab character in column 1 of line 2\"") orelse return h.unmet("no -Wtabs message: {s}", .{sent});
+    const mark = "\"range\":{\"start\":{\"line\":";
+    const r = std.mem.findLast(u8, sent[0..at], mark) orelse return h.unmet("no range in {s}", .{sent});
+    try h.expect(std.mem.startsWith(u8, sent[r + mark.len ..], "1,"), "the TAB warning is not on line 2: {s}", .{sent[r..at]});
+    // the driver's message: its option is the code, not in the text
+    try h.expect(std.mem.find(u8, sent, "include directory 'nope'\",") != null and std.mem.find(u8, sent, "\"code\":\"-Wmissing-include-dirs\"") != null, "the include directory warning: {s}", .{sent});
 }

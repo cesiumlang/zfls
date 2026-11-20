@@ -394,12 +394,21 @@ pub const Parser = struct {
     }
 
     /// A message without a location from the compiler driver, such as
-    /// "gfortran: error: unrecognized command-line option '-Wfoo'"
+    /// "gfortran: error: unrecognized command-line option '-Wfoo'"; a
+    /// trailing `[-Wname]` is its code ("f951.exe: Warning: Nonexistent
+    /// include directory 'x' [-Wmissing-include-dirs]")
     pub fn driver(p: *Parser, line: []const u8) !bool {
         const r = try p.re("^(?P<bin>[\\w.+-]+(?:\\.exe)?): (?P<sev>fatal error|error|warning): (?P<msg>.+)$", regex.I);
         const m = r.match(line) orelse return false;
         const sev: Severity = if (std.ascii.eqlIgnoreCase(m.named(r, "sev").?, "warning")) .warning else .@"error";
-        try p.push(null, 0, null, sev, try p.a.print("{s}: {s}", .{ m.named(r, "bin").?, m.named(r, "msg").? }), null);
+        var msg = m.named(r, "msg").?;
+        var code: ?[]const u8 = null;
+        const code_re = try p.re("\\s*\\[(-W[\\w=-]+)\\]$", .{});
+        if (code_re.search(msg)) |c| {
+            code = c.group(1);
+            msg = msg[0..c.start(0)];
+        }
+        try p.push(null, 0, null, sev, try p.a.print("{s}: {s}", .{ m.named(r, "bin").?, msg }), code);
         return true;
     }
 
