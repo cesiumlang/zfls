@@ -221,7 +221,7 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
     else if (cmd) |c|
         try compilers.absoluteDirs(a, id, try project.compilerArgs(a, c), c.dir, o)
     else
-        compilers.defaultArgs(id, o);
+        try compilers.defaultArgs(a, id, o);
     // the standard's implicit typing and interfaces, unless `own` says
     try args.appendSlice(a, compilers.implicitRules(id, own));
     for (own) |x| try args.append(a, try a.dupe(u8, x));

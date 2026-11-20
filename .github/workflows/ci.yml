@@ -785,6 +785,12 @@ jobs:
         if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
         run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler flang
 
+      # and with gfortran (GFORTRAN on Windows, MSYS2's), also on a .f77
+      # file and a lower-case .fpp file
+      - name: The compiler check with gfortran (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler gfortran
+
       - name: Version under test
         run: |
           got=$("$ZFLS" --version | tr -d '\r')

@@ -80,6 +80,9 @@ pub const Options = struct {
     /// LLVM Flang's (compilers/flang_modules.zig), conda-forge's ifx's
     /// (`intel.moduleDir`)
     intrinsic_modules: ?[]const u8 = null,
+    /// zfls reads OpenMP's conditional lines (`!$ `) as code
+    /// (`disable_openmp_conditional` off): the compiler should too
+    openmp: bool = false,
 };
 
 /// The executable names tried, in order
@@ -234,15 +237,57 @@ pub fn isDLinesArg(arg: []const u8) bool {
     return false;
 }
 
-/// The arguments when `compiler_args` is not set
-pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
-    return switch (id) {
+/// The arguments when `compiler_args` is not set (and the file has no
+/// command): the compiler's warnings, coarrays (one image: nothing else
+/// matters for a check, and without it gfortran and Intel's stop at the
+/// first coarray), and OpenMP when zfls reads its conditional lines
+/// (`o.openmp`), so that the compiler reads them as code too. Flang reads
+/// coarrays without an option (`-fcoarray` only adds a warning that they
+/// are experimental, Flang 23).
+pub fn defaultArgs(a: Allocator, id: Id, o: Options) ![]const []const u8 {
+    const warnings: []const []const u8 = switch (id) {
         .gfortran => &.{"-Wall"},
-        .ifx, .ifort => if (o.windows) &.{"/warn:all"} else &.{ "-warn", "all" },
+        // what gfortran's -Wall warns about: not every implicitly typed
+        // name (#6717) and every call without an explicit interface
+        // (#8889), which `all` has (#514)
+        .ifx, .ifort => if (o.windows) &.{"/warn:all,nodeclarations,noexternals"} else &.{ "-warn", "all,nodeclarations,noexternals" },
         .nvfortran => &.{"-Minform=warn"},
         .flang => flang.warnings(o.version),
         .nagfor, .lfortran => &.{},
     };
+    const coarrays: []const []const u8 = switch (id) {
+        .gfortran => &.{"-fcoarray=single"},
+        .ifx, .ifort => if (o.windows) &.{"/Qcoarray:single"} else &.{"-coarray=single"},
+        else => &.{},
+    };
+    const openmp: []const []const u8 = if (!o.openmp) &.{} else switch (id) {
+        .gfortran, .flang => &.{"-fopenmp"},
+        .ifx, .ifort => if (o.windows) &.{"/Qopenmp"} else &.{"-qopenmp"},
+        else => &.{},
+    };
+    return std.mem.concat(a, []const u8, &.{ warnings, coarrays, openmp });
+}
+
+test "the default arguments: warnings, coarrays, and OpenMP as zfls reads it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const linux: Options = .{ .windows = false, .mod_dir = "m", .openmp = true };
+    const win: Options = .{ .windows = true, .mod_dir = "m", .openmp = true };
+    const no_omp: Options = .{ .windows = false, .mod_dir = "m" };
+    try expectArgs(try defaultArgs(a, .gfortran, linux), &.{ "-Wall", "-fcoarray=single", "-fopenmp" });
+    try expectArgs(try defaultArgs(a, .gfortran, no_omp), &.{ "-Wall", "-fcoarray=single" });
+    try expectArgs(try defaultArgs(a, .ifx, win), &.{ "/warn:all,nodeclarations,noexternals", "/Qcoarray:single", "/Qopenmp" });
+    try expectArgs(try defaultArgs(a, .ifort, linux), &.{ "-warn", "all,nodeclarations,noexternals", "-coarray=single", "-qopenmp" });
+    try expectArgs(try defaultArgs(a, .flang, .{ .windows = false, .mod_dir = "m", .version = 23, .openmp = true }), &.{ "-Wunused-variable", "-Wused-undefined-variable", "-fopenmp" });
+    try expectArgs(try defaultArgs(a, .flang, linux), &.{"-fopenmp"});
+    try expectArgs(try defaultArgs(a, .nvfortran, linux), &.{"-Minform=warn"});
+    try expectArgs(try defaultArgs(a, .lfortran, linux), &.{});
+}
+
+fn expectArgs(got: []const []const u8, want: []const []const u8) !void {
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
 }
 
 /// Accept implicit typing and implicit interfaces, as the standard does:

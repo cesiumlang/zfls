@@ -259,10 +259,12 @@ pub const FortranFile = struct {
                 self.preproc = true;
             };
         } else {
+            // an upper-case suffix (`.F90`, `.F`), and `.fpp`, which the
+            // compilers preprocess too (gfortran, Flang, ifx)
             var upper_buf: [64]u8 = undefined;
             if (ext.len <= upper_buf.len) {
                 const up = std.ascii.upperString(upper_buf[0..ext.len], ext);
-                self.preproc = std.mem.eql(u8, up, ext);
+                self.preproc = std.mem.eql(u8, up, ext) or std.mem.eql(u8, up, ".FPP");
             }
         }
         return self;

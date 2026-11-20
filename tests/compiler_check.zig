@@ -1,17 +1,19 @@
 //! The compiler check (`compiler_diagnostics`) against a real compiler,
-//! LFortran or LLVM Flang: zfls, started as an editor starts it, checks
+//! LFortran, LLVM Flang or gfortran: zfls, started as an editor starts it, checks
 //! the files of tests/compiler when they are opened, and each must get the
 //! compiler's errors it has and none of those it has not: a program that
 //! uses a module of the workspace (compiled first, for its .mod file),
 //! implicit typing and an external procedure, fixed form, the preprocessor
 //! with a definition of `pp_defs`, an include directory of `include_dirs`,
-//! and the unsaved text of an edit (`compiler_on_change`); with Flang also
-//! a `.f77` file, a debug line (a comment) and an error in an included file
+//! and the unsaved text of an edit (`compiler_on_change`); with Flang and
+//! gfortran also a `.f77` file, a debug line (a comment), an error in an
+//! included file and a preprocessed `.fpp` file (lower case)
 //! (`zig build test-compiler`). Skipped without the compiler.
 //!
-//!     compiler_check --zfls ZFLS [--compiler lfortran|flang] [--path EXE]
+//!     compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran] [--path EXE]
 //!
-//! LFORTRAN or FLANG in the environment names the compiler's executable too.
+//! LFORTRAN, FLANG or GFORTRAN in the environment names the compiler's
+//! executable too.
 
 const std = @import("std");
 const Io = std.Io;
@@ -116,8 +118,51 @@ const compilers = [_]Compiler{
             .{ .file = "intrinsic_modules.f90", .want = &.{
                 .{ .line = 8, .text = "No explicit type declared for 'undeclared_intrinsic'" },
             }, .absent = &.{ "module file", "real64", "ieee_value", "c_int" } },
+            // a lower-case .fpp is preprocessed, with pp_defs (#529)
+            .{ .file = "lower.fpp", .want = &.{
+                .{ .line = 10, .text = "No explicit type declared for 'undeclared_fpp'" },
+            }, .absent = &.{ "not_defined_branch", "from_define" } },
         },
         .edited = .{ .line = 8, .text = "No explicit type declared for 'undeclared_edit'" },
+    },
+    .{
+        .name = "gfortran",
+        .env = "GFORTRAN",
+        .cases = &.{
+            .{ .file = "main.f90", .want = &.{
+                .{ .line = 8, .text = "Symbol 'undeclared_main' at (1) has no IMPLICIT type" },
+                .{ .line = 9, .text = "Symbol 'also_undeclared' at (1) has no IMPLICIT type" },
+            }, .absent = &.{"module file"} },
+            .{ .file = "implicit.f90", .want = &.{
+                .{ .line = 5, .text = "Type mismatch in argument 'r' at (1); passed INTEGER(4) to REAL(4)" },
+            }, .absent = &.{"IMPLICIT type"} },
+            .{ .file = "legacy.f", .want = &.{
+                .{ .line = 6, .text = "Type mismatch in argument 'r' at (1); passed INTEGER(4) to REAL(4)" },
+            }, .absent = &.{"IMPLICIT type"} },
+            .{ .file = "defines.F90", .want = &.{
+                .{ .line = 8, .text = "Symbol 'undeclared_defines' at (1) has no IMPLICIT type" },
+            }, .absent = &.{"from_define"} },
+            .{ .file = "includes.f90", .want = &.{
+                .{ .line = 6, .text = "Symbol 'undeclared_includes' at (1) has no IMPLICIT type" },
+            }, .absent = &.{ "Can't open", "included_n" } },
+            // a suffix gfortran's driver does not know as Fortran (#521)
+            .{ .file = "old.f77", .want = &.{
+                .{ .line = 5, .text = "Symbol 'jundef' at (1) has no IMPLICIT type" },
+            }, .absent = &.{"linker input"} },
+            // the D line is a comment (-fd-lines-as-comments)
+            .{ .file = "dlines.f", .want = &.{
+                .{ .line = 6, .text = "Symbol 'undeclared_fixed' at (1) has no IMPLICIT type" },
+            }, .absent = &.{"dvar"} },
+            // an error in an included file is at the INCLUDE line (#496)
+            .{ .file = "incerr.f90", .want = &.{
+                .{ .line = 4, .text = "Symbol 'undeclared_in_inc' at (1) has no IMPLICIT type" },
+            } },
+            // a lower-case .fpp is preprocessed, with pp_defs (#529)
+            .{ .file = "lower.fpp", .want = &.{
+                .{ .line = 10, .text = "Symbol 'undeclared_fpp' at (1) has no IMPLICIT type" },
+            }, .absent = &.{ "not_defined_branch", "from_define", "Illegal preprocessor directive" } },
+        },
+        .edited = .{ .line = 8, .text = "Symbol 'undeclared_edit' at (1) has no IMPLICIT type" },
     },
 };
 
@@ -142,7 +187,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, cc.name, name)) break cc;
     } else null;
     if (i != argv.len or zfls_exe == null or known == null) {
-        std.debug.print("usage: compiler_check --zfls ZFLS [--compiler lfortran|flang] [--path EXE]\n", .{});
+        std.debug.print("usage: compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran] [--path EXE]\n", .{});
         return 2;
     }
     const compiler = known.?;
