@@ -182,7 +182,7 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 | `zfls dap` on Linux | gdb ✓ | gdb ○ | gdb ○ | gdb ✓ | gdb ○ | gdb ○ | gdb ✓⁹ |
 | `zfls dap` on Windows | gdb ✓ | Windows's ✓¹⁰ | Windows's ○ | gdb ✓, Windows's ✓¹² | – | gdb ○ | –⁹ |
 | `zfls dap` on macOS | lldb-dap ✓¹¹ | – | lldb-dap ○¹¹ | lldb-dap ○¹¹ | – | lldb-dap ○¹¹ | lldb-dap ✓⁹ |
-| Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | ✓¹⁰ | ○ | ✓¹² | ○ | ○ | –⁹ |
+| Variables as Fortran (arrays, derived types, CHARACTER, module variables) | ✓ | partly¹⁰ | ○ | ✓¹² | ○ | ○ | –⁹ |
 | Stops at Fortran runtime errors and ERROR STOP | ✓ | ✓ | ○ | ✓¹² | ○ | ○ | ✓⁹ |
 
 7. MinGW's gfortran needs none.
@@ -207,11 +207,16 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     Microsoft's format; arrays are read through Intel's descriptors and
     LLVM Flang's. CI tests the engine on C programs (also a break
     instruction of the program's own, which stops as an exception, as the
-    Intel runtime's at a runtime error does once), and on LLVM
-    Flang's built with `-g` (breakpoints, `stopAtEntry`, the stack,
-    stepping, the variables, and the stops at a runtime error and at ERROR
-    STOP, not at STOP): it has no ifx. With ifx 2026, tested by hand: the
-    stops at a runtime error and at ERROR STOP (`for_error_stop_quiet`).
+    Intel runtime's at a runtime error does once), on LLVM Flang's built
+    with `-g`, and on ifx 2026's built with `/Zi` (conda-forge's, linked
+    with zfls's ifx kit): breakpoints, `stopAtEntry`, the stack, stepping,
+    the variables, and the stops at a runtime error and at ERROR STOP
+    (ifx's `for_error_stop_quiet`), not at STOP. Of ifx's variables, not
+    yet: an allocatable or pointer array of a derived type (its elements'
+    components), a deferred-length CHARACTER, a polymorphic object with
+    its dynamic type, a module variable by its own name in an expression
+    (`ncells`; `grid::ncells` works), a module's COMMON variables, and
+    REAL(16) values.
 11. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
     Silicon and every user must code-sign it on an Intel Mac: breakpoints,
     stepping, the stack and the stops at runtime errors and ERROR STOP, but
