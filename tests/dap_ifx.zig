@@ -142,6 +142,10 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     var frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     const program_line = lineOf(text, "program main");
     try check(frames.len > 0 and std.mem.eql(u8, str(frames[0], "name") orelse "", "MAIN") and int(frames[0], "line") == program_line, "stopAtEntry: in MAIN at line {d} ({s}:{?d})", .{ program_line, if (frames.len > 0) str(frames[0], "name") orelse "?" else "none", if (frames.len > 0) int(frames[0], "line") else null });
+    // a deferred-length CHARACTER not yet allocated: its descriptor's
+    // address is 0
+    const at_entry = try scopeVariables(c, items(try c.request("scopes", .{ .frameId = int(frames[0], "id").? }), "scopes"), "Locals");
+    try check(std.mem.eql(u8, valueOf(at_entry, "dl"), "not allocated"), "at the start, dl = not allocated ({s})", .{valueOf(at_entry, "dl")});
     _ = try c.request("continue", .{ .threadId = thread });
 
     // in work, called by the main program
@@ -200,6 +204,9 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
         .{ "lb", "labeled(point=…, label=5)" },
         // Intel's frame has its USE'd module variable by its local name
         .{ "nhits", "3" },
+        // a deferred-length CHARACTER: a descriptor of rank 0 (its
+        // address and length)
+        .{ "dl", "'deferred'" },
     };
     for (want) |x| try check(std.mem.eql(u8, valueOf(locals, x[0]), x[1]), "{s} = {s} ({s})", .{ x[0], x[1], valueOf(locals, x[0]) });
     const big = items(try c.request("variables", .{ .variablesReference = int(named(locals, "big").?, "variablesReference").? }), "variables");
@@ -212,6 +219,11 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(pts.len == 2 and std.mem.eql(u8, valueOf(pts, "(1)"), "point(x=1.5, y=-2.0, id=7)"), "pts(1) = point(x=1.5, y=-2.0, id=7) ({s})", .{valueOf(pts, "(1)")});
     const pts2 = try evaluate(c, frames[0], "pts(2)%id");
     try check(std.mem.eql(u8, pts2, "7"), "pts(2)%id = 7 ({s})", .{pts2});
+    // a substring, and a module's deferred-length CHARACTER
+    const dl = try evaluate(c, frames[0], "dl(2:4)");
+    try check(std.mem.eql(u8, dl, "'efe'"), "dl(2:4) = 'efe' ({s})", .{dl});
+    const main_grid = try moduleVariables(c, scopes, "grid");
+    try check(std.mem.eql(u8, valueOf(main_grid, "gname"), "'grid name'"), "grid::gname = 'grid name' ({s})", .{valueOf(main_grid, "gname")});
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");

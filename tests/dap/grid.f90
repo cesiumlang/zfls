@@ -20,6 +20,7 @@ module grid
   integer :: ncells = 42
   integer, private :: secret = 99
   type(point) :: origin
+  character(len=:), allocatable :: gname
 contains
   subroutine work(a, b, s, p, t, ts)
     real, intent(inout) :: a(:)
@@ -51,6 +52,7 @@ program main
   integer, target :: goal = 5
   integer, pointer :: ip, nothing(:)
   integer :: k
+  character(len=:), allocatable :: dl
   nullify(nothing)
   ip => goal
   do k = -1, 1
@@ -60,8 +62,10 @@ program main
   allocate(tg%w(2)); tg%w = 0.25
   allocate(pts(2), source=lb)
   origin%x = 9.0
+  dl = 'deferred'
+  gname = 'grid name'
   call work(v, m, 'abcdef', origin, tg, pts)
-  print *, allocated(none), big(1), ip, nhits
+  print *, allocated(none), big(1), ip, nhits, dl, gname
   k = 4 ! stop here: main
   m(k, -1) = 0
   open(newunit=k, file='no/such/file', status='old')
