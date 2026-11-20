@@ -71,6 +71,7 @@ const SrcCodeInfoW = extern struct {
 };
 extern "dbghelp" fn SymEnumLinesW(h: usize, base: u64, obj: ?[*:0]const u16, file: ?[*:0]const u16, cb: *const fn (*SrcCodeInfoW, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymFromName(h: usize, name: [*:0]const u8, info: *SymbolInfo) callconv(.winapi) i32;
+extern "dbghelp" fn SymEnumTypesByName(h: usize, base: u64, mask: [*:0]const u8, cb: EnumCallback, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymEnumerateModulesW64(h: usize, cb: *const fn ([*:0]const u16, u64, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 
 const SYMFLAG_REGISTER = 0x8;
@@ -740,6 +741,29 @@ pub const Engine = struct {
         _ = SymEnumSymbols(self.process, mod_base, try a.dupeSentinel(u8, mask, 0), &Collect.onSymbol, &ctx);
         if (ctx.failed) return error.OutOfMemory;
         return ctx.out.items;
+    }
+
+    /// The symbol at an address exactly (`grid!QMgridEXdtXtagged`)
+    pub fn symbolAt(self: *Engine, a: Allocator, address: u64) ?[]const u8 {
+        var name: [512:0]u16 = undefined;
+        var len: u32 = 0;
+        var displacement: u64 = 0;
+        if (!succeeded(self.symbols.GetNameByOffsetWide(address, &name, name.len, &len, &displacement)) or displacement != 0 or len < 2) return null;
+        return std.unicode.utf16LeToUtf8Alloc(a, name[0 .. len - 1]) catch null;
+    }
+
+    /// dbghelp's structure of a derived type, by its name: `tagged`, which
+    /// LLVM Flang's CodeView calls by its scope (`MAIN::tagged`,
+    /// `grid::point`); the one with members, not its forward declaration
+    pub fn typeNamed(self: *Engine, a: Allocator, mod_base: u64, name: []const u8) !?u32 {
+        var ctx: Collect = .{ .a = a, .engine = self };
+        _ = SymEnumTypesByName(self.process, mod_base, try a.printSentinel("*::{s}", .{name}, 0), &Collect.onSymbol, &ctx);
+        _ = SymEnumTypesByName(self.process, mod_base, try a.dupeSentinel(u8, name, 0), &Collect.onSymbol, &ctx);
+        if (ctx.failed) return error.OutOfMemory;
+        for (ctx.out.items) |t| {
+            if ((self.typeInfo(u32, mod_base, t.type_index, .childrencount) orelse 0) > 0) return t.type_index;
+        }
+        return null;
     }
 
     /// The base of the module of an address (a frame's instruction)

@@ -63,14 +63,33 @@ pub fn frameVariables(s: *Session, a: Allocator, frame: Frame) ![]FrameVariable 
         if (decl == null and !v.parameter) if (where) |w| if (useDeclaration(s, a, w.file, w.line, v.name)) |o| {
             decl = declOf(a, o);
         };
-        if (decl) |*d| if (v.parameter and d.t.kind == .character and d.t.size == 0 and next_length < lengths.items.len) {
-            d.t.size = lengths.items[next_length];
-            next_length += 1;
+        if (decl) |*d| if (v.parameter and d.t.kind == .character and d.t.size == 0) {
+            if (flangLength(s, vars, v.name)) |n| {
+                d.t.size = n;
+            } else if (next_length < lengths.items.len) {
+                d.t.size = lengths.items[next_length];
+                next_length += 1;
+            }
         };
         try out.append(a, .{ .v = v, .decl = decl });
     }
     if (where) |w| try addStatics(s, a, frame, w.scope, &out);
     return out.items;
+}
+
+/// The length of a CHARACTER(LEN=*) dummy argument of LLVM Flang's: a
+/// hidden local of the frame, `.` and the argument's mangled name and `1`
+/// (`._QMgridFworkEs1` of `s`)
+fn flangLength(s: *Session, vars: []const dbgeng.Variable, name: []const u8) ?u32 {
+    for (vars) |v| {
+        if (v.name.len < name.len + 4 or v.name[0] != '.' or v.name[v.name.len - 1] != '1') continue;
+        const tail = v.name[v.name.len - 1 - name.len - 1 .. v.name.len - 1];
+        if (tail[0] != 'E' or !std.ascii.eqlIgnoreCase(tail[1..], name)) continue;
+        var b: [8]u8 = undefined;
+        if (s.engine.read(v.address, &b) != 8) return null;
+        return @intCast(@min(std.mem.readInt(u64, &b, .little), 1 << 20));
+    }
+    return null;
 }
 
 /// The variables of `scope` that LLVM Flang makes static (a main program's

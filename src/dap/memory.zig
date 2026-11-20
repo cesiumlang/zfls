@@ -34,7 +34,9 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         type_index = s.engine.typeInfo(u32, v.mod_base, type_index, .type) orelse type_index;
     }
     // a scalar of a derived type: to the structure (a CLASS dummy is a
-    // pointer to a pointer to it)
+    // pointer to a pointer to it; LLVM Flang's is its descriptor, whose
+    // first word is the pointer)
+    const box = v.address;
     if (decl != null and decl.?.t.kind == .derived and decl.?.dims.len == 0) {
         for (0..2) |_| {
             if (s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) != @backingInt(dbgeng.SymTag.pointer)) break;
@@ -47,6 +49,12 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     const d = decl orelse return .{ .address = address, .t = rawType(s, v.mod_base, type_index), .expr = expr, .type_index = type_index, .mod_base = v.mod_base };
     var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj };
     if (d.t.kind == .derived) val.type_index = elementType(s, v.mod_base, type_index);
+    if (d.t.kind == .derived and d.t.polymorphic and d.dims.len == 0) {
+        var words: [4]u64 = undefined;
+        if (s.engine.read(box, std.mem.sliceAsBytes(&words)) == @sizeOf(@TypeOf(words))) if (values.Descriptor.parse(&words)) |desc| {
+            if (desc.rank == 0) try toDynamic(s, a, &val, desc.type_info, d);
+        };
+    }
     if (d.dims.len == 0) {
         // a POINTER or ALLOCATABLE scalar of LLVM Flang's: a pointer to it
         // (a derived type's is followed above)
@@ -76,6 +84,7 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         }
         val.address = desc.base;
         if (val.t.kind == .character) val.t.size = @intCast(desc.elem_len);
+        if (d.t.kind == .derived and d.t.polymorphic) try toDynamic(s, a, &val, desc.type_info, d);
         const extents = try a.dupe(values.Extent, desc.dims[0..desc.rank]);
         // an assumed-shape array's lower bounds are its declaration's (1
         // unless `a(0:)`), not those of the actual argument, which LLVM
@@ -101,6 +110,21 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     val.rank = dims.len;
     val.count = val.extents[val.rank - 1].count;
     return val;
+}
+
+/// A CLASS object of LLVM Flang's as its dynamic type, whose description
+/// its descriptor's addendum points at (`_QMgridEXdtXtagged`): dbghelp's
+/// structure of that name, and zfls's definition, for its components
+fn toDynamic(s: *Session, a: Allocator, val: *Val, type_info: u64, d: Decl) !void {
+    if (type_info == 0) return;
+    const symbol = s.engine.symbolAt(a, type_info) orelse return;
+    const name = values.Descriptor.flangTypeName(symbol) orelse return;
+    if (std.ascii.eqlIgnoreCase(name, val.t.name)) return;
+    val.type_index = (try s.engine.typeNamed(a, val.mod_base, name)) orelse return;
+    val.t.name = name;
+    if (d.obj) |o| if (o.parent) |scope| {
+        val.dynamic = typeDefinition(s, scope, name);
+    };
 }
 
 fn dimsDeferred(dims: []const values.Dim) bool {
@@ -147,7 +171,7 @@ pub fn rawType(s: *Session, mod_base: u64, type_index: u32) values.Type {
 /// type's declaration (their Fortran types)
 pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
     const members = try s.engine.members(a, v.mod_base, v.type_index);
-    const def: ?*const Obj = blk: {
+    const def: ?*const Obj = v.dynamic orelse blk: {
         const d = v.decl orelse break :blk null;
         if (d.kind == .variable) if (d.varDataConst().type_obj) |t| break :blk t;
         break :blk if (d.parent) |scope| typeDefinition(s, scope, v.t.name) else null;

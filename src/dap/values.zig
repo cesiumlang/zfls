@@ -123,6 +123,9 @@ pub const Descriptor = struct {
     flags: u64 = 0,
     dims: [7]Extent = undefined,
     rank: u32,
+    /// LLVM Flang's, of a derived type: the address of its type's
+    /// description (`_QMgridEXdtXtagged`), a CLASS object's dynamic type
+    type_info: u64 = 0,
 
     pub const header_words = 6;
 
@@ -141,7 +144,9 @@ pub const Descriptor = struct {
     /// LLVM Flang's: the data's address, an element's length, then a word
     /// of the version (`CFI_VERSION`, by which it is told from Intel's), the
     /// rank, the type, the attribute and an extra byte; then for each
-    /// dimension its lower bound, its extent and its stride in bytes
+    /// dimension its lower bound, its extent and its stride in bytes; then,
+    /// when the extra byte says so, an addendum, of which the first word is
+    /// the derived type's description
     fn parseFlang(words: []const u64) ?Descriptor {
         if (words.len < 3) return null;
         const version: u32 = @truncate(words[2]);
@@ -154,7 +159,18 @@ pub const Descriptor = struct {
             .count = words[3 + 3 * i + 1],
             .stride = @bitCast(words[3 + 3 * i + 2]),
         };
+        const addendum = 3 + 3 * @as(usize, rank);
+        if ((words[2] >> 56) & 1 != 0 and words.len > addendum) d.type_info = words[addendum];
         return d;
+    }
+
+    /// A derived type's name of its description's symbol (LLVM Flang's
+    /// `_QMgridEXdtXtagged`, maybe after its module's name, `grid!`):
+    /// `tagged`
+    pub fn flangTypeName(symbol: []const u8) ?[]const u8 {
+        const at = std.mem.findLast(u8, symbol, "XdtX") orelse return null;
+        const name = symbol[at + 4 ..];
+        return if (name.len > 0) name else null;
     }
 
     /// Intel's: the data's address, an element's length, an offset, flags,
@@ -340,6 +356,15 @@ test "LLVM Flang's descriptor" {
     try std.testing.expectEqual(Extent{ .lo = -1, .count = 3, .stride = 8 }, b.dims[1]);
     // not associated
     try std.testing.expect(Descriptor.parse(&[_]u64{ 0, 4, 0x00001b010134d94f, 1, 0, 4 }).?.empty());
+    // CLASS(point) of a tagged (gdb's x/4gx of the box): rank 0, type 42,
+    // extra 1, the addendum's type description after the header
+    const t = Descriptor.parse(&[_]u64{ 0x7ff6a000, 0x48, 0x01002a000134d94f, 0x7ff6b150 }).?;
+    try std.testing.expectEqual(@as(u32, 0), t.rank);
+    try std.testing.expectEqual(@as(u64, 0x7ff6b150), t.type_info);
+    try std.testing.expectEqual(@as(u64, 0), a.type_info);
+    try std.testing.expectEqualStrings("tagged", Descriptor.flangTypeName("grid!QMgridEXdtXtagged").?);
+    try std.testing.expectEqualStrings("point", Descriptor.flangTypeName("_QMgridEXdtXpoint").?);
+    try std.testing.expect(Descriptor.flangTypeName("QQmain") == null);
     // Intel's is not taken for Flang's
     try std.testing.expectEqual(@as(u32, 2), Descriptor.parse(&[_]u64{ 0x7ff6cfe14380, 4, 0, 1, 2, 0, 2, 4, 1, 3, 8, 1 }).?.rank);
 }

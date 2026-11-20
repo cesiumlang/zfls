@@ -286,6 +286,9 @@ pub const Val = struct {
     mod_base: u64 = 0,
     /// The derived type's declaration, for its components' types
     decl: ?*const Obj = null,
+    /// A CLASS object's dynamic type's definition (LLVM Flang's), for its
+    /// components' types in place of the declared type's
+    dynamic: ?*const Obj = null,
     /// Not allocated, not associated
     empty: bool = false,
 };
