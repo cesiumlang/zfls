@@ -426,8 +426,8 @@ test "construct names and labels on a line" {
     try std.testing.expectEqual(@as(usize, 2), io.label_refs.items.len);
     const arith = try analyze(a, "  if (x) 10, 20, 30", false);
     try std.testing.expectEqual(@as(usize, 3), arith.label_refs.items.len);
-    const labelled = try analyze(a, "100 format (i5)", false);
-    try std.testing.expectEqual(@as(usize, 0), labelled.label_def.?.start);
+    const labeled = try analyze(a, "100 format (i5)", false);
+    try std.testing.expectEqual(@as(usize, 0), labeled.label_def.?.start);
     const fixed = try analyze(a, "   10 CONTINUE", true);
     try std.testing.expectEqual(@as(usize, 3), fixed.label_def.?.start);
     try std.testing.expectEqual(@as(usize, 0), (try analyze(a, "  x = 1.5 + 10", false)).label_refs.items.len);

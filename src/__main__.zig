@@ -190,8 +190,8 @@ fn runServer(ctx: *Ctx) void {
             break;
         };
         if (log.enabled(.debug)) log.debug("RECV {s}", .{json.pretty(a, request) catch ""});
-        if (json.get(request, "id")) |id| if (cancelledLater(a, queue.items, id)) {
-            server.cancelled(a, id);
+        if (json.get(request, "id")) |id| if (canceledLater(a, queue.items, id)) {
+            server.canceled(a, id);
             continue;
         };
         server.handle(a, request);
@@ -200,7 +200,7 @@ fn runServer(ctx: *Ctx) void {
 }
 
 /// Whether one of the messages waiting cancels request `id`
-fn cancelledLater(a: std.mem.Allocator, waiting: []const []u8, id: json.Value) bool {
+fn canceledLater(a: std.mem.Allocator, waiting: []const []u8, id: json.Value) bool {
     for (waiting) |body| {
         if (std.mem.find(u8, body, "$/cancelRequest") == null) continue;
         const msg = json.parse(a, body) catch continue;

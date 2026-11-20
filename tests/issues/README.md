@@ -1,27 +1,17 @@
 # Tests of the open issues of upstream fortls
 
-These tests state, for the open bugs of
-[fortran-lang/fortls](https://github.com/fortran-lang/fortls/issues), what a
-user would expect, and record whether zfls gets it right. A bug that zfls
-still has is not hidden: its test is the oracle for the patch.
+These tests state, for the open bugs of [fortran-lang/fortls](https://github.com/fortran-lang/fortls/issues), what a user would expect, and record whether zfls gets it right. A bug that zfls still has is not hidden: its test is the oracle for the patch.
 
-Run them with `zig build test-issues` (they are also part of `zig build
-test`). Each test builds a small workspace from the fixture in the issue,
-starts a `Server` in-process (`harness.zig`) and sends it LSP requests.
+Run them with `zig build test-issues` (they are also part of `zig build test`). Each test builds a small workspace from the fixture in the issue, starts a `Server` in-process (`harness.zig`) and sends it LSP requests.
 
 A test ends in `h.check(issue, status, result)`:
 
 - `.fixed`: zfls behaves correctly. A failure is a regression.
-- `.known_failure`: the bug is still there, so the expectations must fail.
-  When a patch makes them pass the test fails until the marker is changed to
-  `.fixed`, so the table below does not go stale.
+- `.known_failure`: the bug is still there, so the expectations must fail. When a patch makes them pass the test fails until the marker is changed to `.fixed`, so the table below does not go stale.
 
-Every run writes what each test found, with the reason a known failure fails,
-to `.zig-cache/issue-tests.txt`.
+Every run writes what each test found, with the reason a known failure fails, to `.zig-cache/issue-tests.txt`.
 
-`upstream_check.py` runs the same fixtures through Python fortls (a checkout,
-at the commit the issues cite) and through zfls, using their debug command
-line options, to check the "fortls" column:
+`upstream_check.py` runs the same fixtures through Python fortls (a checkout, at the commit the issues cite) and through zfls, using their debug command line options, to check the "fortls" column:
 
 ```sh
 python tests/issues/upstream_check.py --zfls zig-out/bin/zfls --fortls ../fortls 406
@@ -29,8 +19,7 @@ python tests/issues/upstream_check.py --zfls zig-out/bin/zfls --fortls ../fortls
 
 ## Results
 
-The status of fortls is for its commit `0392beb`. "Same" means both servers
-give the same answer, and the test fails for the reason in the issue.
+The status of fortls is for its commit `0392beb`. "Same" means both servers give the same answer, and the test fails for the reason in the issue.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
@@ -87,25 +76,17 @@ give the same answer, and the test fails for the reason in the issue.
 
 Notes:
 
-- The fixture of #470 is built from its description (the report only has
-  screenshots), and the one of #485 checks the diagnostics only.
-- Where the table says "same" for #489, fortls reports each warning twice;
-  zfls does not (see "Differences from fortls" in the main README).
+- The fixture of #470 is built from its description (the report only has screenshots), and the one of #485 checks the diagnostics only.
+- Where the table says "same" for #489, fortls reports each warning twice; zfls does not (see "Differences from fortls" in the main README).
 
 ### Not tested
 
-- [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
-  test suite on Python 3.14; it does not apply to zfls.
-- The feature requests and discussions have no behavior to test yet:
-  #563, #423, #417, #348, #309,
-  #209, #171, #126, #125, #96, #85, #56 and #28.
+- [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own test suite on Python 3.14; it does not apply to zfls.
+- The feature requests and discussions have no behavior to test yet: #563, #423, #417, #348, #309, #209, #171, #126, #125, #96, #85, #56 and #28.
 
 ## Issues of hansec/fortran-language-server
 
-fortls was forked from
-[hansec/fortran-language-server](https://github.com/hansec/fortran-language-server);
-some of its bugs were never reported again to fortls. Their tests use
-`h.checkIn(.hansec, ...)`.
+fortls was forked from [hansec/fortran-language-server](https://github.com/hansec/fortran-language-server); some of its bugs were never reported again to fortls. Their tests use `h.checkIn(.hansec, ...)`.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
@@ -137,8 +118,7 @@ some of its bugs were never reported again to fortls. Their tests use
 
 ## Issues of fortran-lang/vscode-fortran-support
 
-Feature requests of the Modern Fortran extension that the server answers.
-Their tests use `h.checkIn(.modern_fortran, ...)`.
+Feature requests of the Modern Fortran extension that the server answers. Their tests use `h.checkIn(.modern_fortran, ...)`.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |

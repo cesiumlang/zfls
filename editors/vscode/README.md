@@ -1,74 +1,31 @@
 # zfls for VS Code
 
-Fortran language support powered by
-[zfls](https://github.com/cesiumlang/zfls), a fast native reimplementation
-of the [fortls](https://github.com/fortran-lang/fortls) language server:
+Fortran language support powered by [zfls](https://github.com/cesiumlang/zfls), a fast native reimplementation of the [fortls](https://github.com/fortran-lang/fortls) language server:
 
 - completion, hover, signature help
-- go to definition, implementation and type definition, find references,
-  rename
-- document and workspace symbols, with an outline tree for breadcrumbs and
-  sticky scroll
-- folding of program units, constructs (each `IF`, `SELECT` and `WHERE`
-  branch on its own too), statements continued over three lines or more,
-  preprocessor conditionals and comment blocks
-- semantic highlighting: names colored by what they stand for (procedures,
-  types, dummy arguments, components, variables named like keywords), and
-  the branches of preprocessor conditionals that are left out shown as
-  inactive
-- untitled (new, unsaved) Fortran files too, served by the first folder's
-  server
-- Fortran files changed outside VS Code (a checkout, generated code) are
-  indexed again, and the settings read again when `.fortlsrc`,
-  `.fortls.json`, `.fortls`, `fpm.toml` or `compile_commands.json`
-  changes, without a restart
-- diagnostics, a compiler's errors and warnings (see
-  [Compiler diagnostics](#compiler-diagnostics)), fortitude's problems
-  with its fixes (see [Linting with fortitude](#linting-with-fortitude)),
-  and Codee's checks (see [Codee checks](#codee-checks))
-- syntax highlighting for free-form and fixed-form Fortran, with OpenMP and
-  OpenACC directives, and Fortran code in documentation comments (a block
-  from `` !> ```fortran `` to `` !> ``` ``)
-- namelist files (`.nml`, `.namelist`): highlighting, folding of each group,
-  and an outline of the groups and the variables they set (from zfls, which
-  does not read them as Fortran)
+- go to definition, implementation and type definition, find references, rename
+- document and workspace symbols, with an outline tree for breadcrumbs and sticky scroll
+- folding of program units, constructs (each `IF`, `SELECT` and `WHERE` branch on its own too), statements continued over three lines or more, preprocessor conditionals and comment blocks
+- semantic highlighting: names colored by what they stand for (procedures, types, dummy arguments, components, variables named like keywords), and the branches of preprocessor conditionals that are left out shown as inactive
+- untitled (new, unsaved) Fortran files too, served by the first folder's server
+- Fortran files changed outside VS Code (a checkout, generated code) are indexed again, and the settings read again when `.fortlsrc`, `.fortls.json`, `.fortls`, `fpm.toml` or `compile_commands.json` changes, without a restart
+- diagnostics, a compiler's errors and warnings (see [Compiler diagnostics](#compiler-diagnostics)), fortitude's problems with its fixes (see [Linting with fortitude](#linting-with-fortitude)), and Codee's checks (see [Codee checks](#codee-checks))
+- syntax highlighting for free-form and fixed-form Fortran, with OpenMP and OpenACC directives, and Fortran code in documentation comments (a block from `` !> ```fortran `` to `` !> ``` ``)
+- namelist files (`.nml`, `.namelist`): highlighting, folding of each group, and an outline of the groups and the variables they set (from zfls, which does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
-- indentation as you type: a line after the start of a program unit,
-  procedure (with its prefixes: `pure`, `integer`, ...), derived type,
-  interface or construct (named or not) is indented, and an END, ELSE,
-  CASE, CONTAINS, TYPE IS, ... is outdented as you type it; keywords in
-  comments and strings are ignored. A `module procedure` line does not
-  indent the next one (in an interface block it has no body)
-- formatting of documents and selections with findent or fprettify (see
-  [Formatting](#formatting))
-- Fortran and C: go to definition of a `BIND(C)` procedure gives its C
-  declarations too, and find references its C calls (from clangd or
-  Microsoft's C/C++, when one is installed, and from zfls's own search of
-  the workspace's C files); on a name in a C or C++ file, go to definition
-  gives the Fortran procedures that bind it and find references their
-  Fortran calls, even before a Fortran file is opened
-- a debugger of its own, for programs that gdb debugs: arrays by their
-  subscripts, derived types and polymorphic objects as Fortran shows them,
-  module variables, stopping on Fortran runtime errors (see
-  [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the
-  other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
-- code lenses: the number of references above each module, procedure and
-  derived type (click it for the references), and **Run** and **Debug**
-  above a program
-- run and debug the current file with one click (see
-  [Running and debugging](#running-and-debugging))
-- fpm projects: tasks, running and debugging their targets, and their tests
-  in the Testing view (see [fpm projects](#fpm-projects))
-- pFUnit's tests in the Testing view, for CMake projects (see
-  [pFUnit tests](#pfunit-tests))
+- indentation as you type: a line after the start of a program unit, procedure (with its prefixes: `pure`, `integer`, ...), derived type, interface or construct (named or not) is indented, and an END, ELSE, CASE, CONTAINS, TYPE IS, ... is outdented as you type it; keywords in comments and strings are ignored. A `module procedure` line does not indent the next one (in an interface block it has no body)
+- formatting of documents and selections with findent or fprettify (see [Formatting](#formatting))
+- Fortran and C: go to definition of a `BIND(C)` procedure gives its C declarations too, and find references its C calls (from clangd or Microsoft's C/C++, when one is installed, and from zfls's own search of the workspace's C files); on a name in a C or C++ file, go to definition gives the Fortran procedures that bind it and find references their Fortran calls, even before a Fortran file is opened
+- a debugger of its own, for programs that gdb debugs: arrays by their subscripts, derived types and polymorphic objects as Fortran shows them, module variables, stopping on Fortran runtime errors (see [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
+- code lenses: the number of references above each module, procedure and derived type (click it for the references), and **Run** and **Debug** above a program
+- run and debug the current file with one click (see [Running and debugging](#running-and-debugging))
+- fpm projects: tasks, running and debugging their targets, and their tests in the Testing view (see [fpm projects](#fpm-projects))
+- pFUnit's tests in the Testing view, for CMake projects (see [pFUnit tests](#pfunit-tests))
 - a Fortran file icon, in file icon themes that use the language's icon
 
-The extension includes the `zfls` executable for Windows, Linux and macOS
-(x64 and ARM64). Nothing else needs to be installed.
+The extension includes the `zfls` executable for Windows, Linux and macOS (x64 and ARM64). Nothing else needs to be installed.
 
-It replaces the Modern Fortran extension rather than working alongside it:
-disable Modern Fortran when you install zfls (see
-[Replacing Modern Fortran](#replacing-modern-fortran)).
+It replaces the Modern Fortran extension rather than working alongside it: disable Modern Fortran when you install zfls (see [Replacing Modern Fortran](#replacing-modern-fortran)).
 
 ## Settings
 
@@ -128,82 +85,29 @@ disable Modern Fortran when you install zfls (see
 | `zfls.formatting.customArgs` | `[]` | The arguments of the custom formatter (`${file}`, `${form}`) |
 | `zfls.run.*` | | Compiler, arguments and debugger for running and debugging a file (see [Running and debugging](#running-and-debugging)) |
 
-Each setting becomes the fortls option of the same meaning (the settings'
-descriptions name them). Path settings expand `${workspaceFolder}`,
-`${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~`,
-and every setting can differ per workspace folder. A running language server
-takes a changed setting at once (sent with `workspace/didChangeConfiguration`):
-one that decides what is indexed (`zfls.sourceDirs`, `zfls.includeDirs`,
-`zfls.ppDefs`, ...) has it index the workspace again. The server restarts
-instead when `zfls.path`, `zfls.arguments`, `zfls.incrementalSync` or
-`zfls.configFile` changes, when `zfls.arguments` holds any options (they may
-set what a setting does), when a setting goes back to empty where zfls's
-default cannot be sent (`zfls.sourceDirs`), and when signature help, code
-actions or formatting are turned off.
+Each setting becomes the fortls option of the same meaning (the settings' descriptions name them). Path settings expand `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~`, and every setting can differ per workspace folder. A running language server takes a changed setting at once (sent with `workspace/didChangeConfiguration`): one that decides what is indexed (`zfls.sourceDirs`, `zfls.includeDirs`, `zfls.ppDefs`, ...) has it index the workspace again. The server restarts instead when `zfls.path`, `zfls.arguments`, `zfls.incrementalSync` or `zfls.configFile` changes, when `zfls.arguments` holds any options (they may set what a setting does), when a setting goes back to empty where zfls's default cannot be sent (`zfls.sourceDirs`), and when signature help, code actions or formatting are turned off.
 
-As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the
-workspace root configures source directories, preprocessor definitions and
-other options. zfls also reads a user configuration file of the same format,
-`%APPDATA%\zfls\config.json` on Windows, else
-`~/.config/zfls/config.json` (`$XDG_CONFIG_HOME/zfls/config.json`), for
-other editors; this extension's settings take over from it, and the
-project's file from both.
-VS Code opens these files as JSON with comments and checks them against a
-schema of the options zfls reads from them, with their descriptions and
-defaults in completion and hover. The schema is generated from zfls's option
-table (`zig build generated`).
+As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace root configures source directories, preprocessor definitions and other options. zfls also reads a user configuration file of the same format, `%APPDATA%\zfls\config.json` on Windows, else `~/.config/zfls/config.json` (`$XDG_CONFIG_HOME/zfls/config.json`), for other editors; this extension's settings take over from it, and the project's file from both. VS Code opens these files as JSON with comments and checks them against a schema of the options zfls reads from them, with their descriptions and defaults in completion and hover. The schema is generated from zfls's option table (`zig build generated`).
 
-With a TOML extension that supports `tomlValidation`, such as
-[Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml),
-`fpm.toml` files are checked against the
-[fpm manifest schema](https://github.com/fortran-lang/fpm-metadata) too.
+With a TOML extension that supports `tomlValidation`, such as [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml), `fpm.toml` files are checked against the [fpm manifest schema](https://github.com/fortran-lang/fpm-metadata) too.
 
 ## Workspaces with several folders
 
-Each top-level folder of a multi-root workspace gets its own zfls, rooted
-at that folder and configured by that folder's settings and `.fortlsrc`; a
-folder inside another one is part of the outer one. A Fortran file outside
-every folder gets a zfls rooted at its own directory.
+Each top-level folder of a multi-root workspace gets its own zfls, rooted at that folder and configured by that folder's settings and `.fortlsrc`; a folder inside another one is part of the outer one. A Fortran file outside every folder gets a zfls rooted at its own directory.
 
 ## Replacing Modern Fortran
 
-zfls is a replacement for the
-[Modern Fortran](https://marketplace.visualstudio.com/items?itemName=fortran-lang.linter-gfortran)
-extension, not a companion to it. Both register the same Fortran language
-IDs, grammars and snippets, and Modern Fortran starts its own language
-server (fortls) and compiler linting, so with both enabled they compete
-for Fortran files and you get duplicate completions, hovers and
-diagnostics.
+zfls is a replacement for the [Modern Fortran](https://marketplace.visualstudio.com/items?itemName=fortran-lang.linter-gfortran) extension, not a companion to it. Both register the same Fortran language IDs, grammars and snippets, and Modern Fortran starts its own language server (fortls) and compiler linting, so with both enabled they compete for Fortran files and you get duplicate completions, hovers and diagnostics.
 
-When Modern Fortran is enabled, zfls recommends disabling it and opens its
-page in the Extensions view, where you select **Disable** (an extension
-cannot disable another one), then reload the window.
+When Modern Fortran is enabled, zfls recommends disabling it and opens its page in the Extensions view, where you select **Disable** (an extension cannot disable another one), then reload the window.
 
-If you want to keep Modern Fortran installed for now, you can choose
-**Keep it, turn off its fortls and linter** instead: that stops only
-Modern Fortran's
-language server (`fortran.fortls.disabled`) and its compiler linting
-(`fortran.linter.compiler`), so zfls answers the language requests and
-shows the compiler's messages while Modern Fortran keeps its other
-commands. Its grammars still apply alongside zfls's in that case.
+If you want to keep Modern Fortran installed for now, you can choose **Keep it, turn off its fortls and linter** instead: that stops only Modern Fortran's language server (`fortran.fortls.disabled`) and its compiler linting (`fortran.linter.compiler`), so zfls answers the language requests and shows the compiler's messages while Modern Fortran keeps its other commands. Its grammars still apply alongside zfls's in that case.
 
-zfls recommends disabling these extensions in the same way, as it does
-what they do: Modern Fortran under its old ID (`krvajalm.linter-gfortran`,
-the same languages and grammars, and linting), FORTRAN IntelliSense
-(`hansec.fortran-ls`, a language server of its own, so each completion and
-hover comes twice) and Fortran Breakpoint Support (`ekibun.fortranbreaker`,
-breakpoints in Fortran files). **Don't ask again**
-(`zfls.disableModernFortranCheck`) stops the recommendation for all of
-them.
+zfls recommends disabling these extensions in the same way, as it does what they do: Modern Fortran under its old ID (`krvajalm.linter-gfortran`, the same languages and grammars, and linting), FORTRAN IntelliSense (`hansec.fortran-ls`, a language server of its own, so each completion and hover comes twice) and Fortran Breakpoint Support (`ekibun.fortranbreaker`, breakpoints in Fortran files). **Don't ask again** (`zfls.disableModernFortranCheck`) stops the recommendation for all of them.
 
 ## Compiler diagnostics
 
-When a Fortran file is opened or saved, zfls has a compiler check it
-(without generating code) and shows the compiler's errors and warnings in
-the file and in the Problems panel, labelled with the compiler's name.
-They are cleared when the file is closed or compiler diagnostics are
-turned off. By default, the compiler is gfortran; if it is not installed,
-zfls says so once and checks nothing.
+When a Fortran file is opened or saved, zfls has a compiler check it (without generating code) and shows the compiler's errors and warnings in the file and in the Problems panel, labeled with the compiler's name. They are cleared when the file is closed or compiler diagnostics are turned off. By default, the compiler is gfortran; if it is not installed, zfls says so once and checks nothing.
 
 | Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
 | --- | --- | --- |
@@ -215,16 +119,9 @@ zfls says so once and checks nothing.
 | `flang` | `flang`, else `flang-new` | `-fsyntax-only -cpp -ffree-form`/`-ffixed-form -ffixed-line-length=N -module-dir <dir>`, and `-Wunused-variable -Wused-undefined-variable` by default with Flang 22 and later (older Flangs have neither) and `-fopenmp`, then `-x f95 <file>`, which checks a file of any suffix (`.cuf`, `.f77`, `.f18`, ...) |
 | `Disabled` | | No compiler diagnostics |
 
-`N` is `zfls.fixedFormLineLength` (Intel takes 72, 80 or 132). A
-line-length option of your own in `zfls.linter.extraArgs` replaces zfls's.
+`N` is `zfls.fixedFormLineLength` (Intel takes 72, 80 or 132). A line-length option of your own in `zfls.linter.extraArgs` replaces zfls's.
 
-Whether a file is free or fixed form follows its language in VS Code
-(`FortranFreeForm` or `FortranFixedForm`, from the file extension or
-`files.associations`), not the compiler's guess from the extension. The
-server reads an open document in that form too. A file that is not open
-has the form of its name and text, so give a fixed-form source a
-fixed-form extension, or one that says neither (`.inc`), when other files
-use what it declares.
+Whether a file is free or fixed form follows its language in VS Code (`FortranFreeForm` or `FortranFixedForm`, from the file extension or `files.associations`), not the compiler's guess from the extension. The server reads an open document in that form too. A file that is not open has the form of its name and text, so give a fixed-form source a fixed-form extension, or one that says neither (`.inc`), when other files use what it declares.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -247,70 +144,22 @@ use what it declares.
 | `zfls.linter.fypp.includes` | `[]` | fypp include directories |
 | `zfls.linter.fypp.extraArgs` | `[]` | Further fypp options |
 
-Path settings resolve `${workspaceFolder}`, `${workspaceFolder:name}`,
-`${env:VAR}`, `${userHome}` and a leading `~`; relative paths are relative
-to the workspace folder. There is no `${file}`: these settings are the
-language server's, one per workspace folder, not one per file.
+Path settings resolve `${workspaceFolder}`, `${workspaceFolder:name}`, `${env:VAR}`, `${userHome}` and a leading `~`; relative paths are relative to the workspace folder. There is no `${file}`: these settings are the language server's, one per workspace folder, not one per file.
 
 How it behaves:
 
-- **Modules.** A file that uses a module needs that module's `.mod` file.
-  Before checking a file, zfls compiles the workspace files that define the
-  modules it uses (those modules' own dependencies first), where their
-  `.mod` files are missing or older than the files, and saving a module
-  file checks the open files that use it again. Modules that come from
-  outside the workspace need their `.mod` directory in
-  `zfls.linter.includePaths`. A module whose file does not compile cannot
-  be used; the file using it then shows the compiler's error about the
-  missing module.
-- **The project's options.** When `zfls.linter.extraArgs` is empty and
-  `compile_commands.json` has a command for the file (or for another file
-  in its folder), the file is checked with that command's options (its
-  `-std`, `-fdefault-real-8`, `-ffree-line-length-none`, `-D`, `-I`, ...),
-  in that command's directory, and with its compiler when that is the
-  configured one; zfls's own syntax-only and module directory options
-  stay, and the command's `-c`, `-o`, module directory and dependency
-  files are left out. `zfls.linter.noCompileCommands` turns this off.
-- **Included files.** An error in a file brought in by `INCLUDE` or
-  `#include` shows at that `INCLUDE` line, prefixed with the included
-  file's name and line, with a link to the place in the included file.
-  For a file included by an included file, the line is the outer
-  `INCLUDE`, with a link to each one in between. Flang says which line
-  includes the file; for gfortran, ifx and ifort, zfls finds it.
-- **One compiler at a time.** Checks run one after another, and a newer
-  check of a file replaces one that has not started, so that autosave does
-  not pile up compiler processes. A check of edits waits for
-  `zfls.linter.lintOnTypeDelay` milliseconds without a change.
-- **No duplicates.** Each message shows once, even if the compiler prints
-  it twice.
-- **Clearing.** **zfls: Clear Compiler Diagnostics** clears the messages
-  and the `.mod` files in zfls's cache (not those in a configured
-  `zfls.linter.modOutput`). **zfls: Lint Current File with Compiler**
-  checks the active file now, its text in the editor.
+- **Modules.** A file that uses a module needs that module's `.mod` file. Before checking a file, zfls compiles the workspace files that define the modules it uses (those modules' own dependencies first), where their `.mod` files are missing or older than the files, and saving a module file checks the open files that use it again. Modules that come from outside the workspace need their `.mod` directory in `zfls.linter.includePaths`. A module whose file does not compile cannot be used; the file using it then shows the compiler's error about the missing module.
+- **The project's options.** When `zfls.linter.extraArgs` is empty and `compile_commands.json` has a command for the file (or for another file in its folder), the file is checked with that command's options (its `-std`, `-fdefault-real-8`, `-ffree-line-length-none`, `-D`, `-I`, ...), in that command's directory, and with its compiler when that is the configured one; zfls's own syntax-only and module directory options stay, and the command's `-c`, `-o`, module directory and dependency files are left out. `zfls.linter.noCompileCommands` turns this off.
+- **Included files.** An error in a file brought in by `INCLUDE` or `#include` shows at that `INCLUDE` line, prefixed with the included file's name and line, with a link to the place in the included file. For a file included by an included file, the line is the outer `INCLUDE`, with a link to each one in between. Flang says which line includes the file; for gfortran, ifx and ifort, zfls finds it.
+- **One compiler at a time.** Checks run one after another, and a newer check of a file replaces one that has not started, so that autosave does not pile up compiler processes. A check of edits waits for `zfls.linter.lintOnTypeDelay` milliseconds without a change.
+- **No duplicates.** Each message shows once, even if the compiler prints it twice.
+- **Clearing.** **zfls: Clear Compiler Diagnostics** clears the messages and the `.mod` files in zfls's cache (not those in a configured `zfls.linter.modOutput`). **zfls: Lint Current File with Compiler** checks the active file now, its text in the editor.
 
-The zfls language server runs the compiler (its `compiler_diagnostics`
-options, which other editors use too); these settings become those options,
-and a change applies to the next check. Besides `zfls.linter.includePaths`, the
-compiler gets zfls's include directories (`zfls.includeDirs`, and those of
-`compile_commands.json` and `fpm.toml`) and its preprocessor definitions.
-Glob patterns in the include paths are expanded when zfls starts and when
-the settings change. The
-compiler's output is in zfls's log (its `debug_log` option) in the `zfls`
-output channel.
+The zfls language server runs the compiler (its `compiler_diagnostics` options, which other editors use too); these settings become those options, and a change applies to the next check. Besides `zfls.linter.includePaths`, the compiler gets zfls's include directories (`zfls.includeDirs`, and those of `compile_commands.json` and `fpm.toml`) and its preprocessor definitions. Glob patterns in the include paths are expanded when zfls starts and when the settings change. The compiler's output is in zfls's log (its `debug_log` option) in the `zfls` output channel.
 
 ## Linting with fortitude
 
-With `zfls.fortitude.enabled`, [fortitude](https://fortitude.readthedocs.io)
-checks a Fortran file when it is opened and saved (also while it is edited,
-with `zfls.fortitude.lintOnType`), and its problems show as warnings
-labelled `fortitude`, each code linking to its rule's documentation. Its
-fixes are quick fixes (the unsafe ones say so), and **zfls: Fix All Safe
-fortitude Problems** applies every safe fix; for fixes on save, add
-`"source.fixAll.fortitude": "explicit"` to `editor.codeActionsOnSave`.
-fortitude reads the unsaved text, and its rules from `fpm.toml` or
-`fortitude.toml` above the file. Install it with `pip install
-fortitude-lint`. The zfls language server runs it (its `fortitude` options,
-which other editors use too); these settings become those options.
+With `zfls.fortitude.enabled`, [fortitude](https://fortitude.readthedocs.io) checks a Fortran file when it is opened and saved (also while it is edited, with `zfls.fortitude.lintOnType`), and its problems show as warnings labeled `fortitude`, each code linking to its rule's documentation. Its fixes are quick fixes (the unsafe ones say so), and **zfls: Fix All Safe fortitude Problems** applies every safe fix; for fixes on save, add `"source.fixAll.fortitude": "explicit"` to `editor.codeActionsOnSave`. fortitude reads the unsaved text, and its rules from `fpm.toml` or `fortitude.toml` above the file. Install it with `pip install fortitude-lint`. The zfls language server runs it (its `fortitude` options, which other editors use too); these settings become those options.
 
 | Setting | Default | Description |
 | --- | --- | --- |
@@ -322,13 +171,7 @@ which other editors use too); these settings become those options.
 
 ## Codee checks
 
-With `zfls.codee.enabled`, the checks of [Codee](https://www.codee.com),
-a commercial analyzer of Fortran correctness, modernization and
-performance (installed and licensed separately), show in the file and in
-the Problems panel when it is opened and saved: `codee checks --json` on the
-file as saved. Each check links to its page of Codee's Open Catalog. Its
-defects (`PWD...`) are errors, its recommendations (`PWR...`) warnings and
-its remarks (`RMK...`) hints, as in Codee's own editor integrations.
+With `zfls.codee.enabled`, the checks of [Codee](https://www.codee.com), a commercial analyzer of Fortran correctness, modernization and performance (installed and licensed separately), show in the file and in the Problems panel when it is opened and saved: `codee checks --json` on the file as saved. Each check links to its page of Codee's Open Catalog. Its defects (`PWD...`) are errors, its recommendations (`PWR...`) warnings and its remarks (`RMK...`) hints, as in Codee's own editor integrations.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -336,15 +179,11 @@ its remarks (`RMK...`) hints, as in Codee's own editor integrations.
 | `zfls.codee.path` | empty | The codee executable, or its directory |
 | `zfls.codee.args` | `[]` | More arguments, before the file: `["-p", "build/compile_commands.json"]`, or with `${file}` where the file goes, `["${file}", "--", "gfortran", "-O2", "${file}"]` |
 
-The zfls language server runs it (its `codee` options, which other editors
-use too); these settings become those options. This support follows Codee's
-documentation of its output: zfls has not been tested with Codee itself.
+The zfls language server runs it (its `codee` options, which other editors use too); these settings become those options. This support follows Codee's documentation of its output: zfls has not been tested with Codee itself.
 
 ## Formatting
 
-**Format Document**, **Format Selection** and format on save
-(`editor.formatOnSave`) use an external formatter, which must be installed
-separately:
+**Format Document**, **Format Selection** and format on save (`editor.formatOnSave`) use an external formatter, which must be installed separately:
 
 | Formatter | Install | Formats |
 | --- | --- | --- |
@@ -354,10 +193,7 @@ separately:
 | forformat | as its project says | Whole files |
 | `custom` | your own: `zfls.formatting.path` with `zfls.formatting.customArgs` | What your command does with the source on its standard input |
 
-Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so
-that no formatter runs, and VS Code offers formatters of other extensions,
-until one is chosen. The setting can differ per language, for example
-fprettify for free form and findent for fixed form:
+Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so that no formatter runs, and VS Code offers formatters of other extensions, until one is chosen. The setting can differ per language, for example fprettify for free form and findent for fixed form:
 
 ```jsonc
 "zfls.formatting.formatter": "fprettify",
@@ -366,49 +202,17 @@ fprettify for free form and findent for fixed form:
 }
 ```
 
-The zfls server runs the formatter (its `formatter` options, which these
-settings set; other editors set them in a configuration file, see the
-[zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the
-text to the formatter on its standard input and reads the result from its
-standard output, so no files are written, and changes only the lines the
-formatter changed. findent is told the source form of the file (`-ifree` or
-`-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads
-`.fprettify.rc` files from the directory of the file and its parents, as
-when it formats the file itself. A change of these settings applies to the
-next formatting; turning formatting off restarts the server, so that
-VS Code stops offering it. In `zfls.formatting.path` and the argument settings,
-`${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`,
-`${env:NAME}` and a leading `~` are expanded; an argument with a space in
-it stays one.
+The zfls server runs the formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see the [zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
 
-**Format Selection** formats the whole lines the selection touches. The
-formatter sees only those lines, not the surrounding code: findent starts
-at the indentation of the first selected line (`-Ia`), and fprettify keeps
-it too, but select whole constructs (a complete `do` loop, `if` block or
-procedure) for the indentation inside them to come out right.
+**Format Selection** formats the whole lines the selection touches. The formatter sees only those lines, not the surrounding code: findent starts at the indentation of the first selected line (`-Ia`), and fprettify keeps it too, but select whole constructs (a complete `do` loop, `if` block or procedure) for the indentation inside them to come out right.
 
-When the formatter is missing, fails, or prints nothing, the document is
-left as it is, and the error is shown once, with details in the `zfls`
-output channel (**zfls: Show Output**).
+When the formatter is missing, fails, or prints nothing, the document is left as it is, and the error is shown once, with details in the `zfls` output channel (**zfls: Show Output**).
 
 ## Running and debugging
 
-The **Run Fortran File** and **Debug Fortran File** buttons in the editor
-title (also commands, **zfls: Run Fortran File** and **zfls: Debug Fortran
-File**) build the file in the editor, saving it first, and then run it in a
-terminal, or start the debugger on it. Programs of a single file are the
-aim: the directory of the file is on the include path, but other source
-files are not compiled. In an fpm project, they run the target the file is
-the main program of with fpm instead (see [fpm projects](#fpm-projects)).
-For other projects, use a build system and a launch configuration of your
-own.
+The **Run Fortran File** and **Debug Fortran File** buttons in the editor title (also commands, **zfls: Run Fortran File** and **zfls: Debug Fortran File**) build the file in the editor, saving it first, and then run it in a terminal, or start the debugger on it. Programs of a single file are the aim: the directory of the file is on the include path, but other source files are not compiled. In an fpm project, they run the target the file is the main program of with fpm instead (see [fpm projects](#fpm-projects)). For other projects, use a build system and a launch configuration of your own.
 
-The build uses `zfls.run.compiler` (`gfortran` by default) with debug
-information and no optimization. The program and the compiler's module and
-object files go into the extension's storage, a directory per source file,
-not next to the sources, unless `zfls.run.outputDirectory` says where. On
-Windows the compiler's directory is put first on the program's `PATH`, for
-its runtime libraries.
+The build uses `zfls.run.compiler` (`gfortran` by default) with debug information and no optimization. The program and the compiler's module and object files go into the extension's storage, a directory per source file, not next to the sources, unless `zfls.run.outputDirectory` says where. On Windows the compiler's directory is put first on the program's `PATH`, for its runtime libraries.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -421,16 +225,9 @@ its runtime libraries.
 | `zfls.run.debugger` | `auto` | `zfls`, `cppdbg`, `cppvsdbg`, `lldb` or `gdb`; `auto`: zfls's own when there is a gdb for it (on macOS an lldb-dap), and for the programs of ifx and ifort on Windows, else an installed one |
 | `zfls.run.gdbPath` | empty | The `gdb` for `zfls`, `cppdbg` and `gdb`; empty: the one next to the compiler, else on the `PATH`. On macOS, set: zfls's debugger runs this gdb, not lldb-dap |
 
-`${workspaceFolder}`, `${env:NAME}`, `${userHome}`, `${file}`,
-`${fileDirname}` and a leading `~` are expanded in these settings.
+`${workspaceFolder}`, `${env:NAME}`, `${userHome}`, `${file}`, `${fileDirname}` and a leading `~` are expanded in these settings.
 
-With `zfls.run.debugger` set to `auto`, debugging uses zfls's own debugger
-when there is a gdb for it (gdb 14 or later, built with Python, as MSYS2's,
-Ubuntu's since 24.04 and most others are; on macOS an lldb-dap, which
-Xcode's command line tools have), and on Windows for the programs
-of `ifx` and `ifort`, with Windows's own Debugger Engine (see
-[zfls's debugger](#zflss-debugger)); else the first installed of these
-extensions:
+With `zfls.run.debugger` set to `auto`, debugging uses zfls's own debugger when there is a gdb for it (gdb 14 or later, built with Python, as MSYS2's, Ubuntu's since 24.04 and most others are; on macOS an lldb-dap, which Xcode's command line tools have), and on Windows for the programs of `ifx` and `ifort`, with Windows's own Debugger Engine (see [zfls's debugger](#zflss-debugger)); else the first installed of these extensions:
 
 | Extension | Debugger | For |
 | --- | --- | --- |
@@ -439,82 +236,27 @@ extensions:
 | [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) | `lldb` | lldb |
 | [CDT GDB Debug Adapter](https://marketplace.visualstudio.com/items?itemName=eclipse-cdt.cdt-gdb-vscode) | `gdb` | gdb |
 
-If there is none, **Debug Fortran File** says which to install. gdb cannot
-debug the programs of `ifx` and `ifort` on Windows (their debug
-information is Microsoft's: zfls's debugger then uses Windows's Debugger
-Engine), nor run on macOS on Arm, where lldb, which knows no Fortran, is
-the debugger.
+If there is none, **Debug Fortran File** says which to install. gdb cannot debug the programs of `ifx` and `ifort` on Windows (their debug information is Microsoft's: zfls's debugger then uses Windows's Debugger Engine), nor run on macOS on Arm, where lldb, which knows no Fortran, is the debugger.
 
-LLVM Flang's `-g` on Windows also writes Microsoft's debug information
-only. **Debug Fortran File** builds with `-gdwarf-4`, which writes DWARF
-too and has Flang link with `lld-link`, and `-Wl,-debug:dwarf`, with which
-`lld-link` keeps the DWARF in the program (and the PDB beside it): gdb, and
-so zfls's debugger, reads it as it reads gfortran's programs. Without an
-`lld-link` (next to `flang` or on the `PATH`) the build is `-g -O0`, for
-Windows's Debugger Engine. A `fortran` configuration of a program built
-with `-g` takes `"dbgeng": true` for the engine. Debugging an fpm target
-built with Flang adds `-gdwarf-4 -Wl,-debug:dwarf` to fpm's flags
-(`--flag`, which fpm passes to the link too) where there is an
-`lld-link`, unless `zfls.fpm.flags` already has a `-gdwarf`, and debugs it
-with gdb; without an `lld-link`, fpm's `-g` build goes to the engine.
+LLVM Flang's `-g` on Windows also writes Microsoft's debug information only. **Debug Fortran File** builds with `-gdwarf-4`, which writes DWARF too and has Flang link with `lld-link`, and `-Wl,-debug:dwarf`, with which `lld-link` keeps the DWARF in the program (and the PDB beside it): gdb, and so zfls's debugger, reads it as it reads gfortran's programs. Without an `lld-link` (next to `flang` or on the `PATH`) the build is `-g -O0`, for Windows's Debugger Engine. A `fortran` configuration of a program built with `-g` takes `"dbgeng": true` for the engine. Debugging an fpm target built with Flang adds `-gdwarf-4 -Wl,-debug:dwarf` to fpm's flags (`--flag`, which fpm passes to the link too) where there is an `lld-link`, unless `zfls.fpm.flags` already has a `-gdwarf`, and debugs it with gdb; without an `lld-link`, fpm's `-g` build goes to the engine.
 
-With Intel's compilers on Windows, start VS Code from a oneAPI command prompt (or after `setvars.bat`), so
-that the compiler finds the linker and libraries, or set up ifx without
-Visual Studio:
+With Intel's compilers on Windows, start VS Code from a oneAPI command prompt (or after `setvars.bat`), so that the compiler finds the linker and libraries, or set up ifx without Visual Studio:
 
 ### ifx without Visual Studio (Windows x64)
 
-**zfls: Set Up ifx (Intel Fortran) without Visual Studio** sets up Intel's
-ifx from Intel's Fortran offline installer for Windows, which you download
-from
-[Intel](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler-download.html)
-(the command opens the page): it shows Intel's license from the installer
-and, once you accept it, unpacks the compiler without running the installer
-(no administrator rights, nothing registered, about 210 MB in
-`%LOCALAPPDATA%\zfls\ifx`) and sets it up to link with its own `lld-link`
-and zfls's ifx kit instead of Visual Studio's linker and libraries. It then
-offers to set `zfls.run.compiler`, `zfls.run.compilerPath` and
-`zfls.fpm.compiler` to it. Programs are built with `/MD` (the C runtime of
-Windows), and zfls's debugger debugs them. The same is `zfls setup-ifx` on
-the command line (see zfls's readme).
+**zfls: Set Up ifx (Intel Fortran) without Visual Studio** sets up Intel's ifx from Intel's Fortran offline installer for Windows, which you download from [Intel](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler-download.html) (the command opens the page): it shows Intel's license from the installer and, once you accept it, unpacks the compiler without running the installer (no administrator rights, nothing registered, about 210 MB in `%LOCALAPPDATA%\zfls\ifx`) and sets it up to link with its own `lld-link` and zfls's ifx kit instead of Visual Studio's linker and libraries. It then offers to set `zfls.run.compiler`, `zfls.run.compilerPath` and `zfls.fpm.compiler` to it. Programs are built with `/MD` (the C runtime of Windows), and zfls's debugger debugs them. The same is `zfls setup-ifx` on the command line (see zfls's readme).
 
 ### LFortran without Visual Studio (Windows x64)
 
-LFortran links its programs on Windows with Visual Studio's `link`. Where
-Visual Studio's environment is not set up (no `VCToolsInstallDir`), **Run
-Fortran File** has it link with `lld-link` and zfls's ifx kit instead, when
-there is an `lld-link` next to `lfortran` (conda-forge's `lld` package:
-`conda install -c conda-forge lfortran lld`, or `pixi add lfortran lld`) or
-on the `PATH`. The extension writes a `link.cmd` that runs that `lld-link`
-into its storage, puts it first on the build's `PATH`, and sets `LIB` and
-`LINK` to the kit's directory, startup object and libraries;
-**zfls: Add Build Task and Debug Configuration for Fortran File** writes
-the same into the build task. The programs use Windows's C runtime (UCRT)
-and LFortran's static runtime, so they need nothing else to run.
+LFortran links its programs on Windows with Visual Studio's `link`. Where Visual Studio's environment is not set up (no `VCToolsInstallDir`), **Run Fortran File** has it link with `lld-link` and zfls's ifx kit instead, when there is an `lld-link` next to `lfortran` (conda-forge's `lld` package: `conda install -c conda-forge lfortran lld`, or `pixi add lfortran lld`) or on the `PATH`. The extension writes a `link.cmd` that runs that `lld-link` into its storage, puts it first on the build's `PATH`, and sets `LIB` and `LINK` to the kit's directory, startup object and libraries; **zfls: Add Build Task and Debug Configuration for Fortran File** writes the same into the build task. The programs use Windows's C runtime (UCRT) and LFortran's static runtime, so they need nothing else to run.
 
 ### LLVM Flang without Visual Studio (Windows x64)
 
-LLVM Flang too links with Visual Studio's `link` and libraries, which it
-finds by itself. Where Visual Studio's environment is not set up (no
-`VCToolsInstallDir`), **Run Fortran File** has it link with `lld-link` and
-zfls's ifx kit instead, when there is an `lld-link` next to `flang`
-(conda-forge's `flang_win-64` brings `lld`: `conda install -c conda-forge
-flang_win-64`, or `pixi add flang_win-64`) or on the `PATH`. It adds
-`-fms-runtime-lib=dll -fuse-ld=lld` to the build (Windows's C runtime in
-DLLs, and `lld-link`), and sets `LIB` and `LINK` to the kit's directory,
-startup object and libraries, as the build task of
-**zfls: Add Build Task and Debug Configuration for Fortran File** does.
-With `LIB` set, neither Flang nor `lld-link` looks for Visual Studio's
-libraries. The programs use Windows's C runtime, and Flang's runtime is
-linked into them, so they need nothing else to run. When `zfls.run.buildArgs` choose the
-linker (`-fuse-ld=`) or the C runtime (`-fms-runtime-lib=`), the extension
-leaves the link to them.
+LLVM Flang too links with Visual Studio's `link` and libraries, which it finds by itself. Where Visual Studio's environment is not set up (no `VCToolsInstallDir`), **Run Fortran File** has it link with `lld-link` and zfls's ifx kit instead, when there is an `lld-link` next to `flang` (conda-forge's `flang_win-64` brings `lld`: `conda install -c conda-forge flang_win-64`, or `pixi add flang_win-64`) or on the `PATH`. It adds `-fms-runtime-lib=dll -fuse-ld=lld` to the build (Windows's C runtime in DLLs, and `lld-link`), and sets `LIB` and `LINK` to the kit's directory, startup object and libraries, as the build task of **zfls: Add Build Task and Debug Configuration for Fortran File** does. With `LIB` set, neither Flang nor `lld-link` looks for Visual Studio's libraries. The programs use Windows's C runtime, and Flang's runtime is linked into them, so they need nothing else to run. When `zfls.run.buildArgs` choose the linker (`-fuse-ld=`) or the C runtime (`-fms-runtime-lib=`), the extension leaves the link to them.
 
 ### The `fortran` debug type
 
-A launch configuration of type `fortran` is resolved, when it starts, into
-zfls's debugger or one of the debugger extensions above, chosen as for
-Debug Fortran File:
+A launch configuration of type `fortran` is resolved, when it starts, into zfls's debugger or one of the debugger extensions above, chosen as for Debug Fortran File:
 
 ```json
 {
@@ -526,149 +268,47 @@ Debug Fortran File:
 }
 ```
 
-`program` is the program; or `fpmTarget` (with `fpmTargetKind`
-`executable`, `example` or `test`) names an fpm target, which fpm builds
-first. `args`, `cwd`, `env` and `stopAtEntry` are as their names say;
-`console` is where the program's input and output go: the Debug Console
-(`internalConsole`, the default: the program reads no input),
-`integratedTerminal` or `externalTerminal`. `debugger` picks the debugger
-(`auto` by default, as `zfls.run.debugger`),
-and `compiler` says which compiler built the program (by default
-`zfls.run.compiler`, or for an fpm target `zfls.fpm.compiler`), which
-decides the debugger on Windows (`ifx`'s programs need Windows's engine
-or the Visual Studio debugger; `"dbgeng": true` asks for the engine for
-LLVM Flang's built with `-g`) and puts its runtime libraries on the
-`PATH`. Any other
-key goes to the debugger as it is (`setupCommands`, `MIMode`, ...). The
-configuration stays the same whichever debugger runs it.
+`program` is the program; or `fpmTarget` (with `fpmTargetKind` `executable`, `example` or `test`) names an fpm target, which fpm builds first. `args`, `cwd`, `env` and `stopAtEntry` are as their names say; `console` is where the program's input and output go: the Debug Console (`internalConsole`, the default: the program reads no input), `integratedTerminal` or `externalTerminal`. `debugger` picks the debugger (`auto` by default, as `zfls.run.debugger`), and `compiler` says which compiler built the program (by default `zfls.run.compiler`, or for an fpm target `zfls.fpm.compiler`), which decides the debugger on Windows (`ifx`'s programs need Windows's engine or the Visual Studio debugger; `"dbgeng": true` asks for the engine for LLVM Flang's built with `-g`) and puts its runtime libraries on the `PATH`. Any other key goes to the debugger as it is (`setupCommands`, `MIMode`, ...). The configuration stays the same whichever debugger runs it.
 
-An `attach` configuration attaches zfls's debugger to a running program,
-picked from a list (`"processId": "${command:pickProcess}"`), or to a
-gdbserver (`"target": "host:2345"`), with `program` for its debug
-information.
+An `attach` configuration attaches zfls's debugger to a running program, picked from a list (`"processId": "${command:pickProcess}"`), or to a gdbserver (`"target": "host:2345"`), with `program` for its debug information.
 
-F5 without a `launch.json` debugs the file in the editor, as Debug Fortran
-File does, and the Run and Debug view lists a configuration for each
-executable, example and test of the workspace's fpm projects.
+F5 without a `launch.json` debugs the file in the editor, as Debug Fortran File does, and the Run and Debug view lists a configuration for each executable, example and test of the workspace's fpm projects.
 
-Breakpoints in Fortran files may have conditions in Fortran (`i .eq. 5`,
-`x > 1.0`), set before the program starts or while it runs: gdb reads them
-in the language of the breakpoint's line.
+Breakpoints in Fortran files may have conditions in Fortran (`i .eq. 5`, `x > 1.0`), set before the program starts or while it runs: gdb reads them in the language of the breakpoint's line.
 
-With the debugger extensions, while the program is stopped in a Fortran
-file, the **Fortran Module Variables** view of Run and Debug lists the
-module variables that the selected frame's line sees, which their Variables
-view leaves out (zfls's debugger shows them in the Variables view):
-those of its module, private ones too, and those its USE statements bring
-in, under the names they have there (FortranBreaker #10). Their values come
-from the debugger, asked for each variable by the names that the compilers
-give it: `module::name` (gdb), `__module_MOD_name` (gfortran's symbol, for
-lldb), `_QMmoduleEname` (LLVM Flang's), `MODULE_mp_NAME` (Intel's, for the
-Visual Studio debugger). Arrays and derived types expand as in the
-Variables view. A variable the debugger has no value for shows as not
-available.
+With the debugger extensions, while the program is stopped in a Fortran file, the **Fortran Module Variables** view of Run and Debug lists the module variables that the selected frame's line sees, which their Variables view leaves out (zfls's debugger shows them in the Variables view): those of its module, private ones too, and those its USE statements bring in, under the names they have there (FortranBreaker #10). Their values come from the debugger, asked for each variable by the names that the compilers give it: `module::name` (gdb), `__module_MOD_name` (gfortran's symbol, for lldb), `_QMmoduleEname` (LLVM Flang's), `MODULE_mp_NAME` (Intel's, for the Visual Studio debugger). Arrays and derived types expand as in the Variables view. A variable the debugger has no value for shows as not available.
 
-Hovering over a component (`p%x`, `a(i)%x`) while debugging with gdb shows
-the component, not the variable of that name.
+Hovering over a component (`p%x`, `a(i)%x`) while debugging with gdb shows the component, not the variable of that name.
 
 ### zfls's debugger
 
-zfls's debugger is `zfls dap`, the debug adapter of the zfls executable
-(the extension's own, or `zfls.path`), which other editors use too. It
-runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb
--i=dap`: gdb 14 or later, built with Python), or, for the programs of
-`ifx` and `ifort` on Windows (and LLVM Flang's with `"dbgeng": true`),
-Windows's own Debugger Engine
-(`dbgeng.dll`, which every Windows 10 and later has), and shows the program
-as Fortran (on macOS it runs lldb-dap instead, see below):
+zfls's debugger is `zfls dap`, the debug adapter of the zfls executable (the extension's own, or `zfls.path`), which other editors use too. It runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), or, for the programs of `ifx` and `ifort` on Windows (and LLVM Flang's with `"dbgeng": true`), Windows's own Debugger Engine (`dbgeng.dll`, which every Windows 10 and later has), and shows the program as Fortran (on macOS it runs lldb-dap instead, see below):
 
-- arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a
-  large one in sections (`(1:100)`, ...), with a preview of their first
-  elements (`[1.0, 2.0, …]`) or their shape (`[2×3]`); an unallocated
-  array, or a pointer not associated, says so;
-- derived types with a preview of their components
-  (`point(x=9.0, y=-2.0, id=7)`), pointers as their targets, and a
-  polymorphic object (`class(point)`) with the components of its dynamic
-  type;
-- the module variables that the frame's line sees, as the **Module
-  variables** scope of the Variables view: those of its module, private
-  ones too, and those its USE statements bring in, under their names there
-  (`local => name` when renamed), as zfls's index of the sources (the
-  workspace folder) finds them;
-- each variable with its Fortran expression, for **Add to Watch**, **Copy
-  as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
-- gfortran's hidden lengths of CHARACTER arguments, and LFortran's
-  temporaries, left out;
-- **Fortran runtime errors**, an exception breakpoint of the Breakpoints
-  view, on by default: the program stops where the runtime reports an
-  error (an array bound exceeded under `-fcheck=bounds`, an allocation that
-  failed, an I/O error without `iostat=`, `err=` or `end=`) or at ERROR STOP, at the line of
-  the program, before it ends.
+- arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a large one in sections (`(1:100)`, ...), with a preview of their first elements (`[1.0, 2.0, …]`) or their shape (`[2×3]`); an unallocated array, or a pointer not associated, says so;
+- derived types with a preview of their components (`point(x=9.0, y=-2.0, id=7)`), pointers as their targets, and a polymorphic object (`class(point)`) with the components of its dynamic type;
+- the module variables that the frame's line sees, as the **Module variables** scope of the Variables view: those of its module, private ones too, and those its USE statements bring in, under their names there (`local => name` when renamed), as zfls's index of the sources (the workspace folder) finds them;
+- each variable with its Fortran expression, for **Add to Watch**, **Copy as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
+- gfortran's hidden lengths of CHARACTER arguments, and LFortran's temporaries, left out;
+- **Fortran runtime errors**, an exception breakpoint of the Breakpoints view, on by default: the program stops where the runtime reports an error (an array bound exceeded under `-fcheck=bounds`, an allocation that failed, an I/O error without `iostat=`, `err=` or `end=`) or at ERROR STOP, at the line of the program, before it ends.
 
-LFortran's programs (built with `-g`, not on Windows, where LFortran
-refuses it) have breakpoints, stepping, the stack and the **Fortran runtime
-errors** stops, with gdb and with lldb-dap; their debug information has
-integer and real scalars only, so the Variables view shows those, and no
-arrays, derived types, CHARACTER lengths or module variables.
+LFortran's programs (built with `-g`, not on Windows, where LFortran refuses it) have breakpoints, stepping, the stack and the **Fortran runtime errors** stops, with gdb and with lldb-dap; their debug information has integer and real scalars only, so the Variables view shows those, and no arrays, derived types, CHARACTER lengths or module variables.
 
-The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`).
-`setupCommands` (gdb commands, such as `set print elements 0`) run before
-the program starts.
+The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`). `setupCommands` (gdb commands, such as `set print elements 0`) run before the program starts.
 
-On macOS zfls's debugger runs lldb-dap (`"lldb": true` in the
-configuration, or the lldb-dap to run; `xcrun --find lldb-dap` finds
-Xcode's), since gdb does not run on Apple Silicon and must be code-signed
-on Intel; `zfls.run.gdbPath` or the configuration's `gdb` choose gdb
-instead. With lldb-dap there are breakpoints, stepping, the stack, the
-program in a terminal and the **Fortran runtime errors** stops, but lldb
-reads no Fortran: for the programs of gfortran and LLVM Flang the Variables
-view is empty and expressions are not evaluated. Over ssh, macOS lets a
-debugger start a program only with Developer Mode on (`sudo
-DevToolsSecurity -enable`).
+On macOS zfls's debugger runs lldb-dap (`"lldb": true` in the configuration, or the lldb-dap to run; `xcrun --find lldb-dap` finds Xcode's), since gdb does not run on Apple Silicon and must be code-signed on Intel; `zfls.run.gdbPath` or the configuration's `gdb` choose gdb instead. With lldb-dap there are breakpoints, stepping, the stack, the program in a terminal and the **Fortran runtime errors** stops, but lldb reads no Fortran: for the programs of gfortran and LLVM Flang the Variables view is empty and expressions are not evaluated. Over ssh, macOS lets a debugger start a program only with Developer Mode on (`sudo DevToolsSecurity -enable`).
 
 With Windows's Debugger Engine, zfls reads the variables itself: dbghelp (of the engine) says where each is, zfls's index of the sources (the workspace folder) its type, kind and rank, and the array descriptors (Intel's, LLVM Flang's) their bounds; a polymorphic object or array shows its dynamic type's components, which the descriptor names. Of LLVM Flang's programs built with `-g`, the engine shows the variables (the main program's that Flang makes static too) and stops at Flang's runtime errors and ERROR STOP. The program runs in a console window of its own (`"console": "internalConsole"`: none, its output is then lost). Hovers, watches and the Debug Console take a variable, its components, elements and substrings (`p%x`, `a(2,-1)`, `s(2:4)`), and a module's variable by the name the line sees (`cells`) or by its module's (`grid::cells`).
 
-**zfls: Add Build Task and Debug Configuration for Fortran File** writes
-the same build as a task in `.vscode/tasks.json` and a debug configuration
-that builds first in `.vscode/launch.json`, replacing those of the same
-name, for starting it with F5 and changing it to suit.
+**zfls: Add Build Task and Debug Configuration for Fortran File** writes the same build as a task in `.vscode/tasks.json` and a debug configuration that builds first in `.vscode/launch.json`, replacing those of the same name, for starting it with F5 and changing it to suit.
 
 ## fpm projects
 
-For a directory with an `fpm.toml`, the
-[Fortran Package Manager](https://fpm.fortran-lang.org) builds, runs and
-tests the project. fpm must be installed (`pip install fpm`, conda, or a
-release from its site); `zfls.fpm.path` says where when it is not on the
-`PATH`.
+For a directory with an `fpm.toml`, the [Fortran Package Manager](https://fpm.fortran-lang.org) builds, runs and tests the project. fpm must be installed (`pip install fpm`, conda, or a release from its site); `zfls.fpm.path` says where when it is not on the `PATH`.
 
-- **Tasks:** **Terminal > Run Task > fpm** offers `build`, `build --profile
-  release`, `run`, `test`, `install` and `clean` for each project. In
-  `tasks.json`, a task of type `fpm` takes a `command`, and optionally a
-  `target`, `example`, `profile`, `compiler`, `flags`, `args`,
-  `programArgs` and `cwd` (the project's directory in the folder). The
-  compiler's errors appear in the Problems view (the problem matchers
-  `$zfls-gfortran` and `$zfls-intel`); `build` and `install` run in the C
-  locale (`LC_ALL=C`), so that the compiler writes them in English.
-- **zfls: Run fpm Target** and **zfls: Debug fpm Target** offer the
-  executables and examples (and, to debug, the tests) that fpm lists.
-  Debugging builds the target with fpm, then starts the debugger of
-  `zfls.run.debugger` on its program, in the project's directory.
-- **Run Fortran File** and **Debug Fortran File**, on the main program of a
-  target (a `main` of `fpm.toml`, or a program in `app`, `test` or
-  `example`), do the same for that target, unless `zfls.fpm.runFile` is
-  off. `zfls.run.programArgs` are the program's arguments.
-- **Testing view:** each test target, with a gutter button on its program:
-  the `[[test]]` tables of `fpm.toml`, and (unless `auto-tests = false`)
-  each program in `test` and below, named after its file, as fpm makes
-  them. For [test-drive](https://github.com/fortran-lang/test-drive), the
-  suites the program makes (`new_testsuite`) and the tests of their collect
-  procedures (`new_unittest`, in the sources next to the program) are
-  listed below it, and their results are read from its output. Running one
-  suite or test passes its name to the program when it takes them, as
-  test-drive's template does (`select_suite`, `run_selected`); otherwise
-  the whole target runs. The debug profile runs the program under the
-  debugger. zfls finds the tests (`zfls/fpmTests`, which other editors can
-  ask too); the extension runs them.
+- **Tasks:** **Terminal > Run Task > fpm** offers `build`, `build --profile release`, `run`, `test`, `install` and `clean` for each project. In `tasks.json`, a task of type `fpm` takes a `command`, and optionally a `target`, `example`, `profile`, `compiler`, `flags`, `args`, `programArgs` and `cwd` (the project's directory in the folder). The compiler's errors appear in the Problems view (the problem matchers `$zfls-gfortran` and `$zfls-intel`); `build` and `install` run in the C locale (`LC_ALL=C`), so that the compiler writes them in English.
+- **zfls: Run fpm Target** and **zfls: Debug fpm Target** offer the executables and examples (and, to debug, the tests) that fpm lists. Debugging builds the target with fpm, then starts the debugger of `zfls.run.debugger` on its program, in the project's directory.
+- **Run Fortran File** and **Debug Fortran File**, on the main program of a target (a `main` of `fpm.toml`, or a program in `app`, `test` or `example`), do the same for that target, unless `zfls.fpm.runFile` is off. `zfls.run.programArgs` are the program's arguments.
+- **Testing view:** each test target, with a gutter button on its program: the `[[test]]` tables of `fpm.toml`, and (unless `auto-tests = false`) each program in `test` and below, named after its file, as fpm makes them. For [test-drive](https://github.com/fortran-lang/test-drive), the suites the program makes (`new_testsuite`) and the tests of their collect procedures (`new_unittest`, in the sources next to the program) are listed below it, and their results are read from its output. Running one suite or test passes its name to the program when it takes them, as test-drive's template does (`select_suite`, `run_selected`); otherwise the whole target runs. The debug profile runs the program under the debugger. zfls finds the tests (`zfls/fpmTests`, which other editors can ask too); the extension runs them.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -680,30 +320,15 @@ release from its site); `zfls.fpm.path` says where when it is not on the
 | `zfls.fpm.runFile` | `true` | Run and Debug Fortran File use fpm for the programs of fpm projects |
 | `zfls.fpm.testExplorer` | `true` | fpm's tests in the Testing view |
 
-zfls itself reads `fpm.toml` too: the include directories and macros of a
-project come from it (see the server's documentation).
+zfls itself reads `fpm.toml` too: the include directories and macros of a project come from it (see the server's documentation).
 
 ## pFUnit tests
 
-In a CMake project that builds its [pFUnit](https://github.com/Goddard-Fortran-Ecosystem/pFUnit)
-tests with `add_pfunit_ctest`, the Testing view lists each test program,
-with the suite of each of its `.pf` files (`@suite(name=...)`, else the
-module's name with `_suite`) and their `@test` procedures, with gutter
-buttons on them. zfls finds them (`zfls/pfunitTests`, which other editors
-can ask too); the extension builds and runs them.
+In a CMake project that builds its [pFUnit](https://github.com/Goddard-Fortran-Ecosystem/pFUnit) tests with `add_pfunit_ctest`, the Testing view lists each test program, with the suite of each of its `.pf` files (`@suite(name=...)`, else the module's name with `_suite`) and their `@test` procedures, with gutter buttons on them. zfls finds them (`zfls/pfunitTests`, which other editors can ask too); the extension builds and runs them.
 
-- **Running** builds the program (`cmake --build DIR --target NAME`, with
-  the compiler's problems in the Problems view), takes its command from
-  CTest (`ctest --show-only=json-v1`), runs it with its results in an XML
-  file (`-x -o FILE`), and reports each test, a failed assertion at its line
-  of the `.pf` file. Running one test passes `-f SUITE.TEST` (not for
-  parameterized tests); otherwise the whole program runs.
-- **Debugging** builds the program and runs it under the `fortran` debug
-  type (see [The `fortran` debug type](#the-fortran-debug-type)), with
-  `-f` for one test.
-- The project has to be configured first (by CMake Tools, or `cmake -S . -B
-  build`). A `.pf` file that no `add_pfunit_ctest` names is listed too, and
-  says so when run.
+- **Running** builds the program (`cmake --build DIR --target NAME`, with the compiler's problems in the Problems view), takes its command from CTest (`ctest --show-only=json-v1`), runs it with its results in an XML file (`-x -o FILE`), and reports each test, a failed assertion at its line of the `.pf` file. Running one test passes `-f SUITE.TEST` (not for parameterized tests); otherwise the whole program runs.
+- **Debugging** builds the program and runs it under the `fortran` debug type (see [The `fortran` debug type](#the-fortran-debug-type)), with `-f` for one test.
+- The project has to be configured first (by CMake Tools, or `cmake -S . -B build`). A `.pf` file that no `add_pfunit_ctest` names is listed too, and says so when run.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -714,18 +339,9 @@ can ask too); the extension builds and runs them.
 
 ## Snippets
 
-At the start of a statement, the server completes the constructs and
-program units that can begin there, each with its end statement:
-`program`, `module`, `submodule`, `subroutine`, `function`, `type`,
-`interface`, `enum`, `if ... then`, `do`, `do while`, `do concurrent`,
-`select case`, `select type`, `select rank`, `associate`, `block`,
-`where`, `forall`, `critical`; inside an open construct its `else`,
-`else if`, `case`, `type is`, `elsewhere` and the like; `then` after
-`if (...)`; and after `end`, the end statement of the scope that is open.
-They follow `zfls.lowercaseIntrinsics` and `zfls.autocompleteNoSnippets`.
+At the start of a statement, the server completes the constructs and program units that can begin there, each with its end statement: `program`, `module`, `submodule`, `subroutine`, `function`, `type`, `interface`, `enum`, `if ... then`, `do`, `do while`, `do concurrent`, `select case`, `select type`, `select rank`, `associate`, `block`, `where`, `forall`, `critical`; inside an open construct its `else`, `else if`, `case`, `type is`, `elsewhere` and the like; `then` after `if (...)`; and after `end`, the end statement of the scope that is open. They follow `zfls.lowercaseIntrinsics` and `zfls.autocompleteNoSnippets`.
 
-The extension adds these: type a prefix and pick the snippet from the
-completion list.
+The extension adds these: type a prefix and pick the snippet from the completion list.
 
 | Prefix | Inserts |
 | --- | --- |
@@ -734,34 +350,19 @@ completion list.
 | `imp` | `implicit none` |
 | `modoc` | A module documentation header |
 
-The fixed-form snippets indent with spaces and keep every line at the
-column where the prefix was typed, so type the prefix at column 7 or later.
-Fixed-form files show rulers after columns 5, 6 and 72 (the label, the
-continuation mark and the end of the code), a default of
-`"[FortranFixedForm]": {"editor.rulers": [...]}` that a setting of your
-own replaces.
-Most snippets are adapted from those of Modern Fortran.
+The fixed-form snippets indent with spaces and keep every line at the column where the prefix was typed, so type the prefix at column 7 or later. Fixed-form files show rulers after columns 5, 6 and 72 (the label, the continuation mark and the end of the code), a default of `"[FortranFixedForm]": {"editor.rulers": [...]}` that a setting of your own replaces. Most snippets are adapted from those of Modern Fortran.
 
 ## Commands
 
-- **zfls: Get Started**: a walkthrough of the extension, also under
-  **Help > Welcome** (Modern Fortran #472)
+- **zfls: Get Started**: a walkthrough of the extension, also under **Help > Welcome** (Modern Fortran #472)
 - **zfls: Restart Language Server**
 - **zfls: Show Output**
 - **zfls: Show Module Compile Order**
-- **zfls: Toggle Fixed-Form Line Comment** (`Ctrl+/` in fixed form): with
-  `zfls.fixedFormCommentCharacter` set to `C`, `c` or `*`, comments the lines
-  with that character in column 1, or uncomments them (Modern Fortran #535)
-- **zfls: Run Fortran File**, **zfls: Debug Fortran File** (also buttons in
-  the editor title)
+- **zfls: Toggle Fixed-Form Line Comment** (`Ctrl+/` in fixed form): with `zfls.fixedFormCommentCharacter` set to `C`, `c` or `*`, comments the lines with that character in column 1, or uncomments them (Modern Fortran #535)
+- **zfls: Run Fortran File**, **zfls: Debug Fortran File** (also buttons in the editor title)
 - **zfls: Add Build Task and Debug Configuration for Fortran File**
 - **zfls: Run fpm Target**, **zfls: Debug fpm Target**
 - **zfls: Lint Current File with Compiler**
 - **zfls: Clear Compiler Diagnostics**
 - **zfls: Fix All Safe fortitude Problems**
-- **Fortran: Convert to Free Form** (in a fixed-form file), **Fortran:
-  Convert to Fixed Form** (in a free-form file): findent converts the file,
-  and the result goes to `name.f90` (or `name.f`) beside it, which opens;
-  an existing file is overwritten only when you agree. The old file is left.
-  Needs findent (`pip install findent`); `zfls.formatting.path` is used
-  when findent is the formatter.
+- **Fortran: Convert to Free Form** (in a fixed-form file), **Fortran: Convert to Fixed Form** (in a free-form file): findent converts the file, and the result goes to `name.f90` (or `name.f`) beside it, which opens; an existing file is overwritten only when you agree. The old file is left. Needs findent (`pip install findent`); `zfls.formatting.path` is used when findent is the formatter.

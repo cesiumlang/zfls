@@ -711,7 +711,7 @@ pub const Parser = struct {
             try ast.endScope(ln, true);
             _ = block_id_stack.pop();
             did_close = true;
-            p.dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });
+            p.dbg("{s} !!! END DO-LABELED - Ln:{d}", .{ line, ln });
         }
         return did_close;
     }

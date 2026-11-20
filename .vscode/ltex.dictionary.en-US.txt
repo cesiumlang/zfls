@@ -514,3 +514,13 @@ zthree
 globals
 toolchain
 ASTs
+ofmt
+krvajalm
+libgfortran
+dbgeng
+ptype
+atexit
+msvcrt
+getcwd
+cudadevice
+FFLAGS

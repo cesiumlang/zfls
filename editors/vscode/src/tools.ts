@@ -194,7 +194,7 @@ export interface ProcessResult {
   code: number | null;
   stdout: string;
   stderr: string;
-  /** Set when the process could not be started, or was cancelled or timed out */
+  /** Set when the process could not be started, or was canceled or timed out */
   error?: Error;
 }
 

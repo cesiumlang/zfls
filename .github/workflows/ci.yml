@@ -1016,7 +1016,7 @@ jobs:
           & "$env:RUNNER_TEMP\ps5\zfls\zfls-v0.4.0-x86_64-windows\zfls.exe" --version
 
   # The check the rulesets of main and dev require: passes when no job
-  # before it failed or was cancelled, so also when the build and the tests
+  # before it failed or was canceled, so also when the build and the tests
   # were skipped (only files of no-ci.txt changed, or a release reuses a
   # pull request's tested archives). A matrix job that is skipped reports
   # no check under its legs' names, so those cannot be required themselves.
@@ -1033,7 +1033,7 @@ jobs:
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "$GITHUB_STEP_SUMMARY"
           bad=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")')
           if [ -n "$bad" ]; then
-            echo "::error::failed or cancelled: $bad"
+            echo "::error::failed or canceled: $bad"
             exit 1
           fi
 
