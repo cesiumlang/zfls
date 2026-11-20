@@ -504,7 +504,7 @@
       "default": false
     },
     "pp_suffixes": {
-      "description": "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)",
+      "description": "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes, and .fpp)",
       "type": [
         "array",
         "null"
