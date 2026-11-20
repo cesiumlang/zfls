@@ -1,22 +1,6 @@
 # Third-party notices
 
-The files in `syntaxes/` and `language-configuration.json` are the Fortran
-grammars and language configuration of the
-[Modern Fortran](https://github.com/fortran-lang/vscode-fortran-support)
-extension, version 4.0.0, and the snippets in `snippets/` up to "Module
-Documentation Header" are adapted from its `snippets/fortran90.json`. The
-formatting settings (`zfls.formatting.*`) follow its `fortran.formatting.*`
-settings, the **Run Fortran File** and **Debug Fortran File** commands and
-their editor title buttons its `fortran.build.run` and
-`fortran.build.debug`, the choice among debugger extensions its
-`src/debug/configuration.ts`, and the compiler linting (the
-`zfls.linter.*` settings, and the compiler options and message formats of
-gfortran, Intel, NAG and LFortran in zfls's `src/compilers.zig`) the design
-of its `src/lint/`. zfls has changed the grammars since; where a rule
-differs from upstream's in what it matches, its `comment` says so with
-"zfls:" (for example: a type keyword starts a type declaration only where a
-statement starts, not in an expression such as `x = real(a)`). These are
-used under its MIT license:
+The files in `syntaxes/` and `language-configuration.json` are the Fortran grammars and language configuration of the [Modern Fortran](https://github.com/fortran-lang/vscode-fortran-support) extension, version 4.0.0, and the snippets in `snippets/` up to "Module Documentation Header" are adapted from its `snippets/fortran90.json`. The formatting settings (`zfls.formatting.*`) follow its `fortran.formatting.*` settings, the **Run Fortran File** and **Debug Fortran File** commands and their editor title buttons its `fortran.build.run` and `fortran.build.debug`, the choice among debugger extensions its `src/debug/configuration.ts`, and the compiler linting (the `zfls.linter.*` settings, and the compiler options and message formats of gfortran, Intel, NAG and LFortran in zfls's `src/compilers.zig`) the design of its `src/lint/`. zfls has changed the grammars since; where a rule differs from upstream's in what it matches, its `comment` says so with "zfls:" (for example: a type keyword starts a type declaration only where a statement starts, not in an expression such as `x = real(a)`). These are used under its MIT license:
 
 ```text
 MIT License

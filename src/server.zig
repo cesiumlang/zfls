@@ -341,9 +341,9 @@ pub const Server = struct {
         self.sendNotification(a, "$/progress", params) catch |e| self.logSendFailure(e);
     }
 
-    /// Answer request `id`, cancelled before it was handled
-    pub fn cancelled(self: *Server, a: Allocator, id: Value) void {
-        self.writeError(a, id, -32800, "request cancelled", null) catch |e| self.logSendFailure(e);
+    /// Answer request `id`, canceled before it was handled
+    pub fn canceled(self: *Server, a: Allocator, id: Value) void {
+        self.writeError(a, id, -32800, "request canceled", null) catch |e| self.logSendFailure(e);
     }
 
     /// Sends a request to the client, whose answer is not waited for

@@ -115,7 +115,7 @@ test "LAPACK: specific names of intrinsic functions (DSQRT, FLOAT, IDNINT)" {
     try expectClean(w, "s.f");
 }
 
-test "LAPACK: labelled DO loops ended by END DO with their labels" {
+test "LAPACK: labeled DO loops ended by END DO with their labels" {
     const w = try h.Workspace.init(&.{.{ .name = "s.f", .text =
         \\      SUBROUTINE S( A, N )
         \\      IMPLICIT NONE

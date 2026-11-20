@@ -233,7 +233,7 @@ class FpmTests implements vscode.Disposable {
   private async run(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
     const run = this.controller.createTestRun(request);
     const abort = new AbortController();
-    const cancelled = token.onCancellationRequested(() => abort.abort());
+    const canceled = token.onCancellationRequested(() => abort.abort());
     try {
       for (const { target, picked } of this.byTarget(request).values()) {
         if (token.isCancellationRequested) {
@@ -242,7 +242,7 @@ class FpmTests implements vscode.Disposable {
         await this.runTarget(run, target, picked, abort.signal);
       }
     } finally {
-      cancelled.dispose();
+      canceled.dispose();
       run.end();
     }
   }

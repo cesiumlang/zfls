@@ -203,7 +203,7 @@ class PfunitTests implements vscode.Disposable {
   private async run(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
     const run = this.controller.createTestRun(request);
     const abort = new AbortController();
-    const cancelled = token.onCancellationRequested(() => abort.abort());
+    const canceled = token.onCancellationRequested(() => abort.abort());
     try {
       const excluded = new Set(request.exclude ?? []);
       for (const [top, picked] of this.byProgram(request)) {
@@ -213,7 +213,7 @@ class PfunitTests implements vscode.Disposable {
         await this.runProgram(run, top, picked, excluded, abort.signal);
       }
     } finally {
-      cancelled.dispose();
+      canceled.dispose();
       run.end();
     }
   }
@@ -438,7 +438,7 @@ class PfunitTests implements vscode.Disposable {
   private async debug(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
     const run = this.controller.createTestRun(request);
     const abort = new AbortController();
-    const cancelled = token.onCancellationRequested(() => abort.abort());
+    const canceled = token.onCancellationRequested(() => abort.abort());
     try {
       for (const [top, picked] of this.byProgram(request)) {
         if (token.isCancellationRequested) {
@@ -474,7 +474,7 @@ class PfunitTests implements vscode.Disposable {
         }
       }
     } finally {
-      cancelled.dispose();
+      canceled.dispose();
       run.end();
     }
   }
