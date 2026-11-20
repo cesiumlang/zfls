@@ -88,6 +88,7 @@ pub const Text = struct {
     error_stop: []const u8 = "ERROR STOP",
     gdb_exited: []const u8 = "gdb exited",
     lldb_exited: []const u8 = "lldb-dap exited",
+    ended_by_signal: []const u8 = "The program was ended by a signal",
 
     /// `--text`'s JSON object: its strings over the English ones
     fn parse(a: Allocator, text: []const u8) !Text {

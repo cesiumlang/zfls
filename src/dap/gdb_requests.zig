@@ -27,6 +27,7 @@ const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
 const gdb_entry = @import("gdb_entry.zig");
+const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const Variable = vars.Variable;
 
@@ -301,6 +302,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         .evaluate => try evaluate(s, a, req, args),
         .setVariable => try setVariable(s, a, req, args),
         .disconnect, .terminate => {
+            s.g.stopping = true;
             const r = try gdb.request(s, a, command, args orelse Value.null);
             gdb.respondWith(s, a, req, r);
             if (cmd == .disconnect) {
@@ -539,8 +541,15 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
         // those of the runtime's errors and of the stop at the start are
         // the adapter's own
         if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id) or id == s.g.entry_breakpoint) return;
-    } else if (std.mem.eql(u8, name, "terminated") or std.mem.eql(u8, name, "exited")) {
+    } else if (std.mem.eql(u8, name, "exited")) {
         killTerminal(s);
+        // a signal's end: its exit code (#440)
+        gdb_exit.programExited(s, a, &body);
+        s.event(a, name, body);
+        return gdb_exit.releaseTerminated(s, a);
+    } else if (std.mem.eql(u8, name, "terminated")) {
+        killTerminal(s);
+        if (gdb_exit.holdTerminated(s)) return;
     } else if (std.mem.eql(u8, name, "initialized")) {
         if (s.g.initialized_sent) return;
         s.g.initialized_sent = true;

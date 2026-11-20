@@ -39,6 +39,7 @@
   "The debugger has no value for it here.": "The debugger has no value for it here.",
   "The old Modern Fortran extension (krvajalm.linter-gfortran) is also enabled. It registers the same Fortran languages and grammars as zfls and lints with gfortran, so Fortran files get two sets of grammars and each compiler message twice; disable it.": "The old Modern Fortran extension (krvajalm.linter-gfortran) is also enabled. It registers the same Fortran languages and grammars as zfls and lints with gfortran, so Fortran files get two sets of grammars and each compiler message twice; disable it.",
   "The process to attach to": "The process to attach to",
+  "The program was ended by a signal": "The program was ended by a signal",
   "Use It": "Use It",
   "`{0}` ({1}) in {2}": "`{0}` ({1}) in {2}",
   "building {0} failed (exit code {1}); see the terminal.": "building {0} failed (exit code {1}); see the terminal.",

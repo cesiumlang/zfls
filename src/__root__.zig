@@ -68,6 +68,7 @@ pub const dap_gdb = @import("dap/gdb.zig");
 pub const dap_gdb_variables = @import("dap/gdb_variables.zig");
 pub const dap_lldb = @import("dap/lldb.zig");
 pub const dap_gdb_entry = @import("dap/gdb_entry.zig");
+pub const dap_gdb_exit = @import("dap/gdb_exit.zig");
 
 test {
     std.testing.refAllDecls(@This());
