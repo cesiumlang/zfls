@@ -1391,6 +1391,12 @@ zfls deliberately differs from fortls in a few places:
   when an executable statement came before it in the scope. The same goes
   for a name that is not declared where a USE, an INCLUDE or a host scope
   could declare it. fortls reads every such statement as an assignment.
+- An ENTRY statement (`entry e2(x, y) [result(r)]`) declares a procedure of
+  the kind of its procedure, in the scope that has that procedure (a
+  module, the host, or the file), as the compilers do. It has hover,
+  definition, signature help, references and symbols, and its dummy
+  arguments and result are the procedure's variables of their names.
+  fortls declares nothing for it.
 - A user-defined operator (`.ord.`) has a definition (its `interface
   operator (.ord.)`), a hover (the procedures of that interface) and
   references (its uses in the workspace) (hansec #95); fortls has none. So

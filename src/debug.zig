@@ -214,6 +214,8 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
         o.print("{d}: {s}\n", .{ @backingInt(obj.getType(false)), obj.fqsn });
         try printChildren(a, o, obj, "");
     }
+    // the ENTRY procedures of external procedures, in no scope's lines
+    for (ast.entry_list.items) |e| if (e.parent == null) o.print("{d}: {s}\n", .{ @backingInt(e.getType(false)), e.fqsn });
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
     while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });

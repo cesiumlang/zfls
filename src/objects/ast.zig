@@ -120,6 +120,9 @@ pub const Ast = struct {
     inherit_objs: std.ArrayList(*Obj) = .empty,
     linkable_objs: std.ArrayList(*Obj) = .empty,
     external_objs: std.ArrayList(*Obj) = .empty,
+    /// The procedures of ENTRY statements (parser/entries.zig), which are
+    /// in no scope's lines
+    entry_list: std.ArrayList(*Obj) = .empty,
     none_scope: ?*Obj = null,
     /// Indices of `parse_errors` that an END of the unnamed scope withdraws
     /// (`addMainError`)

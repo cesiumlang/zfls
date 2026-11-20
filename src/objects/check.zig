@@ -184,6 +184,8 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         if (self.parent != null and !is_interface and !in_stmt_function and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
             if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
+                // the result variable of an ENTRY of this function
+                if (parent_var.kind == .function and parent_var.procDataConst().entry_of == self) continue;
                 var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
                 d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                 try errors.append(a, d);

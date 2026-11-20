@@ -228,3 +228,66 @@ test "an assignment to an array element is no statement function (#555)" {
     const cv = try w.hover("a.f90", w.pos("a.f90", "cv(i) = 3", 0, 0));
     if (cv) |text| try h.expect(std.mem.find(u8, text, "FUNCTION") == null, "cv: {s}", .{text});
 }
+
+test "an ENTRY is a procedure of the scope that has its procedure, with its arguments (#554)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "e.f90", .text =
+        \\module ents
+        \\  implicit none
+        \\contains
+        \\  subroutine with_entry(x)
+        \\    integer :: x, y
+        \\    x = 1
+        \\    entry other_entry(x, y)
+        \\    x = y
+        \\  end subroutine with_entry
+        \\  real function f(a)
+        \\    real :: a, g
+        \\    f = a
+        \\    return
+        \\    entry g(a)
+        \\    g = 2 * a
+        \\  end function f
+        \\end module ents
+        \\subroutine ext(p)
+        \\  integer :: p
+        \\  p = 0
+        \\  entry ext2(p)
+        \\  p = 1
+        \\end subroutine ext
+        \\
+        },
+        .{ .name = "u.f90", .text =
+        \\program u
+        \\  use ents
+        \\  implicit none
+        \\  integer :: k, m
+        \\  real :: r
+        \\  call other_entry(k, m)
+        \\  r = g(1.0)
+        \\  call ext2(k)
+        \\end program u
+        \\
+        },
+    }, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try w.expectNoDiagnostics("e.f90");
+    try w.expectNoDiagnostics("u.f90");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "other_entry", 0, 0), "SUBROUTINE other_entry(x, y)");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "other_entry", 0, 0), "INTEGER :: y");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "g(1.0)", 0, 0), "FUNCTION g(a)");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "g(1.0)", 0, 0), "REAL :: a");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "ext2", 0, 0), "SUBROUTINE ext2(p)");
+    const def = (try w.definition("u.f90", w.pos("u.f90", "other_entry", 0, 0))) orelse return h.unmet("no definition of other_entry", .{});
+    try h.expect(def.line == w.pos("e.f90", "entry other_entry", 0, 0).line, "other_entry defined on line {d}", .{def.line});
+    const sig = (try w.signature("u.f90", w.pos("u.f90", "other_entry(k", 0, 12))) orelse return h.unmet("no signature help in other_entry(", .{});
+    try h.expect(std.mem.find(u8, sig.label, "other_entry(x, y)") != null, "signature {s}", .{sig.label});
+    const symbols = try w.symbolPaths("e.f90");
+    for ([_][]const u8{ "ents/other_entry", "ents/g", "ext2" }) |want| {
+        for (symbols) |s| {
+            if (std.mem.eql(u8, s, want)) break;
+        } else return h.unmet("{s} not in {any}", .{ want, symbols });
+    }
+    // the names on the ENTRY line are the procedure's
+    try w.expectHoverContains("e.f90", w.pos("e.f90", "y)", 0, 0), "INTEGER :: y");
+}

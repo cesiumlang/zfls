@@ -61,13 +61,6 @@ pub const rules = [_]Rule{
         .kind = .generic,
         .why = "zfls keeps an ASSIGNMENT(=) interface as an interface block without a name (#gen_int)",
     },
-    .{
-        .file = "tests/flang/extensions.f90",
-        .entity = "extensions::other_entry",
-        .diff = .missing,
-        .kind = .procedure,
-        .why = "zfls declares no procedure of an ENTRY statement (in the module file Flang writes it as a procedure of its own, which zfls reads)",
-    },
     // what zfls reads in another place
     .{
         .file = "tests/fortran/submodules.f90",

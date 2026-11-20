@@ -126,6 +126,9 @@ fn keepsVariable(proc: *const Obj, c: *const Obj) bool {
     const p = proc.procDataConst();
     var it = std.mem.splitScalar(u8, p.args, ',');
     while (it.next()) |arg| if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, arg, " \t"), c.name)) return true;
+    // and those of its ENTRY statements
+    var entry_it = std.mem.splitScalar(u8, p.entry_names, ',');
+    while (entry_it.next()) |n| if (std.ascii.eqlIgnoreCase(n, c.name)) return true;
     if (proc.kind == .function) return std.ascii.eqlIgnoreCase(p.result_name orelse proc.name, c.name);
     return false;
 }

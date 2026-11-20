@@ -131,6 +131,12 @@ pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumen
             }
         }
     }
+    // the procedures of ENTRY statements, of a program unit or at the top
+    for (ast.entry_list.items) |e| {
+        const container: ?[]const u8 = if (e.parent) |p| p.name else null;
+        if (e.parent) |p| if (p.parent != null) continue;
+        try out.append(a, symbolOf(e.name, outline.flatKind(e.getType(false), false), uri, e.sline -| 1, e.eline -| 1, container));
+    }
     return json.from(a, out.items);
 }
 
