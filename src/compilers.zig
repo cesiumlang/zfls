@@ -247,7 +247,10 @@ pub fn isDLinesArg(arg: []const u8) bool {
 pub fn defaultArgs(a: Allocator, id: Id, o: Options) ![]const []const u8 {
     const warnings: []const []const u8 = switch (id) {
         .gfortran => &.{"-Wall"},
-        .ifx, .ifort => if (o.windows) &.{"/warn:all"} else &.{ "-warn", "all" },
+        // what gfortran's -Wall warns about: not every implicitly typed
+        // name (#6717) and every call without an explicit interface
+        // (#8889), which `all` has (#514)
+        .ifx, .ifort => if (o.windows) &.{"/warn:all,nodeclarations,noexternals"} else &.{ "-warn", "all,nodeclarations,noexternals" },
         .nvfortran => &.{"-Minform=warn"},
         .flang => flang.warnings(o.version),
         .nagfor, .lfortran => &.{},
@@ -274,8 +277,8 @@ test "the default arguments: warnings, coarrays, and OpenMP as zfls reads it" {
     const no_omp: Options = .{ .windows = false, .mod_dir = "m" };
     try expectArgs(try defaultArgs(a, .gfortran, linux), &.{ "-Wall", "-fcoarray=single", "-fopenmp" });
     try expectArgs(try defaultArgs(a, .gfortran, no_omp), &.{ "-Wall", "-fcoarray=single" });
-    try expectArgs(try defaultArgs(a, .ifx, win), &.{ "/warn:all", "/Qcoarray:single", "/Qopenmp" });
-    try expectArgs(try defaultArgs(a, .ifort, linux), &.{ "-warn", "all", "-coarray=single", "-qopenmp" });
+    try expectArgs(try defaultArgs(a, .ifx, win), &.{ "/warn:all,nodeclarations,noexternals", "/Qcoarray:single", "/Qopenmp" });
+    try expectArgs(try defaultArgs(a, .ifort, linux), &.{ "-warn", "all,nodeclarations,noexternals", "-coarray=single", "-qopenmp" });
     try expectArgs(try defaultArgs(a, .flang, .{ .windows = false, .mod_dir = "m", .version = 23, .openmp = true }), &.{ "-Wunused-variable", "-Wused-undefined-variable", "-fopenmp" });
     try expectArgs(try defaultArgs(a, .flang, linux), &.{"-fopenmp"});
     try expectArgs(try defaultArgs(a, .nvfortran, linux), &.{"-Minform=warn"});
