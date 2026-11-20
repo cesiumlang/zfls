@@ -399,6 +399,10 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(mv.len == 2, "modules grid and counters ({d})", .{mv.len});
     grid = try variables(c, try named(mv, "grid"));
     for (grid) |x| try check(!eql(str(x, "name"), "secret"), "no private secret in main", .{});
+    // a module's deferred-length CHARACTER: gfortran keeps its length apart
+    try check(eql(str(try named(grid, "gname"), "value"), "'grid name'"), "grid::gname = {s}", .{str(try named(grid, "gname"), "value").?});
+    const gname = try c.request("evaluate", .{ .expression = "gname", .frameId = int(stack[0], "id").?, .context = "watch" });
+    try check(eql(str(gname, "result"), "'grid name'"), "evaluate gname = {s}", .{str(gname, "result") orelse "?"});
     const counters = try named(mv, "counters");
     const hits = try named(try variables(c, counters), "nhits => hits");
     try check(eql(str(hits, "value"), "3") and eql(str(hits, "evaluateName"), "counters::hits"), "nhits => hits = 3", .{});

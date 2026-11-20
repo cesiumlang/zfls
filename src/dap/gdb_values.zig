@@ -1,7 +1,8 @@
 //! Values of the gdb backend of `zfls dap` that gdb does not show as
 //! Fortran, read otherwise: a CHARACTER of kind 4, whose type gdb gives as
 //! an array (`character(kind=4) (5)`) and whose text it cuts short at a
-//! character beyond ASCII; read from memory.
+//! character beyond ASCII, read from memory; a module's deferred-length
+//! CHARACTER, whose length gfortran keeps apart.
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -13,6 +14,7 @@ const session = @import("session.zig");
 const Session = session.Session;
 const gdb = @import("gdb.zig");
 const gdb_variables = @import("gdb_variables.zig");
+const Variable = gdb_variables.Variable;
 
 /// The longest string read from memory
 const max_len = 4096;
@@ -37,6 +39,46 @@ pub fn wideCharacter(s: *Session, a: Allocator, t: fortran.ArrayType, expr: ?[]c
     decoder.decode(bytes, data) catch return null;
     if (bytes.len != len * 4) return null;
     return try wideText(a, bytes);
+}
+
+/// A module's deferred-length CHARACTER of gfortran's, gdb's variable
+/// `gv`: gfortran's DWARF has a pointer to one character (`PTR TO -> (
+/// character(kind=1) )`), and the length in the static
+/// `_F.<module>_MOD_<name>`. Its text (`*module::name@len`), or "not
+/// allocated"; null for another variable, or when it cannot be read
+pub fn moduleString(s: *Session, a: Allocator, module: []const u8, name: []const u8, gv: Variable, frame: ?i64) !?Variable {
+    const target = fortran.pointerTarget(gv.type) orelse return null;
+    if (!std.mem.eql(u8, target, "character(kind=1)")) return null;
+    var out = gv;
+    out.ref = 0;
+    if (fortran.isNullPointer(gv.value)) {
+        out.value = s.text.not_allocated;
+        return out;
+    }
+    const m = try std.ascii.allocLowerString(a, module);
+    const n = try std.ascii.allocLowerString(a, name);
+    const py = try a.print("python print('zfls-len %d' % int(gdb.lookup_global_symbol('_F.{s}_MOD_{s}').value()))", .{ m, n });
+    const r = try gdb.request(s, a, "evaluate", try gdb_variables.evalArgs(a, py, frame, "repl"));
+    const len = lengthResult(json.str(json.path(r, &.{ "body", "result" })) orelse return null) orelse return null;
+    out.type = try a.print("character*{d}", .{len});
+    if (len == 0) {
+        out.value = "''";
+        return out;
+    }
+    const t = try gdb.request(s, a, "evaluate", try gdb_variables.evalArgs(a, try a.print("*{s}::{s}@{d}", .{ m, n, len }), frame, "watch"));
+    if (!gdb.isSuccess(t)) return null;
+    out.value = json.str(json.path(t, &.{ "body", "result" })) orelse return null;
+    return out;
+}
+
+/// The length that `moduleString`'s Python printed: `zfls-len 11`
+pub fn lengthResult(output: []const u8) ?u64 {
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |line| {
+        const l = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, l, "zfls-len ")) return std.fmt.parseInt(u64, l["zfls-len ".len..], 10) catch null;
+    }
+    return null;
 }
 
 /// The kind of gdb's CHARACTER type (`character(kind=4)`): 4; 1 for
@@ -79,4 +121,10 @@ test "a CHARACTER of kind 4 from its bytes" {
     try std.testing.expectEqual(@as(u32, 4), characterKind("character(kind=4)"));
     try std.testing.expectEqual(@as(u32, 1), characterKind("character*5"));
     try std.testing.expectEqual(@as(u32, 0), characterKind("real(kind=4)"));
+}
+
+test "the length of a module's deferred-length CHARACTER, as gdb's Python prints it" {
+    try std.testing.expectEqual(@as(?u64, 11), lengthResult("zfls-len 11\n"));
+    try std.testing.expectEqual(@as(?u64, 0), lengthResult("zfls-len 0\r\n"));
+    try std.testing.expect(lengthResult("Traceback (most recent call last):\nAttributeError: 'NoneType' object has no attribute 'value'\n") == null);
 }

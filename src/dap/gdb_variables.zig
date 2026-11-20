@@ -316,6 +316,12 @@ fn convert(s: *Session, a: Allocator, k: Variable, parent: Context, frame: ?i64)
         const e = try fortran.element(a, array, k.name);
         return present(s, a, k, e.name, e.evaluate_name, frame, e.sub, null);
     }
+    // gdb's Globals: a module's deferred-length CHARACTER (`store::mname`)
+    if (std.mem.find(u8, k.name, "::")) |sep| if (try gdb_values.moduleString(s, a, k.name[0..sep], k.name[sep + 2 ..], k, frame)) |text| {
+        var out = text;
+        out.evaluate_name = k.name;
+        return out;
+    };
     const evaluate_name: []const u8 = blk: {
         if (parent.registers) break :blk try a.print("${s}", .{k.name});
         if (parent.declared) |d| for (d.names) |n| {
@@ -344,12 +350,18 @@ fn moduleVariable(s: *Session, a: Allocator, v: ModuleVariable, frame: ?i64) !Va
     const r = try gdb.request(s, a, "evaluate", try evalArgs(a, expr, frame, "watch"));
     const result = json.str(json.path(r, &.{ "body", "result" }));
     if (!gdb.isSuccess(r) or result == null) return .{ .name = label, .value = s.text.not_available, .type = v.type };
-    return present(s, a, .{
+    const got: Variable = .{
         .name = label,
         .value = result.?,
         .type = json.str(json.path(r, &.{ "body", "type" })),
         .ref = json.int(json.path(r, &.{ "body", "variablesReference" })) orelse 0,
-    }, label, expr, frame, null, null);
+    };
+    if (try gdb_values.moduleString(s, a, v.module, v.name, got, frame)) |text| {
+        var out = text;
+        out.evaluate_name = expr;
+        return out;
+    }
+    return present(s, a, got, label, expr, frame, null, null);
 }
 
 // Values
