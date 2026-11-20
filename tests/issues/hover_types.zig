@@ -115,3 +115,33 @@ test "a type with many components ends its block with ... ; one not found hovers
     try std.testing.expect(std.mem.find(u8, got, "c20") == null);
     try std.testing.expectEqualStrings("```fortran90\nTYPE(unknown_t) :: u\n```", try hoverOf(w, "big.f90", "v, u", 3));
 }
+
+test "hover on a DEC record component in the middle of a chain (sh.centre.x) (#539)" {
+    const w = try h.Workspace.init(&.{.{ .name = "d.f90", .text =
+        \\module decm
+        \\  implicit none
+        \\  structure /point/
+        \\    real x, y
+        \\  end structure
+        \\  structure /shape/
+        \\    real radius
+        \\    record /point/ centre
+        \\  end structure
+        \\end module decm
+        \\program decp
+        \\  use decm
+        \\  implicit none
+        \\  record /shape/ sh
+        \\  sh.centre.x = 0.5
+        \\  sh.radius = sh.centre.y
+        \\end program decp
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("d.f90");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "centre.x", 0, 2), "TYPE(point) :: centre");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "centre.y", 0, 2), "TYPE(point) :: centre");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "centre.x", 0, 7), "REAL :: x");
+    const def = (try w.definition("d.f90", w.pos("d.f90", "centre.x", 0, 2))) orelse return h.unmet("no definition of centre", .{});
+    try h.expect(def.line == 7, "centre defined on line {d}", .{def.line});
+}
