@@ -3,7 +3,10 @@
 //! messages.
 
 const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 const regex = @import("../regex.zig");
+const paths = @import("../paths.zig");
 const compilers = @import("../compilers.zig");
 const Parser = compilers.Parser;
 const Severity = compilers.Severity;
@@ -26,6 +29,25 @@ test "the file's language: /Tf or -Tf right before it for ifx and ifort" {
     try std.testing.expectEqualStrings("-Tf", compilers.language(.ifx, linux)[0]);
     try std.testing.expectEqualStrings("-Tf", compilers.language(.ifort, linux)[0]);
     try std.testing.expectEqual(@as(usize, 1), compilers.language(.ifort, win).len);
+}
+
+/// The directory of the intrinsic and Intel modules (`iso_fortran_env`,
+/// `ifport`, `omp_lib`, ...) of an ifx that its driver does not look in:
+/// conda-forge's, whose activation script adds it to `FFLAGS` (which zfls
+/// does not run). Its `ifx.exe` is in `<prefix>\Library\bin`, the modules
+/// in `<prefix>\opt\compiler\include\intel64`; on Linux `<prefix>/bin/ifx`
+/// and `<prefix>/opt/compiler/include/intel64`. Null when the directory
+/// beside the executable `exe` (a path) has neither `ifcore.mod` nor
+/// `iso_fortran_env.modintr` (Intel's intrinsic modules).
+pub fn moduleDir(io: Io, a: Allocator, exe: []const u8) !?[]const u8 {
+    const bin = std.Io.Dir.path.dirname(exe) orelse return null;
+    for ([_][]const u8{ "..", "../.." }) |up| {
+        const dir = try std.Io.Dir.path.resolveAlloc(a, &.{ bin, up, "opt", "compiler", "include", "intel64" });
+        for ([_][]const u8{ "ifcore.mod", "iso_fortran_env.modintr" }) |name| {
+            if (paths.isFile(io, try std.Io.Dir.path.join(a, &.{ dir, name }))) return dir;
+        }
+    }
+    return null;
 }
 
 fn severity(sev: []const u8) Severity {
@@ -121,4 +143,30 @@ test "ifx and ifort messages without a location: the driver's, with a number or 
         "-:0:- error: xfortcom: No such file or directory: 'nothere.f90'",
         "-:0:- warning: fortcom: something else",
     });
+}
+
+test "conda-forge's ifx: its modules beside it, else none" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Windows's layout: <prefix>\Library\bin\ifx.exe, <prefix>\opt\...
+    try tmp.dir.createDirPath(io, "win/Library/bin");
+    try tmp.dir.createDirPath(io, "win/opt/compiler/include/intel64");
+    try tmp.dir.writeFile(io, .{ .sub_path = "win/opt/compiler/include/intel64/iso_fortran_env.modintr", .data = "" });
+    // Linux's: <prefix>/bin/ifx, <prefix>/opt/...
+    try tmp.dir.createDirPath(io, "linux/bin");
+    try tmp.dir.createDirPath(io, "linux/opt/compiler/include/intel64");
+    try tmp.dir.writeFile(io, .{ .sub_path = "linux/opt/compiler/include/intel64/ifcore.mod", .data = "" });
+    // an ifx without them there (Intel's installer's finds its own)
+    try tmp.dir.createDirPath(io, "plain/bin");
+    const dir = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const win = (try moduleDir(io, a, try paths.join(a, &.{ dir, "win", "Library", "bin", "ifx.exe" }))).?;
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ dir, "win", "opt", "compiler", "include", "intel64" }), win);
+    const linux = (try moduleDir(io, a, try paths.join(a, &.{ dir, "linux", "bin", "ifx" }))).?;
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ dir, "linux", "opt", "compiler", "include", "intel64" }), linux);
+    try std.testing.expect((try moduleDir(io, a, try paths.join(a, &.{ dir, "plain", "bin", "ifx" }))) == null);
+    try std.testing.expect((try moduleDir(io, a, "ifx")) == null);
 }

@@ -74,8 +74,9 @@ pub const Options = struct {
     mod_dir: []const u8,
     /// The compiler's major version, when known (LLVM Flang's)
     version: ?u32 = null,
-    /// LLVM Flang's intrinsic modules, where its driver does not look
-    /// (compilers/flang_modules.zig)
+    /// The compiler's intrinsic modules, where its driver does not look:
+    /// LLVM Flang's (compilers/flang_modules.zig), conda-forge's ifx's
+    /// (`intel.moduleDir`)
     intrinsic_modules: ?[]const u8 = null,
 };
 

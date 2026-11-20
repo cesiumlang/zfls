@@ -171,6 +171,8 @@ pub fn argsOf(self: *Server, a: Allocator, id: compilers.Id, role: Role, file: *
     try args.appendSlice(a, try compilers.modOutput(a, id, o.mod_dir, o));
     // Flang's intrinsic modules where its driver does not look (#438)
     if (id == .flang) if (o.intrinsic_modules) |d| try args.appendSlice(a, &.{ "-fintrinsic-modules-path", try a.dupe(u8, d) });
+    // conda-forge's ifx's modules, which its activation adds (#498)
+    if (id == .ifx or id == .ifort) if (o.intrinsic_modules) |d| try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, d), o));
     try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, paths.dirname(file.path)), o));
     for (try definition.includeDirs(self, a)) |d| try args.appendSlice(a, try compilers.include(a, id, try a.dupe(u8, d), o));
     for (self.s.compiler_include_dirs.slice()) |d| {

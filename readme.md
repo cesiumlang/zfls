@@ -972,7 +972,12 @@ elsewhere, which is also stopped when the server shuts down during a run.
   `compiler_args` are relative to that. ifx and ifort, which write their
   preprocessor's output (`file.i90`) into their working directory, run in
   one of zfls's cache instead, with the relative directories of the `-I`
-  and `-module` options of `compiler_args` made absolute.
+  and `-module` options of `compiler_args` made absolute. zfls passes them
+  `-Tf <file>` (`/Tf <file>` on Windows), so that a file of any suffix
+  (`.f08`, `.f77`, `.pf`) is checked. conda-forge's ifx does not find its
+  own modules (`iso_fortran_env`, `ifport`, `omp_lib`; its activation adds
+  them to `FFLAGS`): when `<prefix>/opt/compiler/include/intel64` is
+  beside its `bin` (or `Library\bin`), zfls passes it with `-I`.
 - A file opened with a text that is not the one on disk (unsaved changes
   the editor restored) is checked from a copy of that text.
 - `compiler_on_change`: also check a file while it is edited, its unsaved
