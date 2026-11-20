@@ -162,6 +162,18 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(std.mem.eql(u8, valueOf(args, "s"), "'abcdef'"), "s = 'abcdef' ({s})", .{valueOf(args, "s")});
     try check(std.mem.eql(u8, valueOf(args, "a"), "[6.0, 2.0, 3.0]"), "a = [6.0, 2.0, 3.0] ({s})", .{valueOf(args, "a")});
     try check(std.mem.eql(u8, valueOf(args, "b"), "[2×3]"), "b = [2×3] ({s})", .{valueOf(args, "b")});
+    // CLASS(point) of a tagged: its dynamic type, whose description
+    // Intel's descriptor points at (`GRID#TAGGED`)
+    const t = named(args, "t");
+    try check(t != null and std.mem.eql(u8, str(t.?, "type") orelse "", "CLASS(point)") and std.mem.startsWith(u8, valueOf(args, "t"), "tagged("), "t: CLASS(point) = tagged(…) ({s})", .{valueOf(args, "t")});
+    const tc = items(try c.request("variables", .{ .variablesReference = int(t.?, "variablesReference").? }), "variables");
+    try check(std.mem.eql(u8, valueOf(tc, "tag"), "'hello   '") and std.mem.eql(u8, valueOf(tc, "w"), "[0.25, 0.25]"), "t%tag = 'hello   ', t%w = [0.25, 0.25] ({s}, {s})", .{ valueOf(tc, "tag"), valueOf(tc, "w") });
+    const tid = try evaluate(c, frames[0], "t%point%id");
+    try check(std.mem.eql(u8, tid, "7"), "t%point%id = 7 ({s})", .{tid});
+    // CLASS(point) array of labeled
+    try check(std.mem.eql(u8, valueOf(args, "ts"), "[labeled(…), labeled(…)]"), "ts = [labeled(…), labeled(…)] ({s})", .{valueOf(args, "ts")});
+    const ts2 = try evaluate(c, frames[0], "ts(2)%label");
+    try check(std.mem.eql(u8, ts2, "5"), "ts(2)%label = 5 ({s})", .{ts2});
     const b_cols = items(try c.request("variables", .{ .variablesReference = int(named(args, "b").?, "variablesReference").? }), "variables");
     try check(std.mem.eql(u8, valueOf(b_cols, "(:,1)"), "[-10, -20]"), "b(:,1) = [-10, -20] ({s})", .{valueOf(b_cols, "(:,1)")});
     const b21 = try evaluate(c, frames[0], "b(2,1)");
@@ -171,6 +183,14 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(std.mem.eql(u8, valueOf(grid, "ncells"), "42"), "grid::ncells = 42 ({s})", .{valueOf(grid, "ncells")});
     const ncells = try evaluate(c, frames[0], "grid::ncells");
     try check(std.mem.eql(u8, ncells, "42"), "evaluate grid::ncells = 42 ({s})", .{ncells});
+    // module variables by their own names (host association), which the
+    // frame does not have: a variable, a component, a COMMON variable of
+    // the module (at the block's symbol `BLK` plus its offset)
+    for ([_][2][]const u8{ .{ "ncells", "42" }, .{ "origin%x", "9.0" }, .{ "cy", "2.5" } }) |x| {
+        const r = try evaluate(c, frames[0], x[0]);
+        try check(std.mem.eql(u8, r, x[1]), "evaluate {s} = {s} ({s})", .{ x[0], x[1], r });
+    }
+    try check(std.mem.eql(u8, valueOf(grid, "cx"), "1.5") and std.mem.eql(u8, valueOf(grid, "cy"), "2.5"), "grid::cx = 1.5, grid::cy = 2.5 ({s}, {s})", .{ valueOf(grid, "cx"), valueOf(grid, "cy") });
 
     // next to END SUBROUTINE, then back to the main program: in its CALL
     // line (the rest of the CALL statement's code), or the next
@@ -213,17 +233,25 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(big.len == 10 and std.mem.eql(u8, str(big[9], "name") orelse "", "(901:1000)"), "big in 10 sections, the last (901:1000) ({d})", .{big.len});
     const tgw = try evaluate(c, frames[0], "tg%w");
     try check(std.mem.eql(u8, tgw, "[0.25, 0.25]"), "tg%w = [0.25, 0.25] ({s})", .{tgw});
-    // an allocatable array of a derived type: its descriptor's elements
-    // are the type's forward reference in CodeView, resolved by its name
+    // an allocatable CLASS(point) array of labeled: its descriptor's
+    // elements are the type's forward reference in CodeView (#499), and
+    // their dynamic type's description follows the dimensions
+    try check(std.mem.eql(u8, valueOf(locals, "pts"), "[labeled(…), labeled(…)]"), "pts = [labeled(…), labeled(…)] ({s})", .{valueOf(locals, "pts")});
     const pts = items(try c.request("variables", .{ .variablesReference = int(named(locals, "pts").?, "variablesReference").? }), "variables");
-    try check(pts.len == 2 and std.mem.eql(u8, valueOf(pts, "(1)"), "point(x=1.5, y=-2.0, id=7)"), "pts(1) = point(x=1.5, y=-2.0, id=7) ({s})", .{valueOf(pts, "(1)")});
-    const pts2 = try evaluate(c, frames[0], "pts(2)%id");
-    try check(std.mem.eql(u8, pts2, "7"), "pts(2)%id = 7 ({s})", .{pts2});
+    try check(pts.len == 2 and std.mem.eql(u8, valueOf(pts, "(1)"), "labeled(point=…, label=5)"), "pts(1) = labeled(point=…, label=5) ({s})", .{valueOf(pts, "(1)")});
+    const pts2 = try evaluate(c, frames[0], "pts(2)%point%id");
+    try check(std.mem.eql(u8, pts2, "7"), "pts(2)%point%id = 7 ({s})", .{pts2});
     // a substring, and a module's deferred-length CHARACTER
     const dl = try evaluate(c, frames[0], "dl(2:4)");
     try check(std.mem.eql(u8, dl, "'efe'"), "dl(2:4) = 'efe' ({s})", .{dl});
     const main_grid = try moduleVariables(c, scopes, "grid");
     try check(std.mem.eql(u8, valueOf(main_grid, "gname"), "'grid name'"), "grid::gname = 'grid name' ({s})", .{valueOf(main_grid, "gname")});
+    // by use association; a module's deferred-length CHARACTER by `::`,
+    // with its declaration
+    for ([_][2][]const u8{ .{ "ncells", "42" }, .{ "grid::gname", "'grid name'" }, .{ "grid::cy", "2.5" } }) |x| {
+        const r = try evaluate(c, frames[0], x[0]);
+        try check(std.mem.eql(u8, r, x[1]), "evaluate {s} = {s} ({s})", .{ x[0], x[1], r });
+    }
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");

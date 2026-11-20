@@ -21,6 +21,8 @@ module grid
   integer, private :: secret = 99
   type(point) :: origin
   character(len=:), allocatable :: gname
+  real :: cx, cy
+  common /blk/ cx, cy
 contains
   subroutine work(a, b, s, p, t, ts)
     real, intent(inout) :: a(:)
@@ -64,6 +66,8 @@ program main
   origin%x = 9.0
   dl = 'deferred'
   gname = 'grid name'
+  cx = 1.5
+  cy = 2.5
   call work(v, m, 'abcdef', origin, tg, pts)
   print *, allocated(none), big(1), ip, nhits, dl, gname
   k = 4 ! stop here: main

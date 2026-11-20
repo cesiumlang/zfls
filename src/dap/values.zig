@@ -189,6 +189,24 @@ pub const Descriptor = struct {
         return d;
     }
 
+    /// Intel's descriptor of a CLASS object or array: after the
+    /// dimensions, the address of the dynamic type's description (word
+    /// 6 + 3·rank), whose first word points to its name (`GRID#TAGGED`)
+    pub fn intelTypeInfo(words: []const u64, rank: u32) ?u64 {
+        const at = header_words + 3 * @as(usize, rank);
+        return if (at < words.len and words[at] != 0) words[at] else null;
+    }
+
+    /// A derived type's name of Intel's description of it (`GRID#TAGGED`,
+    /// a module's; `MAIN#T`): `TAGGED`
+    pub fn intelTypeName(text: []const u8) ?[]const u8 {
+        const at = std.mem.findScalarLast(u8, text, '#') orelse return null;
+        const name = text[at + 1 ..];
+        if (name.len == 0 or at == 0) return null;
+        for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '$') return null;
+        return name;
+    }
+
     /// Not allocated, not associated
     pub fn empty(d: Descriptor) bool {
         return d.base == 0;
@@ -339,6 +357,26 @@ test "Intel's descriptor" {
     try std.testing.expectEqual(Extent{ .lo = 1, .count = 3, .stride = 8 }, d.dims[1]);
     try std.testing.expect(!d.empty());
     try std.testing.expectEqual(@as(usize, 96), Descriptor.bytes(2));
+}
+
+test "Intel's descriptor of a CLASS object or array" {
+    // ifx 2026's, as cdb dumped them: t (rank 0, elem_len 0x60, the size of
+    // a tagged), ts (rank 1, two labeled of 0x10)
+    const t = [_]u64{ 0x7ff7190c4058, 0x60, 0, 3, 0, 0, 0x7ff7190c4298 };
+    const dt = Descriptor.parse(&t).?;
+    try std.testing.expectEqual(@as(u32, 0), dt.rank);
+    try std.testing.expectEqual(@as(u64, 0x60), dt.elem_len);
+    try std.testing.expectEqual(@as(?u64, 0x7ff7190c4298), Descriptor.intelTypeInfo(&t, 0));
+    const ts = [_]u64{ 0x2924df41430, 0x10, 0, 0x81, 1, 0, 2, 0x10, 1, 0x7ff7190c4268 };
+    const dts = Descriptor.parse(&ts).?;
+    try std.testing.expectEqual(Extent{ .lo = 1, .count = 2, .stride = 0x10 }, dts.dims[0]);
+    try std.testing.expectEqual(@as(?u64, 0x7ff7190c4268), Descriptor.intelTypeInfo(&ts, 1));
+    try std.testing.expect(Descriptor.intelTypeInfo(ts[0..9], 1) == null);
+    try std.testing.expectEqualStrings("TAGGED", Descriptor.intelTypeName("GRID#TAGGED").?);
+    try std.testing.expectEqualStrings("LABELED", Descriptor.intelTypeName("GRID#LABELED").?);
+    try std.testing.expect(Descriptor.intelTypeName("TAGGED") == null);
+    try std.testing.expect(Descriptor.intelTypeName("GRID#") == null);
+    try std.testing.expect(Descriptor.intelTypeName("GRID#A B") == null);
 }
 
 test "LLVM Flang's descriptor" {
