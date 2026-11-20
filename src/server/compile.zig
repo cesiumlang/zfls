@@ -346,13 +346,17 @@ fn enqueue(self: *Server, job: *Job) !void {
     w.cond.signal(io);
 }
 
-/// The directory of the .mod files: `compiler_mod_dir`, else one per root
-/// and compiler in zfls's cache
-fn modDir(self: *Server, a: Allocator, id: compilers.Id) ![]const u8 {
+/// The directory of the .mod files: `compiler_mod_dir`, else one per root,
+/// compiler and major version (when it is known: gfortran's, Flang's) in
+/// zfls's cache. Two releases of a compiler do not always read each
+/// other's: gfortran 15 and 16 write module version 16, which gfortran 9 to
+/// 14 cannot read ("created by a different version of GNU Fortran", #526).
+fn modDir(self: *Server, a: Allocator, id: compilers.Id, version: ?u32) ![]const u8 {
     if (self.s.compiler_mod_dir) |d| {
         if (d.len > 0) return if (std.Io.Dir.path.isAbsolute(d)) d else paths.join(a, &.{ self.root_path, d });
     }
-    return paths.join(a, &.{ try cacheDir(self, a, "mod"), @tagName(id) });
+    const name = if (version) |v| try a.print("{s}-{d}", .{ @tagName(id), v }) else @tagName(id);
+    return paths.join(a, &.{ try cacheDir(self, a, "mod"), name });
 }
 
 /// zfls's directory `kind` (`mod`, `work`) for the root
@@ -375,13 +379,13 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     job.arena = .init(self.gpa);
     errdefer freeJob(self.gpa, job);
     const ja = job.arena.allocator();
-    const mod_dir = try ja.dupe(u8, try modDir(self, a, id));
-    Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     // the settings of the file's form, for the modules it uses too
     const user = userArgs(self, file.declared_fixed);
     const cmd = try commandOf(self, a, file, user);
     const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed), cmd);
     const known = compiler_version.of(self, a, id, exes);
+    const mod_dir = try ja.dupe(u8, try modDir(self, a, id, known.version));
+    Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = known.version, .intrinsic_modules = known.intrinsic_modules };
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
     // Intel's preprocessor output goes into the working directory: one of

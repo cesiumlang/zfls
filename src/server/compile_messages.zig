@@ -32,11 +32,20 @@ pub fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line:
         const ec = @min(end_column orelse end_text.len, end_text.len);
         return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = el - 1, .character = str.byteToUtf16(end_text, ec) } };
     };
-    // the name at the column, else one character
+    // the name that has the column, else one character: gfortran's column
+    // is the last letter of the name in many messages ("Symbol 'x' at (1)
+    // has no IMPLICIT type"), the others' its first
+    var begin = start;
     var end = start;
-    while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
-    if (end == start) end = @min(start + 1, text.len);
-    return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
+    if (start < text.len and isNameChar(text[start])) {
+        while (begin > 0 and isNameChar(text[begin - 1])) begin -= 1;
+        while (end < text.len and isNameChar(text[end])) end += 1;
+    } else end = @min(start + 1, text.len);
+    return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, begin) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
+}
+
+fn isNameChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
 /// Whether a message's file is the file checked (`here`: its names, as
@@ -66,6 +75,36 @@ fn relatedInfo(a: Allocator, job: *const Job, r: compilers.Related) !lsp.Diagnos
     };
 }
 
+/// The line of the `#include` of a file that is not found, when the message
+/// names the line after it: gfortran's (its cpp's) `missing.h: No such file
+/// or directory` does (GCC 9 to 16). Null for any other message.
+fn missingInclude(lines: []const []const u8, m: compilers.Message) ?usize {
+    const suffix = ": No such file or directory";
+    if (!std.mem.endsWith(u8, m.message, suffix) or m.line < 2 or m.line - 1 > lines.len) return null;
+    const name = m.message[0 .. m.message.len - suffix.len];
+    if (name.len == 0 or !includes(lines[m.line - 2], name)) return null;
+    // the message's own line includes it: it is right
+    if (m.line <= lines.len and includes(lines[m.line - 1], name)) return null;
+    return m.line - 1;
+}
+
+/// Whether `line` is an `#include` of `name` (`"name"` or `<name>`)
+fn includes(line: []const u8, name: []const u8) bool {
+    const t = std.mem.trimStart(u8, line, " \t");
+    if (t.len == 0 or t[0] != '#') return false;
+    const rest = std.mem.trimStart(u8, t[1..], " \t");
+    if (!std.mem.startsWith(u8, rest, "include")) return false;
+    const arg = std.mem.trim(u8, rest["include".len..], " \t");
+    if (arg.len < 2) return false;
+    const close: u8 = switch (arg[0]) {
+        '"' => '"',
+        '<' => '>',
+        else => return false,
+    };
+    const end = std.mem.findScalarPos(u8, arg, 1, close) orelse return false;
+    return std.mem.eql(u8, arg[1..end], name);
+}
+
 /// The compiler's messages as diagnostics of the file, which they may name
 /// as any of `aliases` (the file, its copy, fypp's output)
 pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const compilers.Message, aliases: []const []const u8) ![]const lsp.Diagnostic {
@@ -75,6 +114,8 @@ pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []co
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (msgs) |m| {
         const ours = try isHere(a, job, here.items, m.file);
+        // a missing #include, on its line rather than the next (gfortran)
+        const moved = if (ours) missingInclude(lines, m) else null;
         // a message in an included file, at the line that includes it
         const site = if (ours) null else if (m.include_site) |s| (if (try isHere(a, job, here.items, s.file)) s else null) else null;
         var related: std.ArrayList(lsp.DiagnosticRelatedInformation) = .empty;
@@ -85,7 +126,7 @@ pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []co
         // includes it or else at the top, with its location
         const message = if (ours) m.message else try a.print("{s}:{d}: {s}", .{ m.file.?, m.line, m.message });
         try out.append(a, .{
-            .range = if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else if (site) |s| rangeAt(lines, s.line, null, null, null) else rangeAt(lines, 0, null, null, null),
+            .range = if (moved) |l| rangeAt(lines, l, null, null, null) else if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else if (site) |s| rangeAt(lines, s.line, null, null, null) else rangeAt(lines, 0, null, null, null),
             .message = message,
             .severity = m.severity.lsp(),
             .code = m.code,
@@ -109,6 +150,31 @@ test "ranges: the name at the column, the whole line, a span" {
     try std.testing.expectEqual(@as(usize, 3), span.end.character);
     const none = rangeAt(&lines, 0, null, null, null);
     try std.testing.expectEqual(@as(usize, 0), none.end.character);
+    // not a name: one character
+    const plus = rangeAt(&lines, 2, 7, null, null);
+    try std.testing.expectEqual(@as(usize, 6), plus.start.character);
+    try std.testing.expectEqual(@as(usize, 7), plus.end.character);
+}
+
+test "ranges: gfortran's column, the last letter of a name, is the whole name" {
+    // MSYS2's gfortran 16.1 (and Nix's 9.5 to 15.3): fxcol.f90:3:19 and
+    // fxcol.f:3:23, "Symbol 'longname' at (1) has no IMPLICIT type"
+    const free = [_][]const u8{ "program fxc", "  implicit none", "  print *, longname, b" };
+    const r = rangeAt(&free, 3, 19, null, null);
+    try std.testing.expectEqual(@as(usize, 11), r.start.character);
+    try std.testing.expectEqual(@as(usize, 19), r.end.character);
+    // "Symbol 'b'": 3:22
+    const b = rangeAt(&free, 3, 22, null, null);
+    try std.testing.expectEqual(@as(usize, 21), b.start.character);
+    try std.testing.expectEqual(@as(usize, 22), b.end.character);
+    const fixed = [_][]const u8{ "      program fxc", "      implicit none", "      print *, longname, b" };
+    const f = rangeAt(&fixed, 3, 23, null, null);
+    try std.testing.expectEqual(@as(usize, 15), f.start.character);
+    try std.testing.expectEqual(@as(usize, 23), f.end.character);
+    // the first letter, as the other compilers give it: the same
+    const first = rangeAt(&free, 3, 12, null, null);
+    try std.testing.expectEqual(@as(usize, 11), first.start.character);
+    try std.testing.expectEqual(@as(usize, 19), first.end.character);
 }
 
 test "a message in an included file: at the line that includes it, its place related" {
@@ -147,6 +213,36 @@ test "a message in an included file: at the line that includes it, its place rel
     try std.testing.expectEqualStrings("No explicit type declared for 'undeclared_in_inc'", rel[0].message);
     try std.testing.expect(std.mem.endsWith(u8, rel[1].location.uri, "/inc/outer.inc"));
     try std.testing.expectEqualStrings("included here", rel[1].message);
+}
+
+test "gfortran: a missing #include is at its line, not the next" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cwd = if (is_windows) "C:\\w" else "/w";
+    const path = try paths.join(a, &.{ cwd, "ppinc.F90" });
+    const job: Job = .{ .arena = arena, .uri = "", .path = path, .id = .gfortran, .exes = &.{}, .compiler_path = null, .cwd = cwd, .deps = &.{}, .deps_fixed = &.{}, .deps_cwd = &.{}, .args = &.{}, .fixed = false, .work_dir = cwd };
+    const text = "program ppinc\n  implicit none\n#include \"inc/bad.inc\"\n#ifdef FOO\n#error FOO must not be set\n#endif\n#include \"missing.h\"\n  print *, q\nend program\n";
+    // MSYS2's gfortran 16.1 (and Nix's 9.5 to 15.3) with -DFOO: the
+    // #include of line 7 is reported on line 8; #error on its own line
+    const msgs = try compilers.parse(a, .gfortran,
+        \\ppinc.F90:5:2: Error: #error FOO must not be set
+        \\ppinc.F90:8:2: Fatal Error: missing.h: No such file or directory
+        \\compilation terminated.
+    );
+    const ds = try toDiagnostics(a, &job, text, msgs, &.{path});
+    try std.testing.expectEqual(@as(usize, 2), ds.len);
+    try std.testing.expectEqual(@as(usize, 4), ds[0].range.start.line);
+    try std.testing.expectEqualStrings("missing.h: No such file or directory", ds[1].message);
+    try std.testing.expectEqual(@as(usize, 6), ds[1].range.start.line);
+    try std.testing.expectEqual(@as(usize, 0), ds[1].range.start.character);
+    try std.testing.expectEqual(@as(usize, 20), ds[1].range.end.character);
+    // the same message on the #include's own line, or after a line that
+    // includes another file: where it is
+    const lines = try splitLines(a, text);
+    try std.testing.expectEqual(@as(?usize, null), missingInclude(lines, .{ .file = null, .line = 7, .column = 2, .severity = .@"error", .message = "missing.h: No such file or directory" }));
+    try std.testing.expectEqual(@as(?usize, null), missingInclude(lines, .{ .file = null, .line = 4, .column = 2, .severity = .@"error", .message = "missing.h: No such file or directory" }));
+    try std.testing.expect(includes("  # include <x/y.h>", "x/y.h") and !includes("#include \"x.h", "x.h") and !includes("! #include \"x.h\"", "x.h"));
 }
 
 test "fpp's messages, which name the file by its name only, are about the file checked" {
