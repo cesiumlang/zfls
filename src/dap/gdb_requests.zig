@@ -30,6 +30,7 @@ const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
+const gdb_values = @import("gdb_values.zig");
 const Variable = vars.Variable;
 
 /// gdb's exception breakpoint filters of Ada, of no use to Fortran
@@ -462,13 +463,16 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     try forwarded.put(a, "context", .{ .string = if (known) context else "watch" });
     const r = try gdb.request(s, a, "evaluate", Value{ .object = forwarded });
     if (gdb.isSuccess(r)) if (r.object.getPtr("body")) |body| if (body.* == .object) {
-        const shown = vars.present(s, a, .{
+        const got: vars.Variable = .{
             .name = expr,
             .value = json.str(json.get(body.*, "result")) orelse "",
             .type = json.str(json.get(body.*, "type")),
             .ref = json.int(json.get(body.*, "variablesReference")) orelse 0,
             .memory_reference = json.str(json.get(body.*, "memoryReference")),
-        }, expr, expr, frame, null, null) catch null;
+        };
+        // a module's deferred-length CHARACTER, by its own name or its module's
+        const string = if (try moduleOf(s, a, expr, frame)) |mv| try gdb_values.moduleString(s, a, mv.module, mv.name, got, frame) else null;
+        const shown = string orelse (vars.present(s, a, got, expr, expr, frame, null, null) catch null);
         if (shown) |v| {
             try body.object.put(a, "result", .{ .string = v.value });
             if (v.type) |t| try body.object.put(a, "type", .{ .string = t }) else _ = body.object.orderedRemove("type");
@@ -476,6 +480,19 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         }
     };
     gdb.respondWith(s, a, req, r);
+}
+
+/// The module variable an expression names: `module::name`, or a name the
+/// frame's line sees by USE or host association; null for other ones
+fn moduleOf(s: *Session, a: Allocator, expr: []const u8, frame: ?i64) !?struct { module: []const u8, name: []const u8 } {
+    const e = std.mem.trim(u8, expr, " ");
+    for (e) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != ':') return null;
+    if (std.mem.find(u8, e, "::")) |sep| return .{ .module = e[0..sep], .name = e[sep + 2 ..] };
+    const f = s.g.frames.get(frame orelse return null) orelse return null;
+    for (try moduleVariablesAt(s, a, f.file orelse return null, f.line)) |mv| {
+        if (std.ascii.eqlIgnoreCase(mv.local, e)) return .{ .module = mv.module, .name = mv.name };
+    }
+    return null;
 }
 
 /// `setVariable`: by the variable's Fortran expression when it has one
