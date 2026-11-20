@@ -63,4 +63,5 @@ test {
     _ = @import("compiler_lfortran.zig");
     _ = @import("compiler_flang.zig");
     _ = @import("flang_modules.zig");
+    _ = @import("flang_declarations.zig");
 }

@@ -30,6 +30,9 @@ pub const Attr = struct {
     name: []const u8,
     kw: Kw,
     text: ?[]const u8 = null,
+    /// the pointer of a Cray pointer, `p` of `POINTER (p, b)`: an integer
+    /// variable the statement declares, not an attribute
+    cray_pointer: bool = false,
 };
 
 /// The statements and the attribute each gives
@@ -118,6 +121,7 @@ pub fn read(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *std.A
         return false;
     }
     if (list.len == 0) return kw == .save;
+    if (kw == .pointer and list[0] == '(') return crayPointers(a, list, scope, ln, out);
     if (!std.ascii.isAlphabetic(list[0]) and !(kw == .save and list[0] == '/')) return false;
     for (try helpers.splitArgs(a, list)) |item_in| {
         const item = str.strip(item_in);
@@ -145,6 +149,26 @@ pub fn read(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *std.A
     return true;
 }
 
+/// `POINTER (p, b), (q, c)`: Cray pointers, an extension of gfortran, ifx
+/// and LLVM Flang; each pointer `p` is an integer variable the statement
+/// declares (its pointee `b` is declared as any variable)
+fn crayPointers(a: Allocator, list_in: []const u8, scope: ?*Obj, ln: usize, out: *std.ArrayList(Attr)) !bool {
+    var list = list_in;
+    var any = false;
+    while (bracketed(list, '(', ')')) |pair| {
+        const comma = std.mem.findScalar(u8, pair, ',') orelse return any;
+        const name = str.strip(pair[0..comma]);
+        if (name.len == 0 or !std.ascii.isAlphabetic(name[0])) return any;
+        for (name) |c| if (!isWordChar(c)) return any;
+        try add(a, out, .{ .scope = scope, .line = ln, .name = name, .kw = .pointer, .cray_pointer = true });
+        any = true;
+        list = std.mem.trimStart(u8, list[pair.len + 2 ..], " \t");
+        if (list.len == 0 or list[0] != ',') break;
+        list = std.mem.trimStart(u8, list[1..], " \t");
+    }
+    return any;
+}
+
 /// Give the attributes to the variables they name, in the order of the
 /// statements; a name not declared gets a variable of its implicit type, if
 /// it has one
@@ -153,6 +177,12 @@ pub fn apply(ast: *Ast, a: Allocator, attrs: []const Attr, sort: bool) !void {
     for (attrs) |at| {
         const scope = at.scope orelse ast.none_scope orelse continue;
         if (scope.data != .scope) continue;
+        if (at.cray_pointer) {
+            for (scope.childList()) |child| {
+                if (child.nameLowerEql(at.name)) break;
+            } else _ = try newVariable(ast, a, scope, at, cray_pointer_type);
+            continue;
+        }
         const v = for (scope.childList()) |child| {
             if (child.nameLowerEql(at.name)) break child;
         } else (try implicitVariable(ast, a, scope, at)) orelse continue;
@@ -187,6 +217,16 @@ pub fn apply(ast: *Ast, a: Allocator, attrs: []const Attr, sort: bool) !void {
 /// statement; null under IMPLICIT NONE
 fn implicitVariable(ast: *Ast, a: Allocator, scope: *Obj, at: Attr) !?*Obj {
     const type_name = implicit.typeOf(scope, at.name) orelse return null;
+    return newVariable(ast, a, scope, at, type_name);
+}
+
+/// The type of a Cray pointer: an address, as LLVM Flang has it on 64-bit
+/// targets (gfortran and ifx use the size of an address too)
+const cray_pointer_type = "INTEGER(8)";
+
+/// A variable of type `type_name` named `at.name` in `scope`, declared at
+/// the statement
+fn newVariable(ast: *Ast, a: Allocator, scope: *Obj, at: Attr, type_name: []const u8) !?*Obj {
     const decl = try a.print("{s} :: {s}", .{ type_name, at.name });
     const def = (try definitions.readVarDef(a, decl, null, false)) orelse return null;
     if (def != .var_) return null;
@@ -227,7 +267,14 @@ test "attribute statements" {
         if (w[2]) |t| try testing.expectEqualStrings(t, got.text.?) else try testing.expect(got.text == null);
     }
     // statements that only start with the word of one
-    for ([_][]const u8{ "save = 1", "pointer (p, b)", "dimension(3) = 1", "target%x = 2", "value", "intent(sideways) :: x", "optional_x = 1" }) |line| {
+    for ([_][]const u8{ "save = 1", "pointer(1) = 2", "dimension(3) = 1", "target%x = 2", "value", "intent(sideways) :: x", "optional_x = 1" }) |line| {
         try testing.expect(!try read(a, line, null, 1, &out));
     }
+    // Cray pointers: the pointers, not the pointees
+    out.clearRetainingCapacity();
+    try testing.expect(try read(a, "pointer (p, b), (q2, c(10))", null, 1, &out));
+    try testing.expectEqual(2, out.items.len);
+    try testing.expectEqualStrings("p", out.items[0].name);
+    try testing.expectEqualStrings("q2", out.items[1].name);
+    try testing.expect(out.items[0].cray_pointer and out.items[1].cray_pointer);
 }

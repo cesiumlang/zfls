@@ -143,7 +143,8 @@ pub fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
     const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
     var kind_str: []const u8 = try std.mem.replaceOwned(u8, a, m.group(1).?, " ", "");
     var rest = line[m.end(0)..];
-    if (std.mem.findScalar(u8, kind_str, '(') != null) {
+    // `()` is whole
+    if (std.mem.findScalar(u8, kind_str, '(') != null and !std.mem.endsWith(u8, kind_str, ")")) {
         const mc = helpers.findParenMatch(rest);
         if (mc < 0) return null; // Incomplete kind specification
         const mcu: usize = @intCast(mc);
@@ -616,7 +617,7 @@ pub fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
 /// anchored at the start of the line, after spaces; the words are those its
 /// pattern (VAR, SUB, FUN, BLOCK_DATA, ...) can begin with.
 pub const def_tests = [_]DefTestEntry{
-    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type" } },
+    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type", "byte" } },
     .{ .read = readSubDef1, .starts = &(.{"subroutine"} ++ proc_prefixes) },
     .{ .read = readFunDef1, .starts = &(.{"function"} ++ proc_prefixes) },
     .{ .read = readBlockDataDef, .starts = &.{"block"} },

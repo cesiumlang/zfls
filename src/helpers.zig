@@ -175,18 +175,30 @@ pub fn splitArgs(a: Allocator, s: []const u8) ![][]const u8 {
     return out.items;
 }
 
-/// Separate definition lists, skipping parenthesis and bracket groups
+/// Separate definition lists, skipping parenthesis and bracket groups, and
+/// the old-style initial values between slashes (`k /3/, v(3) /1, 2, 3/`,
+/// an extension of gfortran, ifx and LLVM Flang)
 pub fn separateDefList(a: Allocator, test_str: []const u8) !?[][]const u8 {
     const stripped = try stripStrings(a, test_str, false);
     var paren_count: isize = 0;
     var def_list: std.ArrayList([]const u8) = .empty;
     var curr: std.ArrayList(u8) = .empty;
+    // in `/.../` after an entity, which has no `=` initialization
+    var in_slashes = false;
+    var has_eq = false;
     for (stripped) |c| {
         switch (c) {
             '(', '[' => paren_count += 1,
             ')', ']' => paren_count -= 1,
-            ',' => if (paren_count == 0) {
+            '=' => if (paren_count == 0) {
+                has_eq = true;
+            },
+            '/' => if (paren_count == 0 and !has_eq) {
+                in_slashes = !in_slashes;
+            },
+            ',' => if (paren_count == 0 and !in_slashes) {
                 const s = str.strip(curr.items);
+                has_eq = false;
                 if (s.len > 0) {
                     try def_list.append(a, try a.dupe(u8, s));
                     curr = .empty;
@@ -202,6 +214,21 @@ pub fn separateDefList(a: Allocator, test_str: []const u8) !?[][]const u8 {
     const s = str.strip(curr.items);
     if (s.len > 0) try def_list.append(a, s);
     return def_list.items;
+}
+
+/// The name of an entity of a declaration's list, with its bounds, length
+/// and codimensions (`v(3)[*]*8`): what is before its initialization, an
+/// `= value` or an old-style `/value/` outside parentheses and brackets
+/// (`x(1:int(n, kind=8))` has none)
+pub fn entityBeforeInit(item: []const u8) []const u8 {
+    var depth: usize = 0;
+    for (item, 0..) |c, i| switch (c) {
+        '(', '[' => depth += 1,
+        ')', ']' => depth -|= 1,
+        '=', '/' => if (depth == 0) return item[0..i],
+        else => {},
+    };
+    return item;
 }
 
 /// Find Fortran word in line
@@ -548,6 +575,13 @@ test "helper functions" {
     const l2 = (try separateDefList(a, "var, init_var(3) = [1,2,3], array(3,3)")).?;
     try testing.expectEqualStrings("init_var(3) = [1,2,3]", l2[1]);
     try testing.expectEqualStrings("array(3,3)", l2[2]);
+    const l3 = (try separateDefList(a, "k /3/, v(3) /1, 2, 3/, w = a / b, z")).?;
+    try testing.expectEqual(@as(usize, 4), l3.len);
+    try testing.expectEqualStrings("v(3) /1, 2, 3/", l3[1]);
+    try testing.expectEqualStrings("w = a / b", l3[2]);
+    try testing.expectEqualStrings("v(3) ", entityBeforeInit("v(3) /1, 2, 3/"));
+    try testing.expectEqualStrings("x(1:int(n, kind=8))", entityBeforeInit("x(1:int(n, kind=8))"));
+    try testing.expectEqualStrings("y ", entityBeforeInit("y = 2"));
 
     const args = try splitArgs(a, "arr(2, 3), x=[1, 2], 'a,b', ");
     try testing.expectEqual(@as(usize, 4), args.len);

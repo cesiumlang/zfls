@@ -510,6 +510,8 @@ const statement_keywords = [_][]const u8{
     "structure",       "record",        "union",       "map",
     // CUDA Fortran
                 "attributes",
+    // BYTE, INTEGER(1) of gfortran, ifx and LLVM Flang
+    "byte",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -526,7 +528,7 @@ const spec_keywords = [_][]const u8{
     "protected",   "public",      "pure",         "real",            "recursive",     "save",
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
-    "record",      "union",       "map",          "attributes",
+    "record",      "union",       "map",          "attributes",      "byte",
 };
 
 fn isSpecKeyword(word: []const u8) bool {

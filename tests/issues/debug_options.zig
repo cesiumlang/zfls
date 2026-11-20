@@ -110,6 +110,23 @@ test "--debug_parser reads .fortls.json (#236)" {
     try expectIn(parsed, "integer :: yes_cfg !!! VARIABLE - Ln:3");
 }
 
+test "--debug_parser reads debug lines as d_lines says" {
+    const w = try h.Workspace.init(&.{.{ .name = "d.f", .text =
+        \\      SUBROUTINE DCODE(N)
+        \\      INTEGER N
+        \\D     INTEGER DEBUG_ONLY
+        \\      END SUBROUTINE
+        \\
+    }}, .{});
+    defer w.deinit();
+    const comment = try debugRun(w, "d.f", .{ .debug_parser = true });
+    defer gpa.free(comment);
+    try std.testing.expect(std.mem.find(u8, comment, "dcode::debug_only") == null);
+    const code = try debugRun(w, "d.f", .{ .debug_parser = true, .d_lines = "code" });
+    defer gpa.free(code);
+    try expectIn(code, "dcode::debug_only");
+}
+
 /// The lines of fortls_debug.log in `w` that name the final options
 fn finalOptions(w: *h.Workspace) ![]const []const u8 {
     var arena = std.heap.ArenaAllocator.init(gpa);

@@ -79,8 +79,9 @@ const defs = [_]Def{
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
-        "|EXTERNAL|CLASS|TYPE)", true },
-    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\*[ ]*[0-9:]*)", true },
+        "|EXTERNAL|CLASS|TYPE|BYTE)", true },
+    // `()`: PROCEDURE() of no interface
+    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
         "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++

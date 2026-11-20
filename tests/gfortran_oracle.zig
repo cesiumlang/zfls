@@ -20,6 +20,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const lsp = @import("lsp_client");
+const util = @import("oracle_util.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 
@@ -302,20 +303,9 @@ fn isFunctionResult(fq: []const u8) bool {
     return std.mem.eql(u8, lastPart(fq[0..sep], "::"), fq[sep + 2 ..]);
 }
 
-fn findOnPath(io: Io, a: Allocator, env: *const std.process.Environ.Map, name: []const u8) !?[]const u8 {
-    const path = env.get("PATH") orelse env.get("Path") orelse return null;
-    const exe = if (builtin.target.os.tag == .windows) try a.print("{s}.exe", .{name}) else name;
-    var dirs = std.mem.tokenizeScalar(u8, path, if (builtin.target.os.tag == .windows) ';' else ':');
-    while (dirs.next()) |d| {
-        const candidate = try std.Io.Dir.path.join(a, &.{ d, exe });
-        if (Io.Dir.cwd().access(io, candidate, .{})) |_| return candidate else |_| {}
-    }
-    return null;
-}
-
 fn findGfortran(io: Io, a: Allocator, env: *const std.process.Environ.Map) !?[]const u8 {
     if (env.get("GFORTRAN")) |g| return g;
-    if (try findOnPath(io, a, env, "gfortran")) |g| return g;
+    if (try util.findOnPath(io, a, env, "gfortran")) |g| return g;
     if (builtin.target.os.tag == .windows) {
         const msys = "C:\\msys64\\ucrt64\\bin\\gfortran.exe";
         if (Io.Dir.cwd().access(io, msys, .{})) |_| return msys else |_| {}
@@ -323,44 +313,10 @@ fn findGfortran(io: Io, a: Allocator, env: *const std.process.Environ.Map) !?[]c
     return null;
 }
 
-const Run = struct { stdout: []const u8, stderr: []const u8, ok: bool, code: []const u8 };
-
-fn run(io: Io, a: Allocator, argv: []const []const u8, cwd: ?[]const u8, env: ?*const std.process.Environ.Map) !Run {
-    const r = try std.process.run(a, io, .{
-        .argv = argv,
-        .cwd = if (cwd) |c| .{ .path = c } else .inherit,
-        .environ_map = env,
-        .create_no_window = true,
-    });
-    return .{ .stdout = r.stdout, .stderr = r.stderr, .ok = r.term.success(), .code = try lsp.termText(a, r.term) };
-}
-
-fn lessThan(_: void, x: []const u8, y: []const u8) bool {
-    return std.mem.order(u8, x, y) == .lt;
-}
-
-fn collect(io: Io, a: Allocator, paths: []const []const u8) ![]const []const u8 {
-    var files: std.ArrayList([]const u8) = .empty;
-    for (paths) |p| {
-        if (Io.Dir.cwd().openDir(io, p, .{ .iterate = true })) |d| {
-            var dir = d;
-            defer dir.close(io);
-            var found: std.ArrayList([]const u8) = .empty;
-            var walker = try dir.walk(a);
-            defer walker.deinit();
-            while (try walker.next(io)) |e| {
-                if (e.kind != .file) continue;
-                const ext = std.Io.Dir.path.extension(e.basename);
-                for (fortran_exts) |x| {
-                    if (std.ascii.eqlIgnoreCase(ext, x)) break;
-                } else continue;
-                try found.append(a, try std.Io.Dir.path.join(a, &.{ p, e.path }));
-            }
-            std.mem.sort([]const u8, found.items, {}, lessThan);
-            try files.appendSlice(a, found.items);
-        } else |_| try files.append(a, p);
-    }
-    return files.items;
+fn isFortran(name: []const u8) bool {
+    const ext = std.Io.Dir.path.extension(name);
+    for (fortran_exts) |x| if (std.ascii.eqlIgnoreCase(ext, x)) return true;
+    return false;
 }
 
 pub fn main(init: std.process.Init) !u8 {
@@ -389,24 +345,16 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("gfortran not found; skipping\n", .{});
         return 0;
     };
-    // gfortran's own directory first on PATH, so that on Windows its
-    // compiler loads the DLLs it was built with rather than other copies
-    // (Git for Windows' bash puts its own first)
-    var gf_env = try env.clone(a);
-    const gf_exe = if (std.Io.Dir.path.dirname(gfortran) == null) (try findOnPath(io, a, env, gfortran)) orelse gfortran else gfortran;
-    if (std.Io.Dir.path.dirname(gf_exe)) |dir| {
-        const key = if (env.get("PATH") == null and env.get("Path") != null) "Path" else "PATH";
-        const old = env.get(key) orelse "";
-        try gf_env.put(key, try a.print("{s}{c}{s}", .{ dir, if (builtin.target.os.tag == .windows) @as(u8, ';') else ':', old }));
-    }
-    const version = try run(io, a, &.{ gfortran, "--version" }, null, &gf_env);
+    // gfortran's own directory first on PATH
+    var gf_env = try util.envWithDirOf(io, a, env, gfortran);
+    const version = try util.run(io, a, &.{ gfortran, "--version" }, null, &gf_env);
     var first = std.mem.splitScalar(u8, version.stdout, '\n');
     std.debug.print("gfortran: {s} ({s})\n", .{ gfortran, std.mem.trim(u8, first.next() orelse "?", " \r") });
     // every fixture is valid Fortran; other corpora may contain files that
     // are not
     const fixtures = paths.items.len == 0;
     if (fixtures) try paths.append(a, "tests/fortran");
-    const files = try collect(io, a, paths.items);
+    const files = try util.collect(io, a, paths.items, isFortran);
     const workdir = try lsp.tempDir(io, a, env, "zfls_gfortran_");
     defer Io.Dir.cwd().deleteTree(io, workdir) catch {};
     var checked: usize = 0;
@@ -420,20 +368,9 @@ pub fn main(init: std.process.Init) !u8 {
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, "-cpp");
         if (std.mem.eql(u8, ext_lower, ".f") or std.mem.eql(u8, ext_lower, ".for")) try cmd.append(a, "-ffixed-form");
         try cmd.append(a, abs);
-        const g = try run(io, a, cmd.items, workdir, &gf_env);
+        const g = try util.run(io, a, cmd.items, workdir, &gf_env);
         if (!g.ok) {
-            var why: []const u8 = g.code;
-            var lines = std.mem.splitScalar(u8, g.stderr, '\n');
-            var first_line: ?[]const u8 = null;
-            while (lines.next()) |l| {
-                const t = std.mem.trim(u8, l, " \r\t");
-                if (t.len == 0) continue;
-                if (first_line == null) first_line = t;
-                if (std.mem.find(u8, t, "rror") != null) {
-                    why = t;
-                    break;
-                }
-            } else if (first_line) |f| why = f;
+            const why = util.failure(g);
             if (fixtures) {
                 std.debug.print("FAIL {s}: rejected by gfortran: {s}\n", .{ src, why });
                 mismatched += 1;
@@ -441,7 +378,7 @@ pub fn main(init: std.process.Init) !u8 {
             continue;
         }
         var ref = try gfortranEntities(a, g.stdout);
-        const z = try run(io, a, &.{ zfls, "--debug_parser", "--debug_filepath", abs }, null, null);
+        const z = try util.run(io, a, &.{ zfls, "--debug_parser", "--debug_filepath", abs }, null, null);
         var got = (try zflsEntities(a, z.stdout)) orelse {
             std.debug.print("FAIL {s}: zfls produced no object tree\n", .{src});
             mismatched += 1;
@@ -469,7 +406,7 @@ pub fn main(init: std.process.Init) !u8 {
             } else try missing.append(a, name);
         }
         for (got.entities.keys()) |name| if (!ref.entities.contains(name)) try extra.append(a, name);
-        for ([_]*std.ArrayList([]const u8){ &missing, &extra, &kinds }) |l| std.mem.sort([]const u8, l.items, {}, lessThan);
+        for ([_]*std.ArrayList([]const u8){ &missing, &extra, &kinds }) |l| std.mem.sort([]const u8, l.items, {}, util.lessThan);
         if (missing.items.len + extra.items.len + kinds.items.len == 0) {
             std.debug.print("OK   {s}: {d} entities\n", .{ src, ref.entities.count() });
             continue;
