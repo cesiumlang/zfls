@@ -172,9 +172,9 @@ pub const Session = struct {
     launched: bool = false,
     done: bool = false,
     stop_at_entry: bool = false,
-    /// The breakpoints on the Fortran runtime's errors, and the function of
-    /// the last one hit
-    error_breakpoints: std.ArrayList(u32) = .empty,
+    /// The breakpoints on the Fortran runtime's errors, each with its
+    /// function
+    error_breakpoints: std.ArrayList(runtime_errors.EngineBreakpoint) = .empty,
     /// The breakpoints whose lines had no code yet (a module not loaded):
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
