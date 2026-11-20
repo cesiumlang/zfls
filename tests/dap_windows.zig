@@ -1,7 +1,9 @@
 //! zfls dap, the debug adapter over Windows's Debugger Engine (the
 //! launch's `dbgeng`), on a program of the MSVC ABI with a PDB
 //! (tests/dap/hello.c, built by `zig cc`): a breakpoint, the stack, the
-//! variables, stepping, an expression, the end (`zig build test-dap`). The
+//! variables, stepping, an expression, the end (`zig build test-dap`); and
+//! tests/dap/trap.c, whose break instruction is an exception, not a step.
+//! The
 //! Fortran values (of ifx's programs) need ifx, which CI has not.
 //!
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
@@ -97,6 +99,24 @@ pub fn main(init: std.process.Init) !u8 {
             return 1;
         };
     }
+    {
+        const trap = try std.Io.Dir.path.join(a, &.{ tmp, "trap.exe" });
+        const trap_built = try std.process.run(a, io, .{
+            .argv = &.{ zig, "cc", "-target", "x86_64-windows-msvc", "-g", "-O0", try cwd.realPathFileAlloc(io, "tests/dap/trap.c", a), "-o", trap },
+            .cwd = .{ .path = tmp },
+        });
+        if (!trap_built.term.success()) {
+            std.debug.print("zig cc failed:\n{s}{s}\n", .{ trap_built.stdout, trap_built.stderr });
+            return 1;
+        }
+        const c = try Client.start(io, init.gpa, &.{ exe_zfls, "dap" });
+        defer c.deinit();
+        runTrap(c, trap, tmp) catch |e| {
+            std.debug.print("zfls dap, a break instruction: {s}\n", .{@errorName(e)});
+            if (c.child.id != null) c.child.kill(io);
+            return 1;
+        };
+    }
     std.debug.print("zfls dap: all good\n", .{});
     if (flang) |fc| return withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp, kit);
     return 0;
@@ -184,6 +204,23 @@ fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool, error_lin
         const exited = get(try c.event("exited"), "body").?;
         try check(int(exited, "exitCode") == 3, "ERROR STOP: then exit code 3 ({?d})", .{int(exited, "exitCode")});
     }
+    _ = try c.request("disconnect", .{ .terminateDebuggee = true });
+    _ = try c.child.wait(c.io);
+}
+
+/// tests/dap/trap.c: the program's own break instruction (the Intel
+/// runtime's at a runtime error) stops as an exception, not as a step, and
+/// the program goes on from it (#493)
+fn runTrap(c: *Client, exe: []const u8, tmp: []const u8) !void {
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
+    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .dbgeng = true });
+    _ = try c.event("initialized");
+    _ = try c.request("configurationDone", .{});
+    const stopped = get(try c.event("stopped"), "body").?;
+    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "exception") and std.mem.eql(u8, str(stopped, "text") orelse "", "0x80000003"), "a break instruction: stopped as an exception ({s}, {s})", .{ str(stopped, "reason") orelse "?", str(stopped, "text") orelse "?" });
+    _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
+    const exited = get(try c.event("exited"), "body").?;
+    try check(int(exited, "exitCode") == 5, "a break instruction: then exit code 5 ({?d})", .{int(exited, "exitCode")});
     _ = try c.request("disconnect", .{ .terminateDebuggee = true });
     _ = try c.child.wait(c.io);
 }

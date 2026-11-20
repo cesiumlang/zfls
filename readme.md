@@ -205,10 +205,13 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
    on the stack there, untested). LFortran for Windows refuses `-g`.
 10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
     Microsoft's format; arrays are read through Intel's descriptors and
-    LLVM Flang's. CI tests the engine on a C program, and on LLVM
+    LLVM Flang's. CI tests the engine on C programs (also a break
+    instruction of the program's own, which stops as an exception, as the
+    Intel runtime's at a runtime error does once), and on LLVM
     Flang's built with `-g` (breakpoints, `stopAtEntry`, the stack,
     stepping, the variables, and the stops at a runtime error and at ERROR
-    STOP, not at STOP): it has no ifx.
+    STOP, not at STOP): it has no ifx. With ifx 2026, tested by hand: the
+    stops at a runtime error and at ERROR STOP (`for_error_stop_quiet`).
 11. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
     Silicon and every user must code-sign it on an Intel Mac: breakpoints,
     stepping, the stack and the stops at runtime errors and ERROR STOP, but

@@ -106,6 +106,9 @@ pub const Stop = union(enum) {
     breakpoint: struct { id: u32, thread: u32 },
     step: u32,
     exception: struct { code: u32, thread: u32, description: []const u8 },
+    /// A break instruction of the program's own (`int 3`, `DebugBreak`),
+    /// such as the Intel runtime's at a runtime error under a debugger
+    trap: struct { thread: u32, description: []const u8 },
     pause: u32,
     exited: u32,
 };
@@ -398,9 +401,13 @@ pub const Engine = struct {
         }
         if (event == dbg.DEBUG_EVENT_EXCEPTION and extra_len >= 4) {
             const code = std.mem.readInt(u32, extra[0..4], .little);
-            // the initial breakpoint, and a step's own trap, are not the program's
+            const description = try a.dupe(u8, desc[0..@min(desc_len -| 1, desc.len)]);
+            // a break instruction: the program's own but in a step (the
+            // initial breakpoint is the launch's, which waits for it)
+            if (code == 0x80000003 and !self.stepping) return .{ .trap = .{ .thread = thread, .description = description } };
+            // a step's own trap is not the program's
             if (code != 0x80000003 and code != 0x80000004 and code != 0x4000001f) {
-                return .{ .exception = .{ .code = code, .thread = thread, .description = try a.dupe(u8, desc[0..@min(desc_len -| 1, desc.len)]) } };
+                return .{ .exception = .{ .code = code, .thread = thread, .description = description } };
             }
         }
         self.stepping = false;
