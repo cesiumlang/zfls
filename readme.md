@@ -212,9 +212,8 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     with zfls's ifx kit): breakpoints, `stopAtEntry`, the stack, stepping,
     the variables, and the stops at a runtime error and at ERROR STOP
     (ifx's `for_error_stop_quiet`), not at STOP. Of ifx's variables, not
-    yet: an allocatable or pointer array of a derived type (its elements'
-    components), a deferred-length CHARACTER, a polymorphic object with
-    its dynamic type, a module variable by its own name in an expression
+    yet: a deferred-length CHARACTER, a polymorphic object with its
+    dynamic type, a module variable by its own name in an expression
     (`ncells`; `grid::ncells` works), a module's COMMON variables, and
     REAL(16) values.
 11. lldb-dap (Xcode's command line tools), since gdb does not run on Apple
