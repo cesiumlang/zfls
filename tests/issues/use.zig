@@ -314,3 +314,21 @@ test "ISO_FORTRAN_ENV and IEEE_ARITHMETIC names that gfortran has (#536)" {
     try w.expectHoverContains("i.f90", w.pos("i.f90", "real16", 0, 0), "INTEGER");
     try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_away", 0, 0), "TYPE(ieee_round_type)");
 }
+
+test "USE openacc gives OpenACC's kinds and constants (acc_device_host) (#535)" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text =
+        \\program acc
+        \\  use openacc
+        \\  implicit none
+        \\  integer(acc_device_kind) :: d
+        \\  d = acc_device_host
+        \\  if (acc_get_device_type() == acc_device_radeon) d = acc_device_current
+        \\  call acc_set_device_type(d)
+        \\end program acc
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("a.f90");
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "acc_device_host", 0, 0), "INTEGER(KIND=acc_device_kind)");
+    try w.expectHoverContains("a.f90", w.pos("a.f90", "acc_device_radeon", 0, 0), "INTEGER(KIND=acc_device_kind)");
+}
