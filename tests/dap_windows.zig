@@ -9,10 +9,10 @@
 //! which `zig build` gives, else the one next to zfls): the breakpoints,
 //! stopAtEntry, the stack, the variables (dummy arguments: arrays through
 //! Flang's descriptors, CHARACTER(*), CLASS with its dynamic type; the main
-//! program's, static ones too; module variables), stepping and the filter
-//! of Fortran runtime errors (at a runtime error; tests/dap/stops.f90: at
-//! ERROR STOP, not at STOP). What it does not do yet is printed as a known
-//! gap and not checked: the caller's line (#441).
+//! program's, static ones too; module variables), the caller's line,
+//! stepping (over Flang's empty line records) and the filter of Fortran
+//! runtime errors (at a runtime error; tests/dap/stops.f90: at ERROR STOP,
+//! called at its line, not at STOP).
 //!
 //!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]
 
@@ -126,13 +126,13 @@ fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.E
     for ([_]bool{ false, true }) |plain| {
         const c = try Client.start(io, gpa, &.{ exe_zfls, "dap" });
         defer c.deinit();
-        runStops(c, stops.exe, tmp, plain) catch |e| {
+        runStops(c, stops.exe, tmp, plain, lineOf(stops.text, "error stop 3")) catch |e| {
             std.debug.print("zfls dap, LLVM Flang's STOP and ERROR STOP: {s}\n", .{@errorName(e)});
             if (c.child.id != null) c.child.kill(io);
             return 1;
         };
     }
-    std.debug.print("zfls dap, LLVM Flang's program: all good (but the known gaps)\n", .{});
+    std.debug.print("zfls dap, LLVM Flang's program: all good\n", .{});
     return 0;
 }
 
@@ -157,8 +157,9 @@ fn buildFlang(io: Io, a: Allocator, fc: []const u8, env: ?*const std.process.Env
 }
 
 /// tests/dap/stops.f90 with the filter of Fortran runtime errors: its
-/// ERROR STOP stops; its plain STOP (`plain`) does not
-fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool) !void {
+/// ERROR STOP stops, called at its line (`error_line`; the call does not
+/// return); its plain STOP (`plain`) does not
+fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool, error_line: i64) !void {
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
     _ = try c.request("launch", .{ .program = exe, .args = if (plain) &[_][]const u8{"plain"} else &[_][]const u8{}, .cwd = tmp, .console = "internalConsole", .sourceRoot = tmp, .dbgeng = true });
     _ = try c.event("initialized");
@@ -170,6 +171,11 @@ fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool) !void {
     } else {
         const stopped = get(try c.event("stopped"), "body").?;
         try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "exception") and std.mem.eql(u8, str(stopped, "description") orelse "", "ERROR STOP"), "ERROR STOP: stopped ({s}: {s})", .{ str(stopped, "reason") orelse "?", str(stopped, "description") orelse "?" });
+        const frames = items(try c.request("stackTrace", .{ .threadId = int(stopped, "threadId").? }), "stackFrames");
+        const caller: ?Value = for (frames) |f| {
+            if (std.mem.eql(u8, str(f, "name") orelse "", "STOPS")) break f;
+        } else null;
+        try check(caller != null and int(caller.?, "line") == error_line, "ERROR STOP: called at line {d} of STOPS ({?d})", .{ error_line, if (caller) |f| int(f, "line") else null });
         _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
         const exited = get(try c.event("exited"), "body").?;
         try check(int(exited, "exitCode") == 3, "ERROR STOP: then exit code 3 ({?d})", .{int(exited, "exitCode")});
@@ -187,13 +193,6 @@ fn lineOf(text: []const u8, marker: []const u8) i64 {
 fn named(vars: []Value, name: []const u8) ?Value {
     for (vars) |v| if (std.mem.eql(u8, str(v, "name") orelse "", name)) return v;
     return null;
-}
-
-/// Prints what the engine shows of `vars`, as a known gap
-fn gap(what: []const u8, vars: []Value) void {
-    std.debug.print("known gap: {s}:", .{what});
-    for (vars) |v| std.debug.print(" {s} = {s};", .{ str(v, "name") orelse "?", str(v, "value") orelse "?" });
-    std.debug.print("\n", .{});
 }
 
 fn scopeVariables(c: *Client, scopes: []Value, name: []const u8) ![]Value {
@@ -238,11 +237,9 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint"), "stopped at a breakpoint", .{});
     frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(frames.len > 1 and contains(str(frames[0], "name"), "work") and int(frames[0], "line") == work_line, "in grid::work at line {d} ({s}:{?d})", .{ work_line, str(frames[0], "name") orelse "?", int(frames[0], "line") });
-    // the caller's line: that of its return address, the line after the
-    // CALL when the call is the line's last instruction
-    const caller_line = int(frames[1], "line") orelse 0;
-    try check(std.mem.eql(u8, str(frames[1], "name") orelse "", "MAIN") and (caller_line == call_line or caller_line == call_line + 1), "called by MAIN at line {d} ({s}:{d})", .{ call_line, str(frames[1], "name") orelse "?", caller_line });
-    if (caller_line != call_line) std.debug.print("known gap: the caller's line is that of the return address ({d}), not the CALL's ({d})\n", .{ caller_line, call_line });
+    // the caller's line: the CALL's (before the return address, which may
+    // be the next line's)
+    try check(std.mem.eql(u8, str(frames[1], "name") orelse "", "MAIN") and int(frames[1], "line") == call_line, "called by MAIN at line {d} ({s}:{?d})", .{ call_line, str(frames[1], "name") orelse "?", int(frames[1], "line") });
     var scopes = items(try c.request("scopes", .{ .frameId = int(frames[0], "id").? }), "scopes");
     // work's dummy arguments: their addresses are in the frame (LLVM's
     // S_DEFRANGE_REGISTER_REL_INDIR)
@@ -276,6 +273,16 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     try check(std.mem.eql(u8, valueOf(grid, "ncells"), "42"), "grid::ncells = 42 ({s})", .{valueOf(grid, "ncells")});
     try check(std.mem.eql(u8, valueOf(grid, "secret"), "99"), "grid::secret = 99 ({s})", .{valueOf(grid, "secret")});
     try check(std.mem.eql(u8, valueOf(grid, "origin"), "point(x=9.0, y=-2.0, id=7)"), "grid::origin = point(x=9.0, y=-2.0, id=7) ({s})", .{valueOf(grid, "origin")});
+
+    // next to END SUBROUTINE (Flang's line table has empty records of the
+    // declarations at its address), then back to the main program's next
+    // line
+    for ([_]struct { []const u8, i64 }{ .{ "work", work_line + 1 }, .{ "MAIN", call_line + 1 } }) |want| {
+        _ = try c.request("next", .{ .threadId = thread });
+        stopped = get(try c.event("stopped"), "body").?;
+        frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
+        try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "step") and contains(str(frames[0], "name"), want[0]) and int(frames[0], "line") == want[1], "next: {s}:{d} ({s}:{?d})", .{ want[0], want[1], str(frames[0], "name") orelse "?", int(frames[0], "line") });
+    }
 
     // in the main program: a variable of it, a step
     _ = try c.request("continue", .{ .threadId = thread });

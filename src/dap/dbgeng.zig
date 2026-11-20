@@ -71,6 +71,8 @@ const SrcCodeInfoW = extern struct {
 };
 extern "dbghelp" fn SymEnumLinesW(h: usize, base: u64, obj: ?[*:0]const u16, file: ?[*:0]const u16, cb: *const fn (*SrcCodeInfoW, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymFromName(h: usize, name: [*:0]const u8, info: *SymbolInfo) callconv(.winapi) i32;
+const LineW64 = extern struct { SizeOfStruct: u32, Key: ?*anyopaque, LineNumber: u32, FileName: ?[*:0]u16, Address: u64 };
+extern "dbghelp" fn SymGetLineFromAddrW64(h: usize, address: u64, displacement: *u32, line: *LineW64) callconv(.winapi) i32;
 extern "dbghelp" fn SymEnumTypesByName(h: usize, base: u64, mask: [*:0]const u8, cb: EnumCallback, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymEnumerateModulesW64(h: usize, cb: *const fn ([*:0]const u16, u64, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 
@@ -158,6 +160,9 @@ pub const Frame = struct {
     name: []const u8,
     file: ?[]const u8,
     line: u32,
+    /// The engine's own line of the place, which steps go by: another than
+    /// `line` where a line table has empty records before the statement's
+    engine_line: u32 = 0,
     instruction: u64,
     frame_offset: u64,
     stack_offset: u64,
@@ -571,23 +576,55 @@ pub const Engine = struct {
         var filled: u32 = 0;
         try ok(self.control.GetStackTrace(0, 0, 0, raw.ptr, max, &filled));
         const out = try a.alloc(Frame, filled);
-        for (raw[0..filled], out) |f, *o| {
+        for (raw[0..filled], out, 0..) |f, *o, i| {
             o.* = .{ .name = "?", .file = null, .line = 0, .instruction = f.InstructionOffset, .frame_offset = f.FrameOffset, .stack_offset = f.StackOffset };
+            // a caller's place is its call, before the return address (the
+            // next line's, or the next function's after a call that does
+            // not return)
+            const at = if (i > 0 and f.InstructionOffset > 0) f.InstructionOffset - 1 else f.InstructionOffset;
             var name: [512:0]u16 = undefined;
             var name_len: u32 = 0;
-            if (succeeded(self.symbols.GetNameByOffsetWide(f.InstructionOffset, &name, name.len, &name_len, null))) {
+            if (succeeded(self.symbols.GetNameByOffsetWide(at, &name, name.len, &name_len, null))) {
                 o.name = try std.unicode.utf16LeToUtf8Alloc(a, name[0..@min(name_len -| 1, name.len)]);
             }
             var file: [1024:0]u16 = undefined;
             var file_len: u32 = 0;
             var line: u32 = 0;
-            if (succeeded(self.symbols.GetLineByOffsetWide(f.InstructionOffset, &line, &file, file.len, &file_len, null))) {
+            if (succeeded(self.symbols.GetLineByOffsetWide(at, &line, &file, file.len, &file_len, null))) {
                 o.file = try std.unicode.utf16LeToUtf8Alloc(a, file[0..@min(file_len -| 1, file.len)]);
-                o.line = line;
+                o.line = self.lastLineAt(at, &file) orelse line;
+                o.engine_line = line;
             }
         }
         return out;
     }
+
+    /// The line of the last of the line records at `address` exactly: LLVM
+    /// Flang's line tables have empty ones before a statement's (an END
+    /// statement's code after rows of the declarations), of which the
+    /// engine gives the first
+    fn lastLineAt(self: *Engine, address: u64, file: [*:0]const u16) ?u32 {
+        var line = std.mem.zeroes(LineW64);
+        line.SizeOfStruct = @sizeOf(LineW64);
+        var displacement: u32 = 0;
+        if (SymGetLineFromAddrW64(self.process, address, &displacement, &line) == 0 or displacement != 0) return null;
+        // (dbghelp's next record of one at the address is not the next
+        // one there: all of the file's, in order)
+        var last: LastAt = .{ .address = address };
+        _ = SymEnumLinesW(self.process, self.moduleBase(address) orelse return null, null, file, &LastAt.onLine, &last);
+        return last.line;
+    }
+
+    const LastAt = struct {
+        address: u64,
+        line: ?u32 = null,
+
+        fn onLine(info: *SrcCodeInfoW, raw: ?*anyopaque) callconv(.winapi) i32 {
+            const w: *LastAt = @ptrCast(@alignCast(raw.?));
+            if (info.Address == w.address) w.line = info.LineNumber;
+            return 1;
+        }
+    };
 
     /// The variables of frame `index` of `thread`: its arguments and locals
     /// (dbghelp's, with their places), statics too
