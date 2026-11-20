@@ -446,9 +446,16 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     // no intrinsics nor global names for nothing typed
     if (typed_prefix.len == 0) include_globals = false;
     const cands = try getCandidates(self, a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
+    // a specific that has the name of its generic (#469) is offered once,
+    // by the generic
+    var by_generic: std.AutoHashMapUnmanaged(*const Obj, void) = .empty;
+    if (!type_mask.contains(C.TypeId.interface)) for (cands.objs) |cand| for (cand.memList()) |m| {
+        if (m != cand and std.ascii.eqlIgnoreCase(m.name, cand.name)) try by_generic.put(a, m, {});
+    };
     next: for (cands.objs, cands.renames) |cand, rename| {
         const ctype = cand.getType(false);
         if (type_mask.contains(ctype)) continue;
+        if (by_generic.contains(cand)) continue;
         // the name being typed, which this declaration declares
         if (entity and cand.kind == .variable and cand.file_ast == ast and cand.sline == ac_line + 1 and std.ascii.eqlIgnoreCase(cand.name, typed_prefix)) continue;
         for (listed) |l| if (std.ascii.eqlIgnoreCase(l, cand.name)) continue :next;

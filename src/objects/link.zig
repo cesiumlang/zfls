@@ -120,7 +120,7 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             mems.clearRetainingCapacity();
             const p = self.parent orelse return;
             for (self.scopeData().members.items) |member| {
-                if (try findInScope(env, p, member, .{})) |m| try mems.append(self.al(), m);
+                if (try specificOf(env, self, p, member)) |m| try mems.append(self.al(), m);
             }
         },
         .subroutine => try self.resolveArgLink(env.tmp),
@@ -168,6 +168,21 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         },
         else => {},
     }
+}
+
+/// The specific procedure `name` of generic interface `generic`, whose
+/// scope is `scope`: what the name stands for there, unless that is the
+/// generic itself, a generic having the name of one of its specifics
+/// (`interface sync` with `module procedure sync`, #469); then the other
+/// object of that name in the scope, by USE or in the host.
+fn specificOf(env: Env, generic: *Obj, scope: *Obj, name: []const u8) Allocator.Error!?*Obj {
+    const found = try findInScope(env, scope, name, .{});
+    if (found != generic) return found;
+    for (scope.childList()) |child| {
+        if (child != generic and std.ascii.eqlIgnoreCase(child.name, name)) return child;
+    }
+    if (try objects.findThroughUse(env, scope, try std.ascii.allocLowerString(env.tmp, name), false)) |v| return v;
+    return findInScope(env, scope.parent, name, .{});
 }
 
 /// `t`: for the time of the call (a page allocator's arena for each of a

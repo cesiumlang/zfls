@@ -125,7 +125,7 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
         var_obj = try objects.findInScope(self.env(a), cs, def_name, .{ .var_line_number = def_line + 1 });
         curr_scope = cs;
     }
-    if (var_obj) |v| return v;
+    if (var_obj) |v| return selfNamedSpecific(v, ast, curr_scope, def_line + 1) orelse v;
     if (is_member) return null;
     const key = try std.ascii.allocLowerString(a, def_name);
     // the file's own global definition before another file's of the
@@ -147,6 +147,21 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
         }
         if (var_type) |vt| return try tempVariable(a, cs.file_ast, def_line + 1, def_name, vt, cs.keywords.items);
     };
+    return null;
+}
+
+/// Of generic `v` that has the name of one of its specifics (#469),
+/// `interface sync` with `module procedure sync`: that specific, when the
+/// name at 1-based `line` of `ast` is the specific's own, on its SUBROUTINE
+/// or FUNCTION and END statements or a procedure statement of the
+/// interface (`scope`); else null, the name being the generic's.
+fn selfNamedSpecific(v: *Obj, ast: *const Ast, scope: ?*Obj, line: usize) ?*Obj {
+    if (v.kind != .interface) return null;
+    for (v.memList()) |m| {
+        if (m == v or !std.ascii.eqlIgnoreCase(m.name, v.name)) continue;
+        if (m.file_ast == ast and (line == m.sline or line == m.eline)) return m;
+        if (scope == v and line > v.sline and line < v.eline) return m;
+    }
     return null;
 }
 

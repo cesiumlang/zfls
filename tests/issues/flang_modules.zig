@@ -120,7 +120,8 @@ test "Flang's intrinsic modules that zfls's table lacks, with the compiler check
         flang,
         // the one the directory is found by, which zfls's own table has
         .{ .name = intrinsic_dir ++ "iso_fortran_env.mod", .text = "\xEF\xBB\xBF!mod$ v1 sum:0\nmodule iso_fortran_env\nend\n" },
-        .{ .name = intrinsic_dir ++ "cudadevice.mod", .text = "\xEF\xBB\xBF!mod$ v1 sum:1\n!need$ 2 n __cuda_device\nmodule cudadevice\nuse __cuda_device,only:threadidx\ninterface\nattributes(device) subroutine syncthreads()\nend\nend interface\nend\n" },
+        // syncthreads as Flang writes it, a generic of its own name (#469)
+        .{ .name = intrinsic_dir ++ "cudadevice.mod", .text = "\xEF\xBB\xBF!mod$ v1 sum:1\n!need$ 2 n __cuda_device\nmodule cudadevice\nuse __cuda_device,only:threadidx\ninterface syncthreads\nprocedure::syncthreads\nend interface\ncontains\nattributes(device) subroutine syncthreads()\nend\nend\n" },
         .{ .name = intrinsic_dir ++ "__cuda_device.mod", .text = "\xEF\xBB\xBF!mod$ v1 sum:2\nmodule __cuda_device\nuse __fortran_builtins,only:__builtin_dim3\ntype(__builtin_dim3)::threadidx\nend\n" },
         .{ .name = intrinsic_dir ++ "__fortran_builtins.mod", .text = "\xEF\xBB\xBF!mod$ v1 sum:3\nmodule __fortran_builtins\ntype::__builtin_dim3\ninteger(4)::x=1_4\ninteger(4)::y=1_4\ninteger(4)::z=1_4\nend type\nend\n" },
     }, .{ .init_options = "{\"compiler_diagnostics\": \"flang\", \"compiler_path\": \"" ++ flang.name ++ "\"}" });
