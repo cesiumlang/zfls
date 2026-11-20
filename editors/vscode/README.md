@@ -208,7 +208,7 @@ zfls says so once and checks nothing.
 | Compiler (`zfls.linter.compiler`) | Runs | Options zfls passes |
 | --- | --- | --- |
 | `gfortran` | `gfortran` | `-fsyntax-only -fno-diagnostics-show-caret -cpp -ffree-form -ffree-line-length-none`/`-ffixed-form -ffixed-line-length-N -J<dir>`, and `-Wall` by default |
-| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`) |
+| `ifx`, `ifort` | `ifx`, `ifort` | `-syntax-only -fpp -free`/`-fixed -extend-source N -module <dir>`, and `-warn all` by default, then `-Tf <file>`, which checks a file of any suffix (`.f08`, `.f77`, `.pf`, ...) (on Windows `/syntax-only /fpp /free`/`/fixed /extend-source:N /module:<dir>`, `/warn:all`, `/Tf <file>`) |
 | `nagfor` | `nagfor` | `-M -quiet -fpp -free`/`-fixed` (`-132` for 132 columns) `-mdir <dir> -I <dir>` |
 | `lfortran` | `lfortran` | `--semantics-only --continue-compilation --error-format=short --cpp`, `--fixed-form` for fixed form, `-J <dir>`, `--implicit-typing --implicit-interface` unless your options say otherwise or choose a `--std`; the modules a file uses are compiled with `--symtab-only -c -o <dir>/zfls-lint.o`, which writes their `.mod` files |
 | `nvfortran` | `nvfortran` | `-c -Mpreprocess -Mfree`/`-Mfixed` (`-Mextend` for 132 columns) `-module <dir>`, and `-Minform=warn` by default; nvfortran has no syntax-only mode, so it compiles, writing the object file into `<dir>` |

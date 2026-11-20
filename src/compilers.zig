@@ -9,6 +9,7 @@ const Allocator = std.mem.Allocator;
 const regex = @import("regex.zig");
 const Regex = regex.Regex;
 const flang = @import("compilers/flang.zig");
+const intel = @import("compilers/intel.zig");
 
 pub const Id = enum {
     gfortran,
@@ -196,10 +197,15 @@ pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
     };
 }
 
-/// The option for the file's language, right before it: Flang's driver
-/// checks only the suffixes it knows (`flang.language`)
-pub fn language(id: Id) []const []const u8 {
-    return if (id == .flang) flang.language else &.{};
+/// The option for the file's language, right before it: the drivers of
+/// Flang and Intel's compilers check only the suffixes they know
+/// (`flang.language`, `intel.language`)
+pub fn language(id: Id, o: Options) []const []const u8 {
+    return switch (id) {
+        .flang => flang.language,
+        .ifx, .ifort => intel.language(o),
+        else => &.{},
+    };
 }
 
 /// Whether `arg` sets the line length of the form (the user's then wins
