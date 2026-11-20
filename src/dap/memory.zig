@@ -48,7 +48,7 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     }
     const d = decl orelse return .{ .address = address, .t = rawType(s, v.mod_base, type_index), .expr = expr, .type_index = type_index, .mod_base = v.mod_base };
     var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj };
-    if (d.t.kind == .derived) val.type_index = elementType(s, v.mod_base, type_index);
+    if (d.t.kind == .derived) val.type_index = try structure(s, a, v.mod_base, elementType(s, v.mod_base, type_index), d.t.name);
     if (d.t.kind == .derived and d.t.polymorphic and d.dims.len == 0) {
         var words: [4]u64 = undefined;
         if (s.engine.read(box, std.mem.sliceAsBytes(&words)) == @sizeOf(@TypeOf(words))) if (values.Descriptor.parse(&words)) |desc| {
@@ -140,6 +140,16 @@ fn boundOf(s: *Session, a: Allocator, frame: Frame, d: values.Dim, hi: bool) !?i
     _ = a;
     _ = frame;
     return null;
+}
+
+/// dbghelp's structure with members of a derived type `name`, from the
+/// type dbghelp gives a variable: itself, the definition of a forward
+/// reference (Intel's descriptors' elements), or else the structure of
+/// that name
+fn structure(s: *Session, a: Allocator, mod_base: u64, type_index: u32, name: []const u8) !u32 {
+    const t = try s.engine.definition(a, mod_base, type_index);
+    if ((s.engine.typeInfo(u32, mod_base, t, .childrencount) orelse 0) > 0 or name.len == 0) return t;
+    return (try s.engine.typeNamed(a, mod_base, name)) orelse t;
 }
 
 /// The type of an element (an array's) or the pointee

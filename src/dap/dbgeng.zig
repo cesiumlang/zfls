@@ -499,6 +499,7 @@ pub const Engine = struct {
     pub const globalsNamed = lookups.globalsNamed;
     pub const symbolAt = lookups.symbolAt;
     pub const typeNamed = lookups.typeNamed;
+    pub const definition = lookups.definition;
     pub const typeInfo = lookups.typeInfo;
     pub const typeName = lookups.typeName;
     pub const Member = lookups.Member;

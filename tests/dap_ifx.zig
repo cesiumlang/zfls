@@ -206,6 +206,12 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(big.len == 10 and std.mem.eql(u8, str(big[9], "name") orelse "", "(901:1000)"), "big in 10 sections, the last (901:1000) ({d})", .{big.len});
     const tgw = try evaluate(c, frames[0], "tg%w");
     try check(std.mem.eql(u8, tgw, "[0.25, 0.25]"), "tg%w = [0.25, 0.25] ({s})", .{tgw});
+    // an allocatable array of a derived type: its descriptor's elements
+    // are the type's forward reference in CodeView, resolved by its name
+    const pts = items(try c.request("variables", .{ .variablesReference = int(named(locals, "pts").?, "variablesReference").? }), "variables");
+    try check(pts.len == 2 and std.mem.eql(u8, valueOf(pts, "(1)"), "point(x=1.5, y=-2.0, id=7)"), "pts(1) = point(x=1.5, y=-2.0, id=7) ({s})", .{valueOf(pts, "(1)")});
+    const pts2 = try evaluate(c, frames[0], "pts(2)%id");
+    try check(std.mem.eql(u8, pts2, "7"), "pts(2)%id = 7 ({s})", .{pts2});
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
