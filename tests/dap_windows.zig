@@ -1,10 +1,9 @@
 //! zfls dap, the debug adapter over Windows's Debugger Engine (the
 //! launch's `dbgeng`), on a program of the MSVC ABI with a PDB
-//! (tests/dap/hello.c, built by `zig cc`): a breakpoint, the stack, the
-//! variables, stepping, an expression, the end (`zig build test-dap`); and
-//! tests/dap/trap.c, whose break instruction is an exception, not a step.
-//! The
-//! Fortran values (of ifx's programs) need ifx, which CI has not.
+//! (tests/dap/hello.c, built by `zig cc` and linked with zfls's ifx kit,
+//! not Visual Studio): a breakpoint, the stack, the variables, stepping, an
+//! expression, the end (`zig build test-dap`); and tests/dap/trap.c, whose
+//! break instruction is an exception, not a step.
 //!
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
 //! tests/dap/grid.f90 built with `-g` (linked with zfls's ifx kit: `--kit`,
@@ -72,15 +71,12 @@ pub fn main(init: std.process.Init) !u8 {
     const exe_zfls = try cwd.realPathFileAlloc(io, zfls_exe.?, a);
     const tmp = try lsp.tempDir(io, a, init.environ_map, "zfls-dap-");
     defer cwd.deleteTree(io, tmp) catch {};
-    const exe = try std.Io.Dir.path.join(a, &.{ tmp, "hello.exe" });
-    const built = try std.process.run(a, io, .{
-        .argv = &.{ zig, "cc", "-target", "x86_64-windows-msvc", "-g", "-O0", src, "-o", exe },
-        .cwd = .{ .path = tmp },
-    });
-    if (!built.term.success()) {
-        std.debug.print("zig cc failed:\n{s}{s}\n", .{ built.stdout, built.stderr });
+    const kit_dir = try dap.kitDir(io, a, exe_zfls, kit) orelse {
+        std.debug.print("FAIL: no ifx kit next to {s} (--kit DIR)\n", .{exe_zfls});
         return 1;
-    }
+    };
+    std.debug.print("linking the C programs with the ifx kit {s}\n", .{kit_dir});
+    const exe = (try buildC(io, a, init.environ_map, zig, kit_dir, tmp, src, "hello")) orelse return 1;
     {
         var names: std.ArrayList(u8) = .empty;
         var dir = try cwd.openDir(io, tmp, .{ .iterate = true });
@@ -100,15 +96,7 @@ pub fn main(init: std.process.Init) !u8 {
         };
     }
     {
-        const trap = try std.Io.Dir.path.join(a, &.{ tmp, "trap.exe" });
-        const trap_built = try std.process.run(a, io, .{
-            .argv = &.{ zig, "cc", "-target", "x86_64-windows-msvc", "-g", "-O0", try cwd.realPathFileAlloc(io, "tests/dap/trap.c", a), "-o", trap },
-            .cwd = .{ .path = tmp },
-        });
-        if (!trap_built.term.success()) {
-            std.debug.print("zig cc failed:\n{s}{s}\n", .{ trap_built.stdout, trap_built.stderr });
-            return 1;
-        }
+        const trap = (try buildC(io, a, init.environ_map, zig, kit_dir, tmp, try cwd.realPathFileAlloc(io, "tests/dap/trap.c", a), "trap")) orelse return 1;
         const c = try Client.start(io, init.gpa, &.{ exe_zfls, "dap" });
         defer c.deinit();
         runTrap(c, trap, tmp) catch |e| {
@@ -120,6 +108,47 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("zfls dap: all good\n", .{});
     if (flang) |fc| return withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp, kit);
     return 0;
+}
+
+/// The C program `src` built in `tmp` as NAME.exe with a PDB, for the
+/// MSVC ABI, without Visual Studio where it is installed: `zig cc` compiles
+/// with a libc file of empty directories (ZIG_LIBC; else it takes Visual
+/// Studio's and the Windows SDK's headers), and `zig lld-link` links with
+/// the ifx kit's startup object and import libraries, told to look for
+/// neither (`-lldignoreenv`, empty `-vctoolsdir` and `-winsdkdir`); null
+/// when it does not build, or when the link read a file of Visual Studio's
+fn buildC(io: Io, a: Allocator, environ: *const std.process.Environ.Map, zig: []const u8, kit_dir: []const u8, tmp: []const u8, src: []const u8, name: []const u8) !?[]const u8 {
+    const cwd = Io.Dir.cwd();
+    const empty = try std.Io.Dir.path.join(a, &.{ tmp, "no-visual-studio" });
+    try cwd.createDirPath(io, empty);
+    const libc = try std.Io.Dir.path.join(a, &.{ tmp, "zig-libc.txt" });
+    try cwd.writeFile(io, .{ .sub_path = libc, .data = try a.print(
+        "include_dir={0s}\nsys_include_dir={0s}\ncrt_dir={0s}\nmsvc_lib_dir={0s}\nkernel32_lib_dir={0s}\ngcc_dir=\ndarwin_sdk_dir=\n",
+        .{empty},
+    ) });
+    const env = try dap.withoutVisualStudio(a, environ);
+    try env.put("ZIG_LIBC", libc);
+    const obj = try std.Io.Dir.path.join(a, &.{ tmp, try a.print("{s}.obj", .{name}) });
+    const exe = try std.Io.Dir.path.join(a, &.{ tmp, try a.print("{s}.exe", .{name}) });
+    const shim = try std.Io.Dir.path.join(a, &.{ kit_dir, "zfls_ifx_shim.obj" });
+    const steps = [_][]const []const u8{
+        // `-v`: the directories of the headers, for the check below; no
+        // sanitizer, whose runtime is not in the kit
+        &.{ zig, "cc", "-target", "x86_64-windows-msvc", "-v", "-c", "-g", "-O0", "-fno-sanitize=undefined", src, "-o", obj },
+        &.{ zig, "lld-link", "-nologo", "-debug", "-subsystem:console", try a.print("-out:{s}", .{exe}), obj, shim, try a.print("-libpath:{s}", .{kit_dir}), "-nodefaultlib", "msvcrt.lib", "ucrt.lib", "vcruntime.lib", "kernel32.lib", "-lldignoreenv", try a.print("-vctoolsdir:{s}", .{empty}), try a.print("-winsdkdir:{s}", .{empty}), "-verbose" },
+    };
+    for (steps) |argv| {
+        const r = try std.process.run(a, io, .{ .argv = argv, .cwd = .{ .path = tmp }, .environ_map = env });
+        if (!r.term.success()) {
+            std.debug.print("{s} {s} failed:\n{s}{s}\n", .{ argv[0], argv[1], r.stdout, r.stderr });
+            return null;
+        }
+        if (dap.visualStudioRead(r.stderr) orelse dap.visualStudioRead(r.stdout)) |line| {
+            std.debug.print("FAIL: building {s} read Visual Studio's files: {s}\n", .{ name, line });
+            return null;
+        }
+    }
+    return exe;
 }
 
 /// tests/dap/grid.f90 built by LLVM Flang with `-g` (Microsoft's debug

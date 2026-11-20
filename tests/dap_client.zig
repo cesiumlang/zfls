@@ -2,8 +2,8 @@
 //! `zfls dap` (tests/dap_windows.zig, tests/dap_gdb.zig): the adapter's
 //! process, whose messages a thread reads, keeping the responses by the
 //! request they answer, and the events and the adapter's own requests
-//! (`runInTerminal`) in order. And how the tests build LLVM Flang's
-//! programs on Windows without Visual Studio (`flangKitEnv`).
+//! (`runInTerminal`) in order. And how the tests build programs on Windows
+//! without Visual Studio, with zfls's ifx kit (`kitDir`, `flangKitEnv`).
 
 const std = @import("std");
 const Io = std.Io;
@@ -229,6 +229,18 @@ pub fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
 /// Studio: Visual Studio's variables left out, as CI's check of the kit
 /// does; null without the kit (an error when `kit` has none)
 pub fn flangKitEnv(io: Io, a: Allocator, environ: *const std.process.Environ.Map, zfls_path: []const u8, kit: ?[]const u8) !?*const std.process.Environ.Map {
+    const dir = try kitDir(io, a, zfls_path, kit) orelse return null;
+    const env = try withoutVisualStudio(a, environ);
+    try env.put("LIB", dir);
+    try env.put("LINK", try a.print("\"{s}\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib", .{try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" })}));
+    std.debug.print("linking with the ifx kit {s}\n", .{dir});
+    return env;
+}
+
+/// The directory of zfls's ifx kit (absolute): `kit`, given by `zig
+/// build`; else `ifx-kit` next to zfls, or `../lib/ifx`; null when there is
+/// none (an error when `kit` has none)
+pub fn kitDir(io: Io, a: Allocator, zfls_path: []const u8, kit: ?[]const u8) !?[]const u8 {
     const exe_dir = std.Io.Dir.path.dirname(zfls_path) orelse return null;
     // absolute: the compiler runs elsewhere (`zig build` gives a relative one)
     const given: ?[]const u8 = if (kit) |k| Io.Dir.cwd().realPathFileAlloc(io, k, a) catch k else null;
@@ -237,19 +249,22 @@ pub fn flangKitEnv(io: Io, a: Allocator, environ: *const std.process.Environ.Map
         const dir = try std.Io.Dir.path.join(a, parts);
         const shim = try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" });
         Io.Dir.cwd().access(io, shim, .{}) catch continue;
-        const env = try a.create(std.process.Environ.Map);
-        env.* = try environ.clone(a);
-        for (visual_studio_variables) |v| _ = env.swapRemove(v);
-        try env.put("LIB", dir);
-        try env.put("LINK", try a.print("\"{s}\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib", .{shim}));
-        std.debug.print("linking with the ifx kit {s}\n", .{dir});
-        return env;
+        return dir;
     }
     if (kit) |k| {
         std.debug.print("no ifx kit in {s}\n", .{k});
         return error.NoKit;
     }
     return null;
+}
+
+/// A copy of `environ` without Visual Studio's variables, as CI's check of
+/// the kit does
+pub fn withoutVisualStudio(a: Allocator, environ: *const std.process.Environ.Map) !*std.process.Environ.Map {
+    const env = try a.create(std.process.Environ.Map);
+    env.* = try environ.clone(a);
+    for (visual_studio_variables) |v| _ = env.swapRemove(v);
+    return env;
 }
 
 /// The variables of a Visual Studio developer prompt, by which LLVM's
