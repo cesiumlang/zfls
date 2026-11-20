@@ -88,6 +88,8 @@ pub const Job = struct {
     deps: []const []const []const u8,
     deps_fixed: []const bool,
     deps_cwd: []const []const u8,
+    /// The modules each of them defines, in lower case
+    deps_modules: []const []const []const u8 = &.{},
     /// The arguments, the file last
     args: []const []const u8,
     fixed: bool,
@@ -394,7 +396,14 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     var dep_args: std.ArrayList([]const []const u8) = .empty;
     var dep_fixed: std.ArrayList(bool) = .empty;
     var dep_cwd: std.ArrayList([]const u8) = .empty;
+    var dep_modules: std.ArrayList([]const []const u8) = .empty;
     if (with_deps and !self.s.compiler_no_dependencies) for (try dependencies(self, a, file)) |d| if (stale(self, a, d, mod_dir)) {
+        var names: std.ArrayList([]const u8) = .empty;
+        if (d.ast) |ast| for (ast.scope_list.items) |sc| if (sc.kind == .module) {
+            const n = try ja.dupe(u8, sc.name);
+            try names.append(ja, std.ascii.lowerString(n, n));
+        };
+        try dep_modules.append(ja, names.items);
         const dep_cmd = try commandOf(self, a, d, user);
         try dep_args.append(ja, try argsOf(self, ja, id, .dependency, d, user, dep_cmd, paths.dirname(file.path), o));
         try dep_fixed.append(ja, d.declared_fixed);
@@ -420,6 +429,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .deps = dep_args.items,
         .deps_fixed = dep_fixed.items,
         .deps_cwd = dep_cwd.items,
+        .deps_modules = dep_modules.items,
         .args = try argsOf(self, ja, id, .check, file, user, cmd, paths.dirname(file.path), o),
         .fixed = file.declared_fixed,
         .text = if (unsaved) try editorText(ja, file) else null,
@@ -627,7 +637,9 @@ fn runJob(w: *Worker, job: *Job) !void {
     defer arena.deinit();
     const a = arena.allocator();
     if (compilers.writesToWorkDir(job.id)) try Io.Dir.cwd().createDirPath(io, job.cwd);
-    for (job.deps, job.deps_fixed, job.deps_cwd) |args, fixed, cwd| {
+    // the module files that did not compile, with their first error
+    var failed: std.ArrayList(messages.FailedDependency) = .empty;
+    for (job.deps, job.deps_fixed, job.deps_cwd, 0..) |args, fixed, cwd, i| {
         if (w.stopped()) return;
         var dep_args = args;
         if (job.fypp != null) {
@@ -635,7 +647,13 @@ fn runJob(w: *Worker, job: *Job) !void {
             dep_args = try withFile(a, args, (try runFypp(w, a, job, src, src, fixed, false)) orelse continue);
         }
         switch (runCompiler(w, a, job, cwd, dep_args)) {
-            .ran => {},
+            .ran => |r| if (!r.ok) {
+                const ms = compilers.parse(a, job.id, r.text) catch &.{};
+                for (ms) |m| if (m.severity == .@"error") {
+                    try failed.append(a, .{ .path = args[args.len - 1], .cwd = cwd, .modules = if (i < job.deps_modules.len) job.deps_modules[i] else &.{}, .first = m });
+                    break;
+                };
+            },
             .missing => break,
             .failed => |e| self.log.warn("compiler_diagnostics: compiling {s}: {s}", .{ args[args.len - 1], @errorName(e) }),
         }
@@ -697,7 +715,9 @@ fn runJob(w: *Worker, job: *Job) !void {
     const text = job.text orelse Io.Dir.cwd().readFileAlloc(io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
     // a message in an included file, at the line that includes it (#496)
     try include_site.fill(a, io, job, try splitLines(a, text), aliases.items, msgs);
-    const diags = try toDiagnostics(a, job, text, msgs, aliases.items);
+    // the error of a module file that did not compile, with the messages
+    // about its module (#546)
+    const diags = try messages.relateFailed(a, try toDiagnostics(a, job, text, msgs, aliases.items), failed.items);
     try publishCompiler(self, a, job.uri, diags);
 }
 
