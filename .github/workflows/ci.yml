@@ -676,6 +676,24 @@ jobs:
           cat p.out p.txt
           grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
 
+      # Intel's ifx from conda-forge (no Intel installer), for
+      # tests/dap_windows.zig (IFX): it links its programs with the
+      # package's ifx kit, the runner's Visual Studio hidden
+      - name: Intel ifx (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            [ -x "$mm/Library/bin/micromamba.exe" ] || curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/ifx")" -c conda-forge ifx_win-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing ifx failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          echo "IFX=$(cygpath -w "$tmp/ifx/Library/bin/ifx.exe")" >> "$GITHUB_ENV"
+
       # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
       # tests/gfortran_oracle.zig, tests/flang_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
@@ -684,7 +702,8 @@ jobs:
       # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
       # and linked with the package's ifx kit (the runner's Visual Studio
       # hidden). And on LLVM Flang's, built with -g and the package's ifx kit
-      # (FLANG): its breakpoints, stack and stepping
+      # (FLANG), and on ifx's, built with /Zi (IFX): their breakpoints,
+      # stack, variables, stepping, runtime errors and ERROR STOP
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
         run: zig-out/bin/dap_windows --zfls "$ZFLS"

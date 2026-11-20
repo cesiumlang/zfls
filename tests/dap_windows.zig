@@ -16,7 +16,11 @@
 //! called at its line, not at STOP; at both, the stack goes on past the
 //! program's frame to `main` and `mainCRTStartup`).
 //!
-//!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]
+//! With Intel's ifx (`--ifx`, or IFX in the environment), the same programs
+//! built with `/Zi /Od /check:bounds` and linked with the kit
+//! (tests/dap_ifx.zig).
+//!
+//!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--ifx IFX] [--kit DIR]
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -29,6 +33,7 @@ const lsp = @import("lsp_client");
 const source = "tests/dap/hello.c";
 
 const dap = @import("dap_client.zig");
+const dap_ifx = @import("dap_ifx.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -44,6 +49,7 @@ pub fn main(init: std.process.Init) !u8 {
     var zfls_exe: ?[]const u8 = null;
     var zig: []const u8 = "zig";
     var flang: ?[]const u8 = init.environ_map.get("FLANG");
+    var ifx: ?[]const u8 = init.environ_map.get("IFX");
     var kit: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
@@ -53,12 +59,14 @@ pub fn main(init: std.process.Init) !u8 {
             zig = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--flang")) {
             flang = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--ifx")) {
+            ifx = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--kit")) {
             kit = argv[i + 1];
         } else break;
     }
     if (i != argv.len or zfls_exe == null) {
-        std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]\n", .{});
+        std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--ifx IFX] [--kit DIR]\n", .{});
         return 2;
     }
     if (builtin.target.os.tag != .windows) {
@@ -106,8 +114,10 @@ pub fn main(init: std.process.Init) !u8 {
         };
     }
     std.debug.print("zfls dap: all good\n", .{});
-    if (flang) |fc| return withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp, kit);
-    return 0;
+    var status: u8 = 0;
+    if (flang) |fc| status |= try withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp, kit);
+    if (ifx) |fx| status |= try dap_ifx.run(io, init.gpa, a, init.environ_map, exe_zfls, fx, tmp, kit_dir);
+    return status;
 }
 
 /// The C program `src` built in `tmp` as NAME.exe with a PDB, for the
@@ -209,7 +219,7 @@ fn buildFlang(io: Io, a: Allocator, fc: []const u8, env: ?*const std.process.Env
 /// tests/dap/stops.f90 with the filter of Fortran runtime errors: its
 /// ERROR STOP stops, called at its line (`error_line`; the call does not
 /// return); its plain STOP (`plain`) does not
-fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool, error_line: i64) !void {
+pub fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool, error_line: i64) !void {
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
     _ = try c.request("launch", .{ .program = exe, .args = if (plain) &[_][]const u8{"plain"} else &[_][]const u8{}, .cwd = tmp, .console = "internalConsole", .sourceRoot = tmp, .dbgeng = true });
     _ = try c.event("initialized");
@@ -256,7 +266,7 @@ fn runTrap(c: *Client, exe: []const u8, tmp: []const u8) !void {
 
 /// Whether the frames past a Fortran program's go on to the C runtime's:
 /// `main`, then `mainCRTStartup`
-fn toStart(frames: []Value) bool {
+pub fn toStart(frames: []Value) bool {
     var want: []const []const u8 = &.{ "main", "mainCRTStartup" };
     for (frames) |f| {
         if (want.len > 0 and std.mem.eql(u8, str(f, "name") orelse "", want[0])) want = want[1..];
@@ -265,36 +275,36 @@ fn toStart(frames: []Value) bool {
 }
 
 /// The frames' names, for messages
-fn frameNames(buf: []u8, frames: []Value) []const u8 {
+pub fn frameNames(buf: []u8, frames: []Value) []const u8 {
     var w: Io.Writer = .fixed(buf);
     for (frames, 0..) |f, k| w.print("{s}{s}", .{ if (k > 0) ", " else "", str(f, "name") orelse "?" }) catch break;
     return w.buffered();
 }
 
 /// The 1-based line of a marker of the source
-fn lineOf(text: []const u8, marker: []const u8) i64 {
+pub fn lineOf(text: []const u8, marker: []const u8) i64 {
     const at = std.mem.find(u8, text, marker) orelse unreachable;
     return @intCast(std.mem.count(u8, text[0..at], "\n") + 1);
 }
 
-fn named(vars: []Value, name: []const u8) ?Value {
+pub fn named(vars: []Value, name: []const u8) ?Value {
     for (vars) |v| if (std.mem.eql(u8, str(v, "name") orelse "", name)) return v;
     return null;
 }
 
-fn scopeVariables(c: *Client, scopes: []Value, name: []const u8) ![]Value {
+pub fn scopeVariables(c: *Client, scopes: []Value, name: []const u8) ![]Value {
     const scope = named(scopes, name) orelse return &.{};
     return items(try c.request("variables", .{ .variablesReference = int(scope, "variablesReference").? }), "variables");
 }
 
 /// The variables of the module `module` of a frame's "Module variables"
-fn moduleVariables(c: *Client, scopes: []Value, module: []const u8) ![]Value {
+pub fn moduleVariables(c: *Client, scopes: []Value, module: []const u8) ![]Value {
     const node = named(try scopeVariables(c, scopes, "Module variables"), module) orelse return &.{};
     return items(try c.request("variables", .{ .variablesReference = int(node, "variablesReference").? }), "variables");
 }
 
 /// The value of the variable `name` of `vars`, or "(none)"
-fn valueOf(vars: []Value, name: []const u8) []const u8 {
+pub fn valueOf(vars: []Value, name: []const u8) []const u8 {
     const v = named(vars, name) orelse return "(none)";
     return str(v, "value") orelse "?";
 }
