@@ -52,22 +52,28 @@ pub fn setExceptions(s: *Session, a: Allocator, req: Value, args: ?Value) !void 
     for (json.items(json.get(args, "filters"))) |f| {
         if (std.mem.eql(u8, json.str(f) orelse "", runtime_errors_filter)) wanted = true;
     }
-    for (s.error_breakpoints.items) |id| s.engine.removeBreakpoint(id);
+    for (s.error_breakpoints.items) |b| s.engine.removeBreakpoint(b.id);
     s.error_breakpoints.clearRetainingCapacity();
-    if (wanted) for (runtime_errors.engine_functions) |f| {
-        const bp = s.engine.addSymbolBreakpoint(a, f.name, false) catch continue;
-        try s.error_breakpoints.append(s.gpa, bp.id);
-    };
+    if (wanted) try runtime_errors.addEach(s.gpa, &s.error_breakpoints, &runtime_errors.engine_functions, &SymbolBreakpoints{ .s = s, .a = a });
     s.respond(a, req, .{ .breakpoints = &[_]struct { verified: bool }{.{ .verified = true }} });
 }
+
+/// The engine's breakpoints on functions, for `runtime_errors.addEach`
+const SymbolBreakpoints = struct {
+    s: *Session,
+    a: Allocator,
+
+    pub fn add(self: *const SymbolBreakpoints, name: []const u8) !u32 {
+        return (try self.s.engine.addSymbolBreakpoint(self.a, name, false)).id;
+    }
+};
 
 /// The exception filter of the Fortran runtime's errors
 pub const runtime_errors_filter = "fortranRuntimeErrors";
 
 /// The function of the runtime's errors of an id of `error_breakpoints`
 pub fn errorFunction(s: *Session, id: u32) ?runtime_errors.Function {
-    for (s.error_breakpoints.items, 0..) |x, i| if (x == id) return runtime_errors.engine_functions[i];
-    return null;
+    return runtime_errors.functionOf(s.error_breakpoints.items, id);
 }
 
 /// Whether a stop at a function of both STOP and ERROR STOP (LLVM Flang's)

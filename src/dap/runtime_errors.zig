@@ -62,6 +62,26 @@ pub const engine_functions = [_]Function{
     .{ .name = "Fortran::runtime::Terminator::CrashHeader" },
 };
 
+/// A breakpoint of the engine on a function of `engine_functions`: its id
+/// with its function
+pub const EngineBreakpoint = struct { id: u32, function: Function };
+
+/// Breakpoints on `functions`, each by `adder.add(name)` (its id), which
+/// fails for a name the program does not have (a program links one
+/// compiler's runtime): each kept with its own function, whichever failed
+pub fn addEach(gpa: std.mem.Allocator, out: *std.ArrayList(EngineBreakpoint), functions: []const Function, adder: anytype) !void {
+    for (functions) |f| {
+        const id = adder.add(f.name) catch continue;
+        try out.append(gpa, .{ .id = id, .function = f });
+    }
+}
+
+/// The function of the breakpoint `id` of `added`
+pub fn functionOf(added: []const EngineBreakpoint, id: u32) ?Function {
+    for (added) |b| if (b.id == id) return b.function;
+    return null;
+}
+
 /// The function of a name of `gdb_functions` or `engine_functions`
 pub fn find(name: []const u8) ?Function {
     inline for (.{ gdb_functions, engine_functions }) |list| {
@@ -160,6 +180,29 @@ test "the functions of the runtimes' errors and ERROR STOP" {
     for (gdb_functions ++ engine_functions) |f| {
         if (f.error_stop_argument != null) try std.testing.expect(f.error_stop);
     }
+}
+
+test "the engine's breakpoints keep their functions when one is not found (#415)" {
+    // ids as the engine gives them, one per breakpoint added; the first
+    // name is not the program's
+    const Adder = struct {
+        next: u32 = 10,
+        pub fn add(self: *@This(), name: []const u8) !u32 {
+            if (std.mem.eql(u8, name, engine_functions[0].name)) return error.NotFound;
+            self.next += 1;
+            return self.next;
+        }
+    };
+    var adder: Adder = .{};
+    var added: std.ArrayList(EngineBreakpoint) = .empty;
+    defer added.deinit(std.testing.allocator);
+    try addEach(std.testing.allocator, &added, &engine_functions, &adder);
+    try std.testing.expectEqual(engine_functions.len - 1, added.items.len);
+    for (engine_functions[1..], 11..) |f, id| {
+        try std.testing.expectEqualStrings(f.name, functionOf(added.items, @intCast(id)).?.name);
+    }
+    try std.testing.expect(functionOf(added.items, 10) == null);
+    try std.testing.expect(functionOf(added.items, 99) == null);
 }
 
 test "the register of ERROR STOP's argument of Flang's STOP functions" {
