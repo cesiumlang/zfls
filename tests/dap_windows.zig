@@ -12,7 +12,8 @@
 //! program's, static ones too; module variables), the caller's line,
 //! stepping (over Flang's empty line records) and the filter of Fortran
 //! runtime errors (at a runtime error; tests/dap/stops.f90: at ERROR STOP,
-//! called at its line, not at STOP).
+//! called at its line, not at STOP; at both, the stack goes on past the
+//! program's frame to `main` and `mainCRTStartup`).
 //!
 //!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]
 
@@ -172,16 +173,36 @@ fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool, error_lin
         const stopped = get(try c.event("stopped"), "body").?;
         try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "exception") and std.mem.eql(u8, str(stopped, "description") orelse "", "ERROR STOP"), "ERROR STOP: stopped ({s}: {s})", .{ str(stopped, "reason") orelse "?", str(stopped, "description") orelse "?" });
         const frames = items(try c.request("stackTrace", .{ .threadId = int(stopped, "threadId").? }), "stackFrames");
-        const caller: ?Value = for (frames) |f| {
-            if (std.mem.eql(u8, str(f, "name") orelse "", "STOPS")) break f;
+        const at = for (frames, 0..) |f, k| {
+            if (std.mem.eql(u8, str(f, "name") orelse "", "STOPS")) break k;
         } else null;
-        try check(caller != null and int(caller.?, "line") == error_line, "ERROR STOP: called at line {d} of STOPS ({?d})", .{ error_line, if (caller) |f| int(f, "line") else null });
+        try check(at != null and int(frames[at.?], "line") == error_line, "ERROR STOP: called at line {d} of STOPS ({?d})", .{ error_line, if (at) |k| int(frames[k], "line") else null });
+        // the call does not return: the stack goes on past it (#460)
+        var buf: [512]u8 = undefined;
+        try check(toStart(frames[at.? + 1 ..]), "ERROR STOP: STOPS, then main, mainCRTStartup ({s})", .{frameNames(&buf, frames[at.? + 1 ..])});
         _ = try c.request("continue", .{ .threadId = int(stopped, "threadId").? });
         const exited = get(try c.event("exited"), "body").?;
         try check(int(exited, "exitCode") == 3, "ERROR STOP: then exit code 3 ({?d})", .{int(exited, "exitCode")});
     }
     _ = try c.request("disconnect", .{ .terminateDebuggee = true });
     _ = try c.child.wait(c.io);
+}
+
+/// Whether the frames past a Fortran program's go on to the C runtime's:
+/// `main`, then `mainCRTStartup`
+fn toStart(frames: []Value) bool {
+    var want: []const []const u8 = &.{ "main", "mainCRTStartup" };
+    for (frames) |f| {
+        if (want.len > 0 and std.mem.eql(u8, str(f, "name") orelse "", want[0])) want = want[1..];
+    }
+    return want.len == 0;
+}
+
+/// The frames' names, for messages
+fn frameNames(buf: []u8, frames: []Value) []const u8 {
+    var w: Io.Writer = .fixed(buf);
+    for (frames, 0..) |f, k| w.print("{s}{s}", .{ if (k > 0) ", " else "", str(f, "name") orelse "?" }) catch break;
+    return w.buffered();
 }
 
 /// The 1-based line of a marker of the source
@@ -329,9 +350,12 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     const info = try c.request("exceptionInfo", .{ .threadId = thread });
     try check(contains(str(info, "exceptionId"), "CrashHeader"), "at Flang's CrashHeader ({s})", .{str(info, "exceptionId") orelse "?"});
     frames = items(try c.request("stackTrace", .{ .threadId = thread, .levels = 40 }), "stackFrames");
-    var at_open = false;
-    for (frames) |f| at_open = at_open or (std.mem.eql(u8, str(f, "name") orelse "", "MAIN") and int(f, "line") == main_line + 2);
-    try check(contains(str(frames[0], "name"), "Fortran::runtime::Terminator::CrashHeader") and at_open, "in Flang's runtime ({s}), called at line {d} of MAIN", .{ str(frames[0], "name") orelse "?", main_line + 2 });
+    const at_open = for (frames, 0..) |f, j| {
+        if (std.mem.eql(u8, str(f, "name") orelse "", "MAIN") and int(f, "line") == main_line + 2) break j;
+    } else null;
+    try check(contains(str(frames[0], "name"), "Fortran::runtime::Terminator::CrashHeader") and at_open != null, "in Flang's runtime ({s}), called at line {d} of MAIN", .{ str(frames[0], "name") orelse "?", main_line + 2 });
+    var buf: [512]u8 = undefined;
+    try check(toStart(frames[at_open.? + 1 ..]), "MAIN, then main, mainCRTStartup ({s})", .{frameNames(&buf, frames[at_open.? + 1 ..])});
     _ = try c.request("disconnect", .{ .terminateDebuggee = true });
     _ = try c.child.wait(c.io);
 }
