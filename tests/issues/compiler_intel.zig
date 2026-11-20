@@ -1,7 +1,7 @@
 //! The compiler check (`compiler_diagnostics`) with Intel's command line,
 //! through a stand-in ifx that logs its arguments: the files of suffixes
-//! its driver does not know (#497), and the driver's messages without a
-//! number (#494).
+//! its driver does not know (#497), the driver's messages without a
+//! number (#494), and fpp's, which name the file by its name only (#495).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -46,4 +46,24 @@ test "ifx: the file and the modules it uses with /Tf (-Tf) right before them, fo
         }
     }
     try std.testing.expectEqual(@as(usize, 2), files);
+}
+
+/// A stand-in ifx that says what Intel's fpp says of `#error` on line 3:
+/// the file by its name only, though given its path
+const fpp: h.File = if (is_windows)
+    .{ .name = "ifx.cmd", .text = "@echo off\r\necho u.f95(3): #error:  named by its name 1>&2\r\n" }
+else
+    .{ .name = "ifx.sh", .text = "#!/bin/sh\necho 'u.f95(3): #error:  named by its name' >&2\n" };
+
+test "ifx: fpp's message, which names the file by its name only, is at its line (#495)" {
+    const w = try h.Workspace.init(&.{ user, fpp }, .{ .init_options = "{\"compiler_diagnostics\": \"ifx\", \"compiler_path\": \"" ++ fpp.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, fpp.name, .executable_file, .{});
+    try w.open("u.f95", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"named by its name\"", 60)) orelse return error.NoCompilerDiagnostics;
+    // the diagnostic's range, before its message
+    const at = std.mem.find(u8, sent, "\"message\":\"named by its name\"").?;
+    const mark = "\"range\":{\"start\":{\"line\":";
+    const r = std.mem.findLast(u8, sent[0..at], mark) orelse return h.unmet("no range in {s}", .{sent});
+    try h.expect(std.mem.startsWith(u8, sent[r + mark.len ..], "2,"), "fpp's message is not on line 3: {s}", .{sent[r..at]});
 }
