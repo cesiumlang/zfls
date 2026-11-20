@@ -35,7 +35,13 @@ pub fn setTypeMask(def: bool) Server.TypeMask {
     return m;
 }
 
-pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, req_abstract: bool, out: *std.ArrayList(*Obj)) !void {
+/// Which abstract interfaces completion offers: none (where a procedure
+/// goes), only them (`procedure(`), or them too (the lists of names of a
+/// USE ONLY, PUBLIC, PRIVATE or IMPORT statement, #481)
+pub const Abstract = enum { no, only, too };
+
+pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, abstract: Abstract, out: *std.ArrayList(*Obj)) !void {
+    const req_abstract = abstract == .only;
     if (!req_abstract) for (try scope.getChildren(a, filter_public)) |child| {
         // not an interface block without a name (`#GEN_INT`: unnamed,
         // abstract, OPERATOR, ASSIGNMENT), but a named generic
@@ -43,11 +49,12 @@ pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.Str
         if (try inOnlyList(a, only_list, child.name)) try out.append(a, child);
     };
     // the interface bodies of its interface blocks (of its abstract ones,
-    // for `req_abstract`) are names of the scope, public or not as its own
-    // names (as `checkScope` finds them, #474); one that has the name of its
-    // generic is offered by the generic
+    // for `.only`, of every one for `.too`) are names of the scope, public or
+    // not as its own names (as `checkScope` finds them, #474); one that has
+    // the name of its generic is offered by the generic
     for (scope.childList()) |child| {
-        if (child.kind != .interface or child.isAbstract() != req_abstract) continue;
+        if (child.kind != .interface) continue;
+        if (abstract != .too and child.isAbstract() != req_abstract) continue;
         for (child.childList()) |body| {
             if (!child.bodiesAreNames(body.name)) continue;
             const private = body.vis == .private or (scope.def_vis == .private and body.vis != .public);
@@ -78,13 +85,13 @@ fn inOnlyList(a: Allocator, only_list: ?*const objects.StrSet, name: []const u8)
     return only.contains(lname);
 }
 
-pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_prefix: []const u8, inc_globals: bool, public_only: bool, abstract_only: bool, no_use: bool) !Server.Candidates {
+pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_prefix: []const u8, inc_globals: bool, public_only: bool, abstract: Abstract, no_use: bool) !Server.Candidates {
     var var_list: std.ArrayList(*Obj) = .empty;
     var use_dict = std.array_hash_map.String(*objects.UseStmt).empty;
     // global names resolve to the requesting file's own definitions first
     const own: ?*objects.Ast = if (scope_list.len > 0) scope_list[0].file_ast else null;
     for (scope_list) |scope| {
-        try childCandidates(a, scope, null, public_only, abstract_only, &var_list);
+        try childCandidates(a, scope, null, public_only, abstract, &var_list);
         if (!no_use) try objects.getUseTree(self.env(a), scope, &use_dict, null, null, &.{});
     }
     // inside an ENUM its enumerators are names of it and of the scope
@@ -109,7 +116,7 @@ pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_
             var only: objects.StrSet = .{};
             for (try use_info.rename(a)) |o| try only.add(a, o);
             var tmp: std.ArrayList(*Obj) = .empty;
-            try childCandidates(a, scope, &only, true, abstract_only, &tmp);
+            try childCandidates(a, scope, &only, true, abstract, &tmp);
             for (tmp.items) |obj| {
                 var rev: ?[]const u8 = null;
                 // reversed rename map (last key wins for duplicate values);
@@ -127,7 +134,7 @@ pub fn getCandidates(self: *Server, a: Allocator, scope_list: []const *Obj, var_
             }
         } else {
             const scope = use_info.scope orelse continue;
-            try childCandidates(a, scope, &use_info.only_list, true, abstract_only, &import_var_list);
+            try childCandidates(a, scope, &use_info.only_list, true, abstract, &import_var_list);
         }
     }
     if (inc_globals) {
@@ -353,7 +360,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     var req_callable = false;
     // the names an ONLY list has already
     var listed: []const []const u8 = &.{};
-    var abstract_only = false;
+    var abstract: Abstract = .no;
     var no_use = false;
     var type_mask = setTypeMask(false);
     type_mask.insert(.module);
@@ -379,6 +386,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             include_globals = false;
             type_mask.remove(.class);
             listed = try onlyListed(a, line_prefix);
+            abstract = .too;
         },
         .pro_link => {
             type_mask = setTypeMask(true);
@@ -398,8 +406,13 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             type_mask = setTypeMask(true);
             type_mask.remove(.class);
             type_mask.remove(.variable);
+            // the abstract interfaces of the host (#481), and its procedures
+            type_mask.remove(.subroutine);
+            type_mask.remove(.function);
+            abstract = .too;
         },
         .vis => {
+            abstract = .too;
             include_globals = false;
             name_only = true;
             type_mask = setTypeMask(true);
@@ -409,7 +422,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             type_mask.remove(.function);
         },
         .int_only => {
-            abstract_only = true;
+            abstract = .only;
             include_globals = false;
             name_only = true;
             type_mask = setTypeMask(true);
@@ -452,7 +465,7 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     if (lc.ctx == .default and !is_member) try keywordArgItems(self, a, file, ast, ac_line, ac_char, &item_list);
     // no intrinsics nor global names for nothing typed
     if (typed_prefix.len == 0) include_globals = false;
-    const cands = try getCandidates(self, a, scope_list, var_prefix, include_globals, public_only, abstract_only, no_use);
+    const cands = try getCandidates(self, a, scope_list, var_prefix, include_globals, public_only, abstract, no_use);
     // a specific that has the name of its generic (#469) is offered once,
     // by the generic
     var by_generic: std.AutoHashMapUnmanaged(*const Obj, void) = .empty;
