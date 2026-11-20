@@ -69,7 +69,45 @@ pub fn frameVariables(s: *Session, a: Allocator, frame: Frame) ![]FrameVariable 
         };
         try out.append(a, .{ .v = v, .decl = decl });
     }
+    if (where) |w| try addStatics(s, a, frame, w.scope, &out);
     return out.items;
+}
+
+/// The variables of `scope` that LLVM Flang makes static (a main program's
+/// initialized, ALLOCATABLE, TARGET or SAVE ones), which are not the
+/// frame's but globals of their own names (CodeView's `S_GDATA32`, `v`):
+/// each that is not a module's variable of that name (whose public symbol
+/// is `_QM<module>E<name>`), when there is one such
+fn addStatics(s: *Session, a: Allocator, frame: Frame, scope: *Obj, out: *std.ArrayList(FrameVariable)) !void {
+    const frames = try s.engine.stack(a, frame.thread, frame.index + 1);
+    if (frame.index >= frames.len) return;
+    const mod_base = s.engine.moduleBase(frames[frame.index].instruction) orelse return;
+    for (scope.childList()) |c| {
+        if (c.kind != .variable) continue;
+        const listed = for (out.items) |fv| {
+            if (std.ascii.eqlIgnoreCase(fv.v.name, c.name)) break true;
+        } else false;
+        if (listed or hasKeyword(c, .parameter) or hasKeyword(c, .external)) continue;
+        const name = try std.ascii.allocLowerString(a, c.name);
+        const modules = try s.engine.globalsNamed(a, mod_base, try a.print("QM*E{s}", .{name}));
+        var found: ?dbgeng.Variable = null;
+        var count: usize = 0;
+        for (try s.engine.globalsNamed(a, mod_base, name)) |g| {
+            if (g.type_index == 0) continue;
+            const of_module = for (modules) |m| {
+                if (m.address == g.address) break true;
+            } else false;
+            if (of_module) continue;
+            found = g;
+            count += 1;
+        }
+        if (count == 1) try out.append(a, .{ .v = found.?, .decl = declOf(a, c) });
+    }
+}
+
+fn hasKeyword(o: *const Obj, k: @import("../constants.zig").Kw) bool {
+    for (o.keywords.items) |x| if (x == k) return true;
+    return false;
 }
 
 /// The declaration of a module variable that a line sees by its local

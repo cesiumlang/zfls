@@ -621,9 +621,9 @@ With Windows's Debugger Engine, zfls reads the variables itself: dbghelp
 workspace folder) its type, kind and rank, and the array descriptors
 (Intel's, LLVM Flang's) their bounds; a polymorphic object shows its
 declared type's components. Of LLVM Flang's programs built with `-g`, the
-engine shows the module variables and the dummy arguments, and stops at
-Flang's runtime errors and ERROR STOP, but not yet all of the main
-program's variables, nor CHARACTER(*) lengths and CLASS dynamic types. The program runs in a console window of its own (`"console":
+engine shows the variables (the main program's that Flang makes static
+too) and stops at Flang's runtime errors and ERROR STOP, but not yet
+CHARACTER(*) lengths and CLASS dynamic types. The program runs in a console window of its own (`"console":
 "internalConsole"`: none, its output is then lost). Hovers, watches and
 the Debug Console take a variable, its components and elements (`p%x`,
 `a(2,-1)`, `grid::cells`).
