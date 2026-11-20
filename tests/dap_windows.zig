@@ -5,15 +5,15 @@
 //! Fortran values (of ifx's programs) need ifx, which CI has not.
 //!
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
-//! tests/dap/grid.f90 built with `-g` (linked with zfls's ifx kit when it
-//! is next to zfls): what the engine does with Flang's programs today, the
+//! tests/dap/grid.f90 built with `-g` (linked with zfls's ifx kit: `--kit`,
+//! which `zig build` gives, else the one next to zfls): what the engine does with Flang's programs today, the
 //! breakpoints, the stack, a main program's variable, stepping and the stop
 //! at Flang's runtime error. What it does not do yet is printed as known
 //! gaps and not checked: the dummy arguments (#381, #382, #384), most of
 //! the main program's variables (#383), the module variables and the
 //! filter of Fortran runtime errors (#380).
 //!
-//!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG]
+//!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -41,6 +41,7 @@ pub fn main(init: std.process.Init) !u8 {
     var zfls_exe: ?[]const u8 = null;
     var zig: []const u8 = "zig";
     var flang: ?[]const u8 = init.environ_map.get("FLANG");
+    var kit: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--zfls")) {
@@ -49,10 +50,12 @@ pub fn main(init: std.process.Init) !u8 {
             zig = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--flang")) {
             flang = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--kit")) {
+            kit = argv[i + 1];
         } else break;
     }
     if (i != argv.len or zfls_exe == null) {
-        std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG]\n", .{});
+        std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]\n", .{});
         return 2;
     }
     if (builtin.target.os.tag != .windows) {
@@ -93,13 +96,13 @@ pub fn main(init: std.process.Init) !u8 {
         };
     }
     std.debug.print("zfls dap: all good\n", .{});
-    if (flang) |fc| return withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp);
+    if (flang) |fc| return withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp, kit);
     return 0;
 }
 
 /// tests/dap/grid.f90 built by LLVM Flang with `-g` (Microsoft's debug
 /// information), under the engine
-fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Environ.Map, exe_zfls: []const u8, fc: []const u8, tmp: []const u8) !u8 {
+fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Environ.Map, exe_zfls: []const u8, fc: []const u8, tmp: []const u8, kit: ?[]const u8) !u8 {
     const version = std.process.run(a, io, .{ .argv = &.{ fc, "--version" } }) catch {
         std.debug.print("LLVM Flang: skipped: no {s}\n", .{fc});
         return 0;
@@ -110,7 +113,7 @@ fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.E
     const src = try std.Io.Dir.path.join(a, &.{ tmp, "grid.f90" });
     try cwd.writeFile(io, .{ .sub_path = src, .data = text });
     const exe = try std.Io.Dir.path.join(a, &.{ tmp, "grid.exe" });
-    const env = try dap.flangKitEnv(io, a, environ, exe_zfls);
+    const env = try dap.flangKitEnv(io, a, environ, exe_zfls, kit);
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(a, &.{ fc, "-g", "-O0" });
     if (env != null) try argv.appendSlice(a, &.{ "-fms-runtime-lib=dll", "-fuse-ld=lld" });
