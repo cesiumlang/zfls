@@ -1,7 +1,8 @@
 //! The compiler check (`compiler_diagnostics`) with gfortran's command
 //! line, through a stand-in gfortran that logs its arguments: the files of
 //! suffixes its driver does not know (#521), a missing `#include` (#524),
-//! and the messages without a file (#525).
+//! the messages without a file (#525), and a directory of .mod files for
+//! each major version (#526).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -86,4 +87,49 @@ test "gfortran: -Wtabs of fixed form at the TAB's line, and the driver's warning
     try h.expect(std.mem.startsWith(u8, sent[r + mark.len ..], "1,"), "the TAB warning is not on line 2: {s}", .{sent[r..at]});
     // the driver's message: its option is the code, not in the text
     try h.expect(std.mem.find(u8, sent, "include directory 'nope'\",") != null and std.mem.find(u8, sent, "\"code\":\"-Wmissing-include-dirs\"") != null, "the include directory warning: {s}", .{sent});
+}
+
+/// A stand-in gfortran of `version` that logs its arguments to
+/// `gfortran.log` beside it and gives a driver message naming its version
+fn versioned(comptime version: []const u8) h.File {
+    return if (is_windows)
+        .{ .name = "gfortran.cmd", .text = "@echo off\r\nif \"%1\"==\"--version\" (echo GNU Fortran ^(GCC^) " ++ version ++ "& exit /b 0)\r\necho %* >> \"%~dp0gfortran.log\"\r\necho gfortran: error: " ++ version ++ " 1>&2\r\n" }
+    else
+        .{ .name = "gfortran.sh", .text = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'GNU Fortran (GCC) " ++ version ++ "'; exit 0; fi\necho \"$@\" >> \"$(dirname \"$0\")/gfortran.log\"\necho 'gfortran: error: " ++ version ++ "' >&2\n" };
+}
+
+/// The `-J` directory of the last call logged in `gfortran.log`
+fn lastModDir(w: *h.Workspace, a: std.mem.Allocator) ![]const u8 {
+    const calls = try w.tmp.dir.readFileAlloc(io, "gfortran.log", a, .limited(1 << 20));
+    var last: ?[]const u8 = null;
+    var it = std.mem.tokenizeAny(u8, calls, "\r\n");
+    while (it.next()) |call| {
+        var words = std.mem.tokenizeScalar(u8, call, ' ');
+        while (words.next()) |x| if (std.mem.startsWith(u8, x, "-J")) {
+            last = std.mem.trim(u8, x[2..], "\"");
+        };
+    }
+    return last orelse h.unmet("no -J in {s}", .{calls});
+}
+
+test "gfortran: the .mod files of each major version in a directory of their own (#526)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const old = comptime versioned("14.4.0");
+    const w = try h.Workspace.init(&.{ module, user, old }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ old.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, old.name, .executable_file, .{});
+    try w.open("u.f77", "fortran");
+    _ = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"gfortran: 14.4.0\"", 60)) orelse return error.NoCompilerDiagnostics;
+    const dir14 = try lastModDir(w, a);
+    try h.expect(std.mem.endsWith(u8, dir14, "gfortran-14"), "gfortran 14's .mod files in {s}", .{dir14});
+    // another gfortran at the same path: another directory
+    const new = comptime versioned("15.3.0");
+    try w.tmp.dir.writeFile(io, .{ .sub_path = new.name, .data = new.text });
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, new.name, .executable_file, .{});
+    try w.save("u.f77");
+    _ = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"gfortran: 15.3.0\"", 60)) orelse return error.NoCompilerDiagnostics;
+    const dir15 = try lastModDir(w, a);
+    try h.expect(std.mem.endsWith(u8, dir15, "gfortran-15"), "gfortran 15's .mod files in {s}", .{dir15});
 }
