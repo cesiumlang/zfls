@@ -1,8 +1,9 @@
 //! The compilers whose messages zfls publishes as diagnostics
 //! (`compiler_diagnostics`): their command-line options and parsers of
-//! their messages (LLVM Flang's in compilers/flang.zig). A port of the VS
-//! Code extension's linter (editors/vscode/src/lint/compilers.ts), whose
-//! tests the ones here follow.
+//! their messages (gfortran's, LLVM Flang's and Intel's in compilers/). A
+//! port of the VS Code extension's linter
+//! (editors/vscode/src/lint/compilers.ts), whose tests the ones here
+//! follow.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -10,6 +11,7 @@ const regex = @import("regex.zig");
 const Regex = regex.Regex;
 const flang = @import("compilers/flang.zig");
 const intel = @import("compilers/intel.zig");
+const gfortran = @import("compilers/gfortran.zig");
 
 pub const Id = enum {
     gfortran,
@@ -199,10 +201,11 @@ pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
 }
 
 /// The option for the file's language, right before it: the drivers of
-/// Flang and Intel's compilers check only the suffixes they know
-/// (`flang.language`, `intel.language`)
+/// gfortran, Flang and Intel's compilers check only the suffixes they know
+/// (`gfortran.language`, `flang.language`, `intel.language`)
 pub fn language(id: Id, o: Options) []const []const u8 {
     return switch (id) {
+        .gfortran => gfortran.language,
         .flang => flang.language,
         .ifx, .ifort => intel.language(o),
         else => &.{},
@@ -344,7 +347,7 @@ pub fn parse(a: Allocator, id: Id, output: []const u8) ![]Message {
     var p: Parser = .{ .a = a };
     defer p.deinit();
     switch (id) {
-        .gfortran => try p.gfortran(output),
+        .gfortran => try gfortran.parse(&p, output),
         .ifx, .ifort => try intel.parse(&p, output),
         .nagfor => try p.nag(output),
         .lfortran => try p.lfortran(output),
@@ -398,62 +401,6 @@ pub const Parser = struct {
         const sev: Severity = if (std.ascii.eqlIgnoreCase(m.named(r, "sev").?, "warning")) .warning else .@"error";
         try p.push(null, 0, null, sev, try p.a.print("{s}: {s}", .{ m.named(r, "bin").?, m.named(r, "msg").? }), null);
         return true;
-    }
-
-    // --- gfortran ----------------------------------------------------------
-
-    fn gnuSeverity(sev: []const u8) Severity {
-        if (std.ascii.eqlIgnoreCase(sev, "warning")) return .warning;
-        if (std.ascii.eqlIgnoreCase(sev, "note") or std.ascii.eqlIgnoreCase(sev, "remark")) return .info;
-        return .@"error";
-    }
-
-    /// Splits gfortran's trailing `[-Wflag]` off into the code
-    fn gnuMessage(p: *Parser, file: ?[]const u8, ln: usize, cn: ?usize, sev: []const u8, msg: []const u8) !void {
-        const r = try p.re("\\s*\\[(-W[\\w=-]+)\\]$", .{});
-        if (r.search(msg)) |m| {
-            try p.push(file, ln, cn, gnuSeverity(sev), msg[0..m.start(0)], m.group(1));
-        } else try p.push(file, ln, cn, gnuSeverity(sev), msg, null);
-    }
-
-    fn gfortran(p: *Parser, output: []const u8) !void {
-        // `file:line:column: Severity: message`, as printed with
-        // -fno-diagnostics-show-caret
-        const one = try p.re("^(?P<file>.+?):(?P<ln>\\d+):(?:(?P<cn>\\d+):)? (?P<sev>Fatal Error|Error|Warning|Note|Remark): (?P<msg>.*)$", .{});
-        // the caret format: a locus line `file:line:column:` (or with a
-        // range, `file:line.column-end:`), the source excerpt, and later
-        // `Severity: message`
-        const locus_re = try p.re("^(?P<file>.+?):(?P<ln>\\d+)[:.](?P<cn>\\d+)(?:-\\d+)?:$", .{});
-        const sev_re = try p.re("^(?P<sev>Fatal Error|Error|Warning|Note|Remark): (?P<msg>.*)$", .{});
-        // -Wtabs (in -Wall), at a TAB-format line: a line of the file read,
-        // which it does not name
-        const tab_re = try p.re("^[\\w.+-]+: (?P<sev>Warning|Error): (?P<msg>Nonconforming tab character in column (?P<cn>\\d+) of line (?P<ln>\\d+).*)$", .{});
-        var locus: ?struct { file: []const u8, ln: usize, cn: usize } = null;
-        var it = lines(output);
-        while (it.next()) |raw| {
-            const text = trimCr(raw);
-            if (one.match(text)) |m| {
-                try p.gnuMessage(m.named(one, "file"), num(m.named(one, "ln")), numOpt(m.named(one, "cn")), m.named(one, "sev").?, m.named(one, "msg").?);
-                locus = null;
-                continue;
-            }
-            if (locus_re.match(text)) |m| {
-                // a second locus of the same message ("at (1) and (2)")
-                // keeps the first
-                if (locus == null) locus = .{ .file = m.named(locus_re, "file").?, .ln = num(m.named(locus_re, "ln")), .cn = num(m.named(locus_re, "cn")) };
-                continue;
-            }
-            if (sev_re.match(text)) |m| {
-                try p.gnuMessage(if (locus) |l| l.file else null, if (locus) |l| l.ln else 0, if (locus) |l| l.cn else null, m.named(sev_re, "sev").?, m.named(sev_re, "msg").?);
-                locus = null;
-                continue;
-            }
-            if (tab_re.match(text)) |m| {
-                try p.gnuMessage(null, num(m.named(tab_re, "ln")), numOpt(m.named(tab_re, "cn")), m.named(tab_re, "sev").?, m.named(tab_re, "msg").?);
-                continue;
-            }
-            _ = try p.driver(text);
-        }
     }
 
     // --- NAG nagfor ----------------------------------------------------------
@@ -568,7 +515,7 @@ pub fn num(s: ?[]const u8) usize {
     return std.fmt.parseInt(usize, s orelse return 0, 10) catch 0;
 }
 
-fn numOpt(s: ?[]const u8) ?usize {
+pub fn numOpt(s: ?[]const u8) ?usize {
     return std.fmt.parseInt(usize, s orelse return null, 10) catch null;
 }
 
@@ -603,52 +550,6 @@ test "the arguments for debug lines: as zfls reads them, unless the user's say" 
     try std.testing.expectEqualStrings("/nod-lines", dLines(.ifort, false, .{ .windows = true, .mod_dir = "m" })[0]);
     try std.testing.expectEqual(@as(usize, 0), dLines(.lfortran, true, o).len);
     try std.testing.expect(isDLinesArg("-fd-lines-as-code") and isDLinesArg("/D-Lines") and !isDLinesArg("-Wall"));
-}
-
-test "gfortran one-line messages" {
-    try expectBrief(.gfortran,
-        \\main.f90:5:7: Error: Symbol 'j' at (1) has no IMPLICIT type
-        \\inc.h:2:21: Error: Symbol 'undefined_thing' at (1) has no IMPLICIT type
-        \\warn.f90:6:16: Warning: Unused variable 'unused' declared at (1) [-Wunused-variable]
-        \\usem.f90:2:7: Fatal Error: Cannot open module file 'nonexistent_mod.mod' for reading at (1): No such file or directory
-        \\compilation terminated.
-    , &.{
-        "main.f90:5:7 error: Symbol 'j' at (1) has no IMPLICIT type",
-        "inc.h:2:21 error: Symbol 'undefined_thing' at (1) has no IMPLICIT type",
-        "warn.f90:6:16 warning: Unused variable 'unused' declared at (1) [-Wunused-variable]",
-        "usem.f90:2:7 error: Cannot open module file 'nonexistent_mod.mod' for reading at (1): No such file or directory",
-    });
-}
-
-test "gfortran caret format" {
-    try expectBrief(.gfortran, "main.f90:5:7:\r\n\r\n    5 |   i = j + 1\r\n      |       1\r\nError: Symbol 'j' at (1) has no IMPLICIT type\r\n" ++
-        "C:\\src\\fixed.f:4:11:\r\n\r\n    4 |       i = q\r\n      |           1\r\nError: Symbol 'q' at (1) has no IMPLICIT type\r\n" ++
-        "two.f90:8.13-15:\r\ntwo.f90:12:3:\r\nWarning: Type mismatch at (1) and (2)\r\n", &.{
-        "main.f90:5:7 error: Symbol 'j' at (1) has no IMPLICIT type",
-        "C:\\src\\fixed.f:4:11 error: Symbol 'q' at (1) has no IMPLICIT type",
-        "two.f90:8:13 warning: Type mismatch at (1) and (2)",
-    });
-}
-
-test "gfortran driver messages" {
-    try expectBrief(.gfortran,
-        \\gfortran: error: unrecognized command-line option '-Wbogus'
-        \\f951.exe: Warning: Nonexistent include directory 'nope' [-Wmissing-include-dirs]
-    , &.{
-        "-:0:- error: gfortran: unrecognized command-line option '-Wbogus'",
-        "-:0:- warning: f951.exe: Nonexistent include directory 'nope' [-Wmissing-include-dirs]",
-    });
-}
-
-test "gfortran's -Wtabs at the TAB-format line" {
-    // MSYS2's gfortran 16.1, -Wall
-    try expectBrief(.gfortran,
-        \\f951.exe: Warning: Nonconforming tab character in column 1 of line 4 [-Wtabs]
-        \\f951: Error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]
-    , &.{
-        "-:4:1 warning: Nonconforming tab character in column 1 of line 4 [-Wtabs]",
-        "-:6:3 error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]",
-    });
 }
 
 test "nagfor messages" {
