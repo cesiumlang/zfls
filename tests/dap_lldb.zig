@@ -5,7 +5,8 @@
 //! program's exit, attaching to a running program and (with script(1)) the
 //! program in a terminal (`zig build test-dap-lldb`). lldb reads no
 //! Fortran: the test shows what lldb gives as variables and checks nothing
-//! of them. Skipped without gfortran or lldb-dap, and on Windows.
+//! of them. Skipped without gfortran or lldb-dap. On Windows, where
+//! lldb-dap tells no stop (#374), only that zfls refuses it.
 //!
 //!     dap_lldb --zfls ZFLS [--gfortran GFORTRAN] [--lldb LLDB_DAP]
 //!
@@ -64,11 +65,9 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("usage: dap_lldb --zfls ZFLS [--gfortran GFORTRAN] [--lldb LLDB_DAP]\n", .{});
         return 2;
     }
-    // Windows's programs are gdb's or the Debugger Engine's
-    if (builtin.target.os.tag == .windows) {
-        std.debug.print("skipped: not on Windows\n", .{});
-        return 0;
-    }
+    // Windows's programs are gdb's or the Debugger Engine's: lldb-dap is
+    // refused there, with a word of them, and no session waits (#374)
+    if (builtin.target.os.tag == .windows) return refusedOnWindows(io, init.gpa, try Io.Dir.cwd().realPathFileAlloc(io, zfls_exe.?, a));
     const lldb_dap = try zfls.dap_lldb.find(a, io, init.environ_map, lldb) orelse {
         std.debug.print("skipped: no lldb-dap (xcrun --find lldb-dap, or lldb-dap or lldb-vscode on the PATH)\n", .{});
         return 0;
@@ -108,6 +107,29 @@ pub fn main(init: std.process.Init) !u8 {
     }
     if (failed) return 1;
     std.debug.print("zfls dap with lldb-dap: all good\n", .{});
+    return 0;
+}
+
+/// On Windows, a launch with `lldb: true` fails at once, naming gdb and
+/// the Debugger Engine: lldb-dap there tells no stop until it is asked
+/// something else (#374)
+fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8) !u8 {
+    const c = try Client.start(io, gpa, &.{ zfls_exe, "dap" });
+    defer c.deinit();
+    defer {
+        if (c.send("disconnect", .{})) |seq| {
+            _ = c.response(seq, "disconnect") catch {};
+        } else |_| {}
+        c.child.stdin.?.close(io);
+        c.child.stdin = null;
+        _ = c.child.wait(io) catch {};
+    }
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path" });
+    const r = try c.response(try c.send("launch", .{ .program = "C:\\no\\such.exe", .lldb = true }), "launch");
+    const ok = if (get(r, "success")) |v| v == .bool and v.bool else false;
+    const message = str(r, "message") orelse "";
+    check(!ok and contains(message, "gdb") and contains(message, "dbgeng"), "lldb refused on Windows: {s}", .{message}) catch return 1;
+    std.debug.print("zfls dap with lldb-dap: refused on Windows, as it should be\n", .{});
     return 0;
 }
 

@@ -33,12 +33,17 @@ pub const Client = struct {
     output: std.ArrayList(u8) = .empty,
 
     pub fn start(io: Io, gpa: Allocator, argv: []const []const u8) !*Client {
+        return startEnv(io, gpa, argv, null);
+    }
+
+    /// `start`, with the adapter's environment `env` (else this one's)
+    pub fn startEnv(io: Io, gpa: Allocator, argv: []const []const u8, env: ?*const std.process.Environ.Map) !*Client {
         const c = try gpa.create(Client);
         c.* = .{
             .io = io,
             .gpa = gpa,
             .arena = .init(gpa),
-            .child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe, .create_no_window = true }),
+            .child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe, .create_no_window = true, .environ_map = env }),
         };
         c.thread = try std.Thread.spawn(.{}, read, .{c});
         return c;
