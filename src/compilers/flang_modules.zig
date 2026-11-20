@@ -6,7 +6,8 @@
 //! every `use iso_fortran_env` is an error ("Cannot parse module file"),
 //! and the compiler check gives it for every file that has one (#438).
 //! Then the directory that has them, of the same processor, is passed with
-//! `-fintrinsic-modules-path`.
+//! `-fintrinsic-modules-path`. zfls indexes the modules of that directory
+//! (`moduleDir`) that its own table lacks (`cudadevice`, #395).
 
 const std = @import("std");
 const Io = std.Io;
@@ -37,6 +38,22 @@ pub fn parseInstall(output: []const u8) ?Install {
 /// when there is no directory of the driver's target there, the one of
 /// another triple of the same processor that has `iso_fortran_env.mod`
 pub fn intrinsicModules(io: Io, a: Allocator, version_output: []const u8) !?[]const u8 {
+    const found = try find(io, a, version_output) orelse return null;
+    return if (found.driver_looks) null else found.dir;
+}
+
+/// The directory of the intrinsic modules of the Flang that
+/// `version_output` describes, wherever they are (its driver's, else the
+/// one `intrinsicModules` passes), or null when none is found: the
+/// `.mod` files zfls indexes (#395)
+pub fn moduleDir(io: Io, a: Allocator, version_output: []const u8) !?[]const u8 {
+    const found = try find(io, a, version_output) orelse return null;
+    return found.dir;
+}
+
+const Found = struct { dir: []const u8, driver_looks: bool };
+
+fn find(io: Io, a: Allocator, version_output: []const u8) !?Found {
     const install = parseInstall(version_output) orelse return null;
     const arch = install.target[0 .. std.mem.findScalar(u8, install.target, '-') orelse install.target.len];
     const clang = try std.Io.Dir.path.join(a, &.{ install.bin, "..", "lib", "clang" });
@@ -47,9 +64,10 @@ pub fn intrinsicModules(io: Io, a: Allocator, version_output: []const u8) !?[]co
     while (try vit.next(io)) |v| {
         if (v.kind != .directory) continue;
         const flang = try std.Io.Dir.path.join(a, &.{ clang, v.name, "finclude", "flang" });
-        if (hasModules(io, a, try std.Io.Dir.path.join(a, &.{ flang, install.target }))) return null;
+        const own = try std.Io.Dir.path.join(a, &.{ flang, install.target });
+        if (hasModules(io, a, own)) return .{ .dir = own, .driver_looks = true };
         // the layout before the triples (Flang 20)
-        if (hasModules(io, a, flang)) return null;
+        if (hasModules(io, a, flang)) return .{ .dir = flang, .driver_looks = true };
         var triples = Io.Dir.cwd().openDir(io, flang, .{ .iterate = true }) catch continue;
         defer triples.close(io);
         var tit = triples.iterate();
@@ -59,7 +77,7 @@ pub fn intrinsicModules(io: Io, a: Allocator, version_output: []const u8) !?[]co
             if (found == null and hasModules(io, a, dir)) found = dir;
         }
     }
-    return found;
+    return if (found) |d| .{ .dir = d, .driver_looks = false } else null;
 }
 
 fn hasModules(io: Io, a: Allocator, dir: []const u8) bool {
@@ -96,8 +114,13 @@ test "the intrinsic modules of another triple, when the driver's has none" {
     try tmp.dir.writeFile(io, .{ .sub_path = "lib/clang/23/finclude/flang/x86_64-unknown-linux-gnu/iso_fortran_env.mod", .data = "" });
     const dir = (try intrinsicModules(io, a, conda)).?;
     try std.testing.expect(std.mem.endsWith(u8, dir, "x86_64-unknown-linux-gnu"));
-    // the driver's own triple has them: nothing to pass
-    try std.testing.expect(try intrinsicModules(io, a, try a.print("Target: x86_64-unknown-linux-gnu\nInstalledDir: {s}\n", .{bin})) == null);
+    // where zfls reads them: there too (#395)
+    try std.testing.expectEqualStrings(dir, (try moduleDir(io, a, conda)).?);
+    // the driver's own triple has them: nothing to pass, and zfls reads them there
+    const own = try a.print("Target: x86_64-unknown-linux-gnu\nInstalledDir: {s}\n", .{bin});
+    try std.testing.expect(try intrinsicModules(io, a, own) == null);
+    try std.testing.expect(std.mem.endsWith(u8, (try moduleDir(io, a, own)).?, "x86_64-unknown-linux-gnu"));
     // no InstalledDir
     try std.testing.expect(try intrinsicModules(io, a, "Target: x86_64-conda-linux-gnu\n") == null);
+    try std.testing.expect(try moduleDir(io, a, "Target: x86_64-conda-linux-gnu\n") == null);
 }

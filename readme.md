@@ -622,6 +622,17 @@ directory without one) comes first on that file's search path in
 without build information, the one in the file's own directory, then in
 the nearest directory, then the one of the lowest path.
 
+A module that a USE names and that neither the workspace's sources nor
+zfls's table of the intrinsic modules defines is read from its module file
+when that is LLVM Flang's, which is Fortran source: `<module>.mod` in the
+`include_dirs` (with those of the build files), then, when
+`compiler_diagnostics` is `flang`, in the directory of Flang's intrinsic
+modules (`cudadevice`, `cooperative_groups`, `__fortran_builtins`, found
+from `flang --version`), and the modules those use. Hover, completion and
+go to definition then reach a library's modules and Flang's own; the
+module files' own diagnostics are not shown. The `.mod` files of other
+compilers (gfortran's are compressed, Intel's binary) are not read.
+
 ### Fortran and C
 
 For a procedure with `BIND(C)`, whose C name is its `NAME=` or else its

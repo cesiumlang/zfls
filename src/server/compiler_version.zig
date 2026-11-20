@@ -19,7 +19,9 @@ const Server = @import("../server.zig").Server;
 
 /// What is known of the compiler that the check runs, the first of `exes`
 /// that runs: for LLVM Flang only, else nothing. Nothing too when none
-/// runs or it does not say (no version-dependent options then).
+/// runs or it does not say (no version-dependent options then). An
+/// executable that did not run is asked again next time: it may run then
+/// (a script made executable after zfls first asked at the start, #395).
 pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u8) Known {
     const none: Known = .{ .found = false, .version = null };
     if (id != .flang) return none;
@@ -31,6 +33,10 @@ pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u
         };
         var found = ask(self, a, exe);
         found.stamp = stamp;
+        if (!found.ran) {
+            if (found.found) return found;
+            continue;
+        }
         if (self.compiler_versions.getPtr(exe)) |old| {
             old.* = found;
         } else {
@@ -43,8 +49,11 @@ pub fn of(self: *Server, a: Allocator, id: compilers.Id, exes: []const []const u
 }
 
 /// What `exe --version` said, whether `exe` was there, and the file it
-/// was; the directory of Flang's intrinsic modules to pass (the server's)
-pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null, intrinsic_modules: ?[]const u8 = null };
+/// was; the directory of Flang's intrinsic modules to pass (the server's),
+/// and where they are, passed or not (modfiles.zig); `ran`: false when
+/// `exe` could not be run (not found, not executable), which `of` does not
+/// keep (a compiler that hangs is kept: asked again, it would hang again)
+pub const Known = struct { found: bool, version: ?u32, stamp: ?Stamp = null, intrinsic_modules: ?[]const u8 = null, module_dir: ?[]const u8 = null, ran: bool = true };
 
 /// The size and modification time of an executable's file
 pub const Stamp = struct { size: u64, mtime: i96 };
@@ -83,12 +92,19 @@ fn ask(self: *Server, a: Allocator, exe: []const u8) Known {
         .cwd = if (self.root_path.len > 0) self.root_path else null,
         .environ_map = self.toolEnv(),
         .timeout = tools.seconds(10),
-    }) catch |e| return .{ .found = e != error.FileNotFound, .version = null };
+    }) catch |e| return .{ .found = e != error.FileNotFound, .version = null, .ran = e == error.Timeout };
     const version = flang.parseVersion(r.stdout) orelse flang.parseVersion(r.stderr);
     self.log.info("compiler_diagnostics: {s} is LLVM Flang {?d}", .{ exe, version });
     const modules = flang_modules.intrinsicModules(self.io, a, r.stdout) catch null;
     if (modules) |d| self.log.info("compiler_diagnostics: {s}'s intrinsic modules are not where its driver looks: -fintrinsic-modules-path {s}", .{ exe, d });
-    return .{ .found = true, .version = version, .intrinsic_modules = if (modules) |d| self.arena.allocator().dupe(u8, d) catch null else null };
+    const module_dir = flang_modules.moduleDir(self.io, a, r.stdout) catch null;
+    const sa = self.arena.allocator();
+    return .{
+        .found = true,
+        .version = version,
+        .intrinsic_modules = if (modules) |d| sa.dupe(u8, d) catch null else null,
+        .module_dir = if (module_dir) |d| sa.dupe(u8, d) catch null else null,
+    };
 }
 
 test "an executable's stamp: its file, on the PATH, and none" {

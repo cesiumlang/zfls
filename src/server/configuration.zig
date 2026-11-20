@@ -344,7 +344,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
         };
     }
     if (docs.items.len > 0) {
-        _ = try workspace.addIncludedFiles(self, a, null);
+        _ = try workspace.addNeededFiles(self, a, null);
         try linking.fullRelink(self, a);
     }
     clangd.start(self, a);
