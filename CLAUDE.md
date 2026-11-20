@@ -75,6 +75,15 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
   Pull requests take the release-note labels of `.github/release.yml`
   (`fix`, `feature`, `performance`, `tests`, `refactor`, `ci`,
   `skip-changelog`); their titles are the release notes.
+- **GitHub: the Cesium Agent app.** On GitHub, act as the GitHub App Cesium
+  Agent (`cesium-agent[bot]`), not as the maintainer (cesium-workspace#6;
+  cesium-workspace's CLAUDE.md has the details). Prefix `gh` commands with
+  `GH_TOKEN="$(bash /c/scratch/github-apps/app-token.sh cesiumlang)"`, and
+  run git commands that commit or push as
+  `bash /c/scratch/github-apps/app-git.sh cesiumlang <git arguments>`.
+  Never print, copy or commit anything in `C:\scratch\github-apps\cesiumlang\`.
+  The app merges pull requests into `dev`; the `dev` to `main` pull request
+  is merged by the maintainer, or on his word.
 - **The debug options' output is ours.** What `--debug_*` prints serves
   zfls's own testing; it need not match fortls's, so change it as tests
   need.
