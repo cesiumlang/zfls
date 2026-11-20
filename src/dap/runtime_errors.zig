@@ -54,6 +54,20 @@ const lfortran_functions = [_]Function{
     } },
 };
 
+/// Intel's ERROR STOP (libifcore). ifx 2026 calls `for_error_stop_quiet`
+/// for every form of it (`error stop`, `error stop 3`, `error stop 'text'`,
+/// `quiet=`), since Fortran 2018's `QUIET=`; `_int8` for an 8-byte code.
+/// ifort and older ifx call the others. Plain STOP is `for_stop_core_quiet`,
+/// which is not here.
+const intel_error_stops = [_]Function{
+    .{ .name = "for_error_stop", .error_stop = true },
+    .{ .name = "for_error_stop8", .error_stop = true },
+    .{ .name = "for_error_stop_int", .error_stop = true },
+    .{ .name = "for_error_stop_int8", .error_stop = true },
+    .{ .name = "for_error_stop_quiet", .error_stop = true },
+    .{ .name = "for_error_stop_quiet_int8", .error_stop = true },
+};
+
 /// gdb's and lldb-dap's: gfortran's, LLVM Flang's, Intel's, LFortran's.
 ///
 /// Every error of Flang's runtime (an I/O error, a failed allocation,
@@ -73,18 +87,14 @@ pub const gdb_functions = [_]Function{
     .{ .name = "?CrashHeader@Terminator@runtime@Fortran@@QEBAXXZ" },
     .{ .name = "Fortran::runtime::Terminator::CrashHeader" },
     .{ .name = "for__issue_diagnostic" },
-} ++ lfortran_functions;
+} ++ intel_error_stops ++ lfortran_functions;
 
 /// Windows's Debugger Engine's: Intel's (what its runtime calls on a severe
 /// error and on `ERROR STOP`), LLVM Flang's (the engine undecorates
 /// Microsoft's names)
 pub const engine_functions = [_]Function{
     .{ .name = "for__issue_diagnostic" },
-    .{ .name = "for_error_stop", .error_stop = true },
-    .{ .name = "for_error_stop8", .error_stop = true },
-    .{ .name = "for_error_stop_int", .error_stop = true },
-    .{ .name = "for_error_stop_int8", .error_stop = true },
-} ++ flang_stops ++ [_]Function{
+} ++ intel_error_stops ++ flang_stops ++ [_]Function{
     .{ .name = "Fortran::runtime::Terminator::CrashHeader" },
 };
 
@@ -246,6 +256,17 @@ test "the functions of the runtimes' errors and ERROR STOP" {
     try std.testing.expect(isErrorStop("_FortranAStopStatement"));
     try std.testing.expect(isErrorStop("_FortranAStopStatementText"));
     try std.testing.expect(isErrorStop("for_error_stop_int8"));
+    // ifx 2026's ERROR STOP, in both lists: gdb has Intel's too (#492)
+    for ([_][]const u8{ "for_error_stop_quiet", "for_error_stop_quiet_int8", "for_error_stop", "for_error_stop_int" }) |name| {
+        try std.testing.expect(isErrorStop(name));
+        inline for (.{ gdb_functions, engine_functions }) |list| {
+            const has = for (list) |f| {
+                if (std.mem.eql(u8, f.name, name)) break true;
+            } else false;
+            try std.testing.expect(has);
+        }
+    }
+    try std.testing.expect(find("for_stop_core_quiet") == null);
     try std.testing.expect(!isErrorStop("?CrashHeader@Terminator@runtime@Fortran@@QEBAXXZ"));
     try std.testing.expect(!isErrorStop("Fortran::runtime::Terminator::CrashHeader"));
     try std.testing.expect(!isErrorStop("for__issue_diagnostic"));
