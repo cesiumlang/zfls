@@ -103,6 +103,9 @@ pub const gdb_functions = [_]Function{
     .{ .name = "_gfortran_os_error_at" },
     .{ .name = "_gfortran_error_stop_string", .error_stop = true },
     .{ .name = "_gfortran_error_stop_numeric", .error_stop = true },
+    // with `-fcoarray=lib` (libcaf_single, OpenCoarrays, libcaf_shmem)
+    .{ .name = "_gfortran_caf_error_stop_str", .error_stop = true },
+    .{ .name = "_gfortran_caf_error_stop", .error_stop = true },
 } ++ flang_stops ++ [_]Function{
     .{ .name = "?CrashHeader@Terminator@runtime@Fortran@@QEBAXXZ" },
     .{ .name = "Fortran::runtime::Terminator::CrashHeader" },
@@ -298,6 +301,11 @@ test "the functions of the runtimes' errors and ERROR STOP" {
         }
     }
     try std.testing.expect(find("for_stop_core_quiet") == null);
+    // gfortran's with `-fcoarray=lib` (#532); its STOP is not
+    try std.testing.expect(isErrorStop("_gfortran_caf_error_stop_str"));
+    try std.testing.expect(isErrorStop("_gfortran_caf_error_stop"));
+    try std.testing.expect(find("_gfortran_caf_stop_str") == null);
+    try std.testing.expect(find("_gfortran_caf_stop_numeric") == null);
     try std.testing.expect(!isErrorStop("?CrashHeader@Terminator@runtime@Fortran@@QEBAXXZ"));
     try std.testing.expect(!isErrorStop("Fortran::runtime::Terminator::CrashHeader"));
     try std.testing.expect(!isErrorStop("for__issue_diagnostic"));
