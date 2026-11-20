@@ -550,7 +550,7 @@ are a scope of their own (zfls indexes the program's sources: `sourceRoot`
 of the configuration, else `cwd`). With all three, the exception filter
 **Fortran runtime errors** stops the program where the Fortran runtime reports an error (an
 array bound exceeded under `-fcheck=bounds`, a failed allocation, an I/O
-error without `iostat=`) or at ERROR STOP, LLVM Flang's and LFortran's
+error without `iostat=`, `err=` or `end=`) or at ERROR STOP, LLVM Flang's and LFortran's
 runtimes' too.
 `--text JSON` translates the words it shows (the VS Code extension passes
 them in VS Code's language).

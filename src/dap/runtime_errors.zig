@@ -1,6 +1,7 @@
 //! The functions of the Fortran runtimes that a program calls on an error
 //! at run time (an array bound exceeded under `-fcheck=bounds` or by
-//! LFortran's checks, a failed allocation, an I/O error without `iostat=`)
+//! LFortran's checks, a failed allocation, an I/O error without `iostat=`,
+//! `err=` or `end=`)
 //! or on `ERROR STOP`, where
 //! the exception filter **Fortran runtime errors** stops: gdb's and
 //! lldb-dap's (`gdb_functions`), Windows's Debugger Engine's
@@ -21,7 +22,21 @@ pub const Function = struct {
     /// A function of `ERROR STOP` among other uses: the C strings that its
     /// arguments begin with at `ERROR STOP`. The debugger stops only then
     error_stop_strings: []const StringArgument = &.{},
+    /// A function of every I/O error, handled or not: its argument (from 0)
+    /// that points to the statement's flags (an `int`), of which none of
+    /// `unhandled` must be set. The debugger stops only then: not when the
+    /// statement has `IOSTAT=`, `ERR=` or `END=`
+    io_flags: ?IoFlags = null,
 };
+
+/// The flags of an I/O statement behind a pointer argument
+pub const IoFlags = struct { argument: u2, handled: u32 };
+
+/// libgfortran's flags of an I/O statement (`st_parameter_common.flags`,
+/// libgfortran/io/io.h) that handle an error: `ERR=` (`IOPARM_ERR`),
+/// `END=` (`IOPARM_END`), `IOSTAT=` (`IOPARM_HAS_IOSTAT`). (`EOR=`, of
+/// data transfers only, is a bit that OPEN's own flags use too)
+pub const gfortran_io_handled: u32 = 0x4 | 0x8 | 0x20;
 
 /// An argument (from 0) that points to a C string beginning with `text`;
 /// `variadic` when it is among the `...` of a variadic function
@@ -78,6 +93,11 @@ const intel_error_stops = [_]Function{
 /// left out: it calls `CrashHeader`, so the program would stop twice.
 pub const gdb_functions = [_]Function{
     .{ .name = "_gfortran_runtime_error" },
+    // every I/O error (an OPEN of a missing file, a READ of bad data):
+    // `generate_error_common(st_parameter_common *, int family, const char
+    // *message)`, which then ends the program unless the statement handles
+    // the error
+    .{ .name = "_gfortran_generate_error_common", .io_flags = .{ .argument = 0, .handled = gfortran_io_handled } },
     .{ .name = "_gfortran_runtime_error_at" },
     .{ .name = "_gfortran_os_error" },
     .{ .name = "_gfortran_os_error_at" },
@@ -217,6 +237,14 @@ pub const Register = struct {
     engine: [:0]const u8,
 };
 
+/// The condition that the flags of an I/O statement behind an argument
+/// have none of `handled`: in C (gdb's and lldb's for a function without
+/// debug information); null when the argument has no register
+pub fn ioCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag, comptime f: IoFlags) ?[]const u8 {
+    const reg = comptime pointerRegister(arch, os, f.argument, false) orelse return null;
+    return comptime std.fmt.comptimePrint("(*(int *){s} & 0x{x}) == 0", .{ reg, f.handled });
+}
+
 /// A breakpoint of gdb or lldb on a function of `gdb_functions`
 pub const GdbBreakpoint = struct {
     name: []const u8,
@@ -238,6 +266,9 @@ pub fn gdbBreakpoints(comptime arch: std.Target.Cpu.Arch, comptime os: std.Targe
                 out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = r.gdb }};
             } else if (f.error_stop_strings.len > 0) {
                 const c = stringCondition(arch, os, f.error_stop_strings) orelse continue;
+                out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = c }};
+            } else if (f.io_flags) |io| {
+                const c = ioCondition(arch, os, io) orelse continue;
                 out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = c }};
             } else out = out ++ [_]GdbBreakpoint{.{ .name = f.name }};
         }
@@ -340,14 +371,33 @@ test "the register of ERROR STOP's argument of Flang's STOP functions" {
             try std.testing.expectEqualStrings("$r8l", b.condition.?);
         } else if (std.mem.eql(u8, b.name, "_lcompilers_print_error")) {
             try std.testing.expect(std.mem.startsWith(u8, b.condition.?, "*(unsigned short *)$rcx == 0x7325 && "));
+        } else if (std.mem.eql(u8, b.name, "_gfortran_generate_error_common")) {
+            try std.testing.expectEqualStrings("(*(int *)$rcx & 0x2c) == 0", b.condition.?);
         } else try std.testing.expect(b.condition == null);
     }
     for (comptime gdbBreakpoints(.x86_64, .linux)) |b| if (std.mem.eql(u8, b.name, "_FortranAStopStatement"))
         try std.testing.expectEqualStrings("$sil", b.condition.?);
-    // a target of no known convention: without Flang's STOP functions
-    // and LFortran's
-    try std.testing.expectEqual(gdb_functions.len - 3, (comptime gdbBreakpoints(.riscv64, .linux)).len);
+    // a target of no known convention: without Flang's STOP functions,
+    // LFortran's and gfortran's I/O errors
+    try std.testing.expectEqual(gdb_functions.len - 4, (comptime gdbBreakpoints(.riscv64, .linux)).len);
     for (comptime gdbBreakpoints(.riscv64, .linux)) |b| try std.testing.expect(b.condition == null);
+}
+
+test "gfortran's I/O errors: only those its statement does not handle (#530)" {
+    const io = comptime find("_gfortran_generate_error_common").?.io_flags.?;
+    try std.testing.expectEqual(@as(u2, 0), io.argument);
+    try std.testing.expect(!isErrorStop("_gfortran_generate_error_common"));
+    // the flags lldb read on macOS (GCC 15): an OPEN of a missing file and a
+    // READ of bad data stop, the OPEN with IOSTAT= does not
+    for ([_]struct { u32, bool }{ .{ 0x01800300, true }, .{ 0x00004080, true }, .{ 0x01800320, false }, .{ 0x4, false }, .{ 0x8, false } }) |c| {
+        try std.testing.expectEqual(c[1], c[0] & io.handled == 0);
+    }
+    try std.testing.expectEqualStrings("(*(int *)$rdi & 0x2c) == 0", comptime ioCondition(.x86_64, .linux, io).?);
+    try std.testing.expectEqualStrings("(*(int *)$rdi & 0x2c) == 0", comptime ioCondition(.x86_64, .macos, io).?);
+    try std.testing.expectEqualStrings("(*(int *)$x0 & 0x2c) == 0", comptime ioCondition(.aarch64, .macos, io).?);
+    try std.testing.expect(comptime ioCondition(.riscv64, .linux, io) == null);
+    // no ' in it: lldb's command quotes the condition so (lldb.zig)
+    try std.testing.expect(std.mem.findScalar(u8, comptime ioCondition(.x86_64, .linux, io).?, '\'') == null);
 }
 
 test "LFortran's ERROR STOP: the strings of _lcompilers_print_error" {

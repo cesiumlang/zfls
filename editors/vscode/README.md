@@ -602,7 +602,7 @@ as Fortran (on macOS it runs lldb-dap instead, see below):
 - **Fortran runtime errors**, an exception breakpoint of the Breakpoints
   view, on by default: the program stops where the runtime reports an
   error (an array bound exceeded under `-fcheck=bounds`, an allocation that
-  failed, an I/O error without `iostat=`) or at ERROR STOP, at the line of
+  failed, an I/O error without `iostat=`, `err=` or `end=`) or at ERROR STOP, at the line of
   the program, before it ends.
 
 LFortran's programs (built with `-g`, not on Windows, where LFortran
