@@ -9,6 +9,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const FortranFile = @import("../parser.zig").FortranFile;
+const helpers = @import("../helpers.zig");
 const no_arg_check = @import("no_arg_check.zig");
 
 /// The checks that a directive leaves out for a dummy argument
@@ -101,7 +102,7 @@ pub fn ofProcedure(a: Allocator, f: *const FortranFile, sline: usize, eline: usi
             if (depth > 0) out.shrinkRetainingCapacity(before);
             continue;
         }
-        const code = std.mem.trim(u8, if (f.fixed and text.len > 6) text[6..] else text, " \t\r");
+        const code = std.mem.trim(u8, if (f.fixed) text[helpers.fixedStmtStart(text)..] else text, " \t\r");
         if (startsWord(code, "contains") and depth == 0) break;
         if (startsWord(code, "interface") or startsWord(code, "abstract")) depth += 1;
         if (startsWord(code, "endinterface") or (startsWord(code, "end") and startsWord(std.mem.trimStart(u8, code[3..], " \t"), "interface"))) depth -|= 1;

@@ -418,6 +418,9 @@ pub const Parser = struct {
         // `Severity: message`
         const locus_re = try p.re("^(?P<file>.+?):(?P<ln>\\d+)[:.](?P<cn>\\d+)(?:-\\d+)?:$", .{});
         const sev_re = try p.re("^(?P<sev>Fatal Error|Error|Warning|Note|Remark): (?P<msg>.*)$", .{});
+        // -Wtabs (in -Wall), at a TAB-format line: a line of the file read,
+        // which it does not name
+        const tab_re = try p.re("^[\\w.+-]+: (?P<sev>Warning|Error): (?P<msg>Nonconforming tab character in column (?P<cn>\\d+) of line (?P<ln>\\d+).*)$", .{});
         var locus: ?struct { file: []const u8, ln: usize, cn: usize } = null;
         var it = lines(output);
         while (it.next()) |raw| {
@@ -436,6 +439,10 @@ pub const Parser = struct {
             if (sev_re.match(text)) |m| {
                 try p.gnuMessage(if (locus) |l| l.file else null, if (locus) |l| l.ln else 0, if (locus) |l| l.cn else null, m.named(sev_re, "sev").?, m.named(sev_re, "msg").?);
                 locus = null;
+                continue;
+            }
+            if (tab_re.match(text)) |m| {
+                try p.gnuMessage(null, num(m.named(tab_re, "ln")), numOpt(m.named(tab_re, "cn")), m.named(tab_re, "sev").?, m.named(tab_re, "msg").?);
                 continue;
             }
             _ = try p.driver(text);
@@ -659,6 +666,17 @@ test "gfortran driver messages" {
     , &.{
         "-:0:- error: gfortran: unrecognized command-line option '-Wbogus'",
         "-:0:- warning: f951.exe: Nonexistent include directory 'nope' [-Wmissing-include-dirs]",
+    });
+}
+
+test "gfortran's -Wtabs at the TAB-format line" {
+    // MSYS2's gfortran 16.1, -Wall
+    try expectBrief(.gfortran,
+        \\f951.exe: Warning: Nonconforming tab character in column 1 of line 4 [-Wtabs]
+        \\f951: Error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]
+    , &.{
+        "-:4:1 warning: Nonconforming tab character in column 1 of line 4 [-Wtabs]",
+        "-:6:3 error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]",
     });
 }
 

@@ -10,6 +10,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const fixed_columns = @import("fixed_columns.zig");
+const helpers = @import("../helpers.zig");
 
 pub const Form = enum { fixed, free };
 
@@ -64,16 +65,14 @@ fn isFixedComment(line: []const u8, d_lines_code: bool) bool {
 }
 
 fn isFixedContinuation(line: []const u8) bool {
-    if (line.len < 6 or line[5] == ' ' or line[5] == '0') return false;
-    for (line[0..5]) |ch| if (ch != ' ') return false;
-    return true;
+    return helpers.fixedContMark(line) != null;
 }
 
 /// Where a fixed-form code line's code ends: at its `!` comment (outside
 /// strings), else at its end
 fn codeEnd(line: []const u8) usize {
     var quote: u8 = 0;
-    var i: usize = if (isFixedContinuation(line)) 6 else 0;
+    var i: usize = helpers.fixedContMark(line) orelse 0;
     while (i < line.len) : (i += 1) {
         const ch = line[i];
         if (quote != 0) {
@@ -156,7 +155,11 @@ fn fixedLine(line: []u8, len: usize, amp: Amp, d_lines_code: bool) usize {
     }
     // a debug line read as code
     if (l[0] == 'd' or l[0] == 'D') l[0] = ' ';
-    if (isFixedContinuation(l)) l[5] = '&';
+    if (helpers.fixedContMark(l)) |s| {
+        // `&` for the mark; a TAB before it (TAB-format) a blank
+        l[s - 1] = '&';
+        if (s != 6) l[s - 2] = ' ';
+    }
     if (amp == .none) return len;
     const end = codeEnd(l);
     if (amp == .blank) {

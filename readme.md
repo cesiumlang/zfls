@@ -159,6 +159,7 @@ the columns say whose dialect each is.
 | `!GCC$ ATTRIBUTES NO_ARG_CHECK` (gfortran), `!DIR$ ATTRIBUTES NO_ARG_CHECK` (Intel): no argument checks for the dummy arguments it names | ✓ | ✓ | ✓ | – | – | – | – |
 | `!DIR$ FIXED`, `!DIR$ FREE`: the source form of the lines after them | – | – | – | ✓ | – | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| TAB-format fixed form (DEC): a TAB in columns 1 to 6 stands for them, a nonzero digit after it marks a continuation line | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ○ |
 
 5. gfortran's with `-fdec-structure`.
 6. LLVM Flang's without `UNION` and `MAP`, which it has not implemented.

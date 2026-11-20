@@ -301,7 +301,7 @@ fn isCode(file: *const FortranFile, text: []const u8) bool {
 
 /// Whether a fixed-form line continues the statement before it
 fn isFixedContinuation(text: []const u8) bool {
-    return text.len > 5 and text[5] != ' ' and text[5] != '0';
+    return helpers.fixedContMark(text) != null;
 }
 
 /// Whether the code of a free-form line ends with `&`

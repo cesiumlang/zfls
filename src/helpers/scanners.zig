@@ -131,6 +131,53 @@ pub fn isFixedCont(line: []const u8) bool {
         std.mem.findScalar(u8, str.whitespace, line[5]) == null;
 }
 
+/// The TAB that makes `line` a TAB-format line (DEC's tab source form, which
+/// ifx, ifort, gfortran and Flang read as fixed form): one in columns 1 to 6
+/// after blanks or a label only. It stands for the columns up to 6: the
+/// statement follows it, and a nonzero digit right after it marks a
+/// continuation line. zfls reads it as a blank, but on a continuation line.
+pub fn tabFormatTab(line: []const u8) ?usize {
+    for (line[0..@min(line.len, 6)], 0..) |c, i| switch (c) {
+        '\t' => return i,
+        ' ', '0'...'9' => {},
+        else => return null,
+    };
+    return null;
+}
+
+/// Where the statement goes on in a TAB-format continuation line: after
+/// blanks, a TAB and a nonzero digit
+pub fn tabContStart(line: []const u8) ?usize {
+    const i = tabFormatTab(line) orelse return null;
+    if (std.mem.findNone(u8, line[0..i], " ") != null) return null;
+    return if (i + 1 < line.len and line[i + 1] >= '1' and line[i + 1] <= '9') i + 2 else null;
+}
+
+/// Where the statement goes on in a fixed-form continuation line: column 7
+/// (`isFixedCont`), or after the digit of a TAB-format one; null for
+/// another line
+pub fn fixedContStart(line: []const u8) ?usize {
+    return if (isFixedCont(line)) 6 else tabContStart(line);
+}
+
+/// As `fixedContStart`, for a mark in column 6 other than `0` only, which
+/// standard Fortran reads as a blank there
+pub fn fixedContMark(line: []const u8) ?usize {
+    if (line.len > 5 and line[5] == '0' and tabContStart(line) == null) return null;
+    return fixedContStart(line);
+}
+
+/// Where the statement of a fixed-form line that is not a comment starts:
+/// at column 7, or where it goes on on a continuation line. A letter in the
+/// label field (columns 1 to 5) is the statement of a TAB-format line,
+/// whose TAB zfls reads as a blank: it starts after the label there.
+pub fn fixedStmtStart(line: []const u8) usize {
+    if (fixedContStart(line)) |s| return s;
+    const n = @min(line.len, 6);
+    const i = std.mem.findNone(u8, line[0..n], " 0123456789") orelse return n;
+    return if (i < 5 or std.mem.findNone(u8, line[0..5], " ") != null) i else n;
+}
+
 /// Index just after the `&` of a free-form line that starts with spaces and
 /// `&` (FREE_CONT)
 pub fn freeContEnd(line: []const u8) ?usize {
@@ -182,7 +229,8 @@ pub fn words(line: []const u8) WordIterator {
 }
 
 /// Detect fixed/free format by looking for characters in label columns
-/// and variable declarations before column 6.
+/// and variable declarations before column 6. The TAB of a TAB-format line
+/// (`tabFormatTab`) is no space: such a line is fixed form.
 pub fn detectFixedFormat(file_lines: []const []const u8) bool {
     var pp_continue = false;
     for (file_lines) |line| {
@@ -320,4 +368,36 @@ test "the line scanners agree with the patterns they replace" {
         }
         try testing.expect(got_words.next() == null);
     }
+}
+
+test "TAB-format lines (DEC's tab source form)" {
+    patterns.init();
+    try testing.expectEqual(@as(?usize, 0), tabFormatTab("\tI = 1"));
+    try testing.expectEqual(@as(?usize, 2), tabFormatTab("10\tJ = I"));
+    try testing.expectEqual(@as(?usize, 5), tabFormatTab("     \tX"));
+    try testing.expect(tabFormatTab("      X = 1\t! a TAB in the statement") == null);
+    try testing.expect(tabFormatTab("C\tcomment") == null);
+    // a continuation: a TAB and a nonzero digit, without a label
+    try testing.expectEqual(@as(?usize, 2), tabContStart("\t1 2"));
+    try testing.expectEqual(@as(?usize, 4), tabContStart("  \t9X"));
+    try testing.expect(tabContStart("\t0X") == null);
+    try testing.expect(tabContStart("10\t1X") == null);
+    try testing.expectEqual(@as(?usize, 6), fixedContStart("     &X"));
+    try testing.expectEqual(@as(?usize, 2), fixedContStart("\t1 2"));
+    try testing.expect(fixedContMark("     0X") == null);
+    try testing.expectEqual(@as(?usize, 6), fixedContMark("     1X"));
+    // where the statement starts in the lines zfls reads (the TAB a blank)
+    try testing.expectEqual(@as(usize, 6), fixedStmtStart("      X = 1"));
+    try testing.expectEqual(@as(usize, 6), fixedStmtStart("   10 CONTINUE"));
+    try testing.expectEqual(@as(usize, 1), fixedStmtStart(" I = 1"));
+    try testing.expectEqual(@as(usize, 3), fixedStmtStart("10 J = I"));
+    try testing.expectEqual(@as(usize, 5), fixedStmtStart("1234 X = 1"));
+    try testing.expectEqual(@as(usize, 2), fixedStmtStart("\t1 2"));
+    try testing.expectEqual(@as(usize, 3), fixedStmtStart("123"));
+    // a file with TAB-format lines is fixed form; the TAB was a space
+    // before column 6 (FREE_FORMAT_TEST)
+    try testing.expect(detectFixedFormat(&.{ "      PROGRAM DL", "\tI = 1", "C     comment here", "\tEND" }));
+    try testing.expect(detectFixedFormat(&.{"\tINTEGER I"}));
+    try testing.expect(!detectFixedFormat(&.{ "\tI = 1", " x = 1" }));
+    try testing.expect(!detectFixedFormat(&.{"\tcall f(a, &"}));
 }
