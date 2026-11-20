@@ -1,0 +1,183 @@
+//! The compiler's messages (compilers.zig) as diagnostics of the file
+//! checked (compile.zig): their ranges, and a message about an included
+//! file at the line that includes it.
+
+const std = @import("std");
+const builtin = @import("builtin");
+const Allocator = std.mem.Allocator;
+const lsp = @import("../lsp.zig");
+const str = @import("../str.zig");
+const paths = @import("../paths.zig");
+const compilers = @import("../compilers.zig");
+const compile = @import("compile.zig");
+const Job = compile.Job;
+const comparable = compile.comparable;
+const splitLines = compile.splitLines;
+
+const is_windows = builtin.target.os.tag == .windows;
+
+/// The range of a message at 1-based `line` and `column` (or the whole line
+/// without one; an LFortran span when it has one)
+pub fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line: ?usize, end_column: ?usize) lsp.Range {
+    if (line == 0 or line > lines.len) return .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
+    const ln = line - 1;
+    const text = lines[ln];
+    const c = column orelse {
+        const first = std.mem.findNone(u8, text, " \t") orelse 0;
+        return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, first) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, text.len) } };
+    };
+    const start = @min(c -| 1, text.len);
+    if (end_line) |el| if (el >= line and el <= lines.len) {
+        const end_text = lines[el - 1];
+        const ec = @min(end_column orelse end_text.len, end_text.len);
+        return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = el - 1, .character = str.byteToUtf16(end_text, ec) } };
+    };
+    // the name at the column, else one character
+    var end = start;
+    while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
+    if (end == start) end = @min(start + 1, text.len);
+    return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
+}
+
+/// Whether a message's file is the file checked (`here`: its names, as
+/// `comparable`); a message without a file is about it. Intel's fpp names
+/// a file by its name only (`ppinc.F90(5): #error: ...`), also when it is
+/// given the file's path, and Intel's compilers run in a directory of
+/// zfls's (`compilers.writesToWorkDir`): a name without a directory is the
+/// file checked when it is the name of the file.
+fn isHere(a: Allocator, job: *const Job, here: []const []const u8, file: ?[]const u8) !bool {
+    const named = try comparable(a, job.cwd, file orelse return true);
+    for (here) |h| if (std.mem.eql(u8, named, h)) return true;
+    if (compilers.writesToWorkDir(job.id) and std.mem.findAny(u8, file.?, "/\\") == null) {
+        const base = std.Io.Dir.path.basename(named);
+        for (here) |h| if (std.mem.eql(u8, std.Io.Dir.path.basename(h), base)) return true;
+    }
+    return false;
+}
+
+/// A further location of a message, one character at its line and column
+fn relatedInfo(a: Allocator, job: *const Job, r: compilers.Related) !lsp.DiagnosticRelatedInformation {
+    const rpath = if (r.file) |f| (if (std.Io.Dir.path.isAbsolute(f)) f else try paths.join(a, &.{ job.cwd, f })) else job.path;
+    const rl = r.line -| 1;
+    const rc = (r.column orelse 1) -| 1;
+    return .{
+        .location = .{ .uri = try paths.pathToUri(a, try paths.normpath(a, rpath)), .range = .{ .start = .{ .line = rl, .character = rc }, .end = .{ .line = rl, .character = rc + 1 } } },
+        .message = r.message,
+    };
+}
+
+/// The compiler's messages as diagnostics of the file, which they may name
+/// as any of `aliases` (the file, its copy, fypp's output)
+pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const compilers.Message, aliases: []const []const u8) ![]const lsp.Diagnostic {
+    const lines = try splitLines(a, text);
+    var here: std.ArrayList([]const u8) = .empty;
+    for (aliases) |p| try here.append(a, try comparable(a, job.cwd, p));
+    var out: std.ArrayList(lsp.Diagnostic) = .empty;
+    for (msgs) |m| {
+        const ours = try isHere(a, job, here.items, m.file);
+        // a message in an included file, at the line that includes it
+        const site = if (ours) null else if (m.include_site) |s| (if (try isHere(a, job, here.items, s.file)) s else null) else null;
+        var related: std.ArrayList(lsp.DiagnosticRelatedInformation) = .empty;
+        // its place in that file first
+        if (site != null) try related.append(a, try relatedInfo(a, job, .{ .file = m.file, .line = m.line, .column = m.column, .message = m.message }));
+        for (m.related.items) |r| try related.append(a, try relatedInfo(a, job, r));
+        // a message about another file (an included one): at the line that
+        // includes it or else at the top, with its location
+        const message = if (ours) m.message else try a.print("{s}:{d}: {s}", .{ m.file.?, m.line, m.message });
+        try out.append(a, .{
+            .range = if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else if (site) |s| rangeAt(lines, s.line, null, null, null) else rangeAt(lines, 0, null, null, null),
+            .message = message,
+            .severity = m.severity.lsp(),
+            .code = m.code,
+            .source = @tagName(job.id),
+            .relatedInformation = if (related.items.len > 0) related.items else null,
+        });
+    }
+    return out.items;
+}
+
+test "ranges: the name at the column, the whole line, a span" {
+    const lines = [_][]const u8{ "program p", "  x = 1 + yy", "end" };
+    const r = rangeAt(&lines, 2, 11, null, null);
+    try std.testing.expectEqual(@as(usize, 10), r.start.character);
+    try std.testing.expectEqual(@as(usize, 12), r.end.character);
+    const whole = rangeAt(&lines, 2, null, null, null);
+    try std.testing.expectEqual(@as(usize, 2), whole.start.character);
+    try std.testing.expectEqual(@as(usize, 12), whole.end.character);
+    const span = rangeAt(&lines, 1, 1, 3, 3);
+    try std.testing.expectEqual(@as(usize, 2), span.end.line);
+    try std.testing.expectEqual(@as(usize, 3), span.end.character);
+    const none = rangeAt(&lines, 0, null, null, null);
+    try std.testing.expectEqual(@as(usize, 0), none.end.character);
+}
+
+test "a message in an included file: at the line that includes it, its place related" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cwd = if (is_windows) "C:\\w" else "/w";
+    const path = try paths.join(a, &.{ cwd, "nest.f90" });
+    const job: Job = .{ .arena = arena, .uri = "", .path = path, .id = .flang, .exes = &.{}, .compiler_path = null, .cwd = cwd, .deps = &.{}, .deps_fixed = &.{}, .deps_cwd = &.{}, .args = &.{}, .fixed = false, .work_dir = cwd };
+    // Flang 23.1.5's output for an INCLUDE of an INCLUDE
+    const msgs = try compilers.parse(a, .flang,
+        \\error: Semantic errors in nest.f90
+        \\inc/bad.inc:2:7: error: No explicit type declared for 'undeclared_in_inc'
+        \\    q = undeclared_in_inc
+        \\        ^^^^^^^^^^^^^^^^^
+        \\inc/outer.inc:1:1: error: included here
+        \\    include 'bad.inc'
+        \\  ^^^^^^^^^^^^^^^^^^^
+        \\nest.f90:3:1: error: included here
+        \\    include 'outer.inc'
+        \\  ^^^^^^^^^^^^^^^^^^^^^
+    );
+    const text = "program n\n  implicit none\n  include 'outer.inc'\n  print *, q\nend program n\n";
+    const ds = try toDiagnostics(a, &job, text, msgs, &.{path});
+    try std.testing.expectEqual(@as(usize, 1), ds.len);
+    try std.testing.expectEqualStrings("inc/bad.inc:2: No explicit type declared for 'undeclared_in_inc'", ds[0].message);
+    // the INCLUDE line, from its keyword
+    try std.testing.expectEqual(@as(usize, 2), ds[0].range.start.line);
+    try std.testing.expectEqual(@as(usize, 2), ds[0].range.start.character);
+    try std.testing.expectEqual(@as(usize, 21), ds[0].range.end.character);
+    const rel = ds[0].relatedInformation.?;
+    try std.testing.expectEqual(@as(usize, 2), rel.len);
+    try std.testing.expect(std.mem.endsWith(u8, rel[0].location.uri, "/inc/bad.inc"));
+    try std.testing.expectEqual(@as(usize, 1), rel[0].location.range.start.line);
+    try std.testing.expectEqual(@as(usize, 6), rel[0].location.range.start.character);
+    try std.testing.expectEqualStrings("No explicit type declared for 'undeclared_in_inc'", rel[0].message);
+    try std.testing.expect(std.mem.endsWith(u8, rel[1].location.uri, "/inc/outer.inc"));
+    try std.testing.expectEqualStrings("included here", rel[1].message);
+}
+
+test "fpp's messages, which name the file by its name only, are about the file checked" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const root = if (is_windows) "C:\\w" else "/w";
+    const path = try paths.join(a, &.{ root, "src", "ppinc.F90" });
+    // Intel's compilers run in a directory of zfls's
+    const cwd = try paths.join(a, &.{ root, "cache", "run" });
+    const job: Job = .{ .arena = arena, .uri = "", .path = path, .id = .ifx, .exes = &.{}, .compiler_path = null, .cwd = cwd, .deps = &.{}, .deps_fixed = &.{}, .deps_cwd = &.{}, .args = &.{}, .fixed = false, .work_dir = cwd };
+    // ifx 2026.2.0 /fpp on Windows, given the file's absolute path
+    const output = "ppinc.F90(5): #error:  FOO must not be set\r\n\r\nppinc.F90(7): #error: can't find include file: missing.h\r\n" ++
+        (if (is_windows) "C:\\w\\src\\ppinc.F90" else "/w/src/ppinc.F90") ++ "(9): error #6404: This name does not have a type, and must have an explicit type.   [UNDECLARED_PP]\r\n  undeclared_pp = 3\r\n--^\r\n" ++
+        "other.F90(2): #error: not this file\r\n";
+    const msgs = try compilers.parse(a, .ifx, output);
+    const text = "program ppinc\n  implicit none\n#include \"inc/bad.inc\"\n#ifdef FOO\n#error FOO must not be set\n#endif\n#include \"missing.h\"\n  ok_inc = 2\n  undeclared_pp = 3\nend program\n";
+    const ds = try toDiagnostics(a, &job, text, msgs, &.{path});
+    try std.testing.expectEqual(@as(usize, 4), ds.len);
+    try std.testing.expectEqualStrings("FOO must not be set", ds[0].message);
+    try std.testing.expectEqual(@as(usize, 4), ds[0].range.start.line);
+    try std.testing.expectEqualStrings("can't find include file: missing.h", ds[1].message);
+    try std.testing.expectEqual(@as(usize, 6), ds[1].range.start.line);
+    try std.testing.expectEqual(@as(usize, 8), ds[2].range.start.line);
+    // another file's name: at the top, with its name
+    try std.testing.expectEqual(@as(usize, 0), ds[3].range.start.line);
+    try std.testing.expectEqualStrings("other.F90:2: not this file", ds[3].message);
+    // gfortran runs in the file's directory, where a name is a file there
+    var gjob = job;
+    gjob.id = .gfortran;
+    gjob.cwd = try paths.join(a, &.{ root, "src" });
+    const gds = try toDiagnostics(a, &gjob, text, try compilers.parse(a, .gfortran, "ppinc.F90:5:2: Error: #error FOO must not be set\n"), &.{path});
+    try std.testing.expectEqual(@as(usize, 4), gds[0].range.start.line);
+}
