@@ -186,8 +186,9 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
 7. MinGW's gfortran needs none.
 8. With zfls's ifx kit (and for ifx `zfls setup-ifx`), on Windows x64
    (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)).
-9. Programs built with `lfortran -g` (which runs `llvm-dwarfdump`: build
-   with LFortran's environment on the `PATH`), tested in CI with gdb on
+9. Programs built with `lfortran -g` (which runs `llvm-dwarfdump` and
+   Python: build with LFortran's environment on the `PATH`; conda-forge's
+   LFortran for Linux needs `llvm-tools` beside it), tested in CI with gdb on
    Linux x64 and lldb-dap on macOS x64: breakpoints, stepping, the stack,
    the stops at LFortran's runtime errors (a bound exceeded, which it
    checks by default) and at ERROR STOP, not at STOP. LFortran's debug
