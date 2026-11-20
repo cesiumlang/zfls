@@ -183,6 +183,14 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(std.mem.eql(u8, valueOf(grid, "ncells"), "42"), "grid::ncells = 42 ({s})", .{valueOf(grid, "ncells")});
     const ncells = try evaluate(c, frames[0], "grid::ncells");
     try check(std.mem.eql(u8, ncells, "42"), "evaluate grid::ncells = 42 ({s})", .{ncells});
+    // module variables by their own names (host association), which the
+    // frame does not have: a variable, a component, a COMMON variable of
+    // the module (at the block's symbol `BLK` plus its offset)
+    for ([_][2][]const u8{ .{ "ncells", "42" }, .{ "origin%x", "9.0" }, .{ "cy", "2.5" } }) |x| {
+        const r = try evaluate(c, frames[0], x[0]);
+        try check(std.mem.eql(u8, r, x[1]), "evaluate {s} = {s} ({s})", .{ x[0], x[1], r });
+    }
+    try check(std.mem.eql(u8, valueOf(grid, "cx"), "1.5") and std.mem.eql(u8, valueOf(grid, "cy"), "2.5"), "grid::cx = 1.5, grid::cy = 2.5 ({s}, {s})", .{ valueOf(grid, "cx"), valueOf(grid, "cy") });
 
     // next to END SUBROUTINE, then back to the main program: in its CALL
     // line (the rest of the CALL statement's code), or the next
@@ -238,6 +246,12 @@ fn runGrid(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     try check(std.mem.eql(u8, dl, "'efe'"), "dl(2:4) = 'efe' ({s})", .{dl});
     const main_grid = try moduleVariables(c, scopes, "grid");
     try check(std.mem.eql(u8, valueOf(main_grid, "gname"), "'grid name'"), "grid::gname = 'grid name' ({s})", .{valueOf(main_grid, "gname")});
+    // by use association; a module's deferred-length CHARACTER by `::`,
+    // with its declaration
+    for ([_][2][]const u8{ .{ "ncells", "42" }, .{ "grid::gname", "'grid name'" }, .{ "grid::cy", "2.5" } }) |x| {
+        const r = try evaluate(c, frames[0], x[0]);
+        try check(std.mem.eql(u8, r, x[1]), "evaluate {s} = {s} ({s})", .{ x[0], x[1], r });
+    }
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
