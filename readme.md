@@ -969,7 +969,9 @@ elsewhere, which is also stopped when the server shuts down during a run.
   of that file, whatever their form (the `.mod` files of two compilers do
   not mix).
 - `compiler_mod_dir`: where the `.mod` files go, relative to the root; by
-  default a directory per project and compiler in zfls's cache
+  default a directory per project, compiler and major version (gfortran's
+  and Flang's, from `--version`: gfortran 9 to 14 cannot read the `.mod`
+  files of gfortran 15 and 16) in zfls's cache
   (`%LOCALAPPDATA%\zfls` on Windows, `~/Library/Caches/zfls` on macOS,
   `$XDG_CACHE_HOME/zfls` or `~/.cache/zfls` elsewhere).
 - `compiler_include_dirs`: further include directories, for the compiler
@@ -980,7 +982,9 @@ elsewhere, which is also stopped when the server shuts down during a run.
   one of zfls's cache instead, with the relative directories of the `-I`
   and `-module` options of `compiler_args` made absolute. zfls passes them
   `-Tf <file>` (`/Tf <file>` on Windows), so that a file of any suffix
-  (`.f08`, `.f77`, `.pf`) is checked. conda-forge's ifx does not find its
+  (`.f08`, `.f77`, `.pf`) is checked; gfortran and Flang get `-x f95`
+  right before the file for the same reason (`.f77`, `.f18`, `.f23`,
+  `.pf`, `.cuf`). conda-forge's ifx does not find its
   own modules (`iso_fortran_env`, `ifport`, `omp_lib`; its activation adds
   them to `FFLAGS`): when `<prefix>/opt/compiler/include/intel64` is
   beside its `bin` (or `Library\bin`), zfls passes it with `-I`.
