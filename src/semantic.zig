@@ -512,6 +512,9 @@ const statement_keywords = [_][]const u8{
                 "attributes",
     // BYTE, INTEGER(1) of gfortran, ifx and LLVM Flang
     "byte",
+    // Fortran 2018's EVENT POST, EVENT WAIT, FORM TEAM, CHANGE TEAM and
+    // FAIL IMAGE (#538)
+               "event",         "form",        "change",          "fail",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -645,6 +648,8 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
         .{ "double", "complex" },   .{ "block", "data" },      .{ "sync", "all" },
         .{ "sync", "images" },      .{ "sync", "memory" },     .{ "error", "stop" },
         .{ "module", "procedure" }, .{ "module", "function" }, .{ "module", "subroutine" },
+        .{ "event", "post" },       .{ "event", "wait" },      .{ "form", "team" },
+        .{ "change", "team" },      .{ "fail", "image" },      .{ "sync", "team" },
     };
     for (pairs) |p| if (std.ascii.eqlIgnoreCase(first, p[0]) and std.ascii.eqlIgnoreCase(word, p[1])) return true;
     if (std.ascii.eqlIgnoreCase(first, "end")) return isStatementKeyword(word) or std.ascii.eqlIgnoreCase(word, "team");
