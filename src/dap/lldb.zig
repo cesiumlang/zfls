@@ -14,7 +14,9 @@
 //! main program. Those are lldb's own, set by commands (lldb-dap's REPL),
 //! so that their ids are known: the answer of Apple's lldb-dap (lldb-1700)
 //! to `setFunctionBreakpoints` lists them in no particular order, and
-//! breakpoints without its label "dap" make no `breakpoint` events.
+//! breakpoints without its label "dap" make no `breakpoint` events. The
+//! client's function breakpoints are lldb-dap's, its answer put back in
+//! their order by their functions (`inRequestOrder`).
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -204,6 +206,69 @@ pub fn syncErrors(s: *Session, a: Allocator) !void {
     }
 }
 
+/// lldb-dap's answer to `setFunctionBreakpoints` (`bps`) in the order of
+/// the request (`asked`, the client's breakpoints): Apple's lldb-dap
+/// (lldb-1700) lists them in no fixed order (an `llvm::StringMap`'s), so
+/// that a client would show one function's verified state on another
+/// (#373). Each breakpoint's function is found by its id in lldb's
+/// `breakpoint list`.
+pub fn inRequestOrder(s: *Session, a: Allocator, asked: []const Value, bps: []Value) ![]Value {
+    if (bps.len < 2) return bps;
+    const r = try gdb.request(s, a, "evaluate", .{ .expression = "`breakpoint list", .context = "repl" });
+    const names = try a.alloc([]const u8, asked.len);
+    for (asked, names) |b, *name| name.* = json.str(json.get(b, "name")) orelse "";
+    return byName(a, names, bps, json.str(json.path(r, &.{ "body", "result" })) orelse "");
+}
+
+/// `bps` in the order of `names`, by the functions that lldb's
+/// `breakpoint list` (`listing`) gives their ids; those not found keep
+/// their order in the places left
+fn byName(a: Allocator, names: []const []const u8, bps: []Value, listing: []const u8) ![]Value {
+    const n = @min(names.len, bps.len);
+    const out = try a.alloc(?Value, n);
+    @memset(out, null);
+    const used = try a.alloc(bool, bps.len);
+    @memset(used, false);
+    for (names[0..n], out) |name, *slot| {
+        for (bps, used) |b, *u| {
+            if (u.*) continue;
+            const id = json.int(json.get(b, "id")) orelse continue;
+            const function = listedName(listing, id) orelse continue;
+            if (!std.mem.eql(u8, function, name)) continue;
+            slot.* = b;
+            u.* = true;
+            break;
+        }
+    }
+    var next: usize = 0;
+    const result = try a.alloc(Value, n);
+    for (out, result) |slot, *res| {
+        res.* = slot orelse blk: {
+            while (used[next]) next += 1;
+            used[next] = true;
+            break :blk bps[next];
+        };
+    }
+    return result;
+}
+
+/// The function of breakpoint `id` in lldb's `breakpoint list`:
+/// `4: name = 'work', locations = 1, ...`
+fn listedName(listing: []const u8, id: i64) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, listing, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
+        const n = std.fmt.parseInt(i64, line[0..colon], 10) catch continue;
+        if (n != id) continue;
+        const mark = "name = '";
+        const at = std.mem.find(u8, line, mark) orelse return null;
+        const rest = line[at + mark.len ..];
+        return rest[0 .. std.mem.findScalar(u8, rest, '\'') orelse return null];
+    }
+    return null;
+}
+
 /// Runs an lldb command in lldb-dap's REPL (its prefix "`" makes it a
 /// command whatever the REPL's mode): the id of the breakpoint it set, if
 /// it set one
@@ -236,6 +301,31 @@ test "the ids of lldb's breakpoints" {
     try std.testing.expectEqual(@as(?i64, 12), breakpointId("Breakpoint 12: where = libgfortran.5.dylib`_gfortran_runtime_error_at, address = 0x0000000100372c20\n"));
     try std.testing.expectEqual(@as(?i64, null), breakpointId("error: invalid combination of options for the given command\n"));
     try std.testing.expectEqual(@as(?i64, null), breakpointId(""));
+}
+
+test "lldb-dap's function breakpoints in the order of the request" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const listing =
+        \\Current breakpoints:
+        \\1: name = 'no_such_function', locations = 0 (pending)
+        \\  Names:
+        \\    dap
+        \\
+        \\2: name = 'work', locations = 1, resolved = 1, hit count = 0
+        \\  2.1: where = grid`__grid_MOD_work + 20 at grid.f90:31:5, address = 0x0000000100003c84, resolved, hit count = 0
+        \\
+    ;
+    const answer = try json.parse(a, "[{\"id\":1,\"verified\":false},{\"id\":2,\"verified\":true}]");
+    const got = try byName(a, &.{ "work", "no_such_function" }, answer.array.items, listing);
+    try std.testing.expectEqual(@as(?i64, 2), json.int(json.get(got[0], "id")));
+    try std.testing.expectEqual(@as(?i64, 1), json.int(json.get(got[1], "id")));
+    // no listing: as lldb-dap gave them
+    const same = try byName(a, &.{ "work", "no_such_function" }, answer.array.items, "");
+    try std.testing.expectEqual(@as(?i64, 1), json.int(json.get(same[0], "id")));
+    try std.testing.expectEqualStrings("work", listedName(listing, 2).?);
+    try std.testing.expect(listedName(listing, 3) == null);
 }
 
 test "a launch in lldb-dap's words" {
