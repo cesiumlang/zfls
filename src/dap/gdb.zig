@@ -48,6 +48,9 @@ pub const State = struct {
     seq: i64 = 1,
     /// gdb has exited, or did not start: why (`gpa`'s)
     exit_message: ?[]u8 = null,
+    /// gdb said the program has exited: gdb's own end after that is not
+    /// news, before it is (#439)
+    program_exited: bool = false,
     /// The end of what gdb wrote to its standard error (under the queue's
     /// mutex)
     stderr: std.ArrayList(u8) = .empty,
@@ -156,8 +159,15 @@ pub fn gdbEnv(a: Allocator, base: *const std.process.Environ.Map, gdb: []const u
 pub fn start(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     stop(s);
     if (try checkDap(s, a, gdb)) |why| return why;
-    return spawn(s, a, &.{ gdb, "-q", "-i=dap" }, try gdbEnv(a, s.environ, gdb), false);
+    return spawn(s, a, &(.{ gdb, "-q" } ++ survive_internal_errors ++ .{"-i=dap"}), try gdbEnv(a, s.environ, gdb), false);
 }
+
+/// gdb's options that keep it running after an internal error, which it
+/// otherwise ends (it asks whether to quit, and the answer without a
+/// terminal is yes): the request fails instead. gdb 17.2 has one when it
+/// shows a Flang program's polymorphic array of a type with allocatable
+/// components (#439).
+const survive_internal_errors = .{ "-iex", "maint set internal-error quit no", "-iex", "maint set internal-error corefile no" };
 
 /// Starts the debugger's process, gdb's or (`lldb`) lldb-dap's, which
 /// speaks the Debug Adapter Protocol on its standard streams: null, or why
@@ -302,7 +312,10 @@ pub fn received(s: *Session, a: Allocator, item: Item) void {
 
 fn handleMessage(s: *Session, a: Allocator, msg: Value) void {
     const kind = json.str(json.get(msg, "type")) orelse return;
-    if (std.mem.eql(u8, kind, "event")) return gdb_requests.event(s, a, msg);
+    if (std.mem.eql(u8, kind, "event")) {
+        if (std.mem.eql(u8, json.str(json.get(msg, "event")) orelse "", "exited")) s.g.program_exited = true;
+        return gdb_requests.event(s, a, msg);
+    }
     if (std.mem.eql(u8, kind, "response")) relay(s, a, msg);
 }
 
@@ -336,10 +349,7 @@ fn exited(s: *Session, a: Allocator) void {
     s.queue.mutex.unlock(s.io);
     var code: []const u8 = "?";
     if (s.g.child) |*c| {
-        if (c.wait(s.io)) |term| switch (term) {
-            .exited => |n| code = a.print("{d}", .{n}) catch "?",
-            else => {},
-        } else |_| {}
+        code = exitStatus(a, s.io, c) catch "?";
         s.g.child = null;
     }
     const tail = said[said.len -| 1000..];
@@ -357,9 +367,53 @@ fn exited(s: *Session, a: Allocator) void {
     s.g.relays.clearRetainingCapacity();
     if (!s.g.ended) {
         s.g.ended = true;
-        if (!std.mem.eql(u8, code, "0")) s.event(a, "output", .{ .category = "stderr", .output = a.print("{s}\n", .{message}) catch message });
+        // while it debugged the program: the client shows it to the user
+        // (#439); after the program, only when it failed
+        const category: ?[]const u8 = if (!s.g.program_exited) "important" else if (!std.mem.eql(u8, code, "0")) "stderr" else null;
+        if (category) |cat| s.event(a, "output", .{ .category = cat, .output = a.print("{s}\n", .{message}) catch message });
         s.event(a, "terminated", null);
     }
+}
+
+extern "kernel32" fn WaitForSingleObject(handle: std.os.windows.HANDLE, ms: u32) callconv(.winapi) u32;
+extern "kernel32" fn GetExitCodeProcess(handle: std.os.windows.HANDLE, code: *u32) callconv(.winapi) i32;
+
+/// How gdb's process ended, waited for: its exit code (on Windows all of
+/// it, an exception's in hexadecimal: `0xC0000409`), or the signal that
+/// ended it
+fn exitStatus(a: Allocator, io: Io, c: *std.process.Child) ![]const u8 {
+    var full: ?u32 = null;
+    if (builtin.target.os.tag == .windows) if (c.id) |h| {
+        // Zig's wait keeps only the code's low byte
+        var n: u32 = undefined;
+        if (WaitForSingleObject(h, 0xFFFFFFFF) == 0 and GetExitCodeProcess(h, &n) != 0) full = n;
+    };
+    const term = try c.wait(io);
+    if (full) |n| return statusText(a, .{ .exited = n });
+    return switch (term) {
+        .exited => |n| statusText(a, .{ .exited = n }),
+        .signal => |sig| statusText(a, .{ .signal = @backingInt(sig) }),
+        else => "?",
+    };
+}
+
+const Status = union(enum) { exited: u32, signal: u32 };
+
+fn statusText(a: Allocator, st: Status) ![]const u8 {
+    return switch (st) {
+        .exited => |n| if (n >= 0xC0000000) a.print("0x{X}", .{n}) else a.print("{d}", .{n}),
+        .signal => |n| a.print("signal {d}", .{n}),
+    };
+}
+
+test "gdb's exit status" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("0", try statusText(a, .{ .exited = 0 }));
+    try std.testing.expectEqualStrings("3", try statusText(a, .{ .exited = 3 }));
+    try std.testing.expectEqualStrings("0xC0000409", try statusText(a, .{ .exited = 0xC0000409 }));
+    try std.testing.expectEqualStrings("signal 6", try statusText(a, .{ .signal = 6 }));
 }
 
 /// "gdb exited", or lldb-dap's

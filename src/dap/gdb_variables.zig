@@ -20,6 +20,7 @@ const Value = json.Value;
 const session = @import("session.zig");
 const Session = session.Session;
 const gdb = @import("gdb.zig");
+const gdb_children = @import("gdb_children.zig");
 
 /// A frame of a stack trace: its file and line
 pub const FrameInfo = struct { file: ?[]const u8, line: i64 };
@@ -213,7 +214,7 @@ fn gdbChildren(s: *Session, a: Allocator, ref: i64) ![]Variable {
     const r = try gdb.request(s, a, "variables", .{ .variablesReference = ref });
     if (!gdb.isSuccess(r)) {
         s.g.failure = json.str(json.get(r, "message")) orelse "variables";
-        return error.GdbFailed;
+        return gdb_children.oneByOne(s, a, ref) orelse error.GdbFailed;
     }
     const items = json.items(json.path(r, &.{ "body", "variables" }));
     const out = try a.alloc(Variable, items.len);

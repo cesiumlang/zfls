@@ -6,10 +6,11 @@
 //! polymorphic argument, hidden lengths left out), the module variables of
 //! a line, setting values, expressions, a Fortran runtime error, stopping
 //! at the start with gdb commands, the program's exit, a program that a
-//! signal ends (its exit code and the signal named), and (on Linux, with
-//! script(1)) the program in a terminal (`zig build test-dap-gdb`). Skipped
-//! without the compiler or a gdb of the Debug Adapter Protocol (gdb 14 or
-//! later).
+//! signal ends (its exit code and the signal named), gdb's own end told, a
+//! variable that gdb fails to show beside the others (Flang), and (on
+//! Linux, with script(1)) the program in a terminal (`zig build
+//! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
+//! Adapter Protocol (gdb 14 or later).
 //!
 //!     dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB]
 //!
@@ -118,7 +119,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a crash", crash }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -456,6 +457,88 @@ fn crash(io: Io, gpa: Allocator, setup: Setup) !void {
         try check(code == 3, "the program exited with 3 ({d})", .{code});
     } else try check(code == 128 + 11 and contains(said, "SIGSEGV (11)"), "ended by SIGSEGV: {d}, said: {s}", .{ code, said[said.len -| 200..] });
     _ = try c.event("terminated");
+}
+
+/// gdb's own end while it debugs the program: the user is told, with
+/// gdb's exit code, before the session's end (#439)
+fn gdbEnds(io: Io, gpa: Allocator, setup: Setup) !void {
+    const c = try start(io, gpa, setup);
+    defer c.deinit();
+    defer end(c);
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path" });
+    const launched = try c.send("launch", .{ .program = setup.program, .cwd = setup.dir, .stopAtEntry = true });
+    _ = try c.event("initialized");
+    _ = try c.request("configurationDone", .{});
+    _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+    const stopped = get(try c.event("stopped"), "body").?;
+    const stack = items(try c.request("stackTrace", .{ .threadId = int(stopped, "threadId").? }), "stackFrames");
+    _ = try c.response(try c.send("evaluate", .{ .expression = "python import os; os._exit(7)", .context = "repl", .frameId = int(stack[0], "id").? }), "evaluate");
+    const said = while (true) {
+        const body = get(try c.event("output"), "body").?;
+        if (eql(str(body, "category"), "important")) break body;
+    };
+    try check(contains(str(said, "output"), "gdb exited (7)"), "told that gdb exited: {s}", .{str(said, "output") orelse "?"});
+    _ = try c.event("terminated");
+}
+
+/// A SELECT TYPE's associate name of an array of a type with allocatable
+/// components (Flang's): gdb 17.2 has an internal error showing it, which
+/// gdb survives, and the frame's other variables are shown (#439)
+fn associated(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler != .flang) return std.debug.print("skipped: Flang only\n", .{});
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src = try std.Io.Dir.path.join(a, &.{ setup.dir, "assoc.f90" });
+    const exe = try std.Io.Dir.path.join(a, &.{ setup.dir, if (builtin.target.os.tag == .windows) "assoc.exe" else "assoc" });
+    const text =
+        \\module shapes
+        \\  implicit none
+        \\  type :: point
+        \\    real :: x = 1.5
+        \\  end type
+        \\  type, extends(point) :: tagged
+        \\    real, allocatable :: w(:)
+        \\  end type
+        \\end module
+        \\program assoc
+        \\  use shapes
+        \\  implicit none
+        \\  class(point), allocatable :: ts(:)
+        \\  integer :: k
+        \\  allocate(tagged :: ts(3))
+        \\  select type (q => ts)
+        \\  type is (tagged)
+        \\    do k = 1, 3
+        \\      allocate(q(k)%w(2)); q(k)%w = k
+        \\    end do
+        \\    print *, q(2)%w ! stop here
+        \\  end select
+        \\end program
+        \\
+    ;
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = text });
+    try build(io, a, setup, src, exe, &.{});
+
+    const c = try start(io, gpa, setup);
+    defer c.deinit();
+    defer end(c);
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
+    const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir });
+    _ = try c.event("initialized");
+    _ = try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = lineOf(text, "stop here") }} });
+    _ = try c.request("configurationDone", .{});
+    _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+    const stopped = get(try c.event("stopped"), "body").?;
+    const thread = int(stopped, "threadId").?;
+    const stack = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
+    const scopes = items(try c.request("scopes", .{ .frameId = int(stack[0], "id").? }), "scopes");
+    const locals = try variables(c, try named(scopes, "Locals"));
+    try check(eql(str(try named(locals, "k"), "value"), "4"), "k = {s}, beside q = {s}", .{ str(try named(locals, "k"), "value").?, str(try named(locals, "q"), "value").? });
+    try check(std.mem.startsWith(u8, str(try named(locals, "ts"), "value") orelse "", "["), "ts = {s}", .{str(try named(locals, "ts"), "value").?});
+    _ = try c.request("continue", .{ .threadId = thread });
+    const exited = get(try c.event("exited"), "body").?;
+    try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
 }
 
 /// The program's input and output in a terminal, which script(1) gives a
