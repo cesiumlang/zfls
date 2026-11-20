@@ -1,8 +1,9 @@
 //! The compiler check (`compiler_diagnostics`) with gfortran's command
 //! line, through a stand-in gfortran that logs its arguments: the files of
 //! suffixes its driver does not know (#521), a missing `#include` (#524),
-//! the messages without a file (#525), and a directory of .mod files for
-//! each major version (#526).
+//! the messages without a file (#525), a directory of .mod files for each
+//! major version (#526), the compiler's directory on its PATH (#528), and
+//! the error of a used module's file (#546).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -132,4 +133,37 @@ test "gfortran: the .mod files of each major version in a directory of their own
     _ = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"gfortran: 15.3.0\"", 60)) orelse return error.NoCompilerDiagnostics;
     const dir15 = try lastModDir(w, a);
     try h.expect(std.mem.endsWith(u8, dir15, "gfortran-15"), "gfortran 15's .mod files in {s}", .{dir15});
+}
+
+/// A stand-in gfortran in a toolchain's `bin` that names the first
+/// directory of its PATH
+const first_path: h.File = .{ .name = "tc/bin/gfortran.cmd", .text = "@echo off\r\nfor /f \"tokens=1 delims=;\" %%p in (\"%PATH%\") do echo gfortran: error: first %%p 1>&2\r\n" };
+
+test "gfortran by its path on Windows: its directory first on its PATH, for its DLLs (#528)" {
+    if (!is_windows) return error.SkipZigTest;
+    const w = try h.Workspace.init(&.{ user, first_path }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ first_path.name ++ "\"}" });
+    defer w.deinit();
+    try w.open("u.f77", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "gfortran: first ", 60)) orelse return error.NoCompilerDiagnostics;
+    const at = std.mem.find(u8, sent, "gfortran: first ").? + "gfortran: first ".len;
+    const end = std.mem.findScalarPos(u8, sent, at, '"') orelse sent.len;
+    const first = std.mem.trimEnd(u8, sent[at..end], " ");
+    try h.expect(std.mem.endsWith(u8, first, "tc/bin") or std.mem.endsWith(u8, first, "tc\\\\bin"), "the first directory of the PATH is {s}, not the compiler's", .{first});
+}
+
+/// A stand-in gfortran for which `k.f18` has an error, and `u.f77`, which
+/// uses its module, then cannot open `k.mod`
+const dep_error: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\nset last=\r\nfor %%a in (%*) do set last=%%~a\r\nif \"%last:~-5%\"==\"k.f18\" (echo k.f18:2:14: Error: Symbol 'x' at ^(1^) has no IMPLICIT type 1>&2& exit /b 1)\r\necho u.f77:2:11: Fatal Error: Cannot open module file 'k.mod' for reading at ^(1^): No such file or directory 1>&2\r\nexit /b 1\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\nfor last; do :; done\ncase \"$last\" in *k.f18) echo \"k.f18:2:14: Error: Symbol 'x' at (1) has no IMPLICIT type\" >&2; exit 1;; esac\necho \"u.f77:2:11: Fatal Error: Cannot open module file 'k.mod' for reading at (1): No such file or directory\" >&2\nexit 1\n" };
+
+test "gfortran: the error of a used module's file with \"Cannot open module file\" (#546)" {
+    const w = try h.Workspace.init(&.{ module, user, dep_error }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ dep_error.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, dep_error.name, .executable_file, .{});
+    try w.open("u.f77", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "Cannot open module file", 60)) orelse return error.NoCompilerDiagnostics;
+    try h.expect(std.mem.find(u8, sent, "(k.f18 did not compile)") != null, "the message does not name k.f18: {s}", .{sent});
+    try h.expect(std.mem.find(u8, sent, "k.f18 did not compile: Symbol 'x' at (1) has no IMPLICIT type") != null, "no related error of k.f18: {s}", .{sent});
 }
