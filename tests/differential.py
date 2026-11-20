@@ -43,12 +43,14 @@ from differential_known import (
     implicit_result_refs,
     in_constructor_or_group,
     is_error,
+    items_within,
     macro_names,
     normalize,
     notifications,
     on_assignment,
     on_construct_name_or_label,
     on_enumerator_statement,
+    on_import_statement,
     on_include_directive,
     on_include_line,
     on_macro,
@@ -488,6 +490,14 @@ def main() -> int:
                 and on_enumerator_statement(src_lines, pos.get("line", -1))
             ):
                 # the enumerators of an ENUM, which fortls does not read
+                continue
+            if (
+                kind == "completion"
+                and on_import_statement(src_lines, pos.get("line", -1))
+                and items_within(a, b)
+            ):
+                # an IMPORT statement: zfls offers every name the host sees
+                # (#486), fortls only those its IMPORT statements name
                 continue
             if (
                 kind in ("hover", "definition", "completion", "signature")

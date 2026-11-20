@@ -178,6 +178,26 @@ fn seenThroughUse(self: *Server, a: Allocator, scope_list: []const *Obj, local: 
     return false;
 }
 
+/// The scopes whose names an IMPORT statement on line `line` (1-based) can
+/// name: of `scopes`, those around the host of the interface body it is in,
+/// not the body nor any scope inside it. `scopes` as they are when the line
+/// is in no interface body.
+fn importHostScopes(a: Allocator, ast: *Ast, scopes: []const *Obj, line: usize) ![]const *Obj {
+    var body = ast.getInnerScope(line) orelse return scopes;
+    while (true) {
+        const p = body.parent orelse return scopes;
+        if (p.kind == .interface) break;
+        body = p;
+    }
+    var out: std.ArrayList(*Obj) = .empty;
+    next: for (scopes) |s| {
+        var cur: ?*Obj = s;
+        while (cur) |c| : (cur = c.parent) if (c == body) continue :next;
+        try out.append(a, s);
+    }
+    return out.items;
+}
+
 /// The LSP completion item kind; the ids of the types that have no kind of
 /// their own are used as they are, as fortls does
 pub fn mapCompletionKind(t: C.TypeId) i64 {
@@ -402,6 +422,10 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
             type_mask.remove(.class);
         },
         .import => {
+            // the names the host sees (#486): its own, those of the scopes
+            // around it and those it has by USE, private ones too
+            scope_list = try importHostScopes(a, ast, scope_list, ac_line + 1);
+            include_globals = false;
             name_only = true;
             type_mask = setTypeMask(true);
             type_mask.remove(.class);

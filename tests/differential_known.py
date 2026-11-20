@@ -442,6 +442,23 @@ def on_enumerator_statement(lines: list, line: int) -> bool:
     return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
 
 
+def on_import_statement(lines: list, line: int) -> bool:
+    """Whether the line is an IMPORT statement, where zfls completes every
+    name the host sees (#486) and fortls only those the interface body's
+    IMPORT statements name already."""
+    if not (0 <= line < len(lines)):
+        return False
+    return re.match(r"\s*import\b", lines[line], re.I) is not None
+
+
+def items_within(a, b) -> bool:
+    """Whether completion items `a` are all among `b`."""
+    if not isinstance(a, list) or not isinstance(b, list):
+        return False
+    keys = {json.dumps(x, sort_keys=True) for x in b}
+    return all(json.dumps(x, sort_keys=True) in keys for x in a)
+
+
 NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
 
 
