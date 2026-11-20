@@ -6,6 +6,11 @@
 //! Windows). So for a program with a `_QQmain` the adapter stops there by
 //! a function breakpoint of its own, which the stop calls the entry and
 //! which goes once it has stopped the program; for the others gdb's stays.
+//! LFortran's main program is C's `main`, whose line table begins with rows
+//! of line 0: gdb's `start`, and a breakpoint on `main`, stop there, at no
+//! line (gdb 15.1, LFortran 0.69.0, Linux). For its programs the adapter's
+//! stop is a temporary breakpoint at the first line of `main`, which gdb's
+//! Python finds in the line table and sets before the program runs.
 
 const std = @import("std");
 const Io = std.Io;
@@ -14,30 +19,71 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const Value = json.Value;
 const Session = @import("session.zig").Session;
+const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
 
 /// LLVM Flang's main program
 pub const flang_main = "_QQmain";
 
+/// LFortran's main program (C's)
+pub const lfortran_main = "main";
+
+/// gdb's Python that sets a temporary breakpoint at the first line of
+/// `main` (of the rows of its line table in its block, the one of the
+/// lowest address that has a line; else on `main`) and prints its number:
+/// `zfls-entry 3`
+const lfortran_entry_python = "python import gdb;s=gdb.lookup_global_symbol('main');b=gdb.block_for_pc(int(s.value().address));l=[e for e in s.symtab.linetable() if b.start<=e.pc<b.end and e.line>0];f=s.symtab.fullname();f=\"'%s'\"%f if ' ' in f else f;p='%s:%d'%(f,min(l,key=lambda e:e.pc).line) if l else 'main';print('zfls-entry %d'%gdb.Breakpoint(p,temporary=True).number)";
+
 /// At `launch` with `stopAtEntry`: the adapter's own stop at the start,
-/// when `program` (relative to `cwd`) is LLVM Flang's. True when it is,
-/// and gdb's stop at the start is not wanted.
+/// when `program` (relative to `cwd`) is LLVM Flang's or LFortran's (as
+/// `s.g.lfortran` says). True when it is, and gdb's stop at the start is
+/// not wanted.
 pub fn atLaunch(s: *Session, a: Allocator, program: ?[]const u8, cwd: ?[]const u8) bool {
     s.g.entry_function = null;
     s.g.entry_breakpoint = null;
     s.g.entry_hit = false;
     const p = program orelse return false;
     const path = if (cwd) |c| (if (std.Io.Dir.path.isAbsolute(p)) p else std.Io.Dir.path.join(a, &.{ c, p }) catch p) else p;
-    if (!programHas(s.io, path, flang_main)) return false;
-    s.g.entry_function = flang_main;
+    if (programHas(s.io, path, flang_main)) {
+        s.g.entry_function = flang_main;
+        return true;
+    }
+    if (!s.g.lfortran) return false;
+    s.g.entry_function = lfortran_main;
     return true;
 }
 
 /// At `configurationDone`, before the program runs: the breakpoint of the
 /// stop at the start, with the function breakpoints
 pub fn beforeRun(s: *Session, a: Allocator) !void {
-    if (s.g.entry_function == null) return;
+    const f = s.g.entry_function orelse return;
+    // LFortran's: gdb's breakpoint, not a function breakpoint
+    if (std.mem.eql(u8, f, lfortran_main)) {
+        s.g.entry_function = null;
+        const r = try gdb.request(s, a, "evaluate", .{ .expression = lfortran_entry_python, .context = "repl" });
+        const id = entryResult(json.str(json.path(r, &.{ "body", "result" })) orelse "");
+        if (id == null) s.log.warn("zfls dap: no stop at the start of LFortran's main: {s}", .{json.str(json.path(r, &.{ "body", "result" })) orelse json.str(json.get(r, "message")) orelse "?"});
+        s.g.entry_breakpoint = id;
+        return;
+    }
     _ = try gdb_requests.syncFunctions(s, a);
+}
+
+/// The breakpoint that `lfortran_entry_python` set, as it printed it
+pub fn entryResult(output: []const u8) ?i64 {
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |line| {
+        const l = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, l, "zfls-entry ")) return std.fmt.parseInt(i64, l["zfls-entry ".len..], 10) catch null;
+    }
+    return null;
+}
+
+test "the breakpoint at the first line of LFortran's main, as gdb's Python prints it" {
+    try std.testing.expectEqual(@as(?i64, 3), entryResult("zfls-entry 3\n"));
+    try std.testing.expectEqual(@as(?i64, 12), entryResult("Temporary breakpoint 12 at 0x401136: file /tmp/a b/grid.f90, line 41.\r\nzfls-entry 12\r\n"));
+    try std.testing.expect(entryResult("Traceback (most recent call last):\nAttributeError: 'NoneType' object has no attribute 'value'\n") == null);
+    try std.testing.expect(entryResult("") == null);
 }
 
 /// After the stop at the start: its breakpoint gone
