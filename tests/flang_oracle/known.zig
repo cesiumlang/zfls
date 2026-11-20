@@ -84,13 +84,6 @@ pub const rules = [_]Rule{
         .kind = .variable,
         .why = "Flang predefines __flang__ (and __flang_major__, ...); zfls defines only pp_defs",
     },
-    .{
-        .file = "tests/flang/detect.fpp",
-        .entity = "detected::not_declared",
-        .diff = .extra,
-        .kind = .variable,
-        .why = "zfls preprocesses only the upper-case suffixes by default (pp_suffixes); Flang, gfortran and ifx preprocess .fpp too",
-    },
 };
 
 /// Whether `text` matches `pattern`, in which `*` is any characters
