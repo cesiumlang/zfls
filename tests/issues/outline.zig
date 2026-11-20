@@ -138,6 +138,48 @@ test "a client without hierarchical symbols gets fortls's flat list" {
     try std.testing.expect(!contains(names, "log_it"));
 }
 
+const generic_bodies =
+    \\module m
+    \\  implicit none
+    \\  interface f
+    \\    subroutine f1(x)
+    \\      integer, intent(in) :: x
+    \\    end subroutine
+    \\    subroutine f2(x)
+    \\      real, intent(in) :: x
+    \\    end subroutine
+    \\  end interface
+    \\  interface
+    \\    subroutine ext(k)
+    \\      integer, intent(in) :: k
+    \\    end subroutine
+    \\  end interface
+    \\contains
+    \\  subroutine s()
+    \\    interface g
+    \\      subroutine g1()
+    \\      end subroutine
+    \\    end interface
+    \\  end subroutine
+    \\end module m
+    \\
+;
+
+test "the flat list has the interface bodies of a named generic, as the outline (#479)" {
+    const files = [_]h.File{.{ .name = "m.f90", .text = generic_bodies }};
+    const tree = try h.Workspace.init(&files, .{ .hierarchical_symbols = true });
+    defer tree.deinit();
+    const paths = try tree.symbolPaths("m.f90");
+    for ([_][]const u8{ "m/f/f1", "m/f/f2", "m/ext" }) |p| try h.expect(contains(paths, p), "no {s} in the outline", .{p});
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    const names = try w.documentSymbols("m.f90");
+    for ([_][]const u8{ "m", "f", "f1", "f2", "ext", "s" }) |n| try h.expect(contains(names, n), "no {s} in the flat list", .{n});
+    // as before: not what a procedure declares
+    for ([_][]const u8{ "g", "g1" }) |n| try h.expect(!contains(names, n), "{s} in the flat list", .{n});
+    try h.expect(names.len == 6, "{d} flat symbols, not 6", .{names.len});
+}
+
 fn expectFolds(w: *h.Workspace) !void {
     const folds = try w.foldingRanges("shapes.f90");
     const Want = struct { from: []const u8, to: []const u8 };
