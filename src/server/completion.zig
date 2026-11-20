@@ -37,8 +37,9 @@ pub fn setTypeMask(def: bool) Server.TypeMask {
 
 pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, req_abstract: bool, out: *std.ArrayList(*Obj)) !void {
     if (!req_abstract) for (try scope.getChildren(a, filter_public)) |child| {
-        // an interface block without a name, but a named generic
-        if (child.isExternalInt()) continue;
+        // not an interface block without a name (`#GEN_INT`: unnamed,
+        // abstract, OPERATOR, ASSIGNMENT), but a named generic
+        if (child.kind == .interface and std.mem.startsWith(u8, child.name, "#")) continue;
         if (try inOnlyList(a, only_list, child.name)) try out.append(a, child);
     };
     // the interface bodies of its interface blocks (of its abstract ones,

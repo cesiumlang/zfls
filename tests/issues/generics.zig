@@ -425,12 +425,12 @@ test "a generic whose specifics are interface bodies: hover, signature help, def
     try expectDefIn(w, "u.f90", "h(2)", 0, 22);
     try expectDefIn(w, "m.f90", "interface h", 10, 21);
     try expectDefIn(w, "m.f90", "subroutine h", 11, 22);
-    // references: the generic's name
+    // references: the generic's name; of h, its interface body's too (#475)
     const refs = try w.references("u.f90", w.pos("u.f90", "f(1)", 0, 0));
     try h.expect(refs.len == 4, "references of f: {d}, not 4", .{refs.len});
     for ([_]struct { []const u8, []const u8, usize }{ .{ "u.f90", "h(2)", 0 }, .{ "m.f90", "interface h", 10 } }) |at| {
         const hr = try w.references(at[0], w.pos(at[0], at[1], 0, at[2]));
-        try h.expect(hr.len == 2, "references of the generic h from {s}: {d}, not 2", .{ at[1], hr.len });
+        try h.expect(hr.len == 3, "references of the generic h from {s}: {d}, not 3", .{ at[1], hr.len });
     }
     // a defined operator and a defined assignment by interface bodies
     try w.expectHoverContains("u.f90", w.pos("u.f90", ".add.", 0, 1), "FUNCTION add_v(a, b)");
@@ -554,4 +554,144 @@ test "the interface bodies of a named generic are names of the module, public or
     try h.expect(ext_offered, "call e does not offer the public ext", .{});
     try w.expectNoDiagnostics("m.f90");
     try w.expectNoDiagnostics("u.f90");
+}
+
+const self_named_body = h.File{ .name = "m.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  interface h
+    \\    subroutine h(n)
+    \\      integer, intent(in) :: n
+    \\    end subroutine h
+    \\    subroutine h_r(x)
+    \\      real, intent(in) :: x
+    \\    end subroutine
+    \\  end interface h
+    \\contains
+    \\  subroutine inside()
+    \\    call h(1)
+    \\  end subroutine
+    \\end module
+    \\
+};
+
+const self_named_body_user = h.File{ .name = "u.f90", .text =
+    \\program p
+    \\  use m
+    \\  implicit none
+    \\  call h(2)
+    \\  call h(2.0)
+    \\end program
+    \\
+};
+
+test "references and rename of a generic that has the name of one of its interface bodies: the generic's and the body's names (#475)" {
+    const w = try h.Workspace.init(&.{ self_named_body, self_named_body_user }, .{});
+    defer w.deinit();
+    // from each: the INTERFACE and END INTERFACE names, the body's
+    // SUBROUTINE and END SUBROUTINE names, and the calls
+    for ([_]struct { []const u8, []const u8, usize }{
+        .{ "u.f90", "h(2)", 0 },
+        .{ "m.f90", "interface h", 10 },
+        .{ "m.f90", "subroutine h(", 11 },
+        .{ "m.f90", "end subroutine h", 15 },
+        .{ "m.f90", "end interface h", 14 },
+        .{ "m.f90", "h(1)", 0 },
+    }) |at| {
+        const refs = try w.references(at[0], w.pos(at[0], at[1], 0, at[2]));
+        try h.expect(countIn(refs, "m.f90") == 5 and countIn(refs, "u.f90") == 2, "references from {s}: {d} in m.f90, {d} in u.f90, not 5 and 2", .{ at[1], countIn(refs, "m.f90"), countIn(refs, "u.f90") });
+    }
+    for ([_]struct { []const u8, usize }{ .{ "subroutine h(", 11 }, .{ "interface h", 10 } }) |at| {
+        const edits = try w.rename("m.f90", w.pos("m.f90", at[0], 0, at[1]), "g");
+        try h.expect(edits.len == 7, "rename from {s}: {d} edits, not 7", .{ at[0], edits.len });
+    }
+    // the specific other than the body named like the generic: its own
+    try h.expect((try w.references("m.f90", w.pos("m.f90", "h_r", 0, 0))).len == 1, "references of h_r", .{});
+    try w.expectNoDiagnostics("m.f90");
+    try w.expectNoDiagnostics("u.f90");
+}
+
+const used_a = h.File{ .name = "a.f90", .text =
+    \\module a
+    \\  implicit none
+    \\  interface
+    \\    subroutine p1(x)
+    \\      integer, intent(in) :: x
+    \\    end subroutine
+    \\  end interface
+    \\  abstract interface
+    \\    subroutine cb(k)
+    \\      integer, intent(in) :: k
+    \\    end subroutine
+    \\  end interface
+    \\contains
+    \\  subroutine s1(n)
+    \\    integer, intent(in) :: n
+    \\  end subroutine s1
+    \\end module a
+    \\
+};
+
+const used_d = h.File{ .name = "d.f90", .text =
+    \\module d
+    \\  use a, only:
+    \\end module d
+    \\
+};
+
+const used_b = h.File{ .name = "b.f90", .text =
+    \\module b
+    \\  use a, only: s1, q1 => p1
+    \\  implicit none
+    \\  interface s1
+    \\    module procedure s1, s1r
+    \\  end interface
+    \\contains
+    \\  subroutine s1r(x)
+    \\    real, intent(in) :: x
+    \\  end subroutine
+    \\end module b
+    \\
+};
+
+const used_c = h.File{ .name = "c.f90", .text =
+    \\program c
+    \\  use b
+    \\  implicit none
+    \\  call s1(1)
+    \\  call s1(1.0)
+    \\  call q1(2)
+    \\end program c
+    \\
+};
+
+test "references of a generic named like a specific it has by USE and of an interface body renamed by USE; completion of an ONLY list (#475)" {
+    const w = try h.Workspace.init(&.{ used_a, used_b, used_c, used_d }, .{});
+    defer w.deinit();
+    // the generic of b and the subroutine of a that it has by USE: one name
+    for ([_]struct { []const u8, []const u8, usize }{
+        .{ "c.f90", "s1(1)", 0 },
+        .{ "a.f90", "subroutine s1", 11 },
+        .{ "b.f90", "interface s1", 10 },
+        .{ "b.f90", "procedure s1", 10 },
+    }) |at| {
+        const refs = try w.references(at[0], w.pos(at[0], at[1], 0, at[2]));
+        try h.expect(countIn(refs, "a.f90") == 2 and countIn(refs, "b.f90") == 3 and countIn(refs, "c.f90") == 2, "references of s1 from {s}: {d}, {d}, {d}, not 2, 3, 2", .{ at[1], countIn(refs, "a.f90"), countIn(refs, "b.f90"), countIn(refs, "c.f90") });
+    }
+    // an interface body of a module, by the local name a USE statement
+    // gives it, as a module procedure (#474: the module is the interface
+    // block's scope)
+    const refs = try w.references("c.f90", w.pos("c.f90", "q1(2)", 0, 0));
+    try h.expect(countIn(refs, "a.f90") == 1 and countIn(refs, "b.f90") == 2 and countIn(refs, "c.f90") == 1, "references of q1: {d}, {d}, {d}, not 1, 2, 1", .{ countIn(refs, "a.f90"), countIn(refs, "b.f90"), countIn(refs, "c.f90") });
+    // the names of the module: its procedures and interface bodies, not
+    // the internal name of its abstract interface block
+    var offered: [2]bool = @splat(false);
+    for (try w.completion("d.f90", w.pos("d.f90", "only:", 0, 5))) |label| {
+        try h.expect(label[0] != '#', "{s} offered", .{label});
+        for ([_][]const u8{ "s1", "p1" }, &offered) |want, *o| if (std.mem.eql(u8, label, want)) {
+            o.* = true;
+        };
+    }
+    try h.expect(offered[0] and offered[1], "use a, only: offers s1 {}, p1 {}", .{ offered[0], offered[1] });
+    for ([_][]const u8{ "a.f90", "b.f90", "c.f90" }) |name| try w.expectNoDiagnostics(name);
 }
