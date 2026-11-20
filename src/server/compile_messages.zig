@@ -32,11 +32,20 @@ pub fn rangeAt(lines: []const []const u8, line: usize, column: ?usize, end_line:
         const ec = @min(end_column orelse end_text.len, end_text.len);
         return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = el - 1, .character = str.byteToUtf16(end_text, ec) } };
     };
-    // the name at the column, else one character
+    // the name that has the column, else one character: gfortran's column
+    // is the last letter of the name in many messages ("Symbol 'x' at (1)
+    // has no IMPLICIT type"), the others' its first
+    var begin = start;
     var end = start;
-    while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
-    if (end == start) end = @min(start + 1, text.len);
-    return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, start) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
+    if (start < text.len and isNameChar(text[start])) {
+        while (begin > 0 and isNameChar(text[begin - 1])) begin -= 1;
+        while (end < text.len and isNameChar(text[end])) end += 1;
+    } else end = @min(start + 1, text.len);
+    return .{ .start = .{ .line = ln, .character = str.byteToUtf16(text, begin) }, .end = .{ .line = ln, .character = str.byteToUtf16(text, end) } };
+}
+
+fn isNameChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
 /// Whether a message's file is the file checked (`here`: its names, as
@@ -109,6 +118,31 @@ test "ranges: the name at the column, the whole line, a span" {
     try std.testing.expectEqual(@as(usize, 3), span.end.character);
     const none = rangeAt(&lines, 0, null, null, null);
     try std.testing.expectEqual(@as(usize, 0), none.end.character);
+    // not a name: one character
+    const plus = rangeAt(&lines, 2, 7, null, null);
+    try std.testing.expectEqual(@as(usize, 6), plus.start.character);
+    try std.testing.expectEqual(@as(usize, 7), plus.end.character);
+}
+
+test "ranges: gfortran's column, the last letter of a name, is the whole name" {
+    // MSYS2's gfortran 16.1 (and Nix's 9.5 to 15.3): fxcol.f90:3:19 and
+    // fxcol.f:3:23, "Symbol 'longname' at (1) has no IMPLICIT type"
+    const free = [_][]const u8{ "program fxc", "  implicit none", "  print *, longname, b" };
+    const r = rangeAt(&free, 3, 19, null, null);
+    try std.testing.expectEqual(@as(usize, 11), r.start.character);
+    try std.testing.expectEqual(@as(usize, 19), r.end.character);
+    // "Symbol 'b'": 3:22
+    const b = rangeAt(&free, 3, 22, null, null);
+    try std.testing.expectEqual(@as(usize, 21), b.start.character);
+    try std.testing.expectEqual(@as(usize, 22), b.end.character);
+    const fixed = [_][]const u8{ "      program fxc", "      implicit none", "      print *, longname, b" };
+    const f = rangeAt(&fixed, 3, 23, null, null);
+    try std.testing.expectEqual(@as(usize, 15), f.start.character);
+    try std.testing.expectEqual(@as(usize, 23), f.end.character);
+    // the first letter, as the other compilers give it: the same
+    const first = rangeAt(&free, 3, 12, null, null);
+    try std.testing.expectEqual(@as(usize, 11), first.start.character);
+    try std.testing.expectEqual(@as(usize, 19), first.end.character);
 }
 
 test "a message in an included file: at the line that includes it, its place related" {
