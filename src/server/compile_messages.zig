@@ -137,6 +137,91 @@ pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []co
     return out.items;
 }
 
+/// A module the file uses whose file did not compile: the file (`path`,
+/// compiled in `cwd`), the modules it defines (in lower case), and the
+/// compiler's first error about it
+pub const FailedDependency = struct {
+    path: []const u8,
+    cwd: []const u8,
+    modules: []const []const u8,
+    first: compilers.Message,
+};
+
+/// `diags` with the first error of each module file that did not compile
+/// (`failed`) given to the messages about its modules: those that mention
+/// "module" and one of its modules' names, such as gfortran's "Cannot open
+/// module file 'shapes.mod' for reading", which hides the cause (#546). The
+/// error becomes their related information, and their text says which
+/// file did not compile.
+pub fn relateFailed(a: Allocator, diags: []const lsp.Diagnostic, failed: []const FailedDependency) ![]const lsp.Diagnostic {
+    if (failed.len == 0) return diags;
+    const out = try a.dupe(lsp.Diagnostic, diags);
+    for (out) |*d| {
+        if (std.ascii.findIgnoreCase(d.message, "module") == null) continue;
+        for (failed) |f| {
+            if (!mentionsAny(d.message, f.modules)) continue;
+            var related: std.ArrayList(lsp.DiagnosticRelatedInformation) = .empty;
+            if (d.relatedInformation) |r| try related.appendSlice(a, r);
+            const named = f.first.file orelse f.path;
+            const file = if (std.Io.Dir.path.isAbsolute(named)) named else try paths.join(a, &.{ f.cwd, named });
+            const line = f.first.line -| 1;
+            const col = (f.first.column orelse 1) -| 1;
+            const base = std.Io.Dir.path.basename(f.path);
+            try related.append(a, .{
+                .location = .{ .uri = try paths.pathToUri(a, try paths.normpath(a, file)), .range = .{ .start = .{ .line = line, .character = col }, .end = .{ .line = line, .character = col + 1 } } },
+                .message = try a.print("{s} did not compile: {s}", .{ base, f.first.message }),
+            });
+            d.relatedInformation = related.items;
+            d.message = try a.print("{s} ({s} did not compile)", .{ d.message, base });
+        }
+    }
+    return out;
+}
+
+/// Whether `text` has one of `names` (lower case) as a word, in any case
+fn mentionsAny(text: []const u8, names: []const []const u8) bool {
+    for (names) |n| {
+        var i: usize = 0;
+        while (std.ascii.findIgnoreCasePos(text, i, n)) |at| : (i = at + 1) {
+            const before_ok = at == 0 or !isNameChar(text[at - 1]);
+            const after = at + n.len;
+            if (before_ok and (after == text.len or !isNameChar(text[after]))) return true;
+        }
+    }
+    return false;
+}
+
+test "a module file that did not compile: its first error with the messages about its module" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cwd = if (is_windows) "C:\\w" else "/w";
+    const path = try paths.join(a, &.{ cwd, "main.f90" });
+    const job: Job = .{ .arena = arena, .uri = "", .path = path, .id = .gfortran, .exes = &.{}, .compiler_path = null, .cwd = cwd, .deps = &.{}, .deps_fixed = &.{}, .deps_cwd = &.{}, .args = &.{}, .fixed = false, .work_dir = cwd };
+    // MSYS2's gfortran 16.1: shapes.f90, then main.f90, which uses shapes
+    const dep = try compilers.parse(a, .gfortran, "shapes.f90:11:43: Error: Symbol 'undeclared_in_module' at (1) has no IMPLICIT type\n");
+    const msgs = try compilers.parse(a, .gfortran,
+        \\main.f90:2:7: Fatal Error: Cannot open module file 'shapes.mod' for reading at (1): No such file or directory
+        \\compilation terminated.
+    );
+    const text = "program main\n  use shapes\n  implicit none\nend program main\n";
+    const ds = try toDiagnostics(a, &job, text, msgs, &.{path});
+    const failed = [_]FailedDependency{.{ .path = try paths.join(a, &.{ cwd, "shapes.f90" }), .cwd = cwd, .modules = &.{"shapes"}, .first = dep[0] }};
+    const got = try relateFailed(a, ds, &failed);
+    try std.testing.expectEqualStrings("Cannot open module file 'shapes.mod' for reading at (1): No such file or directory (shapes.f90 did not compile)", got[0].message);
+    const rel = got[0].relatedInformation.?;
+    try std.testing.expectEqual(@as(usize, 1), rel.len);
+    try std.testing.expect(std.mem.endsWith(u8, rel[0].location.uri, "/shapes.f90"));
+    try std.testing.expectEqual(@as(usize, 10), rel[0].location.range.start.line);
+    try std.testing.expectEqual(@as(usize, 42), rel[0].location.range.start.character);
+    try std.testing.expectEqualStrings("shapes.f90 did not compile: Symbol 'undeclared_in_module' at (1) has no IMPLICIT type", rel[0].message);
+    // a message about another module, or not about a module: unchanged
+    const other = [_]FailedDependency{.{ .path = "x.f90", .cwd = cwd, .modules = &.{"shape"}, .first = dep[0] }};
+    try std.testing.expectEqual(@as(?[]const lsp.DiagnosticRelatedInformation, null), (try relateFailed(a, ds, &other))[0].relatedInformation);
+    try std.testing.expect(mentionsAny("Error in opening the compiled module file.  [KMOD]", &.{"kmod"}));
+    try std.testing.expect(!mentionsAny("module kmodx", &.{"kmod"}));
+}
+
 test "ranges: the name at the column, the whole line, a span" {
     const lines = [_][]const u8{ "program p", "  x = 1 + yy", "end" };
     const r = rangeAt(&lines, 2, 11, null, null);
