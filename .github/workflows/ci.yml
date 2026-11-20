@@ -526,9 +526,12 @@ jobs:
       # LFortran from conda-forge, for the tests of the compiler check with a
       # real compiler: tests/issues/compiler_lfortran.zig (in the unit
       # tests) and tests/compiler_check.zig, and for tests/dap_gdb.zig. Only
-      # `lfortran` goes on the PATH, not its environment's other programs
-      # (`lfortran -g` finds its llvm-dwarfdump: the test puts the
-      # environment's directory on the PATH of its builds)
+      # `lfortran` goes on the PATH, not its environment's other programs.
+      # `lfortran -g` runs llvm-dwarfdump, which the package does not bring
+      # on Linux (llvm-tools has it), and Python (the environment's own: the
+      # gdb steps run without setup-python's library path):
+      # tests/dap_gdb.zig puts the environment's directory first on the
+      # PATH of its builds
       - name: LFortran (Linux x64)
         if: matrix.target == 'x86_64-linux'
         run: |
@@ -536,7 +539,7 @@ jobs:
           mkdir -p "$mm" "$RUNNER_TEMP/lfortran-bin"
           for wait in 15 30 60 0; do
             curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$mm" bin/micromamba &&
-              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran && break
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools python && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
             sleep "$wait"
@@ -735,7 +738,7 @@ jobs:
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
             curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/osx-64/latest | tar -xj -C "$mm" bin/micromamba &&
-              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran && break
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
             sleep "$wait"
