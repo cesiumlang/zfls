@@ -1181,8 +1181,9 @@ every pull request into `main` and every push to `main` once, and tests
 them as release candidates on Linux, Windows and macOS, each on x86_64 and
 ARM64: the suites above, longer stress runs and the differential test.
 macOS on ARM64, whose GitHub-hosted runners are few and can be unavailable
-for hours, is left out of runs started by hand. Pull requests into `dev`
-and pushes to `dev` are not run: whoever merges them runs the checks first,
+for hours, is tested only by pull requests into `main`, by runs started by
+hand, and by a release that builds its own binaries. Pull requests into
+`dev` and pushes to `dev` are not run: whoever merges them runs the checks first,
 and `dev` as a whole is tested by the pull request that releases it, which
 runs again with each change of `dev`. To test another branch or pull
 request in between, start the workflow by hand on its branch
