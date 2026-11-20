@@ -139,7 +139,7 @@ available.
    unless the options say otherwise.
 4. LLVM Flang 22 and later, whose version zfls asks of it once (`flang
    --version`), and again when the executable's file changes; Flang 21 knows neither option, Flang 20 has only `-Werror`,
-   and `-Wall` is none of Flang's, so older Flangs get no warnings by
+   and `-Wall` is none of Flang's, so older Flang get no warnings by
    default. Flang reads debug lines as comments by default; as code
    (`-fd-lines-as-code`) needs Flang 21 or later, and zfls passes Flang 20
    no option, which then reads them as comments.
@@ -628,7 +628,7 @@ when that is LLVM Flang's, which is Fortran source: `<module>.mod` in the
 `include_dirs` (with those of the build files), then, when
 `compiler_diagnostics` is `flang`, in the directory of Flang's intrinsic
 modules (`cudadevice`, `cooperative_groups`, `__fortran_builtins`, found
-from `flang --version`), and the modules those use. Hover, completion and
+from `flang --version`), and the modules that those files use. Hover, completion and
 go to definition then reach a library's modules and Flang's own; the
 module files' own diagnostics are not shown. The `.mod` files of other
 compilers (gfortran's are compressed, Intel's binary) are not read.
