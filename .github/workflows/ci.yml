@@ -3,8 +3,8 @@ name: CI
 # Every pull request into main and every push to main is built and tested on
 # all supported platforms, and the tests run on the release binaries
 # themselves. macOS arm64 is tested then only: by pull requests into main,
-# which is where releases come from, and by a push to main that releases
-# binaries it built itself (see `test`); runs started by hand leave it out.
+# which is where releases come from, by a push to main that releases
+# binaries it built itself (see `test`), and by runs started by hand.
 # A run needs a single macOS arm64 runner, for Test (aarch64-macos): the
 # conda package for osx-arm64 is cross-built on the Intel runner, and the
 # install script's macOS arm64 check is a step of that test job.
@@ -400,11 +400,12 @@ jobs:
     strategy:
       fail-fast: false
       # The macOS arm64 (macos-15) job, the only one of a run, runs only for a
-      # pull request into main and for a run that releases (a push to main
-      # that found no pull request run to reuse, see reuse, so builds and
-      # tests the release itself): GitHub's hosted macOS arm64 runners can
-      # stay unavailable for hours, holding up every merge, and the
-      # organization's plan runs at most five macOS jobs at a time. A
+      # pull request into main, for a run started by hand (which tests a
+      # branch as fully as the release will be), and for a run that releases
+      # (a push to main that found no pull request run to reuse, see reuse,
+      # so builds and tests the release itself): GitHub's hosted macOS arm64
+      # runners can stay unavailable for hours, holding up every merge, and
+      # the organization's plan runs at most five macOS jobs at a time. A
       # release thus always has its macOS arm64 binaries tested: by the pull
       # request run whose archives it publishes (reuse requires all 11 test
       # and conda jobs of it to have passed) or by its own run. The job is
@@ -421,6 +422,7 @@ jobs:
           {"os": "windows-11-arm", "target": "aarch64-windows", "vscode": "win32-arm64"},
           {"os": "macos-15-intel", "target": "x86_64-macos", "vscode": "darwin-x64"}',
           ((github.event_name == 'pull_request' && github.base_ref == 'main')
+          || github.event_name == 'workflow_dispatch'
           || needs.version.outputs.release == 'true')
           && ', {"os": "macos-15", "target": "aarch64-macos", "vscode": "darwin-arm64"}'
           || '')) }}
