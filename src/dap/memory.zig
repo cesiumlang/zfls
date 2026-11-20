@@ -56,6 +56,22 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         };
     }
     if (d.dims.len == 0) {
+        // a deferred-length CHARACTER of Intel's (`character(len=:),
+        // allocatable`): a descriptor of rank 0, CodeView's `LF_OEM`, of its
+        // address and length; LLVM Flang's is a pointer, followed below
+        if (d.t.kind == .character and d.t.size == 0 and (d.pointer or d.allocatable) and s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) != @backingInt(dbgeng.SymTag.pointer)) {
+            var words: [values.Descriptor.header_words]u64 = undefined;
+            if (s.engine.read(address, std.mem.sliceAsBytes(&words)) != @sizeOf(@TypeOf(words))) return error.Unreadable;
+            const desc = values.Descriptor.parse(&words) orelse return error.Unreadable;
+            if (desc.rank != 0) return error.Unreadable;
+            if (desc.empty()) {
+                val.empty = true;
+                return val;
+            }
+            val.address = desc.base;
+            val.t.size = @intCast(@min(desc.elem_len, 1 << 20));
+            return val;
+        }
         // a POINTER or ALLOCATABLE scalar of LLVM Flang's: a pointer to it
         // (a derived type's is followed above)
         if ((d.pointer or d.allocatable) and d.t.kind != .derived and s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) == @backingInt(dbgeng.SymTag.pointer)) {
@@ -258,11 +274,28 @@ pub fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val
     return v;
 }
 
+/// A substring of a CHARACTER scalar (`s(2:4)`, `s(3:)`, `s(:2)`), its
+/// bounds integers within the string; null for anything else
+fn substring(v: Val, range: []const u8) ?Val {
+    if (v.t.kind != .character or v.empty) return null;
+    const colon = std.mem.findScalar(u8, range, ':') orelse return null;
+    const lo_text = std.mem.trim(u8, range[0..colon], " ");
+    const hi_text = std.mem.trim(u8, range[colon + 1 ..], " ");
+    const lo: i64 = if (lo_text.len == 0) 1 else std.fmt.parseInt(i64, lo_text, 10) catch return null;
+    const hi: i64 = if (hi_text.len == 0) v.t.size else std.fmt.parseInt(i64, hi_text, 10) catch return null;
+    if (lo < 1 or hi > v.t.size or hi < lo) return null;
+    var out = v;
+    out.address = v.address + @as(u64, @intCast(lo - 1));
+    out.t.size = @intCast(hi - lo + 1);
+    return out;
+}
+
 /// An element by its subscripts (`(2,-1)`), all of them integers
 fn subscript(a: Allocator, v: Val, text: []const u8) !?Val {
     const t = std.mem.trim(u8, text, " ");
     if (t.len == 0) return v;
-    if (t[0] != '(' or t[t.len - 1] != ')' or v.rank == 0) return null;
+    if (t[0] != '(' or t[t.len - 1] != ')') return null;
+    if (v.rank == 0) return substring(v, t[1 .. t.len - 1]);
     var subs: std.ArrayList(i64) = .empty;
     var it = std.mem.splitScalar(u8, t[1 .. t.len - 1], ',');
     while (it.next()) |x| try subs.append(a, std.fmt.parseInt(i64, std.mem.trim(u8, x, " "), 10) catch return null);
