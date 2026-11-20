@@ -18,7 +18,8 @@
 //!   are shown as Fortran: zfls indexes the program's sources (the launch
 //!   configuration's `sourceRoot`, else `cwd`), and each variable's
 //!   declaration says its type, kind and rank, while dbghelp says where it
-//!   is; arrays are read through Intel's descriptors. The program runs in a
+//!   is; arrays are read through Intel's or LLVM Flang's descriptors. The
+//!   program runs in a
 //!   console of its own.
 //!
 //! gdb and the engine show a "Module variables" scope (the module variables that a

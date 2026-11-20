@@ -250,7 +250,19 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     try check(std.mem.eql(u8, valueOf(args, "p"), "point(x=9.0, y=-2.0, id=7)"), "p = point(x=9.0, y=-2.0, id=7) ({s})", .{valueOf(args, "p")});
     // (CLASS(point): its declared type's components)
     try check(std.mem.eql(u8, valueOf(args, "t"), "point(x=1.5, y=-2.0, id=7)"), "t = point(x=1.5, y=-2.0, id=7) ({s})", .{valueOf(args, "t")});
-    gap("work's arrays, CHARACTER(*) and CLASS arguments (#382, #384)", args);
+    // assumed-shape arrays: Flang's descriptors (ISO_Fortran_binding's)
+    try check(std.mem.eql(u8, valueOf(args, "a"), "[6.0, 2.0, 3.0]"), "a = [6.0, 2.0, 3.0] ({s})", .{valueOf(args, "a")});
+    try check(std.mem.eql(u8, valueOf(args, "b"), "[2×3]"), "b = [2×3] ({s})", .{valueOf(args, "b")});
+    const b_cols = items(try c.request("variables", .{ .variablesReference = int(named(args, "b").?, "variablesReference").? }), "variables");
+    try check(std.mem.eql(u8, valueOf(b_cols, "(:,1)"), "[-10, -20]"), "b(:,1) = [-10, -20] ({s})", .{valueOf(b_cols, "(:,1)")});
+    const b21 = try c.request("evaluate", .{ .expression = "b(2,1)", .frameId = int(frames[0], "id").?, .context = "watch" });
+    try check(std.mem.eql(u8, str(b21, "result") orelse "", "-20"), "b(2,1) = -20 ({s})", .{str(b21, "result") orelse "?"});
+    // CLASS(point) array: its elements by the descriptor's stride (the
+    // dynamic type's size), with the declared type's components
+    try check(std.mem.eql(u8, valueOf(args, "ts"), "[point(…), point(…)]"), "ts = [point(…), point(…)] ({s})", .{valueOf(args, "ts")});
+    const ts2 = try c.request("evaluate", .{ .expression = "ts(2)%id", .frameId = int(frames[0], "id").?, .context = "watch" });
+    try check(std.mem.eql(u8, str(ts2, "result") orelse "", "7"), "ts(2)%id = 7 ({s})", .{str(ts2, "result") orelse "?"});
+    gap("work's CHARACTER(*) and CLASS arguments (#384)", args);
     // the module variables, by Flang's public names (`_QMgridEncells`)
     // with the types of CodeView's own (`ncells`)
     const grid = try moduleVariables(c, scopes, "grid");
@@ -268,6 +280,9 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     // k, after the loop `do k = -1, 1`
     const k = named(locals, "k");
     try check(k != null and std.mem.eql(u8, str(k.?, "value") orelse "", "2"), "k = 2 ({s})", .{if (k) |x| str(x, "value") orelse "?" else "none"});
+    // a POINTER scalar (`ip => goal`): its target's value
+    try check(std.mem.eql(u8, valueOf(locals, "ip"), "5"), "ip = 5 ({s})", .{valueOf(locals, "ip")});
+    try check(std.mem.eql(u8, valueOf(locals, "m"), "[2×3]"), "m = [2×3] ({s})", .{valueOf(locals, "m")});
     gap("the main program's variables, v, big, tg, goal, none, nothing among them (#383)", locals);
     // a module variable by its local name (`use counters, only: nhits => hits`)
     const counters = try moduleVariables(c, scopes, "counters");

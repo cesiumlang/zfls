@@ -190,8 +190,8 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
    only (no arrays, derived types, CHARACTER lengths or module variables),
    and LFortran for Windows refuses `-g`.
 10. Windows's Debugger Engine (`"dbgeng": true`), for debug information of
-    Microsoft's format; arrays are read through Intel's descriptors, not
-    yet LLVM Flang's. CI tests the engine on a C program, and on LLVM
+    Microsoft's format; arrays are read through Intel's descriptors and
+    LLVM Flang's. CI tests the engine on a C program, and on LLVM
     Flang's built with `-g` (breakpoints, `stopAtEntry`, the stack,
     stepping, the module variables, and the stops at a runtime error and
     at ERROR STOP, not at STOP): it has no ifx.
@@ -203,9 +203,10 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     gdb's).
 12. LLVM Flang's `-g` on Windows writes debug information of Microsoft's
     format only, with which Windows's engine has breakpoints, the stack,
-    stepping, the module variables, the scalar and derived-type dummy
-    arguments and the stops at Flang's runtime errors and ERROR STOP, but
-    not yet the other variables. A program built with `-gdwarf-4`
+    stepping, the module variables, the dummy arguments (arrays through
+    Flang's descriptors) and the stops at Flang's runtime errors and ERROR
+    STOP, but not yet all of the main program's variables, nor CHARACTER(*)
+    lengths and CLASS dynamic types. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
     (tested in CI with Flang 23 and MSYS2's gdb): the variables, a
     polymorphic object or array with its dynamic type's components, and stops at
@@ -526,10 +527,10 @@ on Linux and Windows, lldb-dap on macOS.
   its own) or attaches to it, stops at breakpoints of source lines, steps
   by lines, and shows the variables as Fortran: dbghelp says where each
   is, and zfls's declarations its type, kind and rank; arrays are read
-  through Intel's descriptors. For LLVM Flang's programs it has
-  breakpoints, the stack, stepping, the module variables, the scalar and
-  derived-type dummy arguments and the stops at runtime errors, not yet the
-  other variables; gdb reads them from a build
+  through Intel's and LLVM Flang's descriptors. For LLVM Flang's programs
+  it has breakpoints, the stack, stepping, the module variables, the dummy
+  arguments and the stops at runtime errors, not yet all of the main
+  program's variables, nor CHARACTER(*) lengths and CLASS dynamic types; gdb reads them from a build
   with `-gdwarf-4 -Wl,-debug:dwarf`.
 
 With gdb and the engine, the module variables that the frame's line sees

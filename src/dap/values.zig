@@ -115,23 +115,52 @@ pub fn constantShape(dims: []const Dim) bool {
 /// elements
 pub const Extent = struct { lo: i64, count: u64, stride: i64 };
 
-/// Intel's array descriptor (ifx, ifort): the data's address, an element's
-/// length, an offset, flags, the rank, a reserved word, then for each
-/// dimension its extent, its stride in bytes and its lower bound
+/// An array descriptor: Intel's (ifx, ifort), or LLVM Flang's (that of
+/// ISO_Fortran_binding.h, `CFI_cdesc_t`)
 pub const Descriptor = struct {
     base: u64,
     elem_len: u64,
-    flags: u64,
+    flags: u64 = 0,
     dims: [7]Extent = undefined,
     rank: u32,
 
     pub const header_words = 6;
 
+    /// The bytes to read for a descriptor of `rank`, of either layout
     pub fn bytes(rank: u32) usize {
         return (header_words + 3 * @as(usize, rank)) * 8;
     }
 
     pub fn parse(words: []const u64) ?Descriptor {
+        return parseFlang(words) orelse parseIntel(words);
+    }
+
+    /// The versions of `CFI_cdesc_t` (`CFI_VERSION`) of LLVM Flang
+    const cfi_versions = [_]u32{ 20240719, 20180515 };
+
+    /// LLVM Flang's: the data's address, an element's length, then a word
+    /// of the version (`CFI_VERSION`, by which it is told from Intel's), the
+    /// rank, the type, the attribute and an extra byte; then for each
+    /// dimension its lower bound, its extent and its stride in bytes
+    fn parseFlang(words: []const u64) ?Descriptor {
+        if (words.len < 3) return null;
+        const version: u32 = @truncate(words[2]);
+        if (std.mem.findScalar(u32, &cfi_versions, version) == null) return null;
+        const rank: u32 = @intCast((words[2] >> 32) & 0xff);
+        if (rank > 7 or words.len < 3 + 3 * @as(usize, rank)) return null;
+        var d: Descriptor = .{ .base = words[0], .elem_len = words[1], .rank = rank };
+        for (0..d.rank) |i| d.dims[i] = .{
+            .lo = @bitCast(words[3 + 3 * i]),
+            .count = words[3 + 3 * i + 1],
+            .stride = @bitCast(words[3 + 3 * i + 2]),
+        };
+        return d;
+    }
+
+    /// Intel's: the data's address, an element's length, an offset, flags,
+    /// the rank, a reserved word, then for each dimension its extent, its
+    /// stride in bytes and its lower bound
+    fn parseIntel(words: []const u64) ?Descriptor {
         if (words.len < header_words) return null;
         const rank = words[4];
         if (rank > 7 or words.len < header_words + 3 * rank) return null;
@@ -294,6 +323,25 @@ test "Intel's descriptor" {
     try std.testing.expectEqual(Extent{ .lo = 1, .count = 3, .stride = 8 }, d.dims[1]);
     try std.testing.expect(!d.empty());
     try std.testing.expectEqual(@as(usize, 96), Descriptor.bytes(2));
+}
+
+test "LLVM Flang's descriptor" {
+    // Flang 23's of a(3), real, an assumed-shape dummy (gdb's x/6gx):
+    // version 20240719, rank 1, type 27 (float), lower bound 1, extent 3,
+    // stride 4
+    const a = Descriptor.parse(&[_]u64{ 0x7ff6cfe14380, 4, 0x00001b010134d94f, 1, 3, 4 }).?;
+    try std.testing.expectEqual(@as(u32, 1), a.rank);
+    try std.testing.expectEqual(@as(u64, 4), a.elem_len);
+    try std.testing.expectEqual(Extent{ .lo = 1, .count = 3, .stride = 4 }, a.dims[0]);
+    // b(2:3,-1:1), integer; and the older version, 20180515
+    const b = Descriptor.parse(&[_]u64{ 0x1000, 4, 0x000009020133ee23, 2, 2, 4, @bitCast(@as(i64, -1)), 3, 8 }).?;
+    try std.testing.expectEqual(@as(u32, 2), b.rank);
+    try std.testing.expectEqual(Extent{ .lo = 2, .count = 2, .stride = 4 }, b.dims[0]);
+    try std.testing.expectEqual(Extent{ .lo = -1, .count = 3, .stride = 8 }, b.dims[1]);
+    // not associated
+    try std.testing.expect(Descriptor.parse(&[_]u64{ 0, 4, 0x00001b010134d94f, 1, 0, 4 }).?.empty());
+    // Intel's is not taken for Flang's
+    try std.testing.expectEqual(@as(u32, 2), Descriptor.parse(&[_]u64{ 0x7ff6cfe14380, 4, 0, 1, 2, 0, 2, 4, 1, 3, 8, 1 }).?.rank);
 }
 
 test "values as Fortran writes them" {
