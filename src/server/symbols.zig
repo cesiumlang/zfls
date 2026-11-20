@@ -111,12 +111,19 @@ pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumen
         if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
         const tree = try str.split(a, scope.fqsn, "::");
         var scope_type: i64 = undefined;
+        var container: ?[]const u8 = if (std.mem.find(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
         if (tree.len > 2) {
-            if (std.mem.startsWith(u8, tree[1], "#gen_int")) scope_type = 11 else continue;
+            // the interface bodies of an interface block of a program unit:
+            // of a named one too (#479), whose name is their container
+            if (std.mem.startsWith(u8, tree[1], "#gen_int")) {
+                scope_type = 11;
+            } else if (tree.len == 3 and scope.parent != null and scope.parent.?.kind == .interface) {
+                scope_type = 11;
+                container = scope.parent.?.name;
+            } else continue;
         } else {
             scope_type = outline.flatKind(scope.getType(false), false);
         }
-        const container: ?[]const u8 = if (std.mem.find(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
         try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
         if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
             for (scope.childList()) |child| {
