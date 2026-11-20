@@ -524,3 +524,4 @@ msvcrt
 getcwd
 cudadevice
 FFLAGS
+direnv
