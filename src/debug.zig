@@ -119,6 +119,8 @@ const ConfigInfo = struct {
     include_dirs: []const []const u8 = &.{},
     /// `d_lines`: debug lines read as code
     d_lines_code: bool = false,
+    /// `fixed_line_length`
+    fixed_columns: ?usize = null,
 };
 
 /// The preprocessor options as the server takes them: the command line's
@@ -154,6 +156,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
     }
     info.include_dirs = dirs.items;
     info.d_lines_code = merged.dLinesCode();
+    info.fixed_columns = merged.fixedColumns();
     return info;
 }
 
@@ -185,6 +188,7 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     const file = try parser.FortranFile.create(a, fp, cfg.pp_suffixes);
     // as the server reads the file (workspace.loadFile)
     file.d_lines_code = cfg.d_lines_code;
+    file.fixed_columns = cfg.fixed_columns;
     _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
     o.print("  Detected format: {s}\n", .{if (file.fixed) "fixed" else "free"});
     o.print("\n{s}\nParser Output\n{s}\n\n", .{ sep80, sep80 });

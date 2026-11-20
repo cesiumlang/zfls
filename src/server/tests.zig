@@ -118,6 +118,7 @@ const Sources = struct {
         f.comment_markers = self.s.comment_markers.slice();
         f.openmp_conditional = !self.s.disable_openmp_conditional;
         f.d_lines_code = self.s.dLinesCode();
+        f.fixed_columns = self.s.fixedColumns();
         _ = try f.loadFromDisk(self.io);
         const ast = try f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), workspace.parseOptions(self));
         return .{ .file = f, .ast = ast };

@@ -635,7 +635,7 @@ pub const Server = struct {
 
     /// `fixed_line_length` when it limits fixed-form lines
     pub fn fixedLimit(self: *const Server) ?usize {
-        return if (self.s.fixed_line_length > 0) @intCast(self.s.fixed_line_length) else null;
+        return self.s.fixedColumns();
     }
 
     // Requests other files make directly (the handlers are in server/)
