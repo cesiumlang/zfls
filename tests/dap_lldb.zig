@@ -1,5 +1,6 @@
 //! zfls dap with lldb-dap, on a program of gfortran's (tests/dap/grid.f90,
-//! built with -fcheck=bounds): line breakpoints, a step, the stack, the
+//! built with -fcheck=bounds): line breakpoints, function breakpoints'
+//! verified states in their order, a step, the stack, the
 //! program's output, a Fortran runtime error, stopping at the start, the
 //! program's exit, attaching to a running program and (with script(1)) the
 //! program in a terminal (`zig build test-dap-lldb`). lldb reads no
@@ -187,6 +188,12 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(bps.len == 2, "two breakpoints", .{});
     const exc = items(try c.request("setExceptionBreakpoints", .{ .filters = .{"fortranRuntimeErrors"} }), "breakpoints");
     try check(exc.len == 1, "one exception filter", .{});
+    // function breakpoints, of which two do not exist: each with its own
+    // verified state (#373); then none, for the rest of the session
+    const functions = items(try c.request("setFunctionBreakpoints", .{ .breakpoints = .{ .{ .name = "zfls_no_such_function" }, .{ .name = "MAIN__" }, .{ .name = "zfls_nor_this_one" }, .{ .name = "main" } } }), "breakpoints");
+    var states: [4]bool = undefined;
+    for (functions[0..@min(4, functions.len)], 0..) |b, k| states[k] = if (get(b, "verified")) |v| v == .bool and v.bool else false;
+    try check(functions.len == 4 and !states[0] and states[1] and !states[2] and states[3], "function breakpoints verified in their order: {any}", .{states[0..@min(4, functions.len)]});
     _ = try c.request("setFunctionBreakpoints", .{ .breakpoints = [_]u8{} });
     _ = try c.request("configurationDone", .{});
     _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");

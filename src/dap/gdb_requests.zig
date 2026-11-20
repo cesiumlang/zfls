@@ -260,8 +260,10 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
             if (s.g.user_functions.len > 0) s.gpa.free(s.g.user_functions);
             s.g.user_functions = try s.gpa.dupe(u8, try json.stringify(a, json.get(args, "breakpoints") orelse Value{ .array = .init(a) }));
             const r = try syncFunctions(s, a);
-            const bps = json.items(json.path(r, &.{ "body", "breakpoints" }));
-            const n = json.items(json.get(args, "breakpoints")).len;
+            const asked = json.items(json.get(args, "breakpoints"));
+            const n = asked.len;
+            // lldb-dap's in no fixed order: the request's (#373)
+            const bps = if (s.g.lldb) try lldb.inRequestOrder(s, a, asked, json.items(json.path(r, &.{ "body", "breakpoints" }))) else json.items(json.path(r, &.{ "body", "breakpoints" }));
             s.send(a, .{
                 .type = "response",
                 .request_seq = json.int(json.get(req, "seq")) orelse 0,
