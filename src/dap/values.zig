@@ -248,10 +248,16 @@ pub fn scalar(a: Allocator, t: Type, b: []const u8) ![]const u8 {
     }
 }
 
+/// A real of 4, 8 or 16 bytes (IEEE binary32, binary64, binary128: ifx's
+/// and Flang's REAL(16), gfortran's on aarch64), or of 10 (x87's extended
+/// precision: gfortran's REAL(10) on x86, whose 16 bytes of memory hold 10
+/// of it), as the shortest decimal that reads back the same
 fn real(a: Allocator, b: []const u8) ![]const u8 {
     const text = switch (b.len) {
         4 => try a.print("{d}", .{@as(f32, @bitCast(std.mem.readInt(u32, b[0..4], .little)))}),
         8 => try a.print("{d}", .{@as(f64, @bitCast(std.mem.readInt(u64, b[0..8], .little)))}),
+        10 => try a.print("{d}", .{@as(f80, @bitCast(std.mem.readInt(u80, b[0..10], .little)))}),
+        16 => try a.print("{d}", .{@as(f128, @bitCast(std.mem.readInt(u128, b[0..16], .little)))}),
         else => return hex(a, b),
     };
     // `6` -> `6.0`, as Fortran writes a real
@@ -421,6 +427,17 @@ test "values as Fortran writes them" {
     std.mem.writeInt(u32, b[0..4], @bitCast(@as(f32, 1.0)), .little);
     std.mem.writeInt(u32, b[4..8], @bitCast(@as(f32, -2.0)), .little);
     try std.testing.expectEqualStrings("(1.0, -2.0)", try scalar(a, .{ .kind = .complex, .size = 8 }, &b));
+    // REAL(16): ifx's 3.5_16 as the audit read it (0x4000c000…); REAL(10),
+    // x87's; COMPLEX(16) of two REAL(16)
+    var q: [32]u8 = undefined;
+    std.mem.writeInt(u128, q[0..16], 0x4000c000000000000000000000000000, .little);
+    try std.testing.expectEqualStrings("3.5", try scalar(a, .{ .kind = .real, .size = 16 }, q[0..16]));
+    std.mem.writeInt(u128, q[16..32], @bitCast(@as(f128, -0.1)), .little);
+    try std.testing.expectEqualStrings("-0.1", try scalar(a, .{ .kind = .real, .size = 16 }, q[16..32]));
+    try std.testing.expectEqualStrings("(3.5, -0.1)", try scalar(a, .{ .kind = .complex, .size = 32 }, &q));
+    var x: [10]u8 = undefined;
+    std.mem.writeInt(u80, &x, @bitCast(@as(f80, 1.25)), .little);
+    try std.testing.expectEqualStrings("1.25", try scalar(a, .{ .kind = .real, .size = 10 }, &x));
     try std.testing.expectEqualStrings(".TRUE.", try scalar(a, .{ .kind = .logical, .size = 4 }, &[_]u8{ 0xff, 0xff, 0xff, 0xff }));
     try std.testing.expectEqualStrings(".FALSE.", try scalar(a, .{ .kind = .logical, .size = 4 }, &[_]u8{ 0, 0, 0, 0 }));
     try std.testing.expectEqualStrings("'abc'", try scalar(a, .{ .kind = .character, .size = 3 }, "abc"));
