@@ -136,14 +136,6 @@ pub const rules = [_]Rule{
         .kind = .variable,
         .why = "zfls preprocesses only the upper-case suffixes by default (pp_suffixes); Flang, gfortran and ifx preprocess .fpp too",
     },
-    // zfls's own limitations, reported with #399
-    .{
-        .file = "tests/flang/tab_format.f",
-        .entity = "tabbed::tab_cont",
-        .diff = .missing,
-        .kind = .variable,
-        .why = "zfls reads a DEC tab-format file (a tab before the statement, a digit after it continuing the line) as free form, and loses the continuation's names",
-    },
 };
 
 /// Whether `text` matches `pattern`, in which `*` is any characters
