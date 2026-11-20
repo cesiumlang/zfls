@@ -226,3 +226,85 @@ test "type-bound generics and derived-type arguments resolve the same way (#273)
     try std.testing.expectEqual(@as(usize, 4), names.items.len);
     for ([_][]const u8{ "scale_i", "scale_r", "show_a", "show_b" }, names.items) |want, got| try std.testing.expectEqualStrings(want, got);
 }
+
+const self_named = h.File{ .name = "m.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  interface sync
+    \\    module procedure sync, sync_n
+    \\  end interface
+    \\  interface wait
+    \\    procedure :: wait
+    \\  end interface
+    \\contains
+    \\  subroutine sync()
+    \\  end subroutine sync
+    \\  subroutine sync_n(n)
+    \\    integer, intent(in) :: n
+    \\  end subroutine
+    \\  subroutine wait()
+    \\  end subroutine
+    \\end module
+    \\
+};
+
+const self_named_user = h.File{ .name = "u.f90", .text =
+    \\program p
+    \\  use m
+    \\  implicit none
+    \\  call sync()
+    \\  call sync(1)
+    \\  call wait()
+    \\  call wa
+    \\end program
+    \\
+};
+
+/// That go to definition at `plus` characters into the `nth` `needle` of
+/// file `name` goes to 1-based line `want` of m.f90
+fn expectDefIn(w: *h.Workspace, name: []const u8, needle: []const u8, plus: usize, want: i64) !void {
+    const d = (try w.definition(name, w.pos(name, needle, 0, plus))) orelse return h.unmet("no definition of {s}", .{needle});
+    try h.expect(std.mem.endsWith(u8, d.uri, "m.f90") and d.line + 1 == want, "{s} goes to {s}:{d}, not m.f90:{d}", .{ needle, d.uri, d.line + 1, want });
+}
+
+test "a generic that has the name of one of its specifics: hover, definition, references, completion (#469)" {
+    const w = try h.Workspace.init(&.{ self_named, self_named_user }, .{});
+    defer w.deinit();
+    // hover: the specifics, the generic's namesake among them
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "wait()", 0, 1), "SUBROUTINE wait()");
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "interface wait", 0, 10), "SUBROUTINE wait()");
+    const both = (try w.hover("m.f90", w.pos("m.f90", "interface sync", 0, 10))) orelse return h.unmet("no hover on the generic sync", .{});
+    try h.expect(std.mem.find(u8, both, "SUBROUTINE sync()") != null and std.mem.find(u8, both, "SUBROUTINE sync_n(n)") != null, "both specifics: {s}", .{both});
+    // a call: the specific of its arguments
+    const none = (try w.hover("u.f90", w.pos("u.f90", "sync()", 0, 1))) orelse return h.unmet("no hover on sync()", .{});
+    try h.expect(std.mem.find(u8, none, "SUBROUTINE sync()") != null and std.mem.find(u8, none, "sync_n") == null, "sync() is sync: {s}", .{none});
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "sync(1)", 0, 1), "SUBROUTINE sync_n(n)");
+    // definition: the generic on its own name, the specific on a call (as
+    // for any generic, #273) and on the specific's own names
+    try expectDefIn(w, "m.f90", "interface sync", 10, 3);
+    try expectDefIn(w, "m.f90", "interface wait", 10, 6);
+    try expectDefIn(w, "u.f90", "sync()", 1, 10);
+    try expectDefIn(w, "u.f90", "sync(1)", 1, 12);
+    try expectDefIn(w, "u.f90", "wait()", 1, 15);
+    try expectDefIn(w, "m.f90", "procedure sync", 10, 10);
+    try expectDefIn(w, "m.f90", "procedure :: wait", 13, 15);
+    try expectDefIn(w, "m.f90", "subroutine sync()", 11, 10);
+    try expectDefIn(w, "m.f90", "end subroutine sync", 15, 10);
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "subroutine sync()", 0, 11), "SUBROUTINE sync()");
+    // references: the generic and the specific are one name of the module
+    for ([_]struct { []const u8, []const u8, usize }{
+        .{ "u.f90", "sync()", 1 },
+        .{ "m.f90", "interface sync", 10 },
+        .{ "m.f90", "subroutine sync()", 11 },
+    }) |at| {
+        const refs = try w.references(at[0], w.pos(at[0], at[1], 0, at[2]));
+        try h.expect(refs.len == 6, "references of sync from {s}: {d}, not 6", .{ at[1], refs.len });
+    }
+    // completion: the specific once, by its generic
+    var waits: usize = 0;
+    for (try w.completion("u.f90", w.pos("u.f90", "call wa", 0, 7))) |label| {
+        if (std.mem.eql(u8, label, "wait")) waits += 1;
+    }
+    try h.expect(waits == 1, "wait offered {d} times, not once", .{waits});
+    try w.expectNoDiagnostics("m.f90");
+}
