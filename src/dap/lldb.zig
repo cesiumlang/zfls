@@ -71,6 +71,7 @@ fn onPath(a: Allocator, io: Io, environ: *const std.process.Environ.Map, name: [
 /// it did not start
 pub fn start(s: *Session, a: Allocator, configured: ?[]const u8) !?[]const u8 {
     gdb.stop(s);
+    if (builtin.target.os.tag == .windows) return windows_refusal;
     const exe = try find(a, s.io, s.environ, configured) orelse return if (builtin.target.os.tag == .macos)
         "zfls dap: no lldb-dap; Xcode's command line tools have it (xcode-select --install). Or name one: `lldb` in the launch configuration (--lldb PATH), or debug with gdb: `gdb` in the launch configuration (--gdb PATH)"
     else
@@ -79,6 +80,12 @@ pub fn start(s: *Session, a: Allocator, configured: ?[]const u8) !?[]const u8 {
     env.* = try s.environ.clone(a);
     return gdb.spawn(s, a, &.{exe}, env, true);
 }
+
+/// Why not on Windows: LLVM's lldb-dap there (21.1, the Swift toolchain's)
+/// stops the program but tells the stop only when the next request comes,
+/// so a session waits for ever for its first stop (#374). lldb itself
+/// debugs MinGW's programs (gfortran's).
+pub const windows_refusal = "zfls dap: lldb-dap does not tell when a Windows program stops, so a session would wait for ever. Debug with gdb (`gdb` in the launch configuration, or --gdb PATH) or with Windows's Debugger Engine (`dbgeng: true`)";
 
 /// `launch`, `attach`: the program's terminal, the configuration in
 /// lldb-dap's words, then lldb-dap's request

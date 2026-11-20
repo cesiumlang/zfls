@@ -509,7 +509,12 @@ on Linux and Windows, lldb-dap on macOS.
   reads no Fortran ("no plugin for the language fortran95"): for the
   programs of gfortran and LLVM Flang its Variables view is empty (its
   globals show without values), expressions are not evaluated, and there
-  is no module variables scope. Over ssh, macOS lets a debugger start a
+  is no module variables scope. Not on Windows: lldb-dap there (LLVM 21's,
+  the Swift toolchain's) stops the program but tells the stop only when it
+  is asked something else, so zfls refuses it and names gdb and the
+  Debugger Engine. A debugger that does not answer `initialize`,
+  `launch`, `attach` or `disconnect` within two minutes fails that request.
+  Over ssh, macOS lets a debugger start a
   program only with Developer Mode on (`sudo DevToolsSecurity -enable`).
 - Windows's own Debugger Engine (`"dbgeng": true`, or `--dbgeng`;
   `dbgeng.dll` of System32, which every Windows 10 and later has), for the

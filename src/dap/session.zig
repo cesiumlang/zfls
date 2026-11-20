@@ -375,6 +375,8 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
             .gdb => |item| gdb.received(&s, a, item),
             .none => {
                 if (s.queue.closed and s.queue.items.items.len == 0) break;
+                // a `launch` the debugger does not answer (#374)
+                if (s.backend == .gdb or s.backend == .lldb) gdb.expireRelays(&s, a);
                 if (is_windows and s.running) {
                     const stop = s.engine.wait(a, 100) catch continue;
                     if (stop != .running) stopped(&s, a, stop);

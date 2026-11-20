@@ -111,7 +111,48 @@ pub const State = struct {
     indexed: bool = false,
 };
 
-const Relay = struct { seq: i64, command: []u8 };
+/// A request relayed: the client's seq, its command, and when its answer
+/// is overdue (`launch`, `attach`)
+const Relay = struct { seq: i64, command: []u8, deadline: ?Io.Timestamp = null };
+
+/// The requests whose answer the debugger owes soon: without it, the
+/// request fails after `answerTimeout` rather than leaving the client
+/// waiting for ever (#374). Not those that run the program or evaluate.
+const timed = [_][]const u8{ "initialize", "launch", "attach", "disconnect" };
+
+fn isTimed(command: []const u8) bool {
+    for (timed) |c| if (std.mem.eql(u8, c, command)) return true;
+    return false;
+}
+
+/// How long the debugger may take to answer a `timed` request: two
+/// minutes (a large program's symbols take a while), or
+/// ZFLS_DAP_ANSWER_TIMEOUT seconds (for tests)
+fn answerTimeout(s: *Session) Io.Duration {
+    const secs = std.fmt.parseInt(i64, s.environ.get("ZFLS_DAP_ANSWER_TIMEOUT") orelse "", 10) catch 120;
+    return .fromSeconds(secs);
+}
+
+/// "gdb gave no answer to launch in 120 s" (lldb-dap's)
+fn noAnswer(s: *Session, a: Allocator, command: []const u8) []const u8 {
+    return a.print("{s} gave no answer to {s} in {d} s", .{ if (s.g.lldb) "lldb-dap" else "gdb", command, @divTrunc(answerTimeout(s).nanoseconds, std.time.ns_per_s) }) catch command;
+}
+
+/// The relayed requests whose answers are overdue: failed to the client
+pub fn expireRelays(s: *Session, a: Allocator) void {
+    const now = Io.Clock.awake.now(s.io);
+    var it = s.g.relays.iterator();
+    while (it.next()) |kv| {
+        const d = kv.value_ptr.deadline orelse continue;
+        if (now.nanoseconds < d.nanoseconds) continue;
+        const r = kv.value_ptr.*;
+        s.g.relays.removeByPtr(kv.key_ptr);
+        defer s.gpa.free(r.command);
+        s.send(a, .{ .type = "response", .request_seq = r.seq, .command = r.command, .success = false, .message = noAnswer(s, a, r.command) });
+        // one at a time: the iterator is gone
+        return;
+    }
+}
 
 pub const Fake = struct {
     ctx: *anyopaque,
@@ -445,7 +486,8 @@ pub fn request(s: *Session, a: Allocator, command: []const u8, args: anytype) !V
     s.g.seq += 1;
     if (!write(s, a, seq, command, v)) return failure(a, command, exitedText(s));
     while (true) {
-        const item = takeGdb(s, null).?;
+        const deadline: ?Io.Timestamp = if (isTimed(command)) Io.Clock.awake.now(s.io).addDuration(answerTimeout(s)) else null;
+        const item = takeGdb(s, deadline) orelse return failure(a, command, noAnswer(s, a, command));
         const body = item.body orelse {
             exited(s, a);
             return failure(a, command, s.g.exit_message orelse exitedText(s));
@@ -466,7 +508,11 @@ pub fn forward(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     }
     const seq = s.g.seq;
     s.g.seq += 1;
-    try s.g.relays.put(s.gpa, seq, .{ .seq = json.int(json.get(req, "seq")) orelse 0, .command = try s.gpa.dupe(u8, command) });
+    try s.g.relays.put(s.gpa, seq, .{
+        .seq = json.int(json.get(req, "seq")) orelse 0,
+        .command = try s.gpa.dupe(u8, command),
+        .deadline = if (isTimed(command)) Io.Clock.awake.now(s.io).addDuration(answerTimeout(s)) else null,
+    });
     if (!write(s, a, seq, command, args)) {
         const kv = s.g.relays.fetchRemove(seq).?;
         s.gpa.free(kv.value.command);

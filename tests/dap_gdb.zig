@@ -47,6 +47,8 @@ const Setup = struct {
     fc: []const u8,
     /// The build's environment (Flang's link with the ifx kit on Windows)
     build_env: ?*const std.process.Environ.Map,
+    /// This process's environment
+    environ: *const std.process.Environ.Map,
     dir: []const u8,
     src: []const u8,
     program: []const u8,
@@ -113,6 +115,7 @@ pub fn main(init: std.process.Init) !u8 {
         .gdb = gdb,
         .compiler = compiler.?,
         .fc = fc,
+        .environ = init.environ_map,
         .build_env = if (compiler.? == .flang and builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path, kit) else null,
         .dir = tmp,
         .src = src,
@@ -124,7 +127,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -552,6 +555,40 @@ fn associated(io: Io, gpa: Allocator, setup: Setup) !void {
     _ = try c.request("continue", .{ .threadId = thread });
     const exited = get(try c.event("exited"), "body").?;
     try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
+}
+
+/// A gdb that takes the Debug Adapter Protocol's requests and answers
+/// none: `initialize` fails after the time given (ZFLS_DAP_ANSWER_TIMEOUT),
+/// rather than leaving the client waiting for ever (#374)
+fn silentGdb(io: Io, gpa: Allocator, setup: Setup) !void {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const windows = builtin.target.os.tag == .windows;
+    const fake = try std.Io.Dir.path.join(a, &.{ setup.dir, if (windows) "silent-gdb.cmd" else "silent-gdb" });
+    // gdb 17.2 with Python, as zfls checks; then it reads and says nothing
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake, .data = if (windows)
+        "@echo off\r\nif \"%1\"==\"--version\" (echo GNU gdb 17.2& exit /b 0)\r\nif \"%1\"==\"-nx\" (echo 42& exit /b 0)\r\nmore > nul\r\n"
+    else
+        "#!/bin/sh\ncase \"$1\" in --version) echo 'GNU gdb 17.2'; exit 0;; -nx) echo 42; exit 0;; esac\ncat > /dev/null\n" });
+    if (!windows) try Io.Dir.cwd().setFilePermissions(io, fake, .executable_file, .{});
+    var env = try setup.environ.clone(a);
+    try env.put("ZFLS_DAP_ANSWER_TIMEOUT", "3");
+    const c = try Client.startEnv(io, gpa, &.{ setup.zfls, "dap", "--gdb", fake }, &env);
+    defer c.deinit();
+    c.timeout = .fromSeconds(30);
+    // an adapter that waits for ever is killed, not waited for
+    silentInitialize(c) catch |e| {
+        if (c.child.id != null) c.child.kill(io);
+        return e;
+    };
+    end(c);
+}
+
+fn silentInitialize(c: *Client) !void {
+    const r = try c.response(try c.send("initialize", .{ .adapterID = "fortran", .pathFormat = "path" }), "initialize");
+    const ok = if (get(r, "success")) |v| v == .bool and v.bool else false;
+    try check(!ok and contains(str(r, "message"), "gdb gave no answer to initialize in 3 s"), "initialize failed: {s}", .{str(r, "message") orelse "(no message)"});
 }
 
 /// The program's input and output in a terminal, which script(1) gives a
