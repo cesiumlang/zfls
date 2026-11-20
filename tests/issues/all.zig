@@ -31,8 +31,10 @@ test {
     _ = @import("initialization.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
+    _ = @import("includes.zig");
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
+    _ = @import("hover_declarations.zig");
     _ = @import("hover_types.zig");
     _ = @import("intel_directives.zig");
     _ = @import("plain_comments.zig");
@@ -54,6 +56,7 @@ test {
     _ = @import("project.zig");
     _ = @import("pull_diagnostics.zig");
     _ = @import("use.zig");
+    _ = @import("unused.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
     _ = @import("compiler_lfortran.zig");

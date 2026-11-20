@@ -54,7 +54,7 @@ give the same answer, and the test fails for the reason in the issue.
 | [#125](https://github.com/fortran-lang/fortls/issues/125) | hover on a literal constant shows its type with its kind (`REAL(dp)`, `INTEGER(8)`, `DOUBLE PRECISION`, BOZ values) | hover | fixed (feature) | the type without its kind; none on `1d0`, `7_8` |
 | [#501](https://github.com/fortran-lang/fortls/issues/501) | `prefer_implementation`: hover shows the documentation of a separate module procedure's body in a submodule | hover | fixed (feature) | the interface only |
 | [#502](https://github.com/fortran-lang/fortls/issues/502) | `prefer_implementation`: go to definition goes to the body in the submodule | hover | fixed (feature) | the interface only |
-| [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | fixed (patched) | fails, same cause |
+| [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | includes | fixed (patched) | fails, same cause |
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | fixed (patched) | fails, same cause |
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
