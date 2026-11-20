@@ -633,9 +633,8 @@ workspace folder) its type, kind and rank, and the array descriptors
 declared type's components (LLVM Flang's, its dynamic type's). Of LLVM
 Flang's programs built with `-g`, the engine shows the variables (the
 main program's that Flang makes static too) and stops at Flang's runtime
-errors and ERROR STOP. Of ifx's programs (ifx 2026), not yet: a
-deferred-length CHARACTER, a module variable by its own name in an
-expression (`ncells`; `grid::ncells` works), a module's COMMON variables
+errors and ERROR STOP. Of ifx's programs (ifx 2026), not yet: a module
+variable by its own name in an expression (`ncells`; `grid::ncells` works), a module's COMMON variables
 and REAL(16) values. The program runs in a console window of its own (`"console":
 "internalConsole"`: none, its output is then lost). Hovers, watches and
 the Debug Console take a variable, its components and elements (`p%x`,
