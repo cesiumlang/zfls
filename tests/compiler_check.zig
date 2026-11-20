@@ -110,6 +110,12 @@ const compilers = [_]Compiler{
             .{ .file = "incerr.f90", .want = &.{
                 .{ .line = 4, .text = "No explicit type declared for 'undeclared_in_inc'" },
             }, .absent = &.{"included here"} },
+            // the intrinsic modules are found where the package installs
+            // them (#438: conda-forge's Flang for Linux looks under its
+            // driver's triple, the package has them under another)
+            .{ .file = "intrinsic_modules.f90", .want = &.{
+                .{ .line = 8, .text = "No explicit type declared for 'undeclared_intrinsic'" },
+            }, .absent = &.{ "module file", "real64", "ieee_value", "c_int" } },
         },
         .edited = .{ .line = 8, .text = "No explicit type declared for 'undeclared_edit'" },
     },
