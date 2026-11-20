@@ -21,6 +21,35 @@ test "the file's language: -x f95 for gfortran" {
     try std.testing.expectEqual(@as(usize, 2), compilers.language(.gfortran, .{ .windows = true, .mod_dir = "m" }).len);
 }
 
+/// The major version in `gfortran --version`'s output: `GNU Fortran (Rev5,
+/// Built by MSYS2 project) 16.1.0`, `GNU Fortran (GCC) 9.5.0`; null for
+/// another compiler's
+pub fn parseVersion(output: []const u8) ?u32 {
+    var it = compilers.lines(output);
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, compilers.trimCr(raw), " \t");
+        if (!std.mem.startsWith(u8, line, "GNU Fortran ")) continue;
+        // the last word: the version (the parentheses may hold another)
+        const last = line[if (std.mem.findScalarLast(u8, line, ' ')) |i| i + 1 else 0..];
+        var end: usize = 0;
+        while (end < last.len and std.ascii.isDigit(last[end])) end += 1;
+        if (end == 0 or end == last.len or last[end] != '.') return null;
+        return std.fmt.parseInt(u32, last[0..end], 10) catch null;
+    }
+    return null;
+}
+
+test "gfortran's version" {
+    try std.testing.expectEqual(@as(?u32, 16), parseVersion("GNU Fortran (Rev5, Built by MSYS2 project) 16.1.0\r\nCopyright (C) 2026 Free Software Foundation, Inc.\r\n"));
+    try std.testing.expectEqual(@as(?u32, 9), parseVersion("GNU Fortran (GCC) 9.5.0\nCopyright (C) 2019 Free Software Foundation, Inc.\n"));
+    try std.testing.expectEqual(@as(?u32, 14), parseVersion("GNU Fortran (GCC) 14.4.0\n"));
+    try std.testing.expectEqual(@as(?u32, 13), parseVersion("GNU Fortran (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\n"));
+    try std.testing.expectEqual(@as(?u32, 15), parseVersion("GNU Fortran (conda-forge gcc 15.2.0-7) 15.2.0\n"));
+    try std.testing.expectEqual(@as(?u32, null), parseVersion("flang version 23.1.5\n"));
+    try std.testing.expectEqual(@as(?u32, null), parseVersion("GNU Fortran (GCC) x\n"));
+    try std.testing.expectEqual(@as(?u32, null), parseVersion(""));
+}
+
 fn severity(sev: []const u8) Severity {
     if (std.ascii.eqlIgnoreCase(sev, "warning")) return .warning;
     if (std.ascii.eqlIgnoreCase(sev, "note") or std.ascii.eqlIgnoreCase(sev, "remark")) return .info;
