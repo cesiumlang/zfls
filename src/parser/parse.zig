@@ -749,8 +749,26 @@ pub const Parser = struct {
         const o = try Obj.newScope(ast, .type, ln, name, &.{});
         o.typeData().dec_structure = true;
         try ast.addScope(o, &R().END_STRUCTURED, true, true);
+        if (in_type and m.group(1) != null) try hoistStructure(ast, o);
         p.dbg("{s} !!! STRUCTURE - Ln:{d}", .{ line, ln });
         return true;
+    }
+
+    /// A named STRUCTURE nested in another declares its type in the scope
+    /// around the outermost structure, as compilers do (#557): `record
+    /// /inner/ r` names it there. It stays the current scope until its END
+    /// STRUCTURE.
+    fn hoistStructure(ast: *Ast, o: *Obj) !void {
+        const outer = o.parent orelse return;
+        var host: *Obj = outer;
+        while (host.kind == .type) host = host.parent orelse return;
+        for (outer.childList(), 0..) |c, i| if (c == o) {
+            outer.removeChild(i);
+            break;
+        };
+        try host.addChild(o);
+        try o.updateFqsn(host.fqsn);
+        ast.enc_scope_name = o.fqsn;
     }
 
     fn parseImplicit(p: *Parser, line: []const u8, ln: usize) !bool {
