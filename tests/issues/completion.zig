@@ -591,6 +591,48 @@ test "completion of a PUBLIC and an IMPORT statement offers a named generic by i
     }
 }
 
+const nested_import = [_]h.File{
+    .{ .name = "a.f90", .text = "module a\n" ++
+        "  private\n" ++
+        "  integer, public :: from_a\n" ++
+        "  integer :: hidden_a\n" ++
+        "end module a\n" },
+    .{ .name = "g.f90", .text = "module g\n" ++
+        "  use a\n" ++
+        "  private\n" ++
+        "  interface gen\n" ++
+        "    module procedure gs\n" ++
+        "  end interface\n" ++
+        "contains\n" ++
+        "  subroutine gs()\n" ++
+        "  end subroutine\n" ++
+        "  subroutine inner(arg)\n" ++
+        "    integer :: arg, local\n" ++
+        "    interface\n" ++
+        "      subroutine q(dummy)\n" ++
+        "        import :: \n" ++
+        "        integer :: dummy\n" ++
+        "      end subroutine\n" ++
+        "    end interface\n" ++
+        "  end subroutine\n" ++
+        "end module g\n" },
+};
+
+test "completion of an IMPORT statement in an interface inside a procedure offers the names its host sees (#486)" {
+    const w = try h.Workspace.init(&nested_import, .{});
+    defer w.deinit();
+    const got = (try labelsAtEnd(w, "g.f90", 13)) orelse return h.unmet("import :: null", .{});
+    // the host's own names, those of the module around it (private ones
+    // too) and those the module has by USE
+    for ([_][]const u8{ "arg", "local", "gen", "gs", "inner", "from_a" }) |name| {
+        try h.expect(has(got, name), "{s} missing: {any}", .{ name, got });
+    }
+    // not the body's own names, nor what the used module keeps private
+    for ([_][]const u8{ "dummy", "hidden_a" }) |name| {
+        try h.expect(!has(got, name), "{s} offered: {any}", .{ name, got });
+    }
+}
+
 /// The labels completion gives at the end of 0-based line `line`, or
 /// null when it answers null
 fn labelsAtEnd(w: *h.Workspace, name: []const u8, line: i64) !?[]const []const u8 {
