@@ -518,7 +518,8 @@ fn runCompiler(w: *Worker, a: Allocator, job: *const Job, cwd: []const u8, args:
         const r = tools.run(a, io, .{
             .argv = argv,
             .cwd = cwd,
-            .environ_map = w.server.toolEnv(),
+            // a compiler found by its path finds its DLLs (#528)
+            .environ_map = tools.withExeDir(a, w.server.toolEnv(), exe) catch |e| return .{ .failed = e },
             .timeout = tools.seconds(timeout_s),
             .running = &w.running,
         }) catch |e| switch (e) {
