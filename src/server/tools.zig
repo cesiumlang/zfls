@@ -187,6 +187,40 @@ pub fn describeExit(a: Allocator, out: Output) ![]const u8 {
 }
 
 /// A timeout of `s` seconds
+/// `env` with the directory of `exe` first on its `PATH`, on Windows, when
+/// `exe` is a path: a program found by its path may need the DLLs beside
+/// it, as MinGW's gfortran does (its `f951.exe`, in `lib\gcc\...`, needs
+/// those of MinGW's `bin`, and without them exits 1 saying nothing, #528).
+/// Elsewhere, and for a name looked for on the `PATH`, `env` itself.
+pub fn withExeDir(a: Allocator, env: ?*const std.process.Environ.Map, exe: []const u8) !?*const std.process.Environ.Map {
+    if (builtin.target.os.tag != .windows) return env;
+    const base = env orelse return null;
+    if (std.mem.findAny(u8, exe, "/\\") == null) return env;
+    const dir = std.Io.Dir.path.dirname(exe) orelse return env;
+    const m = try a.create(std.process.Environ.Map);
+    m.* = try base.clone(a);
+    const old = base.get("PATH") orelse "";
+    try m.put("PATH", if (old.len == 0) dir else try std.mem.concat(a, u8, &.{ dir, ";", old }));
+    return m;
+}
+
+test "a program found by its path: its directory first on the PATH, on Windows" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    try env.put("PATH", "C:\\Windows\\System32");
+    const by_path = (try withExeDir(a, &env, "C:/msys64/ucrt64/bin/gfortran.exe")).?;
+    // a name, looked for on the PATH: the environment as it is
+    try std.testing.expect((try withExeDir(a, &env, "gfortran")).? == &env);
+    try std.testing.expect((try withExeDir(a, null, "C:/x/gfortran.exe")) == null);
+    if (builtin.target.os.tag == .windows) {
+        try std.testing.expectEqualStrings("C:/msys64/ucrt64/bin;C:\\Windows\\System32", by_path.get("Path").?);
+        // the server's own is unchanged
+        try std.testing.expectEqualStrings("C:\\Windows\\System32", env.get("PATH").?);
+    } else try std.testing.expect(by_path == &env);
+}
+
 pub fn seconds(s: i64) Io.Timeout {
     return .{ .duration = .{ .raw = .fromSeconds(s), .clock = .awake } };
 }
