@@ -2,16 +2,20 @@
 //! built with -fcheck=bounds): line breakpoints, function breakpoints'
 //! verified states in their order, a step, the stack, the
 //! program's output, a Fortran runtime error, stopping at the start, the
-//! program's exit, attaching to a running program and (with script(1)) the
-//! program in a terminal (`zig build test-dap-lldb`). lldb reads no
-//! Fortran: the test shows what lldb gives as variables and checks nothing
-//! of them. Skipped without gfortran or lldb-dap. On Windows, where
-//! lldb-dap tells no stop (#374), only that zfls refuses it.
+//! program's exit, a stop at ERROR STOP and none at STOP
+//! (tests/dap/stops.f90), attaching to a running program and (with
+//! script(1)) the program in a terminal (`zig build test-dap-lldb`). lldb
+//! reads no Fortran: the test shows what lldb gives as variables and checks
+//! nothing of them. Or on LFortran's (`--compiler lfortran`), whose
+//! session is tests/dap_lfortran.zig's, with its integer variables. Skipped
+//! without the compiler or lldb-dap. On Windows, where lldb-dap tells no
+//! stop (#374), only that zfls refuses it.
 //!
-//!     dap_lldb --zfls ZFLS [--gfortran GFORTRAN] [--lldb LLDB_DAP]
+//!     dap_lldb --zfls ZFLS [--compiler gfortran|lfortran] [--fc FC] [--lldb LLDB_DAP]
 //!
-//! GFORTRAN and LLDB_DAP in the environment name them too; else lldb-dap
-//! is found as zfls dap finds it (xcrun on macOS, then the PATH).
+//! GFORTRAN (or LFORTRAN) and LLDB_DAP in the environment name them too
+//! (`--gfortran FC` is `--fc FC`); else lldb-dap is found as zfls dap finds
+//! it (xcrun on macOS, then the PATH).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -22,6 +26,7 @@ const zfls = @import("zfls");
 const lsp = @import("lsp_client");
 
 const dap = @import("dap_client.zig");
+const dap_lfortran = @import("dap_lfortran.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -32,10 +37,16 @@ const check = dap.check;
 
 const source = "tests/dap/grid.f90";
 
+const Compiler = enum { gfortran, lfortran };
+
 const Setup = struct {
     zfls: []const u8,
     lldb: []const u8,
-    gfortran: []const u8,
+    compiler: Compiler,
+    /// The compiler's executable
+    fc: []const u8,
+    /// LFortran's build environment (its directory on the PATH)
+    build_env: ?*const std.process.Environ.Map,
     dir: []const u8,
     src: []const u8,
     program: []const u8,
@@ -50,21 +61,28 @@ pub fn main(init: std.process.Init) !u8 {
     const argv = try init.minimal.args.toSlice(a);
     var zfls_exe: ?[]const u8 = null;
     var lldb: ?[]const u8 = init.environ_map.get("LLDB_DAP");
-    var gfortran: []const u8 = init.environ_map.get("GFORTRAN") orelse "gfortran";
+    var compiler: ?Compiler = .gfortran;
+    var fc_arg: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--zfls")) {
             zfls_exe = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--lldb")) {
             lldb = argv[i + 1];
-        } else if (std.mem.eql(u8, argv[i], "--gfortran")) {
-            gfortran = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--compiler")) {
+            compiler = std.meta.stringToEnum(Compiler, argv[i + 1]);
+        } else if (std.mem.eql(u8, argv[i], "--fc") or std.mem.eql(u8, argv[i], "--gfortran")) {
+            fc_arg = argv[i + 1];
         } else break;
     }
-    if (i != argv.len or zfls_exe == null) {
-        std.debug.print("usage: dap_lldb --zfls ZFLS [--gfortran GFORTRAN] [--lldb LLDB_DAP]\n", .{});
+    if (i != argv.len or zfls_exe == null or compiler == null) {
+        std.debug.print("usage: dap_lldb --zfls ZFLS [--compiler gfortran|lfortran] [--fc FC] [--lldb LLDB_DAP]\n", .{});
         return 2;
     }
+    const fc = fc_arg orelse switch (compiler.?) {
+        .gfortran => init.environ_map.get("GFORTRAN") orelse "gfortran",
+        .lfortran => init.environ_map.get("LFORTRAN") orelse "lfortran",
+    };
     // Windows's programs are gdb's or the Debugger Engine's: lldb-dap is
     // refused there, with a word of them, and no session waits (#374)
     if (builtin.target.os.tag == .windows) return refusedOnWindows(io, init.gpa, try Io.Dir.cwd().realPathFileAlloc(io, zfls_exe.?, a));
@@ -72,10 +90,11 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("skipped: no lldb-dap (xcrun --find lldb-dap, or lldb-dap or lldb-vscode on the PATH)\n", .{});
         return 0;
     };
-    _ = std.process.run(a, io, .{ .argv = &.{ gfortran, "--version" } }) catch {
-        std.debug.print("skipped: no {s}\n", .{gfortran});
+    const fc_version = std.process.run(a, io, .{ .argv = &.{ fc, "--version" } }) catch {
+        std.debug.print("skipped: no {s}\n", .{fc});
         return 0;
     };
+    std.debug.print("{s}\n", .{std.mem.trimEnd(u8, fc_version.stdout[0 .. std.mem.findScalar(u8, fc_version.stdout, '\n') orelse fc_version.stdout.len], "\r")});
 
     const cwd = Io.Dir.cwd();
     const tmp = try lsp.tempDir(io, a, init.environ_map, "zfls-dap-lldb-");
@@ -83,22 +102,25 @@ pub fn main(init: std.process.Init) !u8 {
     const text = try cwd.readFileAlloc(io, source, a, .limited(1 << 20));
     const src = try std.Io.Dir.path.join(a, &.{ tmp, "grid.f90" });
     try cwd.writeFile(io, .{ .sub_path = src, .data = text });
-    const program = try build(io, a, gfortran, tmp, "grid", &.{ "-O0", "-fcheck=bounds" }) orelse return 1;
-    const setup: Setup = .{
+    var setup: Setup = .{
         .zfls = try cwd.realPathFileAlloc(io, zfls_exe.?, a),
         .lldb = lldb_dap,
-        .gfortran = gfortran,
+        .compiler = compiler.?,
+        .fc = fc,
+        .build_env = if (compiler.? == .lfortran) try dap_lfortran.buildEnv(io, a, init.environ_map, fc) else null,
         .dir = tmp,
         .src = src,
-        .program = program,
-        .work_line = lineOf(text, "stop here: work"),
+        .program = "",
+        // LFortran's PRINT has no line: its stop in work is a line before
+        .work_line = lineOf(text, if (compiler.? == .lfortran) "LFortran stops here" else "stop here: work"),
         .call_line = lineOf(text, "call work("),
         .main_line = lineOf(text, "stop here: main"),
     };
-    std.debug.print("{s}, {s}\n", .{ program, lldb_dap });
+    setup.program = try build(io, a, setup, "grid", &.{ "-O0", "-fcheck=bounds" }) orelse return 1;
+    std.debug.print("{s}, {s}\n", .{ setup.program, lldb_dap });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "attaching", attach }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "attaching", attach }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -133,14 +155,21 @@ fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8) !u8 {
     return 0;
 }
 
-/// Builds `dir/name.f90` with debug information: compiled, then linked (a
-/// compiler of Nix's finds no dsymutil when it links), then on macOS the
-/// debug information gathered into `name.dSYM` (lldb also reads it from
-/// the object file, which stays): the program, or null
-fn build(io: Io, a: Allocator, gfortran: []const u8, dir: []const u8, name: []const u8, flags: []const []const u8) !?[]const u8 {
+/// Builds `dir/name.f90` with debug information. gfortran's (with `flags`):
+/// compiled, then linked (a compiler of Nix's finds no dsymutil when it
+/// links), then on macOS the debug information gathered into `name.dSYM`
+/// (lldb also reads it from the object file, which stays). LFortran's:
+/// `lfortran -g`, which writes the `.dSYM` itself. The program, or null
+fn build(io: Io, a: Allocator, setup: Setup, name: []const u8, flags: []const []const u8) !?[]const u8 {
+    const dir = setup.dir;
+    const gfortran = setup.fc;
     const src = try std.Io.Dir.path.join(a, &.{ dir, try a.print("{s}.f90", .{name}) });
     const obj = try std.Io.Dir.path.join(a, &.{ dir, try a.print("{s}.o", .{name}) });
     const exe = try std.Io.Dir.path.join(a, &.{ dir, if (builtin.target.os.tag == .windows) try a.print("{s}.exe", .{name}) else name });
+    if (setup.compiler == .lfortran) {
+        dap_lfortran.build(io, a, setup.fc, setup.build_env.?, dir, src, exe) catch return null;
+        return exe;
+    }
     var compile: std.ArrayList([]const u8) = .empty;
     try compile.appendSlice(a, &.{ gfortran, "-g" });
     try compile.appendSlice(a, flags);
@@ -190,6 +219,15 @@ fn inSource(frame: Value, file: []const u8) bool {
 }
 
 fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran) return dap_lfortran.walkThrough(io, gpa, .{
+        .argv = &.{ setup.zfls, "dap", "--lldb", setup.lldb },
+        .program = setup.program,
+        .src = setup.src,
+        .dir = setup.dir,
+        .work_line = setup.work_line,
+        .call_line = setup.call_line,
+        .main_line = setup.main_line,
+    });
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -289,14 +327,31 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
     try check((int(exited, "exitCode") orelse 0) != 0, "the program exited with {?d}", .{int(exited, "exitCode")});
 }
 
-/// Attaching to a running program, pausing it and ending it
+/// tests/dap/stops.f90: the filter of Fortran runtime errors stops at its
+/// ERROR STOP, not at its STOP. Not LFortran's on macOS: LFortran 0.69.0's
+/// ERROR STOP in a program built with `-g` aborts there before it calls
+/// its runtime's function ("The stack address was not found in any shared
+/// library or the main program")
+fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran and builtin.target.os.tag == .macos) return std.debug.print("skipped: LFortran's ERROR STOP aborts in a -g program on macOS\n", .{});
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ setup.dir, "stops.f90" }), .data = try Io.Dir.cwd().readFileAlloc(io, "tests/dap/stops.f90", a, .limited(1 << 16)) });
+    const exe = try build(io, a, setup, "stops", &.{}) orelse return error.CheckFailed;
+    try dap_lfortran.errorStop(io, gpa, &.{ setup.zfls, "dap", "--lldb", setup.lldb }, exe, setup.dir);
+}
+
+/// Attaching to a running program, pausing it and ending it (gfortran's:
+/// the debugger's part, which LFortran's would not change)
 fn attach(io: Io, gpa: Allocator, setup: Setup) !void {
     if (builtin.target.os.tag == .windows) return std.debug.print("skipped: not on Windows\n", .{});
+    if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran's only\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ setup.dir, "sleeper.f90" }), .data = "program sleeper\n  integer :: i\n  do i = 1, 120\n    call sleep(1)\n  end do\nend program\n" });
-    const exe = try build(io, a, setup.gfortran, setup.dir, "sleeper", &.{}) orelse return error.CheckFailed;
+    const exe = try build(io, a, setup, "sleeper", &.{}) orelse return error.CheckFailed;
     var child = try std.process.spawn(io, .{ .argv = &.{exe}, .stdin = .ignore, .stdout = .ignore });
     // after its wait, nothing to kill
     defer child.kill(io);
@@ -335,7 +390,7 @@ fn terminal(io: Io, gpa: Allocator, setup: Setup) !void {
     defer arena.deinit();
     const a = arena.allocator();
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ setup.dir, "reader.f90" }), .data = "program reader\n  integer :: n\n  read(*, *) n\n  print '(a,i0)', 'read ', n\nend program\n" });
-    const reader_exe = try build(io, a, setup.gfortran, setup.dir, "reader", &.{}) orelse return error.CheckFailed;
+    const reader_exe = try build(io, a, setup, "reader", &.{}) orelse return error.CheckFailed;
 
     const c = try start(io, gpa, setup);
     defer c.deinit();

@@ -1,20 +1,23 @@
 //! zfls dap with gdb, on a program of gfortran's (tests/dap/grid.f90, built
-//! with -fcheck=bounds) or of LLVM Flang's (`--compiler flang`; on Windows
+//! with -fcheck=bounds), of LLVM Flang's (`--compiler flang`; on Windows
 //! with DWARF, `-gdwarf-4 -Wl,-debug:dwarf`, and linked with zfls's ifx kit
-//! when it is next to zfls): breakpoints, the stack, the variables as
+//! when it is next to zfls) or of LFortran's (`--compiler lfortran`, not
+//! on Windows, where LFortran refuses `-g`; its own session is
+//! tests/dap_lfortran.zig's): breakpoints, the stack, the variables as
 //! Fortran (subscripts, sections, previews, not allocated, pointers, a
 //! polymorphic argument, hidden lengths left out), the module variables of
 //! a line, setting values, expressions, a Fortran runtime error, stopping
-//! at the start with gdb commands, the program's exit, a program that a
+//! at the start with gdb commands, the program's exit, a stop at ERROR STOP
+//! and none at STOP (tests/dap/stops.f90), a program that a
 //! signal ends (its exit code and the signal named), gdb's own end told, a
 //! variable that gdb fails to show beside the others (Flang), and (on
 //! Linux, with script(1)) the program in a terminal (`zig build
 //! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
 //! Adapter Protocol (gdb 14 or later).
 //!
-//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB] [--kit DIR]
+//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang|lfortran] [--fc FC] [--gdb GDB] [--kit DIR]
 //!
-//! GFORTRAN (or FLANG) and GDB in the environment name them too. `--kit`
+//! GFORTRAN (or FLANG, LFORTRAN) and GDB in the environment name them too. `--kit`
 //! names the ifx kit for Flang on Windows (`zig build` gives its own, #442);
 //! a link with it must read nothing of Visual Studio's.
 
@@ -27,6 +30,7 @@ const zfls = @import("zfls");
 const lsp = @import("lsp_client");
 
 const dap = @import("dap_client.zig");
+const dap_lfortran = @import("dap_lfortran.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -37,7 +41,7 @@ const check = dap.check;
 
 const source = "tests/dap/grid.f90";
 
-const Compiler = enum { gfortran, flang };
+const Compiler = enum { gfortran, flang, lfortran };
 
 const Setup = struct {
     zfls: []const u8,
@@ -45,7 +49,8 @@ const Setup = struct {
     compiler: Compiler,
     /// The compiler's executable
     fc: []const u8,
-    /// The build's environment (Flang's link with the ifx kit on Windows)
+    /// The build's environment (Flang's link with the ifx kit on Windows,
+    /// LFortran's directory on the PATH)
     build_env: ?*const std.process.Environ.Map,
     /// This process's environment
     environ: *const std.process.Environ.Map,
@@ -54,6 +59,7 @@ const Setup = struct {
     program: []const u8,
     work_line: i64,
     main_line: i64,
+    call_line: i64,
 };
 
 pub fn main(init: std.process.Init) !u8 {
@@ -80,13 +86,18 @@ pub fn main(init: std.process.Init) !u8 {
         } else break;
     }
     if (i != argv.len or zfls_exe == null or compiler == null) {
-        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang] [--fc FC] [--gdb GDB] [--kit DIR]\n", .{});
+        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang|lfortran] [--fc FC] [--gdb GDB] [--kit DIR]\n", .{});
         return 2;
     }
     const fc = fc_arg orelse switch (compiler.?) {
         .gfortran => init.environ_map.get("GFORTRAN") orelse "gfortran",
         .flang => init.environ_map.get("FLANG") orelse "flang",
+        .lfortran => init.environ_map.get("LFORTRAN") orelse "lfortran",
     };
+    if (compiler.? == .lfortran and builtin.target.os.tag == .windows) {
+        std.debug.print("skipped: LFortran for Windows refuses -g (#176)\n", .{});
+        return 0;
+    }
     const version = std.process.run(a, io, .{ .argv = &.{ gdb, "--version" } }) catch {
         std.debug.print("skipped: no {s}\n", .{gdb});
         return 0;
@@ -116,18 +127,24 @@ pub fn main(init: std.process.Init) !u8 {
         .compiler = compiler.?,
         .fc = fc,
         .environ = init.environ_map,
-        .build_env = if (compiler.? == .flang and builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path, kit) else null,
+        .build_env = switch (compiler.?) {
+            .flang => if (builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path, kit) else null,
+            .lfortran => try dap_lfortran.buildEnv(io, a, init.environ_map, fc),
+            .gfortran => null,
+        },
         .dir = tmp,
         .src = src,
         .program = program,
-        .work_line = lineOf(text, "stop here: work"),
+        // LFortran's PRINT has no line: its stop in work is a line before
+        .work_line = lineOf(text, if (compiler.? == .lfortran) "LFortran stops here" else "stop here: work"),
         .main_line = lineOf(text, "stop here: main"),
+        .call_line = lineOf(text, "call work("),
     };
     build(io, a, setup, src, program, &.{"-fcheck=bounds"}) catch return 1;
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -152,6 +169,8 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
             try argv.appendSlice(a, &.{ "-g", "-O0" });
             try argv.appendSlice(a, gfortran_args);
         },
+        // its checks of bounds are on by default
+        .lfortran => try argv.append(a, "-g"),
         .flang => if (builtin.target.os.tag == .windows) {
             try argv.appendSlice(a, &.{ "-gdwarf-4", "-O0", "-Wl,-debug:dwarf" });
             // lld-link's list of what it read, for the check below
@@ -257,6 +276,15 @@ fn listed(a: Allocator, vars: []Value) ![]const u8 {
 }
 
 fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran) return dap_lfortran.walkThrough(io, gpa, .{
+        .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb },
+        .program = setup.program,
+        .src = setup.src,
+        .dir = setup.dir,
+        .work_line = setup.work_line,
+        .call_line = setup.call_line,
+        .main_line = setup.main_line,
+    });
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -436,6 +464,19 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
         try check(int(exited, "exitCode") == 134 and contains(said, "SIGABRT (6)"), "ended by SIGABRT: {?d}, said: {s}", .{ int(exited, "exitCode"), said[said.len -| 200..] });
     }
     _ = try c.event("terminated");
+}
+
+/// tests/dap/stops.f90: the filter of Fortran runtime errors stops at its
+/// ERROR STOP, not at its STOP
+fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src = try std.Io.Dir.path.join(a, &.{ setup.dir, "stops.f90" });
+    const exe = try std.Io.Dir.path.join(a, &.{ setup.dir, if (builtin.target.os.tag == .windows) "stops.exe" else "stops" });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = try Io.Dir.cwd().readFileAlloc(io, "tests/dap/stops.f90", a, .limited(1 << 16)) });
+    try build(io, a, setup, src, exe, &.{});
+    try dap_lfortran.errorStop(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, exe, setup.dir);
 }
 
 /// A program that a signal ends (SIGSEGV): its exit code is 128 + 11, and

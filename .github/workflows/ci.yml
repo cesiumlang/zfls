@@ -525,8 +525,10 @@ jobs:
 
       # LFortran from conda-forge, for the tests of the compiler check with a
       # real compiler: tests/issues/compiler_lfortran.zig (in the unit
-      # tests) and tests/compiler_check.zig. Only `lfortran` goes on the
-      # PATH, not its environment's other programs
+      # tests) and tests/compiler_check.zig, and for tests/dap_gdb.zig. Only
+      # `lfortran` goes on the PATH, not its environment's other programs
+      # (`lfortran -g` finds its llvm-dwarfdump: the test puts the
+      # environment's directory on the PATH of its builds)
       - name: LFortran (Linux x64)
         if: matrix.target == 'x86_64-linux'
         run: |
@@ -701,6 +703,14 @@ jobs:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler flang
 
+      # and on LFortran's (-g, which LFortran for Windows refuses): its
+      # integer variables, the runtime error of a bound exceeded, ERROR STOP
+      - name: zfls dap with gdb on an LFortran program (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler lfortran
+
       # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
       # a step, the stack, a runtime error, attaching, a terminal. A debugger
       # starts a program only with Developer Mode on, which a runner's
@@ -715,6 +725,29 @@ jobs:
           fi
           xcrun --find lldb-dap
           zig-out/bin/dap_lldb --zfls "$ZFLS"
+
+      # LFortran from conda-forge (LFORTRAN names it; the PATH does not have
+      # it), for zfls dap with lldb-dap on its program
+      - name: LFortran (macOS x64)
+        if: matrix.target == 'x86_64-macos'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/osx-64/latest | tar -xj -C "$mm" bin/micromamba &&
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/lfortran/bin/lfortran" --version
+          echo "LFORTRAN=$RUNNER_TEMP/lfortran/bin/lfortran" >> "$GITHUB_ENV"
+
+      # zfls dap with lldb-dap on LFortran's program (-g): breakpoints, the
+      # stack, its integer variables, the runtime error of a bound exceeded
+      - name: zfls dap with lldb-dap on an LFortran program (macOS x64)
+        if: matrix.target == 'x86_64-macos'
+        run: zig-out/bin/dap_lldb --zfls "$ZFLS" --compiler lfortran
 
       # the compiler check of the release binary with LFortran, on files of
       # tests/compiler

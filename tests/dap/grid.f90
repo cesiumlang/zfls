@@ -1,9 +1,9 @@
 ! zfls dap with gdb (tests/dap_gdb.zig): arrays, derived types, polymorphic
 ! arguments (a scalar, an array), allocatables and pointers, module
-! variables, and a
-! bound exceeded (built with -fcheck=bounds; LLVM Flang, which has no such
-! check, stops at the OPEN of a missing file after it). The test
-! stops at the lines marked `stop here`.
+! variables, and a bound exceeded (built with -fcheck=bounds; LLVM Flang,
+! which has no such check, stops at the OPEN of a missing file after it).
+! The test stops at the lines marked `stop here` (LFortran's, in work, a
+! line before: tests/dap_lfortran.zig).
 module grid
   implicit none
   type :: point
@@ -28,7 +28,7 @@ contains
     type(point), intent(in) :: p
     class(point), intent(in) :: t
     class(point), intent(in) :: ts(:)
-    a(1) = a(1) + 5
+    a(1) = a(1) + 5 ! LFortran stops here: its PRINT has no line
     print *, a, b(2,1), s, p%x, t%id, secret ! stop here: work
   end subroutine
 end module

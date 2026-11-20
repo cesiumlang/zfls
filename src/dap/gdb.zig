@@ -33,6 +33,9 @@ pub const State = struct {
     path: []u8 = "",
     /// The process is lldb-dap's (lldb.zig), not gdb's
     lldb: bool = false,
+    /// The program launched is LFortran's (lfortran.zig): its temporaries
+    /// left out of the variables, and no module variables scope
+    lfortran: bool = false,
     /// The breakpoint of the stop at the start: lldb's (lldb.zig), or
     /// gdb's on LLVM Flang's main program (gdb_entry.zig), whose function
     /// is `entry_function`
