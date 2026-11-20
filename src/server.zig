@@ -29,22 +29,33 @@ const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
 const workspace = @import("server/workspace.zig");
+const initialization = @import("server/initialization.zig");
 const symbols = @import("server/symbols.zig");
 const completion = @import("server/completion.zig");
+const completion_resolve = @import("server/completion_resolve.zig");
 const definition = @import("server/definition.zig");
 const signature = @import("server/signature.zig");
 const references = @import("server/references.zig");
+const inline_values = @import("server/inline_values.zig");
+const renames = @import("server/renames.zig");
+const configuration = @import("server/configuration.zig");
 const diagnostics = @import("server/diagnostics.zig");
 const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
+const compiler_version = @import("server/compiler_version.zig");
+const convert = @import("server/convert.zig");
+const pending = @import("server/pending.zig");
+const pull = @import("server/pull.zig");
 const format = @import("server/format.zig");
 const linters = @import("server/linters.zig");
 const bindc = @import("server/bindc.zig");
 const modvars = @import("server/modvars.zig");
 const tests = @import("server/tests.zig");
 const cache = @import("server/cache.zig");
+const summary = @import("server/summary.zig");
 const clangd = @import("server/clangd.zig");
+const lenses = @import("server/lenses.zig");
 
 const Settings = settings_mod.Settings;
 const Obj = objects.Obj;
@@ -93,23 +104,44 @@ pub const Server = struct {
     root_path: []const u8 = "",
     workspace: std.array_hash_map.String(*FortranFile) = .empty,
     obj_tree: objects.ObjTree = .empty,
+    /// Every definition of the global names that several files define
+    same_names: objects.same_name.SameNames = .{},
+    /// The module directories of the compilation database's files
+    module_dirs: project.ModuleDirsMap = .empty,
     link_version: i64 = 0,
     sync_type: i32 = 1,
+    /// Whether `initialize` has succeeded, or failed (initialization.zig)
+    init_state: initialization.State = .none,
     /// The client takes `DocumentSymbol` trees, not fortls's flat list
     hierarchical_symbols: bool = false,
     /// the client asks whether a position can be renamed first
     prepare_rename: bool = false,
+    /// the client takes snippets in completion items
+    completion_snippets: bool = false,
     /// The paths of the documents open in the editor, whose text is the
     /// editor's (keys owned by `gpa`)
     open_docs: std.StringHashMapUnmanaged(void) = .empty,
     /// Every directory under the root is a source directory (no
     /// `source_dirs` option), so new ones are too
     whole_root: bool = false,
+    /// The Fortran files of the compilation database outside the root,
+    /// indexed with the source directories' (#267)
+    outside_sources: std.ArrayList([]const u8) = .empty,
+    /// The commands of code lenses that the client runs (lenses.zig)
+    lens_commands: lenses.Commands = .{},
     post_messages: std.ArrayList(PostMessage) = .empty,
     src_ext_regex: regex.Regex,
     intr: intrinsics.Intrinsics,
     /// ASTs replaced by re-parses, freed after the next full relink
     retired: std.ArrayList(*Ast) = .empty,
+    /// The files not open in the editor are kept as summaries
+    /// (server/summary.zig)
+    summaries: bool = true,
+    /// Of the files requests parsed in full, how many stay so at a save
+    /// (the latest), and when each was (`wake_clock`); keys only compared
+    keep_awake: usize = 64,
+    woken: std.AutoHashMapUnmanaged(*const FortranFile, u64) = .empty,
+    wake_clock: u64 = 0,
     pp_defs: pp.Defs = .empty,
     pp_defs_arena: std.heap.ArenaAllocator,
     running: bool = true,
@@ -122,8 +154,29 @@ pub const Server = struct {
     diag_lock: Io.Mutex = .init,
     own_diags: std.StringHashMapUnmanaged([]u8) = .empty,
     external_diags: [@typeInfo(compile.Source).@"enum".field_names.len]std.StringHashMapUnmanaged([]u8) = @splat(.empty),
+    /// The documents changed since zfls's diagnostics of them were
+    /// published, by URI, and when those are due (pending.zig: the awake
+    /// clock's nanoseconds); keys owned by `gpa`, under `diag_lock`
+    diag_pending: std.StringHashMapUnmanaged(i96) = .empty,
+    /// The client asked for `shutdown`: no diagnostics of a change wait
+    /// or are computed until `exit` (pending.zig; the server's thread)
+    shut_down: bool = false,
+    /// The client pulls zfls's diagnostics (pull.zig), of the workspace
+    /// too when `pull_workspace`
+    pull_diagnostics: bool = false,
+    pull_workspace: bool = false,
+    /// Counts the changes that diagnostics depend on, and the last report
+    /// pulled of each file, by path (keys owned by `gpa`)
+    diag_generation: u64 = 0,
+    pull_results: std.StringHashMapUnmanaged(pull.Result) = .empty,
     /// The thread that runs the compiler, once it has a job
     compiler: ?*compile.Worker = null,
+    /// The command of each Fortran file in compile_commands.json, for the
+    /// compiler check (in `arena`)
+    compile_commands: project.Commands = .empty,
+    /// The compiler check's compilers' versions, by executable (in `arena`;
+    /// compiler_version.zig)
+    compiler_versions: std.array_hash_map.String(compiler_version.Known) = .empty,
     /// The formatting problems posted (hashes of their keys), each once
     format_reported: std.ArrayList(u64) = .empty,
     /// The thread that runs fortitude and Codee, once it has a job
@@ -145,6 +198,16 @@ pub const Server = struct {
     /// The thread writing the index cache after initialization
     index_writer: ?std.Thread = null,
     next_id: i64 = 1,
+    /// Completion items leave their documentation to
+    /// `completionItem/resolve` (the client resolves it)
+    completion_resolve: bool = false,
+    /// Where the settings come from, and the providers announced to the
+    /// client (configuration.zig)
+    config: configuration.State = .{},
+    /// The environment of the programs whose messages zfls reads
+    /// (compilers, fypp, linters, formatters), set by `setEnviron`; null:
+    /// they inherit zfls's
+    tool_env: ?std.process.Environ.Map = null,
     log: *Logger,
 
     pub fn create(gpa: Allocator, io: Io, s: Settings, log: *Logger) !*Server {
@@ -174,6 +237,8 @@ pub const Server = struct {
         compile.stop(self);
         linters.stop(self);
         compile.deinitStore(self);
+        pending.deinit(self);
+        pull.deinit(self);
         clangd.stop(self);
         bindc.deinitIndex(self);
         var c_it = self.c_docs.iterator();
@@ -195,17 +260,33 @@ pub const Server = struct {
         }
         self.workspace.deinit(self.gpa);
         self.obj_tree.deinit(self.gpa);
+        self.same_names.deinit(self.gpa);
         for (self.retired.items) |ast| ast.destroy();
         self.retired.deinit(self.gpa);
+        self.woken.deinit(self.gpa);
         var open_it = self.open_docs.keyIterator();
         while (open_it.next()) |k| self.gpa.free(k.*);
         self.open_docs.deinit(self.gpa);
         self.post_messages.deinit(self.gpa);
         self.format_reported.deinit(self.gpa);
         self.intr.deinit();
+        if (self.tool_env) |*e| e.deinit();
         self.pp_defs_arena.deinit();
         self.arena.deinit();
         self.gpa.destroy(self);
+    }
+
+    /// Gives the programs zfls runs its environment `base`, with their
+    /// messages in English (`toolEnviron`)
+    pub fn setEnviron(self: *Server, base: *const std.process.Environ.Map) !void {
+        const made = try toolEnviron(self.gpa, base);
+        if (self.tool_env) |*e| e.deinit();
+        self.tool_env = made;
+    }
+
+    /// The environment of the programs zfls runs, null for zfls's own
+    pub fn toolEnv(self: *const Server) ?*const std.process.Environ.Map {
+        return if (self.tool_env) |*e| e else null;
     }
 
     pub fn syncPpDefsFromSettings(self: *Server) !void {
@@ -236,7 +317,7 @@ pub const Server = struct {
     }
 
     pub fn env(self: *Server, tmp: Allocator) objects.Env {
-        return .{ .tree = &self.obj_tree, .tmp = tmp };
+        return .{ .tree = &self.obj_tree, .tmp = tmp, .same_names = &self.same_names, .module_dirs = &self.module_dirs };
     }
 
     // ----------------------------------------------------------------------
@@ -263,6 +344,13 @@ pub const Server = struct {
     /// Answer request `id`, cancelled before it was handled
     pub fn cancelled(self: *Server, a: Allocator, id: Value) void {
         self.writeError(a, id, -32800, "request cancelled", null) catch |e| self.logSendFailure(e);
+    }
+
+    /// Sends a request to the client, whose answer is not waited for
+    pub fn sendRequest(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
+        const id = self.next_id;
+        self.next_id += 1;
+        try self.sendJson(a, try json.from(a, .{ .jsonrpc = "2.0", .id = id, .method = method, .params = params }));
     }
 
     pub fn sendNotification(self: *Server, a: Allocator, method: []const u8, params: Value) !void {
@@ -297,10 +385,18 @@ pub const Server = struct {
 
     /// Handle one decoded JSON-RPC message
     pub fn handle(self: *Server, a: Allocator, request: Value) void {
-        const method = json.str(json.get(request, "method")) orelse "";
         const id = json.get(request, "id");
+        // the client's answer to a request of the server's (sendRequest)
+        if (json.get(request, "method") == null and id != null) return;
+        const method = json.str(json.get(request, "method")) orelse "";
         self.log.debug("REQUEST {s} {s}", .{ if (id) |i| (json.stringify(a, i) catch "?") else "None", method });
         const params = json.get(request, "params") orelse .null;
+        // before a successful `initialize`: ServerNotInitialized, and the
+        // notifications dropped
+        if (initialization.waits(self, method)) {
+            if (id) |i| self.writeError(a, i, -32002, "server not initialized", null) catch |e| self.logSendFailure(e);
+            return;
+        }
         const result = self.dispatch(a, method, params);
         if (id == null) {
             if (result) |_| {} else |e| self.log.err("error handling request: {s} ({s})", .{ method, @errorName(e) });
@@ -329,21 +425,29 @@ pub const Server = struct {
         document_symbol,
         folding_range,
         semantic_tokens,
+        semantic_tokens_range,
         completion,
+        completion_resolve,
         signature_help,
         definition,
         references,
         document_highlight,
         hover,
         implementation,
+        type_definition,
+        declaration,
         rename,
         prepare_rename,
+        linked_editing,
         selection_range,
         document_link,
+        code_lens,
+        code_lens_resolve,
         on_type_formatting,
         formatting,
         range_formatting,
         inlay_hint,
+        inline_value,
         prepare_call_hierarchy,
         incoming_calls,
         outgoing_calls,
@@ -353,6 +457,7 @@ pub const Server = struct {
         compile_order,
         compiler_check,
         compiler_clear,
+        convert_form,
         bind_c,
         bind_c_targets,
         bind_c_references,
@@ -365,10 +470,15 @@ pub const Server = struct {
         did_close,
         did_change,
         code_action,
+        document_diagnostic,
+        workspace_diagnostic,
+        did_change_configuration,
         workspace_symbol,
         watched_files,
+        will_rename_files,
         /// accepted and ignored
         ignored,
+        shutdown,
         exit,
     };
 
@@ -377,21 +487,29 @@ pub const Server = struct {
         .{ "textDocument/documentSymbol", .document_symbol },
         .{ "textDocument/foldingRange", .folding_range },
         .{ "textDocument/semanticTokens/full", .semantic_tokens },
+        .{ "textDocument/semanticTokens/range", .semantic_tokens_range },
         .{ "textDocument/completion", .completion },
+        .{ "completionItem/resolve", .completion_resolve },
         .{ "textDocument/signatureHelp", .signature_help },
         .{ "textDocument/definition", .definition },
         .{ "textDocument/references", .references },
         .{ "textDocument/documentHighlight", .document_highlight },
         .{ "textDocument/hover", .hover },
         .{ "textDocument/implementation", .implementation },
+        .{ "textDocument/typeDefinition", .type_definition },
+        .{ "textDocument/declaration", .declaration },
         .{ "textDocument/rename", .rename },
         .{ "textDocument/prepareRename", .prepare_rename },
+        .{ "textDocument/linkedEditingRange", .linked_editing },
         .{ "textDocument/selectionRange", .selection_range },
         .{ "textDocument/documentLink", .document_link },
+        .{ "textDocument/codeLens", .code_lens },
+        .{ "codeLens/resolve", .code_lens_resolve },
         .{ "textDocument/onTypeFormatting", .on_type_formatting },
         .{ "textDocument/formatting", .formatting },
         .{ "textDocument/rangeFormatting", .range_formatting },
         .{ "textDocument/inlayHint", .inlay_hint },
+        .{ "textDocument/inlineValue", .inline_value },
         .{ "textDocument/prepareCallHierarchy", .prepare_call_hierarchy },
         .{ "callHierarchy/incomingCalls", .incoming_calls },
         .{ "callHierarchy/outgoingCalls", .outgoing_calls },
@@ -407,42 +525,59 @@ pub const Server = struct {
         .{ "zfls/pfunitTests", .pfunit_tests },
         .{ "zfls/compilerCheck", .compiler_check },
         .{ "zfls/compilerClear", .compiler_clear },
+        .{ "zfls/convertForm", .convert_form },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
         .{ "textDocument/didChange", .did_change },
         .{ "textDocument/codeAction", .code_action },
+        .{ "textDocument/diagnostic", .document_diagnostic },
+        .{ "workspace/diagnostic", .workspace_diagnostic },
         .{ "workspace/symbol", .workspace_symbol },
         .{ "initialized", .initialized },
         .{ "workspace/didChangeWatchedFiles", .watched_files },
-        .{ "workspace/didChangeConfiguration", .ignored },
+        .{ "workspace/willRenameFiles", .will_rename_files },
+        .{ "workspace/didChangeConfiguration", .did_change_configuration },
         .{ "$/cancelRequest", .ignored },
         .{ "$/setTrace", .ignored },
-        .{ "shutdown", .ignored },
+        .{ "shutdown", .shutdown },
         .{ "exit", .exit },
     });
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
-        return switch (methods.get(method) orelse return error.MethodNotFound) {
-            .initialize => workspace.serveInitialize(self, a, try json.decode(lsp.InitializeParams, a, params)),
+        const m = methods.get(method) orelse return error.MethodNotFound;
+        switch (m) {
+            .initialize, .initialized, .did_open, .did_save, .did_close, .did_change, .watched_files, .did_change_configuration, .will_rename_files, .ignored, .shutdown, .exit => {},
+            else => try summary.beforeRequest(self, a, method, params),
+        }
+        return switch (m) {
+            .initialize => initialization.initialize(self, a, params),
             .document_symbol => symbols.serveDocumentSymbols(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .folding_range => symbols.serveFoldingRanges(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .semantic_tokens => symbols.serveSemanticTokens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .semantic_tokens_range => symbols.serveSemanticTokensRange(self, a, try json.decode(lsp.SemanticTokensRangeParams, a, params)),
             .completion => completion.serveAutocomplete(self, a, try json.decode(lsp.PositionParams, a, params)),
-            .signature_help => signature.serveSignature(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .completion_resolve => completion_resolve.serveResolve(self, a, params),
+            .signature_help => if (configuration.withdrawn(self, .signature_help)) .null else signature.serveSignature(self, a, try json.decode(lsp.PositionParams, a, params)),
             .definition => definition.serveDefinition(self, a, try json.decode(lsp.PositionParams, a, params)),
             .references => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), true),
             .document_highlight => references.serveReferences(self, a, try json.decode(lsp.PositionParams, a, params), false),
             .hover => definition.serveHover(self, a, try json.decode(lsp.PositionParams, a, params)),
             .implementation => definition.serveImplementation(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .type_definition => definition.serveTypeDefinition(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .declaration => definition.serveDeclaration(self, a, try json.decode(lsp.PositionParams, a, params)),
             .rename => references.serveRename(self, a, try json.decode(lsp.RenameParams, a, params)),
             .prepare_rename => references.servePrepareRename(self, a, try json.decode(lsp.PositionParams, a, params)),
+            .linked_editing => references.serveLinkedEditing(self, a, try json.decode(lsp.PositionParams, a, params)),
             .selection_range => definition.serveSelectionRanges(self, a, try json.decode(lsp.SelectionRangeParams, a, params)),
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .code_lens => lenses.serveCodeLens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
+            .code_lens_resolve => lenses.serveResolve(self, a, params),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
-            .formatting => format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
-            .range_formatting => format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
+            .formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
+            .range_formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
             .inlay_hint => hints.serveInlayHints(self, a, try json.decode(lsp.InlayHintParams, a, params)),
+            .inline_value => inline_values.serveInlineValues(self, a, try json.decode(lsp.InlineValueParams, a, params)),
             .prepare_call_hierarchy => calls.servePrepare(self, a, try json.decode(lsp.PositionParams, a, params)),
             .incoming_calls => calls.serveIncoming(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
             .outgoing_calls => calls.serveOutgoing(self, a, try json.decode(lsp.CallHierarchyCallsParams, a, params)),
@@ -458,7 +593,9 @@ pub const Server = struct {
             .pfunit_tests => tests.servePfunitTests(self, a),
             .compiler_check => compile.serveCheck(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .compiler_clear => compile.serveClear(self, a),
+            .convert_form => convert.serveConvertForm(self, a, try json.decode(convert.Params, a, params)),
             .initialized => blk: {
+                configuration.watchConfigFiles(self, a);
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
                 break :blk .null;
             },
@@ -466,10 +603,18 @@ pub const Server = struct {
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
             .did_change => workspace.serveOnChange(self, a, try json.decode(lsp.DidChangeParams, a, params)),
-            .code_action => diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
+            .code_action => if (configuration.withdrawn(self, .code_actions)) .null else diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
+            .document_diagnostic => pull.serveDocument(self, a, try json.decode(lsp.DocumentDiagnosticParams, a, params)),
+            .workspace_diagnostic => pull.serveWorkspace(self, a, try json.decode(lsp.WorkspaceDiagnosticParams, a, params)),
             .workspace_symbol => symbols.serveWorkspaceSymbol(self, a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
             .watched_files => workspace.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
+            .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
+            .did_change_configuration => configuration.serveDidChange(self, a, params),
             .ignored => .null,
+            .shutdown => blk: {
+                pending.shutdown(self);
+                break :blk .null;
+            },
             .exit => blk: {
                 self.serveExit();
                 break :blk .null;
@@ -490,13 +635,26 @@ pub const Server = struct {
 
     /// `fixed_line_length` when it limits fixed-form lines
     pub fn fixedLimit(self: *const Server) ?usize {
-        return if (self.s.fixed_line_length > 0) @intCast(self.s.fixed_line_length) else null;
+        return self.s.fixedColumns();
     }
 
     // Requests other files make directly (the handlers are in server/)
 
     pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
         return diagnostics.getDiagnostics(self, a, uri);
+    }
+
+    /// When the diagnostics of a changed document are next due (the awake
+    /// clock's nanoseconds), for the loop that reads the messages to wait
+    /// no longer; null: none are
+    pub fn nextDiagnosticsTime(self: *Server) ?i96 {
+        return pending.next(self);
+    }
+
+    /// Publishes the diagnostics of changed documents due at `now` (null:
+    /// all of them)
+    pub fn publishPendingDiagnostics(self: *Server, a: Allocator, now: ?i96) void {
+        pending.publishDue(self, a, now);
     }
 
     pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, did_open: bool, did_close: bool) !Value {
@@ -529,14 +687,28 @@ pub const Server = struct {
         return str.byteToUtf16(text, col);
     }
 
-    /// `range_json` with optional end values falling back to the start
+    /// `range_json` with optional end values falling back to the start. An
+    /// end column 0 on a later line is the start of that line, not the start
+    /// column (which that line may not have).
     pub fn rangeOf(file: ?*const FortranFile, sln: usize, sch: usize, eln_in: ?usize, ech_in: ?usize) lsp.Range {
         const eln = if (eln_in) |e| (if (e != 0) e else sln) else sln;
-        const ech = if (ech_in) |e| (if (e != 0) e else sch) else sch;
+        const ech = if (ech_in) |e| (if (e != 0 or eln != sln) e else sch) else sch;
         return .{
             .start = .{ .line = sln, .character = toLspCol(file, sln, sch) },
             .end = .{ .line = eln, .character = toLspCol(file, eln, ech) },
         };
+    }
+
+    /// Where whole lines inserted before 0-based line `line` go, and what
+    /// their text starts with: past the last line, at its end after a line
+    /// break, since a line after the last is not in the document
+    pub const LineInsertion = struct { range: lsp.Range, prefix: []const u8 };
+
+    pub fn lineInsertion(file: *const FortranFile, line: usize) LineInsertion {
+        if (line < file.nLines()) return .{ .range = rangeOf(file, line, 0, line, 0), .prefix = "" };
+        const last = file.nLines() -| 1;
+        const len = if (file.getLine(last, false)) |l| l.len else 0;
+        return .{ .range = rangeOf(file, last, len, last, len), .prefix = if (len > 0) "\n" else "" };
     }
 
     pub fn locationOf(uri: []const u8, file: ?*const FortranFile, sln: usize, sch: usize, eln: ?usize, ech: ?usize) lsp.Location {
@@ -637,4 +809,32 @@ pub fn pyFormatLangid(a: Allocator, s: []const u8, langid: []const u8) ![]const 
         }
     }
     return out.items;
+}
+
+/// The environment of a program zfls reads the messages of: `base` in the C
+/// locale, so that they are in English (gettext reads LC_ALL before
+/// LC_MESSAGES and LANG, and ignores LANGUAGE in the C locale)
+pub fn toolEnviron(gpa: Allocator, base: *const std.process.Environ.Map) !std.process.Environ.Map {
+    var env = try base.clone(gpa);
+    errdefer env.deinit();
+    try env.put("LC_ALL", "C");
+    _ = env.swapRemove("LANGUAGE");
+    return env;
+}
+
+test "the tools' environment: the C locale, the rest kept" {
+    var base: std.process.Environ.Map = .init(std.testing.allocator);
+    defer base.deinit();
+    try base.put("PATH", "/opt/intel/bin");
+    try base.put("ONEAPI_ROOT", "/opt/intel");
+    try base.put("LANG", "de_DE.UTF-8");
+    try base.put("LC_ALL", "de_DE.UTF-8");
+    try base.put("LANGUAGE", "de");
+    var env = try toolEnviron(std.testing.allocator, &base);
+    defer env.deinit();
+    try std.testing.expectEqualStrings("C", env.get("LC_ALL").?);
+    try std.testing.expect(env.get("LANGUAGE") == null);
+    try std.testing.expectEqualStrings("/opt/intel/bin", env.get("PATH").?);
+    try std.testing.expectEqualStrings("/opt/intel", env.get("ONEAPI_ROOT").?);
+    try std.testing.expectEqualStrings("de_DE.UTF-8", base.get("LC_ALL").?);
 }

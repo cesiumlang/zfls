@@ -1,14 +1,22 @@
 name: CI
 
-# Every pull request and every push to main is built and tested on all
-# supported platforms, and the tests run on the release binaries themselves.
-# Pushes to dev are not run: what reaches dev is tested by its pull request,
-# and dev as a whole by the pull request that releases it (to main), so
-# running pushes to dev too would test the same trees twice (start the
-# workflow by hand on dev to test it in between). A pull request that only
-# changes the files listed in no-ci.txt (documentation, editor settings)
-# skips the build and the tests; the "CI" job, the check the rulesets
-# require, passes then too.
+# Every pull request into main and every push to main is built and tested on
+# all supported platforms, and the tests run on the release binaries
+# themselves. macOS arm64 is tested then only: by pull requests into main,
+# which is where releases come from, by a push to main that releases
+# binaries it built itself (see `test`), and by runs started by hand.
+# A run needs a single macOS arm64 runner, for Test (aarch64-macos): the
+# conda package for osx-arm64 is cross-built on the Intel runner, and the
+# install script's macOS arm64 check is a step of that test job.
+# Pull requests into dev and pushes to dev are not run: their authors run
+# the checks before merging, and dev as a whole is tested by the pull
+# request that releases it (to main), which runs again with each change of
+# dev. To test another branch or pull request, start the workflow by hand
+# on its branch (`gh workflow run ci.yml --ref BRANCH`): the run's checks
+# show on the pull request. A pull request that only changes the files
+# listed in no-ci.txt (documentation, editor settings) skips the build and
+# the tests; the "CI" job, the check the ruleset of main requires, passes
+# then too.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
 # release binaries are built once and packaged without the
@@ -28,13 +36,16 @@ name: CI
 # from main publishes the archives of a passed pull request run that built
 # exactly the same tree, with the same version, instead of building and
 # testing them again; without one (main moved on after the pull request ran,
-# a direct push, expired artifacts) it builds and tests them itself.
+# a direct push, expired artifacts, a pull request whose CI was started by
+# hand as m-intrinsics.yml does) it builds and tests them itself, macOS
+# arm64 included.
 
 on:
   push:
     # (not dev: see the top)
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -45,7 +56,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  ZIG_VERSION: 0.17.0
+  ZIG_VERSION: 0.17.1
   # The fortls commit the parity, differential and stress tests run against
   FORTLS_REPO: fortran-lang/fortls
   FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
@@ -194,7 +205,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
-          # the test matrix (6) and the conda package matrix (5)
+          # the test matrix (6, macOS arm64 included: only runs of pull
+          # requests into main have it, see test, so only they count) and
+          # the conda package matrix (5)
           JOBS: 11
         run: |
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
@@ -202,7 +215,6 @@ jobs:
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
-            # all six test jobs must have run and passed, not been skipped
             # all test and conda package jobs must have run and passed, not
             # been skipped
             passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (") or startswith("Conda package (")) | select(.conclusion == "success")] | length')
@@ -375,22 +387,60 @@ jobs:
     # explicit: a skipped job anywhere upstream (reuse, on pull requests)
     # would otherwise skip the tests too
     if: ${{ !cancelled() && needs.build.result == 'success' }}
-    runs-on: ${{ matrix.os }}
+    # The macOS arm64 leg runs on a self-hosted runner instead when the
+    # repository variable MACOS_ARM64_RUNNER names one (a label of it, such
+    # as `self-hosted`): a switch for the hours when GitHub's own runners
+    # are not handed out. Never for a pull request from a fork, whose
+    # workflow could run anything on that machine.
+    runs-on: >-
+      ${{ (matrix.target == 'aarch64-macos' && vars.MACOS_ARM64_RUNNER != ''
+      && (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository))
+      && vars.MACOS_ARM64_RUNNER || matrix.os }}
     strategy:
       fail-fast: false
+      # The macOS arm64 (macos-15) job, the only one of a run, runs only for a
+      # pull request into main, for a run started by hand (which tests a
+      # branch as fully as the release will be), and for a run that releases
+      # (a push to main that found no pull request run to reuse, see reuse,
+      # so builds and tests the release itself): GitHub's hosted macOS arm64
+      # runners can stay unavailable for hours, holding up every merge, and
+      # the organization's plan runs at most five macOS jobs at a time. A
+      # release thus always has its macOS arm64 binaries tested: by the pull
+      # request run whose archives it publishes (reuse requires all 11 test
+      # and conda jobs of it to have passed) or by its own run. The job is
+      # left out of the matrix, not skipped, since even a skipped leg waits
+      # for its runner; and as an include list cannot be filtered with
+      # exclude, the list is JSON, with the macOS arm64 entry appended when
+      # it runs.
       matrix:
-        include:
-          - { os: ubuntu-24.04, target: x86_64-linux, vscode: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-linux, vscode: linux-arm64 }
-          - { os: windows-2025, target: x86_64-windows, vscode: win32-x64 }
-          - { os: windows-11-arm, target: aarch64-windows, vscode: win32-arm64 }
-          - { os: macos-15-intel, target: x86_64-macos, vscode: darwin-x64 }
-          - { os: macos-15, target: aarch64-macos, vscode: darwin-arm64 }
+        include: >-
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"os": "ubuntu-24.04", "target": "x86_64-linux", "vscode": "linux-x64"},
+          {"os": "ubuntu-24.04-arm", "target": "aarch64-linux", "vscode": "linux-arm64"},
+          {"os": "windows-2025", "target": "x86_64-windows", "vscode": "win32-x64"},
+          {"os": "windows-11-arm", "target": "aarch64-windows", "vscode": "win32-arm64"},
+          {"os": "macos-15-intel", "target": "x86_64-macos", "vscode": "darwin-x64"}',
+          ((github.event_name == 'pull_request' && github.base_ref == 'main')
+          || github.event_name == 'workflow_dispatch'
+          || needs.version.outputs.release == 'true')
+          && ', {"os": "macos-15", "target": "aarch64-macos", "vscode": "darwin-arm64"}'
+          || '')) }}
     env:
       FORTLS: ${{ github.workspace }}/_fortls
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
+      # On a self-hosted runner (see runs-on) the caches go to the job's
+      # temporary directory, which the runner empties after each job, so
+      # that runs do not fill the machine
+      - name: Caches in the job's temporary directory (self-hosted)
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-global-cache" >> "$GITHUB_ENV"
+          echo "ZIG_LOCAL_CACHE_DIR=$RUNNER_TEMP/zig-local-cache" >> "$GITHUB_ENV"
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.sha }}
@@ -433,9 +483,19 @@ jobs:
             sudo apt-get update && sudo apt-get install -y gfortran gdb
           fi
 
+      # (a self-hosted runner: Nix's, which installs nothing on the machine
+      # outside the Nix store)
       - name: gfortran (macOS)
         if: runner.os == 'macOS'
         run: |
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+            export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+            gf="$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths nixpkgs#gfortran)/bin/gfortran"
+            mkdir -p "$RUNNER_TEMP/bin"
+            ln -sf "$gf" "$RUNNER_TEMP/bin/gfortran"
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
           gf=$(ls "$(brew --prefix)"/bin/gfortran-* 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$gf" ]; then
             brew install gcc
@@ -464,6 +524,47 @@ jobs:
           echo "$MSYS2_LOCATION\\ucrt64\\bin" >> "$GITHUB_PATH"
           echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
           echo "GDB=$MSYS2_LOCATION\\ucrt64\\bin\\gdb.exe" >> "$GITHUB_ENV"
+
+      # LFortran from conda-forge, for the tests of the compiler check with a
+      # real compiler: tests/issues/compiler_lfortran.zig (in the unit
+      # tests) and tests/compiler_check.zig, and for tests/dap_gdb.zig. Only
+      # `lfortran` goes on the PATH, not its environment's other programs.
+      # `lfortran -g` runs llvm-dwarfdump, which the package does not bring
+      # on Linux (llvm-tools has it), and Python (the environment's own: the
+      # gdb steps run without setup-python's library path):
+      # tests/dap_gdb.zig puts the environment's directory first on the
+      # PATH of its builds
+      - name: LFortran (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          mkdir -p "$mm" "$RUNNER_TEMP/lfortran-bin"
+          for wait in 15 30 60 0; do
+            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$mm" bin/micromamba &&
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools python && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          ln -s "$RUNNER_TEMP/lfortran/bin/lfortran" "$RUNNER_TEMP/lfortran-bin/lfortran"
+          "$RUNNER_TEMP/lfortran-bin/lfortran" --version
+          echo "$RUNNER_TEMP/lfortran-bin" >> "$GITHUB_PATH"
+
+      # LLVM Flang from conda-forge (on Windows x64, the ifx kit's step below
+      # installs it), for tests/compiler_check.zig, tests/dap_gdb.zig and
+      # tests/flang_oracle.zig; FLANG names it, and the PATH does not have it
+      - name: LLVM Flang (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          for wait in 15 30 60 0; do
+            MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/flang" -c conda-forge flang_linux-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/flang/bin/flang" --version
+          echo "FLANG=$RUNNER_TEMP/flang/bin/flang" >> "$GITHUB_ENV"
 
       - name: Unit tests
         run: zig build test --summary failures
@@ -494,7 +595,7 @@ jobs:
         if: matrix.target == 'x86_64-windows'
         run: |
           kit="$(dirname "$ZFLS")/ifx-kit"
-          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib; do
+          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib msvcprt.lib; do
             if [ ! -s "$kit/$f" ]; then
               echo "::error::the Windows x64 package has no ifx-kit/$f"
               exit 1
@@ -502,13 +603,107 @@ jobs:
           done
           "$ZFLS" setup-ifx --help | head -1
 
-      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig,
-      # tests/gfortran_oracle.zig, tests/stress_edit.zig)
+      # LFortran's programs link with lld-link and the package's ifx kit, as
+      # Run Fortran File has them link without Visual Studio: LFortran and
+      # lld from conda-forge, `link` a script that runs lld-link, and a PATH
+      # without Visual Studio's or Git's `link`
+      - name: LFortran links with the ifx kit (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          # a POSIX path: tar takes the "D:" of a Windows one for a host
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          bin="$tmp/lfortran/Library/bin"
+          kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
+          mkdir -p "$tmp/lfortran-link"
+          printf '@"%s" %%*\r\n' "$(cygpath -w "$bin/lld-link.exe")" > "$tmp/lfortran-link/link.cmd"
+          cd "$tmp"
+          printf "program p\n  real :: x(3)\n  x = 2\n  open(10, file='p.txt')\n  write(10, *) sum(x)\n  close(10)\n  print *, 'linked', sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
+          PATH="$tmp/lfortran-link:/c/Windows/System32:/c/Windows" LIB="$kit" \
+            LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" \
+            MSYS2_ARG_CONV_EXCL='*' "$bin/lfortran.exe" p.f90 -o p.exe
+          set +e
+          ./p.exe > p.out 2>&1
+          code=$?
+          set -e
+          cat p.out p.txt
+          grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+
+      # LLVM Flang's programs link with lld-link and the package's ifx kit,
+      # with the environment Run Fortran File gives the build (LIB, LINK,
+      # -fms-runtime-lib=dll -fuse-ld=lld). The runner has Visual Studio:
+      # lld-link's list of what it read shows that no library of Visual
+      # Studio's or of the Windows SDK's was
+      - name: LLVM Flang links with the ifx kit (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            [ -x "$mm/Library/bin/micromamba.exe" ] || curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/flang")" -c conda-forge flang_win-64 lld && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          bin="$tmp/flang/Library/bin"
+          "$bin/flang.exe" --version
+          echo "FLANG=$(cygpath -w "$bin/flang.exe")" >> "$GITHUB_ENV"
+          kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
+          cd "$tmp"
+          printf "program p\n  real :: x(3)\n  integer :: u\n  character(:), allocatable :: s\n  x = 2\n  s = 'linked'\n  open(newunit=u, file='p.txt')\n  write(u, '(f4.1)') sum(x)\n  close(u)\n  print *, s, sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
+          export LIB="$kit" LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" MSYS2_ARG_CONV_EXCL='*'
+          unset VCToolsInstallDir VCINSTALLDIR VSINSTALLDIR WindowsSdkDir UniversalCRTSdkDir
+          PATH="/c/Windows/System32:/c/Windows" "$bin/flang.exe" -fms-runtime-lib=dll -fuse-ld=lld p.f90 -o p.exe -Wl,-verbose > link.log 2>&1 || { cat link.log; exit 1; }
+          grep "Reading [A-Za-z]:" link.log | sed 's/.*Reading //' | sort -u
+          if grep -i -E "Microsoft Visual Studio|Windows Kits" link.log; then
+            echo "::error::lld-link read Visual Studio's or the Windows SDK's files"
+            exit 1
+          fi
+          set +e
+          ./p.exe > p.out 2>&1
+          code=$?
+          set -e
+          cat p.out p.txt
+          grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+
+      # Intel's ifx from conda-forge (no Intel installer), for
+      # tests/dap_windows.zig (IFX): it links its programs with the
+      # package's ifx kit, the runner's Visual Studio hidden
+      - name: Intel ifx (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            [ -x "$mm/Library/bin/micromamba.exe" ] || curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/ifx")" -c conda-forge ifx_win-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing ifx failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          echo "IFX=$(cygpath -w "$tmp/ifx/Library/bin/ifx.exe")" >> "$GITHUB_ENV"
+
+      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
+      # tests/gfortran_oracle.zig, tests/flang_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
 
       # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
-      # (with the runner's Visual Studio libraries): Fortran's need ifx
+      # and linked with the package's ifx kit (the runner's Visual Studio
+      # hidden). And on LLVM Flang's, built with -g and the package's ifx kit
+      # (FLANG), and on ifx's, built with /Zi (IFX): their breakpoints,
+      # stack, variables, stepping, runtime errors and ERROR STOP
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
         run: zig-out/bin/dap_windows --zfls "$ZFLS"
@@ -524,6 +719,78 @@ jobs:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
 
+      # and on an LLVM Flang program (FLANG): on Windows x64 with DWARF,
+      # linked with the package's ifx kit
+      - name: zfls dap with gdb on an LLVM Flang program (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler flang
+
+      # and on LFortran's (-g, which LFortran for Windows refuses): its
+      # integer variables, the runtime error of a bound exceeded, ERROR STOP
+      - name: zfls dap with gdb on an LFortran program (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler lfortran
+
+      # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
+      # a step, the stack, a runtime error, attaching, a terminal. A debugger
+      # starts a program only with Developer Mode on, which a runner's
+      # session without a desktop does not have (a self-hosted runner's
+      # machine has it on, and its user in _developer, set up once by hand)
+      - name: zfls dap with lldb-dap (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo DevToolsSecurity -enable
+            sudo dscl . append /Groups/_developer GroupMembership "$(id -un)"
+          fi
+          xcrun --find lldb-dap
+          zig-out/bin/dap_lldb --zfls "$ZFLS"
+
+      # LFortran from conda-forge (LFORTRAN names it; the PATH does not have
+      # it), for zfls dap with lldb-dap on its program
+      - name: LFortran (macOS x64)
+        if: matrix.target == 'x86_64-macos'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/osx-64/latest | tar -xj -C "$mm" bin/micromamba &&
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/lfortran/bin/lfortran" --version
+          echo "LFORTRAN=$RUNNER_TEMP/lfortran/bin/lfortran" >> "$GITHUB_ENV"
+
+      # zfls dap with lldb-dap on LFortran's program (-g): breakpoints, the
+      # stack, its integer variables, the runtime error of a bound exceeded
+      - name: zfls dap with lldb-dap on an LFortran program (macOS x64)
+        if: matrix.target == 'x86_64-macos'
+        run: zig-out/bin/dap_lldb --zfls "$ZFLS" --compiler lfortran
+
+      # the compiler check of the release binary with LFortran, on files of
+      # tests/compiler
+      - name: The compiler check with LFortran (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS"
+
+      # and with LLVM Flang (FLANG), also on a .f77 file, a debug line and
+      # an error in an included file
+      - name: The compiler check with LLVM Flang (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler flang
+
+      # and with gfortran (GFORTRAN on Windows, MSYS2's), also on a .f77
+      # file and a lower-case .fpp file
+      - name: The compiler check with gfortran (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler gfortran
+
       - name: Version under test
         run: |
           got=$("$ZFLS" --version | tr -d '\r')
@@ -538,6 +805,13 @@ jobs:
 
       - name: gfortran oracle
         run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
+
+      # LLVM Flang is the oracle of the corpus, of its own dialect and quirks
+      # (tests/flang), of the module files it writes and of its intrinsic
+      # modules (FLANG, installed above for the compiler check)
+      - name: Flang oracle (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/flang_oracle --zfls "$ZFLS" --flang "$FLANG"
 
       - name: Stress sessions
         run: |
@@ -560,6 +834,17 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      # packaging/install.sh on macOS arm64 (the install-script job's two
+      # installs, here so that a run needs one macOS arm64 runner): it
+      # installs published releases, not this run's binaries
+      - name: Install script, latest and a given release (macOS arm64)
+        if: matrix.target == 'aarch64-macos'
+        run: |
+          mkdir "$RUNNER_TEMP/here"
+          (cd "$RUNNER_TEMP/here" && sh -s < "$GITHUB_WORKSPACE/packaging/install.sh" && ./zfls-v*/zfls --version)
+          sh -s -- --dir "$RUNNER_TEMP/there/zfls" --version 0.4.0 < packaging/install.sh
+          "$RUNNER_TEMP"/there/zfls/zfls-v0.4.0-*/zfls --version
 
       - name: VS Code's libraries and a display (Linux)
         if: runner.os == 'Linux'
@@ -597,6 +882,12 @@ jobs:
             run_vscode
           fi
 
+      # a self-hosted runner keeps its working directory between jobs: the
+      # downloaded VS Code, the archives and the build outputs go
+      - name: Clean the working directory (self-hosted)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: git clean -ffdxq && git submodule foreach --recursive git clean -ffdxq
+
   conda:
     name: Conda package (${{ matrix.platform }})
     needs: [version, build]
@@ -604,15 +895,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # osx-arm64 is cross-built on the Intel runner, as conda-forge builds
+      # it (the recipe's build.sh builds for target_platform): GitHub's
+      # macOS arm64 runners are few, and a run should need as few of them
+      # as it can (see test). Its tests, which would run the arm64 zfls,
+      # are skipped there; the macOS arm64 test job runs the binaries
       matrix:
         include:
-          - { os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl }
-          - { os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe }
-          - { os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin }
-          - { os: macos-15, platform: osx-arm64, rattler: aarch64-apple-darwin }
+          - {os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl}
+          - {os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl}
+          - {os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe}
+          - {os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin}
+          - {os: macos-15-intel, platform: osx-arm64, rattler: x86_64-apple-darwin}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PLATFORM: ${{ matrix.platform }}
       RATTLER_BUILD_VERSION: v0.76.1
     steps:
       - uses: actions/checkout@v7
@@ -642,8 +939,11 @@ jobs:
           echo "$dir" >> "$GITHUB_PATH"
 
       # The conda-forge recipe, built from this run's source archive with
-      # conda-forge's zig; its tests check the installed zfls. Writing it
-      # downloads the packages it pins (retried, like the fetches)
+      # conda-forge's zig; its tests check the installed zfls where the
+      # package's platform is the runner's own (`--test native`: not for
+      # osx-arm64, cross-built on the Intel runner, whose arm64 zfls it
+      # cannot run). Writing it downloads the packages it pins (retried,
+      # like the fetches)
       - name: Build and test the conda package
         run: |
           for wait in 15 30 60 0; do
@@ -652,7 +952,7 @@ jobs:
             echo "::warning::writing the recipe failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
+          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out" --target-platform "$PLATFORM" --test native
 
   # packaging/install.sh and install.ps1 install published releases (not
   # this run's binaries), the way their users run them: piped from curl
@@ -666,8 +966,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # macOS: on the Intel runner here; on macOS arm64 the same two
+      # installs are steps of the test job (Test (aarch64-macos)), so that a
+      # run needs one macOS arm64 runner, not two
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, macos-15-intel, windows-2025]
     steps:
       - uses: actions/checkout@v7
         with:

@@ -47,7 +47,7 @@ const LineInfo = struct {
     ends: bool = false,
 };
 
-const construct_keywords = [_][]const u8{ "do", "if", "select", "block", "associate", "where", "forall", "critical", "change" };
+const construct_keywords = [_][]const u8{ "do", "if", "select", "selectcase", "selecttype", "selectrank", "block", "associate", "where", "forall", "critical", "change" };
 
 /// Statements that name a construct with their last word
 const naming_statements = [_][]const u8{ "exit", "cycle", "else", "elseif", "elsewhere", "case", "type", "class", "rank" };
@@ -104,15 +104,16 @@ fn analyze(a: Allocator, code: []const u8, fixed: bool) !LineInfo {
     var info: LineInfo = .{};
     var from: usize = 0;
     if (fixed) {
-        // the label field, then code from column 7
-        const field = code[0..@min(code.len, 5)];
+        // the label field, then code from column 7 (or after the TAB of a
+        // TAB-format line)
+        from = helpers.fixedStmtStart(code);
+        const field = code[0..@min(code.len, 5, from)];
         const trimmed = std.mem.trim(u8, field, " ");
-        const cont = code.len > 5 and code[5] != ' ' and code[5] != '0';
+        const cont = helpers.fixedContMark(code) != null;
         if (trimmed.len > 0 and !cont and std.mem.findNone(u8, trimmed, "0123456789") == null) {
             const s = std.mem.find(u8, field, trimmed).?;
             info.label_def = .{ .kind = .number, .start = s, .end = s + trimmed.len, .depth = 0 };
         }
-        from = @min(code.len, 6);
     }
     var toks = try tokenize(a, code, from);
     // ; separates statements: only the first is looked at here
@@ -342,6 +343,17 @@ pub fn at(a: Allocator, file: *const FortranFile, ast: *Ast, ln: usize, col: usi
     return .{ .kind = kind, .name = name, .def = def, .spans = spans.items };
 }
 
+/// Whether the word at byte column `start` of 0-based line `ln` names a
+/// construct on a statement that may repeat the name of its construct
+/// (`else n1`, `case (1) n2`, `elsewhere n6`, `exit outer`, `end do outer`):
+/// no variable there
+pub fn isConstructUse(a: Allocator, file: *const FortranFile, ln: usize, start: usize) !bool {
+    const code = (try codeOf(a, file, ln)) orelse return false;
+    const info = try analyze(a, code, file.fixed);
+    for (info.construct_uses.items) |t| if (t.start == start) return true;
+    return false;
+}
+
 fn sameName(x: []const u8, y: []const u8, kind: Kind) bool {
     return switch (kind) {
         .construct => std.ascii.eqlIgnoreCase(x, y),
@@ -399,6 +411,14 @@ test "construct names and labels on a line" {
     try std.testing.expectEqual(@as(usize, 0), (try analyze(a, "  end subroutine outer", false)).construct_uses.items.len);
     try std.testing.expectEqual(@as(usize, 0), (try analyze(a, "  type(t) :: outer", false)).construct_uses.items.len);
     try std.testing.expectEqual(@as(usize, 1), (try analyze(a, "  type is (integer) outer", false)).construct_uses.items.len);
+    for ([_][]const u8{ "  else n1", "  else if (i < 0) then n1", "  case (1) n1", "  case default n1", "  elsewhere (a < 0) n1", "  elsewhere n1" }) |l| {
+        const uses = (try analyze(a, l, false)).construct_uses.items;
+        try std.testing.expectEqual(@as(usize, 1), uses.len);
+        try std.testing.expectEqualStrings("n1", l[uses[0].start..uses[0].end]);
+    }
+    for ([_][]const u8{ "  n1: selectcase (i)", "  n1: selecttype (x)", "  n1: selectrank (x)" }) |l| {
+        try std.testing.expectEqual(@as(usize, 2), (try analyze(a, l, false)).construct_def.?.start);
+    }
     try std.testing.expectEqual(@as(usize, 1), (try analyze(a, "  if (x(i) < 0) cycle outer", false)).construct_uses.items.len);
     const go = try analyze(a, "  if (x > 0) go to 10", false);
     try std.testing.expectEqual(@as(usize, 1), go.label_refs.items.len);

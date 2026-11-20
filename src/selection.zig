@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const objects = @import("objects.zig");
 const Ast = objects.Ast;
 const FortranFile = @import("parser.zig").FortranFile;
+const helpers = @import("helpers.zig");
 
 /// 0-based lines, byte columns
 pub const Span = struct { sline: usize, scol: usize, eline: usize, ecol: usize };
@@ -25,9 +26,10 @@ pub fn around(a: Allocator, file: *const FortranFile, ast: *Ast, line: usize, co
     while (e < text.len and isWord(text[e])) e += 1;
     if (e > s) try push(a, &out, .{ .sline = line, .scol = s, .eline = line, .ecol = e });
     // the parentheses around it on its line, innermost first: their
-    // contents, then with the parentheses
+    // contents, then with the parentheses; those of the code, not of a
+    // comment after it
     const code = codeEnd(text);
-    var open = col;
+    var open = @min(col, code);
     var depth: usize = 0;
     while (open > 0) {
         open -= 1;
@@ -103,7 +105,7 @@ fn trimmedEnd(line: []const u8) usize {
 }
 
 /// Where the code of a line ends: at a `!` comment outside strings
-fn codeEnd(line: []const u8) usize {
+pub fn codeEnd(line: []const u8) usize {
     var quote: u8 = 0;
     for (line, 0..) |c, i| {
         if (quote != 0) {
@@ -149,10 +151,11 @@ pub fn statementLines(file: *const FortranFile, line: usize) struct { first: usi
 /// Whether the statement on 0-based line `l` goes on to the next line
 fn continues(file: *const FortranFile, l: usize) bool {
     if (file.fixed) {
-        // a fixed-form continuation line has a character in column 6
+        // a fixed-form continuation line has a character in column 6 (or a
+        // digit after the TAB of a TAB-format line)
         const next = file.getLine(l + 1, false) orelse return false;
         const comment = next.len > 0 and (next[0] == 'c' or next[0] == 'C' or next[0] == '*' or next[0] == '!');
-        return !(comment or next.len < 6 or next[5] == ' ' or next[5] == '0');
+        return !comment and helpers.fixedContMark(next) != null;
     }
     const text = file.getLine(l, false) orelse return false;
     return std.mem.endsWith(u8, std.mem.trimEnd(u8, text[0..codeEnd(text)], " \t\r"), "&");

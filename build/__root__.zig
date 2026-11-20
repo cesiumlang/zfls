@@ -57,7 +57,7 @@ pub fn build(b: *std.Build) !void {
     bin_step.dependOn(&install_sentinel.step);
 
     // What ifx needs to link without Visual Studio (Windows x64 packages)
-    _ = @import("ifxkit.zig").add(b);
+    const kit = @import("ifxkit.zig").add(b);
 
     const run_cmd = b.addRunArtifact(exe);
     const run_cmd_step = &run_cmd.step;
@@ -103,7 +103,22 @@ pub fn build(b: *std.Build) !void {
     fuzz_step.dependOn(&run_fuzz_tests.step);
     test_step.dependOn(&run_fuzz_tests.step);
 
-    addScriptTests(b, mod, exe, test_step);
+    // The corpus damaged as half-typed code is (tests/damaged_source.zig):
+    // a sample in `zig build test`, all of it in `zig build test-damaged`
+    const damaged_mod = b.createModule(.{
+        .root_source_file = b.path("tests/damaged_source.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zfls", .module = mod }},
+    });
+    const damaged_tests = b.addTest(.{ .root_module = damaged_mod });
+    test_step.dependOn(&b.addRunArtifact(damaged_tests).step);
+    const run_damaged_long = b.addRunArtifact(damaged_tests);
+    run_damaged_long.setEnvironmentVariable("ZFLS_DAMAGE", "long");
+    const damaged_step = b.step("test-damaged", "Damage every line of the test corpus and check the server's answers (minutes)");
+    damaged_step.dependOn(&run_damaged_long.step);
+
+    addScriptTests(b, mod, exe, test_step, damaged_step, kit.dir);
 }
 
 /// Steps running the test drivers in tests/ against the built server: the
@@ -113,25 +128,33 @@ pub fn build(b: *std.Build) !void {
 /// zfls (and fortls when CMD starts it) timed on a large workspace
 /// (tools/bench_workspace.zig; build with -Doptimize=safe). Their
 /// unit tests are part of `test_step`.
-fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
+fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step, damaged_step: *std.Build.Step, kit: std.Build.LazyPath) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
-    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran oracle and the stress test");
+    const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran and Flang oracles and the stress test");
     all.dependOn(b.getInstallStep());
     all.dependOn(test_step);
+    all.dependOn(damaged_step);
 
     const client = b.createModule(.{
         .root_source_file = b.path("tests/lsp_client.zig"),
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran oracle, stress test, zfls dap with the engine and gdb)");
-    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false };
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran and Flang oracles, stress test, zfls dap with the engine, gdb and lldb-dap, the compiler check)");
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false, needs_kit: bool = false };
     const tools = [_]Tool{
         .{
             .name = "gfortran_oracle",
             .root = "tests/gfortran_oracle.zig",
             .step = "test-oracle",
             .desc = "Compare zfls symbols with gfortran parse trees of tests/fortran",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "flang_oracle",
+            .root = "tests/flang_oracle.zig",
+            .step = "test-flang-oracle",
+            .desc = "Compare zfls symbols with LLVM Flang's of tests/fortran, tests/flang, their module files and Flang's intrinsic modules (skipped without Flang; FLANG names it)",
             .needs_fortls = false,
         },
         .{
@@ -145,16 +168,40 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_windows",
             .root = "tests/dap_windows.zig",
             .step = "test-dap",
-            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it)",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it, linked with the ifx kit), LLVM Flang's with -- --flang FLANG and ifx's with -- --ifx IFX",
             .needs_fortls = false,
             .needs_zig = true,
+            .needs_kit = true,
         },
         .{
             .name = "dap_gdb",
             .root = "tests/dap_gdb.zig",
             .step = "test-dap-gdb",
-            .desc = "Debug a gfortran program with zfls dap and gdb (skipped without gfortran or gdb 14+)",
+            .desc = "Debug a gfortran program (or LLVM Flang's, with -- --compiler flang, linked with the ifx kit on Windows x64; LFortran's with -- --compiler lfortran, not on Windows) with zfls dap and gdb (skipped without the compiler or gdb 14+)",
             .needs_fortls = false,
+            .needs_kit = true,
+        },
+        .{
+            .name = "dap_lldb",
+            .root = "tests/dap_lldb.zig",
+            .step = "test-dap-lldb",
+            .desc = "Debug a gfortran program (or LFortran's, with -- --compiler lfortran) with zfls dap and lldb-dap (skipped without the compiler or lldb-dap)",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "compiler_check",
+            .root = "tests/compiler_check.zig",
+            .step = "test-compiler",
+            .desc = "Check tests/compiler with compiler_diagnostics and a real LFortran, or LLVM Flang with -- --compiler flang (skipped without it)",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "async_stdio",
+            .root = "tests/async_stdio.zig",
+            .step = "test-stdio",
+            .desc = "Run zfls on standard streams opened for overlapped I/O (Windows only)",
+            .needs_fortls = false,
+            .in_test = true,
         },
         .{
             .name = "bench_workspace",
@@ -183,11 +230,21 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         run.addArtifactArg2(exe, .{});
         if (t.needs_fortls) if (fortls) |f| run.addArgs(&.{ "--fortls", f });
         if (t.needs_zig) run.addArgs(&.{ "--zig", b.graph.zig_exe });
+        // LLVM Flang's programs link with the ifx kit, built for the test,
+        // not with whatever the machine has (Visual Studio): the zfls of
+        // the cache has no kit next to it (#442)
+        const target = mod.resolved_target.?.result;
+        if (t.needs_kit and target.os.tag == .windows and target.cpu.arch == .x86_64) {
+            run.addArg("--kit");
+            run.addDirectoryArg2(kit, .{});
+        }
         run.addPassthruArgs();
         // They report their own results; always rerun them
         run.has_side_effects = true;
         b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
         if (t.step != null) all.dependOn(&run.step);
+        // quick, and needs nothing installed: also part of `zig build test`
+        if (t.in_test and b.graph.host.result.os.tag == .windows and mod.resolved_target.?.result.os.tag == .windows) test_step.dependOn(&run.step);
     }
 
     const Script = struct { step: []const u8, desc: []const u8, script: []const u8, needs_fortls: bool };

@@ -12,6 +12,7 @@ import {
   Target,
   TargetKind,
   TaskCommand,
+  fpmDwarfFlags,
   isProgram,
   listArgs,
   parseList,
@@ -22,7 +23,7 @@ import {
   taskArgs,
 } from "./fpm";
 import { compilerKind, launchConfiguration, runtimeEnv } from "./run";
-import { addFileRunner, chooseInstalledDebugger, gdbFor, runTask } from "./runFile";
+import { addFileRunner, chooseInstalledDebugger, gdbFor, lldLinkFor, runTask } from "./runFile";
 import { expandVariables, findExecutable, runProcess } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -49,6 +50,9 @@ export interface FpmTaskDefinition extends vscode.TaskDefinition {
 }
 
 const PROBLEM_MATCHERS = ["$zfls-gfortran", "$zfls-intel"];
+/** The environment of a build whose messages the problem matchers read:
+ * the C locale, so that the compiler writes "Error" and "Warning" in English */
+const MATCHER_ENV = { LC_ALL: "C" };
 
 /** Directories whose fpm.toml files are not projects of the workspace:
  * fpm's dependencies are in build/dependencies */
@@ -160,6 +164,25 @@ export function fpmExecutable(project: FpmProject, quiet = false): string | unde
   return fpm;
 }
 
+/** Whether the debug builds of fpm targets with LLVM Flang on Windows have
+ * DWARF, for gdb (`debugBuildOptions`): when zfls.fpm.flags ask for it, or
+ * the extension adds it */
+export function fpmFlangDwarf(project: FpmProject): boolean {
+  return /(^|\s)-gdwarf/.test(debugBuildOptions(project).flags ?? "");
+}
+
+/** The build options of a target's debug build: zfls.fpm's, with DWARF for
+ * LLVM Flang on Windows (`fpmDwarfFlags`) where it links with lld-link
+ * (next to `flang` or on the PATH; with `-gdwarf-4` Flang's driver
+ * chooses it) */
+export function debugBuildOptions(project: FpmProject): BuildOptions {
+  const opts = buildOptions(project);
+  const compiler = fpmCompiler(project);
+  const exe = compiler.exe ?? compiler.name;
+  const flags = fpmDwarfFlags(opts.flags, exe, process.platform);
+  return flags !== opts.flags && lldLinkFor(exe) !== undefined ? { ...opts, flags } : opts;
+}
+
 /** zfls.fpm.profile, compiler, flags and args */
 export function buildOptions(project: FpmProject): BuildOptions {
   const config = vscode.workspace.getConfiguration("zfls.fpm", vscode.Uri.file(project.root));
@@ -188,7 +211,10 @@ export function fpmTask(project: FpmProject, def: FpmTaskDefinition, name: strin
     project.folder ?? vscode.TaskScope.Workspace,
     name,
     "fpm",
-    new vscode.ProcessExecution(fpm, args, { cwd: project.root }),
+    new vscode.ProcessExecution(fpm, args, {
+      cwd: project.root,
+      env: def.command === "build" || def.command === "install" ? MATCHER_ENV : undefined,
+    }),
     def.command === "clean" ? [] : PROBLEM_MATCHERS,
   );
   if (def.command === "build" || def.command === "install") {
@@ -340,8 +366,9 @@ export function fpmCompiler(project: FpmProject): { name: string; exe: string | 
 }
 
 /**
- * Builds a target with fpm, in a terminal where its errors are seen, and
- * gives its program (from `--runner echo`), or undefined after saying why.
+ * Builds a target with fpm for debugging (`debugBuildOptions`), in a
+ * terminal where its errors are seen, and gives its program (from
+ * `--runner echo`), or undefined after saying why.
  */
 export async function buildTarget(
   project: FpmProject,
@@ -352,7 +379,7 @@ export async function buildTarget(
   if (!fpm) {
     return undefined;
   }
-  const echo = runArgs(target, buildOptions(project), [], "echo");
+  const echo = runArgs(target, debugBuildOptions(project), [], "echo");
   log.info(`[fpm] ${fpm} ${echo.join(" ")} (in ${project.root})`);
   const build = new vscode.Task(
     { type: "fpm", command: "build", target: target.name } as FpmTaskDefinition,
@@ -401,7 +428,7 @@ export async function debugTarget(
     return false;
   }
   const compiler = fpmCompiler(project);
-  const kind = compilerKind(compiler.exe ?? compiler.name, process.platform);
+  const kind = compilerKind(compiler.exe ?? compiler.name, process.platform, fpmFlangDwarf(project));
   const scope = vscode.Uri.file(project.root);
   const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
   const gdbPath = gdbFor(scope, compiler.exe);

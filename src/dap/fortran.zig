@@ -2,8 +2,8 @@
 //! variables read as Fortran. The bounds of an array from gdb's type
 //! string, the names and expressions of its elements and sections,
 //! previews of values, the hidden arguments to leave out, the dynamic type
-//! of a polymorphic object, and the runtime's error functions. Pure
-//! functions: no gdb here.
+//! of a polymorphic object, the main program's functions. Pure functions:
+//! no gdb here. The runtime's error functions are runtime_errors.zig's.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -403,27 +403,163 @@ pub fn castCommand(a: Allocator, variable: []const u8, address: []const u8, t: D
     });
 }
 
-// Errors at run time
+// LLVM Flang's polymorphic objects
 
-/// The functions of the Fortran runtimes that a program calls on an error
-/// (an array bound exceeded with `-fcheck=bounds`, a failed allocation, an
-/// I/O error without `iostat=`) or `ERROR STOP`: gfortran's, LLVM Flang's,
-/// Intel's
-pub const runtime_error_functions = [_][]const u8{
-    "_gfortran_runtime_error",
-    "_gfortran_runtime_error_at",
-    "_gfortran_os_error",
-    "_gfortran_os_error_at",
-    "_gfortran_error_stop_string",
-    "_gfortran_error_stop_numeric",
-    "_FortranAReportFatalUserError",
-    "for__issue_diagnostic",
-};
+/// The Python of `flangClassCommand` and `flangClassArrayCommand`. Flang's
+/// objects of a polymorphic type have a descriptor (ISO_Fortran_binding's):
+/// the object's address, its size, the version 20240719, the rank, type,
+/// attribute and `extra` bytes, the dimensions (lower bound, extent and
+/// stride in bytes, of 8 bytes each) and, when `extra & 1`, an addendum,
+/// whose first word is the type's description, `_QM<module>EXdtX<type>`.
+/// The type itself may be in the DWARF of a procedure (that of the main
+/// program, where Flang 23 puts the types its variables need), so it is
+/// looked up in the module, in the frame's blocks, and in the main
+/// program's. Each prints `zfls-class <type>` when it set the variable
+/// (`flangClassResult`).
+const flang_class_python =
+    \\import gdb, re, struct
+    \\def zfls_header(inf, at, rank, base):
+    \\    m = inf.read_memory(at, 32 + 24 * rank).tobytes()
+    \\    if struct.unpack_from('<I', m, 16)[0] != 20240719 or m[20] != rank or not m[23] & 1 or struct.unpack_from('<Q', m)[0] != base:
+    \\        return None
+    \\    return m
+    \\def zfls_type(info, D):
+    \\    s = re.search(r'<(_Q\w*?)XdtX(\w+)>', gdb.format_address(info))
+    \\    if not s or s.group(2).lower() == D.lower():
+    \\        return None
+    \\    t, mod = s.group(2), re.match(r'_QM([a-z0-9_$]+?)(?:[A-Z]|$)', s.group(1))
+    \\    blocks = [None]
+    \\    try:
+    \\        b = gdb.selected_frame().block()
+    \\        while b is not None:
+    \\            blocks.append(b)
+    \\            b = b.superblock
+    \\    except (gdb.error, RuntimeError):
+    \\        pass
+    \\    try:
+    \\        blocks.append(gdb.block_for_pc(int(gdb.parse_and_eval('_QQmain').address)))
+    \\    except (gdb.error, RuntimeError):
+    \\        pass
+    \\    for c in ([mod.group(1) + '::' + t] if mod else []) + [t]:
+    \\        for b in blocks:
+    \\            try:
+    \\                return (gdb.lookup_type(c, b) if b is not None else gdb.lookup_type(c)), t
+    \\            except gdb.error:
+    \\                continue
+    \\    return None
+    \\def zfls_class(E, N, D):
+    \\    v = gdb.parse_and_eval(E)
+    \\    if v.type.strip_typedefs().code != gdb.TYPE_CODE_PTR or v.address is None:
+    \\        return
+    \\    m = zfls_header(gdb.selected_inferior(), int(v.address), 0, int(v))
+    \\    found = zfls_type(struct.unpack_from('<Q', m, 24)[0], D) if m else None
+    \\    if found:
+    \\        gdb.set_convenience_variable(N, gdb.Value(int(v)).cast(found[0].pointer()))
+    \\        print('zfls-class ' + found[1])
+    \\def zfls_class_array(E, N, D):
+    \\    v = gdb.parse_and_eval(E)
+    \\    t = v.type.strip_typedefs()
+    \\    ranges = []
+    \\    while t.code == gdb.TYPE_CODE_ARRAY:
+    \\        ranges.append(t.range())
+    \\        t = t.target().strip_typedefs()
+    \\    if not ranges or v.address is None:
+    \\        return
+    \\    data, rank = int(v.address), len(ranges)
+    \\    where = gdb.execute('info address ' + E, to_string=True)
+    \\    f, inf = gdb.selected_frame(), gdb.selected_inferior()
+    \\    places = []
+    \\    m = re.search(r'static storage at address (0x[0-9a-fA-F]+)', where)
+    \\    if m:
+    \\        places.append(int(m.group(1), 16))
+    \\    m = re.search(r'frame base reg \$(\w+) offset (-?\d+)\+(-?\d+)', where)
+    \\    if m:
+    \\        places.append(int(f.read_register(m.group(1))) + int(m.group(2)) + int(m.group(3)))
+    \\    m = re.search(r'DW_OP_breg\d+ (-?\d+) \[\$(\w+)\]', where)
+    \\    if m:
+    \\        at = int(f.read_register(m.group(2))) + int(m.group(1))
+    \\        if 'DW_OP_deref' in where:
+    \\            at = struct.unpack('<Q', inf.read_memory(at, 8).tobytes())[0]
+    \\        places.append(at)
+    \\    m = re.search(r'DW_OP_fbreg (-?\d+)', where)
+    \\    if m:
+    \\        for r in ('rsp', 'rbp', 'sp', 'x29'):
+    \\            try:
+    \\                at = int(f.read_register(r)) + int(m.group(1))
+    \\                if 'DW_OP_deref' in where:
+    \\                    at = struct.unpack('<Q', inf.read_memory(at, 8).tobytes())[0]
+    \\                places.append(at)
+    \\            except (gdb.error, gdb.MemoryError, ValueError):
+    \\                pass
+    \\    for at in places:
+    \\        try:
+    \\            h = zfls_header(inf, at, rank, data)
+    \\        except gdb.MemoryError:
+    \\            continue
+    \\        if h is None:
+    \\            continue
+    \\        size, stride = struct.unpack_from('<Q', h, 8)[0], struct.unpack_from('<Q', h, 8)[0]
+    \\        for k in range(rank):
+    \\            extent, sm = struct.unpack_from('<qq', h, 32 + 24 * k)
+    \\            if extent > 1 and sm != stride:
+    \\                return
+    \\            stride *= extent
+    \\        found = zfls_type(struct.unpack_from('<Q', h, 24 + 24 * rank)[0], D)
+    \\        if not found or found[0].sizeof != size or getattr(found[0], 'dynamic', True):
+    \\            return
+    \\        typ = found[0]
+    \\        for r in reversed(ranges):
+    \\            typ = typ.array(r[0], r[1])
+    \\        gdb.set_convenience_variable(N, gdb.Value(data).cast(typ.pointer()).dereference())
+    \\        print('zfls-class ' + found[1])
+    \\        return
+    \\
+;
 
-/// Whether a runtime function is one of `ERROR STOP`
-pub fn isErrorStop(function: []const u8) bool {
-    return std.ascii.findIgnoreCase(function, "error_stop") != null;
+/// The gdb command (Python, `flang_class_python`) that finds the dynamic
+/// type of LLVM Flang's polymorphic scalar `expr` and sets the convenience
+/// variable `$name` to the object as a pointer to that type, when it is
+/// not `declared` (the declared type's name). Flang's DWARF gives
+/// `class(point)` as a pointer to `point`, with the object's descriptor
+/// where the pointer is.
+pub fn flangClassCommand(a: Allocator, expr: []const u8, name: []const u8, declared: []const u8) ![]const u8 {
+    return flangCommand(a, "zfls_class", expr, name, declared);
 }
+
+/// The gdb command that finds the dynamic type of LLVM Flang's polymorphic
+/// array `expr` (a variable's name, whose descriptor `info address` locates)
+/// and sets `$name` to the array as one of that type, with the same bounds,
+/// when it is not `declared` and the array is contiguous. Not for a type
+/// with allocatable or pointer components (gdb's `dynamic`), as gdb stops
+/// with an internal error on an array of gdb's own of one. Flang's DWARF
+/// gives `class(point) :: ts(:)` as an array of `point` whose stride is the
+/// dynamic type's size.
+pub fn flangClassArrayCommand(a: Allocator, expr: []const u8, name: []const u8, declared: []const u8) ![]const u8 {
+    return flangCommand(a, "zfls_class_array", expr, name, declared);
+}
+
+fn flangCommand(a: Allocator, function: []const u8, expr: []const u8, name: []const u8, declared: []const u8) ![]const u8 {
+    const program = try a.print("{s}try:\n    {s}(E, N, D)\nexcept (gdb.error, gdb.MemoryError, RuntimeError, ValueError):\n    pass\n", .{ flang_class_python, function });
+    return a.print("python exec({f}, {{'E': {f}, 'N': {f}, 'D': {f}}})", .{
+        std.json.fmt(program, .{}), std.json.fmt(expr, .{}), std.json.fmt(name, .{}), std.json.fmt(declared, .{}),
+    });
+}
+
+/// The dynamic type that `flangClassCommand`'s output names, or null
+pub fn flangClassResult(output: []const u8) ?[]const u8 {
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |line| {
+        const l = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, l, "zfls-class ") and l.len > "zfls-class ".len) return l["zfls-class ".len..];
+    }
+    return null;
+}
+
+// The start
+
+/// The functions of the main program, where a stop at the start stops
+/// (lldb.zig): gfortran's and Intel's, LLVM Flang's
+pub const main_program_functions = [_][]const u8{ "MAIN__", "_QQmain" };
 
 // gdb itself
 
@@ -578,8 +714,6 @@ test "the dynamic type of a polymorphic object" {
         "python gdb.set_convenience_variable(\"zfls_1\", gdb.Value(0x10).cast(gdb.lookup_type(\"grid::tagged\").pointer()))",
         try castCommand(a, "zfls_1", "0x10", .{ .module = "grid", .name = "tagged" }),
     );
-    try std.testing.expect(isErrorStop("_gfortran_error_stop_string"));
-    try std.testing.expect(!isErrorStop("_gfortran_runtime_error_at"));
 }
 
 test "gdb's version" {
@@ -588,4 +722,24 @@ test "gdb's version" {
     try std.testing.expectEqual([2]u32{ 12, 1 }, gdbVersion("GNU gdb (GDB; SUSE Linux Enterprise 15) 12.1").?);
     try std.testing.expectEqual([2]u32{ 14, 1 }, gdbVersion("GNU gdb (Fedora Linux) 14.1-2.fc39\r\nCopyright").?);
     try std.testing.expect(gdbVersion("lldb version 21") == null);
+}
+
+test "LLVM Flang's polymorphic objects: the command and its output" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cmd = try flangClassCommand(a, "t%\"q\"", "zfls_2", "point");
+    // one line of gdb's, the names as Python's strings
+    try std.testing.expect(std.mem.findScalar(u8, cmd, '\n') == null);
+    try std.testing.expect(std.mem.startsWith(u8, cmd, "python exec(\"import gdb, re, struct\\n"));
+    try std.testing.expect(std.mem.endsWith(u8, cmd, "{'E': \"t%\\\"q\\\"\", 'N': \"zfls_2\", 'D': \"point\"})"));
+    try std.testing.expect(std.mem.find(u8, cmd, "20240719") != null);
+    try std.testing.expect(std.mem.find(u8, cmd, "\\n    zfls_class(E, N, D)\\n") != null);
+    const arr = try flangClassArrayCommand(a, "ts", "zfls_3", "point");
+    try std.testing.expect(std.mem.findScalar(u8, arr, '\n') == null);
+    try std.testing.expect(std.mem.find(u8, arr, "\\n    zfls_class_array(E, N, D)\\n") != null);
+    try std.testing.expectEqualStrings("tagged", flangClassResult("zfls-class tagged\n").?);
+    try std.testing.expectEqualStrings("tagged", flangClassResult("warning: x\r\nzfls-class tagged\r\n").?);
+    try std.testing.expect(flangClassResult("") == null);
+    try std.testing.expect(flangClassResult("zfls-class \n") == null);
 }

@@ -2,7 +2,8 @@
 //! `zfls dap` (tests/dap_windows.zig, tests/dap_gdb.zig): the adapter's
 //! process, whose messages a thread reads, keeping the responses by the
 //! request they answer, and the events and the adapter's own requests
-//! (`runInTerminal`) in order.
+//! (`runInTerminal`) in order. And how the tests build programs on Windows
+//! without Visual Studio, with zfls's ifx kit (`kitDir`, `flangKitEnv`).
 
 const std = @import("std");
 const Io = std.Io;
@@ -32,12 +33,17 @@ pub const Client = struct {
     output: std.ArrayList(u8) = .empty,
 
     pub fn start(io: Io, gpa: Allocator, argv: []const []const u8) !*Client {
+        return startEnv(io, gpa, argv, null);
+    }
+
+    /// `start`, with the adapter's environment `env` (else this one's)
+    pub fn startEnv(io: Io, gpa: Allocator, argv: []const []const u8, env: ?*const std.process.Environ.Map) !*Client {
         const c = try gpa.create(Client);
         c.* = .{
             .io = io,
             .gpa = gpa,
             .arena = .init(gpa),
-            .child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe, .create_no_window = true }),
+            .child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe, .create_no_window = true, .environ_map = env }),
         };
         c.thread = try std.Thread.spawn(.{}, read, .{c});
         return c;
@@ -159,6 +165,12 @@ pub const Client = struct {
 
     /// The next event named `name` (the events before it are dropped)
     pub fn event(c: *Client, name: []const u8) !Value {
+        return c.eventOf(&.{name});
+    }
+
+    /// The next event named one of `names` (the events before it are
+    /// dropped)
+    pub fn eventOf(c: *Client, names: []const []const u8) !Value {
         const deadline = Io.Clock.awake.now(c.io).addDuration(c.timeout);
         c.mutex.lockUncancelable(c.io);
         defer c.mutex.unlock(c.io);
@@ -166,9 +178,9 @@ pub const Client = struct {
             while (c.seen < c.events.items.len) {
                 const e = c.events.items[c.seen];
                 c.seen += 1;
-                if (std.mem.eql(u8, str(e, "event") orelse "", name)) return e;
+                for (names) |name| if (std.mem.eql(u8, str(e, "event") orelse "", name)) return e;
             }
-            try c.wait(deadline, name);
+            try c.wait(deadline, names[0]);
         }
     }
 
@@ -209,4 +221,69 @@ pub fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
         return error.CheckFailed;
     }
     std.debug.print("ok: " ++ what ++ "\n", args);
+}
+
+/// Flang's build environment on Windows that links with lld-link and
+/// zfls's ifx kit (`kit`, given by `zig build`; else `ifx-kit` next to
+/// zfls, or `../lib/ifx`), as Run Fortran File links without Visual
+/// Studio: Visual Studio's variables left out, as CI's check of the kit
+/// does; null without the kit (an error when `kit` has none)
+pub fn flangKitEnv(io: Io, a: Allocator, environ: *const std.process.Environ.Map, zfls_path: []const u8, kit: ?[]const u8) !?*const std.process.Environ.Map {
+    const dir = try kitDir(io, a, zfls_path, kit) orelse return null;
+    const env = try withoutVisualStudio(a, environ);
+    try env.put("LIB", dir);
+    try env.put("LINK", try a.print("\"{s}\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib", .{try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" })}));
+    std.debug.print("linking with the ifx kit {s}\n", .{dir});
+    return env;
+}
+
+/// The directory of zfls's ifx kit (absolute): `kit`, given by `zig
+/// build`; else `ifx-kit` next to zfls, or `../lib/ifx`; null when there is
+/// none (an error when `kit` has none)
+pub fn kitDir(io: Io, a: Allocator, zfls_path: []const u8, kit: ?[]const u8) !?[]const u8 {
+    const exe_dir = std.Io.Dir.path.dirname(zfls_path) orelse return null;
+    // absolute: the compiler runs elsewhere (`zig build` gives a relative one)
+    const given: ?[]const u8 = if (kit) |k| Io.Dir.cwd().realPathFileAlloc(io, k, a) catch k else null;
+    const places: []const []const []const u8 = if (given) |k| &.{&.{k}} else &.{ &.{ exe_dir, "ifx-kit" }, &.{ exe_dir, "..", "lib", "ifx" } };
+    for (places) |parts| {
+        const dir = try std.Io.Dir.path.join(a, parts);
+        const shim = try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" });
+        Io.Dir.cwd().access(io, shim, .{}) catch continue;
+        return dir;
+    }
+    if (kit) |k| {
+        std.debug.print("no ifx kit in {s}\n", .{k});
+        return error.NoKit;
+    }
+    return null;
+}
+
+/// A copy of `environ` without Visual Studio's variables, as CI's check of
+/// the kit does
+pub fn withoutVisualStudio(a: Allocator, environ: *const std.process.Environ.Map) !*std.process.Environ.Map {
+    const env = try a.create(std.process.Environ.Map);
+    env.* = try environ.clone(a);
+    for (visual_studio_variables) |v| _ = env.swapRemove(v);
+    return env;
+}
+
+/// The variables of a Visual Studio developer prompt, by which LLVM's
+/// driver and lld-link find its libraries
+const visual_studio_variables = [_][]const u8{ "VCToolsInstallDir", "VCINSTALLDIR", "VSINSTALLDIR", "WindowsSdkDir", "UniversalCRTSdkDir", "INCLUDE", "LIBPATH" };
+
+/// Whether lld-link's list of what it read (`-Wl,-verbose`) names a file of
+/// Visual Studio's or of the Windows SDK's: what it read, or null
+pub fn visualStudioRead(output: []const u8) ?[]const u8 {
+    var it = std.mem.splitScalar(u8, output, '\n');
+    while (it.next()) |line| {
+        for ([_][]const u8{ "Microsoft Visual Studio", "Windows Kits" }) |mark| {
+            if (std.ascii.findIgnoreCase(line, mark) != null) return std.mem.trimEnd(u8, line, "\r");
+        }
+    }
+    return null;
+}
+
+test "lld-link's reading of Visual Studio's files" {
+    try std.testing.expect(visualStudioRead("lld-link: Reading C:\\kit\\msvcrt.lib\r\nlld-link: Reading p.o\r\n") == null);
+    try std.testing.expectEqualStrings("lld-link: Reading C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\ucrt.lib", visualStudioRead("lld-link: Reading C:\\kit\\a.lib\nlld-link: Reading C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\ucrt.lib\r\n").?);
 }

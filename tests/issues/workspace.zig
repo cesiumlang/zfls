@@ -273,3 +273,236 @@ test "without workspace_diagnostics, nothing is published at start" {
     _ = try w.server.dispatchPublic(w.arena.allocator(), "initialized", .{ .object = .empty });
     try std.testing.expect(!publishedFor(w, "bad.f90"));
 }
+
+test "workspace symbols include type-bound procedures and interface bodies" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "mesh.f90", .text =
+        \\module mesh_mod
+        \\  implicit none
+        \\  integer :: mod_var
+        \\  type :: mesh_t
+        \\    integer :: field_n
+        \\  contains
+        \\    procedure, public, pass(obj) :: get_nne => obj_get_nne
+        \\  end type mesh_t
+        \\  interface
+        \\    module function obj_get_nne(obj) result(ans)
+        \\      class(mesh_t), intent(in) :: obj
+        \\      integer :: ans
+        \\    end function obj_get_nne
+        \\  end interface
+        \\contains
+        \\  subroutine helper()
+        \\    integer :: local_var
+        \\    local_var = 1
+        \\  contains
+        \\    subroutine helper_inner()
+        \\      integer :: inner_local
+        \\      inner_local = 2
+        \\    end subroutine helper_inner
+        \\  end subroutine helper
+        \\end module mesh_mod
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main_prog
+        \\  implicit none
+        \\  call prog_inner()
+        \\contains
+        \\  subroutine prog_inner()
+        \\  end subroutine prog_inner
+        \\end program main_prog
+        \\
+        \\subroutine top_level()
+        \\  call top_inner()
+        \\contains
+        \\  subroutine top_inner()
+        \\  end subroutine top_inner
+        \\end subroutine top_level
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const named = struct {
+        fn has(syms: []const []const u8, name: []const u8) bool {
+            for (syms) |s| if (std.mem.eql(u8, s, name)) return true;
+            return false;
+        }
+    };
+    const syms = try w.workspaceSymbols("get_nne");
+    try h.expect(named.has(syms, "get_nne"), "no type-bound procedure get_nne: {any}", .{syms});
+    try h.expect(named.has(syms, "obj_get_nne"), "no interface body obj_get_nne: {any}", .{syms});
+    // what the first level always offered is still there
+    const vars = try w.workspaceSymbols("mod_var");
+    try h.expect(named.has(vars, "mod_var"), "no module variable mod_var: {any}", .{vars});
+    // locals and type components stay out of the results
+    const locals = try w.workspaceSymbols("local_var");
+    try h.expect(locals.len == 0, "local variable offered: {any}", .{locals});
+    const fields = try w.workspaceSymbols("field_n");
+    try h.expect(fields.len == 0, "type component offered: {any}", .{fields});
+    // the internal procedures of a module procedure, a program and a
+    // top-level procedure, with their hosts as containers (#197); still
+    // not their locals
+    inline for (.{ .{ "helper_inner", "mesh_mod::helper" }, .{ "prog_inner", "main_prog" }, .{ "top_inner", "top_level" } }) |c| {
+        const found = try w.workspaceSymbolInfos(c[0]);
+        try h.expect(found.len == 1, "{d} symbols for {s}: {any}", .{ found.len, c[0], found });
+        const container = found[0].container orelse "";
+        try h.expect(std.mem.eql(u8, container, c[1]), "{s} is in '{s}', not {s}", .{ c[0], container, c[1] });
+    }
+    const inner_locals = try w.workspaceSymbols("inner_local");
+    try h.expect(inner_locals.len == 0, "local variable of an internal procedure offered: {any}", .{inner_locals});
+}
+
+test "workspace symbols offer each object once, in its own file" {
+    // one errors.F90 #included into two submodules, and a second library's
+    // errors.F90 of the same procedure name; and declarations that an
+    // INCLUDE puts into a module
+    const errors = "subroutine assert_error(a)\n  logical, intent(in) :: a\nend subroutine assert_error\n";
+    const submodule = struct {
+        fn text(comptime name: []const u8) []const u8 {
+            return "submodule(m) " ++ name ++ "\n  implicit none\ncontains\n  subroutine " ++ name ++ "_t()\n    call assert_error(.true.)\n  end subroutine " ++ name ++ "_t\n\n#include \"../inc/errors.F90\"\n\nend submodule " ++ name ++ "\n";
+        }
+    };
+    const w = try h.Workspace.init(&.{
+        .{ .name = "a/inc/errors.F90", .text = errors },
+        .{ .name = "a/m.F90", .text = "module m\n  implicit none\n  include 'decls.inc'\nend module m\n" },
+        .{ .name = "a/decls.inc", .text = "integer :: shared_count\n" },
+        .{ .name = "a/src/sa.F90", .text = submodule.text("sa") },
+        .{ .name = "a/src/sb.F90", .text = submodule.text("sb") },
+        .{ .name = "b/inc/errors.F90", .text = errors },
+        .{ .name = "b/src/sc.F90", .text = submodule.text("sc") },
+    }, .{});
+    defer w.deinit();
+    const syms = try w.workspaceSymbolInfos("assert_error");
+    try h.expect(syms.len == 2, "{d} symbols for assert_error, not one per errors.F90: {any}", .{ syms.len, syms });
+    var lib_a = false;
+    var lib_b = false;
+    for (syms) |s| {
+        lib_a = lib_a or std.mem.endsWith(u8, s.uri, "a/inc/errors.F90");
+        lib_b = lib_b or std.mem.endsWith(u8, s.uri, "b/inc/errors.F90");
+        // in no scope of its own file, whichever submodule includes it
+        try h.expect(s.container == null, "assert_error is in {?s}", .{s.container});
+    }
+    try h.expect(lib_a and lib_b, "assert_error not offered in both errors.F90: {any}", .{syms});
+    const decls = try w.workspaceSymbolInfos("shared_count");
+    try h.expect(decls.len == 1, "{d} symbols for shared_count: {any}", .{ decls.len, decls });
+    try h.expect(std.mem.endsWith(u8, decls[0].uri, "a/decls.inc"), "shared_count is in {s}", .{decls[0].uri});
+    // still once each after an including file is edited and linked again
+    try w.replaceText("a/src/sa.F90", submodule.text("sa"));
+    try h.expect((try w.workspaceSymbolInfos("assert_error")).len == 2, "assert_error offered again after an edit", .{});
+}
+
+test "renaming a file rewrites the includes that name it (#198)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text = "{\"include_dirs\": [\"inc\"]}\n" },
+        .{ .name = "inc/errors.inc", .text = "integer :: nerr\n" },
+        .{ .name = "inc/consts.h", .text = "#define N 4\n" },
+        .{ .name = "src/a.F90", .text =
+        \\subroutine a()
+        \\  include '../inc/errors.inc'
+        \\#include "consts.h"
+        \\end subroutine a
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const Want = struct { line: i64, start: i64, text: []const u8 };
+    const Case = struct { what: []const u8, moves: []const [2][]const u8, want: []const Want };
+    const cases = [_]Case{
+        // found next to the including file: relative to it
+        .{ .what = "the included file moves", .moves = &.{.{ "inc/errors.inc", "inc/common/errors.inc" }}, .want = &.{
+            .{ .line = 1, .start = 11, .text = "../inc/common/errors.inc" },
+        } },
+        // the including file moves: its relative INCLUDE follows; what an
+        // include directory gives does not change
+        .{ .what = "the including file moves", .moves = &.{.{ "src/a.F90", "src/sub/a.F90" }}, .want = &.{
+            .{ .line = 1, .start = 11, .text = "../../inc/errors.inc" },
+        } },
+        // found in an include directory: relative to it while it stays there
+        .{ .what = "a file of an include directory moves", .moves = &.{.{ "inc/consts.h", "inc/c/consts.h" }}, .want = &.{
+            .{ .line = 2, .start = 10, .text = "c/consts.h" },
+        } },
+        // a directory moves: both, the one leaving its include directory
+        // relative to the including file
+        .{ .what = "the directory moves", .moves = &.{.{ "inc", "include" }}, .want = &.{
+            .{ .line = 1, .start = 11, .text = "../include/errors.inc" },
+            .{ .line = 2, .start = 10, .text = "../include/consts.h" },
+        } },
+        .{ .what = "an unrelated file moves", .moves = &.{.{ "src/b.f90", "src/c.f90" }}, .want = &.{} },
+    };
+    for (cases) |c| {
+        const edits = try w.willRenameFiles(c.moves);
+        try h.expect(edits.len == c.want.len, "{s}: {d} edits, not {d}: {any}", .{ c.what, edits.len, c.want.len, edits });
+        for (edits, c.want) |e, want| {
+            try h.expect(std.mem.endsWith(u8, e.uri, "src/a.F90"), "{s}: an edit of {s}", .{ c.what, e.uri });
+            try h.expect(e.line == want.line and e.start == want.start and std.mem.eql(u8, e.new_text, want.text), "{s}: {d}:{d} '{s}', not {d}:{d} '{s}'", .{ c.what, e.line, e.start, e.new_text, want.line, want.start, want.text });
+        }
+    }
+}
+
+fn expectUncAnswers(w: *h.Workspace) !void {
+    const root_uri = try w.uri("");
+    try h.expect(std.mem.startsWith(u8, root_uri, "file://localhost/"), "the root's URI is {s}", .{root_uri});
+    try w.open("a.f90", "fortran");
+    const at = w.pos("a.f90", "n = 1", 0, 0);
+    const hover = (try w.hover("a.f90", at)) orelse return h.unmet("no hover", .{});
+    try h.expect(std.mem.find(u8, hover, "INTEGER :: n") != null, "hover gives {s}", .{hover});
+    const def = (try w.definition("a.f90", at)) orelse return h.unmet("no definition", .{});
+    try h.expect(def.line == 2 and def.col == 14, "the definition is at {d}:{d}", .{ def.line, def.col });
+    // answers name files as the client does
+    try h.expect(std.mem.eql(u8, def.uri, try w.uri("a.f90")), "the definition is in {s}", .{def.uri});
+    // a file that is not open, found through `source_dirs`
+    const shared = (try w.definition("a.f90", w.pos("a.f90", "shared = 2", 0, 0))) orelse return h.unmet("no definition in another file", .{});
+    try h.expect(std.mem.eql(u8, shared.uri, try w.uri("sub/b.f90")), "the other file is {s}", .{shared.uri});
+    const syms = try w.workspaceSymbolInfos("m219");
+    try h.expect(syms.len == 1, "{d} workspace symbols", .{syms.len});
+    try h.expect(std.mem.eql(u8, syms[0].uri, try w.uri("a.f90")), "the workspace symbol is in {s}", .{syms[0].uri});
+    try h.expect((try w.workspaceSymbols("skipped219")).len == 0, "excl_paths does not apply", .{});
+}
+
+test "Modern Fortran #1087 a workspace on a UNC path (file://host/share/...) is served" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = ".fortlsrc", .text = "{\"source_dirs\": [\"sub\"], \"excl_paths\": [\"skip/**\"]}\n" },
+        .{ .name = "a.f90", .text =
+        \\module m219
+        \\   use m2
+        \\   integer :: n
+        \\contains
+        \\   subroutine sub()
+        \\      n = 1
+        \\      shared = 2
+        \\   end subroutine
+        \\end module
+        \\
+        },
+        .{ .name = "sub/b.f90", .text =
+        \\module m2
+        \\   integer :: shared
+        \\end module
+        \\
+        },
+        .{ .name = "skip/c.f90", .text =
+        \\module skipped219
+        \\end module
+        \\
+        },
+    }, .{ .unc_root = true });
+    defer w.deinit();
+    try h.checkIn(.modern_fortran, 1087, .fixed, expectUncAnswers(w));
+}
+
+test "textDocumentSync is announced as options: open and close, the change kind, save without text (#269)" {
+    const empty = [_]h.File{.{ .name = "t.f90", .text = "program p\nend program p\n" }};
+    inline for (.{ false, true }) |incremental| {
+        const w = try h.Workspace.init(&empty, .{ .settings = .{ .incremental_sync = incremental } });
+        defer w.deinit();
+        const sync = h.json.path(w.init_result, &.{ "capabilities", "textDocumentSync" }) orelse return error.TestUnexpectedResult;
+        const text = try h.json.stringify(std.testing.allocator, sync);
+        defer std.testing.allocator.free(text);
+        const want = if (incremental)
+            "{\"openClose\":true,\"change\":2,\"save\":{\"includeText\":false}}"
+        else
+            "{\"openClose\":true,\"change\":1,\"save\":{\"includeText\":false}}";
+        try std.testing.expectEqualStrings(want, text);
+    }
+}

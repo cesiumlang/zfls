@@ -36,6 +36,7 @@ fn typeHash(comptime T: type) u64 {
             return h.final();
         }
         h.update(@typeName(T));
+        if (notSaved(T)) return h.final();
         switch (@typeInfo(T)) {
             .@"struct" => |s| for (s.field_names, s.field_types) |name, F| {
                 if (T == Ast and byHand(name)) continue;
@@ -59,6 +60,12 @@ fn typeHash(comptime T: type) u64 {
         }
         return h.final();
     }
+}
+
+/// A type that is rebuilt rather than saved (it declares `not_saved`): saved
+/// as nothing, loaded as its default
+fn notSaved(comptime T: type) bool {
+    return @typeInfo(T) == .@"struct" and @hasDecl(T, "not_saved");
 }
 
 /// A `std.ArrayList`: saved as its items, loaded with no spare capacity
@@ -164,7 +171,9 @@ const Saver = struct {
                 } else try s.value(p.child, v.*),
                 else => @compileError("not saved: " ++ @typeName(T)),
             },
-            .@"struct" => |st| if (comptime isList(T)) {
+            .@"struct" => |st| if (comptime notSaved(T)) {
+                return;
+            } else if (comptime isList(T)) {
                 try s.value([]const ListItem(T), v.items);
             } else inline for (st.field_names, st.field_types) |name, F| try s.value(F, @field(v, name)),
             .@"union" => |u| {
@@ -302,6 +311,7 @@ const Loader = struct {
                 else => @compileError("not saved: " ++ @typeName(T)),
             },
             .@"struct" => |st| {
+                if (comptime notSaved(T)) return .{};
                 if (comptime isList(T)) {
                     const items = try l.value([]ListItem(T));
                     var list: T = .empty;

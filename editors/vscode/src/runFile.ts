@@ -13,14 +13,18 @@ import {
   buildArgs,
   chooseDebugger,
   compilerKind,
+  compilerName,
   launchConfiguration,
+  flangKitLink,
+  lfortranLinkEnv,
+  linkScript,
   outputDirFor,
   programPath,
   runtimeEnv,
   upsertByKey,
   workspaceRelative,
 } from "./run";
-import { gdbHasDap } from "./debugSupport";
+import { findLldbDap, gdbHasDap } from "./debugSupport";
 import { expandVariables, findExecutable } from "./tools";
 import { documentVariables } from "./variables";
 
@@ -37,14 +41,28 @@ export function addFileRunner(runner: FileRunner): void {
   fileRunners.push(runner);
 }
 
-export function registerRunCommands(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
+/** The zfls executable, whose ifx kit LFortran's and LLVM Flang's programs
+ * link with on Windows */
+let serverExe: () => string | undefined = () => undefined;
+
+export function registerRunCommands(
+  context: vscode.ExtensionContext,
+  log: vscode.LogOutputChannel,
+  zfls: () => string | undefined,
+): void {
+  serverExe = zfls;
   context.subscriptions.push(
-    vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, false)),
-    vscode.commands.registerCommand("zfls.debugFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, true)),
+    // a code lens above a program gives the URI as a string
+    vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri | string) => runOrDebug(context, log, asUri(uri), false)),
+    vscode.commands.registerCommand("zfls.debugFile", (uri?: vscode.Uri | string) => runOrDebug(context, log, asUri(uri), true)),
     vscode.commands.registerCommand("zfls.generateLaunchConfig", (uri?: vscode.Uri) =>
       generateLaunchConfig(context, uri),
     ),
   );
+}
+
+function asUri(uri: vscode.Uri | string | undefined): vscode.Uri | undefined {
+  return typeof uri === "string" ? vscode.Uri.parse(uri) : uri;
 }
 
 /** Everything about building and running one file */
@@ -54,15 +72,21 @@ interface Plan {
   source: string;
   compiler: string;
   args: string[];
+  /** zfls.run.buildArgs, with the variables expanded */
+  userArgs: string[] | undefined;
   /** Where the compiler runs and module files go */
   outDir: string;
   program: string;
   programArgs: string[];
   cwd: string;
   env: Record<string, string>;
+  /** The build's environment, beyond the editor's */
+  buildEnv: Record<string, string>;
   msvc: boolean;
   debuggerPreference: string;
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap (`lldbWanted`) */
+  lldb: boolean;
 }
 
 async function runOrDebug(
@@ -80,7 +104,7 @@ async function runOrDebug(
       return;
     }
   }
-  const plan = makePlan(context, document);
+  const plan = makePlan(context, document, log);
   if (!plan) {
     return;
   }
@@ -100,7 +124,7 @@ async function runOrDebug(
       plan.folder ?? vscode.TaskScope.Workspace,
       `build ${path.basename(plan.source)}`,
       "zfls",
-      new vscode.ProcessExecution(plan.compiler, plan.args, { cwd: plan.outDir }),
+      new vscode.ProcessExecution(plan.compiler, plan.args, { cwd: plan.outDir, env: plan.buildEnv }),
       [],
     ),
   );
@@ -143,6 +167,7 @@ async function runOrDebug(
     env: plan.env,
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    lldb: plan.lldb,
     msvc: plan.msvc,
     sourceRoot: plan.folder?.uri.fsPath ?? path.dirname(plan.source),
   }) as vscode.DebugConfiguration;
@@ -173,7 +198,7 @@ async function fortranDocument(uri: vscode.Uri | undefined): Promise<vscode.Text
   return document;
 }
 
-function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocument): Plan | undefined {
+function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocument, log?: vscode.LogOutputChannel): Plan | undefined {
   const config = vscode.workspace.getConfiguration("zfls.run", document.uri);
   const ctx = documentVariables(document.uri);
   const source = document.uri.fsPath;
@@ -202,8 +227,11 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
       });
     return undefined;
   }
-  const kind = compilerKind(compiler, process.platform);
-  const userArgs = config.get<string[] | null>("buildArgs", null);
+  // LLVM Flang on Windows: DWARF, for gdb, where it links with lld-link
+  const kind = compilerKind(compiler, process.platform, lldLinkFor(compiler) !== undefined);
+  const configuredArgs = config.get<string[] | null>("buildArgs", null);
+  const userArgs = configuredArgs ? configuredArgs.map((a) => expandVariables(a, ctx)) : undefined;
+  const link = kitLink(context, compiler, userArgs, log);
   const configuredOut = expandVariables(config.get<string>("outputDirectory", "").trim(), ctx);
   const outDir = configuredOut
     ? path.resolve(ctx.workspaceFolder ?? path.dirname(source), configuredOut)
@@ -216,32 +244,118 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
     folder: vscode.workspace.getWorkspaceFolder(document.uri),
     source,
     compiler,
-    args: buildArgs(kind, source, program, userArgs ? userArgs.map((a) => expandVariables(a, ctx)) : undefined),
+    args: buildArgs(kind, source, program, userArgs, link.args),
+    userArgs,
     outDir,
     program,
     programArgs: config.get<string[]>("programArgs", []).map((a) => expandVariables(a, ctx)),
     cwd: path.resolve(path.dirname(source), cwdSetting),
     env: runtimeEnv(compiler, process.platform, process.env),
+    buildEnv: link.env,
     msvc: kind.msvc,
     debuggerPreference: config.get<string>("debugger", "auto"),
     gdbPath,
+    lldb: lldbWanted(document.uri),
   };
+}
+
+/** How a build links on Windows without Visual Studio: arguments added to
+ * the compiler's, and the build's environment beyond the editor's */
+interface KitLink {
+  args: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * For LFortran and LLVM Flang on Windows, how the build links with lld-link
+ * and zfls's ifx kit, not Visual Studio's linker: when lld-link is next to
+ * the compiler (conda-forge's `lld`) or on the PATH, and the kit next to
+ * zfls. LFortran runs `link`, so a `link.cmd` in the extension's storage
+ * runs lld-link where it is, beside the DLLs it needs (`linkScript`,
+ * `lfortranLinkEnv`); Flang runs lld-link itself (`flangKitLink`).
+ * `userArgs`: zfls.run.buildArgs; `env`: the environment the build adds
+ * to.
+ */
+function kitLink(
+  context: vscode.ExtensionContext,
+  compiler: string,
+  userArgs: readonly string[] | undefined,
+  log?: vscode.LogOutputChannel,
+  env: NodeJS.ProcessEnv = process.env,
+): KitLink {
+  const none: KitLink = { args: [], env: {} };
+  const name = compilerName(compiler);
+  const flang = name === "flang" || name === "flang-new";
+  if (process.platform !== "win32" || (name !== "lfortran" && !flang)) {
+    return none;
+  }
+  const label = flang ? "LLVM Flang" : "LFortran";
+  const server = serverExe();
+  const kit = server
+    ? [path.join(path.dirname(server), "ifx-kit"), path.join(path.dirname(server), "..", "lib", "ifx")].find((d) =>
+        fs.existsSync(path.join(d, "zfls_ifx_shim.obj")),
+      )
+    : undefined;
+  const lld = lldLinkFor(compiler);
+  if (!kit || !lld) {
+    log?.info(`[run] ${label} links with Visual Studio's link: ${!kit ? "no ifx kit next to zfls" : `no lld-link next to ${label} or on the PATH`}`);
+    return none;
+  }
+  if (flang) {
+    return flangKitLink(kit, userArgs, env) ?? none;
+  }
+  const linkDir = path.join(context.globalStorageUri.fsPath, "lfortran-link");
+  const link = path.join(linkDir, "link.cmd");
+  const script = linkScript(lld);
+  try {
+    if (!fs.existsSync(link) || fs.readFileSync(link, "utf8") !== script) {
+      fs.mkdirSync(linkDir, { recursive: true });
+      fs.writeFileSync(link, script);
+    }
+  } catch (err) {
+    log?.warn(`[run] could not write ${link}: ${String(err)}`);
+    return none;
+  }
+  return { args: [], env: lfortranLinkEnv(kit, linkDir, env) ?? {} };
+}
+
+/** The lld-link next to `compiler` (conda-forge's `lld`), else on the PATH */
+export function lldLinkFor(compiler: string): string | undefined {
+  return findExecutable("lld-link", path.dirname(compiler)) ?? findExecutable("lld-link");
+}
+
+/** `env` of the build task of LFortran and LLVM Flang on Windows
+ * (`kitLink`), over the environment of the machine running it */
+function kitTaskEnv(context: vscode.ExtensionContext, compiler: string, userArgs: readonly string[] | undefined): { env?: Record<string, string> } {
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "Path";
+  const { env } = kitLink(context, compiler, userArgs, undefined, {
+    [pathKey]: `\${env:${pathKey}}`,
+    LIB: "${env:LIB}",
+    LINK: "${env:LINK}",
+    VCToolsInstallDir: process.env.VCToolsInstallDir,
+  });
+  return Object.keys(env).length > 0 ? { env } : {};
 }
 
 /** The debugger to use, or undefined (with a message) when none is installed */
 async function pickDebugger(plan: Plan): Promise<DebugType | undefined> {
-  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath);
+  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath, plan.lldb);
 }
 
 /** The debugger of `preference` (zfls.run.debugger) for a program, MSVC-ABI
  * or not, or undefined (with a message) when none is installed; `gdb`: the
- * gdb that zfls's debugger would run */
+ * gdb that zfls's debugger would run, unless it runs lldb-dap (`lldb`:
+ * true, or the lldb-dap configured) */
 export async function chooseInstalledDebugger(
   preference: string,
   msvc: boolean,
   gdb: string | undefined,
+  lldb: boolean | string = false,
 ): Promise<DebugType | undefined> {
-  const dap = !msvc && (preference === "auto" || preference === "zfls") && gdb ? await gdbHasDap(gdb) : false;
+  const own = !msvc && (preference === "auto" || preference === "zfls");
+  const dap = own && lldb
+    ? (await findLldbDap(typeof lldb === "string" ? lldb : undefined)) !== undefined
+    : own && gdb ? await gdbHasDap(gdb) : false;
   // MSVC-ABI programs: Windows's Debugger Engine, which every Windows has
   const dbgeng = msvc && process.platform === "win32";
   const choice = chooseDebugger(
@@ -258,8 +372,10 @@ export async function chooseInstalledDebugger(
     const settings = vscode.l10n.t("Open Settings");
     const picked = await vscode.window.showErrorMessage(
       msvc
-        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug MSVC-ABI programs (ifx, ifort, LLVM Flang on Windows); set zfls.run.debugger to cppvsdbg.")
-        : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
+        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug a program without DWARF debug information (ifx's, ifort's, or LLVM Flang's built with -g on Windows); set zfls.run.debugger to cppvsdbg.")
+        : lldb
+          ? vscode.l10n.t("zfls: its debugger needs lldb-dap, which Xcode's command line tools have (xcode-select --install); or set zfls.run.gdbPath to debug with gdb, or zfls.run.debugger to another debugger.")
+          : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
       settings,
     );
     if (picked === settings) {
@@ -285,6 +401,13 @@ export async function chooseInstalledDebugger(
     await vscode.commands.executeCommand("workbench.extensions.search", choice.extensions.map((id) => `@id:${id}`).join(" "));
   }
   return undefined;
+}
+
+/** Whether zfls's debugger runs lldb-dap rather than gdb: on macOS, where
+ * gdb does not run on Apple silicon and must be code-signed on Intel,
+ * unless zfls.run.gdbPath names a gdb */
+export function lldbWanted(uri: vscode.Uri): boolean {
+  return process.platform === "darwin" && !vscode.workspace.getConfiguration("zfls.run", uri).get<string>("gdbPath", "").trim();
 }
 
 /** The gdb of zfls.run.gdbPath, else the one next to `compiler`, else on
@@ -367,7 +490,7 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
     type: "process",
     command,
     args: plan.args.map((a) => replaceAll(a, [plan.source, plan.program, path.dirname(plan.source)], rel)),
-    options: { cwd: rel(plan.outDir) },
+    options: { cwd: rel(plan.outDir), ...kitTaskEnv(context, plan.compiler, plan.userArgs) },
     group: "build",
     problemMatcher: [],
   };
@@ -383,6 +506,7 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
     ),
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    lldb: plan.lldb,
     preLaunchTask: label,
   });
 

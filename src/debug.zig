@@ -3,6 +3,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const stdio = @import("stdio.zig");
 const str = @import("str.zig");
 const json = @import("json.zig");
 const json5 = @import("json5.zig");
@@ -28,6 +29,11 @@ const Out = struct {
     a: Allocator,
     /// What `fail` reported
     fail_msg: []const u8 = "",
+    /// Where the output goes instead of stdout (for tests), with its
+    /// allocator
+    capture: ?Capture = null,
+    /// The error of the first write that failed: the output is incomplete
+    write_error: ?anyerror = null,
 
     fn print(self: *Out, comptime fmt: []const u8, args: anytype) void {
         self.buf.print(self.a, fmt, args) catch {};
@@ -35,10 +41,16 @@ const Out = struct {
     }
 
     fn flush(self: *Out) void {
-        Io.File.stdout().writeStreamingAll(self.io, self.buf.items) catch {};
+        if (self.capture) |c| {
+            c.out.appendSlice(c.a, self.buf.items) catch {};
+        } else if (self.write_error == null) stdio.stdout().writeStreamingAll(self.io, self.buf.items) catch |e| {
+            self.write_error = e;
+        };
         self.buf.clearRetainingCapacity();
     }
 };
+
+pub const Capture = struct { a: Allocator, out: *std.ArrayList(u8) };
 
 fn fail(o: *Out, comptime fmt: []const u8, args: anytype) DebugError {
     o.fail_msg = o.a.print(fmt, args) catch "debug error";
@@ -60,10 +72,15 @@ fn traceTo(o: *Out) parser.Trace {
 
 /// Run the requested debug mode; returns the process exit code
 pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
+    return runTo(gpa, io, s_in, null);
+}
+
+/// `run`, its output in `capture` instead of on stdout
+pub fn runTo(gpa: Allocator, io: Io, s_in: Settings, capture: ?Capture) !u8 {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    var o: Out = .{ .io = io, .a = a };
+    var o: Out = .{ .io = io, .a = a, .capture = capture };
     var s = s_in;
     const result = blk: {
         if (s.debug_parser) break :blk debugParser(a, io, &o, &s);
@@ -77,6 +94,15 @@ pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
         },
         else => return e,
     };
+    if (o.write_error) |e| {
+        // a reader that has gone away (`| head`) knows
+        if (e != error.BrokenPipe) {
+            var buf: [128]u8 = undefined;
+            const msg = std.mem.print(&buf, "ERROR: the output is incomplete: {s}\n", .{@errorName(e)}) catch "";
+            stdio.stderr().writeStreamingAll(io, msg) catch {};
+        }
+        return 1;
+    }
     return 0;
 }
 
@@ -91,55 +117,90 @@ const ConfigInfo = struct {
     pp_suffixes: ?[]const []const u8 = null,
     pp_defs: pp.Defs = .empty,
     include_dirs: []const []const u8 = &.{},
+    /// `d_lines`: debug lines read as code
+    d_lines_code: bool = false,
+    /// `fixed_line_length`
+    fixed_columns: ?usize = null,
 };
 
-fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, input_config: []const u8) !ConfigInfo {
-    var info: ConfigInfo = .{};
-    const r = root orelse return info;
-    const candidates = [_][]const u8{ input_config, ".fortlsrc", ".fortls.json5", ".fortls" };
-    var config_path: ?[]const u8 = null;
-    for (candidates) |f| {
-        const p = try paths.join(a, &.{ r, f });
-        if (paths.isFile(io, p)) {
-            config_path = p;
-            break;
-        }
-    }
-    o.print("  Config file = {s}\n", .{config_path orelse "None"});
-    const cp = config_path orelse return info;
-    const data = Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 26)) catch return info;
-    var p: json5.Parser = .{ .a = a, .src = data };
-    const cfg = p.parseDocument() catch {
-        const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, cp });
-        return info;
+/// The preprocessor options as the server takes them: the command line's
+/// (`s`), the user's configuration file's over them, and the configuration
+/// file's in `root` over those
+fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settings) !ConfigInfo {
+    var merged = try settings_mod.clone(a, s.*);
+    if (paths.userConfigFile()) |u| if (paths.isFile(io, u)) {
+        o.print("  User config file = {s}\n", .{u});
+        try applyConfigFile(a, io, o, &merged, u);
     };
-    var s: Settings = .{};
-    try settings_mod.applyConfig(a, &s, cfg);
-    if (s.pp_suffixes) |l| info.pp_suffixes = l.slice();
-    for (s.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
+    if (root) |r| {
+        var config_path: ?[]const u8 = null;
+        for (settings_mod.configFileNames(s.config)) |f| {
+            const p = try paths.join(a, &.{ r, f });
+            if (paths.isFile(io, p)) {
+                config_path = p;
+                break;
+            }
+        }
+        o.print("  Config file = {s}\n", .{config_path orelse "None"});
+        if (config_path) |cp| try applyConfigFile(a, io, o, &merged, cp);
+    }
+    var info: ConfigInfo = .{};
+    // an empty list is the default rule, as in the server
+    if (merged.pp_suffixes) |l| if (l.len() > 0) {
+        info.pp_suffixes = l.slice();
+    };
+    for (merged.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
     var dirs: std.ArrayList([]const u8) = .empty;
-    for (s.include_dirs.slice()) |inc| {
-        for (try glob.resolveGlobs(io, a, inc, r)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
+    for (merged.include_dirs.slice()) |inc| {
+        for (try glob.resolveGlobs(io, a, inc, root)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
     }
     info.include_dirs = dirs.items;
+    info.d_lines_code = merged.dLinesCode();
+    info.fixed_columns = merged.fixedColumns();
     return info;
+}
+
+/// The settings of the configuration file `path` over `s`
+fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8) !void {
+    const data = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 26)) catch return;
+    var p: json5.Parser = .{ .a = a, .src = data };
+    if (p.parseDocument()) |cfg| {
+        if (cfg == .object) try settings_mod.applyConfig(a, s, cfg);
+    } else |_| {
+        const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
+        o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, path });
+    }
 }
 
 fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {
     for (try obj.getChildren(a, false)) |child| {
-        o.print("  {s}{d}: {s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn });
+        o.print("  {s}{d}: {s}{s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn, groupMark(child) });
         try printChildren(a, o, child, try std.mem.concat(a, u8, &.{ indent, "  " }));
     }
+    // its COMMON blocks (#556)
+    if (obj.data == .scope) for (obj.scopeData().commons.items) |c| o.print("  {s}{d}: {s}{s}\n", .{ indent, @backingInt(c.getType(false)), c.fqsn, groupMark(c) });
+}
+
+/// After a COMMON block or NAMELIST group in the object tree: what it is
+fn groupMark(obj: *const objects.Obj) []const u8 {
+    if (obj.kind != .variable) return "";
+    return switch (obj.varDataConst().group) {
+        .none => "",
+        .common => " COMMON",
+        .namelist => " NAMELIST",
+    };
 }
 
 fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting parser\n", .{});
     separator(o);
     const fp = try ensureFileAccessible(io, o, s.debug_filepath);
-    const cfg = try readConfig(a, io, o, s.debug_rootpath, s.config);
+    const cfg = try readConfig(a, io, o, s.debug_rootpath, s);
     o.print("  File = \"{s}\"\n", .{fp});
     const file = try parser.FortranFile.create(a, fp, cfg.pp_suffixes);
+    // as the server reads the file (workspace.loadFile)
+    file.d_lines_code = cfg.d_lines_code;
+    file.fixed_columns = cfg.fixed_columns;
     _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
     o.print("  Detected format: {s}\n", .{if (file.fixed) "fixed" else "free"});
     o.print("\n{s}\nParser Output\n{s}\n\n", .{ sep80, sep80 });
@@ -165,6 +226,8 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
         o.print("{d}: {s}\n", .{ @backingInt(obj.getType(false)), obj.fqsn });
         try printChildren(a, o, obj, "");
     }
+    // the ENTRY procedures of external procedures, in no scope's lines
+    for (ast.entry_list.items) |e| if (e.parent == null) o.print("{d}: {s}\n", .{ @backingInt(e.getType(false)), e.fqsn });
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
     while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
@@ -180,7 +243,7 @@ fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     // like Python's readlines(): no empty element after a final newline
     if (lines.len > 0 and lines[lines.len - 1].len == 0) lines = lines[0 .. lines.len - 1];
     const root = s.debug_rootpath orelse paths.dirname(fp);
-    const cfg = try readConfig(a, io, o, root, s.config);
+    const cfg = try readConfig(a, io, o, root, s);
     const sep2 = sep75;
     o.print("\n{s}\nPreprocessor Pass:\n{s}\n", .{ sep2, sep2 });
     const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, traceTo(o));

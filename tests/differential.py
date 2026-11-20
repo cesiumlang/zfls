@@ -23,7 +23,50 @@ import sys
 import tempfile
 from io import StringIO
 from pathlib import Path
-from urllib.parse import unquote
+
+from differential_known import (
+    ENTITY_LENGTH,
+    LITERAL_HOVER,
+    SEMICOLON_STRINGS,
+    ZFLS_ONLY_INTRINSICS,
+    after_non_code_line,
+    associate_bound,
+    associate_names,
+    conditional_attributes,
+    first_difference,
+    forget_associate_types,
+    generic_specific_definition,
+    ignore_conditional_attributes,
+    ignore_param_strings,
+    ignore_slice_dimensions,
+    ignore_type_params,
+    implicit_result_refs,
+    in_constructor_or_group,
+    is_error,
+    items_within,
+    macro_names,
+    normalize,
+    notifications,
+    on_assignment,
+    on_construct_name_or_label,
+    on_enumerator_statement,
+    on_import_statement,
+    on_include_directive,
+    on_include_line,
+    on_macro,
+    on_use_rename_original,
+    on_user_operator,
+    on_zfls_only_intrinsic,
+    own_file_definition,
+    ref_key,
+    separate_procedure_refs,
+    two_forms_item,
+    untyped_by_fortls,
+    use_alias_refs,
+    use_rename_extras,
+    zfls_only_intrinsics,
+    zfls_only_item,
+)
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -115,18 +158,10 @@ STUBS = {
     "setuptools_scm.py": "def get_version(*a, **k):\n    return '0.0.0'\n",
 }
 
+# The places build_requests asks about: names, numbers, logical literals and
+# character literals
 WORD = re.compile(
     r"[a-z_][\w$]*|\d+(\.\d*)?|\.(true|false)\.|'[^']*'|\"[^\"]*\"", re.I
-)
-
-
-# Typos fixed in zfls's copy of the fortls data files
-# cSpell:disable-next-line
-TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
-PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
-INTRINSIC_DOC = re.compile(
-    r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
-    re.S,
 )
 
 
@@ -247,340 +282,6 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
     return out
 
 
-# The intrinsic procedures of zfls's table that fortls's lacks (the
-# specific names, `DSQRT`, and newer generics, `REDUCE`): set by main
-ZFLS_ONLY_INTRINSICS: set = set()
-
-
-def zfls_only_intrinsics(fortls_root: Path) -> set:
-    table = REPO / "src" / "data" / "procedures.zig"
-    ours = set(re.findall(r'\.name = "([^"]+)"', table.read_text("utf-8")))
-    internal = fortls_root / "fortls" / "parsers" / "internal"
-    theirs_text = (internal / "intrinsic.procedures.json").read_text("utf-8")
-    return ours - set(json.loads(theirs_text))
-
-
-def on_zfls_only_intrinsic(lines: list, line: int, char: int) -> bool:
-    """Whether the position is on the name of an intrinsic that only zfls
-    knows (`ZFLS_ONLY_INTRINSICS`), which zfls answers on and fortls does
-    not."""
-    if not (0 <= line < len(lines)):
-        return False
-    for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", lines[line]):
-        if m.start() <= char <= m.end():
-            return m.group(0).upper() in ZFLS_ONLY_INTRINSICS
-    return False
-
-
-def zfls_only_item(item) -> bool:
-    """A zfls completion item of its own: `name=` for a keyword argument
-    (hansec #133), a name of a module not used yet that adds the USE
-    statement (hansec #62), or an intrinsic that fortls does not know."""
-    if not isinstance(item, dict):
-        return False
-    if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
-        return True
-    # the parent components of an extended type (hansec #121)
-    if "labelDetails" in item:
-        return True
-    if "additionalTextEdits" in item:
-        return True
-    return str(item.get("label", "")).endswith("=") and "filterText" in item
-
-
-def normalize(v):
-    """Drop details that legitimately differ between the servers."""
-    if isinstance(v, dict):
-        # zfls gives each diagnostic a code and source (fortls has neither)
-        diagnostic = {"range", "message", "severity"} <= v.keys()
-        return {
-            k: normalize(x) for k, x in v.items()
-            if k != "traceback" and not (diagnostic and k in ("code", "source"))
-        }
-    if isinstance(v, list):
-        # names not declared under IMPLICIT NONE (hansec #129): zfls only
-        # and unused names: zfls only
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned"))]
-    if isinstance(v, str):
-        for old, new in TEXT_FIXES:
-            v = v.replace(old, new)
-        # fortls cuts the value of a parameter at its first parenthesis or
-        # bracket; zfls shows it whole (upstream issue 124)
-        v = PARAM_VALUE.sub(r"\1", v)
-        # zfls ships a newer M_intrinsics than fortls, its links rewritten
-        m = INTRINSIC_DOC.match(v)
-        if m:
-            return f"<intrinsic manual page {m.group(1)}>"
-    return v
-
-
-INCLUDE_DIRECTIVE = re.compile(r"\s*#\s*include\s*[\"<]", re.I)
-USE_LINE = re.compile(r"\s*use\b", re.I)
-
-
-def on_use_rename_original(lines: list, line: int, char: int) -> bool:
-    """Whether (line, char) is on the original name of a rename on a USE
-    statement, `use m, local => ORIGINAL`."""
-    if not 0 <= line < len(lines) or not USE_LINE.match(lines[line]):
-        return False
-    text = lines[line]
-    start = char
-    while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
-        start -= 1
-    return text[:start].rstrip().endswith("=>")
-
-
-def use_rename_extras(lines: list, a, b) -> bool:
-    """Whether references `b` are `a` plus locations on the original names
-    of USE renames only."""
-    if not isinstance(a, list) or not isinstance(b, list) or len(b) <= len(a):
-        return False
-    rest = list(b)
-    for loc in a:
-        if loc not in rest:
-            return False
-        rest.remove(loc)
-    for loc in rest:
-        start = loc.get("range", {}).get("start", {})
-        if not on_use_rename_original(lines, start.get("line", -1), start.get("character", 0)):
-            return False
-    return True
-
-
-def on_include_directive(path: Path, position) -> bool:
-    """Whether the position is on a preprocessor `#include` line of the file."""
-    if not position:
-        return False
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    line = position.get("line", -1)
-    return 0 <= line < len(lines) and bool(INCLUDE_DIRECTIVE.match(lines[line]))
-
-
-ASSOC_BOUND = re.compile(r"\b(\w+)\s*=>\s*\w+\s*\(", re.I)
-
-
-def associate_names(source: str) -> set:
-    """Lowercase names bound by `name => array(...)` (ASSOCIATE or pointer
-    assignment) in a source file."""
-    return {m.group(1).lower() for m in ASSOC_BOUND.finditer(source)}
-
-
-PP_IF = re.compile(r"\s*#\s*if", re.I)
-PP_ENDIF = re.compile(r"\s*#\s*endif", re.I)
-CONT_ATTRIBUTE = re.compile(r"\s*,\s*(\w+)", re.I)
-
-
-def conditional_attributes(source: str) -> set:
-    """Uppercase attributes given on a continuation line inside a
-    preprocessor conditional, as in `REAL &` / `#ifdef X` / `, POINTER &`."""
-    depth = 0
-    out = set()
-    for line in source.splitlines():
-        if PP_IF.match(line):
-            depth += 1
-        elif PP_ENDIF.match(line):
-            depth = max(depth - 1, 0)
-        elif depth:
-            m = CONT_ATTRIBUTE.match(line)
-            if m:
-                out.add(m.group(1).upper())
-    return out
-
-
-def ignore_conditional_attributes(v, attrs: set):
-    """fortls joins the lines of inactive conditional branches into a
-    continued declaration; zfls leaves them out (hansec issue 203). Compare
-    declarations without the attributes such branches can add."""
-    if isinstance(v, dict):
-        return {k: ignore_conditional_attributes(x, attrs) for k, x in v.items()}
-    if isinstance(v, list):
-        return [ignore_conditional_attributes(x, attrs) for x in v]
-    if isinstance(v, str) and attrs:
-        alt = "|".join(sorted(attrs))
-        return re.sub(rf", (?:{alt})(?=[,\s])", "", v, flags=re.I)
-    return v
-
-
-def ignore_slice_dimensions(v, names: set):
-    """fortls gives an ASSOCIATE name bound to an element or a section the
-    dimensions of the whole array; zfls gives it those of the section
-    (upstream issue 108). Compare the dimensions of such names as equal."""
-    if isinstance(v, dict):
-        return {k: ignore_slice_dimensions(x, names) for k, x in v.items()}
-    if isinstance(v, list):
-        return [ignore_slice_dimensions(x, names) for x in v]
-    if isinstance(v, str) and names:
-        def repl(m):
-            return m.group(0) if m.group(3).lower() not in names else m.group(2) + m.group(3)
-
-        return re.sub(r"(, )?DIMENSION\([^)\n]*\)( :: )(\w+)", repl, v)
-    return v
-
-
-def is_error(v) -> bool:
-    return isinstance(v, dict) and "__error__" in v
-
-
-def notifications(res: dict, method: str) -> list:
-    return [n["params"] for n in res["notifications"] if n["method"] == method]
-
-
-CONSTRUCT_KEYWORDS = r"(do|if|select|block|associate|where|forall|critical|change)\b"
-
-
-INTERFACE_LINE = re.compile(r"\s*interface\s+(\w+)", re.I)
-PROCEDURE_LINE = re.compile(r".*\b(?:subroutine|function)\s+(\w+)", re.I)
-
-
-def generic_specific_definition(lines: list, ref, got) -> bool:
-    """Whether fortls's definition is a generic interface of the file and
-    zfls's a procedure that the interface lists: on a call of a generic
-    interface zfls goes to the procedure the arguments fit (hansec #135)."""
-    if not (isinstance(ref, dict) and isinstance(got, dict)) or ref.get("uri") != got.get("uri"):
-        return False
-    a = ref.get("range", {}).get("start", {}).get("line", -1)
-    b = got.get("range", {}).get("start", {}).get("line", -1)
-    if not (0 <= a < len(lines) and 0 <= b < len(lines)):
-        return False
-    iface = INTERFACE_LINE.match(lines[a])
-    proc = PROCEDURE_LINE.match(lines[b])
-    if not (iface and proc):
-        return False
-    name = proc.group(1).lower()
-    for line in lines[a + 1:]:
-        if re.match(r"\s*end\s*interface", line, re.I):
-            return False
-        if name in re.findall(r"\w+", line.lower()):
-            return True
-    return False
-
-
-LITERAL_HOVER = re.compile(r"```\w*\n(REAL|INTEGER|LOGICAL|CHARACTER\(LEN=\d+\))\n```")
-INTRINSIC_DOT_OPS = {"eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "eqv", "neqv", "true", "false"}
-
-
-def on_user_operator(lines: list, line: int, char: int) -> bool:
-    """Whether the position is on a user-defined operator `.name.` (hansec
-    #95), which zfls answers on and fortls does not."""
-    if not (0 <= line < len(lines)):
-        return False
-    for m in re.finditer(r"\.([A-Za-z]+)\.", lines[line]):
-        if m.start() <= char <= m.end() and m.group(1).lower() not in INTRINSIC_DOT_OPS:
-            return True
-    return False
-
-
-def on_assignment(lines: list, line: int, char: int) -> bool:
-    """Whether the position is on the `=` of an assignment or on
-    `assignment(=)`, where zfls answers for a defined assignment (hansec
-    #95) and fortls does not."""
-    if not (0 <= line < len(lines)):
-        return False
-    text = lines[line]
-    if any(0 <= c < len(text) and text[c] == "=" for c in (char, char - 1)):
-        return True
-    for m in re.finditer(r"(?i)assignment\s*\(\s*=\s*\)", text):
-        if m.start() <= char <= m.end():
-            return True
-    return False
-
-
-def on_enumerator_statement(lines: list, line: int) -> bool:
-    """Whether the line is an ENUMERATOR statement, whose names zfls reads
-    (named constants of the scope around the ENUM) and fortls does not."""
-    if not (0 <= line < len(lines)):
-        return False
-    return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
-
-
-def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
-    """Whether (line, char) is on a statement label or on a construct name
-    that the file defines (`name: do`); zfls answers definition, references
-    and rename there (fortls #424), fortls has no answer."""
-    if not 0 <= line < len(lines):
-        return False
-    text = lines[line]
-    for m in re.finditer(r"[A-Za-z_]\w*|\d+", text):
-        if m.start() <= char <= m.end():
-            token = m.group(0)
-            break
-    else:
-        return False
-    if token.isdigit():
-        return True
-    name = re.compile(
-        r"^\s*(\d+\s+)?" + re.escape(token) + r"\s*:(?!:)\s*" + CONSTRUCT_KEYWORDS, re.I
-    )
-    return any(name.match(l) for l in lines)
-
-
-def own_file_definition(ref, got, own: str) -> bool:
-    """Whether zfls found the definition in the requesting file (path
-    suffix `own`) where fortls found one in another file."""
-    if not (isinstance(ref, dict) and isinstance(got, dict)):
-        return False
-    ref_uri = unquote(ref.get("uri", ""))
-    got_uri = unquote(got.get("uri", ""))
-    return got_uri.endswith(own) and not ref_uri.endswith(own)
-
-
-def first_difference(a, b, path="$"):
-    """Return (json path, a value, b value) of the first difference."""
-    if type(a) is not type(b):
-        return path, a, b
-    if isinstance(a, dict):
-        for k in list(a) + [k for k in b if k not in a]:
-            if k not in a or k not in b:
-                missing = "<absent>"
-                return f"{path}.{k}", a.get(k, missing), b.get(k, missing)
-            d = first_difference(a[k], b[k], f"{path}.{k}")
-            if d:
-                return d
-        return None
-    if isinstance(a, list):
-        for i, (x, y) in enumerate(zip(a, b)):
-            d = first_difference(x, y, f"{path}[{i}]")
-            if d:
-                return d
-        if len(a) != len(b):
-            return f"{path}.length", len(a), len(b)
-        return None
-    return None if a == b else (path, a, b)
-
-
-def ref_key(r: dict):
-    start = r["range"]["start"]
-    return (r["uri"], start["line"], start["character"])
-
-
-PROCEDURE_STMT = re.compile(r"\b(?:subroutine|function|procedure)\b", re.I)
-
-
-def uri_line(uri: str, line: int) -> str:
-    path = unquote(uri.removeprefix("file://"))
-    if os.name == "nt":
-        path = path.lstrip("/")
-    try:
-        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return ""
-    return lines[line] if 0 <= line < len(lines) else ""
-
-
-def separate_procedure_refs(a, b) -> bool:
-    """zfls's references to a separate module procedure also list its
-    interface and its implementation in a submodule (hansec issue 168):
-    whether `b` is `a` plus locations on SUBROUTINE, FUNCTION or PROCEDURE
-    statements only."""
-    if not (isinstance(a, list) and isinstance(b, list)):
-        return False
-    ka = {ref_key(r) for r in a}
-    kb = {ref_key(r) for r in b}
-    if not ka < kb:
-        return False
-    return all(PROCEDURE_STMT.search(uri_line(u, ln)) for u, ln, _ in kb - ka)
-
-
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fortls", default=str(REPO.parent / "fortls"))
@@ -595,6 +296,35 @@ def parse_args():
     ap.add_argument("--requests", default=ALL_KINDS)
     ap.add_argument("--args", default="", help="extra server arguments")
     return ap.parse_args()
+
+
+def declared_word(lines: list, line: int, char: int):
+    """The name (lowercase) that ends at the position when it is in the
+    entity list of a declaration (after `::`, or in the old form after the
+    type), not an initialization, else None."""
+    if not (0 <= line < len(lines)):
+        return None
+    code = lines[line].split("!")[0][:char]
+    if "::" not in code and not DECL_START.match(code):
+        return None
+    depth = 0
+    for c in reversed(code.split("::")[-1]):
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            depth -= 1
+        elif depth == 0 and c == ",":
+            break
+        elif depth == 0 and c == "=":
+            return None
+    m = re.search(r"[A-Za-z_][A-Za-z0-9_]*$", code)
+    return m.group(0).lower() if m else None
+
+
+DECL_START = re.compile(
+    r"\s*(integer|real|complex|logical|character|double(\s*)precision|double(\s*)complex|external|type(\s*)\(|class(\s*)\(|procedure(\s*)\().*[\s,)*]\w*$",
+    re.I,
+)
 
 
 def main() -> int:
@@ -613,7 +343,11 @@ def main() -> int:
     env["PYTHONHASHSEED"] = "0"
     common = ["--incremental_sync", "--disable_autoupdate", *args.args.split()]
     fortls_cmd = [sys.executable, "-m", "fortls_ordered", *common]
-    zfls_cmd = [str(Path(args.zfls).resolve()), *common, "--disable_index_cache"]
+    # hover on a derived type lists its components (#268); fortls's does not
+    zfls_cmd = [
+        str(Path(args.zfls).resolve()), *common, "--disable_index_cache",
+        "--hover_no_type_components",
+    ]
 
     exts = {".f", ".f90", ".f08", ".f03", ".f95", ".f77", ".for", ".fpp", ".h"}
     files = sorted(
@@ -639,17 +373,30 @@ def main() -> int:
                     diffs.append((method, None, a, b))
         source = path.read_text(encoding="utf-8", errors="replace")
         assoc = associate_names(source)
+        bound = associate_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
+        macros = macro_names(path, source)
+        entity_lengths = bool(ENTITY_LENGTH.search(source))
+        semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
             if cond_attrs and kind in ("hover", "completion"):
                 a = ignore_conditional_attributes(a, cond_attrs)
                 b = ignore_conditional_attributes(b, cond_attrs)
+            if entity_lengths and kind in ("hover", "completion"):
+                a, b = ignore_type_params(a), ignore_type_params(b)
+            if semicolon_strings and kind in ("hover", "completion"):
+                a, b = ignore_param_strings(a), ignore_param_strings(b)
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
+            if bound and kind in ("hover", "completion"):
+                untyped = untyped_by_fortls(a, bound)
+                if untyped:
+                    a = forget_associate_types(a, untyped)
+                    b = forget_associate_types(b, untyped)
             total += 1
             if kind == "references":
                 # cross-file order follows workspace iteration order
@@ -659,12 +406,31 @@ def main() -> int:
                 # zfls offers the keyword arguments of the call the position
                 # is in (hansec #133) and names of modules not used yet
                 # (hansec #62); fortls does not
+                own_items = [x for x in b if zfls_only_item(x)]
                 b = [x for x in b if not zfls_only_item(x)]
+                if a is None and not b and own_items:
+                    # only zfls's own items (after `end`, its end statement)
+                    b = None
+            if kind == "completion":
+                # an intrinsic with two forms completes to one of them
+                # (#245); fortls's snippet mixes them
+                a = [x for x in a if not two_forms_item(x)] if isinstance(a, list) else a
+                b = [x for x in b if not two_forms_item(x)] if isinstance(b, list) else b
             if kind == "completion":
                 # globals are listed in workspace iteration order, which is
                 # hash-randomized in fortls; clients sort completions anyway
                 if isinstance(a, list) and isinstance(b, list):
                     a, b = sorted(a, key=json.dumps), sorted(b, key=json.dumps)
+            if kind == "completion":
+                # in the entity list of a declaration zfls offers the dummy
+                # arguments not declared yet, and not the name being
+                # declared (#270)
+                p = params.get("position") or {}
+                word = declared_word(src_lines, p.get("line", -1), p.get("character", 0))
+                if word and isinstance(a, list):
+                    a = [x for x in a if str(x.get("label", "")).lower() != word]
+                if isinstance(b, list):
+                    b = [x for x in b if x.get("detail") != "argument not declared" and (not word or str(x.get("label", "")).lower() != word)]
             if is_error(a):
                 # fortls crashed (Python exception): no reference behavior
                 crashes += 1
@@ -678,7 +444,31 @@ def main() -> int:
                 # go to definition on a `#include` opens the included file
                 # (upstream issue 498); fortls has no answer
                 continue
+            if kind == "hover" and on_include_line(path, params.get("position")):
+                # hover on an included file's name shows that file, nothing
+                # when it is not found (#240); fortls has no answer or one
+                # for a character literal
+                continue
+            if (
+                kind == "definition"
+                and isinstance(a, dict)
+                and isinstance(b, dict)
+                and a.get("uri") == b.get("uri")
+                and (b.get("range") or {}).get("start") == {"line": 0, "character": 0}
+                and on_include_line(path, params.get("position"))
+            ):
+                # go to definition on an INCLUDE line opens the included
+                # file at its first line; fortls gives the line of the
+                # INCLUDE statement in the including file (#224)
+                continue
             pos = params.get("position") or {}
+            if (
+                (kind in ("definition", "references") or (kind == "hover" and a is None))
+                and on_macro(src_lines, macros, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # a macro: its #define, its places, and hover on a
+                # directive's line (#265)
+                continue
             if (
                 kind in ("hover", "definition", "references")
                 and a is None
@@ -700,6 +490,22 @@ def main() -> int:
                 and on_enumerator_statement(src_lines, pos.get("line", -1))
             ):
                 # the enumerators of an ENUM, which fortls does not read
+                continue
+            if (
+                kind == "completion"
+                and on_import_statement(src_lines, pos.get("line", -1))
+                and items_within(a, b)
+            ):
+                # an IMPORT statement: zfls offers every name the host sees
+                # (#486), fortls only those its IMPORT statements name
+                continue
+            if (
+                kind in ("hover", "definition", "completion", "signature")
+                and not a
+                and after_non_code_line(src_lines, pos.get("line", -1))
+            ):
+                # a statement continued across a directive or comment line
+                # (zfls #259); fortls sees only its part after that line
                 continue
             if kind == "hover" and a is None and any(m in json.dumps(b) for m in ("Implicitly typed (not declared)", "Fortran keyword", "OpenMP directive", "OpenACC directive")):
                 # the implicit type of a name that is not declared (hansec
@@ -731,6 +537,15 @@ def main() -> int:
                 # the intrinsics fortls's table lacks: specific names
                 # (`DSQRT`) and newer generic ones (`REDUCE`)
                 continue
+            if (
+                kind == "signature"
+                and a is None
+                and isinstance(b, dict)
+                and in_constructor_or_group(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside an array constructor or parentheses, the call
+                # around them (hansec #60); fortls answers null
+                continue
             if kind == "signature" and a is None and isinstance(b, dict) and "activeSignature" in b:
                 # signature help on a generic interface: a signature per
                 # procedure (fortls #6); fortls has none
@@ -744,6 +559,14 @@ def main() -> int:
             if kind == "references" and separate_procedure_refs(a, b):
                 # references to a separate module procedure include its
                 # interface and implementation (hansec issue 168)
+                continue
+            if kind == "references" and implicit_result_refs(a, b):
+                # a function without RESULT and its result variable are
+                # one name (zfls #228)
+                continue
+            if kind == "references" and use_alias_refs(a, b):
+                # references follow names that USE statements rename
+                # (zfls #233)
                 continue
             if kind == "definition" and own_file_definition(a, b, own):
                 # a global name defined in several files: zfls answers with

@@ -15,6 +15,7 @@ const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
 const KW = @import("constants.zig").KW;
 const typing = @import("argcheck/typing.zig");
+const ignore_tkr = @import("argcheck/ignore_tkr.zig");
 const Category = typing.Category;
 const Typed = typing.Typed;
 const numeric = typing.numeric;
@@ -35,6 +36,43 @@ const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
 pub const Kind = enum { arguments, kinds, intent_in };
+
+/// How an actual argument fits a dummy argument (`Checker.compare`)
+pub const Match = union(enum) {
+    /// its type, kind and rank are known and fit
+    fits,
+    /// nothing is known not to fit, but not all of it is known
+    unknown,
+    type: struct { want: Category, have: Category },
+    kind: struct { cat: Category, want: i64, have: i64 },
+    /// another derived type (for a generic reference)
+    derived,
+    /// an array for a scalar
+    scalar_expected,
+    /// a scalar for an array
+    array_expected,
+    /// arrays of different ranks (for a generic reference)
+    rank,
+};
+
+/// The rank of a dummy argument's DIMENSION (`:,:` 2, `*` 1), or null
+/// when it cannot be told
+fn rankOf(dims: ?[]const u8) ?usize {
+    const d = std.mem.trim(u8, dims orelse return null, " ");
+    if (d.len == 0) return null;
+    var n: usize = 1;
+    var rest = d;
+    while (topLevel(rest, ',')) |i| : (rest = rest[i + 1 ..]) n += 1;
+    return n;
+}
+
+/// The rank of an actual argument that is a whole array, `x` or `t%x`
+/// (no subscripts), or null
+fn wholeArrayRank(actual: []const u8, typed: Typed) ?usize {
+    if (!typed.designator or std.mem.findScalar(u8, actual, '(') != null) return null;
+    const v = typed.obj orelse return null;
+    return rankOf(v.keyword_info.dimension);
+}
 
 pub const Problem = struct { line: usize, start: usize, end: usize, message: []const u8, kind: Kind };
 
@@ -108,12 +146,19 @@ fn isSpec(word: []const u8) bool {
     return std.ascii.startsWithIgnoreCase(word, "end");
 }
 
-const Checker = struct {
+pub const Checker = struct {
     a: Allocator,
     env: objects.Env,
     ast: *Ast,
     cache: std.StringHashMapUnmanaged(?*Obj) = .empty,
+    /// the workspace's files, for `objects.declaredProcedure`
+    files: []const *FortranFile,
     out: std.ArrayList(Problem) = .empty,
+    /// the innermost scope of each line, found once
+    inner: objects.InnerScopes,
+    /// the `!dir$ ignore_tkr` and `NO_ARG_CHECK` directives of each
+    /// procedure called, read once
+    tkr: std.AutoHashMapUnmanaged(*const Obj, []const ignore_tkr.Entry) = .empty,
 
     fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
@@ -137,7 +182,7 @@ const Checker = struct {
         var it = helpers.words(text);
         const first = it.next() orelse return;
         const line_no = j.lines[s + first.start] + 1;
-        const scope = c.ast.getInnerScope(line_no);
+        const scope = c.inner.at(line_no);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
         // the calls
@@ -163,7 +208,11 @@ const Checker = struct {
                 try c.member(scope, text[0..w.end], w.str)
             else
                 try c.lookup(scope, w.str, line_no);
-            const obj = callee_obj orelse continue;
+            var obj = callee_obj orelse continue;
+            // the caller's own declaration of a procedure it calls (#232)
+            if (!is_member) if (try objects.declaredProcedure(c.env, c.ast, c.files, obj, true)) |p| {
+                obj = p;
+            };
             var drop: ?usize = null;
             const proc = switch (obj.kind) {
                 .subroutine, .function => obj,
@@ -261,43 +310,104 @@ const Checker = struct {
     /// its kind, and an array for a scalar or a scalar expression for an
     /// array (not for an elemental procedure)
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, scope: ?*Obj, line_no: usize) !void {
-        if (dummy.kind != .variable or actual.len == 0) return;
-        const want = varCategory(dummy);
-        const typed = (try c.exprType(actual, scope, line_no, 0)) orelse return;
-        const have = typed.cat;
-        const have_array = typed.array;
-        const is_literal = typed.literal;
-        if (want != .unknown and have != .unknown and want != have) {
-            try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(want), @tagName(have) });
-            return;
+        // those that `!dir$ ignore_tkr` or `NO_ARG_CHECK` leaves out
+        const ignored = try c.ignoredChecks(proc, dummy.name);
+        switch (try c.compare(dummy, actual, elemental, false, scope, line_no)) {
+            .type => |t| if (!ignored.type) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(t.want), @tagName(t.have) }),
+            .kind => |k| if (!ignored.kind) {
+                const t = typeName(k.cat);
+                try c.report(j, s + w.start, s + w.end, .kinds, "Argument {s} of {s}: {s}({d}) expected, {s}({d}) given", .{ dummy.name, proc.name, t, k.want, t, k.have });
+            },
+            .scalar_expected => if (!ignored.rank) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: a scalar expected, an array given", .{ dummy.name, proc.name }),
+            .array_expected => if (!ignored.rank) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an array expected, a scalar given", .{ dummy.name, proc.name }),
+            .fits, .unknown, .derived, .rank => {},
         }
+    }
+
+    /// The checks of dummy argument `name` of `proc` that its `!dir$
+    /// ignore_tkr` and `NO_ARG_CHECK` directives leave out
+    fn ignoredChecks(c: *Checker, proc: *const Obj, name: []const u8) !ignore_tkr.Ignored {
+        const gop = try c.tkr.getOrPut(c.a, proc);
+        if (!gop.found_existing) gop.value_ptr.* = if (proc.file_ast.file) |f| try ignore_tkr.ofProcedure(c.a, f, proc.sline, proc.eline) else &.{};
+        return ignore_tkr.of(gop.value_ptr.*, name);
+    }
+
+    /// How actual argument `actual` fits dummy argument `dummy`. For the
+    /// diagnostics, an element (`x(1)`) or a character scalar fits an array
+    /// (sequence association). `generic` asks what a generic reference
+    /// asks instead: the same rank (an elemental procedure's scalar takes
+    /// any), and the same derived type (or one that extends it, for a
+    /// CLASS); it tells the ranks of whole arrays apart.
+    pub fn compare(c: *Checker, dummy: *Obj, actual: []const u8, elemental: bool, generic: bool, scope: ?*Obj, line_no: usize) !Match {
+        if (dummy.kind != .variable or actual.len == 0) return .unknown;
+        const want = varCategory(dummy);
+        const typed = (try c.exprType(actual, scope, line_no, 0)) orelse return .unknown;
+        const have = typed.cat;
+        var known = want != .unknown and have != .unknown;
+        if (known and want != have) return .{ .type = .{ .want = want, .have = have } };
         // the kinds, when both are known
-        if (want == have and want != .unknown and want != .character and want != .derived) {
+        if (known and want != .character and want != .derived) {
             const want_kind = try c.kindOfVar(dummy);
-            const have_kind = if (is_literal)
+            const have_kind = if (typed.literal)
                 try c.literalKind(actual, scope, line_no)
             else if (typed.obj) |v|
                 try c.kindOfVar(v)
             else
                 null;
-            if (want_kind != null and have_kind != null and want_kind.? != have_kind.?) {
-                const t = typeName(want);
-                try c.report(j, s + w.start, s + w.end, .kinds, "Argument {s} of {s}: {s}({d}) expected, {s}({d}) given", .{ dummy.name, proc.name, t, want_kind.?, t, have_kind.? });
-                return;
-            }
+            if (want_kind != null and have_kind != null) {
+                if (want_kind.? != have_kind.?) return .{ .kind = .{ .cat = want, .want = want_kind.?, .have = have_kind.? } };
+            } else known = false;
         }
-        if (elemental) return;
+        // a CHARACTER of another kind
+        if (generic and known and want == .character) {
+            for ([_]?*Obj{ dummy, typed.obj }) |o| if (o) |v| if (v.varDataConst().vkind) |k| if (std.ascii.findIgnoreCase(k, "kind") != null) {
+                known = false;
+            };
+        }
+        if (generic and known and want == .derived) switch (try c.sameType(dummy, typed.obj)) {
+            .no => return .derived,
+            .unknown => known = false,
+            .yes => {},
+        };
         const dims = dummy.keyword_info.dimension;
         const dummy_array = dummy.hasKeyword(KW.dimension) or dims != null;
+        if (elemental and (generic or !dummy_array)) return if (known) .fits else .unknown;
+        if (elemental) return .unknown;
         // assumed rank takes any
-        if (dims) |d| if (std.mem.eql(u8, std.mem.trim(u8, d, " "), "..")) return;
-        if (have_array and !dummy_array) {
-            try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: a scalar expected, an array given", .{ dummy.name, proc.name });
-        } else if (!have_array and !typed.designator and dummy_array and have != .character) {
+        if (dims) |d| if (std.mem.eql(u8, std.mem.trim(u8, d, " "), "..")) return if (known) .fits else .unknown;
+        if (typed.array and !dummy_array) return .scalar_expected;
+        if (!typed.array and dummy_array) {
             // an element (`x(1)`) may start an array (sequence association);
             // another scalar may not
-            try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an array expected, a scalar given", .{ dummy.name, proc.name });
+            if (generic or (!typed.designator and have != .character)) return .array_expected;
+            return .unknown;
         }
+        if (typed.array and dummy_array) {
+            if (!generic) return .unknown;
+            const want_rank = rankOf(dims) orelse return .unknown;
+            const have_rank = wholeArrayRank(actual, typed) orelse return .unknown;
+            if (want_rank != have_rank) return .rank;
+        }
+        return if (known) .fits else .unknown;
+    }
+
+    /// Whether variable `v` has the derived type of dummy argument `dummy`
+    /// (or, for a CLASS dummy argument, a type that extends it)
+    fn sameType(c: *Checker, dummy: *Obj, v_opt: ?*Obj) !enum { yes, no, unknown } {
+        const v = v_opt orelse return .unknown;
+        const want = (try dummy.getTypeObj(c.env)) orelse return .unknown;
+        var t = (try v.getTypeObj(c.env)) orelse return .unknown;
+        if (want.kind != .type or t.kind != .type) return .unknown;
+        if (t == want) return .yes;
+        if (!std.ascii.startsWithIgnoreCase(std.mem.trim(u8, dummy.descOf(), " "), "class")) return .no;
+        var n: usize = 0;
+        while (n < 20) : (n += 1) {
+            // a type that extends one not found
+            if (t.data == .scope and t.data.scope.inherit != null and t.typeDataConst().inherit_var == null) return .unknown;
+            t = t.typeDataConst().inherit_var orelse return .no;
+            if (t == want) return .yes;
+        }
+        return .unknown;
     }
 
     /// The type of an argument: a literal, a variable or a part of one
@@ -629,9 +739,24 @@ fn headerHasDirective(proc: *const Obj) bool {
     return false;
 }
 
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast) ![]const Problem {
-    var c: Checker = .{ .a = a, .env = env, .ast = ast };
+/// A checker for the arguments of single calls (`Checker.compare`); with no
+/// workspace files, which only serve the checks of a file's calls
+pub fn checker(a: Allocator, env: objects.Env, ast: *Ast) Checker {
+    return .{ .a = a, .env = env, .ast = ast, .files = &.{}, .inner = .{ .lines = &.{}, .none_scope = null } };
+}
+
+/// The type of expression `expr` in `scope` (1-based `line_no`), as the
+/// checks tell types apart; null when it cannot be told (for the type of an
+/// ASSOCIATE name bound to an expression)
+pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, expr: []const u8, line_no: usize) !?Typed {
+    var c = checker(a, env, ast);
+    return c.exprType(expr, scope, line_no, 0);
+}
+
+/// `files`: the workspace's
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile) ![]const Problem {
     const n = file.nLines();
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n) };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);

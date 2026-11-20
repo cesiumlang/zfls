@@ -1,12 +1,13 @@
 # Notes for coding agents
 
 What a coding agent working on zfls needs to know besides the code, the
-[readme](readme.md) and the [roadmap](todo.md). Mistakes that have been made
-more than once are written down here so that they are not made again.
+[readme](readme.md) and the [issues](https://github.com/cesiumlang/zfls/issues).
+Mistakes that have been made more than once are written down here so that
+they are not made again.
 
 ## Zig 0.17: what not to use
 
-zfls builds with Zig 0.17.0, whose standard library marks many older
+zfls builds with Zig 0.17.1, whose standard library marks many older
 declarations deprecated in their doc comments. The compiler does not warn
 about them, so they creep back in. Use the replacement:
 
@@ -56,11 +57,33 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
 - **Branches.** Work goes on a branch, in its own git worktree when other
   sessions may be working in the main checkout, and reaches `dev` through
   a pull request. `main` only takes releases, from `dev`.
-- **The roadmap is [todo.md](todo.md).** Mark an item `[~]` when work on it
-  starts and `[x]` in the pull request that finishes it; ideas not
-  scheduled yet are under "Proposed", work waiting on something under
-  "On hold". After a release, remove the `[x]` items it shipped: the
-  release notes on GitHub and the git history record them.
+- **The backlog is the [issues](https://github.com/cesiumlang/zfls/issues).**
+  Each issue is one task, landed in one pull request; split a larger plan
+  into one issue per step. The current milestone is the task list in the
+  description of the open `dev` to `main` pull request, in work order:
+  check an issue off there when it lands on `dev`, and close the issue
+  with a comment naming the pull request (or let the pull request close it
+  with `Closes #N`). Labels: `backlog` for what is outside the milestone,
+  `blocked` with a `**Blocked:**` line naming the outside cause,
+  `upstream: <project>` for work waiting on or following another project,
+  `compiler: <name>` (`gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`,
+  `nagfor`, `lfortran`) for work specific to one compiler,
+  `awaiting input` for a decision the user makes, `housekeeping` for
+  readability and structure work. `**Needs:**` links the issues that must
+  land first. Upstream issues are cited as in the readme (`FL #438`), ours
+  as `#N`. Don't open issues for follow-ups on your own; report them.
+  Pull requests take the release-note labels of `.github/release.yml`
+  (`fix`, `feature`, `performance`, `tests`, `refactor`, `ci`,
+  `skip-changelog`); their titles are the release notes.
+- **GitHub: the Cesium Agent app.** On GitHub, act as the GitHub App Cesium
+  Agent (`cesium-agent[bot]`), not as the maintainer (cesium-workspace#6;
+  cesium-workspace's CLAUDE.md has the details). Prefix `gh` commands with
+  `GH_TOKEN="$(bash /c/scratch/github-apps/app-token.sh cesiumlang)"`, and
+  run git commands that commit or push as
+  `bash /c/scratch/github-apps/app-git.sh cesiumlang <git arguments>`.
+  Never print, copy or commit anything in `C:\scratch\github-apps\cesiumlang\`.
+  The app merges pull requests into `dev`; the `dev` to `main` pull request
+  is merged by the maintainer, or on his word.
 - **The debug options' output is ours.** What `--debug_*` prints serves
   zfls's own testing; it need not match fortls's, so change it as tests
   need.
@@ -70,7 +93,13 @@ ZLS shows the old one's "Deprecated" on it: that one is fine.)
 - **Checks before a pull request.** `zig build test`, `zig fmt --check
   build build.zig src tests tools`, `zig build check-generated`, and for the
   extension `npx tsc --noEmit -p .` in `editors/vscode`. Do not run the
-  extension's `npm test` locally: it opens VS Code windows. CI runs it.
+  extension's `npm test` locally: it opens VS Code windows. CI runs it. CI does not
+  run on pull requests into `dev` (only on those into `main`, and when
+  started by hand: `gh workflow run ci.yml --ref BRANCH`), so these checks,
+  with `zig build test-differential` and `zig build test-parity` for
+  changes to the server, are what stands between a change and `dev`: run
+  them after merging `origin/dev` into the branch, and say in the pull
+  request which were run.
 - **File size.** Keep source files under about 900 lines; split larger ones
   by concern, as `src/server/` and `src/dap/` are ("Part of `Server`
   (server.zig): each function takes it as `self`").

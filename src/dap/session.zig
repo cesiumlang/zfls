@@ -1,22 +1,28 @@
 //! `zfls dap`: a debug adapter (Debug Adapter Protocol, on standard input
-//! and output) of Fortran programs, over one of two debuggers, chosen at
+//! and output) of Fortran programs, over one of three debuggers, chosen at
 //! `launch` or `attach`:
 //!
 //! - gdb (gdb.zig, gdb_requests.zig, gdb_variables.zig): `gdb -i=dap`,
 //!   gdb 14 or later built with Python, whose own protocol zfls passes
 //!   through and reshapes for Fortran (fortran.zig): the programs of
 //!   gfortran, LLVM Flang and the others of DWARF's debug information. The
-//!   gdb is `--gdb PATH`'s, or the configuration's `gdb`, else the PATH's.
+//!   gdb is the configuration's `gdb`, else `--gdb PATH`'s, else the
+//!   PATH's. The default, but on macOS.
+//! - lldb-dap (lldb.zig), LLVM's adapter, passed through as gdb's is, when
+//!   the configuration says `lldb: true` or `lldb: PATH` (or `--lldb
+//!   [PATH]`); the default on macOS. lldb reads no Fortran: the variables
+//!   and expressions are lldb's own.
 //! - Windows's Debugger Engine (dbgeng.zig), when the configuration says
 //!   `dbgeng: true` (or `--dbgeng`), for programs with Microsoft's debug
 //!   information: Intel's ifx and LLVM Flang's on Windows. Their variables
 //!   are shown as Fortran: zfls indexes the program's sources (the launch
 //!   configuration's `sourceRoot`, else `cwd`), and each variable's
 //!   declaration says its type, kind and rank, while dbghelp says where it
-//!   is; arrays are read through Intel's descriptors. The program runs in a
+//!   is; arrays are read through Intel's or LLVM Flang's descriptors. The
+//!   program runs in a
 //!   console of its own.
 //!
-//! Both show a "Module variables" scope (the module variables that a
+//! gdb and the engine show a "Module variables" scope (the module variables that a
 //! frame's line sees, by zfls's index of the sources) and a "Fortran
 //! runtime errors" exception filter. `--text JSON` translates the words
 //! they show (`Text`).
@@ -34,6 +40,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
+const stdio = @import("../stdio.zig");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
@@ -52,9 +59,11 @@ const is_windows = builtin.target.os.tag == .windows;
 const Engine = if (is_windows) dbgeng.Engine else void;
 
 const breakpoints = @import("breakpoints.zig");
+const runtime_errors = @import("runtime_errors.zig");
 const runtime_errors_filter = breakpoints.runtime_errors_filter;
 const errorFunction = breakpoints.errorFunction;
 const isUserBreakpoint = breakpoints.isUserBreakpoint;
+const isPlainStop = breakpoints.isPlainStop;
 const declarations = @import("declarations.zig");
 const index = declarations.index;
 const memory = @import("memory.zig");
@@ -65,6 +74,7 @@ const show = variables.show;
 const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
 const gdb_variables = @import("gdb_variables.zig");
+const lldb = @import("lldb.zig");
 
 /// The words the adapter shows, which `--text` translates (its keys:
 /// `moduleVariables`, `notAllocated`, ...)
@@ -78,6 +88,8 @@ pub const Text = struct {
     runtime_error: []const u8 = "Fortran runtime error",
     error_stop: []const u8 = "ERROR STOP",
     gdb_exited: []const u8 = "gdb exited",
+    lldb_exited: []const u8 = "lldb-dap exited",
+    ended_by_signal: []const u8 = "The program was ended by a signal",
 
     /// `--text`'s JSON object: its strings over the English ones
     fn parse(a: Allocator, text: []const u8) !Text {
@@ -121,7 +133,12 @@ const Queue = struct {
     gdb: std.ArrayList(gdb.Item) = .empty,
 };
 
-pub const Backend = enum { none, dbgeng, gdb };
+pub const Backend = enum { none, dbgeng, gdb, lldb };
+
+/// The debugger unless the configuration names one: lldb-dap on macOS,
+/// where gdb does not run on Apple silicon and must be code-signed on
+/// Intel; gdb elsewhere
+const default_backend: Backend = if (builtin.target.os.tag == .macos) .lldb else .gdb;
 
 pub const Session = struct {
     gpa: Allocator,
@@ -131,12 +148,17 @@ pub const Session = struct {
     text: Text = .{},
     /// `--gdb`: the gdb unless the configuration names one
     gdb_path: []const u8 = "gdb",
+    /// `--lldb PATH`: the lldb-dap unless the configuration names one
+    lldb_path: ?[]const u8 = null,
+    /// The debugger unless the configuration names one: `--gdb`'s or
+    /// `--lldb`'s, else the platform's
+    default: Backend = default_backend,
     /// `--dbgeng`: Windows's Debugger Engine whatever the configuration
     want_dbgeng: bool = false,
     /// The client's `initialize` arguments (JSON, `gpa`'s), for a gdb
     /// started at `launch`
     client_init: []u8 = "",
-    /// Why gdb did not start at `initialize` (`gpa`'s)
+    /// Why the default debugger did not start at `initialize` (`gpa`'s)
     gdb_error: ?[]u8 = null,
     /// The gdb backend's state (gdb.zig)
     g: gdb.State = .{},
@@ -151,13 +173,18 @@ pub const Session = struct {
     launched: bool = false,
     done: bool = false,
     stop_at_entry: bool = false,
-    /// The breakpoints on the Fortran runtime's errors, and the function of
-    /// the last one hit
-    error_breakpoints: std.ArrayList(u32) = .empty,
+    /// The engine's step under way from a line it takes for another
+    step_from: ?StepFrom = null,
+    /// The breakpoints on the Fortran runtime's errors, each with its
+    /// function
+    error_breakpoints: std.ArrayList(runtime_errors.EngineBreakpoint) = .empty,
     /// The breakpoints whose lines had no code yet (a module not loaded):
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     last_error: []const u8 = "",
+    /// The last stop was the filter's at a runtime error: the Intel
+    /// runtime's break instruction that follows it is no stop of its own
+    after_runtime_error: bool = false,
     attached: bool = false,
     /// Breakpoints by source file: the engine's ids
     breakpoints: std.StringHashMapUnmanaged(std.ArrayList(u32)) = .empty,
@@ -183,7 +210,7 @@ pub const Session = struct {
         s.seq += 1;
         const body = json.stringify(a, v) catch return 0;
         const framed = jsonrpc.frame(a, body) catch return 0;
-        Io.File.stdout().writeStreamingAll(s.io, framed) catch {};
+        stdio.stdout().writeStreamingAll(s.io, framed) catch {};
         return seq;
     }
 
@@ -264,11 +291,15 @@ pub const Val = struct {
     mod_base: u64 = 0,
     /// The derived type's declaration, for its components' types
     decl: ?*const Obj = null,
+    /// A CLASS object's dynamic type's definition (LLVM Flang's), for its
+    /// components' types in place of the declared type's
+    dynamic: ?*const Obj = null,
     /// Not allocated, not associated
     empty: bool = false,
 };
 
-/// Runs `zfls dap [--gdb PATH] [--dbgeng] [--text JSON]`: its exit code
+/// Runs `zfls dap [--gdb PATH | --lldb [PATH]] [--dbgeng] [--text JSON]`:
+/// its exit code
 pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args: []const []const u8) !u8 {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -290,14 +321,21 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         } else if (std.mem.eql(u8, arg, "--gdb") and i + 1 < args.len) {
             i += 1;
             s.gdb_path = args[i];
+            s.default = .gdb;
+        } else if (std.mem.eql(u8, arg, "--lldb")) {
+            s.default = .lldb;
+            if (i + 1 < args.len and !std.mem.startsWith(u8, args[i + 1], "-")) {
+                i += 1;
+                s.lldb_path = args[i];
+            }
         } else if (std.mem.eql(u8, arg, "--text") and i + 1 < args.len) {
             i += 1;
             s.text = Text.parse(options_arena.allocator(), args[i]) catch {
-                try Io.File.stderr().writeStreamingAll(io, "zfls dap: --text needs a JSON object\n");
+                try stdio.stderr().writeStreamingAll(io, "zfls dap: --text needs a JSON object\n");
                 return 2;
             };
         } else {
-            try Io.File.stderr().writeStreamingAll(io, "usage: zfls dap [--gdb PATH] [--dbgeng] [--text JSON]\n");
+            try stdio.stderr().writeStreamingAll(io, "usage: zfls dap [--gdb PATH | --lldb [PATH]] [--dbgeng] [--text JSON]\n");
             return 2;
         }
     }
@@ -346,6 +384,8 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
             .gdb => |item| gdb.received(&s, a, item),
             .none => {
                 if (s.queue.closed and s.queue.items.items.len == 0) break;
+                // a `launch` the debugger does not answer (#374)
+                if (s.backend == .gdb or s.backend == .lldb) gdb.expireRelays(&s, a);
                 if (is_windows and s.running) {
                     const stop = s.engine.wait(a, 100) catch continue;
                     if (stop != .running) stopped(&s, a, stop);
@@ -353,7 +393,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
             },
         }
     }
-    if (s.backend == .gdb) {
+    if (s.backend == .gdb or s.backend == .lldb) {
         _ = arena.reset(.retain_capacity);
         gdb.finish(&s, arena.allocator());
     }
@@ -362,7 +402,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
 
 fn readRequests(s: *Session) void {
     var buf: [64 * 1024]u8 = undefined;
-    var reader = Io.File.stdin().readerStreaming(s.io, &buf);
+    var reader = stdio.stdin().readerStreaming(s.io, &buf);
     // the session may end while this thread still waits for the client:
     // not `gpa`'s, whose leaks are counted at the end
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
@@ -419,19 +459,21 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             s.backend = .dbgeng;
             return handleEngine(s, a, req);
         }
-        // the configuration's gdb, when another than the one started
-        const configured = if (json.str(json.get(args, "gdb"))) |g| if (g.len > 0) g else null else null;
-        const other = if (configured) |g| !std.mem.eql(u8, g, s.g.path) else false;
-        if (s.g.child == null or s.g.exit_message != null or other) {
-            if (configured == null) if (s.gdb_error) |why| return s.fail(a, req, why);
-            if (try gdb.start(s, a, configured orelse s.gdb_path)) |why| return s.fail(a, req, why);
+        // the configuration's debugger, when another than the one started
+        const want = chosen(s, args);
+        const lldb_wanted = want.backend == .lldb;
+        const other = if (want.path) |p| !std.mem.eql(u8, p, s.g.path) else false;
+        if (s.g.child == null or s.g.exit_message != null or s.g.lldb != lldb_wanted or other) {
+            if (want.path == null and want.backend == s.default) if (s.gdb_error) |why| return s.fail(a, req, why);
+            const why = if (lldb_wanted) try lldb.start(s, a, want.path orelse s.lldb_path) else try gdb.start(s, a, want.path orelse s.gdb_path);
+            if (why) |w| return s.fail(a, req, w);
             try gdb_requests.initializeAgain(s, a);
         }
-        s.backend = .gdb;
-        return gdb_requests.launch(s, a, req, args);
+        s.backend = want.backend;
+        return if (lldb_wanted) lldb.launch(s, a, req, args) else gdb_requests.launch(s, a, req, args);
     }
     switch (s.backend) {
-        .gdb => return gdb_requests.handle(s, a, req),
+        .gdb, .lldb => return gdb_requests.handle(s, a, req),
         .dbgeng => if (is_windows) return handleEngine(s, a, req),
         .none => {},
     }
@@ -441,16 +483,29 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
     } else s.fail(a, req, "not supported before launch or attach");
 }
 
-/// `initialize`: gdb's capabilities, its own, unless the engine is to be
-/// used; else the engine's, on Windows, where the configuration may still
-/// want it
+/// The debugger of a configuration: `lldb: true` or `lldb: PATH`, `gdb:
+/// PATH`, else the default; `lldb: false` is gdb
+fn chosen(s: *Session, args: ?Value) struct { backend: Backend, path: ?[]const u8 = null } {
+    if (json.get(args, "lldb")) |v| switch (v) {
+        .bool => |b| if (b) return .{ .backend = .lldb } else if (json.str(json.get(args, "gdb")) == null) return .{ .backend = .gdb },
+        .string => |p| return .{ .backend = .lldb, .path = if (p.len > 0) p else null },
+        else => {},
+    };
+    if (json.str(json.get(args, "gdb"))) |g| if (g.len > 0) return .{ .backend = .gdb, .path = g };
+    return .{ .backend = s.default };
+}
+
+/// `initialize`: the default debugger's capabilities, its own (gdb's,
+/// lldb-dap's), unless the engine is to be used; else the engine's, on
+/// Windows, where the configuration may still want it
 fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     if (s.client_init.len > 0) s.gpa.free(s.client_init);
     s.client_init = try s.gpa.dupe(u8, try json.stringify(a, args orelse Value.null));
     s.g.run_in_terminal = flag(args, "supportsRunInTerminalRequest");
     if (!(is_windows and s.want_dbgeng)) {
-        const why = try gdb.start(s, a, s.gdb_path) orelse {
-            s.backend = .gdb;
+        const started = if (s.default == .lldb) try lldb.start(s, a, s.lldb_path) else try gdb.start(s, a, s.gdb_path);
+        const why = started orelse {
+            s.backend = s.default;
             return gdb_requests.initialize(s, a, req, args);
         };
         if (!is_windows) return s.fail(a, req, why);
@@ -511,7 +566,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         .setFunctionBreakpoints => s.respond(a, req, .{ .breakpoints = &[_]u8{} }),
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
-            .description = if (std.mem.find(u8, s.last_error, "error_stop") != null) s.text.error_stop else s.text.runtime_error,
+            .description = if (runtime_errors.isErrorStop(s.last_error)) s.text.error_stop else s.text.runtime_error,
             .breakMode = "always",
         }),
         .configurationDone => {
@@ -579,6 +634,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         .next, .stepIn, .stepOut => {
             const thread: ?u32 = if (json.int(json.get(args, "threadId"))) |t| @intCast(t) else null;
             s.respond(a, req, null);
+            s.step_from = if (cmd == .stepOut) null else stepFrom(s, a, cmd == .stepIn, thread);
             try go(s, switch (cmd) {
                 .next => .over,
                 .stepIn => .into,
@@ -603,7 +659,35 @@ fn initialized(s: *Session, a: Allocator) void {
     s.event(a, "initialized", null);
 }
 
+/// Where a step starts, when the engine's line there is not the one shown:
+/// LLVM Flang's line tables have empty records before a statement's (an
+/// END statement after the declarations'), the first of which the engine
+/// steps by, so that it stops again on the line shown (#441)
+pub const StepFrom = struct { into: bool, thread: u32, line: u32, function: u64, again: u8 = 0 };
+
+fn stepFrom(s: *Session, a: Allocator, into: bool, thread: ?u32) ?StepFrom {
+    const t = thread orelse return null;
+    const frames = s.engine.stack(a, t, 1) catch return null;
+    if (frames.len == 0 or frames[0].engine_line == frames[0].line) return null;
+    return .{ .into = into, .thread = t, .line = frames[0].line, .function = std.hash.Wyhash.hash(0, frames[0].name) };
+}
+
+/// A step's stop on the line it started from, in the same function, from
+/// where the engine's line was another (`StepFrom`): the step goes on
+fn stepAgain(s: *Session, a: Allocator, thread: u32) bool {
+    if (s.step_from == null) return false;
+    const from = &s.step_from.?;
+    if (from.again >= 4 or from.thread != thread) return false;
+    const frames = s.engine.stack(a, thread, 1) catch return false;
+    if (frames.len == 0 or frames[0].line != from.line or std.hash.Wyhash.hash(0, frames[0].name) != from.function) return false;
+    from.again += 1;
+    s.engine.resumeThread(if (from.into) .into else .over, thread) catch return false;
+    s.running = true;
+    return true;
+}
+
 fn go(s: *Session, how: Engine.Resume, thread: ?u32) !void {
+    if (how == .go or how == .out) s.step_from = null;
     s.nodes.clearRetainingCapacity();
     _ = s.nodes_arena.reset(.retain_capacity);
     try s.engine.resumeThread(how, thread);
@@ -612,6 +696,8 @@ fn go(s: *Session, how: Engine.Resume, thread: ?u32) !void {
 
 fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
     s.running = false;
+    const after_runtime_error = s.after_runtime_error;
+    s.after_runtime_error = false;
     // breakpoints resolved since (a module loaded): the client is told
     var it = s.unverified.iterator();
     var resolved: std.ArrayList(u32) = .empty;
@@ -627,20 +713,41 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             s.event(a, "terminated", null);
         },
         .breakpoint => |b| if (errorFunction(s, b.id)) |f| {
-            s.last_error = f;
+            // LLVM Flang's plain STOP: the program goes on to its end
+            if (isPlainStop(s, f)) return go(s, .go, null) catch {};
+            s.last_error = f.name;
+            s.after_runtime_error = !f.error_stop;
             s.event(a, "stopped", .{
                 .reason = "exception",
                 .threadId = b.thread,
                 .allThreadsStopped = true,
-                .description = if (std.mem.find(u8, f, "error_stop") != null) s.text.error_stop else s.text.runtime_error,
+                .description = if (f.error_stop) s.text.error_stop else s.text.runtime_error,
             });
         } else if (isUserBreakpoint(s, b.id))
             s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} })
         else
             // the engine's own (step out, stop at entry)
             s.event(a, "stopped", .{ .reason = "step", .threadId = b.thread, .allThreadsStopped = true }),
-        .step => |t| s.event(a, "stopped", .{ .reason = "step", .threadId = t, .allThreadsStopped = true }),
+        .step => |t| if (!stepAgain(s, a, t)) {
+            s.step_from = null;
+            s.event(a, "stopped", .{ .reason = "step", .threadId = t, .allThreadsStopped = true });
+        },
         .pause => |t| s.event(a, "stopped", .{ .reason = "pause", .threadId = t, .allThreadsStopped = true }),
+        .trap => |t| {
+            // the Intel runtime's `int 3` in `for__issue_diagnostic`, after
+            // the filter's stop there: the program goes on (#493)
+            if (after_runtime_error) return go(s, .go, null) catch {};
+            // without the filter: the runtime error, as the filter says it
+            const intel = inIntelDiagnostic(s, a, t.thread);
+            if (intel) s.last_error = intel_diagnostic;
+            s.event(a, "stopped", .{
+                .reason = "exception",
+                .threadId = t.thread,
+                .allThreadsStopped = true,
+                .description = if (intel) s.text.runtime_error else t.description,
+                .text = "0x80000003",
+            });
+        },
         .exception => |e| s.event(a, "stopped", .{
             .reason = "exception",
             .threadId = e.thread,
@@ -649,6 +756,29 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             .text = a.print("0x{x}", .{e.code}) catch "",
         }),
     }
+}
+
+/// The function of the Intel runtime that reports a runtime error
+const intel_diagnostic = "for__issue_diagnostic";
+
+/// Whether thread `thread` stopped in `for__issue_diagnostic` (the engine
+/// names it `libifcoremd!for__issue_diagnostic+0x8a3`)
+fn inIntelDiagnostic(s: *Session, a: Allocator, thread: u32) bool {
+    const frames = s.engine.stack(a, thread, 1) catch return false;
+    return frames.len > 0 and isIntelDiagnostic(frames[0].name);
+}
+
+fn isIntelDiagnostic(name: []const u8) bool {
+    const at = std.mem.find(u8, name, intel_diagnostic) orelse return false;
+    const end = at + intel_diagnostic.len;
+    return (at == 0 or name[at - 1] == '!') and (end == name.len or name[end] == '+');
+}
+
+test "the Intel runtime's function of runtime errors, as the engine names a place in it" {
+    try std.testing.expect(isIntelDiagnostic("libifcoremd!for__issue_diagnostic+0x8a3"));
+    try std.testing.expect(isIntelDiagnostic("for__issue_diagnostic"));
+    try std.testing.expect(!isIntelDiagnostic("libifcoremd!for__issue_diagnostic_x+0x10"));
+    try std.testing.expect(!isIntelDiagnostic("hello!main+0x20"));
 }
 
 fn frameOf(id: i64) Frame {

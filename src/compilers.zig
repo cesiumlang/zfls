@@ -1,12 +1,17 @@
 //! The compilers whose messages zfls publishes as diagnostics
 //! (`compiler_diagnostics`): their command-line options and parsers of
-//! their messages. A port of the VS Code extension's linter
-//! (editors/vscode/src/lint/compilers.ts), whose tests the ones here follow.
+//! their messages (gfortran's, LLVM Flang's and Intel's in compilers/). A
+//! port of the VS Code extension's linter
+//! (editors/vscode/src/lint/compilers.ts), whose tests the ones here
+//! follow.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const regex = @import("regex.zig");
 const Regex = regex.Regex;
+const flang = @import("compilers/flang.zig");
+const intel = @import("compilers/intel.zig");
+const gfortran = @import("compilers/gfortran.zig");
 
 pub const Id = enum {
     gfortran,
@@ -58,6 +63,9 @@ pub const Message = struct {
     message: []const u8,
     code: ?[]const u8 = null,
     related: std.ArrayList(Related) = .empty,
+    /// For a message in an included file, the line that includes it (of
+    /// the outermost include), such as flang's "included here"
+    include_site: ?Related = null,
 };
 
 /// What changes a compiler's command line
@@ -66,6 +74,15 @@ pub const Options = struct {
     windows: bool,
     /// Where the compiler writes .mod (and any object) files
     mod_dir: []const u8,
+    /// The compiler's major version, when known (LLVM Flang's)
+    version: ?u32 = null,
+    /// The compiler's intrinsic modules, where its driver does not look:
+    /// LLVM Flang's (compilers/flang_modules.zig), conda-forge's ifx's
+    /// (`intel.moduleDir`)
+    intrinsic_modules: ?[]const u8 = null,
+    /// zfls reads OpenMP's conditional lines (`!$ `) as code
+    /// (`disable_openmp_conditional` off): the compiler should too
+    openmp: bool = false,
 };
 
 /// The executable names tried, in order
@@ -86,11 +103,26 @@ pub fn syntaxOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
         .ifx, .ifort => if (o.windows) &.{ "/nologo", "/syntax-only" } else &.{"-syntax-only"},
         // -M: produce .mod files only; -quiet: no banner and summary line
         .nagfor => &.{ "-M", "-quiet" },
-        .lfortran => &.{ "--semantics-only", "--error-format=short", "--no-color" },
+        // --continue-compilation: every error, not only the first
+        .lfortran => &.{ "--semantics-only", "--continue-compilation", "--error-format=short", "--no-color" },
         // no syntax-only mode: compile, with the object file next to the
         // .mod files rather than in the source tree
         .nvfortran => try dupeArgs(a, &.{ "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }) }),
         .flang => &.{ "-fsyntax-only", "-fno-color-diagnostics" },
+    };
+}
+
+/// Compile a module that the file checked uses, for its .mod files: as
+/// `syntaxOnly`, except for LFortran, whose --semantics-only writes none
+pub fn moduleOnly(a: Allocator, id: Id, o: Options) ![]const []const u8 {
+    return switch (id) {
+        // the symbol tables only, without the executable statements: enough
+        // for the users of its type-bound procedures, defined operators and
+        // pure functions. -c and -o: LFortran writes .mod files only when
+        // it compiles, and the object goes next to them, not into the
+        // source tree.
+        .lfortran => try dupeArgs(a, &.{ "--symtab-only", "-c", "-o", try std.Io.Dir.path.join(a, &.{ o.mod_dir, "zfls-lint.o" }), "--error-format=short", "--no-color" }),
+        else => syntaxOnly(a, id, o),
     };
 }
 
@@ -129,14 +161,157 @@ pub fn fixedForm(id: Id, o: Options) []const []const u8 {
     };
 }
 
-/// The arguments when `compiler_args` is not set
-pub fn defaultArgs(id: Id, o: Options) []const []const u8 {
-    return switch (id) {
-        .gfortran => &.{"-Wall"},
-        .ifx, .ifort => if (o.windows) &.{"/warn:all"} else &.{ "-warn", "all" },
-        .nvfortran => &.{"-Minform=warn"},
-        .nagfor, .lfortran, .flang => &.{},
+/// The line length of the file's form: for fixed form `fixed_columns`
+/// (`fixed_line_length`; null: the compiler's default), for free form no
+/// limit. Nothing when the compiler has no option for it, or that is its
+/// default.
+pub fn lineLength(a: Allocator, id: Id, fixed: bool, fixed_columns: ?usize, o: Options) ![]const []const u8 {
+    if (!fixed) return switch (id) {
+        // gfortran cuts free-form lines at 132 columns
+        .gfortran => &.{"-ffree-line-length-none"},
+        .ifx, .ifort, .nagfor, .lfortran, .nvfortran, .flang => &.{},
     };
+    const n = fixed_columns orelse return &.{};
+    return switch (id) {
+        .gfortran => dupeArgs(a, &.{try a.print("-ffixed-line-length-{d}", .{n})}),
+        .flang => dupeArgs(a, &.{try a.print("-ffixed-line-length={d}", .{n})}),
+        .ifx, .ifort => switch (n) {
+            72, 80, 132 => if (o.windows) dupeArgs(a, &.{try a.print("/extend-source:{d}", .{n})}) else dupeArgs(a, &.{ "-extend-source", try a.print("{d}", .{n}) }),
+            else => &.{},
+        },
+        .nvfortran => if (n == 132) &.{"-Mextend"} else &.{},
+        .nagfor => if (n == 132) &.{"-132"} else &.{},
+        .lfortran => &.{},
+    };
+}
+
+/// How a fixed-form file's debug lines (D or d in column 1) are read, as
+/// zfls reads them (`d_lines`): as code or as comments. gfortran rejects
+/// them without an option; LFortran has none.
+pub fn dLines(id: Id, code: bool, o: Options) []const []const u8 {
+    return switch (id) {
+        .gfortran => if (code) &.{"-fd-lines-as-code"} else &.{"-fd-lines-as-comments"},
+        .flang => flang.dLines(code, o.version),
+        .ifx, .ifort => if (o.windows)
+            (if (code) &.{"/d-lines"} else &.{"/nod-lines"})
+        else
+            (if (code) &.{"-d-lines"} else &.{"-nod-lines"}),
+        .nvfortran => if (code) &.{"-Mdlines"} else &.{"-Mnodlines"},
+        // comments by default
+        .nagfor => if (code) &.{"-d_lines"} else &.{},
+        .lfortran => &.{},
+    };
+}
+
+/// The option for the file's language, right before it: the drivers of
+/// gfortran, Flang and Intel's compilers check only the suffixes they know
+/// (`gfortran.language`, `flang.language`, `intel.language`)
+pub fn language(id: Id, o: Options) []const []const u8 {
+    return switch (id) {
+        .gfortran => gfortran.language,
+        .flang => flang.language,
+        .ifx, .ifort => intel.language(o),
+        else => &.{},
+    };
+}
+
+/// Whether `arg` sets the line length of the form (the user's then wins
+/// over `lineLength`)
+pub fn isLineLength(id: Id, fixed: bool, arg: []const u8) bool {
+    const prefixes: []const []const u8 = switch (id) {
+        .gfortran, .flang => if (fixed) &.{"-ffixed-line-length"} else &.{"-ffree-line-length"},
+        .ifx, .ifort => if (fixed) &.{ "-extend-source", "-extend_source", "/extend-source", "/extend_source", "/4L" } else &.{},
+        .nvfortran => if (fixed) &.{ "-Mextend", "-Mnoextend" } else &.{},
+        .nagfor => if (fixed) &.{"-132"} else &.{},
+        .lfortran => &.{},
+    };
+    for (prefixes) |p| if (std.mem.startsWith(u8, arg, p)) return true;
+    return false;
+}
+
+/// Whether `arg` of `compiler_args` says how debug lines are read, which
+/// `dLines` then leaves to it
+pub fn isDLinesArg(arg: []const u8) bool {
+    const names = [_][]const u8{ "-fd-lines-as-code", "-fd-lines-as-comments", "-d-lines", "-nod-lines", "/d-lines", "/nod-lines", "-Mdlines", "-Mnodlines", "-d_lines" };
+    for (names) |n| if (std.ascii.eqlIgnoreCase(arg, n)) return true;
+    return false;
+}
+
+/// The arguments when `compiler_args` is not set (and the file has no
+/// command): the compiler's warnings, coarrays (one image: nothing else
+/// matters for a check, and without it gfortran and Intel's stop at the
+/// first coarray), and OpenMP when zfls reads its conditional lines
+/// (`o.openmp`), so that the compiler reads them as code too. Flang reads
+/// coarrays without an option (`-fcoarray` only adds a warning that they
+/// are experimental, Flang 23).
+pub fn defaultArgs(a: Allocator, id: Id, o: Options) ![]const []const u8 {
+    const warnings: []const []const u8 = switch (id) {
+        .gfortran => &.{"-Wall"},
+        // what gfortran's -Wall warns about: not every implicitly typed
+        // name (#6717) and every call without an explicit interface
+        // (#8889), which `all` has (#514)
+        .ifx, .ifort => if (o.windows) &.{"/warn:all,nodeclarations,noexternals"} else &.{ "-warn", "all,nodeclarations,noexternals" },
+        .nvfortran => &.{"-Minform=warn"},
+        .flang => flang.warnings(o.version),
+        .nagfor, .lfortran => &.{},
+    };
+    const coarrays: []const []const u8 = switch (id) {
+        .gfortran => &.{"-fcoarray=single"},
+        .ifx, .ifort => if (o.windows) &.{"/Qcoarray:single"} else &.{"-coarray=single"},
+        else => &.{},
+    };
+    const openmp: []const []const u8 = if (!o.openmp) &.{} else switch (id) {
+        .gfortran, .flang => &.{"-fopenmp"},
+        .ifx, .ifort => if (o.windows) &.{"/Qopenmp"} else &.{"-qopenmp"},
+        else => &.{},
+    };
+    return std.mem.concat(a, []const u8, &.{ warnings, coarrays, openmp });
+}
+
+test "the default arguments: warnings, coarrays, and OpenMP as zfls reads it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const linux: Options = .{ .windows = false, .mod_dir = "m", .openmp = true };
+    const win: Options = .{ .windows = true, .mod_dir = "m", .openmp = true };
+    const no_omp: Options = .{ .windows = false, .mod_dir = "m" };
+    try expectArgs(try defaultArgs(a, .gfortran, linux), &.{ "-Wall", "-fcoarray=single", "-fopenmp" });
+    try expectArgs(try defaultArgs(a, .gfortran, no_omp), &.{ "-Wall", "-fcoarray=single" });
+    try expectArgs(try defaultArgs(a, .ifx, win), &.{ "/warn:all,nodeclarations,noexternals", "/Qcoarray:single", "/Qopenmp" });
+    try expectArgs(try defaultArgs(a, .ifort, linux), &.{ "-warn", "all,nodeclarations,noexternals", "-coarray=single", "-qopenmp" });
+    try expectArgs(try defaultArgs(a, .flang, .{ .windows = false, .mod_dir = "m", .version = 23, .openmp = true }), &.{ "-Wunused-variable", "-Wused-undefined-variable", "-fopenmp" });
+    try expectArgs(try defaultArgs(a, .flang, linux), &.{"-fopenmp"});
+    try expectArgs(try defaultArgs(a, .nvfortran, linux), &.{"-Minform=warn"});
+    try expectArgs(try defaultArgs(a, .lfortran, linux), &.{});
+}
+
+fn expectArgs(got: []const []const u8, want: []const []const u8) !void {
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+/// Accept implicit typing and implicit interfaces, as the standard does:
+/// LFortran's own dialect (`--std=lf`, its default) rejects them, which
+/// gives standard code without IMPLICIT NONE, and most fixed form, false
+/// errors. Each is left out when `own` (`compiler_args`, or the project's
+/// command) has an option about it, and both when `own` chooses a standard
+/// (`--disable-implicit-typing` with `--implicit-typing` is an error).
+/// Not `--std=f23`: it also casts arguments implicitly, which hides
+/// arguments of the wrong type.
+pub fn implicitRules(id: Id, own: []const []const u8) []const []const u8 {
+    if (id != .lfortran) return &.{};
+    var typing = true;
+    var interface = true;
+    for (own) |x| {
+        if (std.mem.startsWith(u8, x, "--std")) return &.{};
+        if (std.mem.eql(u8, x, "--implicit-typing") or std.mem.eql(u8, x, "--disable-implicit-typing")) typing = false;
+        if (std.mem.eql(u8, x, "--implicit-interface") or std.mem.eql(u8, x, "--disable-implicit-interface")) interface = false;
+    }
+    const both: []const []const u8 = &.{ "--implicit-typing", "--implicit-interface" };
+    if (typing and interface) return both;
+    if (typing) return both[0..1];
+    if (interface) return both[1..];
+    return &.{};
 }
 
 /// Write .mod files to, and read them from, `dir`
@@ -167,17 +342,62 @@ pub fn define(a: Allocator, id: Id, name: []const u8, value: []const u8, o: Opti
     return a.print("{s}{s}={s}", .{ flag, name, value });
 }
 
+/// Whether the compiler writes files into its working directory even when
+/// it only checks the source: Intel's write their preprocessor's output
+/// (`file.i90`, `file.i`) there, so they run in a directory of zfls's
+/// rather than beside the sources
+pub fn writesToWorkDir(id: Id) bool {
+    return id == .ifx or id == .ifort;
+}
+
+/// `args` with the relative directories of its include and module options
+/// made absolute against `base`, for a compiler run in another directory
+/// (`writesToWorkDir`): `-Idir`, `-I dir`, `-module dir` and, on Windows,
+/// `/Idir`, `/I dir`, `/module:dir`
+pub fn absoluteDirs(a: Allocator, id: Id, args: []const []const u8, base: []const u8, o: Options) ![]const []const u8 {
+    if (!writesToWorkDir(id)) return args;
+    const out = try a.dupe([]const u8, args);
+    const joined = struct {
+        fn f(al: Allocator, b: []const u8, prefix: []const u8, dir: []const u8) ![]const u8 {
+            if (dir.len == 0 or std.Io.Dir.path.isAbsolute(dir)) return std.mem.concat(al, u8, &.{ prefix, dir });
+            return std.mem.concat(al, u8, &.{ prefix, try std.Io.Dir.path.join(al, &.{ b, dir }) });
+        }
+    }.f;
+    // the options whose value is the next argument, and those with it
+    // attached
+    const separate: []const []const u8 = if (o.windows) &.{ "-I", "/I", "-module", "/module" } else &.{ "-I", "-module" };
+    const attached: []const []const u8 = if (o.windows) &.{ "/module:", "-I", "/I" } else &.{"-I"};
+    var i: usize = 0;
+    while (i < out.len) : (i += 1) {
+        const x = out[i];
+        if (for (separate) |s| {
+            if (std.mem.eql(u8, x, s)) break true;
+        } else false) {
+            if (i + 1 < out.len) {
+                out[i + 1] = try joined(a, base, "", out[i + 1]);
+                i += 1;
+            }
+            continue;
+        }
+        for (attached) |p| if (std.mem.startsWith(u8, x, p)) {
+            out[i] = try joined(a, base, p, x[p.len..]);
+            break;
+        };
+    }
+    return out;
+}
+
 /// The messages in a compiler's output
 pub fn parse(a: Allocator, id: Id, output: []const u8) ![]Message {
     var p: Parser = .{ .a = a };
     defer p.deinit();
     switch (id) {
-        .gfortran => try p.gfortran(output),
-        .ifx, .ifort => try p.intel(output),
+        .gfortran => try gfortran.parse(&p, output),
+        .ifx, .ifort => try intel.parse(&p, output),
         .nagfor => try p.nag(output),
         .lfortran => try p.lfortran(output),
         .nvfortran => try p.nvfortran(output),
-        .flang => try p.flang(output),
+        .flang => try flang.parse(&p, output),
     }
     return dedupe(a, p.out.items);
 }
@@ -196,7 +416,7 @@ pub fn dedupe(a: Allocator, msgs: []Message) ![]Message {
     return out.items;
 }
 
-const Parser = struct {
+pub const Parser = struct {
     a: Allocator,
     out: std.ArrayList(Message) = .empty,
     res: std.ArrayList(*Regex) = .empty,
@@ -207,110 +427,34 @@ const Parser = struct {
 
     /// Compiled once per parse; each has its own allocation, so that the
     /// pointers stay valid
-    fn re(p: *Parser, pattern: []const u8, flags: regex.Flags) !*const Regex {
+    pub fn re(p: *Parser, pattern: []const u8, flags: regex.Flags) !*const Regex {
         const r = try p.a.create(Regex);
         r.* = try Regex.compile(p.a, pattern, flags);
         try p.res.append(p.a, r);
         return r;
     }
 
-    fn push(p: *Parser, file: ?[]const u8, line: usize, column: ?usize, sev: Severity, text: []const u8, code: ?[]const u8) !void {
+    pub fn push(p: *Parser, file: ?[]const u8, line: usize, column: ?usize, sev: Severity, text: []const u8, code: ?[]const u8) !void {
         try p.out.append(p.a, .{ .file = file, .line = line, .column = column, .severity = sev, .message = std.mem.trim(u8, text, " \t"), .code = code });
     }
 
     /// A message without a location from the compiler driver, such as
-    /// "gfortran: error: unrecognized command-line option '-Wfoo'"
-    fn driver(p: *Parser, line: []const u8) !bool {
+    /// "gfortran: error: unrecognized command-line option '-Wfoo'"; a
+    /// trailing `[-Wname]` is its code ("f951.exe: Warning: Nonexistent
+    /// include directory 'x' [-Wmissing-include-dirs]")
+    pub fn driver(p: *Parser, line: []const u8) !bool {
         const r = try p.re("^(?P<bin>[\\w.+-]+(?:\\.exe)?): (?P<sev>fatal error|error|warning): (?P<msg>.+)$", regex.I);
         const m = r.match(line) orelse return false;
         const sev: Severity = if (std.ascii.eqlIgnoreCase(m.named(r, "sev").?, "warning")) .warning else .@"error";
-        try p.push(null, 0, null, sev, try p.a.print("{s}: {s}", .{ m.named(r, "bin").?, m.named(r, "msg").? }), null);
+        var msg = m.named(r, "msg").?;
+        var code: ?[]const u8 = null;
+        const code_re = try p.re("\\s*\\[(-W[\\w=-]+)\\]$", .{});
+        if (code_re.search(msg)) |c| {
+            code = c.group(1);
+            msg = msg[0..c.start(0)];
+        }
+        try p.push(null, 0, null, sev, try p.a.print("{s}: {s}", .{ m.named(r, "bin").?, msg }), code);
         return true;
-    }
-
-    // --- gfortran ----------------------------------------------------------
-
-    fn gnuSeverity(sev: []const u8) Severity {
-        if (std.ascii.eqlIgnoreCase(sev, "warning")) return .warning;
-        if (std.ascii.eqlIgnoreCase(sev, "note") or std.ascii.eqlIgnoreCase(sev, "remark")) return .info;
-        return .@"error";
-    }
-
-    /// Splits gfortran's trailing `[-Wflag]` off into the code
-    fn gnuMessage(p: *Parser, file: ?[]const u8, ln: usize, cn: ?usize, sev: []const u8, msg: []const u8) !void {
-        const r = try p.re("\\s*\\[(-W[\\w=-]+)\\]$", .{});
-        if (r.search(msg)) |m| {
-            try p.push(file, ln, cn, gnuSeverity(sev), msg[0..m.start(0)], m.group(1));
-        } else try p.push(file, ln, cn, gnuSeverity(sev), msg, null);
-    }
-
-    fn gfortran(p: *Parser, output: []const u8) !void {
-        // `file:line:column: Severity: message`, as printed with
-        // -fno-diagnostics-show-caret
-        const one = try p.re("^(?P<file>.+?):(?P<ln>\\d+):(?:(?P<cn>\\d+):)? (?P<sev>Fatal Error|Error|Warning|Note|Remark): (?P<msg>.*)$", .{});
-        // the caret format: a locus line `file:line:column:` (or with a
-        // range, `file:line.column-end:`), the source excerpt, and later
-        // `Severity: message`
-        const locus_re = try p.re("^(?P<file>.+?):(?P<ln>\\d+)[:.](?P<cn>\\d+)(?:-\\d+)?:$", .{});
-        const sev_re = try p.re("^(?P<sev>Fatal Error|Error|Warning|Note|Remark): (?P<msg>.*)$", .{});
-        var locus: ?struct { file: []const u8, ln: usize, cn: usize } = null;
-        var it = lines(output);
-        while (it.next()) |raw| {
-            const text = trimCr(raw);
-            if (one.match(text)) |m| {
-                try p.gnuMessage(m.named(one, "file"), num(m.named(one, "ln")), numOpt(m.named(one, "cn")), m.named(one, "sev").?, m.named(one, "msg").?);
-                locus = null;
-                continue;
-            }
-            if (locus_re.match(text)) |m| {
-                // a second locus of the same message ("at (1) and (2)")
-                // keeps the first
-                if (locus == null) locus = .{ .file = m.named(locus_re, "file").?, .ln = num(m.named(locus_re, "ln")), .cn = num(m.named(locus_re, "cn")) };
-                continue;
-            }
-            if (sev_re.match(text)) |m| {
-                try p.gnuMessage(if (locus) |l| l.file else null, if (locus) |l| l.ln else 0, if (locus) |l| l.cn else null, m.named(sev_re, "sev").?, m.named(sev_re, "msg").?);
-                locus = null;
-                continue;
-            }
-            _ = try p.driver(text);
-        }
-    }
-
-    // --- Intel ifx and ifort ------------------------------------------------
-
-    fn intelSeverity(sev: []const u8) Severity {
-        if (std.ascii.eqlIgnoreCase(sev, "warning")) return .warning;
-        if (std.ascii.eqlIgnoreCase(sev, "remark") or std.ascii.eqlIgnoreCase(sev, "info")) return .info;
-        return .@"error";
-    }
-
-    fn intel(p: *Parser, output: []const u8) !void {
-        // `file(line): error #6404: message   [NAME]`, then the source line
-        // and a caret line `-----^`; fpp prints `file(line): #error: message`
-        const msg_re = try p.re("^(?P<file>.+?)\\((?P<ln>\\d+)\\): (?:#)?(?P<sev>catastrophic error|fatal error|error|warning|remark|info)(?: #(?P<code>\\d+))?: (?P<msg>.*)$", regex.I);
-        const caret = try p.re("^(?P<dashes>[-.]*)\\^\\s*$", .{});
-        const drv = try p.re("^(?:ifx|ifort|icx)(?:\\.exe)?: (?:command line )?(?P<sev>error|warning) #\\d+: (?P<msg>.+)$", regex.I);
-        var all: std.ArrayList([]const u8) = .empty;
-        var it = lines(output);
-        while (it.next()) |raw| try all.append(p.a, trimCr(raw));
-        for (all.items, 0..) |text, i| {
-            const m = msg_re.match(text) orelse {
-                if (drv.match(text)) |d| try p.push(null, 0, null, intelSeverity(d.named(drv, "sev").?), text, null);
-                continue;
-            };
-            var column: ?usize = null;
-            // the source line and the caret line follow the message
-            var j = i + 1;
-            while (j <= i + 2 and j < all.items.len) : (j += 1) {
-                if (caret.match(all.items[j])) |c| {
-                    column = c.named(caret, "dashes").?.len + 1;
-                    break;
-                }
-                if (msg_re.match(all.items[j]) != null) break;
-            }
-            try p.push(m.named(msg_re, "file"), num(m.named(msg_re, "ln")), column, intelSeverity(m.named(msg_re, "sev").?), m.named(msg_re, "msg").?, m.named(msg_re, "code"));
-        }
     }
 
     // --- NAG nagfor ----------------------------------------------------------
@@ -349,9 +493,26 @@ const Parser = struct {
         // `--error-format=short`: `file:line-endline:col-endcol: severity
         // [code]: message`, or without a location `severity: message`
         const r = try p.re("^(?:(?P<file>.+?):(?P<ls>\\d+)-(?P<le>\\d+):(?P<cs>\\d+)-(?P<ce>\\d+): )?(?P<sev>(?:[\\w ]*error)|warning|note|help|style suggestion)(?: \\[(?P<code>[^\\]]+)\\])?: (?P<msg>.*)$", .{});
+        // the other lines are messages too, without a location: about the
+        // command line ("The following argument was not expected: --x",
+        // "Cannot use --disable-implicit-typing and --implicit-typing at
+        // the same time"), a file that cannot be opened, an internal
+        // error. The lines of one (a traceback) go together, up to an
+        // empty line or a message of the format above.
+        var free: std.ArrayList(u8) = .empty;
         var it = lines(output);
         while (it.next()) |raw| {
-            const m = r.match(trimCr(raw)) orelse continue;
+            const text = std.mem.trimEnd(u8, trimCr(raw), " \t");
+            const m = r.match(text) orelse {
+                if (text.len == 0) {
+                    try p.unlocated(&free);
+                } else if (!lfortranNoise(text)) {
+                    if (free.items.len > 0) try free.append(p.a, '\n');
+                    try free.appendSlice(p.a, text);
+                }
+                continue;
+            };
+            try p.unlocated(&free);
             const sev_text = m.named(r, "sev").?;
             const sev: Severity = if (std.mem.eql(u8, sev_text, "warning")) .warning else if (std.mem.eql(u8, sev_text, "note")) .info else if (std.mem.eql(u8, sev_text, "help") or std.mem.eql(u8, sev_text, "style suggestion")) .hint else .@"error";
             try p.push(m.named(r, "file"), if (m.named(r, "ls")) |s| num(s) else 0, numOpt(m.named(r, "cs")), sev, m.named(r, "msg").?, m.named(r, "code"));
@@ -361,6 +522,22 @@ const Parser = struct {
                 last.end_column = numOpt(m.named(r, "ce"));
             }
         }
+        try p.unlocated(&free);
+    }
+
+    /// The lines gathered in `free`, as one error without a location
+    fn unlocated(p: *Parser, free: *std.ArrayList(u8)) !void {
+        if (free.items.len == 0) return;
+        try p.push(null, 0, null, .@"error", try free.toOwnedSlice(p.a), null);
+    }
+
+    /// LFortran's lines that are no message: the advice after a
+    /// command-line error, and the request for reports after the messages
+    /// of its human format
+    fn lfortranNoise(text: []const u8) bool {
+        return std.mem.eql(u8, text, "Run with --help for more information.") or
+            std.mem.startsWith(u8, text, "Note: Please report unclear") or
+            std.mem.startsWith(u8, text, "https://github.com/lfortran/lfortran/issues");
     }
 
     // --- NVIDIA nvfortran -----------------------------------------------------
@@ -378,63 +555,28 @@ const Parser = struct {
             try p.push(m.named(r, "file"), if (m.named(r, "ln")) |l| num(l) else 0, numOpt(m.named(r, "cn")), sev, m.named(r, "msg").?, m.named(r, "code"));
         }
     }
-
-    // --- LLVM flang -----------------------------------------------------------
-
-    fn flang(p: *Parser, output: []const u8) !void {
-        // `file:line:column: severity: message`, as clang; flang adds
-        // context lines without a severity (`file:line:column: Declaration
-        // of 'x'`), which belong to the message before them
-        const r = try p.re("^(?P<file>.+?):(?P<ln>\\d+):(?P<cn>\\d+): (?:(?P<sev>fatal error|error|warning|portability|note|remark|because): )?(?P<msg>.*)$", .{});
-        const summary = try p.re("^error: (?:Semantic errors in|Could not scan) ", .{});
-        var it = lines(output);
-        while (it.next()) |raw| {
-            const text = trimCr(raw);
-            if (r.match(text)) |m| {
-                const sev_text = m.named(r, "sev");
-                const sev: ?Severity = if (sev_text) |s|
-                    (if (std.mem.eql(u8, s, "error") or std.mem.eql(u8, s, "fatal error")) .@"error" else if (std.mem.eql(u8, s, "warning") or std.mem.eql(u8, s, "portability")) .warning else if (std.mem.eql(u8, s, "remark")) .info else null)
-                else
-                    null;
-                const ln = num(m.named(r, "ln"));
-                const cn = num(m.named(r, "cn"));
-                const msg = m.named(r, "msg").?;
-                if (sev) |s| {
-                    const text_msg = if (std.mem.eql(u8, sev_text.?, "portability")) try p.a.print("portability: {s}", .{msg}) else msg;
-                    try p.push(m.named(r, "file"), ln, cn, s, text_msg, null);
-                } else if (p.out.items.len > 0) {
-                    // a note, a "because" or a context line
-                    try p.out.items[p.out.items.len - 1].related.append(p.a, .{ .file = m.named(r, "file"), .line = ln, .column = cn, .message = std.mem.trim(u8, msg, " \t") });
-                }
-                continue;
-            }
-            // "error: Semantic errors in x.f90" repeats the messages above it
-            if (summary.match(text) != null) continue;
-            if (try p.driver(text)) continue;
-            if (std.mem.startsWith(u8, text, "error: ")) try p.push(null, 0, null, .@"error", text["error: ".len..], null);
-        }
-    }
 };
 
-fn lines(output: []const u8) std.mem.SplitIterator(u8, .scalar) {
+pub fn lines(output: []const u8) std.mem.SplitIterator(u8, .scalar) {
     return std.mem.splitScalar(u8, output, '\n');
 }
 
-fn trimCr(s: []const u8) []const u8 {
+pub fn trimCr(s: []const u8) []const u8 {
     return std.mem.trimEnd(u8, s, "\r");
 }
 
-fn num(s: ?[]const u8) usize {
+pub fn num(s: ?[]const u8) usize {
     return std.fmt.parseInt(usize, s orelse return 0, 10) catch 0;
 }
 
-fn numOpt(s: ?[]const u8) ?usize {
+pub fn numOpt(s: ?[]const u8) ?usize {
     return std.fmt.parseInt(usize, s orelse return null, 10) catch null;
 }
 
 // --- tests: the samples of editors/vscode/test/unit/lint.test.ts ------------
 
-fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
+/// One line per message, for the tests
+pub fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
     for (ms) |m| {
         const col = if (m.column) |c| try a.print("{d}", .{c}) else "-";
@@ -444,7 +586,8 @@ fn brief(a: Allocator, ms: []const Message) ![]const []const u8 {
     return out.items;
 }
 
-fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
+/// Fails unless `output` parses to the messages `want` (as `brief`)
+pub fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -453,60 +596,14 @@ fn expectBrief(id: Id, output: []const u8, want: []const []const u8) !void {
     for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
 }
 
-test "gfortran one-line messages" {
-    try expectBrief(.gfortran,
-        \\main.f90:5:7: Error: Symbol 'j' at (1) has no IMPLICIT type
-        \\inc.h:2:21: Error: Symbol 'undefined_thing' at (1) has no IMPLICIT type
-        \\warn.f90:6:16: Warning: Unused variable 'unused' declared at (1) [-Wunused-variable]
-        \\usem.f90:2:7: Fatal Error: Cannot open module file 'nonexistent_mod.mod' for reading at (1): No such file or directory
-        \\compilation terminated.
-    , &.{
-        "main.f90:5:7 error: Symbol 'j' at (1) has no IMPLICIT type",
-        "inc.h:2:21 error: Symbol 'undefined_thing' at (1) has no IMPLICIT type",
-        "warn.f90:6:16 warning: Unused variable 'unused' declared at (1) [-Wunused-variable]",
-        "usem.f90:2:7 error: Cannot open module file 'nonexistent_mod.mod' for reading at (1): No such file or directory",
-    });
-}
-
-test "gfortran caret format" {
-    try expectBrief(.gfortran, "main.f90:5:7:\r\n\r\n    5 |   i = j + 1\r\n      |       1\r\nError: Symbol 'j' at (1) has no IMPLICIT type\r\n" ++
-        "C:\\src\\fixed.f:4:11:\r\n\r\n    4 |       i = q\r\n      |           1\r\nError: Symbol 'q' at (1) has no IMPLICIT type\r\n" ++
-        "two.f90:8.13-15:\r\ntwo.f90:12:3:\r\nWarning: Type mismatch at (1) and (2)\r\n", &.{
-        "main.f90:5:7 error: Symbol 'j' at (1) has no IMPLICIT type",
-        "C:\\src\\fixed.f:4:11 error: Symbol 'q' at (1) has no IMPLICIT type",
-        "two.f90:8:13 warning: Type mismatch at (1) and (2)",
-    });
-}
-
-test "gfortran driver messages" {
-    try expectBrief(.gfortran,
-        \\gfortran: error: unrecognized command-line option '-Wbogus'
-        \\f951.exe: Warning: Nonexistent include directory 'nope' [-Wmissing-include-dirs]
-    , &.{
-        "-:0:- error: gfortran: unrecognized command-line option '-Wbogus'",
-        "-:0:- warning: f951.exe: Nonexistent include directory 'nope' [-Wmissing-include-dirs]",
-    });
-}
-
-test "ifx and ifort messages" {
-    try expectBrief(.ifx,
-        \\test.f90(3): error #6404: This name does not have a type, and must have an explicit type.   [X]
-        \\  x = 1
-        \\--^
-        \\C:\work\test.f90(7): warning #6717: This name has not been given an explicit type.   [Y]
-        \\      y = 2
-        \\------^
-        \\test.f90(9): remark #7712: This variable has not been used.   [Z]
-        \\test.f90(2): #error: unsupported configuration
-        \\test.f90(12): catastrophic error: Too many errors, exiting
-        \\compilation aborted for test.f90 (code 1)
-    , &.{
-        "test.f90:3:3 error: This name does not have a type, and must have an explicit type.   [X] [6404]",
-        "C:\\work\\test.f90:7:7 warning: This name has not been given an explicit type.   [Y] [6717]",
-        "test.f90:9:- info: This variable has not been used.   [Z] [7712]",
-        "test.f90:2:- error: unsupported configuration",
-        "test.f90:12:- error: Too many errors, exiting",
-    });
+test "the arguments for debug lines: as zfls reads them, unless the user's say" {
+    const o: Options = .{ .windows = false, .mod_dir = "m" };
+    try std.testing.expectEqualStrings("-fd-lines-as-code", dLines(.gfortran, true, o)[0]);
+    try std.testing.expectEqualStrings("-fd-lines-as-comments", dLines(.gfortran, false, o)[0]);
+    try std.testing.expectEqualStrings("-d-lines", dLines(.ifx, true, o)[0]);
+    try std.testing.expectEqualStrings("/nod-lines", dLines(.ifort, false, .{ .windows = true, .mod_dir = "m" })[0]);
+    try std.testing.expectEqual(@as(usize, 0), dLines(.lfortran, true, o).len);
+    try std.testing.expect(isDLinesArg("-fd-lines-as-code") and isDLinesArg("/D-Lines") and !isDLinesArg("-Wall"));
 }
 
 test "nagfor messages" {
@@ -536,12 +633,43 @@ test "lfortran messages" {
         \\test.f90:8-8:3-3: warning: The variable 'x' is used before it is set
         \\test.f90:9-9:3-9: style suggestion: Use '**' instead
         \\C preprocessor error: cannot open 'x.h'
+        \\pp.F90:2-2:11-19: C preprocessor error: Include file 'nothere.h' not found.
+        \\C:\w\a b.f90:3-3:3-13: semantic error: Function 'ext' not found (not user defined nor intrinsic)
+        \\semantic error: no main program found; cannot build an executable.
     , &.{
         "test.f90:3:5 error: Variable 'abc' is not declared",
         "test.f90:5:1 error: Token 'end' is unexpected here",
         "test.f90:8:3 warning: The variable 'x' is used before it is set",
         "test.f90:9:3 hint: Use '**' instead",
         "-:0:- error: cannot open 'x.h'",
+        "pp.F90:2:11 error: Include file 'nothere.h' not found.",
+        "C:\\w\\a b.f90:3:3 error: Function 'ext' not found (not user defined nor intrinsic)",
+        "-:0:- error: no main program found; cannot build an executable.",
+    });
+}
+
+test "lfortran messages without a location" {
+    // as LFortran 0.69 prints them
+    try expectBrief(.lfortran, "The following argument was not expected: --bogus\r\nRun with --help for more information.\r\n", &.{
+        "-:0:- error: The following argument was not expected: --bogus",
+    });
+    try expectBrief(.lfortran,
+        \\The option `--std=f77` is not supported
+        \\error: no such file or directory: 'nofile.f90'
+        \\File 'incdir' cannot be opened.
+        \\Cannot use --disable-implicit-typing and --implicit-typing at the same time
+        \\
+        \\Internal Compiler Error: Unhandled exception
+        \\Traceback (most recent call last):
+        \\  File "lfortran.cpp", line 10
+        \\a.f90:1-1:1-1: semantic error: x
+        \\
+    , &.{
+        "-:0:- error: The option `--std=f77` is not supported",
+        "-:0:- error: no such file or directory: 'nofile.f90'",
+        "-:0:- error: File 'incdir' cannot be opened.\nCannot use --disable-implicit-typing and --implicit-typing at the same time",
+        "-:0:- error: Internal Compiler Error: Unhandled exception\nTraceback (most recent call last):\n  File \"lfortran.cpp\", line 10",
+        "a.f90:1:1 error: x",
     });
 }
 
@@ -562,39 +690,96 @@ test "nvfortran messages" {
     });
 }
 
-test "flang messages and their context lines" {
+test "the modules a file uses: LFortran compiles their symbol tables, which writes .mod files" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const out =
-        \\error: Semantic errors in test.f90
-        \\./test.f90:3:3: error: No explicit type declared for 'x'
-        \\    x = 1
-        \\    ^
-        \\./test.f90:5:7: error: 'y' is already declared in this scoping unit
-        \\    real :: y
-        \\            ^
-        \\./test.f90:4:14: Previous declaration of 'y'
-        \\./test.f90:8:1: portability: nonstandard usage: tab character
-        \\./test.f90:9:3: warning: Variable 'z' is used but never defined [-Wused-undefined-variable]
-        \\flang: error: unknown argument: '-Wbogus'
-    ;
-    const ms = try parse(a, .flang, out);
-    const want = [_][]const u8{
-        "./test.f90:3:3 error: No explicit type declared for 'x'",
-        "./test.f90:5:7 error: 'y' is already declared in this scoping unit",
-        "./test.f90:8:1 warning: portability: nonstandard usage: tab character",
-        "./test.f90:9:3 warning: Variable 'z' is used but never defined [-Wused-undefined-variable]",
-        "-:0:- error: flang: unknown argument: '-Wbogus'",
-    };
-    const got = try brief(a, ms);
+    const o: Options = .{ .windows = false, .mod_dir = "m" };
+    const lf = try moduleOnly(a, .lfortran, o);
+    try std.testing.expectEqualStrings("--symtab-only", lf[0]);
+    try std.testing.expectEqualStrings("-c", lf[1]);
+    try std.testing.expectEqualStrings(try std.Io.Dir.path.join(a, &.{ "m", "zfls-lint.o" }), lf[3]);
+    // the file itself: semantics only, and every error
+    const check = try syntaxOnly(a, .lfortran, o);
+    try std.testing.expectEqualStrings("--semantics-only", check[0]);
+    try std.testing.expectEqualStrings("--continue-compilation", check[1]);
+    try std.testing.expectEqualStrings("-fsyntax-only", (try moduleOnly(a, .gfortran, o))[0]);
+}
+
+fn expectImplicitRules(own: []const []const u8, want: []const []const u8) !void {
+    const got = implicitRules(.lfortran, own);
     try std.testing.expectEqual(want.len, got.len);
     for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
-    try std.testing.expectEqual(@as(usize, 1), ms[1].related.items.len);
-    try std.testing.expectEqualStrings("Previous declaration of 'y'", ms[1].related.items[0].message);
-    try std.testing.expectEqual(@as(usize, 4), ms[1].related.items[0].line);
+}
+
+test "LFortran: implicit typing and interfaces, unless the user's options say" {
+    try expectImplicitRules(&.{}, &.{ "--implicit-typing", "--implicit-interface" });
+    try expectImplicitRules(&.{"--disable-implicit-typing"}, &.{"--implicit-interface"});
+    try expectImplicitRules(&.{"--implicit-interface"}, &.{"--implicit-typing"});
+    try expectImplicitRules(&.{ "--implicit-typing", "--implicit-interface" }, &.{});
+    try expectImplicitRules(&.{"--std=f23"}, &.{});
+    try expectImplicitRules(&.{ "--std", "lf" }, &.{});
+    try std.testing.expectEqual(@as(usize, 0), implicitRules(.gfortran, &.{}).len);
+}
+
+fn expectLineLength(id: Id, fixed: bool, columns: ?usize, windows: bool, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const got = try lineLength(arena.allocator(), id, fixed, columns, .{ .windows = windows, .mod_dir = "m" });
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "line lengths: fixed form as fixed_line_length, free form without a limit" {
+    try expectLineLength(.gfortran, true, 132, false, &.{"-ffixed-line-length-132"});
+    try expectLineLength(.gfortran, true, null, false, &.{});
+    try expectLineLength(.gfortran, false, null, false, &.{"-ffree-line-length-none"});
+    try expectLineLength(.gfortran, false, 72, false, &.{"-ffree-line-length-none"});
+    try expectLineLength(.flang, true, 80, false, &.{"-ffixed-line-length=80"});
+    try expectLineLength(.flang, false, null, false, &.{});
+    try expectLineLength(.ifx, true, 132, false, &.{ "-extend-source", "132" });
+    try expectLineLength(.ifort, true, 80, true, &.{"/extend-source:80"});
+    try expectLineLength(.ifx, true, 100, false, &.{});
+    try expectLineLength(.ifx, false, null, true, &.{});
+    try expectLineLength(.nvfortran, true, 132, false, &.{"-Mextend"});
+    try expectLineLength(.nvfortran, true, 80, false, &.{});
+    try expectLineLength(.nagfor, true, 132, false, &.{"-132"});
+    try expectLineLength(.nagfor, true, 72, false, &.{});
+    try expectLineLength(.lfortran, true, 132, false, &.{});
+}
+
+test "line lengths: the user's options of the same form" {
+    try std.testing.expect(isLineLength(.gfortran, true, "-ffixed-line-length-none"));
+    try std.testing.expect(!isLineLength(.gfortran, false, "-ffixed-line-length-none"));
+    try std.testing.expect(isLineLength(.gfortran, false, "-ffree-line-length-200"));
+    try std.testing.expect(isLineLength(.flang, true, "-ffixed-line-length=132"));
+    try std.testing.expect(isLineLength(.ifx, true, "/extend-source:132"));
+    try std.testing.expect(isLineLength(.ifort, true, "-extend-source"));
+    try std.testing.expect(isLineLength(.ifort, true, "/4L132"));
+    try std.testing.expect(isLineLength(.nvfortran, true, "-Mextend"));
+    try std.testing.expect(isLineLength(.nagfor, true, "-132"));
+    try std.testing.expect(!isLineLength(.gfortran, true, "-Wall"));
 }
 
 test "repeated messages are dropped" {
     try expectBrief(.gfortran, "a.f90:1:2: Error: x\na.f90:1:2: Error: x\na.f90:1:3: Error: x\n", &.{ "a.f90:1:2 error: x", "a.f90:1:3 error: x" });
+}
+
+fn expectAbsoluteDirs(id: Id, windows: bool, args: []const []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const base = if (windows) "C:\\src" else "/src";
+    const got = try absoluteDirs(arena.allocator(), id, args, base, .{ .windows = windows, .mod_dir = "m" });
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "Intel's relative include and module directories, made absolute for a run elsewhere" {
+    if (@import("builtin").target.os.tag == .windows) {
+        try expectAbsoluteDirs(.ifx, true, &.{ "/warn:all", "/Iinc", "/I", "more", "-Iother", "/module:mods", "/IC:\\abs" }, &.{ "/warn:all", "/IC:\\src\\inc", "/I", "C:\\src\\more", "-IC:\\src\\other", "/module:C:\\src\\mods", "/IC:\\abs" });
+    } else {
+        try expectAbsoluteDirs(.ifort, false, &.{ "-warn", "all", "-Iinc", "-I", "more", "-module", "mods", "-I/abs" }, &.{ "-warn", "all", "-I/src/inc", "-I", "/src/more", "-module", "/src/mods", "-I/abs" });
+    }
+    // the other compilers run beside the file: unchanged
+    try expectAbsoluteDirs(.gfortran, false, &.{"-Iinc"}, &.{"-Iinc"});
 }

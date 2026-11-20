@@ -1,50 +1,64 @@
-// The zfls command line from the zfls.* settings of a workspace folder.
+// The zfls command line from the zfls.* settings of a workspace folder, and
+// the same settings under zfls's configuration-file names, which a running
+// server takes over LSP (workspace/didChangeConfiguration).
 
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { expandDirectoryGlob } from "./lint/paths";
+import { FORMATTERS, type ServerSettings } from "./settingsSync";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
-/** A setting and the zfls option it becomes */
+/** A setting and the zfls option it becomes. `restart`: a running server
+ * cannot change it (it is read at start-up only). `fallback`: zfls's own
+ * default, for a value the command line leaves out. */
 type Option =
-  | { setting: string; flag: string; kind: "flag" }
-  | { setting: string; flag: string; kind: "int" }
-  | { setting: string; flag: string; kind: "string"; path?: boolean }
+  | { setting: string; flag: string; kind: "flag"; restart?: true }
+  | { setting: string; flag: string; kind: "int"; fallback: number }
+  | { setting: string; flag: string; kind: "string"; path?: boolean; restart?: true }
   | { setting: string; flag: string; kind: "list"; path?: boolean }
   | { setting: string; flag: string; kind: "json" };
 
 /** The typed settings, in the order their options are passed */
 export const OPTIONS: readonly Option[] = [
-  { setting: "incrementalSync", flag: "--incremental_sync", kind: "flag" },
+  { setting: "incrementalSync", flag: "--incremental_sync", kind: "flag", restart: true },
   { setting: "signatureHelp", flag: "--use_signature_help", kind: "flag" },
   { setting: "codeActions", flag: "--enable_code_actions", kind: "flag" },
   { setting: "hoverSignature", flag: "--hover_signature", kind: "flag" },
+  { setting: "docMath", flag: "--doc_math", kind: "string" },
   { setting: "preferImplementation", flag: "--prefer_implementation", kind: "flag" },
   { setting: "lowercaseHover", flag: "--lowercase_hover", kind: "flag" },
+  { setting: "hoverNoTypeComponents", flag: "--hover_no_type_components", kind: "flag" },
+  { setting: "hoverPlainComments", flag: "--hover_plain_comments", kind: "flag" },
   { setting: "lowercaseIntrinsics", flag: "--lowercase_intrinsics", kind: "flag" },
   { setting: "autocompleteNameOnly", flag: "--autocomplete_name_only", kind: "flag" },
   { setting: "autocompleteNoSnippets", flag: "--autocomplete_no_snippets", kind: "flag" },
   { setting: "autocompleteNoAutoUse", flag: "--autocomplete_no_auto_use", kind: "flag" },
   { setting: "sortKeywords", flag: "--sort_keywords", kind: "flag" },
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
+  { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
+  { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
+  { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
-  { setting: "nthreads", flag: "--nthreads", kind: "int" },
-  { setting: "maxLineLength", flag: "--max_line_length", kind: "int" },
-  { setting: "maxCommentLineLength", flag: "--max_comment_line_length", kind: "int" },
-  { setting: "fixedFormLineLength", flag: "--fixed_line_length", kind: "int" },
-  { setting: "configFile", flag: "--config", kind: "string", path: true },
+  { setting: "nthreads", flag: "--nthreads", kind: "int", fallback: 4 },
+  { setting: "maxLineLength", flag: "--max_line_length", kind: "int", fallback: -1 },
+  { setting: "maxCommentLineLength", flag: "--max_comment_line_length", kind: "int", fallback: -1 },
+  { setting: "fixedFormLineLength", flag: "--fixed_line_length", kind: "int", fallback: -1 },
+  { setting: "configFile", flag: "--config", kind: "string", path: true, restart: true },
   { setting: "sourceDirs", flag: "--source_dirs", kind: "list", path: true },
   { setting: "includeDirs", flag: "--include_dirs", kind: "list", path: true },
   { setting: "excludePaths", flag: "--excl_paths", kind: "list", path: true },
   { setting: "commentMarkers", flag: "--comment_markers", kind: "list" },
+  { setting: "disableOpenmpConditional", flag: "--disable_openmp_conditional", kind: "flag" },
+  { setting: "fixedFormDLines", flag: "--d_lines", kind: "string" },
   { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
   { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
   { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list" },
   { setting: "ppDefs", flag: "--pp_defs", kind: "json" },
+  { setting: "disableIntelDirectives", flag: "--disable_intel_directives", kind: "flag" },
   { setting: "diagnosticSeverity", flag: "--diagnostic_severity", kind: "json" },
   { setting: "externalModules", flag: "--external_modules", kind: "list" },
 ];
@@ -101,7 +115,8 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
-  args.push(...config.get<string[]>("arguments", []));
+  // the settings editor's "Add Item" leaves empty items easily
+  args.push(...config.get<string[]>("arguments", []).filter((a) => typeof a === "string" && a.trim() !== ""));
   return args;
 }
 
@@ -123,17 +138,27 @@ function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefi
 export function linterArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
-  if (compiler === "Disabled") {
+  const fixed = fixedCompilerSettings(config, folder);
+  if (compiler === "Disabled" && !fixed.compiler_diagnostics_fixed) {
     return [];
   }
-  const args = ["--compiler_diagnostics", compiler];
+  const args = ["--compiler_diagnostics", compiler === "Disabled" ? "none" : compiler];
+  if (fixed.compiler_diagnostics_fixed) {
+    args.push("--compiler_diagnostics_fixed", fixed.compiler_diagnostics_fixed);
+  }
+  if (fixed.compiler_path_fixed) {
+    args.push("--compiler_path_fixed", fixed.compiler_path_fixed);
+  }
+  if (fixed.compiler_args_fixed !== null) {
+    args.push(argOption("--compiler_args_fixed", fixed.compiler_args_fixed));
+  }
   const exe = config.get<string>("compilerPath", "").trim();
   if (exe) {
     args.push("--compiler_path", resolvePath(exe, folder));
   }
   const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
   if (extra.length) {
-    args.push(`--compiler_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    args.push(argOption("--compiler_args", extra.map((a) => resolvePath(a, folder))));
   }
   const includes = directories(config.get<string[]>("includePaths", []), folder);
   if (includes.length) {
@@ -152,6 +177,9 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   if (!config.get<boolean>("resolveModules", true)) {
     args.push("--compiler_no_dependencies");
   }
+  if (config.get<boolean>("noCompileCommands", false)) {
+    args.push("--compiler_no_compile_commands");
+  }
   if (config.get<boolean>("fypp.enabled", false)) {
     const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
     // a name is looked for on the PATH; a path is resolved
@@ -162,7 +190,7 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
       ...config.get<string[]>("fypp.extraArgs", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)),
     ];
     if (fyppArgs.length) {
-      args.push(`--compiler_fypp_args=${fyppArgs.join(" ")}`);
+      args.push(argOption("--compiler_fypp_args", fyppArgs));
     }
   }
   return args;
@@ -188,7 +216,7 @@ function fortitudeArguments(folder: vscode.WorkspaceFolder | undefined): string[
   }
   const extra = config.get<string[]>("args", []).filter((a) => a !== "");
   if (extra.length) {
-    args.push(`--fortitude_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    args.push(argOption("--fortitude_args", extra.map((a) => resolvePath(a, folder))));
   }
   if (config.get<boolean>("lintOnType", false)) {
     args.push("--fortitude_on_change", "--fortitude_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 500))));
@@ -210,7 +238,7 @@ function codeeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   }
   const extra = config.get<string[]>("args", []).filter((a) => a !== "");
   if (extra.length) {
-    args.push(`--codee_args=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+    args.push(argOption("--codee_args", extra.map((a) => resolvePath(a, folder))));
   }
   return args;
 }
@@ -226,31 +254,202 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   ];
   const args: string[] = [];
   let any = false;
+  let codee = false;
   for (const { languageId, flag, argsFlag } of forms) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
     const formatter = config.get<string>("formatter", "Disabled");
-    if (formatter !== "findent" && formatter !== "fprettify") {
+    if (!FORMATTERS.includes(formatter)) {
       args.push(flag, "none");
       continue;
     }
     any = true;
+    codee ||= formatter === "codee";
     args.push(flag, formatter);
     const extra = config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "");
     if (extra.length) {
-      args.push(`${argsFlag}=${extra.map((a) => resolvePath(a, folder)).join(" ")}`);
+      args.push(argOption(argsFlag, extra.map((a) => resolvePath(a, folder))));
     }
   }
   if (!any) {
     return [];
   }
-  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  const exe = formatterPath(folder, codee);
   if (exe) {
     args.push("--formatter_path", resolvePath(exe, folder));
   }
   return args;
 }
 
-/** Whether a configuration change needs the language servers restarted */
+/** zfls.formatting.path, else for Codee's formatter zfls.codee.path */
+function formatterPath(folder: vscode.WorkspaceFolder | undefined, codee: boolean): string {
+  const exe = vscode.workspace.getConfiguration("zfls.formatting", folder?.uri).get<string>("path", "").trim();
+  if (exe || !codee) {
+    return exe;
+  }
+  return vscode.workspace.getConfiguration("zfls.codee", folder?.uri).get<string>("path", "").trim();
+}
+
+/** The settings of `serverArguments` (but `zfls.arguments` and those a
+ * running server cannot change) under zfls's configuration-file names, each
+ * with its value: what the command line would set, else zfls's default.
+ * Sent to a running server, they take over from its command line.
+ * `source_dirs` is left out when empty: zfls's default (the root) has no
+ * value to send. */
+export function serverSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
+  const out: ServerSettings = {};
+  for (const o of OPTIONS) {
+    if ("restart" in o) {
+      continue;
+    }
+    const key = o.flag.slice(2);
+    const value = config.get<unknown>(o.setting);
+    switch (o.kind) {
+      case "flag":
+        out[key] = value === true;
+        break;
+      case "int":
+        out[key] = typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : o.fallback;
+        break;
+      case "string":
+        out[key] = typeof value === "string" && value !== "" ? (o.path ? resolvePath(value, folder) : value) : null;
+        break;
+      case "list": {
+        const items = (Array.isArray(value) ? value : []).filter((x): x is string => typeof x === "string" && x !== "");
+        const list = items.map((x) => (o.path ? resolvePath(x, folder) : x));
+        if (key === "source_dirs" && list.length === 0) {
+          break;
+        }
+        // no pp_suffixes: the default rule (uppercase extensions)
+        out[key] = key === "pp_suffixes" && list.length === 0 ? null : list;
+        break;
+      }
+      case "json":
+        out[key] = value !== null && typeof value === "object" ? value : {};
+        break;
+    }
+  }
+  return { ...out, ...linterSettings(folder), ...formattingSettings(folder), ...fortitudeSettings(folder), ...codeeSettings(folder) };
+}
+
+/** The compiler of fixed-form files (`zfls.linter.fixedCompiler`, its path
+ * and arguments) as settings; null: those of free form */
+function fixedCompilerSettings(config: vscode.WorkspaceConfiguration, folder: vscode.WorkspaceFolder | undefined) {
+  const name = config.get<string>("fixedCompiler", "").trim();
+  const exe = config.get<string>("fixedCompilerPath", "").trim();
+  const extra = config.get<string[] | null>("fixedExtraArgs", null);
+  return {
+    compiler_diagnostics_fixed: name === "" ? null : name === "Disabled" ? "none" : name,
+    compiler_path_fixed: exe ? resolvePath(exe, folder) : null,
+    compiler_args_fixed: Array.isArray(extra) ? extra.filter((a) => a !== "").map((a) => resolvePath(a, folder)) : null,
+  };
+}
+
+/** `linterArguments` as settings */
+function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
+  const compiler = config.get<string>("compiler", "gfortran");
+  const fixed = fixedCompilerSettings(config, folder);
+  const on = compiler !== "Disabled" || fixed.compiler_diagnostics_fixed !== null;
+  const exe = config.get<string>("compilerPath", "").trim();
+  const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
+  const modDir = config.get<string>("modOutput", "").trim();
+  const fypp = on && config.get<boolean>("fypp.enabled", false);
+  return {
+    compiler_diagnostics: compiler !== "Disabled" ? compiler : null,
+    ...fixed,
+    compiler_path: on && exe ? resolvePath(exe, folder) : null,
+    compiler_args: on && extra.length ? extra.map((a) => resolvePath(a, folder)) : null,
+    compiler_include_dirs: on ? directories(config.get<string[]>("includePaths", []), folder) : [],
+    compiler_mod_dir: on && modDir ? resolvePath(modDir, folder) : null,
+    compiler_no_save: on && !config.get<boolean>("lintOnSave", true),
+    compiler_on_change: on && config.get<boolean>("lintOnType", false),
+    compiler_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 1000)),
+    compiler_no_dependencies: on && !config.get<boolean>("resolveModules", true),
+    compiler_no_compile_commands: on && config.get<boolean>("noCompileCommands", false),
+    compiler_fypp: fypp ? programPath(config.get<string>("fypp.path", "fypp").trim() || "fypp", folder) : null,
+    compiler_fypp_args: fypp
+      ? [
+          ...directories(config.get<string[]>("fypp.includes", []), folder).map((d) => `-I${d}`),
+          ...Object.entries(config.get<Record<string, string>>("fypp.definitions", {})).map(([k, v]) => (v ? `-D${k}=${v}` : `-D${k}`)),
+          ...config.get<string[]>("fypp.extraArgs", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)),
+        ]
+      : [],
+  };
+}
+
+/** A zfls option that holds a program's arguments, on the command line:
+ * the arguments separated by spaces, or, when one has a space in it (a
+ * folder under a path with a space), as a JSON list, which zfls keeps item
+ * by item. The settings sent over LSP are lists. */
+export function argOption(flag: string, args: string[]): string {
+  const list = args.some((a) => /\s/.test(a)) || args[0]?.trimStart().startsWith("[");
+  return `${flag}=${list ? JSON.stringify(args) : args.join(" ")}`;
+}
+
+/** `fortitudeArguments` as settings */
+function fortitudeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const config = vscode.workspace.getConfiguration("zfls.fortitude", folder?.uri);
+  const on = config.get<boolean>("enabled", false);
+  const exe = config.get<string>("path", "").trim();
+  return {
+    fortitude: on,
+    fortitude_path: on && exe ? programPath(exe, folder) : null,
+    fortitude_args: on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : [],
+    fortitude_on_change: on && config.get<boolean>("lintOnType", false),
+    fortitude_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 500)),
+  };
+}
+
+/** `codeeArguments` as settings */
+function codeeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const config = vscode.workspace.getConfiguration("zfls.codee", folder?.uri);
+  const on = config.get<boolean>("enabled", false);
+  const exe = config.get<string>("path", "").trim();
+  return {
+    codee: on,
+    codee_path: on && exe ? programPath(exe, folder) : null,
+    codee_args: on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : [],
+  };
+}
+
+/** `formattingArguments` as settings */
+function formattingSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const out: ServerSettings = {};
+  let any = false;
+  let codee = false;
+  for (const [languageId, key] of [
+    ["FortranFreeForm", "formatter"],
+    ["FortranFixedForm", "formatter_fixed"],
+  ]) {
+    const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
+    const formatter = config.get<string>("formatter", "Disabled");
+    const on = FORMATTERS.includes(formatter);
+    any ||= on;
+    codee ||= formatter === "codee";
+    out[key] = on ? formatter : "none";
+    const extra = on ? config.get<string[]>(`${formatter}Args`, []).filter((a) => a !== "") : [];
+    out[`${key}_args`] = extra.map((a) => resolvePath(a, folder));
+  }
+  const exe = formatterPath(folder, codee);
+  out.formatter_path = any && exe ? resolvePath(exe, folder) : null;
+  return out;
+}
+
+/** Whether a configuration change restarts the language server of `scope`
+ * (a workspace folder, or none): a change of a setting a running server
+ * cannot change, or any while `zfls.arguments` has options, which may set
+ * what a setting does (on the command line, under what the server is sent) */
+export function restartsServer(e: vscode.ConfigurationChangeEvent, scope: vscode.Uri | undefined): boolean {
+  return (
+    e.affectsConfiguration("zfls.path", scope) ||
+    e.affectsConfiguration("zfls.arguments", scope) ||
+    OPTIONS.some((o) => "restart" in o && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
+    vscode.workspace.getConfiguration("zfls", scope).get<string[]>("arguments", []).length > 0
+  );
+}
+
+/** Whether a configuration change concerns the language servers */
 export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
   return (
     e.affectsConfiguration("zfls.path") ||

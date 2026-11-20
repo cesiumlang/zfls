@@ -19,6 +19,7 @@ const Obj = objects.Obj;
 const Env = objects.Env;
 const findInScope = objects.findInScope;
 const climbTypeTree = objects.climbTypeTree;
+const selector = @import("selector.zig");
 
 pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Error!void {
     switch (self.kind) {
@@ -119,15 +120,23 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             mems.clearRetainingCapacity();
             const p = self.parent orelse return;
             for (self.scopeData().members.items) |member| {
-                if (try findInScope(env, p, member, .{})) |m| try mems.append(self.al(), m);
+                if (try specificOf(env, self, p, member)) |m| try mems.append(self.al(), m);
             }
+            // and the interface bodies of a generic (#472); those of an
+            // interface block that has no generic specification declare
+            // external procedures, and those of an abstract one, abstract
+            // interfaces: names of the scope around, no specifics
+            if (self.ifaceData().generic) for (self.childList()) |child| {
+                if (child.kind.isSubroutine()) try mems.append(self.al(), child);
+            };
+            try resolveExtended(env, self);
         },
-        .subroutine => try self.resolveArgLink(),
+        .subroutine => try self.resolveArgLink(env.tmp),
         .function => {
-            try self.resolveArgLink();
+            try self.resolveArgLink(env.tmp);
             const proc = self.procData();
             const rn = proc.result_name orelse self.name;
-            for (self.childList()) |child| {
+            for ((proc.entry_of orelse self).childList()) |child| {
                 if (std.ascii.eqlIgnoreCase(child.name, rn)) {
                     proc.result_obj = child;
                     proc.result_name = child.name;
@@ -137,39 +146,124 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         },
         .submodule => try self.resolveSubmoduleLink(env),
         .associate => {
+            // the selectors are names of the scope around the construct
+            // (`associate (x => x%field)`: the outer `x`)
+            const outer = self.parent orelse self;
             for (self.assocData().links.items) |*assoc| {
-                assoc.var_.varData().link_obj = null;
-                assoc.link_name = try R().PAREN_CONTENT.sub(self.al(), "", assoc.link_name);
-                const var_stack = try helpers.getVarStack(env.tmp, assoc.link_name);
+                const v = assoc.var_.varData();
+                v.link_obj = null;
+                const name = try R().PAREN_CONTENT.sub(env.tmp, "", assoc.link_name);
                 var var_obj: ?*Obj = null;
-                if (var_stack.len > 1) {
-                    const type_scope = (try climbTypeTree(env, var_stack, self)) orelse continue;
-                    var_obj = try findInScope(env, type_scope, var_stack[var_stack.len - 1], .{});
-                } else {
-                    var_obj = try findInScope(env, self, assoc.link_name, .{});
+                if (selector.isDesignator(name)) {
+                    const var_stack = try helpers.getVarStack(env.tmp, name);
+                    if (var_stack.len > 1) {
+                        if (try climbTypeTree(env, var_stack, outer)) |type_scope| {
+                            var_obj = try findInScope(env, type_scope, var_stack[var_stack.len - 1], .{});
+                        }
+                    } else {
+                        var_obj = try findInScope(env, outer, str.strip(name), .{});
+                    }
                 }
-                if (var_obj) |v| if (!assoc.var_.linkLoops(v)) {
-                    assoc.var_.varData().link_obj = v;
+                if (var_obj) |o| if (!assoc.var_.linkLoops(o)) {
+                    v.link_obj = o;
+                    continue;
                 };
+                // a literal or an expression: its type
+                const t = try selector.typeOf(env, outer, assoc.link_name, self.sline);
+                v.desc = if (t) |typ| try self.al().dupe(u8, typ.desc) else "UNKNOWN";
+                v.vkind = if (t) |typ| if (typ.kind) |k| try self.al().dupe(u8, k) else null else null;
             }
         },
         else => {},
     }
 }
 
-pub fn resolveArgLink(self: *Obj) !void {
+/// The specific procedure `name` of generic interface `generic`, whose
+/// scope is `scope`: what the name stands for there, unless that is the
+/// generic itself, a generic having the name of one of its specifics
+/// (`interface sync` with `module procedure sync`, #469); then the other
+/// object of that name in the scope, by USE or in the host.
+fn specificOf(env: Env, generic: *Obj, scope: *Obj, name: []const u8) Allocator.Error!?*Obj {
+    const found = try findInScope(env, scope, name, .{});
+    if (found != generic) return found;
+    for (scope.childList()) |child| {
+        if (child != generic and std.ascii.eqlIgnoreCase(child.name, name)) return child;
+    }
+    if (try objects.findThroughUse(env, scope, try std.ascii.allocLowerString(env.tmp, name), false)) |v| return v;
+    return findInScope(env, scope.parent, name, .{});
+}
+
+/// Whether `o` is a generic interface with a generic name (not an
+/// OPERATOR or ASSIGNMENT block, whose blocks the operator requests
+/// gather over the workspace)
+fn isNamedGeneric(o: *const Obj) bool {
+    return o.kind == .interface and o.ifaceDataConst().generic and o.name.len > 0 and o.name[0] != '#';
+}
+
+/// A generic is one with the other interface blocks of its name that it
+/// sees (#478): those of its scope, those that USE brings in (of every
+/// module that has the name), or else that its host has; and so those
+/// blocks' own in turn. Their specifics are appended to `self`'s, which
+/// lists them in `extends`.
+fn resolveExtended(env: Env, self: *Obj) Allocator.Error!void {
+    const iface = self.ifaceData();
+    iface.extends.clearRetainingCapacity();
+    if (!isNamedGeneric(self)) return;
+    const scope = self.parent orelse return;
+    if (scope.kind == .type) return;
+    var seen: std.ArrayList(*Obj) = .empty;
+    try seen.append(env.tmp, self);
+    try addBlocks(env, self, scope, try std.ascii.allocLowerString(env.tmp, self.name), &seen);
+    for (seen.items[1..]) |g| try iface.extends.append(self.al(), g);
+}
+
+/// For `resolveExtended`: the blocks of generic `name` in `scope` not yet
+/// `seen`, and then those `scope` sees of the name
+fn addBlocks(env: Env, self: *Obj, scope: *Obj, name: []const u8, seen: *std.ArrayList(*Obj)) Allocator.Error!void {
+    for (scope.childList()) |g| {
+        if (!isNamedGeneric(g) or !std.ascii.eqlIgnoreCase(g.name, name)) continue;
+        if (std.mem.findScalar(*Obj, seen.items, g) != null) continue;
+        try seen.append(env.tmp, g);
+        const p = g.parent orelse continue;
+        const mems = &self.ifaceData().mems;
+        for (g.scopeData().members.items) |member| {
+            const m = (try specificOf(env, g, p, member)) orelse continue;
+            if (std.mem.findScalar(*Obj, mems.items, m) == null) try mems.append(self.al(), m);
+        }
+        for (g.childList()) |m| {
+            if (m.kind.isSubroutine() and std.mem.findScalar(*Obj, mems.items, m) == null) try mems.append(self.al(), m);
+        }
+    }
+    var used: std.ArrayList(*Obj) = .empty;
+    try objects.findAllThroughUse(env, scope, name, &used);
+    for (used.items) |g| {
+        if (!isNamedGeneric(g) or std.mem.findScalar(*Obj, seen.items, g) != null) continue;
+        const p = g.parent orelse continue;
+        try addBlocks(env, self, p, try std.ascii.allocLowerString(env.tmp, g.name), seen);
+    }
+    if (used.items.len > 0) return;
+    // the host's: not of an interface body, which has none
+    const host = scope.parent orelse return;
+    if (host.kind == .interface or scope.kind == .module or scope.kind == .submodule) return;
+    // a name of the host that is no generic hides those it sees
+    if (try findInScope(env, host, name, .{ .local_only = true })) |o| if (!isNamedGeneric(o)) return;
+    try addBlocks(env, self, host, name, seen);
+}
+
+/// `t`: for the time of the call (a page allocator's arena for each of a
+/// workspace's procedures made linking it several times slower, #219)
+pub fn resolveArgLink(self: *Obj, t: Allocator) !void {
     const proc = self.procData();
     if (proc.args.len == 0 or self.scopeData().in_children.items.len > 0) return;
     const a = self.al();
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const t = arena.allocator();
     const arg_list = try str.split(t, proc.args, ",");
     const arg_list_lower = try str.split(t, try std.ascii.allocLowerString(t, proc.args), ",");
     proc.arg_objs.clearRetainingCapacity();
     try proc.arg_objs.appendNTimes(a, null, arg_list.len);
     proc.missing_args.clearRetainingCapacity();
-    for (self.childList()) |child| {
+    // an ENTRY's are the variables of the procedure it is an entry of
+    const owner = proc.entry_of orelse self;
+    for (owner.childList()) |child| {
         var ind: ?usize = null;
         for (arg_list_lower, 0..) |arg, i| {
             if (std.ascii.eqlIgnoreCase(arg, child.name)) {
@@ -187,7 +281,7 @@ pub fn resolveArgLink(self: *Obj) !void {
         if (ind) |i| {
             proc.arg_objs.items[i] = child;
             if (child.isOptional()) arg_list[i] = try t.print("{s}={s}", .{ arg_list[i], arg_list[i] });
-        } else if (child.hasKeyword(KW.intent)) {
+        } else if (child.hasKeyword(KW.intent) and owner == self) {
             try proc.missing_args.append(a, child);
         }
     }

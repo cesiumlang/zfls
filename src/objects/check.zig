@@ -38,7 +38,14 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             // file that zfls does not read: not found, or a part of a
             // statement's text (json-fortran's argument lists)
             for (self.file_ast.include_statements.items) |inc| {
-                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                if (inc.file != null) continue;
+                if (inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                // the macros of an `#include` not found outside every
+                // procedure may make the declarations of those after it
+                if (inc.missing != null and inc.line_number < self.sline) {
+                    const at = self.file_ast.getInnerScope(inc.line_number);
+                    if (at == null or !at.?.kind.isSubroutine()) return errors.items;
+                }
             }
             for (self.procDataConst().missing_args.items) |m| {
                 try errors.append(a, Diagnostic.init(
@@ -55,13 +62,16 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                 if (arg_obj == null) {
                     const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
-                    try errors.append(a, Diagnostic.init(
+                    var d = Diagnostic.init(
                         .argument_not_declared,
                         self.sline -| 1,
                         try a.print("No matching declaration found for argument \"{s}\"", .{arg_name}),
                         1,
                         arg_name,
-                    ));
+                    );
+                    // for the quick fix declaring it
+                    d.subject = arg_name;
+                    try errors.append(a, d);
                 }
             }
         },
@@ -149,10 +159,14 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
 
     for (self.childList()) |child| {
         if (std.mem.startsWith(u8, child.name, "#")) continue;
+        // a procedure an include links in is checked in its own file, at its
+        // own lines, which are none of this scope's
+        if (child.file_ast != self.file_ast and child.kind.isSubroutine()) continue;
         const line_number = child.sline -| 1;
         if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
         const ct = child.getType(true);
-        if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function)) {
+        const stmt_function = child.kind == .function and child.procDataConst().stmt_function;
+        if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function) and !stmt_function) {
             try errors.append(a, Diagnostic.init(.procedure_before_contains, line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
         }
         if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
@@ -164,9 +178,14 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         };
         // an interface body has no host association, so nothing in it masks
         // a variable of the scope around the interface (hansec #200)
-        if (self.parent != null and !is_interface and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
+        // nor in a statement function, whose dummy arguments are typed as
+        // the variables of their names in the scope around it
+        const in_stmt_function = self.kind == .function and self.procDataConst().stmt_function;
+        if (self.parent != null and !is_interface and !in_stmt_function and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
             if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
+                // the result variable of an ENTRY of this function
+                if (parent_var.kind == .function and parent_var.procDataConst().entry_of == self) continue;
                 var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
                 d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                 try errors.append(a, d);
@@ -182,6 +201,8 @@ pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
     // lines are 1-based, so 0 is before every USE statement
     var last_use_line: usize = 0;
     for (self.scopeDataConst().use.items) |u| {
+        // the included file reports its own
+        if (u.included) continue;
         last_use_line = @max(last_use_line, u.line_number);
         if (u.is_import) {
             if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {

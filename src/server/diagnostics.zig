@@ -18,6 +18,8 @@ const suppress = @import("../suppress.zig");
 const implicit = @import("../implicit.zig");
 const selection = @import("../selection.zig");
 const unused = @import("../unused.zig");
+const procinterface = @import("../procinterface.zig");
+const extract = @import("../extract.zig");
 const modgraph = @import("../modgraph.zig");
 const argcheck = @import("../argcheck.zig");
 const rewrite = @import("../rewrite.zig");
@@ -34,6 +36,8 @@ const Server = srv.Server;
 const completion = @import("completion.zig");
 const compile = @import("compile.zig");
 const linters = @import("linters.zig");
+const convert = @import("convert.zig");
+const summary = @import("summary.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     var out: std.ArrayList(lsp.CodeAction) = .empty;
@@ -47,10 +51,14 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     const eline = params.range.end.line;
     try addUseActions(self, a, file, ast, sline, eline, &out);
     try addDeclareActions(self, a, file, ast, sline, eline, &out);
-    try addRemoveUnusedActions(self, a, file, ast, sline, eline, &out);
+    try addDeclareArgActions(self, a, file, ast, sline, eline, &out);
+    try addRemoveUnusedActions(self, a, file, ast, sline, eline, params.context.only, &out);
     try addRewriteActions(self, a, file, ast, sline, eline, &out);
     try addStubActions(self, a, file, ast, sline, eline, &out);
+    try addExtractAction(self, a, file, ast, params.range, params.context.only, &out);
     if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
+    // findent runs only when source actions are asked for
+    if (wants(params.context.only, "source")) if (try convert.freeFormAction(self, a, file)) |act| try out.append(a, act);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     for (actions) |act| {
@@ -164,8 +172,9 @@ pub fn addRewriteActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         if (sc.parent) |p| if (p.kind == .interface) continue;
         if (sc.getImplicit() != null) continue;
         const at = try autouse.insertionPoint(a, file, sc);
+        const ins = Server.lineInsertion(file, at.line);
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}implicit none\n", .{at.indent}) };
+        edits[0] = .{ .range = ins.range, .newText = try a.print("{s}{s}implicit none\n", .{ ins.prefix, at.indent }) };
         try out.append(a, try action(a, uri, try a.print("Add IMPLICIT NONE to {s}", .{sc.name}), "quickfix", edits));
     }
     var op_edits: std.ArrayList(lsp.TextEdit) = .empty;
@@ -182,25 +191,110 @@ pub fn addRewriteActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
     if (kind_edits.items.len > 0) try out.append(a, try action(a, uri, "Write the kinds given with * as kind parameters", "refactor.rewrite", kind_edits.items));
 }
 
-/// `text` (lines) with `indent` before each line, and two spaces more
-/// before the lines between the first and the last
-fn indentBlock(a: Allocator, text: []const u8, indent: []const u8) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    var it = std.mem.splitScalar(u8, text, '\n');
-    var lines: std.ArrayList([]const u8) = .empty;
-    while (it.next()) |l| try lines.append(a, l);
-    for (lines.items, 0..) |l, i| {
-        try out.appendSlice(a, indent);
-        if (i > 0 and i + 1 < lines.items.len) try out.appendSlice(a, "  ");
-        try out.appendSlice(a, l);
-        try out.append(a, '\n');
+/// Writes `stmt` (one line) after `indent`, continued on further lines
+/// where it is long: at a comma, in the form of the file (`fixed`)
+fn writeStatement(a: Allocator, out: *std.ArrayList(u8), indent: []const u8, stmt: []const u8, fixed: bool) !void {
+    const limit: usize = if (fixed) 72 else 100;
+    // where the code of a continuation line starts
+    const cont_col = indent.len + 4;
+    var rest = stmt;
+    var lead = indent;
+    while (true) {
+        try out.appendSlice(a, lead);
+        const room = limit -| lead.len -| @as(usize, if (fixed) 0 else 2);
+        if (rest.len <= limit -| lead.len or room == 0) {
+            try out.appendSlice(a, rest);
+            try out.append(a, '\n');
+            return;
+        }
+        const cut = if (std.mem.findLast(u8, rest[0..room], ", ")) |i| i + 1 else if (fixed) room else {
+            try out.appendSlice(a, rest);
+            try out.append(a, '\n');
+            return;
+        };
+        try out.appendSlice(a, rest[0..cut]);
+        try out.appendSlice(a, if (fixed) "\n" else " &\n");
+        rest = std.mem.trimStart(u8, rest[cut..], " ");
+        lead = if (fixed)
+            try std.mem.concat(a, u8, &.{ "     &", try spaces(a, cont_col -| 6) })
+        else
+            try spaces(a, cont_col);
     }
-    return out.items;
+}
+
+fn spaces(a: Allocator, n: usize) ![]const u8 {
+    const out = try a.alloc(u8, n);
+    @memset(out, ' ');
+    return out;
+}
+
+/// The interface block of external procedure `proc` for `unit`, at the
+/// end of its declarations, and the cuts removing the declarations of its
+/// name that `unit` has (`external f`, `real f`), which the block replaces
+fn interfaceEdits(a: Allocator, file: *FortranFile, ast: *Ast, unit: *Obj, proc: *const Obj) !?[]const lsp.TextEdit {
+    const stmts = (try procinterface.body(a, proc)) orelse return null;
+    const at = try declarationPoint(a, file, unit);
+    var text: std.ArrayList(u8) = .empty;
+    try writeStatement(a, &text, at.indent, "interface", file.fixed);
+    const inner = try std.mem.concat(a, u8, &.{ at.indent, "  " });
+    const body = try std.mem.concat(a, u8, &.{ at.indent, "    " });
+    for (stmts, 0..) |st, i| try writeStatement(a, &text, if (i == 0 or i + 1 == stmts.len) inner else body, st, file.fixed);
+    try writeStatement(a, &text, at.indent, "end interface", file.fixed);
+    var edits: std.ArrayList(lsp.TextEdit) = .empty;
+    // the unit's own declarations of the name, outside the scopes in it
+    const sd = unit.scopeDataConst();
+    const end = @min((sd.contains_start orelse unit.eline) -| 1, file.nLines());
+    var l: usize = unit.sline;
+    while (l < end) : (l += 1) {
+        if (selection.statementLines(file, l).first != l) continue;
+        if (ast.getInnerScope(l + 1) != unit) continue;
+        const raw = file.getLine(l, false) orelse continue;
+        var words = helpers.words(raw);
+        const first = words.next() orelse continue;
+        if (std.ascii.eqlIgnoreCase(first.str, "use")) continue;
+        const cuts = (try unused.removal(a, file, l, &.{proc.name})) orelse continue;
+        try edits.appendSlice(a, try cutEdits(a, file, cuts));
+    }
+    const ins = Server.lineInsertion(file, at.line);
+    try edits.append(a, .{ .range = ins.range, .newText = try std.mem.concat(a, u8, &.{ ins.prefix, text.items }) });
+    return edits.items;
+}
+
+/// On a selection of whole statements of a procedure or program: moving
+/// them into a new internal subroutine, called in their place (#222). When
+/// they cannot be moved, and the client asks for refactorings and shows
+/// actions that cannot be taken, the action with why.
+fn addExtractAction(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, range: lsp.Range, only: ?[]const []const u8, out: *std.ArrayList(lsp.CodeAction)) !void {
+    if (only != null and !wants(only, "refactor.extract")) return;
+    const first = range.start.line;
+    // a selection of whole lines ends at the start of the next one
+    const last = if (range.end.line > first and range.end.character == 0) range.end.line - 1 else range.end.line;
+    if (range.start.line == range.end.line and range.start.character == range.end.character) return;
+    const p = (try extract.plan(a, file, ast, first, last)) orelse return;
+    const ok = switch (p) {
+        .refused => |why| {
+            if (only == null or !self.config.client.textDocument.codeAction.disabledSupport) return;
+            var act = try action(a, try paths.pathToUri(a, file.path), "Extract into subroutine", "refactor.extract", &.{});
+            act.disabled = .{ .reason = try a.print("Cannot extract: {s}", .{why}) };
+            return out.append(a, act);
+        },
+        .extracted => |e| e,
+    };
+    const edits = try a.alloc(lsp.TextEdit, ok.edits.len);
+    for (ok.edits, edits) |e, *te| te.* = .{
+        .range = .{
+            .start = .{ .line = e.sl, .character = Server.toLspCol(file, e.sl, e.sc) },
+            .end = .{ .line = e.el, .character = Server.toLspCol(file, e.el, e.ec) },
+        },
+        .newText = e.text,
+    };
+    try out.append(a, try action(a, try paths.pathToUri(a, file.path), try a.print("Extract into subroutine {s}", .{ok.name}), "refactor.extract", edits));
 }
 
 /// Code actions that write declarations from others:
 /// - on a line calling a procedure defined outside any module, an
-///   interface block for it in the unit around the call;
+///   interface block for it in the unit around the call, replacing the
+///   unit's EXTERNAL or type declaration of it;
 /// - on a separate module procedure that has no implementation, its
 ///   `module procedure` stub in a submodule of its module (a new one at the
 ///   end of the file when there is none)
@@ -215,7 +309,9 @@ pub fn addStubActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast
         var it = helpers.words(code);
         var offered: std.ArrayList(*Obj) = .empty;
         while (it.next()) |w| {
-            const o = (try definition.getDefinition(self, a, file, ln, w.start, false)) orelse continue;
+            var o = (try definition.getDefinition(self, a, file, ln, w.start, false)) orelse continue;
+            // the caller's own declaration of an external procedure
+            if (o.kind == .variable) o = (try definition.callerTarget(self, a, file, ln, w.start, o)) orelse continue;
             if ((o.kind != .subroutine and o.kind != .function) or o.file_ast.file == null) continue;
             if (std.mem.findScalar(*Obj, offered.items, o) != null) continue;
             try offered.append(a, o);
@@ -223,12 +319,7 @@ pub fn addStubActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast
                 // an external procedure, called from another unit
                 const unit = autouse.unitOf(try ast.getScopes(a, ln + 1)) orelse continue;
                 if (unit == o or o.sline == ln + 1) continue;
-                const iface = (try o.getInterface(a, null, null, null)) orelse continue;
-                const at = try declarationPoint(a, file, unit);
-                const body = try indentBlock(a, iface, try std.mem.concat(a, u8, &.{ at.indent, "  " }));
-                const text = try a.print("{s}interface\n{s}{s}end interface\n", .{ at.indent, body, at.indent });
-                const edits = try a.alloc(lsp.TextEdit, 1);
-                edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text };
+                const edits = (try interfaceEdits(a, file, ast, unit, o)) orelse continue;
                 try out.append(a, try action(a, uri, try a.print("Add an interface block for {s}", .{o.name}), "quickfix", edits));
             } else if (o.parent.?.kind == .interface and o.isModScope() and o.linkObj() == null and o.sline == ln + 1) {
                 try submoduleStub(self, a, file, o, out);
@@ -254,11 +345,13 @@ fn submoduleStub(self: *Server, a: Allocator, file: *FortranFile, proto: *Obj, o
         try out.append(a, try action(a, try paths.pathToUri(a, path), try a.print("Implement {s} in submodule {s}", .{ proto.name, u.name }), "quickfix", edits));
         return;
     }
-    // a new submodule after the module
-    const end_line = file.nLines();
+    // a new submodule after the module, at the end of the last line (a
+    // line after it is not in the document)
+    const end_line = file.nLines() -| 1;
+    const end_col = if (file.getLine(end_line, false)) |l| l.len else 0;
     const edits = try a.alloc(lsp.TextEdit, 1);
     edits[0] = .{
-        .range = Server.rangeOf(file, end_line, 0, end_line, 0),
+        .range = Server.rangeOf(file, end_line, end_col, end_line, end_col),
         .newText = try a.print("\nsubmodule ({s}) {s}_impl\ncontains\n  module procedure {s}\n  end procedure {s}\nend submodule {s}_impl\n", .{ module.name, module.name, proto.name, proto.name, module.name }),
     };
     try out.append(a, try action(a, try paths.pathToUri(a, file.path), try a.print("Implement {s} in a new submodule", .{proto.name}), "quickfix", edits));
@@ -312,7 +405,7 @@ fn isDotWord(w: []const u8) bool {
 /// assignments to INTENT(IN) arguments
 pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try argcheck.check(a, self.env(a), file, ast)) |p| try out.append(a, .{
+    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values())) |p| try out.append(a, .{
         .sln = p.line,
         .sch = p.start,
         .eln = p.line,
@@ -406,6 +499,27 @@ pub fn circularUses(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) 
     return out.items;
 }
 
+/// The `#include` directives whose file is found neither next to the file
+/// nor in `include_dirs` (`include-not-found`, information)
+pub fn includesNotFound(a: Allocator, ast: *Ast) ![]const objects.BuiltDiag {
+    var out: std.ArrayList(objects.BuiltDiag) = .empty;
+    for (ast.include_statements.items) |inc| {
+        const cols = inc.missing orelse continue;
+        if (inc.file != null) continue;
+        try out.append(a, .{
+            .sln = inc.line_number -| 1,
+            .sch = cols[0],
+            .eln = inc.line_number -| 1,
+            .ech = cols[1],
+            .message = try a.print("Include file \"{s}\" not found (include_dirs)", .{inc.path}),
+            .severity = C.Severity.info,
+            .code = .include_not_found,
+            .subject = inc.path,
+        });
+    }
+    return out.items;
+}
+
 /// The local variables and USE ONLY names that their scope never uses,
 /// shown faded (`unused-name`, a hint)
 pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
@@ -426,27 +540,63 @@ pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects
     return out.items;
 }
 
-/// For each unused name on 0-based lines `sline`..`eline` whose statement
-/// declares nothing else: a quick fix removing that statement
-pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+/// For each unused name on 0-based lines `sline`..`eline`: a quick fix
+/// removing it from its declaration (the whole statement when it declares
+/// nothing else); and as a source action, removing all of the file's.
+/// Names whose hint is hidden are left alone.
+pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, only: ?[]const []const u8, out: *std.ArrayList(lsp.CodeAction)) !void {
+    if ((severityOf(self, .unused_name) orelse C.Severity.hint) == 0) return;
     const uri = try paths.pathToUri(a, file.path);
-    const diags = try unusedNames(a, file, ast);
-    for (try unused.find(a, file, ast), diags) |u, d| {
+    const hidden = try suppress.of(a, file);
+    const found = try unused.find(a, file, ast);
+    // the names of each declaration statement, for the source action
+    var by_statement: std.array_hash_map.Auto(usize, std.ArrayList([]const u8)) = .empty;
+    for (found, try unusedNames(a, file, ast)) |u, d| {
+        if (hidden.hides(d.code, d.sln)) continue;
+        const gop = try by_statement.getOrPut(a, u.decl_line);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(a, u.name);
         if (u.line < sline or u.line > eline) continue;
-        const r = u.removable orelse continue;
-        const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, r.first, 0, r.last + 1, 0), .newText = "" };
-        const files = try a.alloc(lsp.Changes.File, 1);
-        files[0] = .{ .uri = uri, .edits = edits };
+        const cuts = (try unused.removal(a, file, u.decl_line, &.{u.name})) orelse continue;
         const dv = try a.alloc(lsp.Diagnostic, 1);
         dv[0] = try self.diagnosticOf(a, file, d);
-        try out.append(a, .{
-            .title = try a.print("Remove unused {s}", .{u.name}),
-            .kind = "quickfix",
-            .edit = .{ .changes = .{ .files = files } },
-            .diagnostics = dv,
-        });
+        var act = try action(a, uri, try a.print("Remove unused {s}", .{u.name}), "quickfix", try cutEdits(a, file, cuts));
+        act.diagnostics = dv;
+        try out.append(a, act);
     }
+    if (!wants(only, "source")) return;
+    var edits: std.ArrayList(lsp.TextEdit) = .empty;
+    var it = by_statement.iterator();
+    while (it.next()) |e| {
+        const cuts = (try unused.removal(a, file, e.key_ptr.*, e.value_ptr.items)) orelse continue;
+        try edits.appendSlice(a, try cutEdits(a, file, cuts));
+    }
+    if (edits.items.len > 0) try out.append(a, try action(a, uri, "Remove all unused declarations", "source.removeUnused", edits.items));
+}
+
+fn cutEdits(a: Allocator, file: *const FortranFile, cuts: []const unused.Cut) ![]const lsp.TextEdit {
+    const edits = try a.alloc(lsp.TextEdit, cuts.len);
+    for (cuts, edits) |c_in, *e| {
+        var c = c_in;
+        // whole lines up to a line after the last, which is not in the
+        // document: to the end of the last, from the end of the line before
+        if (c.el >= file.nLines()) {
+            c.el = file.nLines() -| 1;
+            c.ec = if (file.getLine(c.el, false)) |l| l.len else 0;
+            if (c.sc == 0 and c.sl > 0) {
+                c.sl -= 1;
+                c.sc = if (file.getLine(c.sl, false)) |l| l.len else 0;
+            }
+        }
+        e.* = .{
+            .range = .{
+                .start = .{ .line = c.sl, .character = Server.toLspCol(file, c.sl, c.sc) },
+                .end = .{ .line = c.el, .character = Server.toLspCol(file, c.el, c.ec) },
+            },
+            .newText = "",
+        };
+    }
+    return edits;
 }
 
 /// Whether `file` has fypp directives (`#:for`, `#:set`, ...) or inline
@@ -516,10 +666,10 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
         const key = try a.print("{x}:{s}", .{ @intFromPtr(unit), try std.ascii.allocLowerString(a, name) });
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         const at = try declarationPoint(a, file, unit);
-        const letter = std.ascii.toLower(name[0]);
-        const type_name: []const u8 = if (letter >= 'i' and letter <= 'n') "integer" else "real";
+        const ins = Server.lineInsertion(file, at.line);
+        const type_name = defaultType(name);
         const edits = try a.alloc(lsp.TextEdit, 1);
-        edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = try a.print("{s}{s} :: {s}\n", .{ at.indent, type_name, name }) };
+        edits[0] = .{ .range = ins.range, .newText = try a.print("{s}{s}{s} :: {s}\n", .{ ins.prefix, at.indent, type_name, name }) };
         const files = try a.alloc(lsp.Changes.File, 1);
         files[0] = .{ .uri = uri, .edits = edits };
         const dv = try a.alloc(lsp.Diagnostic, 1);
@@ -531,6 +681,55 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
             .diagnostics = dv,
         });
     }
+}
+
+/// The type the default IMPLICIT rules give `name`
+fn defaultType(name: []const u8) []const u8 {
+    const letter = std.ascii.toLower(name[0]);
+    return if (letter >= 'i' and letter <= 'n') "integer" else "real";
+}
+
+/// For each dummy argument with no declaration (`argument-not-declared`)
+/// on the procedure headers of 0-based lines `sline`..`eline`: a quick fix
+/// declaring it with the type of the default rules, after the last
+/// declaration of the procedure; and one declaring all of a procedure's
+/// when it has several
+pub fn addDeclareArgActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast, sline: usize, eline: usize, out: *std.ArrayList(lsp.CodeAction)) !void {
+    const uri = try paths.pathToUri(a, file.path);
+    const diags = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
+    for (ast.scope_list.items) |proc| {
+        if (proc.kind != .subroutine and proc.kind != .function) continue;
+        if (proc.sline == 0 or proc.sline - 1 < sline or proc.sline - 1 > eline) continue;
+        var names: std.ArrayList([]const u8) = .empty;
+        var text: std.ArrayList(u8) = .empty;
+        var found: std.ArrayList(lsp.Diagnostic) = .empty;
+        const at = try declarationPoint(a, file, proc);
+        const ins = Server.lineInsertion(file, at.line);
+        for (diags) |d| {
+            if (d.code != .argument_not_declared or d.sln != proc.sline - 1) continue;
+            const name = d.subject orelse continue;
+            if (name.len == 0) continue;
+            const decl = try a.print("{s}{s} :: {s}\n", .{ at.indent, defaultType(name), name });
+            const dv = try a.alloc(lsp.Diagnostic, 1);
+            dv[0] = try self.diagnosticOf(a, file, d);
+            try out.append(a, try declareAction(a, uri, ins.range, try a.print("Declare {s} as {s}", .{ name, defaultType(name) }), try std.mem.concat(a, u8, &.{ ins.prefix, decl }), dv));
+            try names.append(a, name);
+            try text.appendSlice(a, decl);
+            try found.append(a, dv[0]);
+        }
+        if (names.items.len < 2) continue;
+        const title = try a.print("Declare the arguments {s}", .{try std.mem.join(a, ", ", names.items)});
+        try out.append(a, try declareAction(a, uri, ins.range, title, try std.mem.concat(a, u8, &.{ ins.prefix, text.items }), found.items));
+    }
+}
+
+/// A quick fix inserting `text` at `range` of the document `uri`
+fn declareAction(a: Allocator, uri: []const u8, range: lsp.Range, title: []const u8, text: []const u8, diags: []const lsp.Diagnostic) !lsp.CodeAction {
+    const edits = try a.alloc(lsp.TextEdit, 1);
+    edits[0] = .{ .range = range, .newText = text };
+    const files = try a.alloc(lsp.Changes.File, 1);
+    files[0] = .{ .uri = uri, .edits = edits };
+    return .{ .title = title, .kind = "quickfix", .edit = .{ .changes = .{ .files = files } }, .diagnostics = diags };
 }
 
 /// Where a new declaration of `unit` goes: after the last declaration of
@@ -565,11 +764,12 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
         const at = try autouse.insertionPoint(a, file, unit);
-        for (try autouse.exports(a, try completion.usableModules(self, a), .{ .exact = name }, 10)) |e| {
+        const ins = Server.lineInsertion(file, at.line);
+        for (try autouse.exports(a, try completion.usableModules(self, a, ast), .{ .exact = name }, 10)) |e| {
             if (autouse.isWithin(unit, e.module)) continue;
             const text = try autouse.statement(a, at.indent, e.module.name, e.obj.name);
             const edits = try a.alloc(lsp.TextEdit, 1);
-            edits[0] = .{ .range = Server.rangeOf(file, at.line, 0, at.line, 0), .newText = text };
+            edits[0] = .{ .range = ins.range, .newText = try std.mem.concat(a, u8, &.{ ins.prefix, text }) };
             const files = try a.alloc(lsp.Changes.File, 1);
             files[0] = .{ .uri = uri, .edits = edits };
             const dv = try a.alloc(lsp.Diagnostic, 1);
@@ -586,12 +786,17 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
 
 pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp.Diagnostic {
     const file = (try self.fileFromUri(a, uri)) orelse return null;
+    // those of its full AST
+    if (summary.dormant(file)) try summary.wake(self, a, &.{file});
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
+    const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
+        // a file included by another may hold a part of a scope
+        if (included and d.code == .unclosed_scope) continue;
         if (d.code == .module_not_found) if (d.subject) |m| if (isExternalModule(self, m)) continue;
         var dd = d;
         dd.severity = severityOf(self, d.code) orelse d.severity;
@@ -599,6 +804,16 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
         try out.append(a, try self.diagnosticOf(a, file, dd));
     }
     return out.items;
+}
+
+/// Whether an INCLUDE statement or `#include` of a workspace file names
+/// `file`
+fn isIncluded(self: *Server, file: *const FortranFile) bool {
+    for (self.workspace.values()) |f| {
+        const ast = f.ast orelse continue;
+        for (ast.include_statements.items) |inc| if (inc.file == file) return true;
+    }
+    return false;
 }
 
 /// The severity `diagnostic_severity` gives the diagnostics of `code`
@@ -651,27 +866,31 @@ pub fn getDiagnostics(self: *Server, a: Allocator, uri: []const u8) !?Value {
 /// that editors list the problems of files that are not open
 pub fn publishWorkspace(self: *Server, a: Allocator) void {
     if (self.s.disable_diagnostics) return;
+    // those of the files' full ASTs
+    summary.wakeAll(self, a) catch |e| self.log.err("parsing the workspace's files in full: {s}", .{@errorName(e)});
     for (self.workspace.values()) |f| {
-        if (f.ast == null) continue;
-        // an included file is a part of others', and diagnosed as a
-        // document only when it is open
-        if (f.included and !self.open_docs.contains(f.path)) continue;
+        if (!publishedInWorkspace(self, f)) continue;
         const uri = paths.pathToUri(a, f.path) catch continue;
         sendDiagnostics(self, a, uri);
     }
 }
 
+/// Whether a file has diagnostics of its own with `workspace_diagnostics`:
+/// a parsed one, but an included file (a part of others') only when it is
+/// open
+pub fn publishedInWorkspace(self: *const Server, f: *const FortranFile) bool {
+    if (f.ast == null) return false;
+    return !f.included or self.open_docs.contains(f.path);
+}
+
 pub fn sendDiagnostics(self: *Server, a: Allocator, uri: []const u8) void {
+    // the client asks for them (pull.zig)
+    if (self.pull_diagnostics) return;
     const res = diagnosticsOf(self, a, uri) catch |e| {
         self.writeError(a, .{ .integer = -1 }, -32603, @errorName(e), .{ .traceback = @errorName(e) }) catch |e2| self.logSendFailure(e2);
         return;
     };
-    if (res) |diags| {
-        // with the compiler's diagnostics of the file, when there are any
-        if (compile.compilerOf(self) != null) {
-            compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
-            return;
-        }
-        self.sendNotification(a, "textDocument/publishDiagnostics", json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = diags }) catch return) catch |e| self.logSendFailure(e);
-    }
+    // with the last diagnostics of the file from the compiler and the
+    // linters, whose publications have these with them
+    if (res) |diags| compile.publish(self, a, uri, diags) catch |e| self.logSendFailure(e);
 }

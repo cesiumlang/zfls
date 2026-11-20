@@ -18,6 +18,9 @@ pub const Range = struct { start: Position, end: Position };
 
 pub const Location = struct { uri: []const u8, range: Range };
 
+/// The answer to `textDocument/linkedEditingRange`
+pub const LinkedEditingRanges = struct { ranges: []const Range, wordPattern: ?[]const u8 = null };
+
 pub const MarkupContent = struct {
     kind: []const u8 = "markdown",
     value: []const u8,
@@ -54,7 +57,9 @@ pub const Changes = struct {
     }
 };
 
-pub const WorkspaceEdit = struct { changes: Changes };
+/// A workspace edit: text edits by file (`changes`), or (`documentChanges`)
+/// resource operations and text edits in order
+pub const WorkspaceEdit = struct { changes: ?Changes = null, documentChanges: ?json.Value = null };
 
 // --------------------------------------------------------------------------
 // Responses
@@ -98,6 +103,24 @@ pub const CompletionItem = struct {
     filterText: ?[]const u8 = null,
     labelDetails: ?struct { detail: ?[]const u8 = null, description: ?[]const u8 = null } = null,
     additionalTextEdits: ?[]const TextEdit = null,
+    textEdit: ?TextEdit = null,
+    /// what `completionItem/resolve` finds the object by, for a client
+    /// that resolves the documentation (completion_resolve.zig)
+    data: ?CompletionData = null,
+};
+
+/// The object of a completion item, in few bytes (a list has hundreds):
+/// its file and fully qualified name, or its place in the intrinsics
+pub const CompletionData = struct {
+    /// the index of its file in the workspace (searched for the name when
+    /// the files changed)
+    f: ?usize = null,
+    /// its fully qualified name
+    q: ?[]const u8 = null,
+    /// the 1-based line of its declaration
+    l: ?usize = null,
+    /// an intrinsic procedure or keyword: its index among them
+    i: ?usize = null,
 };
 
 pub const Hover = struct { contents: MarkupContent };
@@ -127,6 +150,8 @@ pub const CodeAction = struct {
     edit: WorkspaceEdit,
     diagnostics: []const Diagnostic,
     isPreferred: ?bool = null,
+    /// why the action cannot be taken (its edit then changes nothing)
+    disabled: ?struct { reason: []const u8 } = null,
 };
 
 pub const PublishDiagnosticsParams = struct {
@@ -151,7 +176,10 @@ pub const SemanticTokensLegend = struct {
 pub const SemanticTokensOptions = struct {
     legend: SemanticTokensLegend,
     full: bool = true,
+    range: bool = true,
 };
+
+pub const SemanticTokensRangeParams = struct { textDocument: TextDocumentIdentifier, range: Range };
 
 pub const ServerCapabilities = struct {
     completionProvider: CompletionOptions,
@@ -162,22 +190,59 @@ pub const ServerCapabilities = struct {
     referencesProvider: bool = true,
     hoverProvider: bool = true,
     implementationProvider: bool = true,
+    typeDefinitionProvider: bool = true,
+    declarationProvider: bool = true,
     /// `true`, or `{"prepareProvider": true}` for clients with prepareSupport
     renameProvider: json.Value = .{ .bool = true },
     selectionRangeProvider: bool = true,
+    linkedEditingRangeProvider: bool = true,
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
+    /// the reference counts of lenses are counted on resolve
+    codeLensProvider: struct { resolveProvider: bool = true } = .{},
     documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
     inlayHintProvider: bool = true,
     callHierarchyProvider: bool = true,
     typeHierarchyProvider: bool = true,
     workspaceSymbolProvider: bool = true,
-    textDocumentSync: i64,
+    inlineValueProvider: bool = true,
+    workspace: WorkspaceCapabilities = .{},
+    textDocumentSync: TextDocumentSyncOptions,
     signatureHelpProvider: ?SignatureHelpOptions = null,
     codeActionProvider: ?bool = null,
     semanticTokensProvider: ?SemanticTokensOptions = null,
     /// with a formatter (`formatter`)
     documentFormattingProvider: ?bool = null,
     documentRangeFormattingProvider: ?bool = null,
+    /// for a client that pulls diagnostics (pull.zig)
+    diagnosticProvider: ?DiagnosticOptions = null,
+};
+
+pub const DiagnosticOptions = struct {
+    identifier: []const u8 = "zfls",
+    /// a file's diagnostics change with the modules it uses
+    interFileDependencies: bool = true,
+    workspaceDiagnostics: bool,
+};
+
+/// `textDocument/diagnostic`
+pub const DocumentDiagnosticParams = struct {
+    textDocument: TextDocumentIdentifier,
+    previousResultId: ?[]const u8 = null,
+};
+
+/// `workspace/diagnostic`
+pub const WorkspaceDiagnosticParams = struct {
+    previousResultIds: []const struct { uri: []const u8, value: []const u8 } = &.{},
+};
+
+/// How documents are synchronized: the options form, which says that the
+/// client sends `didOpen`/`didClose` and `didSave` (zfls runs its checks
+/// and the compiler on save, and reads the file then); `change` is 1 (the
+/// whole text) or 2 (incremental)
+pub const TextDocumentSyncOptions = struct {
+    openClose: bool = true,
+    change: i64,
+    save: struct { includeText: bool = false } = .{},
 };
 
 pub const InitializeResult = struct { capabilities: ServerCapabilities };
@@ -204,8 +269,8 @@ pub const TextDocumentIdentifier = struct {
     languageId: ?[]const u8 = null,
 };
 
-/// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange` and
-/// `semanticTokens/full`
+/// `didOpen`, `didSave`, `didClose`, `documentSymbol`, `foldingRange`,
+/// `semanticTokens/full` and `codeLens`
 pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 
 /// `completion`, `hover`, `signatureHelp`, `definition`, `references`,
@@ -213,6 +278,35 @@ pub const TextDocumentParams = struct { textDocument: TextDocumentIdentifier };
 pub const PositionParams = struct {
     textDocument: TextDocumentIdentifier,
     position: Position,
+};
+
+/// `textDocument/inlineValue`
+pub const InlineValueParams = struct {
+    textDocument: TextDocumentIdentifier,
+    range: Range,
+    context: struct { frameId: i64 = 0, stoppedLocation: Range },
+};
+
+/// A value the editor asks the debug adapter for by name
+pub const InlineValueVariableLookup = struct {
+    range: Range,
+    variableName: []const u8,
+    caseSensitiveLookup: bool = false,
+};
+
+/// `workspace/willRenameFiles`
+pub const RenameFilesParams = struct {
+    files: []const struct { oldUri: []const u8, newUri: []const u8 },
+};
+
+/// The files whose renames the server is told of first: every file and
+/// directory (`workspace/willRenameFiles`)
+pub const WorkspaceCapabilities = struct {
+    fileOperations: struct {
+        willRename: struct {
+            filters: []const struct { pattern: struct { glob: []const u8 } } = &.{.{ .pattern = .{ .glob = "**" } }},
+        } = .{},
+    } = .{},
 };
 
 pub const RenameParams = struct {
@@ -254,6 +348,8 @@ pub const InitializeParams = struct {
     capabilities: ClientCapabilities = .{},
     /// to report the progress of indexing with
     workDoneToken: ?json.Value = null,
+    /// settings, under the config file's names (configuration.zig)
+    initializationOptions: ?json.Value = null,
 };
 
 /// The `value` of a `$/progress` notification
@@ -273,7 +369,56 @@ pub const ClientCapabilities = struct {
         rename: struct {
             prepareSupport: bool = false,
         } = .{},
+        completion: struct {
+            completionItem: struct {
+                snippetSupport: bool = false,
+                /// the properties that `completionItem/resolve` may fill
+                /// in (read at `initialize` only: not kept)
+                resolveSupport: struct { properties: []const []const u8 = &.{} } = .{},
+            } = .{},
+        } = .{},
+        signatureHelp: Dynamic = .{},
+        /// present: the client pulls diagnostics (`textDocument/diagnostic`)
+        diagnostic: ?Dynamic = null,
+        codeAction: struct {
+            dynamicRegistration: bool = false,
+            /// it shows actions that cannot be taken, with why
+            disabledSupport: bool = false,
+        } = .{},
+        formatting: Dynamic = .{},
+        rangeFormatting: Dynamic = .{},
     } = .{},
+    workspace: struct {
+        didChangeWatchedFiles: struct {
+            dynamicRegistration: bool = false,
+            /// patterns relative to a directory, which may be outside the
+            /// workspace
+            relativePatternSupport: bool = false,
+        } = .{},
+        workspaceEdit: struct {
+            /// `create`, `rename`, `delete`: the file operations of a
+            /// workspace edit the client performs
+            resourceOperations: []const []const u8 = &.{},
+        } = .{},
+        /// the client takes `workspace/diagnostic/refresh`
+        diagnostics: struct { refreshSupport: bool = false } = .{},
+        codeLens: struct { refreshSupport: bool = false } = .{},
+    } = .{},
+    /// `commands.commands`: the commands the client runs itself (as
+    /// rust-analyzer's clients announce them), which code lenses may name;
+    /// read at `initialize` only, as a value so that any other content
+    /// does not fail it (not kept)
+    experimental: ?json.Value = null,
+
+    /// Whether the client takes `client/registerCapability` for a method
+    pub const Dynamic = struct { dynamicRegistration: bool = false };
+};
+
+/// A `client/registerCapability` registration
+pub const Registration = struct {
+    id: []const u8,
+    method: []const u8,
+    registerOptions: ?json.Value = null,
 };
 
 pub const SelectionRangeParams = struct {
@@ -284,6 +429,24 @@ pub const SelectionRangeParams = struct {
 pub const SelectionRange = struct { range: Range, parent: ?*const SelectionRange = null };
 
 pub const DocumentLink = struct { range: Range, target: []const u8 };
+
+pub const Command = struct {
+    title: []const u8,
+    /// empty: a lens that only shows its title
+    command: []const u8,
+    arguments: ?[]const json.Value = null,
+};
+
+/// A code lens, unresolved without `command` (then with `data`)
+pub const CodeLens = struct {
+    range: Range,
+    command: ?Command = null,
+    data: ?CodeLensData = null,
+};
+
+/// What resolves a lens: the document, and the line of the end statement
+/// of the unit whose name the lens's range is
+pub const CodeLensData = struct { uri: []const u8, end: usize };
 
 pub const PrepareRenameResult = struct { range: Range, placeholder: []const u8 };
 

@@ -1,7 +1,7 @@
 // The `fortran` debug type: a launch configuration that the extension
 // resolves into zfls's own debugger (`zfls dap`, which runs gdb when there
-// is a gdb of the Debug Adapter Protocol, or Windows's Debugger Engine for
-// MSVC-ABI programs) or one of the debugger extensions installed (C/C++,
+// is a gdb of the Debug Adapter Protocol, lldb-dap on macOS, or Windows's
+// Debugger Engine for MSVC-ABI programs) or one of the debugger extensions installed (C/C++,
 // CodeLLDB, CDT GDB), as Debug Fortran File chooses: the program, or an fpm
 // target that it builds first, with its arguments, directory and
 // environment, and the compiler's runtime libraries on the PATH on
@@ -14,10 +14,10 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { TargetKind } from "./fpm";
-import { FpmProject, buildTarget, findProjects, fpmCompiler, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
-import { gdbHasDap, hoverExpressionStart } from "./debugSupport";
-import { compilerKind, fortranLaunch, parseProcesses, runtimeEnv } from "./run";
-import { chooseInstalledDebugger, gdbFor } from "./runFile";
+import { FpmProject, buildTarget, findProjects, fpmCompiler, fpmExecutable, fpmFlangDwarf, listTargets, projectOf } from "./fpmCommands";
+import { findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
+import { adapterArgs, compilerKind, fortranLaunch, parseProcesses, runtimeEnv } from "./run";
+import { chooseInstalledDebugger, gdbFor, lldbWanted } from "./runFile";
 import { expandVariables, findExecutable } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -32,16 +32,16 @@ export function registerDebugType(
 ): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, {
-      // zfls dap: Windows's Debugger Engine for MSVC-ABI programs, else gdb;
-      // the words it shows, in VS Code's language
+      // zfls dap: Windows's Debugger Engine for MSVC-ABI programs, else
+      // lldb-dap or gdb (by default lldb-dap on macOS, gdb elsewhere); the
+      // words it shows, in VS Code's language
       createDebugAdapterDescriptor: (session) => {
         const exe = zfls();
         if (!exe) {
           throw new Error(vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."));
         }
         const config = session.configuration;
-        const debuggerArgs =
-          config.dbgeng === true ? ["--dbgeng"] : ["--gdb", typeof config.gdb === "string" && config.gdb ? config.gdb : "gdb"];
+        const debuggerArgs = adapterArgs(config, process.platform);
         log.info(`[debug] ${exe} dap ${debuggerArgs.join(" ")}`);
         return new vscode.DebugAdapterExecutable(exe, ["dap", ...debuggerArgs, "--text", JSON.stringify(adapterText())]);
       },
@@ -131,7 +131,8 @@ async function resolve(
     compilerExe = findExecutable(compilerName) ?? compiler.exe;
     const kind: TargetKind = ["executable", "example", "test"].includes(config.fpmTargetKind) ? config.fpmTargetKind : "executable";
     cwd ??= project.root;
-    const debugType = await pick(run, config, compilerExe ?? compilerName, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe));
+    const msvc = msvcProgram(config, compilerExe ?? compilerName, fpmFlangDwarf(project));
+    const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
     if (!debugType) {
       return undefined;
     }
@@ -139,7 +140,7 @@ async function resolve(
     if (!program) {
       return undefined;
     }
-    return finish(config, debugType, program, cwd, compilerExe, scope, log, compilerKind(compilerExe ?? compilerName, process.platform).msvc);
+    return finish(config, debugType, program, cwd, compilerExe, scope, log, msvc);
   }
   if (typeof config.program !== "string" || !config.program) {
     void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran launch configuration needs a program or an fpmTarget."));
@@ -150,11 +151,12 @@ async function resolve(
   const configuredPath = expandVariables(run.get<string>("compilerPath", "").trim(), folderVariables(folder));
   compilerExe = findExecutable(compilerName, configuredPath, folder?.uri.fsPath);
   cwd ??= path.dirname(program);
-  const debugType = await pick(run, config, compilerExe ?? compilerName, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe));
+  const msvc = msvcProgram(config, compilerExe ?? compilerName);
+  const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
   if (!debugType) {
     return undefined;
   }
-  return finish(config, debugType, program, cwd, compilerExe, scope, log, compilerKind(compilerExe ?? compilerName, process.platform).msvc);
+  return finish(config, debugType, program, cwd, compilerExe, scope, log, msvc);
 }
 
 /** An attach configuration: zfls's debugger, attached to a process
@@ -164,6 +166,27 @@ async function attach(
   config: vscode.DebugConfiguration,
   log: vscode.LogOutputChannel,
 ): Promise<vscode.DebugConfiguration | undefined> {
+  const lldb = usesLldb(config, folder?.uri);
+  if (lldb) {
+    if (!(await findLldbDap(typeof lldb === "string" ? lldb : undefined))) {
+      void vscode.window.showErrorMessage(
+        vscode.l10n.t("zfls: its debugger needs lldb-dap, which Xcode's command line tools have (xcode-select --install); or set zfls.run.gdbPath to debug with gdb, or zfls.run.debugger to another debugger."),
+      );
+      return undefined;
+    }
+    if (!config.processId) {
+      void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran attach configuration with lldb-dap needs a processId."));
+      return undefined;
+    }
+    const resolved = {
+      ...config,
+      type: DEBUG_TYPE,
+      lldb,
+      ...(typeof config.program === "string" && config.program ? { program: path.resolve(folder?.uri.fsPath ?? "", config.program) } : {}),
+    };
+    log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
+    return resolved;
+  }
   const gdb = gdbFor(folder?.uri ?? vscode.Uri.file(process.cwd()), undefined);
   if (!gdb || !(await gdbHasDap(gdb))) {
     void vscode.window.showErrorMessage(
@@ -187,6 +210,18 @@ async function attach(
   return resolved;
 }
 
+/** Whether a configuration's zfls debugger runs lldb-dap: its `lldb`, else
+ * on macOS without its `gdb` as `lldbWanted` says */
+function usesLldb(config: vscode.DebugConfiguration, scope: vscode.Uri | undefined): boolean | string {
+  if (config.lldb === true || (typeof config.lldb === "string" && config.lldb)) {
+    return config.lldb;
+  }
+  if (config.lldb === false || (typeof config.gdb === "string" && config.gdb)) {
+    return false;
+  }
+  return lldbWanted(scope ?? vscode.Uri.file(process.cwd()));
+}
+
 /** The words zfls dap shows, translated (`zfls dap --text`) */
 function adapterText(): Record<string, string> {
   return {
@@ -201,16 +236,19 @@ function adapterText(): Record<string, string> {
     runtimeError: vscode.l10n.t("Fortran runtime error"),
     errorStop: "ERROR STOP",
     gdbExited: vscode.l10n.t("gdb exited"),
+    lldbExited: vscode.l10n.t("lldb-dap exited"),
+    endedBySignal: vscode.l10n.t("The program was ended by a signal"),
   };
 }
 
 /** The expression under the mouse, while debugging with gdb (which reads
  * Fortran; to lldb and the Visual Studio debugger `p%x` is a remainder): a
- * name with the parents of its component (`p%x`, `a(i)%x`) */
+ * name with the parents of its component (`p%x`, `a(i)%x`). zfls's debugger
+ * with lldb-dap gets VS Code's own. */
 function evaluatableExpression(document: vscode.TextDocument, position: vscode.Position): vscode.EvaluatableExpression | undefined {
   const session = vscode.debug.activeDebugSession;
   const gdb =
-    session?.type === DEBUG_TYPE ||
+    (session?.type === DEBUG_TYPE && !usesLldb(session.configuration, session.workspaceFolder?.uri)) ||
     session?.type === "gdb" ||
     (session?.type === "cppdbg" && session.configuration.MIMode !== "lldb");
   if (!gdb) {
@@ -257,18 +295,28 @@ function fpmProjectFor(folder: vscode.WorkspaceFolder | undefined, cwd: string |
   return dir ? projectOf(vscode.Uri.file(path.join(dir, "fpm.toml"))) : undefined;
 }
 
+/** Whether the program has Microsoft's debug information only (ifx's and
+ * ifort's on Windows), for Windows's Debugger Engine or the Visual Studio
+ * debugger: LLVM Flang's when the configuration says `"dbgeng": true`
+ * (built with `-g`, not `-gdwarf-4`), or `flangDwarf` is false */
+function msvcProgram(config: vscode.DebugConfiguration, compiler: string, flangDwarf = true): boolean {
+  return compilerKind(compiler, process.platform, flangDwarf).msvc || (process.platform === "win32" && config.dbgeng === true);
+}
+
 /** The debugger: the configuration's, else zfls.run.debugger's, among
- * those installed; MSVC-ABI programs (ifx, LLVM Flang on Windows) need
- * the Visual Studio debugger */
+ * those installed; programs with Microsoft's debug information only
+ * (`msvcProgram`) need Windows's Debugger Engine or the Visual Studio
+ * debugger */
 function pick(
   run: vscode.WorkspaceConfiguration,
   config: vscode.DebugConfiguration,
-  compiler: string,
+  msvc: boolean,
   gdb: string | undefined,
+  lldb: boolean | string,
 ): ReturnType<typeof chooseInstalledDebugger> {
   const preference = typeof config.debugger === "string" ? config.debugger : run.get<string>("debugger", "auto");
   const configured = typeof config.gdb === "string" && config.gdb ? config.gdb : undefined;
-  return chooseInstalledDebugger(preference, compilerKind(compiler, process.platform).msvc, configured ?? gdb);
+  return chooseInstalledDebugger(preference, msvc, configured ?? gdb, lldb);
 }
 
 function finish(
@@ -288,6 +336,7 @@ function finish(
     runtimeEnv: compilerExe ? runtimeEnv(compilerExe, process.platform, process.env) : {},
     platform: process.platform,
     gdbPath: gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe),
+    lldb: usesLldb(config, scope) !== false,
     msvc,
     sourceRoot: scope?.fsPath,
   }) as vscode.DebugConfiguration;

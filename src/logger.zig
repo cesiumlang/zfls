@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const Io = std.Io;
+const stdio = @import("stdio.zig");
 
 const Logger = @This();
 
@@ -52,17 +53,25 @@ fn write(self: *Logger, level: Level, comptime fmt: []const u8, args: anytype) v
         .off => "",
     };
     var w: std.Io.Writer = .fixed(&buf);
-    w.print("[{s}] ", .{tag}) catch {};
-    w.print(fmt, args) catch {};
-    w.writeByte('\n') catch {};
-    const msg = w.buffered();
+    // a longer message is written in pieces
+    const fits = if (w.print("[{s}] " ++ fmt ++ "\n", .{tag} ++ args)) true else |_| false;
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
-    if (@backingInt(level) >= @backingInt(self.stderr_level)) {
-        Io.File.stderr().writeStreamingAll(self.io, msg) catch {};
-    }
+    var targets: [2]?Io.File = .{ null, null };
+    if (@backingInt(level) >= @backingInt(self.stderr_level)) targets[0] = stdio.stderr();
     if (self.file) |f| {
-        if (@backingInt(level) >= @backingInt(self.file_level)) f.writeStreamingAll(self.io, msg) catch {};
+        if (@backingInt(level) >= @backingInt(self.file_level)) targets[1] = f;
+    }
+    for (targets) |target| {
+        const f = target orelse continue;
+        if (fits) {
+            f.writeStreamingAll(self.io, w.buffered()) catch {};
+        } else {
+            var piece: [1024]u8 = undefined;
+            var fw = f.writerStreaming(self.io, &piece);
+            fw.interface.print("[{s}] " ++ fmt ++ "\n", .{tag} ++ args) catch {};
+            fw.interface.flush() catch {};
+        }
     }
 }
 

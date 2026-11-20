@@ -104,11 +104,64 @@ def substring_symbols_replacement(mod):
     return test
 
 
+def sync_options_replacement(mod):
+    """`test_server::test_init` expects `textDocumentSync` to be the change
+    kind (2); zfls announces it as options, `openClose` and `save` with
+    that kind as `change` (#269), which is checked and turned back into
+    the number here."""
+    original = getattr(mod, "test_init")
+
+    def test():
+        run = mod.run_request
+
+        def sync_number(request, fortls_args=None):
+            errcode, results = run(request, fortls_args)
+            for r in results:
+                caps = r.get("capabilities") if isinstance(r, dict) else None
+                if caps is not None and isinstance(caps.get("textDocumentSync"), dict):
+                    sync = caps["textDocumentSync"]
+                    assert sync["openClose"] is True
+                    assert sync["save"] == {"includeText": False}
+                    caps["textDocumentSync"] = sync["change"]
+            return errcode, results
+
+        mod.run_request = sync_number
+        try:
+            original()
+        finally:
+            mod.run_request = run
+
+    return test
+
+
+def include_file_definition_replacement(mod):
+    """`test_server_definitions::test_def_include_file` expects the included
+    file at line 2, the line of the INCLUDE statement in the including file;
+    zfls goes to the included file's first line (#224), which a file shorter
+    than the including one's INCLUDE line also has."""
+
+    def test():
+        test_dir = mod.test_dir
+        string = mod.write_rpc_request(1, "initialize", {"rootPath": str(test_dir)})
+        file_path = test_dir / "test_inc.f90"
+        string += mod.def_request(file_path, 3, 16)
+        errcode, results = mod.run_request(string)
+        assert errcode == 0
+        ref_res = [[0, 0, str(test_dir / "subdir" / "test_inc2.f90")]]
+        assert len(ref_res) == len(results) - 1
+        for i, res in enumerate(ref_res):
+            mod.validate_def(results[i + 1], res)
+
+    return test
+
+
 # Tests whose expectations zfls deliberately does not match verbatim, with a
 # replacement test implementing the zfls expectation.
 KNOWN_DEVIATIONS = {
     "test_server_hover::test_intrinsics": intrinsic_hover_replacement,
     "test_server::test_workspace_symbols": substring_symbols_replacement,
+    "test_server::test_init": sync_options_replacement,
+    "test_server_definitions::test_def_include_file": include_file_definition_replacement,
 }
 
 
@@ -288,7 +341,12 @@ def main() -> int:
         import subprocess
         from io import StringIO
 
-        command = [zfls, "--incremental_sync", "--disable_index_cache"]
+        # hover on a derived type lists its components (#268); fortls's
+        # tests expect its declaration alone
+        command = [
+            zfls, "--incremental_sync", "--disable_index_cache",
+            "--hover_no_type_components",
+        ]
         if fortls_args:
             for i in fortls_args:
                 command.extend(shlex.split(i, posix=False))

@@ -14,6 +14,11 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const intrinsics = @import("../intrinsics.zig");
 const constructs = @import("../constructs.zig");
+const patterns = @import("../patterns.zig");
+
+fn R() *const patterns.Patterns {
+    return patterns.get();
+}
 
 const Obj = objects.Obj;
 const FortranFile = parser.FortranFile;
@@ -24,7 +29,9 @@ const assignment = @import("assignment.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
+const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
+const groups = @import("groups.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
     return switch (o.kind) {
@@ -40,10 +47,52 @@ pub fn isImplicitResult(fun: *const Obj, v: *const Obj) bool {
     return fun.kind == .function and v.kind == .variable and v.parent == fun and std.ascii.eqlIgnoreCase(v.name, fun.name);
 }
 
+/// The function whose result variable `obj` is, when it has the function's
+/// name: references and rename on it are those of the function (#228)
+pub fn functionOfResult(obj: *Obj) *Obj {
+    const fun = obj.parent orelse return obj;
+    return if (isImplicitResult(fun, obj)) fun else obj;
+}
+
 /// Whether `x` and `y` are the interface and the implementation of the
 /// same separate module procedure, in either order (hansec #168)
 pub fn isSeparateProcedurePair(x: *const Obj, y: *const Obj) bool {
     return isSeparateInterfaceOf(x, y) or isSeparateInterfaceOf(y, x);
+}
+
+/// Whether `x` and `y` are a generic interface and a specific of it that
+/// has its name, in either order: one name, as a generic and a module
+/// procedure of its name in its module are (#469). The specific is an
+/// interface body of the generic (`interface h` with `subroutine h(n)`,
+/// #475) or a procedure of another module (`use a, only: s1` with
+/// `interface s1` / `module procedure s1`).
+pub fn isSelfNamedSpecificPair(x: *const Obj, y: *const Obj) bool {
+    return isSelfNamedSpecificOf(x, y) or isSelfNamedSpecificOf(y, x);
+}
+
+fn isSelfNamedSpecificOf(generic: *const Obj, specific: *const Obj) bool {
+    if (generic.kind != .interface or generic == specific or !std.ascii.eqlIgnoreCase(generic.name, specific.name)) return false;
+    for (generic.memList()) |m| if (m == specific) return true;
+    return false;
+}
+
+/// Whether `x` and `y` are generic interfaces of which one extends the
+/// other (#478: an interface block of a generic's name that it has by USE
+/// or from its host): one generic, one name
+pub fn isExtendedGenericPair(x: *const Obj, y: *const Obj) bool {
+    return extends(x, y) or extends(y, x);
+}
+
+fn extends(generic: *const Obj, other: *const Obj) bool {
+    if (generic.kind != .interface or other.kind != .interface or generic == other) return false;
+    return std.mem.findScalar(*Obj, generic.ifaceDataConst().extends.items, @constCast(other)) != null;
+}
+
+/// The scope that `o` is a name of: its parent, or for an interface body
+/// the scope around its interface block (#474)
+fn ownerOf(o: *const Obj) ?*const Obj {
+    const p = o.parent orelse return null;
+    return if (p.kind == .interface) p.parent else p;
 }
 
 pub fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
@@ -56,7 +105,7 @@ pub fn isSeparateInterfaceOf(iface: *const Obj, impl: *const Obj) bool {
 /// original name is not visible under that name in the importing scope,
 /// so the definition lookup cannot find it (upstream #52).
 pub fn isRenamedOriginal(line: []const u8, col: usize, def_obj: *const Obj) bool {
-    const parent = def_obj.parent orelse return false;
+    const parent = ownerOf(def_obj) orelse return false;
     if (parent.kind != .module) return false;
     if (!std.mem.endsWith(u8, str.rstrip(line[0..col]), "=>")) return false;
     const t = str.lstrip(line);
@@ -69,8 +118,9 @@ pub fn isRenamedOriginal(line: []const u8, col: usize, def_obj: *const Obj) bool
 }
 
 /// The renamed import that the word at (`line`, `col`) is the local name
-/// of, if it is one (upstream #52)
-pub fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?Server.RenamedImport {
+/// of, if it is one (upstream #52): by a USE statement of its scope or a
+/// scope around, or of a module it has the name from by USE (#480)
+pub fn renamedImport(self: *Server, a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?Server.RenamedImport {
     const text = file.getLine(line, false) orelse return null;
     var it = helpers.words(text);
     const word = while (it.next()) |m| {
@@ -78,13 +128,27 @@ pub fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, 
     } else return null;
     if (std.ascii.eqlIgnoreCase(word, target.name)) return null;
     const lower = try std.ascii.allocLowerString(a, word);
-    var scope = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
+    const inner = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
+    var scope = inner;
     while (true) {
         for (scope.scopeData().use.items) |u| {
             if (!u.is_import and u.rename_map.get(lower) != null) return .{ .alias = lower, .scope = scope, .use_line = u.line_number };
         }
-        scope = scope.parent orelse return null;
+        scope = scope.parent orelse break;
     }
+    var cur: ?*Obj = inner;
+    while (cur) |x| : (cur = x.parent) {
+        const r = (try objects.renamingModule(self.env(a), x, lower)) orelse continue;
+        // a module in a file the workspace has (not a module file's summary)
+        if (r.mod.file_ast.file == null) return null;
+        return .{ .alias = r.name, .scope = r.mod, .use_line = r.use_line };
+    }
+    return null;
+}
+
+/// The file whose USE statement makes the local name of `ri`
+pub fn renameFile(ri: Server.RenamedImport, at: *FortranFile) *FortranFile {
+    return ri.scope.file_ast.file orelse at;
 }
 
 /// The uses of a renamed import: of its local name, in the scope of the
@@ -112,20 +176,86 @@ pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj:
             try refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
         }
     }
-    if (refs.items.len == 0) return &.{};
-    const out = try a.alloc(Server.FileRefs, 1);
-    out[0] = .{ .path = file.path, .file = file, .refs = refs };
-    return out;
+    var out: std.ArrayList(Server.FileRefs) = .empty;
+    // a module's local name is one of its users' names too (#233)
+    if (ri.scope.kind == .module) for (self.workspace.values()) |other| {
+        const users = try aliasUses(self, a, other, def_obj, ri, &name_re, if (other == file) ri.scope else null);
+        if (other == file) {
+            try refs.appendSlice(a, users.items);
+        } else if (users.items.len > 0) try out.append(a, .{ .path = other.path, .file = other, .refs = users });
+    };
+    if (refs.items.len > 0) try out.append(a, .{ .path = file.path, .file = file, .refs = refs });
+    return out.items;
 }
 
-/// The references to `def_obj`. A rename also takes what only it must change:
-/// the result variable of a function and the original name in a renamed
-/// import; "find references" leaves them out, as fortls does.
+/// The places in `file`, outside `skip`, of the local name `ri.alias` that
+/// module `ri.scope` gives `def_obj` by a rename: in the scopes that have
+/// the name from it by USE, and in the USE statements that name it (in a
+/// rename again, `use m, only: other => alias`) in a module that has it
+fn aliasUses(self: *Server, a: Allocator, file: *FortranFile, def_obj: *Obj, ri: Server.RenamedImport, name_re: *regex.Regex, skip: ?*const Obj) !std.ArrayList(Server.Ref) {
+    var refs: std.ArrayList(Server.Ref) = .empty;
+    const ast = file.ast orelse return refs;
+    const env = self.env(a);
+    for (file.lines.items, 0..) |raw_line, i| {
+        if (skip) |s| if (i + 1 >= s.sline and i + 1 <= s.eline) continue;
+        const line = file.stripComment(raw_line);
+        if (line.len == 0 or line[0] == '#') continue;
+        if (std.ascii.findIgnoreCase(line, ri.alias) == null) continue;
+        const scope = ast.getInnerScope(i + 1) orelse continue;
+        const use_stmt = R().USE.match(line);
+        const used_mod: ?[]const u8 = if (use_stmt) |u| u.group(2) else null;
+        var it = name_re.iterator(line);
+        while (it.next()) |m| {
+            // not the module name of a USE statement
+            if (use_stmt) |u| if (m.start(1) < u.end(0)) continue;
+            const after = str.lstrip(line[m.end(1)..]);
+            const ok = if (used_mod != null and !std.mem.startsWith(u8, after, "=>")) blk: {
+                // the name in the module the statement uses
+                const mod = env.global(ast, try std.ascii.allocLowerString(a, used_mod.?)) orelse break :blk false;
+                if (mod == ri.scope) break :blk true;
+                break :blk (try objects.comesThrough(env, mod, ri.alias, true, ri.scope, ri.alias)) orelse false;
+            } else blk: {
+                const var_def = (try definition.getDefinition(self, a, file, i, m.start(1) + 1, false)) orelse break :blk false;
+                if (!std.mem.eql(u8, def_obj.fqsn, var_def.fqsn)) break :blk false;
+                break :blk try seesAliasOf(env, scope, ri.alias, ri.scope);
+            };
+            if (ok) try refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+        }
+    }
+    return refs;
+}
+
+/// Whether `scope` has the name `alias` from module `holder`, the module
+/// whose USE statement makes it a local name: inside it, as its submodule,
+/// or by USE through it
+fn seesAliasOf(env: objects.Env, scope: *Obj, alias: []const u8, holder: *Obj) !bool {
+    var cur: ?*Obj = scope;
+    while (cur) |x| : (cur = x.parent) {
+        if (x == holder) return true;
+        for (try x.getAncestors(env.tmp)) |anc| if (anc == holder) return true;
+        if (try objects.comesThrough(env, x, alias, false, holder, alias)) |via| return via;
+    }
+    return false;
+}
+
+/// The references to `def_obj`, with those of its result variable when it
+/// is a function without a RESULT clause (#228). A rename also takes what
+/// only it must change: the original name in a renamed import; "find
+/// references" leaves it out, as fortls does.
 pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bool, restrict: ?*FortranFile, for_rename: bool) ![]Server.FileRefs {
-    const def_name = try std.ascii.allocLowerString(a, def_obj.name);
+    // a COMMON block is found by its name between the slashes
+    const def_name = try std.ascii.allocLowerString(a, if (groups.isCommon(def_obj)) groups.bareName(def_obj) else def_obj.name);
     const def_fqsn = def_obj.fqsn;
-    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{def_name}), regex.I) catch return &.{};
-    defer name_re.deinit();
+    // the entity's own name, and for references the local names USE
+    // statements give it (#233): a rename changes only the name it starts on
+    const names = if (for_rename) &[_][]const u8{def_name} else try useAliases(self, a, def_obj, def_name);
+    const name_res = try a.alloc(regex.Regex, names.len);
+    var n_res: usize = 0;
+    defer for (name_res[0..n_res]) |*re| re.deinit();
+    for (names) |name| {
+        name_res[n_res] = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{name}), regex.I) catch return &.{};
+        n_res += 1;
+    }
     var files: std.ArrayList(*FortranFile) = .empty;
     if (restrict) |f| try files.append(a, f) else try files.appendSlice(a, self.workspace.values());
     var override_cache: std.ArrayList([]const u8) = .empty;
@@ -133,11 +263,11 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
     for (files.items) |file| {
         var file_refs: std.ArrayList(Server.Ref) = .empty;
         const filename = file.path;
-        for (file.lines.items, 0..) |raw_line, i| {
+        for (names, name_res) |name, *name_re| for (file.lines.items, 0..) |raw_line, i| {
             if (raw_line.len == 0) continue;
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
-            if (std.ascii.findIgnoreCase(line, def_name) == null) continue;
+            if (std.ascii.findIgnoreCase(line, name) == null) continue;
             var it = name_re.iterator(line);
             while (it.next()) |m| {
                 if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
@@ -151,8 +281,13 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                 for (override_cache.items) |c| if (std.mem.eql(u8, c, var_def.fqsn)) {
                     in_cache = true;
                 };
-                if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or (for_rename and isImplicitResult(def_obj, var_def)) or
-                    isSeparateProcedurePair(def_obj, var_def))
+                if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def) or
+                    // the blocks of one name of all program units (#556)
+                    groups.sameBlock(def_obj, var_def) or
+                    isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
+                    isExtendedGenericPair(def_obj, var_def) or
+                    // a caller's own declaration of the procedure (#232)
+                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
                 {
                     ref_match = true;
                 } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
@@ -184,21 +319,60 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                 }
                 if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
             }
-        }
+        };
         if (file_refs.items.len > 0) try out.append(a, .{ .path = filename, .file = file, .refs = file_refs });
     }
     return out.items;
+}
+
+/// `def_name` (the lowercase name of `def_obj`) and, for an entity of a
+/// module, the local names that the USE statements of the workspace give
+/// it, or a name of it, by a rename (`use m, only: local => name`).
+/// Names that only coincide are among them: each place is still checked.
+pub fn useAliases(self: *Server, a: Allocator, def_obj: *const Obj, def_name: []const u8) ![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    try names.append(a, def_name);
+    const parent = ownerOf(def_obj) orelse return names.items;
+    if (parent.kind != .module) return names.items;
+    var grew = true;
+    while (grew) {
+        grew = false;
+        for (self.workspace.values()) |file| {
+            const ast = file.ast orelse continue;
+            for (ast.scope_list.items) |scope| for (scope.scopeDataConst().use.items) |u| {
+                if (u.is_import) continue;
+                for (u.rename_map.keys.items, u.rename_map.values.items) |local, original| {
+                    if (!containsName(names.items, original) or containsName(names.items, local)) continue;
+                    try names.append(a, local);
+                    grew = true;
+                }
+            };
+        }
+    }
+    return names.items;
+}
+
+fn containsName(names: []const []const u8, name: []const u8) bool {
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
 }
 
 pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, restrict: ?*FortranFile } {
     _ = self;
     var type_mem = false;
     var restrict: ?*FortranFile = null;
+    // a COMMON block is one of the program's, wherever it is named
+    if (groups.isCommon(def_obj)) return .{ .type_mem = false, .restrict = null };
     if (std.mem.count(u8, def_obj.fqsn, ":") > 2) {
         const parent = def_obj.parent orelse return null;
         // the implementation of a separate module procedure may be in
         // another file (hansec #168)
         if (parent.kind == .interface and def_obj.isModScope() and def_obj.linkObj() != null) return .{ .type_mem = false, .restrict = null };
+        // an interface body of a module's interface block is a name of the
+        // module, which other files use (#474)
+        if (parent.kind == .interface) if (parent.parent) |p| if (p.kind == .module or p.kind == .submodule) return .{ .type_mem = false, .restrict = null };
+        // a generic of a procedure that extends one of a module (#478)
+        if (def_obj.kind == .interface and def_obj.ifaceDataConst().extends.items.len > 0) return .{ .type_mem = false, .restrict = null };
         if (parent.getType(false) == C.TypeId.class) {
             type_mem = true;
         } else {
@@ -217,17 +391,20 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.assignmentAt(self, a, params)) |b| return assignment.references(self, a, b);
     if (try definition.constructAt(self, a, params)) |c| return json.from(a, try definition.constructLocations(a, try paths.pathToUri(a, c.file.path), c.file, c.target.spans));
+    if (try macros.atPosition(self, a, params)) |m| return macros.references(self, a, m, with_c);
     const d = (try definition.definitionAt(self, a, params, false)) orelse return .null;
-    if (d.obj.kind == .intrinsic) return error.IntrinsicHasNoFQSN;
-    const rs = referenceScope(self, d.obj) orelse return .null;
-    const all = try getAllReferences(self, a, d.obj, rs.type_mem, rs.restrict, false);
+    // an intrinsic is declared nowhere: none (not an error, #224)
+    if (d.obj.kind == .intrinsic) return .null;
+    const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
+    const rs = referenceScope(self, obj) orelse return .null;
+    const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);
     var out: std.ArrayList(lsp.Location) = .empty;
     for (all) |fr| {
         const uri = try paths.pathToUri(a, fr.path);
         for (fr.refs.items) |r| try out.append(a, Server.locationOf(uri, fr.file, r.line, r.start, r.line, r.end));
     }
-    if (with_c) if (try bindc.cNameOf(a, d.obj)) |cname| {
-        try bindc.fortranReferences(self, a, cname, d.obj, &out);
+    if (with_c) if (try bindc.cNameOf(a, obj)) |cname| {
+        try bindc.fortranReferences(self, a, cname, obj, &out);
         try out.appendSlice(a, try bindc.cUses(self, a, cname));
         return json.from(a, try bindc.unique(a, out.items));
     };
@@ -263,11 +440,12 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
         self.postMessage(a, "Rename failed: Cannot rename intrinsics", C.Severity.warn);
         return .null;
     }
-    const all = if (try renamedImport(a, d.file, d.line, d.col, d.obj)) |ri|
-        try aliasReferences(self, a, d.file, d.obj, ri)
+    const all = if (try renamedImport(self, a, d.file, d.line, d.col, d.obj)) |ri|
+        try aliasReferences(self, a, renameFile(ri, d.file), d.obj, ri)
     else blk: {
-        const rs = referenceScope(self, d.obj) orelse return .null;
-        break :blk try getAllReferences(self, a, d.obj, rs.type_mem, rs.restrict, true);
+        const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
+        const rs = referenceScope(self, obj) orelse return .null;
+        break :blk try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, true);
     };
     if (all.len == 0) {
         self.postMessage(a, "Rename failed: No usages found to rename", C.Severity.warn);
@@ -305,4 +483,45 @@ pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, fi
     const files = try a.alloc(lsp.Changes.File, 1);
     files[0] = .{ .uri = try paths.pathToUri(a, file.path), .edits = edits };
     return json.from(a, lsp.WorkspaceEdit{ .changes = .{ .files = files } });
+}
+
+/// Linked editing (#193): the name of a program unit, derived type or named
+/// interface in its first statement and in its END statement, edited
+/// together; and a construct name at all its places (`outer: do`,
+/// `end do outer`, `cycle outer`), as rename finds them. Only when the
+/// cursor is on one of them and the END statement repeats the name.
+pub fn serveLinkedEditing(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
+    const word_pattern = "[A-Za-z][A-Za-z0-9_]*";
+    if (try definition.constructAt(self, a, params)) |c| {
+        if (c.target.kind != .construct or c.target.spans.len < 2) return .null;
+        const ranges = try a.alloc(lsp.Range, c.target.spans.len);
+        for (c.target.spans, ranges) |s, *r| r.* = Server.rangeOf(c.file, s.line, s.start, s.line, s.end);
+        return json.from(a, lsp.LinkedEditingRanges{ .ranges = ranges, .wordPattern = word_pattern });
+    }
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+    const ast = file.ast orelse return .null;
+    const line = params.position.line;
+    const text = file.getLine(line, false) orelse return .null;
+    const col = Server.toByteCol(file, line, params.position.character);
+    var start = @min(col, text.len);
+    while (start > 0 and regex.isWordChar(text[start - 1])) start -= 1;
+    var end = @min(col, text.len);
+    while (end < text.len and regex.isWordChar(text[end])) end += 1;
+    if (start == end) return .null;
+    const word = text[start..end];
+    for (ast.scope_list.items) |s| {
+        if (s.name.len == 0 or s.name[0] == '#' or !std.ascii.eqlIgnoreCase(s.name, word)) continue;
+        if (s.eline <= s.sline) continue;
+        const first = try file.findWordInCodeLine(a, s.sline -| 1, s.name, true, false, false);
+        const last = try file.findWordInCodeLine(a, s.eline -| 1, s.name, false, true, false);
+        if (first.range.start < 0 or last.range.start < 0 or first.line == last.line) continue;
+        const on_first = first.line == line and first.range.start == start;
+        const on_last = last.line == line and last.range.start == start;
+        if (!on_first and !on_last) continue;
+        const ranges = try a.alloc(lsp.Range, 2);
+        for ([_]@TypeOf(first){ first, last }, ranges) |w, *r|
+            r.* = Server.rangeOf(file, w.line, @intCast(w.range.start), w.line, @intCast(w.range.end));
+        return json.from(a, lsp.LinkedEditingRanges{ .ranges = ranges, .wordPattern = word_pattern });
+    }
+    return .null;
 }

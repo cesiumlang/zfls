@@ -5,7 +5,8 @@
 //! error functions, whose stops are exceptions), the runtime's frames
 //! de-emphasized, the program in a terminal (`console`), the
 //! configuration's gdb commands (`setupCommands`), and values set by
-//! Fortran expressions.
+//! Fortran expressions. lldb-dap's requests (lldb.zig) come here too, but
+//! for its variables and expressions, which are lldb's own.
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -16,6 +17,7 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
 const fortran = @import("fortran.zig");
+const runtime_errors = @import("runtime_errors.zig");
 const Value = json.Value;
 
 const session = @import("session.zig");
@@ -23,7 +25,12 @@ const Session = session.Session;
 const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
 const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
+const lldb = @import("lldb.zig");
+const lfortran = @import("lfortran.zig");
+const gdb_entry = @import("gdb_entry.zig");
+const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
+const gdb_values = @import("gdb_values.zig");
 const Variable = vars.Variable;
 
 /// gdb's exception breakpoint filters of Ada, of no use to Fortran
@@ -33,7 +40,8 @@ const ada_filters = [_][]const u8{ "assert", "exception" };
 /// stop are gone
 const resuming = [_][]const u8{ "continue", "next", "stepIn", "stepOut", "stepBack", "reverseContinue", "goto" };
 
-/// `initialize`: gdb's, its capabilities with the runtime's errors
+/// `initialize`: gdb's (or lldb-dap's), its capabilities with the
+/// runtime's errors
 pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const r = try gdb.request(s, a, "initialize", try forGdbInitialize(s, a, args));
     if (gdb.isSuccess(r)) if (json.get(r, "body")) |body| if (body == .object) {
@@ -44,16 +52,17 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
             .description = s.text.runtime_errors_description,
             .default = true,
         }));
+        const foreign: []const []const u8 = if (s.g.lldb) &lldb.foreign_filters else &ada_filters;
         for (json.items(json.get(body, "exceptionBreakpointFilters"))) |f| {
             const name = json.str(json.get(f, "filter")) orelse "";
-            const ada = for (ada_filters) |x| {
+            const other = for (foreign) |x| {
                 if (std.mem.eql(u8, x, name)) break true;
             } else false;
-            if (!ada) try filters.append(f);
+            if (!other) try filters.append(f);
         }
         var o = body.object;
         try o.put(a, "supportsExceptionInfoRequest", .{ .bool = true });
-        try o.put(a, "supportsSetVariable", .{ .bool = true });
+        if (!s.g.lldb) try o.put(a, "supportsSetVariable", .{ .bool = true });
         try o.put(a, "exceptionBreakpointFilters", .{ .array = filters });
         r.object.getPtr("body").?.* = .{ .object = o };
     };
@@ -77,6 +86,9 @@ fn forGdbInitialize(s: *Session, a: Allocator, args: ?Value) !Value {
         while (it.next()) |kv| try o.put(a, kv.key_ptr.*, kv.value_ptr.*);
     };
     try o.put(a, "supportsRunInTerminalRequest", .{ .bool = false });
+    // the adapter's `variables` with `start` and `count`, which gdb ignores
+    // otherwise: children one at a time (gdb_children.zig)
+    try o.put(a, "supportsVariablePaging", .{ .bool = true });
     return .{ .object = o };
 }
 
@@ -87,6 +99,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     try prepare(s, a, args);
     const program = json.str(json.get(args, "program"));
     const cwd = json.str(json.get(args, "cwd"));
+    s.g.lfortran = lfortran.isProgram(s.io, a, program, cwd);
     if (s.g.source_root) |r| s.gpa.free(r);
     const root = json.str(json.get(args, "sourceRoot")) orelse cwd orelse if (program) |p| std.Io.Dir.path.dirname(p) else null;
     s.g.source_root = if (root) |r| try s.gpa.dupe(u8, r) else null;
@@ -109,7 +122,10 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         try o.put(a, "args", .{ .array = list });
         try o.put(a, "env", try environment(s, a, json.get(args, "env")));
         const at_entry = json.get(args, "stopAtEntry");
-        try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = at_entry != null and at_entry.? == .bool and at_entry.?.bool });
+        const wanted = at_entry != null and at_entry.? == .bool and at_entry.?.bool;
+        // LLVM Flang's main program: the adapter's own stop
+        const own = wanted and gdb_entry.atLaunch(s, a, program, cwd);
+        try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = wanted and !own });
     } else {
         if (json.get(args, "processId")) |p| switch (p) {
             .integer => |n| try o.put(a, "pid", .{ .integer = n }),
@@ -132,7 +148,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 }
 
 /// A JSON value as text: a string's own
-fn text(a: Allocator, v: Value) ![]const u8 {
+pub fn text(a: Allocator, v: Value) ![]const u8 {
     return switch (v) {
         .string => |t| t,
         .integer => |n| a.print("{d}", .{n}),
@@ -181,7 +197,7 @@ fn prepare(s: *Session, a: Allocator, args: ?Value) !void {
 
 /// A terminal of the client for the program: its tty, which a shell in it
 /// writes to a file and then waits
-fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8) !?[]const u8 {
+pub fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8) !?[]const u8 {
     const tmp = s.environ.get("TMPDIR") orelse "/tmp";
     const file = try a.print("{s}/zfls-tty-{d}", .{ std.mem.trimEnd(u8, tmp, "/"), Io.Clock.real.now(s.io).nanoseconds });
     const seq = s.sendSeq(a, .{
@@ -221,12 +237,21 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
     const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, disconnect, terminate };
+    if (s.g.lldb) try lldb.afterEntry(s, a) else try gdb_entry.afterEntry(s, a);
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
         for (resuming) |r| if (std.mem.eql(u8, r, command)) vars.clear(s);
+        if (std.mem.eql(u8, command, "pause")) s.g.pausing = true;
         return gdb.forward(s, a, req, args);
+    };
+    // lldb reads no Fortran: its own variables and expressions
+    if (s.g.lldb) switch (cmd) {
+        .variables => if (s.g.lfortran) return lldb.variables(s, a, req, args) else return gdb.forward(s, a, req, args),
+        .scopes, .evaluate, .setVariable => return gdb.forward(s, a, req, args),
+        else => {},
     };
     switch (cmd) {
         .configurationDone => {
+            if (s.g.lldb) try lldb.beforeRun(s, a) else try gdb_entry.beforeRun(s, a);
             const held = s.g.held_launch orelse return gdb.forward(s, a, req, args);
             s.g.held_launch = null;
             defer s.gpa.free(held);
@@ -239,8 +264,10 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
             if (s.g.user_functions.len > 0) s.gpa.free(s.g.user_functions);
             s.g.user_functions = try s.gpa.dupe(u8, try json.stringify(a, json.get(args, "breakpoints") orelse Value{ .array = .init(a) }));
             const r = try syncFunctions(s, a);
-            const bps = json.items(json.path(r, &.{ "body", "breakpoints" }));
-            const n = json.items(json.get(args, "breakpoints")).len;
+            const asked = json.items(json.get(args, "breakpoints"));
+            const n = asked.len;
+            // lldb-dap's in no fixed order: the request's (#373)
+            const bps = if (s.g.lldb) try lldb.inRequestOrder(s, a, asked, json.items(json.path(r, &.{ "body", "breakpoints" }))) else json.items(json.path(r, &.{ "body", "breakpoints" }));
             s.send(a, .{
                 .type = "response",
                 .request_seq = json.int(json.get(req, "seq")) orelse 0,
@@ -253,9 +280,9 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         .setExceptionBreakpoints => try setExceptions(s, a, req, args),
         .exceptionInfo => if (s.g.last_error) |f| s.respond(a, req, .{
             .exceptionId = f,
-            .description = if (fortran.isErrorStop(f)) s.text.error_stop else s.text.runtime_error,
+            .description = if (runtime_errors.isErrorStop(f)) s.text.error_stop else s.text.runtime_error,
             .breakMode = "always",
-        }) else s.fail(a, req, ""),
+        }) else if (s.g.lldb) try gdb.forward(s, a, req, args) else s.fail(a, req, ""),
         .stackTrace => {
             const r = try gdb.request(s, a, command, args orelse Value.null);
             for (json.items(json.path(r, &.{ "body", "stackFrames" }))) |*f| {
@@ -284,6 +311,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         .evaluate => try evaluate(s, a, req, args),
         .setVariable => try setVariable(s, a, req, args),
         .disconnect, .terminate => {
+            s.g.stopping = true;
             const r = try gdb.request(s, a, command, args orelse Value.null);
             gdb.respondWith(s, a, req, r);
             if (cmd == .disconnect) {
@@ -295,21 +323,32 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
 }
 
 /// gdb's function breakpoints: the client's, then the runtime's error
-/// functions when that filter is on
-fn syncFunctions(s: *Session, a: Allocator) !Value {
+/// functions when that filter is on (lldb-dap's: the client's; the
+/// runtime's are lldb's own, lldb.zig)
+/// The function breakpoints: the client's, those of the runtime's errors
+/// when that filter is on, and that of the stop at the start
+/// (gdb_entry.zig)
+pub fn syncFunctions(s: *Session, a: Allocator) !Value {
     var list: json.Array = .init(a);
     const user = if (s.g.user_functions.len > 0) json.items(json.parse(a, s.g.user_functions) catch Value.null) else &.{};
     try list.appendSlice(user);
-    const ours: []const []const u8 = if (s.g.runtime_errors) &fortran.runtime_error_functions else &.{};
-    for (ours) |name| try list.append(try json.from(a, .{ .name = name }));
+    if (s.g.lldb) return gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
+    const ours: []const runtime_errors.GdbBreakpoint = if (s.g.runtime_errors) runtime_errors.gdb_breakpoints else &.{};
+    // Flang's STOP functions: only at ERROR STOP
+    for (ours) |b| try list.append(if (b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
+    if (s.g.entry_function) |f| try list.append(try json.from(a, .{ .name = f }));
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     s.g.error_breakpoints.clearRetainingCapacity();
     const bps = json.items(json.path(r, &.{ "body", "breakpoints" }));
-    for (ours, 0..) |name, i| {
+    for (ours, 0..) |b, i| {
         if (user.len + i >= bps.len) break;
         const id = json.int(json.get(bps[user.len + i], "id")) orelse continue;
-        try s.g.error_breakpoints.put(s.gpa, id, name);
+        try s.g.error_breakpoints.put(s.gpa, id, b.name);
     }
+    s.g.entry_breakpoint = if (s.g.entry_function != null and user.len + ours.len < bps.len)
+        json.int(json.get(bps[user.len + ours.len], "id"))
+    else
+        null;
     return r;
 }
 
@@ -331,7 +370,7 @@ fn setExceptions(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const r = try gdb.request(s, a, "setExceptionBreakpoints", .{ .filters = Value{ .array = filters }, .filterOptions = Value{ .array = options } });
     if (wanted != s.g.runtime_errors) {
         s.g.runtime_errors = wanted;
-        _ = try syncFunctions(s, a);
+        if (s.g.lldb) try lldb.syncErrors(s, a) else _ = try syncFunctions(s, a);
     }
     if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
     const theirs = json.items(json.path(r, &.{ "body", "breakpoints" }));
@@ -359,6 +398,8 @@ fn scopes(s: *Session, a: Allocator, frame: ?i64, r: Value) !void {
         _ = sc.object.orderedRemove("namedVariables");
         _ = sc.object.orderedRemove("indexedVariables");
     }
+    // LFortran's debug information has no module variables (#366)
+    if (s.g.lfortran) return;
     const f = s.g.frames.get(frame orelse return) orelse return;
     const modvars = try moduleVariablesAt(s, a, f.file orelse return, f.line);
     if (modvars.len == 0) return;
@@ -381,23 +422,32 @@ fn scopes(s: *Session, a: Allocator, frame: ?i64, r: Value) !void {
 /// The module variables a line of a file sees, from zfls's index of the
 /// sources (the launch's `sourceRoot`, else its `cwd`)
 fn moduleVariablesAt(s: *Session, a: Allocator, file: []const u8, line: i64) ![]vars.ModuleVariable {
-    if (!s.g.indexed) {
-        s.g.indexed = true;
-        if (s.g.source_root) |root| declarations.index(s, a, root);
-    }
+    indexed(s, a);
     const srv = s.server orelse return &.{};
     const items = srv.dispatchPublic(a, "zfls/moduleVariables", try json.from(a, .{
         .textDocument = .{ .uri = try paths.pathToUri(a, file) },
         .position = .{ .line = @max(line - 1, 0), .character = 0 },
     })) catch return &.{};
     var out: std.ArrayList(vars.ModuleVariable) = .empty;
-    for (json.items(items)) |it| try out.append(a, .{
-        .module = json.str(json.get(it, "module")) orelse continue,
-        .name = json.str(json.get(it, "name")) orelse continue,
-        .local = json.str(json.get(it, "local")) orelse json.str(json.get(it, "name")).?,
-        .type = json.str(json.get(it, "type")) orelse "",
-    });
+    for (json.items(items)) |it| {
+        // an intrinsic module's names are constants, not the program's
+        if (declarations.isIntrinsicModule(s, json.str(json.get(it, "module")) orelse "")) continue;
+        try out.append(a, .{
+            .module = json.str(json.get(it, "module")) orelse continue,
+            .name = json.str(json.get(it, "name")) orelse continue,
+            .local = json.str(json.get(it, "local")) orelse json.str(json.get(it, "name")).?,
+            .type = json.str(json.get(it, "type")) orelse "",
+        });
+    }
     return out.items;
+}
+
+/// zfls's index of the sources (the launch's `sourceRoot`, else its
+/// `cwd`), made the first time it is needed
+fn indexed(s: *Session, a: Allocator) void {
+    if (s.g.indexed) return;
+    s.g.indexed = true;
+    if (s.g.source_root) |root| declarations.index(s, a, root);
 }
 
 fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
@@ -421,14 +471,37 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     } else false;
     try forwarded.put(a, "context", .{ .string = if (known) context else "watch" });
     const r = try gdb.request(s, a, "evaluate", Value{ .object = forwarded });
+    // a variable of a module's COMMON block, which gdb does not know
+    // (`cx`, `blk_var(2)`), by its convenience variable
+    const head = std.mem.findAny(u8, expr, "(%") orelse expr.len;
+    if (!gdb.isSuccess(r)) if (try moduleOf(s, a, expr[0..head], frame)) |mv| if (try gdb_values.commonMember(s, a, mv.module, mv.name, frame)) |cv| {
+        var got = cv;
+        if (head < expr.len) {
+            const e = try a.print("{s}{s}", .{ cv.evaluate_name.?, expr[head..] });
+            const rr = try gdb.request(s, a, "evaluate", try vars.evalArgs(a, e, frame, "watch"));
+            if (!gdb.isSuccess(rr)) return gdb.respondWith(s, a, req, rr);
+            got = .{
+                .name = expr,
+                .value = json.str(json.path(rr, &.{ "body", "result" })) orelse "",
+                .type = json.str(json.path(rr, &.{ "body", "type" })),
+                .ref = json.int(json.path(rr, &.{ "body", "variablesReference" })) orelse 0,
+                .evaluate_name = e,
+            };
+        }
+        const v = try vars.present(s, a, got, expr, got.evaluate_name, frame, null, null);
+        return s.respond(a, req, .{ .result = v.value, .type = v.type, .variablesReference = v.ref });
+    };
     if (gdb.isSuccess(r)) if (r.object.getPtr("body")) |body| if (body.* == .object) {
-        const shown = vars.present(s, a, .{
+        const got: vars.Variable = .{
             .name = expr,
             .value = json.str(json.get(body.*, "result")) orelse "",
             .type = json.str(json.get(body.*, "type")),
             .ref = json.int(json.get(body.*, "variablesReference")) orelse 0,
             .memory_reference = json.str(json.get(body.*, "memoryReference")),
-        }, expr, expr, frame, null, null) catch null;
+        };
+        // a module's deferred-length CHARACTER, by its own name or its module's
+        const string = if (try moduleOf(s, a, expr, frame)) |mv| try gdb_values.moduleString(s, a, mv.module, mv.name, got, frame) else null;
+        const shown = string orelse (vars.present(s, a, got, expr, expr, frame, null, null) catch null);
         if (shown) |v| {
             try body.object.put(a, "result", .{ .string = v.value });
             if (v.type) |t| try body.object.put(a, "type", .{ .string = t }) else _ = body.object.orderedRemove("type");
@@ -436,6 +509,20 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         }
     };
     gdb.respondWith(s, a, req, r);
+}
+
+/// The module variable an expression names: `module::name`, or a name the
+/// frame's line sees by USE or host association; null for other ones
+fn moduleOf(s: *Session, a: Allocator, expr: []const u8, frame: ?i64) !?struct { module: []const u8, name: []const u8 } {
+    const e = std.mem.trim(u8, expr, " ");
+    for (e) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != ':') return null;
+    indexed(s, a);
+    if (std.mem.find(u8, e, "::")) |sep| return .{ .module = e[0..sep], .name = e[sep + 2 ..] };
+    const f = s.g.frames.get(frame orelse return null) orelse return null;
+    for (try moduleVariablesAt(s, a, f.file orelse return null, f.line)) |mv| {
+        if (std.ascii.eqlIgnoreCase(mv.local, e)) return .{ .module = mv.module, .name = mv.name };
+    }
+    return null;
 }
 
 /// `setVariable`: by the variable's Fortran expression when it has one
@@ -490,18 +577,36 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
             }
         }
         s.g.last_error = hit;
+        // the breakpoint of the stop at the start (lldb's, or gdb's on
+        // Flang's main program), and lldb's stop of a pause
+        if (s.g.entry_breakpoint) |entry| for (json.items(json.get(body, "hitBreakpointIds"))) |id| {
+            if (json.int(id) != entry or body != .object) continue;
+            body.object.put(a, "reason", .{ .string = "entry" }) catch {};
+            s.g.entry_hit = true;
+        };
+        if (s.g.pausing and s.g.lldb and body == .object and std.mem.eql(u8, json.str(json.get(body, "reason")) orelse "", "exception"))
+            body.object.put(a, "reason", .{ .string = "pause" }) catch {};
+        s.g.pausing = false;
         if (hit) |f| if (body == .object) {
             body.object.put(a, "reason", .{ .string = "exception" }) catch {};
-            body.object.put(a, "description", .{ .string = if (fortran.isErrorStop(f)) s.text.error_stop else s.text.runtime_error }) catch {};
+            body.object.put(a, "description", .{ .string = if (runtime_errors.isErrorStop(f)) s.text.error_stop else s.text.runtime_error }) catch {};
             body.object.put(a, "text", .{ .string = f }) catch {};
         };
     } else if (std.mem.eql(u8, name, "continued")) {
         vars.clear(s);
     } else if (std.mem.eql(u8, name, "breakpoint")) {
-        // those of the runtime's errors are the adapter's own
-        if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id)) return;
-    } else if (std.mem.eql(u8, name, "terminated") or std.mem.eql(u8, name, "exited")) {
+        // those of the runtime's errors and of the stop at the start are
+        // the adapter's own
+        if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id) or id == s.g.entry_breakpoint) return;
+    } else if (std.mem.eql(u8, name, "exited")) {
         killTerminal(s);
+        // a signal's end: its exit code (#440)
+        gdb_exit.programExited(s, a, &body);
+        s.event(a, name, body);
+        return gdb_exit.releaseTerminated(s, a);
+    } else if (std.mem.eql(u8, name, "terminated")) {
+        killTerminal(s);
+        if (gdb_exit.holdTerminated(s)) return;
     } else if (std.mem.eql(u8, name, "initialized")) {
         if (s.g.initialized_sent) return;
         s.g.initialized_sent = true;

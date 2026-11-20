@@ -21,7 +21,6 @@ const project = @import("../project.zig");
 const semantic = @import("../semantic.zig");
 const namelist = @import("../namelist.zig");
 
-const Obj = objects.Obj;
 const Ast = objects.Ast;
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
@@ -34,9 +33,17 @@ const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
 const format = @import("format.zig");
 const linters = @import("linters.zig");
+const pending = @import("pending.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
+const configuration = @import("configuration.zig");
+const completion_resolve = @import("completion_resolve.zig");
+const pull = @import("pull.zig");
+const lenses = @import("lenses.zig");
+const linking = @import("linking.zig");
+const modfiles = @import("modfiles.zig");
+const summary = @import("summary.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -50,9 +57,14 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.root_path = try sa.dupe(u8, try self.pathFromUri(a, root_in));
     self.hierarchical_symbols = params.capabilities.textDocument.documentSymbol.hierarchicalDocumentSymbolSupport;
     self.prepare_rename = params.capabilities.textDocument.rename.prepareSupport;
+    self.completion_snippets = params.capabilities.textDocument.completion.completionItem.snippetSupport;
     try self.s.source_dirs.add(sa, self.root_path);
+    self.config.client = params.capabilities;
+    self.completion_resolve = completion_resolve.wanted(params.capabilities);
+    self.config.client.textDocument.completion.completionItem.resolveSupport = .{};
+    self.pull_diagnostics = pull.wanted(params.capabilities);
 
-    try loadConfigFile(self, a);
+    try configuration.load(self, a, params.initializationOptions);
     try loadProjectFiles(self, a);
     try diagnostics.checkDiagnosticSeverity(self, a);
     try compile.checkSetting(self, a);
@@ -61,76 +73,94 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     try configLogger(self);
     try loadIntrinsics(self);
     try addSourceDirs(self, a);
+    self.lens_commands = lenses.clientCommands(params.capabilities.experimental);
+    self.config.client.experimental = null;
 
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);
     self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
+    try logOptions(self, a);
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
+    const on = configuration.wanted(self);
+    self.config.announced = on;
+    self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
     return json.from(a, lsp.InitializeResult{ .capabilities = .{
-        .completionProvider = .{ .resolveProvider = false, .triggerCharacters = &.{ "%", "." } },
-        .textDocumentSync = self.sync_type,
-        .signatureHelpProvider = if (self.s.use_signature_help) .{ .triggerCharacters = &.{ "(", "," } } else null,
-        .codeActionProvider = if (self.s.enable_code_actions or self.s.fortitude) true else null,
+        .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
+        .textDocumentSync = .{ .change = self.sync_type },
+        .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
+        .codeActionProvider = if (on.code_actions) true else null,
         .semanticTokensProvider = .{ .legend = semantic.legend },
         .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
-        .documentFormattingProvider = if (format.enabled(self)) true else null,
-        .documentRangeFormattingProvider = if (format.enabled(self)) true else null,
+        .documentFormattingProvider = if (on.formatting) true else null,
+        .documentRangeFormattingProvider = if (on.formatting) true else null,
+        .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
     } });
 }
 
-/// Problems with the user's configuration file are posted to the client;
-/// only allocation failures are errors
-pub fn loadConfigFile(self: *Server, a: Allocator) Allocator.Error!void {
-    const candidates = [_][]const u8{ self.s.config, ".fortlsrc", ".fortls.json", ".fortls" };
+/// The names of the configuration file, the first found being read
+pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames("")) {
+    return settings_mod.configFileNames(self.s.config);
+}
+
+/// Reads the configuration file: its JSON object (owned by the server's
+/// arena), null without one. Problems with it are posted to the client;
+/// only allocation failures are errors.
+pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
+    self.config.file_path = null;
     var config_path: ?[]const u8 = null;
-    for (candidates) |f| {
+    for (configFileNames(self)) |f| {
         const p = try paths.join(a, &.{ self.root_path, f });
         if (paths.isFile(self.io, p)) {
             config_path = p;
             break;
         }
     }
-    const cp = config_path orelse return;
-    const sa = self.arena.allocator();
-    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, sa, .limited(1 << 26)) catch {
+    const cp = config_path orelse return null;
+    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, self.arena.allocator(), .limited(1 << 26)) catch {
         self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
-        return;
+        return null;
     };
-    var p: json5.Parser = .{ .a = sa, .src = data };
+    const cfg = try parseConfigFile(self, a, data, self.s.config) orelse return null;
+    self.config.file_path = try self.arena.allocator().dupe(u8, cp);
+    return cfg;
+}
+
+/// The JSON object of a configuration file's text `data` (in the server's
+/// arena), null when it is none: an error then posted, naming the file as
+/// `name`
+pub fn parseConfigFile(self: *Server, a: Allocator, data: []const u8, name: []const u8) Allocator.Error!?Value {
+    var p: json5.Parser = .{ .a = self.arena.allocator(), .src = data };
     const cfg = p.parseDocument() catch {
         const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, self.s.config });
+        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, name });
         self.postMessage(a, msg, C.Severity.err);
-        return;
+        return null;
     };
     if (cfg != .object) {
-        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{self.s.config}), C.Severity.err);
-        return;
+        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{name}), C.Severity.err);
+        return null;
     }
-    try settings_mod.applyConfig(sa, &self.s, cfg);
-    self.sync_type = if (self.s.incremental_sync) 2 else 1;
-    if (cfg.object.get("incl_suffixes") != null) {
-        if (patterns.createSrcFileExtsStr(sa, self.s.incl_suffixes.slice())) |re| {
-            self.src_ext_regex = re;
-        } else |e| switch (e) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => self.postMessage(a, "Invalid 'incl_suffixes' in the configuration file; keeping the default source file extensions", C.Severity.warn),
-        }
-    }
-    try self.syncPpDefsFromSettings();
+    return cfg;
 }
 
 /// Adds the include directories and preprocessor definitions of the
 /// project's compile_commands.json and fpm.toml to the options' own
 pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     const sa = self.arena.allocator();
+    self.outside_sources = .empty;
+    self.module_dirs = .empty;
+    self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
         if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
-                self.log.info("{s}: {d} include directories, {d} definitions", .{ p, found.include_dirs.items.len, found.defs.items.len });
+                self.module_dirs = found.module_dirs;
+                self.compile_commands = found.commands;
+                // those under the root are the scan's
+                for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
+                self.log.info("{s}: {d} include directories, {d} definitions, {d} files outside the root", .{ p, found.include_dirs.items.len, found.defs.items.len, self.outside_sources.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => self.postMessage(a, try a.print("Could not read \"{s}\": not a compilation database", .{p}), C.Severity.warn),
@@ -194,6 +224,16 @@ pub fn configLogger(self: *Server) !void {
     }
 }
 
+/// The options in effect, after the command line, the editor's settings,
+/// the configuration file and the build files, in the debug log
+pub fn logOptions(self: *Server, a: Allocator) Allocator.Error!void {
+    if (!self.log.enabled(.debug)) return;
+    var read: std.ArrayList([]const u8) = .empty;
+    for ([_]?[]const u8{ self.config.user_path, self.config.file_path }) |p| if (p) |x| try read.append(a, x);
+    self.log.debug("Configuration files read: {s}", .{if (read.items.len == 0) "none" else try std.mem.join(a, ", ", read.items)});
+    self.log.debug("Final options: {s}", .{try json.stringify(a, try settings_mod.toJson(a, &self.s))});
+}
+
 pub fn loadIntrinsics(self: *Server) !void {
     const new = try intrinsics.load(self.gpa, self.s.lowercase_intrinsics);
     // Remove old intrinsic modules from the tree before freeing them
@@ -214,7 +254,7 @@ pub fn loadIntrinsics(self: *Server) !void {
 }
 
 pub fn parseOptions(self: *const Server) parser.Options {
-    return .{ .sort_keywords = self.s.sort_keywords };
+    return .{ .sort_keywords = self.s.sort_keywords, .intel_directives = !self.s.disable_intel_directives, .plain_comments = self.s.hover_plain_comments };
 }
 
 pub fn addSourceDirs(self: *Server, a: Allocator) !void {
@@ -251,10 +291,22 @@ pub fn getSourceFiles(self: *Server, a: Allocator) ![][]const u8 {
                 excluded = true;
             };
             if (excluded) continue;
+            if (project.isIfortInterface(self.io, p)) continue;
             try out.append(a, p);
         }
     }
+    for (self.outside_sources.items) |p| if (isOutsideSource(self, p)) try out.append(a, p);
     return out.items;
+}
+
+/// Whether `path`, a file of the compilation database outside the root, is
+/// indexed: neither in a source directory (which has it already) nor
+/// excluded
+fn isOutsideSource(self: *const Server, path: []const u8) bool {
+    if (self.s.source_dirs.contains(paths.dirname(path))) return false;
+    for (self.s.excl_paths.slice()) |ex| if (paths.eql(path, ex) or paths.isUnder(path, ex)) return false;
+    for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, path, ext)) return false;
+    return paths.isFile(self.io, path) and !project.isIfortInterface(self.io, path);
 }
 
 pub fn ppSuffixes(self: *const Server) ?[]const []const u8 {
@@ -272,24 +324,29 @@ pub fn initWorker(job: *Server.InitJob) void {
 
 /// Port of `file_init`
 pub fn fileInit(self: *Server, filepath: []const u8) Server.InitResult {
-    const f = loadFile(self, filepath) catch |e| return .{ .err = e };
+    const f = loadFile(self, filepath, true) catch |e| return .{ .err = e };
     return .{ .ok = f };
 }
 
-/// Create, read and parse a workspace file. The caller owns the result
+/// Create, read and parse a workspace file, keeping the summary of its AST
+/// when `rest` and it may rest (summary.zig). The caller owns the result
 /// (the file and its AST).
-pub fn loadFile(self: *Server, filepath: []const u8) parser.FileError!*FortranFile {
+pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
     f.comment_markers = self.s.comment_markers.slice();
+    f.openmp_conditional = !self.s.disable_openmp_conditional;
+    f.d_lines_code = self.s.dLinesCode();
+    f.fixed_columns = self.s.fixedColumns();
     errdefer f.destroy();
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
     const opts = parseOptions(self);
     const prepared = f.prepare(self.io, &self.pp_defs, self.s.include_dirs.slice(), opts) catch return error.ParseFailed;
     // or its AST from the index cache
-    const ast = cache.parseFile(self, f, prepared, opts) catch return error.ParseFailed;
+    const ast = cache.parseFile(self, f, prepared, opts, rest) catch return error.ParseFailed;
     // Emulate Python's recursion limit (deeply nested scopes)
-    if (maxScopeDepth(ast) > self.s.recursion_limit) {
+    const depth = if (ast.summary) |sm| sm.depth else objects.summary.maxScopeDepth(ast);
+    if (depth > self.s.recursion_limit) {
         ast.destroy();
         return error.RecursionLimit;
     }
@@ -317,7 +374,7 @@ pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
                 (try definition.resolveInclude(self, a, f, inc.path)) orelse continue;
             const path = try parser.normPath(a, found);
             if (self.workspace.contains(path)) continue;
-            const nf = loadFile(self, path) catch |e| {
+            const nf = loadFile(self, path, false) catch |e| {
                 self.log.info("{s}, included by {s}: {s}", .{ path, f.path, parser.describeFileError(e) });
                 continue;
             };
@@ -326,7 +383,7 @@ pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
                 errdefer nf.destroy();
                 try self.workspace.put(self.gpa, nf.path, nf);
             }
-            try addToTree(self, nf);
+            try linking.addToTree(self, nf);
             try todo.append(a, nf);
             added = true;
         }
@@ -334,15 +391,14 @@ pub fn addIncludedFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
     return added;
 }
 
-pub fn maxScopeDepth(ast: *Ast) i64 {
-    var max: i64 = 0;
-    for (ast.scope_list.items) |s| {
-        var d: i64 = 0;
-        var p: ?*Obj = s;
-        while (p) |o| : (p = o.parent) d += 1;
-        max = @max(max, d);
-    }
-    return max;
+/// The files that are none of the workspace's sources but that its files
+/// need: those they include (`addIncludedFiles`) and the module files of
+/// LLVM Flang's of the modules they use (modfiles.zig). Whether one was
+/// added (which a relink then links in).
+pub fn addNeededFiles(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
+    const included = try addIncludedFiles(self, a, of);
+    const modules = try modfiles.add(self, a, of);
+    return included or modules;
 }
 
 /// Parse the workspace's files; with the `workDoneToken` of the
@@ -385,146 +441,25 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
             .ok => |f| {
                 if (self.workspace.get(f.path)) |old| {
                     // Duplicate path (overlapping source dirs): keep the newest
-                    try retireFileAst(self, old);
+                    try linking.retireFileAst(self, old);
                     old.ast = f.ast;
                     f.ast = null;
                     f.destroy();
-                    try addToTree(self, old);
+                    try linking.addToTree(self, old);
                 } else {
                     try self.workspace.put(self.gpa, f.path, f);
-                    try addToTree(self, f);
+                    try linking.addToTree(self, f);
                 }
             },
         }
     }
-    _ = try addIncludedFiles(self, a, null);
-    try fullRelink(self, a);
-}
-
-// Several files can define the same global name. Unlike fortls, where
-// the last file parsed takes the name and re-parsing either file drops
-// it for both, the tree keeps one owner per name chosen the same way
-// whatever the order of events, so a long session agrees with a fresh
-// start: any file over an intrinsic module, then the lowest path.
-
-/// Whether a definition from `path` takes a name held by `held`.
-pub fn treeOwnerBeats(path: ?[]const u8, held: ?[]const u8) bool {
-    const p = path orelse return false;
-    const h = held orelse return true;
-    return std.mem.order(u8, p, h) == .lt;
-}
-
-pub fn addToTree(self: *Server, f: *FortranFile) !void {
-    const ast = f.ast orelse return;
-    var it = ast.global_dict.iterator();
-    while (it.next()) |e| {
-        const gop = try self.obj_tree.getOrPut(self.gpa, e.key_ptr.*);
-        if (gop.found_existing and !treeOwnerBeats(f.path, gop.value_ptr.path)) continue;
-        // the key is the owner's (it lives as long as the owner's AST)
-        gop.key_ptr.* = e.key_ptr.*;
-        gop.value_ptr.* = .{ .obj = e.value_ptr.*, .path = f.path };
-    }
-}
-
-/// Drops the names `ast` owns, handing each to the next file (or
-/// intrinsic module) that defines it.
-pub fn removeFromTree(self: *Server, ast: *Ast) void {
-    for (ast.global_dict.keys()) |key| {
-        const held = self.obj_tree.getEntry(key) orelse continue;
-        if (held.value_ptr.obj.file_ast != ast) continue;
-        var best: ?struct { key: []const u8, entry: objects.TreeEntry } = null;
-        for (self.workspace.values()) |f| {
-            const other = f.ast orelse continue;
-            if (other == ast) continue;
-            const e = other.global_dict.getEntry(key) orelse continue;
-            if (best == null or treeOwnerBeats(f.path, best.?.entry.path)) {
-                best = .{ .key = e.key_ptr.*, .entry = .{ .obj = e.value_ptr.*, .path = f.path } };
-            }
-        }
-        if (best == null) for (self.intr.mods) |m| {
-            if (std.mem.eql(u8, m.fqsn, key)) best = .{ .key = m.fqsn, .entry = .{ .obj = m, .path = null } };
-        };
-        if (best) |b| {
-            held.key_ptr.* = b.key;
-            held.value_ptr.* = b.entry;
-        } else _ = self.obj_tree.orderedRemove(key);
-    }
-}
-
-pub fn retireFileAst(self: *Server, f: *FortranFile) !void {
-    if (f.ast) |old| {
-        try self.retired.append(self.gpa, old);
-        removeFromTree(self, old);
-    }
-}
-
-/// Re-resolve includes and links across the whole workspace, after
-/// which no object references a retired AST, so those can be freed.
-pub fn fullRelink(self: *Server, a: Allocator) !void {
-    // Reset cross-file references so that nothing points into retired ASTs
-    for (self.workspace.values()) |f| {
-        const ast = f.ast orelse continue;
-        ast.included_in = null;
-        if (ast.inc_scope) |inc| {
-            ast.none_scope = inc;
-            for (inc.childList()) |c| c.parent = inc;
-        }
-        for (ast.include_statements.items) |inc| {
-            inc.inc_obj = null;
-            inc.file = null;
-        }
-        for (ast.variable_list.items) |v| {
-            v.varData().type_obj = null;
-            v.varData().link_obj = null;
-        }
-        for (ast.scope_list.items) |s| {
-            if (s.kind.isSubroutine()) s.procData().link_obj = null;
-            if (s.procDataOpt()) |p| if (p.linked_from_interface) s.resetInterfaceCopy();
-            if (s.kind == .interface) s.ifaceData().mems.clearRetainingCapacity();
-            if (s.kind == .type) {
-                s.typeData().inherit_var = null;
-                s.scopeData().in_children.clearRetainingCapacity();
-                s.typeData().inherit_version = -1;
-            }
-            if (s.kind == .submodule) s.submodData().ancestor_obj = null;
-            // Children of scopes in other files added through INCLUDE
-            var k: usize = 0;
-            while (k < s.childList().len) {
-                if (s.childList()[k].file_ast != ast) {
-                    _ = s.scopeData().children.orderedRemove(k);
-                } else k += 1;
-            }
-        }
-        if (ast.none_scope) |ns| {
-            var k: usize = 0;
-            while (k < ns.childList().len) {
-                if (ns.childList()[k].file_ast != ast) {
-                    _ = ns.scopeData().children.orderedRemove(k);
-                } else k += 1;
-            }
-        }
-    }
-    for (self.workspace.values()) |f| {
-        const ast = f.ast orelse continue;
-        for (ast.include_statements.items) |inc| inc.scope_objs.clearRetainingCapacity();
-    }
-    for (self.workspace.values()) |f| {
-        if (f.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
-    }
-    self.link_version = @mod(self.link_version + 1, 1000);
-    var tmp = std.heap.ArenaAllocator.init(self.gpa);
-    defer tmp.deinit();
-    for (self.workspace.values()) |f| {
-        if (f.ast) |ast| {
-            try ast.resolveLinks(self.env(tmp.allocator()), self.link_version);
-            _ = tmp.reset(.retain_capacity);
-        }
-    }
-    for (self.retired.items) |ast| ast.destroy();
-    self.retired.clearRetainingCapacity();
+    _ = try addNeededFiles(self, a, null);
+    try linking.fullRelink(self, a);
+    try summary.wakeIncluded(self, a);
 }
 
 pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !Value {
+    pull.changed(self);
     const path = try self.pathFromUri(a, params.textDocument.uri);
     if (self.c_docs.get(path) orelse self.nml_docs.get(path)) |doc| {
         for (params.contentChanges) |c| _ = doc.applyChange(toChange(c)) catch {};
@@ -562,13 +497,16 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         if (file.ast) |ast| try ast.resolveIncludes(&self.workspace, try definition.includeDirs(self, a), null, a);
         // a file not read yet that a new INCLUDE names is linked in by a
         // full relink, as is the memory of replaced ASTs reclaimed
-        if (try addIncludedFiles(self, a, file) or self.retired.items.len >= 16) try fullRelink(self, a);
+        if (try addNeededFiles(self, a, file) or self.retired.items.len >= 16) try linking.fullRelink(self, a);
     } else if (file.preproc) {
         const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
         try self.mergePpDefs(&out.defs);
     }
-    // the compiler checks the unsaved text after a pause (compiler_on_change)
+    // zfls's diagnostics of the new text follow after a pause
+    // (diagnostics_change_delay), as does the compiler's check of it
+    // (compiler_on_change)
     if (!self.s.disable_diagnostics) {
+        pending.schedule(self, a, params.textDocument.uri);
         compile.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ path, @errorName(e) });
         linters.check(self, a, params.textDocument.uri, path, .change) catch |e| self.log.err("linters of {s}: {s}", .{ path, @errorName(e) });
     }
@@ -603,23 +541,60 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         errdefer self.gpa.free(key);
         try self.open_docs.put(self.gpa, key, {});
     }
-    if (did_close) if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
-    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, did_open, did_close);
+    if (did_close) {
+        if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
+        pending.cancel(self, uri);
+    }
+    // the form the editor's language names, while the document is open
+    const form: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
-        if (self.workspace.get(filepath)) |f| if (f.ast) |ast| removeFromTree(self, ast);
+        // a document that was never saved, or whose file is gone: it leaves
+        // the workspace, and its problems with it
+        const f = self.workspace.get(filepath) orelse return .null;
+        if (f.ast == null) return .null;
+        try linking.retireFileAst(self, f);
+        f.ast = null;
+        // so that the same text, opened again, is parsed again (in the form
+        // its language names then)
+        f.hash = null;
+        f.forced_form = null;
+        try linking.fullRelink(self, a);
+        if (!self.s.disable_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
         return .null;
     }
-    const changed = updateWorkspaceFile(self, filepath, true, did_open, false) catch |e| {
-        self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
+    // an opened document's text is the editor's, which need not be the
+    // file's: unsaved changes restored, or a new file not saved yet. Only a
+    // didOpen without a text (and a save or a close) reads the file.
+    const open_text = if (did_open) params.textDocument.text else null;
+    var changed = (if (open_text) |t| openDocument(self, filepath, t, form) else updateWorkspaceFile(self, filepath, true, did_open, false)) catch |e| {
+        self.postMessage(a, try a.print("{s} request failed for file '{s}': {s}", .{ if (did_open) "Open" else "Save", filepath, parser.describeFileError(e) }), C.Severity.err);
         return .null;
     };
-    if (changed) {
-        _ = try addIncludedFiles(self, a, self.workspace.get(filepath));
-        try fullRelink(self, a);
+    // read in the other form than before: parsed again (an opened text
+    // was read in its form by openDocument)
+    if (open_text == null and (did_open or did_close)) if (self.workspace.get(filepath)) |f| if (f.forceForm(form)) {
+        changed = updateWorkspaceFile(self, filepath, false, true, false) catch |e| {
+            self.postMessage(a, try a.print("Save request failed for file '{s}': {s}", .{ filepath, parser.describeFileError(e) }), C.Severity.err);
+            return .null;
+        };
+    };
+    // an opened summary is parsed in full again, as it was
+    if (did_open) if (self.workspace.get(filepath)) |f| if (summary.dormant(f)) try summary.wake(self, a, &.{f});
+    // the files parsed in full for requests rest again, but for a closed
+    // one, whose diagnostics are of its full AST
+    const slept = !did_close and try summary.sleepAll(self, a);
+    if (changed or slept) {
+        if (changed) _ = try addNeededFiles(self, a, self.workspace.get(filepath));
+        try linking.fullRelink(self, a);
+        try summary.wakeIncluded(self, a);
     }
     // the compiler checks the file as saved, on its own thread
     if (!did_close and !self.s.disable_diagnostics) {
-        const trigger: compile.Trigger = if (did_open) .open else .save;
+        // the compiler and Codee read the file, which an opened document's
+        // text may differ from
+        const unsaved = open_text != null and (compile.anyCompiler(self) or self.s.codee) and differsFromDisk(self, filepath);
+        const trigger: compile.Trigger = if (unsaved) .open_unsaved else if (did_open) .open else .save;
         compile.check(self, a, uri, filepath, trigger) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ filepath, @errorName(e) });
         linters.check(self, a, uri, filepath, trigger) catch |e| self.log.err("linters of {s}: {s}", .{ filepath, @errorName(e) });
     }
@@ -629,7 +604,41 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         return .null;
     }
     if (!self.s.disable_diagnostics) diagnostics.sendDiagnostics(self, a, uri);
+    if (did_close) if (self.workspace.get(filepath)) |f| {
+        summary.forget(self, f);
+        if (try summary.sleepAll(self, a)) try linking.fullRelink(self, a);
+    };
     return .null;
+}
+
+/// `didOpen` of a file's document with its text: the text is the document's,
+/// whatever the file holds (if there is one). Returns whether it changed:
+/// a text equal to the one the workspace has of the file is not parsed again.
+fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?parser.SourceForm) parser.FileError!bool {
+    const file = self.workspace.get(filepath) orelse blk: {
+        const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
+        errdefer nf.destroy();
+        nf.comment_markers = self.s.comment_markers.slice();
+        nf.openmp_conditional = !self.s.disable_openmp_conditional;
+        nf.d_lines_code = self.s.dLinesCode();
+        nf.fixed_columns = self.s.fixedColumns();
+        try self.workspace.put(self.gpa, nf.path, nf);
+        break :blk nf;
+    };
+    // the form first, so that a new text is read in it
+    const reformed = file.forceForm(form);
+    const changed = try file.setText(text);
+    if (!changed and !reformed and file.ast != null) return false;
+    return updateWorkspaceFile(self, filepath, false, true, false);
+}
+
+/// Whether the text zfls has of `filepath` is not what the file holds (or
+/// there is no such file)
+fn differsFromDisk(self: *Server, filepath: []const u8) bool {
+    const file = self.workspace.get(filepath) orelse return false;
+    const data = Io.Dir.cwd().readFileAlloc(self.io, filepath, self.gpa, .limited(1 << 30)) catch return true;
+    defer self.gpa.free(data);
+    return file.hash == null or file.hash.? != parser.FortranFile.textHash(data);
 }
 
 /// A document zfls holds the text of but does not parse as Fortran: a C
@@ -664,8 +673,14 @@ fn textDocument(self: *Server, docs: *std.StringHashMapUnmanaged(*FortranFile), 
 /// are left alone, their text being the editor's.
 pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatchedFilesParams) !Value {
     var changed = false;
+    // a file the settings are read from, which are read again after
+    var settings_file: ?configuration.Watched = null;
     for (params.changes) |ev| {
         const path = try self.pathFromUri(a, ev.uri);
+        if (try configuration.watched(self, a, path)) |kind| {
+            if (settings_file != .project) settings_file = kind;
+            continue;
+        }
         // the C search again; a `.h` may be a Fortran include too, which
         // the rest follows
         if (bindc.isCFile(path)) bindc.deinitIndex(self);
@@ -673,7 +688,7 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         if (ev.type == 3) {
             const f = self.workspace.get(path) orelse continue;
             if (f.ast == null) continue;
-            try retireFileAst(self, f);
+            try linking.retireFileAst(self, f);
             f.ast = null;
             // so that the same text, restored, is parsed again
             f.hash = null;
@@ -690,9 +705,15 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         };
         changed = changed or updated;
     }
-    if (changed) {
-        _ = try addIncludedFiles(self, a, null);
-        try fullRelink(self, a);
+    if (try summary.sleepAll(self, a) or changed) {
+        _ = try addNeededFiles(self, a, null);
+        try linking.fullRelink(self, a);
+        try summary.wakeIncluded(self, a);
+    }
+    if (settings_file) |kind| {
+        // which publishes the diagnostics again
+        try configuration.reload(self, a, kind == .project);
+        return .null;
     }
     if (changed and self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
     return .null;
@@ -700,38 +721,47 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
 
 /// Whether `path` is a file the workspace indexes: a Fortran file of a
 /// source directory (any directory under the root, without
-/// `source_dirs`) that no exclusion covers
+/// `source_dirs`) or of the compilation database outside the root, that no
+/// exclusion covers, and no interface module of ifort's
 pub fn isSourceFile(self: *const Server, path: []const u8) bool {
     const base = std.Io.Dir.path.basename(path);
     if (self.src_ext_regex.search(base) == null) return false;
     for (self.s.excl_suffixes.slice()) |ext| if (std.mem.endsWith(u8, base, ext)) return false;
     for (self.s.excl_paths.slice()) |ex| if (std.mem.startsWith(u8, path, ex)) return false;
-    if (self.s.source_dirs.contains(paths.dirname(path))) return true;
-    return self.whole_root and std.mem.startsWith(u8, path, self.root_path);
+    const in_sources = self.s.source_dirs.contains(paths.dirname(path)) or
+        (self.whole_root and std.mem.startsWith(u8, path, self.root_path)) or
+        for (self.outside_sources.items) |p| {
+            if (paths.eql(p, path)) break true;
+        } else false;
+    return in_sources and !project.isIfortInterface(self.io, path);
 }
 
 /// `didOpen`, `didSave` and `didClose` of a document that is not a file
 /// (an untitled one): its text comes with `didOpen` and its changes,
 /// and it leaves the workspace when it is closed
-pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, did_open: bool, did_close: bool) !Value {
+pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
     if (did_close) {
-        if (self.workspace.get(path)) |f| if (f.ast) |ast| removeFromTree(self, ast);
+        if (self.workspace.get(path)) |f| if (f.ast) |ast| linking.removeFromTree(self, ast);
         return .null;
     }
     if (did_open) {
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
+            nf.d_lines_code = self.s.dLinesCode();
+            nf.fixed_columns = self.s.fixedColumns();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
         };
         _ = try file.setText(text orelse "");
+        _ = file.forceForm(form);
         const changed = updateWorkspaceFile(self, path, false, true, false) catch |e| {
             self.postMessage(a, try a.print("Open request failed for '{s}': {s}", .{ path, parser.describeFileError(e) }), C.Severity.err);
             return .null;
         };
-        if (changed) try fullRelink(self, a);
+        if (changed) try linking.fullRelink(self, a);
     }
     if (!self.s.disable_diagnostics) diagnostics.sendDiagnostics(self, a, uri);
     return .null;
@@ -750,6 +780,9 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         if (file == null) {
             const nf = try FortranFile.create(self.gpa, filepath, ppSuffixes(self));
             nf.comment_markers = self.s.comment_markers.slice();
+            nf.openmp_conditional = !self.s.disable_openmp_conditional;
+            nf.d_lines_code = self.s.dLinesCode();
+            nf.fixed_columns = self.s.fixedColumns();
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;
@@ -786,9 +819,10 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         }
         if (f.ast) |old| try self.retired.append(self.gpa, old);
     }
-    if (f.ast) |old| removeFromTree(self, old);
+    if (f.ast) |old| linking.removeFromTree(self, old);
     f.ast = ast_new;
-    try addToTree(self, f);
+    pull.changed(self);
+    try linking.addToTree(self, f);
     if (update_links) {
         self.link_version = @mod(self.link_version + 1, 1000);
         var tmp = std.heap.ArenaAllocator.init(self.gpa);

@@ -145,6 +145,8 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
             var seen: std.ArrayList([]const u8) = .empty;
             for (json.items(items)) |it| {
                 const module = json.str(json.get(it, "module")) orelse continue;
+                // an intrinsic module's names are constants, not the program's
+                if (declarations.isIntrinsicModule(s, module)) continue;
                 const listed = for (seen.items) |m| {
                     if (std.ascii.eqlIgnoreCase(m, module)) break true;
                 } else false;

@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const regex = @import("regex.zig");
+const suffixes = @import("suffixes.zig");
 const Regex = regex.Regex;
 const I = regex.I;
 
@@ -41,12 +42,12 @@ const defs = [_]Def{
     .{ "END_BLOCK_DATA", "BLOCK[ ]*DATA", true },
     .{ "DO", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?DO([ ]+[0-9]*|$)", true },
     .{ "END_DO", "DO", true },
-    .{ "WHERE", "[ ]*WHERE[ ]*\\(", true },
+    .{ "WHERE", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?WHERE[ ]*\\(", true },
     .{ "END_WHERE", "WHERE", true },
     .{ "IF", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?IF[ ]*\\(", true },
     .{ "THEN", "\\)[ ]*THEN$", true },
     .{ "END_IF", "IF", true },
-    .{ "ASSOCIATE", "[ ]*ASSOCIATE[ ]*\\(", true },
+    .{ "ASSOCIATE", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?ASSOCIATE[ ]*\\(", true },
     .{ "END_ASSOCIATE", "ASSOCIATE", true },
     .{ "END_FIXED", "[ ]*([0-9]*)[ ]*CONTINUE", true },
     .{ "SELECT", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?SELECT[ ]*(CASE|TYPE|RANK)[ ]*\\(([\\w=> ]*)", true },
@@ -78,13 +79,14 @@ const defs = [_]Def{
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
-        "|EXTERNAL|CLASS|TYPE)", true },
-    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\*[ ]*[0-9:]*)", true },
+        "|EXTERNAL|CLASS|TYPE|BYTE)", true },
+    // `()`: PROCEDURE() of no interface
+    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
         "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
-        "PASS[ ]*\\(\\w*\\)|SAVE|PARAMETER|EXTERNAL|" ++
-        "CONTIGUOUS|CODIMENSION[ ]*\\[)", true },
+        "PASS[ ]*\\([ ]*\\w*[ ]*\\)|SAVE|PARAMETER|EXTERNAL|" ++
+        "CONTIGUOUS|VOLATILE|ASYNCHRONOUS|PROTECTED|VALUE|CODIMENSION[ ]*\\[)", true },
     .{ "PARAMETER_VAL", "\\w*[\\s\\&]*=(([\\s\\&]*[\\w\\.\\-\\+\\*\\/\\'\\\"])*)", true },
     .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS\\(\\w*\\))", true },
     .{ "VIS", "[ ]*\\b(PUBLIC|PRIVATE)\\b", true },
@@ -107,7 +109,7 @@ const defs = [_]Def{
     .{ "PP_REGEX", "[ ]*#[ ]*(if |ifdef|ifndef|else|elif|endif)", true },
     .{ "PP_DEF", "[ ]*#[ ]*(define|undef|undefined)[ ]*(\\w+)(\\([ ]*([ \\w,]*?)[ ]*\\))?", true },
     .{ "PP_DEF_TEST", "(![ ]*)?defined[ ]*\\([ ]*(\\w*)[ ]*\\)$", true },
-    .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"\\w\\./\\\\]*)", true },
+    .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"<>\\w\\./\\\\-]*)", true },
     .{ "CALL", "[ ]*CALL[ ]+[\\w%]*$", true },
     .{ "INT_STMNT", "^[ ]*[a-z]*$", true },
     .{ "TYPE_STMNT", "[ ]*(TYPE|CLASS)[ ]*(IS)?[ ]*$", true },
@@ -166,10 +168,10 @@ pub fn init() void {
 }
 
 /// Port of `create_src_file_exts_regex`: build a regex matching the default
-/// Fortran file extensions plus `input_exts` (already escaped regex snippets).
+/// Fortran file extensions (suffixes.zig) plus `input_exts` (already escaped
+/// regex snippets).
 pub fn createSrcFileExtsRegex(a: std.mem.Allocator, input_exts: []const []const u8) !Regex {
-    // and CUDA Fortran's .cuf
-    const default = "\\.([fF](77|90|95|03|05|08|18|[oO][rR]|[pP]{2})?|[cC][uU][fF])";
+    const default = suffixes.pattern;
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(a);
     try buf.appendSlice(a, "((");
@@ -213,6 +215,14 @@ test "src file exts regex" {
     try std.testing.expect(re.search("test.F90") != null);
     try std.testing.expect(re.search("kernels.cuf") != null);
     try std.testing.expect(re.search("test.c") == null);
+    // and in either case (#250)
+    for ([_][]const u8{ "f", "f77", "for", "ftn", "fpp", "f90", "f95", "f03", "f05", "f08", "f18", "f23", "cuf", "pf", "fypp" }) |ext| {
+        var lower: [8]u8 = undefined;
+        var upper: [8]u8 = undefined;
+        try std.testing.expect(re.search(try std.mem.print(&lower, "x.{s}", .{ext})) != null);
+        try std.testing.expect(re.search(std.ascii.upperString(&upper, try std.mem.print(&lower, "x.{s}", .{ext}))) != null);
+    }
+    for ([_][]const u8{ "x.f2", "x.ft", "x.f233", "x.F233", "x.pff", "x.fyp", "x.f90.bak" }) |name| try std.testing.expect(re.search(name) == null);
 
     const bad = [_][]const u8{"*.inc"};
     var re2 = try createSrcFileExtsRegex(a, &bad);

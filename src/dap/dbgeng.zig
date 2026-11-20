@@ -26,84 +26,12 @@ const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
 const DebugCreateFn = *const fn (iid: *const GUID, out: *?*anyopaque) callconv(.winapi) HRESULT;
 
-// dbghelp (the engine's, by the same process handle)
-pub const SymbolInfo = extern struct {
-    SizeOfStruct: u32,
-    TypeIndex: u32,
-    Reserved: [2]u64,
-    Index: u32,
-    Size: u32,
-    ModBase: u64,
-    Flags: u32,
-    Value: u64,
-    Address: u64,
-    Register: u32,
-    Scope: u32,
-    Tag: u32,
-    NameLen: u32,
-    MaxNameLen: u32,
-    Name: [1]u8,
-};
-const ImagehlpStackFrame = extern struct {
-    InstructionOffset: u64,
-    ReturnOffset: u64,
-    FrameOffset: u64,
-    StackOffset: u64,
-    BackingStoreOffset: u64,
-    FuncTableEntry: u64,
-    Params: [4]u64,
-    Reserved: [5]u64,
-    Virtual: i32,
-    Reserved2: u32,
-};
-const EnumCallback = *const fn (*SymbolInfo, u32, ?*anyopaque) callconv(.winapi) i32;
-extern "dbghelp" fn SymSetContext(h: usize, frame: *ImagehlpStackFrame, ctx: ?*anyopaque) callconv(.winapi) i32;
-extern "dbghelp" fn SymEnumSymbols(h: usize, base: u64, mask: ?[*:0]const u8, cb: EnumCallback, ctx: ?*anyopaque) callconv(.winapi) i32;
-extern "dbghelp" fn SymGetTypeInfo(h: usize, base: u64, type_id: u32, kind: u32, out: *anyopaque) callconv(.winapi) i32;
-const SrcCodeInfoW = extern struct {
-    SizeOfStruct: u32,
-    Key: ?*anyopaque,
-    ModBase: u64,
-    Obj: [261]u16,
-    FileName: [261]u16,
-    LineNumber: u32,
-    Address: u64,
-};
-extern "dbghelp" fn SymEnumLinesW(h: usize, base: u64, obj: ?[*:0]const u16, file: ?[*:0]const u16, cb: *const fn (*SrcCodeInfoW, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
-extern "dbghelp" fn SymFromName(h: usize, name: [*:0]const u8, info: *SymbolInfo) callconv(.winapi) i32;
-
-const SYMFLAG_REGISTER = 0x8;
-const SYMFLAG_REGREL = 0x10;
-const SYMFLAG_PARAMETER = 0x40;
-const SYMFLAG_LOCAL = 0x80;
-
-/// dbghelp's questions about a type (`IMAGEHLP_SYMBOL_TYPE_INFO`)
-pub const TypeQuery = enum(u32) {
-    symtag = 0,
-    symname = 1,
-    length = 2,
-    type = 4,
-    basetype = 6,
-    childrencount = 13,
-    count = 12,
-    findchildren = 7,
-    offset = 10,
-};
-
-/// dbghelp's kinds of types (`SymTagEnum`)
-pub const SymTag = enum(u32) {
-    udt = 11,
-    enumeration = 12,
-    function_type = 13,
-    pointer = 14,
-    array = 15,
-    base = 16,
-    typedef = 17,
-    data = 7,
-    base_class = 18,
-    custom = 28,
-    _,
-};
+// dbghelp's lookups (dbgeng_symbols.zig)
+const lookups = @import("dbgeng_symbols.zig");
+pub const SymbolInfo = lookups.SymbolInfo;
+pub const TypeQuery = lookups.TypeQuery;
+pub const SymTag = lookups.SymTag;
+const withoutUnderscore = lookups.withoutUnderscore;
 
 const DEBUG_ONLY_THIS_PROCESS: u32 = 0x2;
 const CREATE_NEW_CONSOLE: u32 = 0x10;
@@ -132,7 +60,7 @@ fn ok(hr: HRESULT) Error!void {
     }
 }
 
-fn succeeded(hr: HRESULT) bool {
+pub fn succeeded(hr: HRESULT) bool {
     return @as(i32, @bitCast(hr)) >= 0;
 }
 
@@ -153,6 +81,9 @@ pub const Frame = struct {
     name: []const u8,
     file: ?[]const u8,
     line: u32,
+    /// The engine's own line of the place, which steps go by: another than
+    /// `line` where a line table has empty records before the statement's
+    engine_line: u32 = 0,
     instruction: u64,
     frame_offset: u64,
     stack_offset: u64,
@@ -175,6 +106,9 @@ pub const Stop = union(enum) {
     breakpoint: struct { id: u32, thread: u32 },
     step: u32,
     exception: struct { code: u32, thread: u32, description: []const u8 },
+    /// A break instruction of the program's own (`int 3`, `DebugBreak`),
+    /// such as the Intel runtime's at a runtime error under a debugger
+    trap: struct { thread: u32, description: []const u8 },
     pause: u32,
     exited: u32,
 };
@@ -338,86 +272,20 @@ pub const Engine = struct {
         return .{ .id = id, .offset = offset };
     }
 
-    /// The address of the code of `file`:`line` in the loaded modules
-    fn lineOffset(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
-        if (try self.lineFromRecords(a, file, line)) |at| return at;
-        for ([_][]const u8{ file, std.Io.Dir.path.basename(file) }) |name| {
-            const w = try std.unicode.utf8ToUtf16LeAllocZ(a, name);
-            var off: u64 = 0;
-            const hr = self.symbols.GetOffsetByLineWide(line, w.ptr, &off);
-            if (succeeded(hr) and off != 0) return off;
-            last_failure = @bitCast(hr);
-            line_lookups[if (std.mem.eql(u8, name, file)) 0 else 1] = @bitCast(hr);
-        }
-        return null;
-    }
-
-    /// The address of `file`:`line` from the line records of the loaded
-    /// modules, matched here (dbghelp's own lookup by a file's name fails
-    /// on some Windows): the file by its path, else by its name; the line,
-    /// else the next one with code
-    fn lineFromRecords(self: *Engine, a: Allocator, file: []const u8, line: u32) !?u64 {
-        var want: Lines = .{ .a = a, .line = line, .path = try normalized(a, file), .name = try normalized(a, std.Io.Dir.path.basename(file)) };
-        var loaded: u32 = 0;
-        var unloaded: u32 = 0;
-        if (!succeeded(self.symbols.GetNumberModules(&loaded, &unloaded))) return null;
-        for (0..loaded) |i| {
-            var base: u64 = 0;
-            if (!succeeded(self.symbols.GetModuleByIndex(@intCast(i), &base))) continue;
-            _ = SymEnumLinesW(self.process, base, null, null, &Lines.onLine, &want);
-        }
-        const best = if (want.by_path.found) want.by_path else want.by_name;
-        return if (best.found) best.address else null;
-    }
-
-    const Pick = struct { found: bool = false, line: u32 = 0, address: u64 = 0 };
-
-    const Lines = struct {
-        a: Allocator,
-        line: u32,
-        path: []const u8,
-        name: []const u8,
-        by_path: Pick = .{},
-        by_name: Pick = .{},
-
-        fn onLine(info: *SrcCodeInfoW, raw: ?*anyopaque) callconv(.winapi) i32 {
-            const w: *Lines = @ptrCast(@alignCast(raw.?));
-            if (info.LineNumber < w.line) return 1;
-            const n = std.mem.findScalar(u16, &info.FileName, 0) orelse info.FileName.len;
-            const name = std.unicode.utf16LeToUtf8Alloc(w.a, info.FileName[0..n]) catch return 1;
-            const path = normalized(w.a, name) catch return 1;
-            if (std.mem.eql(u8, path, w.path)) {
-                keep(&w.by_path, info);
-            } else if (std.mem.endsWith(u8, path, w.name) and (path.len == w.name.len or path[path.len - w.name.len - 1] == '\\')) {
-                keep(&w.by_name, info);
-            }
-            return 1;
-        }
-
-        /// The line asked for, else the nearest after it; its lowest address
-        fn keep(p: *Pick, info: *const SrcCodeInfoW) void {
-            if (!p.found or info.LineNumber < p.line or (info.LineNumber == p.line and info.Address < p.address)) {
-                p.* = .{ .found = true, .line = info.LineNumber, .address = info.Address };
-            }
-        }
-    };
-
-    /// A path for comparing: lowercase, backslashes
-    fn normalized(a: Allocator, p: []const u8) ![]const u8 {
-        const out = try std.ascii.allocLowerString(a, p);
-        for (out) |*c| if (c.* == '/') {
-            c.* = '\\';
-        };
-        return out;
-    }
-
-    /// A breakpoint at a symbol (`MAIN__`, a runtime's function), maybe once
+    /// A breakpoint at a symbol (`MAIN__`, `_QQmain`, a runtime's
+    /// function), maybe once: at its address in the loaded modules (see
+    /// `global`), else deferred until a module that has it loads
     pub fn addSymbolBreakpoint(self: *Engine, a: Allocator, symbol: []const u8, one_shot: bool) !Breakpoint {
         var bp: ?*dbg.IDebugBreakpoint2 = null;
         try ok(self.control.AddBreakpoint2(DEBUG_BREAKPOINT_CODE, DEBUG_ANY_ID, &bp));
         const b = bp.?;
-        const wexpr = try std.unicode.utf8ToUtf16LeAllocZ(a, symbol);
-        _ = b.SetOffsetExpressionWide(wexpr.ptr);
+        if (try self.global(a, symbol)) |g| {
+            try ok(b.SetOffset(g.address));
+        } else {
+            // the engine's expression, without the `_` that dbghelp drops
+            const wexpr = try std.unicode.utf8ToUtf16LeAllocZ(a, withoutUnderscore(symbol));
+            _ = b.SetOffsetExpressionWide(wexpr.ptr);
+        }
         try ok(b.AddFlags(DEBUG_BREAKPOINT_ENABLED | if (one_shot) DEBUG_BREAKPOINT_ONE_SHOT else 0));
         var id: u32 = 0;
         try ok(b.GetId(&id));
@@ -533,9 +401,13 @@ pub const Engine = struct {
         }
         if (event == dbg.DEBUG_EVENT_EXCEPTION and extra_len >= 4) {
             const code = std.mem.readInt(u32, extra[0..4], .little);
-            // the initial breakpoint, and a step's own trap, are not the program's
+            const description = try a.dupe(u8, desc[0..@min(desc_len -| 1, desc.len)]);
+            // a break instruction: the program's own but in a step (the
+            // initial breakpoint is the launch's, which waits for it)
+            if (code == 0x80000003 and !self.stepping) return .{ .trap = .{ .thread = thread, .description = description } };
+            // a step's own trap is not the program's
             if (code != 0x80000003 and code != 0x80000004 and code != 0x4000001f) {
-                return .{ .exception = .{ .code = code, .thread = thread, .description = try a.dupe(u8, desc[0..@min(desc_len -| 1, desc.len)]) } };
+                return .{ .exception = .{ .code = code, .thread = thread, .description = description } };
             }
         }
         self.stepping = false;
@@ -559,84 +431,32 @@ pub const Engine = struct {
         var filled: u32 = 0;
         try ok(self.control.GetStackTrace(0, 0, 0, raw.ptr, max, &filled));
         const out = try a.alloc(Frame, filled);
-        for (raw[0..filled], out) |f, *o| {
+        for (raw[0..filled], out, 0..) |f, *o, i| {
             o.* = .{ .name = "?", .file = null, .line = 0, .instruction = f.InstructionOffset, .frame_offset = f.FrameOffset, .stack_offset = f.StackOffset };
+            // a caller's place is its call, before the return address (the
+            // next line's, or the next function's after a call that does
+            // not return)
+            const at = if (i > 0 and f.InstructionOffset > 0) f.InstructionOffset - 1 else f.InstructionOffset;
             var name: [512:0]u16 = undefined;
             var name_len: u32 = 0;
-            if (succeeded(self.symbols.GetNameByOffsetWide(f.InstructionOffset, &name, name.len, &name_len, null))) {
+            if (succeeded(self.symbols.GetNameByOffsetWide(at, &name, name.len, &name_len, null))) {
                 o.name = try std.unicode.utf16LeToUtf8Alloc(a, name[0..@min(name_len -| 1, name.len)]);
             }
             var file: [1024:0]u16 = undefined;
             var file_len: u32 = 0;
             var line: u32 = 0;
-            if (succeeded(self.symbols.GetLineByOffsetWide(f.InstructionOffset, &line, &file, file.len, &file_len, null))) {
+            if (succeeded(self.symbols.GetLineByOffsetWide(at, &line, &file, file.len, &file_len, null))) {
                 o.file = try std.unicode.utf16LeToUtf8Alloc(a, file[0..@min(file_len -| 1, file.len)]);
-                o.line = line;
+                o.line = self.lastLineAt(at, &file) orelse line;
+                o.engine_line = line;
             }
         }
         return out;
     }
 
-    /// The variables of frame `index` of `thread`: its arguments and locals
-    /// (dbghelp's, with their places), statics too
-    pub fn variables(self: *Engine, a: Allocator, thread: u32, index: u32) ![]Variable {
-        const frames = try self.stack(a, thread, index + 1);
-        if (index >= frames.len) return &.{};
-        const f = frames[index];
-        _ = self.symbols.SetScopeFrameByIndex(index);
-        var sf = std.mem.zeroes(ImagehlpStackFrame);
-        sf.InstructionOffset = f.instruction;
-        sf.FrameOffset = f.frame_offset;
-        sf.StackOffset = f.stack_offset;
-        _ = SymSetContext(self.process, &sf, null);
-        var ctx: Collect = .{ .a = a, .engine = self };
-        _ = SymEnumSymbols(self.process, 0, null, &Collect.onSymbol, &ctx);
-        if (ctx.failed) return error.OutOfMemory;
-        return ctx.out.items;
-    }
-
-    const Collect = struct {
-        a: Allocator,
-        engine: *Engine,
-        out: std.ArrayList(Variable) = .empty,
-        failed: bool = false,
-
-        fn onSymbol(s: *SymbolInfo, _: u32, raw: ?*anyopaque) callconv(.winapi) i32 {
-            const c: *Collect = @ptrCast(@alignCast(raw.?));
-            const name_ptr: [*]const u8 = @ptrCast(&s.Name);
-            const name = name_ptr[0..s.NameLen];
-            var address = s.Address;
-            if (s.Flags & SYMFLAG_REGREL != 0) {
-                const base = c.engine.frameRegister(s.Register) orelse return 1;
-                address = base +% s.Address;
-            } else if (s.Flags & SYMFLAG_REGISTER != 0) {
-                return 1; // in a register: not addressable (optimized code)
-            }
-            c.out.append(c.a, .{
-                .name = c.a.dupe(u8, name) catch {
-                    c.failed = true;
-                    return 0;
-                },
-                .address = address,
-                .size = s.Size,
-                .type_index = s.TypeIndex,
-                .mod_base = s.ModBase,
-                .parameter = s.Flags & SYMFLAG_PARAMETER != 0,
-            }) catch {
-                c.failed = true;
-                return 0;
-            };
-            return 1;
-        }
-    };
-
-    /// A register of the scope's frame, by CodeView's number
-    fn frameRegister(self: *Engine, cv: u32) ?u64 {
-        const name: [:0]const u8 = switch (cv) {
-            334 => "rbp",
-            335 => "rsp",
-            else => return null,
-        };
+    /// A register of the scope's frame (at a stop: of the thread stopped,
+    /// its innermost frame), by its name (`rdx`)
+    pub fn register(self: *Engine, name: [:0]const u8) ?u64 {
         var index: u32 = 0;
         if (!succeeded(self.registers.GetIndexByName(name.ptr, &index))) return null;
         var v: [1]dbg.DEBUG_VALUE = undefined;
@@ -644,15 +464,10 @@ pub const Engine = struct {
         return v[0].Anonymous.Anonymous.I64;
     }
 
-    /// A global (a module variable: `GRID_mp_CELLS`, `_QMgridEcells`)
-    pub fn global(self: *Engine, a: Allocator, name: []const u8) !?Variable {
-        var buf: [@sizeOf(SymbolInfo) + 512]u8 align(8) = undefined;
-        const info: *SymbolInfo = @ptrCast(&buf);
-        info.SizeOfStruct = @sizeOf(SymbolInfo);
-        info.MaxNameLen = 512;
-        const z = try a.dupeSentinel(u8, name, 0);
-        if (SymFromName(self.process, z.ptr, info) == 0) return null;
-        return .{ .name = try a.dupe(u8, name), .address = info.Address, .size = info.Size, .type_index = info.TypeIndex, .mod_base = info.ModBase, .parameter = false };
+    /// The base of the module of an address (a frame's instruction)
+    pub fn moduleBase(self: *Engine, address: u64) ?u64 {
+        var base: u64 = 0;
+        return if (succeeded(self.symbols.GetModuleByOffset(address, 0, null, &base))) base else null;
     }
 
     /// Reads the program's memory: the bytes read
@@ -667,55 +482,6 @@ pub const Engine = struct {
         return succeeded(self.data.WriteVirtual(address, @constCast(bytes.ptr), @intCast(bytes.len), &put)) and put == bytes.len;
     }
 
-    /// dbghelp's answer about a type (`u32` and `u64` ones)
-    pub fn typeInfo(self: *Engine, comptime T: type, mod_base: u64, type_index: u32, q: TypeQuery) ?T {
-        var v: T = 0;
-        return if (SymGetTypeInfo(self.process, mod_base, type_index, @backingInt(q), @ptrCast(&v)) != 0) v else null;
-    }
-
-    pub fn typeName(self: *Engine, a: Allocator, mod_base: u64, type_index: u32) ?[]const u8 {
-        var name: ?[*:0]u16 = null;
-        if (SymGetTypeInfo(self.process, mod_base, type_index, @backingInt(TypeQuery.symname), @ptrCast(&name)) == 0) return null;
-        const n = name orelse return null;
-        const s = n[0..std.mem.findSentinel(u16, 0, n)];
-        return std.unicode.utf16LeToUtf8Alloc(a, s) catch null;
-    }
-
-    pub const Member = struct { name: []const u8, offset: u32, type_index: u32 };
-
-    /// The members of a structure (a derived type), from dbghelp
-    pub fn members(self: *Engine, a: Allocator, mod_base: u64, type_index: u32) ![]Member {
-        const n = self.typeInfo(u32, mod_base, type_index, .childrencount) orelse return &.{};
-        if (n == 0) return &.{};
-        // TI_FINDCHILDREN_PARAMS: Count, Start, then the ids
-        const params = try a.alignedAlloc(u32, .@"4", n + 2);
-        params[0] = n;
-        params[1] = 0;
-        if (SymGetTypeInfo(self.process, mod_base, type_index, @backingInt(TypeQuery.findchildren), @ptrCast(params.ptr)) == 0) return &.{};
-        var out: std.ArrayList(Member) = .empty;
-        for (params[2..]) |child| {
-            const tag = self.typeInfo(u32, mod_base, child, .symtag) orelse continue;
-            if (tag == @backingInt(SymTag.base_class)) {
-                // the parent of an extended type: its component of its type's name
-                const t = self.typeInfo(u32, mod_base, child, .type) orelse continue;
-                const full = self.typeName(a, mod_base, t) orelse continue;
-                try out.append(a, .{
-                    .name = if (std.mem.findLast(u8, full, "::")) |i| full[i + 2 ..] else full,
-                    .offset = self.typeInfo(u32, mod_base, child, .offset) orelse 0,
-                    .type_index = t,
-                });
-                continue;
-            }
-            if (tag != @backingInt(SymTag.data)) continue;
-            try out.append(a, .{
-                .name = self.typeName(a, mod_base, child) orelse continue,
-                .offset = self.typeInfo(u32, mod_base, child, .offset) orelse 0,
-                .type_index = self.typeInfo(u32, mod_base, child, .type) orelse continue,
-            });
-        }
-        return out.items;
-    }
-
     pub fn terminate(self: *Engine) void {
         _ = self.client.TerminateProcesses();
     }
@@ -723,6 +489,21 @@ pub const Engine = struct {
     pub fn detach(self: *Engine) void {
         _ = self.client.DetachProcesses();
     }
+
+    // dbghelp's lookups (dbgeng_symbols.zig)
+    const lineOffset = lookups.lineOffset;
+    const lastLineAt = lookups.lastLineAt;
+    pub const variables = lookups.variables;
+    pub const global = lookups.global;
+    pub const dataAt = lookups.dataAt;
+    pub const globalsNamed = lookups.globalsNamed;
+    pub const symbolAt = lookups.symbolAt;
+    pub const typeNamed = lookups.typeNamed;
+    pub const definition = lookups.definition;
+    pub const typeInfo = lookups.typeInfo;
+    pub const typeName = lookups.typeName;
+    pub const Member = lookups.Member;
+    pub const members = lookups.members;
 };
 
 comptime {

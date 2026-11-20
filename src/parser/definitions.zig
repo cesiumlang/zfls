@@ -55,7 +55,9 @@ pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const [
 /// `SUBMODULE (ancestor[:parent]) name`
 pub const SmodInfo = struct { name: []const u8, ancestor: []const u8, parent: []const u8 };
 
-pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
+/// `[ABSTRACT] INTERFACE [name]`; `generic`: named, or `OPERATOR(...)` or
+/// `ASSIGNMENT(=)` (#472)
+pub const InterInfo = struct { name: ?[]const u8, abstract: bool, generic: bool = false };
 
 pub const VisInfo = struct { private: bool, obj_names: []const []const u8 };
 
@@ -141,7 +143,8 @@ pub fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
     const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
     var kind_str: []const u8 = try std.mem.replaceOwned(u8, a, m.group(1).?, " ", "");
     var rest = line[m.end(0)..];
-    if (std.mem.findScalar(u8, kind_str, '(') != null) {
+    // `()` is whole
+    if (std.mem.findScalar(u8, kind_str, '(') != null and !std.mem.endsWith(u8, kind_str, ")")) {
         const mc = helpers.findParenMatch(rest);
         if (mc < 0) return null; // Incomplete kind specification
         const mcu: usize = @intCast(mc);
@@ -318,8 +321,26 @@ pub fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
     const trailing = line[m.end(0)..];
     const mc = helpers.findParenMatch(trailing);
     if (mc < 0) return .{ .assoc = &.{} };
-    const words = try helpers.separateDefList(a, str.strip(trailing[0..@intCast(mc)]));
-    return .{ .assoc = words orelse &.{} };
+    // split at the commas outside parentheses and strings, the strings kept
+    // (`s => 'abc'` is typed by its literal)
+    const list = str.strip(trailing[0..@intCast(mc)]);
+    const blanked = try helpers.stripStrings(a, list, true);
+    var words: std.ArrayList([]const u8) = .empty;
+    var depth: usize = 0;
+    var start: usize = 0;
+    for (blanked, 0..) |c, i| switch (c) {
+        '(', '[' => depth += 1,
+        ')', ']' => depth -|= 1,
+        ',' => if (depth == 0) {
+            const w = str.strip(list[start..i]);
+            if (w.len > 0) try words.append(a, w);
+            start = i + 1;
+        },
+        else => {},
+    };
+    const last = str.strip(list[start..]);
+    if (last.len > 0) try words.append(a, last);
+    return .{ .assoc = words.items };
 }
 
 pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
@@ -473,8 +494,8 @@ pub fn readIntDef(a: Allocator, line: []const u8) E!?DefResult {
     const int_name = try std.ascii.allocLowerString(a, raw);
     const is_abstract = m.group(1) != null;
     if (int_name.len == 0) return .{ .int = .{ .name = null, .abstract = is_abstract } };
-    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false } };
-    return .{ .int = .{ .name = raw, .abstract = is_abstract } };
+    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false, .generic = true } };
+    return .{ .int = .{ .name = raw, .abstract = is_abstract, .generic = !is_abstract } };
 }
 
 pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
@@ -596,7 +617,7 @@ pub fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
 /// anchored at the start of the line, after spaces; the words are those its
 /// pattern (VAR, SUB, FUN, BLOCK_DATA, ...) can begin with.
 pub const def_tests = [_]DefTestEntry{
-    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type" } },
+    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type", "byte" } },
     .{ .read = readSubDef1, .starts = &(.{"subroutine"} ++ proc_prefixes) },
     .{ .read = readFunDef1, .starts = &(.{"function"} ++ proc_prefixes) },
     .{ .read = readBlockDataDef, .starts = &.{"block"} },
@@ -643,10 +664,6 @@ pub fn canStart(entry: DefTestEntry, word: []const u8) bool {
     return false;
 }
 
-/// The first definition test that matches the line (`get_fortran_definition`).
-/// Only the tests whose pattern can begin with the line's first word run,
-/// in order; a line without a usable first word runs all of them. Debug builds
-/// also run all of them and check that the result is the same.
 /// A procedure statement after the CUDA Fortran prefix
 /// `attributes(global|device|host|grid_global)`: the rest of the line
 pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
@@ -661,10 +678,67 @@ pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
     return rest;
 }
 
+/// The words of a procedure's prefix that may come before its CUDA
+/// Fortran `attributes(...)`, and the types of a function's result
+const prefix_words = [_][]const u8{
+    "pure",    "impure", "elemental", "recursive",       "non_recursive", "module", "simple",
+    "integer", "real",   "complex",   "logical",         "character",     "double", "precision",
+    "type",    "class",  "byte",      "doubleprecision", "doublecomplex",
+};
+
+/// A procedure statement with the CUDA Fortran prefix `attributes(...)`
+/// after other words of its prefix (`pure attributes(device) function`):
+/// the line with `attributes(...)` blanked, its columns kept
+pub fn withoutCudaAttributes(a: Allocator, line: []const u8) E!?[]const u8 {
+    var i: usize = 0;
+    var words: usize = 0;
+    while (words < 8) : (words += 1) {
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        const start = i;
+        while (i < line.len and (std.ascii.isAlphanumeric(line[i]) or line[i] == '_')) i += 1;
+        const word = line[start..i];
+        if (word.len == 0) return null;
+        if (std.ascii.eqlIgnoreCase(word, "attributes")) {
+            // not the first word: afterCudaAttributes
+            if (words == 0) return null;
+            const rest = afterCudaAttributes(line[start..]) orelse return null;
+            const out = try a.dupe(u8, line);
+            @memset(out[start .. line.len - rest.len], ' ');
+            return out;
+        }
+        for (prefix_words) |w| {
+            if (std.ascii.eqlIgnoreCase(word, w)) break;
+        } else return null;
+        // a kind or length (`integer(c_int)`, `real*8`)
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        if (i < line.len and line[i] == '(') {
+            var depth: usize = 0;
+            while (i < line.len) : (i += 1) {
+                if (line[i] == '(') depth += 1;
+                if (line[i] == ')') {
+                    depth -= 1;
+                    if (depth == 0) break;
+                }
+            } else return null;
+            i += 1;
+        } else if (i < line.len and line[i] == '*') {
+            i += 1;
+            while (i < line.len and (std.ascii.isDigit(line[i]) or line[i] == ' ')) i += 1;
+        }
+    }
+    return null;
+}
+
+/// The first definition test that matches the line (`get_fortran_definition`).
+/// Only the tests whose pattern can begin with the line's first word run,
+/// in order; a line without a usable first word runs all of them. Debug builds
+/// also run all of them and check that the result is the same.
 pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
     // CUDA Fortran kernels and device procedures (`attributes(global)
-    // subroutine k(...)`) are procedures
+    // subroutine k(...)`, `pure attributes(device) function f(...)`) are
+    // procedures
     if (afterCudaAttributes(line)) |rest| return getFortranDefinition(a, rest);
+    if (try withoutCudaAttributes(a, line)) |rest| return getFortranDefinition(a, rest);
     var buf: [32]u8 = undefined;
     const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
     const found = try runDefTests(a, line, word);
@@ -736,4 +810,65 @@ pub fn getLineContext(a: Allocator, line: []const u8) E!struct { ctx: LineContex
     if (R().INT_STMNT.match(line) != null) return .{ .ctx = .first };
     if (type_def) return .{ .ctx = .skip };
     return .{ .ctx = .default };
+}
+
+test "read definitions" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = (try readVarDef(a, "  integer(kind=8), intent(in) :: x, y(3)", null, false)).?;
+    try std.testing.expectEqualStrings("INTEGER", r.var_.var_type);
+    try std.testing.expectEqualStrings("(kind=8)", r.var_.var_kind.?);
+    try std.testing.expectEqual(@as(usize, 2), r.var_.var_names.?.len);
+    try std.testing.expectEqualStrings("INTENT(IN)", r.var_.keywords[0]);
+
+    const f = (try readFunDef(a, "pure real function foo(a, b) result(c)", null, false)).?;
+    try std.testing.expectEqualStrings("foo", f.fun.name);
+    try std.testing.expectEqualStrings("a,b", f.fun.args);
+
+    const s = (try getFortranDefinition(a, "subroutine bar(x)")).?;
+    try std.testing.expectEqualStrings("bar", s.sub.name);
+
+    const ctx = try getLineContext(a, "call foo");
+    try std.testing.expectEqual(LineContext.call, ctx.ctx);
+
+    // MODULE after the type (stdlib): a separate module procedure, not a
+    // variable named `module`
+    for ([_][]const u8{ "real(RTICKS) module function lifetime(p) result(t)", "pure real(dp) module function lifetime(p)" }) |line| {
+        const m = (try getFortranDefinition(a, line)).?;
+        try std.testing.expectEqualStrings("lifetime", m.fun.name);
+        try std.testing.expect(m.fun.mod_flag);
+    }
+    // a variable of that name stays one
+    const v = (try getFortranDefinition(a, "      REAL MODULE")).?;
+    try std.testing.expectEqualStrings("MODULE", v.var_.var_names.?[0]);
+}
+
+test "the definition tests are chosen by the first word, labels fall back to all" {
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("integer", firstWord("  INTEGER :: x", &buf).?);
+    try std.testing.expectEqualStrings("doubleprecision", firstWord("      DOUBLEPRECISION X", &buf).?);
+    try std.testing.expect(firstWord("  outer: do i = 1, n", &buf) == null);
+    // `\w` takes bytes past ASCII, so this is a construct label too
+    try std.testing.expect(firstWord("add\xe2\x88\x911 : BLOCK", &buf) == null);
+    try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
+    try std.testing.expect(firstWord("_x: block", &buf) == null);
+    try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
+}
+
+test "CUDA Fortran's attributes after other words of the prefix" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("pure                    function f(x)", (try withoutCudaAttributes(a, "pure attributes(device) function f(x)")).?);
+    try std.testing.expectEqualStrings("  integer(c_int)                    pure function g()", (try withoutCudaAttributes(a, "  integer(c_int) attributes(device) pure function g()")).?);
+    try std.testing.expect((try withoutCudaAttributes(a, "real*8 attributes(host, device) function h()")) != null);
+    // first: afterCudaAttributes; none
+    try std.testing.expect(try withoutCudaAttributes(a, "attributes(device) pure function f(x)") == null);
+    try std.testing.expect(try withoutCudaAttributes(a, "x = attributes(1)") == null);
+    try std.testing.expect(try withoutCudaAttributes(a, "call attributes(device) x") == null);
+    try std.testing.expect(try withoutCudaAttributes(a, "pure function attributes(x)") == null);
+    const d = (try getFortranDefinition(a, "pure attributes(device) subroutine s(a)")).?;
+    try std.testing.expect(d == .sub);
 }

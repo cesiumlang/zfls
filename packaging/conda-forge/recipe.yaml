@@ -20,7 +20,7 @@ build:
 
 requirements:
   build:
-    - zig 0.17.*
+    - zig >=0.17.1,<0.18
     # zfls is statically linked and uses no C library; on macOS this is
     # what records the minimum macOS version it is built for
     - if: osx

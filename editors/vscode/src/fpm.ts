@@ -4,6 +4,7 @@
 // `vscode` import (see test/unit).
 
 import * as path from "node:path";
+import { compilerName } from "./run";
 
 export type TargetKind = "executable" | "test" | "example";
 
@@ -36,6 +37,8 @@ const TABLES: Record<string, TargetKind> = { executable: "executable", test: "te
  * them: `[[kind]]` tables of string keys, and booleans in `[build]`.
  */
 export function parseManifest(text: string): Manifest {
+  // a UTF-8 byte-order mark (Windows PowerShell 5.1 writes one)
+  text = text.replace(/^\uFEFF/, "");
   const manifest: Manifest = { targets: [], auto: { executable: true, test: true, example: true } };
   let table = "";
   let target: Partial<ManifestTarget> | undefined;
@@ -190,6 +193,25 @@ export function runArgs(
     args.push("--", ...programArgs);
   }
   return args;
+}
+
+/** What a debug build of an fpm target with LLVM Flang on Windows adds
+ * to fpm's flags (`fpmDwarfFlags`) */
+export const FPM_FLANG_DWARF_FLAGS = "-gdwarf-4 -Wl,-debug:dwarf";
+
+/**
+ * fpm's flags (`--flag`, zfls.fpm.flags) for debugging a target built by
+ * `compiler` on `platform`: for LLVM Flang on Windows, whose `-g` (fpm's)
+ * writes Microsoft's debug information only, with DWARF for gdb
+ * (`FPM_FLANG_DWARF_FLAGS`; fpm passes `--flag` to the link too), unless
+ * they already ask for DWARF; else `flags` as they are.
+ */
+export function fpmDwarfFlags(flags: string | undefined, compiler: string, platform: NodeJS.Platform): string | undefined {
+  const name = compilerName(compiler);
+  if (platform !== "win32" || (name !== "flang" && name !== "flang-new") || /(^|\s)-gdwarf/.test(flags ?? "")) {
+    return flags;
+  }
+  return flags ? `${flags} ${FPM_FLANG_DWARF_FLAGS}` : FPM_FLANG_DWARF_FLAGS;
 }
 
 /** `--profile`, `--compiler` and `--flag`, then the extra arguments */

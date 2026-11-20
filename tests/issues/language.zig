@@ -296,3 +296,60 @@ test "hansec #95 definition, hover and references of defined assignment" {
     defer w.deinit();
     try h.checkIn(.hansec, 95, .fixed, expectAssignment(w));
 }
+
+test "hover on the file name of an #include or INCLUDE shows the file it reads, not a literal (#240)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "a.F90", .text =
+        \\#include "defs.h"
+        \\#include "nowhere.h"
+        \\#define GREETING "hello"
+        \\program p
+        \\  implicit none
+        \\  include 'decl.inc'
+        \\  integer :: n = NVAL
+        \\  print *, "defs.h"
+        \\end program
+        \\
+        },
+        .{ .name = "defs.h", .text = "#define NVAL 3\n" },
+        .{ .name = "inc/decl.inc", .text = "integer :: m\n" },
+        .{ .name = ".fortlsrc", .text = "{\"include_dirs\": [\"inc\"]}\n" },
+    }, .{});
+    defer w.deinit();
+    const defs = (try w.hover("a.F90", w.pos("a.F90", "defs.h", 0, 2))) orelse return error.NoHover;
+    try std.testing.expect(std.mem.find(u8, defs, "[defs.h](file:") != null);
+    try std.testing.expect(std.mem.find(u8, defs, "Literal") == null);
+    try std.testing.expect((try w.hover("a.F90", w.pos("a.F90", "nowhere.h", 0, 2))) == null);
+    const decl = (try w.hover("a.F90", w.pos("a.F90", "decl.inc", 0, 2))) orelse return error.NoHover;
+    try std.testing.expect(std.mem.find(u8, decl, "[inc/decl.inc](file:") != null);
+    // a string on another preprocessor line is no Fortran literal either
+    try std.testing.expect((try w.hover("a.F90", w.pos("a.F90", "\"hello", 0, 2))) == null);
+    // a string in code still is
+    const lit = (try w.hover("a.F90", w.pos("a.F90", "print *, \"defs.h", 0, 12))) orelse return error.NoHover;
+    try std.testing.expect(std.mem.find(u8, lit, "CHARACTER(LEN=6)") != null);
+    try std.testing.expect(std.mem.find(u8, lit, "Literal constant") != null);
+}
+
+test "F2018 EVENT POST, EVENT WAIT, FORM TEAM, CHANGE TEAM and FAIL IMAGE are statements, not names (#538)" {
+    const w = try h.Workspace.init(&.{.{ .name = "c.f90", .text =
+        \\program coarr
+        \\  use iso_fortran_env, only: event_type, team_type
+        \\  implicit none
+        \\  type(event_type) :: ev[*]
+        \\  type(team_type) :: team
+        \\  integer :: me, s
+        \\  me = this_image()
+        \\  event post (ev[1])
+        \\  if (me == 1) event wait (ev)
+        \\  form team (1, team)
+        \\  change team (team)
+        \\    s = team_number()
+        \\  end team
+        \\  sync team (team)
+        \\  if (me == 2) fail image
+        \\end program coarr
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("c.f90");
+}

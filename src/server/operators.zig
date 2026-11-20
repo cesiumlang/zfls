@@ -51,6 +51,11 @@ fn defines(iface: *const Obj, name: []const u8) bool {
     return std.ascii.findIgnoreCase(text[op..], dotted) != null;
 }
 
+/// Whether an interface of the workspace defines operator `name`
+pub fn defined(self: *Server, a: Allocator, name: []const u8) !bool {
+    return (try interfaces(self, a, name)).len > 0;
+}
+
 /// The interfaces that define operator `name`
 fn interfaces(self: *Server, a: Allocator, name: []const u8) ![]const *Obj {
     var out: std.ArrayList(*Obj) = .empty;

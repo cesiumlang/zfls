@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const helpers = @import("helpers.zig");
 const lsp = @import("lsp.zig");
 const objects = @import("objects.zig");
+const constructs = @import("constructs.zig");
 const str = @import("str.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
@@ -97,10 +98,27 @@ const Tokenizer = struct {
     /// When set, the uses of named constants are collected here (not
     /// their declarations)
     constants: ?*std.ArrayList(ConstantUse) = null,
+    /// the innermost scope of each line, found once (see `innerScope`)
+    inner: ?objects.InnerScopes = null,
+    /// The line as written, while the tokenizer reads the text the
+    /// preprocessor made of it (macros expanded): the unknown names are
+    /// those of the expanded text that are also written there
+    written: ?[]const u8 = null,
+
+    /// The scope `Ast.getInnerScope` gives line `ln` (0-based), from the
+    /// scopes of every line, found once (`Ast.innerScopes`)
+    fn innerScope(t: *Tokenizer, ln: usize) !?*Obj {
+        const inner = t.inner orelse blk: {
+            t.inner = try t.ast.innerScopes(t.a, t.file.nLines());
+            break :blk t.inner.?;
+        };
+        return inner.at(ln + 1);
+    }
 
     /// Collect a name that stands for nothing found, unless it is a word
     /// that is no name: in a specification or END statement, after CALL
-    /// (an external subroutine) or EXIT/CYCLE (a construct), a keyword
+    /// (an external subroutine) or EXIT/CYCLE (a construct), the name of a
+    /// construct repeated on a branch (`else n1`), a keyword
     /// inside a statement (`then`, `while`, `concurrent`, ...), an
     /// intrinsic procedure, a component
     fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool) !void {
@@ -111,7 +129,33 @@ const Tokenizer = struct {
         };
         for (inner_keywords) |k| if (std.ascii.eqlIgnoreCase(w.str, k)) return;
         for (t.intrinsics) |f| if (std.ascii.eqlIgnoreCase(f.name, w.str)) return;
-        try list.append(t.a, .{ .line = ln, .start = w.start, .end = w.end, .name = w.str, .scope = scope });
+        const at = if (t.written) |text| writtenWord(t.file, list.items, ln, text, w.str) orelse return else w;
+        // the name of its construct, repeated on a branch (`else n1`)
+        if (try constructs.isConstructUse(t.a, t.file, ln, at.start)) return;
+        try list.append(t.a, .{ .line = ln, .start = at.start, .end = at.end, .name = at.str, .scope = scope });
+    }
+
+    /// Where a name of the expanded text of line `ln` is written in `text`,
+    /// the line as written: the first place not taken by a name already
+    /// collected, out of character literals, comments and macro names
+    fn writtenWord(file: *const FortranFile, collected: []const Unknown, ln: usize, text: []const u8, name: []const u8) ?helpers.Word {
+        var it = helpers.words(text);
+        var quote: ?u8 = null;
+        var scanned: usize = 0;
+        next: while (it.next()) |w| {
+            for (text[scanned..w.start]) |c| {
+                if (quote) |q| {
+                    if (c == q) quote = null;
+                } else if (c == '\'' or c == '"') {
+                    quote = c;
+                } else if (c == '!') return null;
+            }
+            scanned = w.end;
+            if (quote != null or !std.ascii.eqlIgnoreCase(w.str, name) or file.pp_defs.contains(w.str)) continue;
+            for (collected) |u| if (u.line == ln and u.start == w.start) continue :next;
+            return w;
+        }
+        return null;
     }
 
     fn add(t: *Tokenizer, line: usize, text: []const u8, start: usize, end: usize, kind: Kind) !void {
@@ -178,8 +222,17 @@ const Tokenizer = struct {
     }
 
     fn tokenizeLine(t: *Tokenizer, ln: usize) !void {
-        const raw = t.file.getLine(ln, false) orelse return;
-        if (helpers.isComment(t.file.fixed, raw)) return;
+        const written = t.file.getLine(ln, false) orelse return;
+        // the names of a line with macros are found in the text the
+        // compiler reads, with the macros expanded (see `written`)
+        const raw = if (t.unknown != null) t.file.getLine(ln, true) orelse written else written;
+        t.written = if (std.mem.eql(u8, raw, written)) null else written;
+        if (helpers.isComment(t.file.fixed, raw)) {
+            // a debug line read as a comment (`d_lines`), which the grammar
+            // colors as code: a comment token over it
+            if (t.file.fixed and (raw[0] == 'd' or raw[0] == 'D') and t.unknown == null) try t.add(ln, raw, 0, raw.len, .{ .type = .comment });
+            return;
+        }
         const trimmed = std.mem.trimStart(u8, raw, " \t");
         if (trimmed.len > 0 and trimmed[0] == '#') return;
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
@@ -194,13 +247,13 @@ const Tokenizer = struct {
         var stmt_start = !t.continued;
         if (t.file.fixed) {
             // the label and continuation columns
-            if (line.len > 5 and line[5] != ' ' and line[5] != '0') stmt_start = false;
+            if (helpers.fixedContMark(line) != null) stmt_start = false;
         } else if (std.mem.startsWith(u8, trimmed, "&")) stmt_start = false;
         const continues = !stmt_start;
         // a character literal the line before left open goes on after the
         // `&` that starts this one (free form), or in column 7 (fixed form)
         const quote = if (continues) t.quote else null;
-        const from = if (t.file.fixed) @min(line.len, 6) else if (quote != null and trimmed.len > 0 and trimmed[0] == '&') raw.len - trimmed.len + 1 else 0;
+        const from = if (t.file.fixed) helpers.fixedStmtStart(line) else if (quote != null and trimmed.len > 0 and trimmed[0] == '&') raw.len - trimmed.len + 1 else 0;
         const lit = try blankLiterals(t.a, line, from, quote);
         var code = lit.code[0 .. lit.comment orelse lit.code.len];
         t.quote = lit.open;
@@ -212,9 +265,9 @@ const Tokenizer = struct {
         // fypp's inline expressions (`eg_${name}$_t`) are no Fortran: blank
         // them, and leave the pieces of a name around them alone
         code = try blankFyppInline(t.a, code);
-        const scope = t.ast.getInnerScope(ln + 1);
+        const scope = try t.innerScope(ln);
         var it = helpers.words(code);
-        if (t.file.fixed) it.pos = @min(code.len, 6);
+        if (t.file.fixed) it.pos = @min(code.len, from);
         var st: Stmt = .{
             .start = stmt_start or t.stmt_next,
             .depth = if (continues) t.depth else 0,
@@ -457,6 +510,11 @@ const statement_keywords = [_][]const u8{
     "structure",       "record",        "union",       "map",
     // CUDA Fortran
                 "attributes",
+    // BYTE, INTEGER(1) of gfortran, ifx and LLVM Flang
+    "byte",
+    // Fortran 2018's EVENT POST, EVENT WAIT, FORM TEAM, CHANGE TEAM and
+    // FAIL IMAGE (#538)
+               "event",         "form",        "change",          "fail",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -473,7 +531,7 @@ const spec_keywords = [_][]const u8{
     "protected",   "public",      "pure",         "real",            "recursive",     "save",
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
-    "record",      "union",       "map",          "attributes",
+    "record",      "union",       "map",          "attributes",      "byte",
 };
 
 fn isSpecKeyword(word: []const u8) bool {
@@ -590,6 +648,8 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
         .{ "double", "complex" },   .{ "block", "data" },      .{ "sync", "all" },
         .{ "sync", "images" },      .{ "sync", "memory" },     .{ "error", "stop" },
         .{ "module", "procedure" }, .{ "module", "function" }, .{ "module", "subroutine" },
+        .{ "event", "post" },       .{ "event", "wait" },      .{ "form", "team" },
+        .{ "change", "team" },      .{ "fail", "image" },      .{ "sync", "team" },
     };
     for (pairs) |p| if (std.ascii.eqlIgnoreCase(first, p[0]) and std.ascii.eqlIgnoreCase(word, p[1])) return true;
     if (std.ascii.eqlIgnoreCase(first, "end")) return isStatementKeyword(word) or std.ascii.eqlIgnoreCase(word, "team");
@@ -658,13 +718,32 @@ fn nextChar(code: []const u8, i: usize) u8 {
 /// line and start relative to the previous token, its length, type and
 /// modifiers
 pub fn tokens(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, fixed_limit: ?usize) ![]const u32 {
+    return tokensIn(a, env, file, ast, fixed_limit, 0, file.nLines() -| 1);
+}
+
+/// The semantic tokens of lines `first` to `last` (0-based, inclusive), as
+/// `tokens` encodes them (`semanticTokens/range`). The lines are read from
+/// the start of the statement `first` is in, as the tokens of a line
+/// depend on the lines it continues.
+pub fn tokensIn(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, fixed_limit: ?usize, first: usize, last_in: usize) ![]const u32 {
     var t: Tokenizer = .{ .a = a, .env = env, .file = file, .ast = ast, .fixed_limit = fixed_limit };
     const n = file.nLines();
+    if (n == 0) return &.{};
+    const last = @min(last_in, n - 1);
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);
     try t.inactiveLines(inactive);
-    for (0..n) |ln| if (!inactive[ln]) try t.tokenizeLine(ln);
-    const toks = t.tokens.items;
+    var ln = statementStart(file, @min(first, last));
+    while (ln <= last) : (ln += 1) if (!inactive[ln]) try t.tokenizeLine(ln);
+    var toks = t.tokens.items;
+    if (first > 0) {
+        var kept: usize = 0;
+        for (toks) |tok| if (tok.line >= first) {
+            toks[kept] = tok;
+            kept += 1;
+        };
+        toks = toks[0..kept];
+    }
     std.mem.sort(Token, toks, {}, struct {
         fn lt(_: void, x: Token, y: Token) bool {
             return x.line < y.line or (x.line == y.line and x.start < y.start);
@@ -684,6 +763,36 @@ pub fn tokens(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *As
         prev_start = tok.start;
     }
     return data;
+}
+
+/// The first line of the statement that line `ln` is a part of: back over
+/// the lines it continues (free form: code lines that end with `&`; fixed
+/// form: lines with a mark in column 6), past blank, comment and
+/// preprocessor lines
+fn statementStart(file: *const FortranFile, ln: usize) usize {
+    var start = ln;
+    while (true) {
+        if (file.fixed) {
+            const l = file.getLine(start, false) orelse return start;
+            const continuation = helpers.fixedContMark(l) != null and !helpers.isFixedComment(l) and l[0] != '#';
+            if (!continuation) return start;
+        }
+        // the code line before
+        var prev = start;
+        const found = while (prev > 0) {
+            prev -= 1;
+            const l = file.getLine(prev, false) orelse break false;
+            const code = std.mem.trim(u8, file.stripComment(l), " \t\r");
+            if (code.len == 0 or code[0] == '#') continue;
+            break true;
+        } else false;
+        if (!found) return start;
+        if (!file.fixed) {
+            const code = std.mem.trim(u8, file.stripComment(file.getLine(prev, false).?), " \t\r");
+            if (code[code.len - 1] != '&') return start;
+        }
+        start = prev;
+    }
 }
 
 test "the legend lists the token types in the order of their numbers" {

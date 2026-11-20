@@ -1,5 +1,6 @@
 //! Navigation requests zfls answers beyond fortls: prepareRename,
-//! selection ranges and document links.
+//! selection ranges, document links, type definitions, declarations and
+//! linked editing.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -415,7 +416,7 @@ test "hansec #115: references across Fortran and C" {
     };
     // references of c_add: its Fortran references, those of the other
     // interface of the same C name, and the C declarations and call (not
-    // the comment)
+    // the comment); of `add2`, also its result variable (#228)
     const refs = try places.of(a, try w.references("iface.f90", w.pos("iface.f90", "c_add(n", 0, 1)));
     try places.expect(&.{
         .{ .file = "cfuncs.c", .line = 1 },
@@ -425,6 +426,7 @@ test "hansec #115: references across Fortran and C" {
         .{ .file = "iface.f90", .line = 6 },
         .{ .file = "iface.f90", .line = 11 },
         .{ .file = "other.f90", .line = 2 },
+        .{ .file = "other.f90", .line = 5 },
         .{ .file = "other.f90", .line = 6 },
         .{ .file = "other.f90", .line = 11 },
     }, refs);
@@ -524,4 +526,177 @@ test "FortranBreaker #10: the module variables a line sees, for the debugger" {
     // the type, for the view
     const one = h.json.items(try w.zflsRequest("zfls/moduleVariables", try w.positionOf("grid.f90", w.pos("grid.f90", "local_i = counter", 0, 0))))[0];
     try std.testing.expectEqualStrings("REAL", h.json.str(h.json.get(one, "type")).?);
+}
+
+test "go to type definition (#191)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "shapes.f90", .text =
+        \\module shapes
+        \\  implicit none
+        \\  type :: point_t
+        \\    real :: x, y
+        \\  end type point_t
+        \\  type :: mesh_t
+        \\    type(point_t), allocatable :: nodes(:)
+        \\  contains
+        \\    procedure :: first => mesh_first
+        \\  end type mesh_t
+        \\contains
+        \\  function mesh_first(self) result(p)
+        \\    class(mesh_t), intent(in) :: self
+        \\    type(point_t) :: p
+        \\    p = self%nodes(1)
+        \\  end function mesh_first
+        \\  type(mesh_t) function new_mesh()
+        \\  end function new_mesh
+        \\end module shapes
+        \\
+        },
+        .{ .name = "main.f90", .text =
+        \\program main
+        \\  use shapes
+        \\  implicit none
+        \\  type(mesh_t) :: m
+        \\  type(point_t) :: q
+        \\  class(*), allocatable :: any
+        \\  integer :: n
+        \\  m = new_mesh()
+        \\  q = m%nodes(1)
+        \\  q = mesh_first(m)
+        \\  n = 1
+        \\end program main
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const Case = struct { needle: []const u8, nth: usize, type_line: ?i64 };
+    const cases = [_]Case{
+        // a variable, at its declaration and at a use
+        .{ .needle = "m = new_mesh", .nth = 0, .type_line = 5 },
+        .{ .needle = "q = m%", .nth = 0, .type_line = 2 },
+        // a component
+        .{ .needle = "nodes(1)\n  q", .nth = 0, .type_line = 2 },
+        // a function with RESULT, and one with the type in its prefix
+        .{ .needle = "mesh_first(m)", .nth = 0, .type_line = 2 },
+        .{ .needle = "new_mesh()", .nth = 0, .type_line = 5 },
+        // a type name is its own type
+        .{ .needle = "point_t) :: q", .nth = 0, .type_line = 2 },
+        // intrinsic types and class(*): nothing
+        .{ .needle = "n = 1", .nth = 0, .type_line = null },
+        .{ .needle = "any", .nth = 0, .type_line = null },
+    };
+    for (cases) |c| {
+        const loc = try w.typeDefinition("main.f90", w.pos("main.f90", c.needle, c.nth, 0));
+        if (c.type_line) |line| {
+            const l = loc orelse return h.unmet("no type definition at '{s}'", .{c.needle});
+            try h.expect(std.mem.endsWith(u8, l.uri, "shapes.f90") and l.line == line, "type definition at '{s}' is {s}:{d}, not line {d}", .{ c.needle, l.uri, l.line, line });
+        } else try h.expect(loc == null, "a type definition at '{s}': {any}", .{ c.needle, loc });
+    }
+}
+
+const separate = [_]h.File{
+    .{ .name = "solver.f90", .text =
+    \\module solver
+    \\  implicit none
+    \\  integer :: tolerance
+    \\  interface
+    \\    module subroutine solve(n)
+    \\      integer, intent(in) :: n
+    \\    end subroutine solve
+    \\  end interface
+    \\end module solver
+    \\
+    },
+    .{ .name = "solver_impl.f90", .text =
+    \\submodule (solver) solver_impl
+    \\  implicit none
+    \\contains
+    \\  module procedure solve
+    \\    tolerance = n
+    \\  end procedure solve
+    \\end submodule solver_impl
+    \\
+    },
+    .{ .name = "main.f90", .text =
+    \\program main
+    \\  use solver
+    \\  implicit none
+    \\  call solve(3)
+    \\  tolerance = 1
+    \\end program main
+    \\
+    },
+};
+
+test "go to declaration: a separate module procedure's interface (#192)" {
+    inline for (.{ false, true }) |prefer| {
+        const w = try h.Workspace.init(&separate, .{ .settings = .{ .prefer_implementation = prefer } });
+        defer w.deinit();
+        const Case = struct { file: []const u8, needle: []const u8, line: i64 };
+        const cases = [_]Case{
+            // from a call and from the body, whatever prefer_implementation says
+            .{ .file = "main.f90", .needle = "solve(3)", .line = 4 },
+            .{ .file = "solver_impl.f90", .needle = "solve\n    tolerance", .line = 4 },
+            // anything else: its definition
+            .{ .file = "main.f90", .needle = "tolerance = 1", .line = 2 },
+        };
+        for (cases) |c| {
+            const l = (try w.declaration(c.file, w.pos(c.file, c.needle, 0, 0))) orelse
+                return h.unmet("no declaration at '{s}' (prefer_implementation {})", .{ c.needle, prefer });
+            try h.expect(std.mem.endsWith(u8, l.uri, "/solver.f90") and l.line == c.line, "declaration at '{s}' (prefer_implementation {}) is {s}:{d}, not line {d}", .{ c.needle, prefer, l.uri, l.line, c.line });
+        }
+    }
+}
+
+test "linked editing of a name and its END statement (#193)" {
+    const w = try h.Workspace.init(&.{.{ .name = "units.f90", .text =
+        \\module units
+        \\  implicit none
+        \\  type :: cell_t
+        \\    integer :: n
+        \\  end type cell_t
+        \\  interface norm
+        \\    module procedure norm_cell
+        \\  end interface norm
+        \\contains
+        \\  integer function norm_cell(c)
+        \\    type(cell_t), intent(in) :: c
+        \\    norm_cell = c%n
+        \\  end function norm_cell
+        \\  subroutine sweep(m)
+        \\    integer, intent(in) :: m
+        \\    integer :: i
+        \\    outer: do i = 1, m
+        \\      if (i > 2) cycle outer
+        \\    end do outer
+        \\    call bare()
+        \\  end subroutine sweep
+        \\  subroutine bare()
+        \\  end subroutine
+        \\end module units
+        \\
+    }}, .{});
+    defer w.deinit();
+    const Case = struct { needle: []const u8, nth: usize, want: []const h.Pos };
+    const cases = [_]Case{
+        // a module, from its END statement
+        .{ .needle = "units\n", .nth = 1, .want = &.{ .{ .line = 0, .col = 7 }, .{ .line = 23, .col = 11 } } },
+        // a derived type, a named interface, a function, a subroutine
+        .{ .needle = "cell_t\n    integer", .nth = 0, .want = &.{ .{ .line = 2, .col = 10 }, .{ .line = 4, .col = 11 } } },
+        .{ .needle = "norm\n", .nth = 0, .want = &.{ .{ .line = 5, .col = 12 }, .{ .line = 7, .col = 16 } } },
+        .{ .needle = "norm_cell\n  sub", .nth = 0, .want = &.{ .{ .line = 9, .col = 19 }, .{ .line = 12, .col = 15 } } },
+        .{ .needle = "sweep(m)", .nth = 0, .want = &.{ .{ .line = 13, .col = 13 }, .{ .line = 20, .col = 17 } } },
+        // a construct name, with its CYCLE
+        .{ .needle = "outer: do", .nth = 0, .want = &.{ .{ .line = 16, .col = 4 }, .{ .line = 17, .col = 23 }, .{ .line = 18, .col = 11 } } },
+        // an END without the name, a use of the name, a variable: none
+        .{ .needle = "bare()\n  end", .nth = 0, .want = &.{} },
+        .{ .needle = "bare()\n  end subroutine sweep", .nth = 0, .want = &.{} },
+        .{ .needle = "cell_t), intent", .nth = 0, .want = &.{} },
+        .{ .needle = "m)\n    integer, intent", .nth = 0, .want = &.{} },
+    };
+    for (cases) |c| {
+        const got = try w.linkedEditing("units.f90", w.pos("units.f90", c.needle, c.nth, 0));
+        try h.expect(got.len == c.want.len, "{d} linked ranges at '{s}', not {d}: {any}", .{ got.len, c.needle, c.want.len, got });
+        for (got, c.want) |g, want| try h.expect(g.line == want.line and g.col == want.col, "a linked range at '{s}' is {d}:{d}, not {d}:{d}", .{ c.needle, g.line, g.col, want.line, want.col });
+    }
 }
