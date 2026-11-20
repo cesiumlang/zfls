@@ -1,8 +1,8 @@
 //! The compiler check (`compiler_diagnostics`) with gfortran's command
 //! line, through a stand-in gfortran that logs its arguments: the files of
 //! suffixes its driver does not know (#521), a missing `#include` (#524),
-//! the messages without a file (#525), and a directory of .mod files for
-//! each major version (#526).
+//! the messages without a file (#525), a directory of .mod files for each
+//! major version (#526), and the compiler's directory on its PATH (#528).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -132,4 +132,20 @@ test "gfortran: the .mod files of each major version in a directory of their own
     _ = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"gfortran: 15.3.0\"", 60)) orelse return error.NoCompilerDiagnostics;
     const dir15 = try lastModDir(w, a);
     try h.expect(std.mem.endsWith(u8, dir15, "gfortran-15"), "gfortran 15's .mod files in {s}", .{dir15});
+}
+
+/// A stand-in gfortran in a toolchain's `bin` that names the first
+/// directory of its PATH
+const first_path: h.File = .{ .name = "tc/bin/gfortran.cmd", .text = "@echo off\r\nfor /f \"tokens=1 delims=;\" %%p in (\"%PATH%\") do echo gfortran: error: first %%p 1>&2\r\n" };
+
+test "gfortran by its path on Windows: its directory first on its PATH, for its DLLs (#528)" {
+    if (!is_windows) return error.SkipZigTest;
+    const w = try h.Workspace.init(&.{ user, first_path }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ first_path.name ++ "\"}" });
+    defer w.deinit();
+    try w.open("u.f77", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "gfortran: first ", 60)) orelse return error.NoCompilerDiagnostics;
+    const at = std.mem.find(u8, sent, "gfortran: first ").? + "gfortran: first ".len;
+    const end = std.mem.findScalarPos(u8, sent, at, '"') orelse sent.len;
+    const first = std.mem.trimEnd(u8, sent[at..end], " ");
+    try h.expect(std.mem.endsWith(u8, first, "tc/bin") or std.mem.endsWith(u8, first, "tc\\\\bin"), "the first directory of the PATH is {s}, not the compiler's", .{first});
 }
