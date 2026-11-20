@@ -77,6 +77,9 @@ const SYMFLAG_REGISTER = 0x8;
 const SYMFLAG_REGREL = 0x10;
 const SYMFLAG_PARAMETER = 0x40;
 const SYMFLAG_LOCAL = 0x80;
+/// The variable's address is at the register plus the offset (LLVM's
+/// `S_DEFRANGE_REGISTER_REL_INDIR`: LLVM Flang's dummy arguments)
+const SYMFLAG_REGREL_ALIASINDIR = 0x800000;
 
 /// dbghelp's questions about a type (`IMAGEHLP_SYMBOL_TYPE_INFO`)
 pub const TypeQuery = enum(u32) {
@@ -617,6 +620,11 @@ pub const Engine = struct {
             if (s.Flags & SYMFLAG_REGREL != 0) {
                 const base = c.engine.frameRegister(s.Register) orelse return 1;
                 address = base +% s.Address;
+            } else if (s.Flags & SYMFLAG_REGREL_ALIASINDIR != 0) {
+                // the address is in the frame: at the register plus the offset
+                const base = c.engine.frameRegister(s.Register) orelse return 1;
+                var p: [8]u8 = undefined;
+                address = if (c.engine.read(base +% s.Address, &p) == 8) std.mem.readInt(u64, &p, .little) else 0;
             } else if (s.Flags & SYMFLAG_REGISTER != 0) {
                 return 1; // in a register: not addressable (optimized code)
             }
