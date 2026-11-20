@@ -274,9 +274,27 @@ pub fn moduleGlobal(s: *Session, a: Allocator, module: []const u8, name: []const
     if (try s.engine.global(a, intel)) |v| return v;
     const lower = try std.ascii.allocLowerString(a, name);
     const flang = try a.print("_QM{s}E{s}", .{ try std.ascii.allocLowerString(a, module), lower });
-    const v = (try s.engine.global(a, flang)) orelse return null;
+    const v = (try s.engine.global(a, flang)) orelse return commonMember(s, a, module, name);
     if (v.type_index == 0) if (try s.engine.dataAt(a, v.mod_base, lower, v.address)) |typed| return typed;
     return v;
+}
+
+/// A module's variable in its COMMON block (`common /blk/ cx`): at the
+/// block's symbol (Intel's `BLK`, else gfortran's and Flang's `blk_`) plus
+/// its offset there, without a type of dbghelp's (the declaration gives it)
+fn commonMember(s: *Session, a: Allocator, module: []const u8, name: []const u8) !?dbgeng.Variable {
+    const mod = declarations.moduleNamed(s, module) orelse return null;
+    const place = declarations.commonPlace(a, mod, name) orelse return null;
+    if (place.block.len == 0) return null;
+    const lower = try std.ascii.allocLowerString(a, place.block);
+    for ([_][]const u8{ try std.ascii.allocUpperString(a, place.block), try a.print("{s}_", .{lower}) }) |symbol| {
+        var v = (try s.engine.global(a, symbol)) orelse continue;
+        v.name = name;
+        v.address += place.offset;
+        v.type_index = 0;
+        return v;
+    }
+    return null;
 }
 
 /// An expression of a frame: a variable, its components and elements
@@ -289,13 +307,19 @@ pub fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val
     const name = std.mem.trim(u8, head[0..name_end], " ");
     var v: Val = undefined;
     if (std.mem.find(u8, name, "::")) |sep| {
-        const g = (try moduleGlobal(s, a, name[0..sep], name[sep + 2 ..])) orelse return null;
-        v = try valueOf(s, a, g, null, frame, try std.ascii.allocLowerString(a, name));
-    } else {
-        const found = for (try frameVariables(s, a, frame)) |x| {
-            if (std.ascii.eqlIgnoreCase(x.v.name, name)) break x;
-        } else return null;
+        const module = name[0..sep];
+        const g = (try moduleGlobal(s, a, module, name[sep + 2 ..])) orelse return null;
+        v = try valueOf(s, a, g, declarations.moduleDecl(s, a, module, name[sep + 2 ..]), frame, try std.ascii.allocLowerString(a, name));
+    } else if (for (try frameVariables(s, a, frame)) |x| {
+        if (std.ascii.eqlIgnoreCase(x.v.name, name)) break x;
+    } else null) |found| {
         v = try valueOf(s, a, found.v, found.decl, frame, try std.ascii.allocLowerString(a, name));
+    } else {
+        // a module's variable that the line sees by this name (host or use
+        // association), which the frame does not have
+        const seen = declarations.seenModuleVariable(s, a, frame, name) orelse return null;
+        const g = (try moduleGlobal(s, a, seen.module, seen.name)) orelse return null;
+        v = try valueOf(s, a, g, declarations.moduleDecl(s, a, seen.module, seen.name), frame, try std.ascii.allocLowerString(a, name));
     }
     v = (try subscript(a, v, head[name_end..])) orelse return null;
     while (parts.next()) |p| {

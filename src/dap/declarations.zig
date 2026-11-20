@@ -150,6 +150,86 @@ fn useDeclaration(s: *Session, a: Allocator, file: []const u8, line: u32, name: 
     return null;
 }
 
+/// A module of the sources, by its name
+pub fn moduleNamed(s: *Session, name: []const u8) ?*const Obj {
+    const srv = s.server orelse return null;
+    var it = srv.workspace.iterator();
+    while (it.next()) |kv| {
+        const ast = kv.value_ptr.*.ast orelse continue;
+        for (ast.scope_list.items) |o| if (o.kind == .module and std.ascii.eqlIgnoreCase(o.name, name)) return o;
+    }
+    return null;
+}
+
+/// The declaration of a module's variable
+pub fn moduleDecl(s: *Session, a: Allocator, module: []const u8, name: []const u8) ?Decl {
+    const mod = moduleNamed(s, module) orelse return null;
+    for (mod.childList()) |c| if (c.kind == .variable and std.ascii.eqlIgnoreCase(c.name, name)) return declOf(a, c);
+    return null;
+}
+
+/// The module variable that a frame's line sees by `name`, its module's
+/// and its own name there (a USE may rename it): host and use
+/// association (`zfls/moduleVariables`)
+pub fn seenModuleVariable(s: *Session, a: Allocator, frame: Frame, name: []const u8) ?struct { module: []const u8, name: []const u8 } {
+    const where = scopeOf(s, a, frame) orelse return null;
+    const srv = s.server orelse return null;
+    const uri = paths.pathToUri(a, where.file) catch return null;
+    const items = srv.dispatchPublic(a, "zfls/moduleVariables", json.from(a, .{
+        .textDocument = .{ .uri = uri },
+        .position = .{ .line = where.line - 1, .character = 0 },
+    }) catch return null) catch return null;
+    for (json.items(items)) |it| {
+        const real = json.str(json.get(it, "name")) orelse continue;
+        const local = json.str(json.get(it, "local")) orelse real;
+        if (!std.ascii.eqlIgnoreCase(local, name)) continue;
+        return .{ .module = json.str(json.get(it, "module")) orelse continue, .name = real };
+    }
+    return null;
+}
+
+/// The place of a module's variable that its COMMON block holds (`common
+/// /blk/ cx, cy` in the module): the offset in the block, by the sizes of
+/// the variables before it there, and the block's name; null when it is in
+/// none, or a size before it is not known
+pub fn commonPlace(a: Allocator, module: *const Obj, name: []const u8) ?struct { block: []const u8, offset: u64 } {
+    if (module.data != .scope) return null;
+    for (module.scopeDataConst().commons.items) |blk| {
+        var offset: u64 = 0;
+        var depth: usize = 0;
+        var start: usize = 0;
+        const members = blk.varDataConst().members;
+        for (members, 0..) |ch, i| {
+            switch (ch) {
+                '(' => depth += 1,
+                ')' => depth -|= 1,
+                else => {},
+            }
+            if (!((ch == ',' and depth == 0) or i == members.len - 1)) continue;
+            const item = std.mem.trim(u8, members[start..if (ch == ',' and depth == 0) i else i + 1], " ");
+            start = i + 1;
+            const member = std.mem.trim(u8, item[0 .. std.mem.findScalar(u8, item, '(') orelse item.len], " ");
+            if (std.ascii.eqlIgnoreCase(member, name)) return .{ .block = std.mem.trim(u8, blk.name, "/"), .offset = offset };
+            const c = for (module.childList()) |c| {
+                if (c.kind == .variable and std.ascii.eqlIgnoreCase(c.name, member)) break c;
+            } else return null;
+            offset += sizeOf(declOf(a, c)) orelse return null;
+        }
+    }
+    return null;
+}
+
+/// The bytes of a variable of intrinsic type, of a known size and shape
+fn sizeOf(d: Decl) ?u64 {
+    if (d.t.kind == .derived or d.t.kind == .unknown or d.t.size == 0 or d.allocatable or d.pointer) return null;
+    var n: u64 = d.t.size;
+    if (d.dims.len > 0) {
+        if (!values.constantShape(d.dims)) return null;
+        for (d.dims) |x| n *= @intCast(@max(0, x.hi.? - x.lo.? + 1));
+    }
+    return n;
+}
+
 /// The declaration of `name` seen from `scope`: its scopes' variables
 fn declaration(scope: *Obj, name: []const u8) ?*const Obj {
     var sc: ?*Obj = scope;
