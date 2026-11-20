@@ -352,7 +352,10 @@ pub fn assignmentAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?a
 pub fn operatorAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?[]const u8 {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
     const line = params.position.line;
-    return operators.at(a, file, line, Server.toByteCol(file, line, params.position.character));
+    const name = (try operators.at(a, file, line, Server.toByteCol(file, line, params.position.character))) orelse return null;
+    // `.name.` that no interface defines is a DEC component between dots,
+    // `centre` of `sh.centre.x` (#539)
+    return if (try operators.defined(self, a, name)) name else null;
 }
 
 pub fn serveDefinition(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
