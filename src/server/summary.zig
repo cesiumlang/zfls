@@ -318,7 +318,7 @@ fn wakeForPosition(self: *Server, a: Allocator, pos: lsp.PositionParams, rename:
     if (try @import("macros.zig").atPosition(self, a, pos)) |_| return;
     const d = (try definition.definitionAt(self, a, pos, false)) orelse return;
     if (d.obj.kind == .intrinsic) return;
-    if (rename) if (try references.renamedImport(a, d.file, d.line, d.col, d.obj)) |ri| {
+    if (rename) if (try references.renamedImport(self, a, d.file, d.line, d.col, d.obj)) |ri| {
         const name = try a.dupe(u8, ri.alias);
         return wakeNamed(self, a, &.{ name, try a.dupe(u8, d.obj.name) }, &.{});
     };

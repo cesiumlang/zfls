@@ -117,8 +117,9 @@ pub fn isRenamedOriginal(line: []const u8, col: usize, def_obj: *const Obj) bool
 }
 
 /// The renamed import that the word at (`line`, `col`) is the local name
-/// of, if it is one (upstream #52)
-pub fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?Server.RenamedImport {
+/// of, if it is one (upstream #52): by a USE statement of its scope or a
+/// scope around, or of a module it has the name from by USE (#480)
+pub fn renamedImport(self: *Server, a: Allocator, file: *FortranFile, line: usize, col: usize, target: *const Obj) !?Server.RenamedImport {
     const text = file.getLine(line, false) orelse return null;
     var it = helpers.words(text);
     const word = while (it.next()) |m| {
@@ -126,13 +127,27 @@ pub fn renamedImport(a: Allocator, file: *FortranFile, line: usize, col: usize, 
     } else return null;
     if (std.ascii.eqlIgnoreCase(word, target.name)) return null;
     const lower = try std.ascii.allocLowerString(a, word);
-    var scope = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
+    const inner = (file.ast orelse return null).getInnerScope(line + 1) orelse return null;
+    var scope = inner;
     while (true) {
         for (scope.scopeData().use.items) |u| {
             if (!u.is_import and u.rename_map.get(lower) != null) return .{ .alias = lower, .scope = scope, .use_line = u.line_number };
         }
-        scope = scope.parent orelse return null;
+        scope = scope.parent orelse break;
     }
+    var cur: ?*Obj = inner;
+    while (cur) |x| : (cur = x.parent) {
+        const r = (try objects.renamingModule(self.env(a), x, lower)) orelse continue;
+        // a module in a file the workspace has (not a module file's summary)
+        if (r.mod.file_ast.file == null) return null;
+        return .{ .alias = r.name, .scope = r.mod, .use_line = r.use_line };
+    }
+    return null;
+}
+
+/// The file whose USE statement makes the local name of `ri`
+pub fn renameFile(ri: Server.RenamedImport, at: *FortranFile) *FortranFile {
+    return ri.scope.file_ast.file orelse at;
 }
 
 /// The uses of a renamed import: of its local name, in the scope of the
@@ -419,8 +434,8 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
         self.postMessage(a, "Rename failed: Cannot rename intrinsics", C.Severity.warn);
         return .null;
     }
-    const all = if (try renamedImport(a, d.file, d.line, d.col, d.obj)) |ri|
-        try aliasReferences(self, a, d.file, d.obj, ri)
+    const all = if (try renamedImport(self, a, d.file, d.line, d.col, d.obj)) |ri|
+        try aliasReferences(self, a, renameFile(ri, d.file), d.obj, ri)
     else blk: {
         const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
         const rs = referenceScope(self, obj) orelse return .null;

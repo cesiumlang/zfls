@@ -223,3 +223,84 @@ test "a recursive function names itself in its body; RESULT keeps the two apart 
     try expectSorted(&.{ .{ 21, 23 }, .{ 23, 12 }, .{ 24, 4 } }, try sortedPlaces(h.Location, try w.references("r.f90", w.pos("r.f90", "r = x", 0, 0))));
     try expectSorted(&.{ .{ 21, 11 }, .{ 27, 13 } }, try sortedPlaces(h.Location, try w.references("r.f90", w.pos("r.f90", "f(x)", 0, 0))));
 }
+
+const renamed_through = [_]h.File{
+    .{ .name = "a.f90", .text =
+    \\module a
+    \\  implicit none
+    \\  interface
+    \\    subroutine e1(x)
+    \\      integer, intent(in) :: x
+    \\    end subroutine
+    \\  end interface
+    \\contains
+    \\  subroutine p1(x)
+    \\    integer, intent(in) :: x
+    \\  end subroutine p1
+    \\end module a
+    \\
+    },
+    .{ .name = "b.f90", .text =
+    \\module b
+    \\  use a, only: q1 => p1, r1 => e1
+    \\  implicit none
+    \\contains
+    \\  subroutine inside()
+    \\    call q1(1)
+    \\  end subroutine
+    \\end module b
+    \\
+    },
+    .{ .name = "c.f90", .text =
+    \\program c
+    \\  use b
+    \\  implicit none
+    \\  call q1(2)
+    \\  call r1(3)
+    \\end program c
+    \\
+    },
+    .{ .name = "d.f90", .text =
+    \\module d
+    \\  use b
+    \\end module d
+    \\program e
+    \\  use d
+    \\  call q1(4)
+    \\end program e
+    \\
+    },
+};
+
+/// The number of `edits` in file `name`
+fn editsIn(edits: []const h.Edit, name: []const u8) usize {
+    var n: usize = 0;
+    for (edits) |e| if (std.mem.endsWith(u8, e.uri, name)) {
+        n += 1;
+    };
+    return n;
+}
+
+test "rename of a USE-renamed name from a further user changes the local name, not the original (#480)" {
+    const w = try h.Workspace.init(&renamed_through, .{});
+    defer w.deinit();
+    // from a user of the module that renames, of a user of that one, and
+    // inside the module: the local name in the rename and its uses
+    for ([_]struct { []const u8, []const u8 }{
+        .{ "c.f90", "q1(2)" },
+        .{ "d.f90", "q1(4)" },
+        .{ "b.f90", "q1(1)" },
+    }) |at| {
+        const edits = try w.rename(at[0], w.pos(at[0], at[1], 0, 0), "local");
+        const in = [_]usize{ editsIn(edits, "a.f90"), editsIn(edits, "b.f90"), editsIn(edits, "c.f90"), editsIn(edits, "d.f90") };
+        try h.expect(edits.len == 4 and in[0] == 0 and in[1] == 2 and in[2] == 1 and in[3] == 1, "rename of q1 from {s}: {d} edits, {any} by file, not 0, 2, 1, 1", .{ at[1], edits.len, in });
+        for (edits) |e| try h.expect(!std.mem.endsWith(u8, e.uri, "b.f90") or e.line != 1 or e.start == 15, "b.f90's USE statement edited at {d}", .{e.start});
+    }
+    // an interface body renamed so (#474: a name of the module)
+    const r = try w.rename("c.f90", w.pos("c.f90", "r1(3)", 0, 0), "local");
+    try h.expect(r.len == 2 and editsIn(r, "b.f90") == 1 and editsIn(r, "c.f90") == 1, "rename of r1: {d} edits", .{r.len});
+    // from the original name: the original only
+    const p = try w.rename("a.f90", w.pos("a.f90", "subroutine p1", 0, 11), "orig");
+    try h.expect(p.len == 3 and editsIn(p, "a.f90") == 2 and editsIn(p, "b.f90") == 1, "rename of p1: {d} edits, {d} in a.f90, {d} in b.f90", .{ p.len, editsIn(p, "a.f90"), editsIn(p, "b.f90") });
+    for ([_][]const u8{ "a.f90", "b.f90", "c.f90", "d.f90" }) |name| try w.expectNoDiagnostics(name);
+}
