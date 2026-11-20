@@ -29,6 +29,7 @@ const changes = @import("parser/changes.zig");
 const openmp = @import("parser/openmp.zig");
 const form_switch = @import("parser/form_switch.zig");
 const fixed_columns = @import("parser/fixed_columns.zig");
+const tab_format = @import("parser/tab_format.zig");
 const pp_intel = @import("preprocessor/intel.zig");
 
 pub const ResultSig = parser_definitions.ResultSig;
@@ -153,6 +154,12 @@ fn continuationAmpersand(line: []const u8) ?usize {
     return if (amper < comment) amper else null;
 }
 
+/// A fixed-form continuation line with blanks for its marks, the statement
+/// going on at `start` (`helpers.fixedContStart`)
+fn contLine(a: Allocator, line: []const u8, start: usize) ![]const u8 {
+    return std.mem.concat(a, u8, &.{ try str.spaces(a, start), str.from(line, start) });
+}
+
 /// A fixed-form line without its trailing `!` comment. A `!` inside a
 /// string, also one left open to continue on the next line, is no comment.
 fn fixedNoComment(a: Allocator, line: []const u8) ![]const u8 {
@@ -181,15 +188,6 @@ pub fn formOfLanguage(language_id: ?[]const u8) ?SourceForm {
     if (std.ascii.eqlIgnoreCase(id, "FortranFixedForm")) return .fixed;
     if (std.ascii.eqlIgnoreCase(id, "FortranFreeForm")) return .free;
     return null;
-}
-
-/// Makes the tabs and form feeds (the page breaks of old sources) of
-/// `text` spaces, as compilers read them (fortls #443); every column stays
-/// where it is
-fn blankSpaces(text: []u8) void {
-    for (text) |*c| {
-        if (c.* == '\t' or c.* == '\x0c') c.* = ' ';
-    }
 }
 
 pub const FortranFile = struct {
@@ -293,10 +291,11 @@ pub const FortranFile = struct {
         const was = self.declared_fixed;
         const lines = self.editLines();
         self.setForm(lines, true);
-        // debug lines are read as code in fixed form only (`d_lines`), and
-        // the fixed-form lines of a file that switches forms as free ones:
-        // the editor's lines read again in the new form
-        if (was != self.declared_fixed and (self.d_lines_code or self.form_switched)) self.setContents(lines, false) catch {};
+        // debug lines are read as code in fixed form only (`d_lines`), the
+        // fixed-form lines of a file that switches forms as free ones, a
+        // TAB-format continuation line as one: the editor's lines read again
+        // in the new form
+        if (was != self.declared_fixed and (self.d_lines_code or self.form_switched or self.raw_lines.items.len > 0)) self.setContents(lines, false) catch {};
         return was != self.declared_fixed;
     }
 
@@ -339,7 +338,7 @@ pub const FortranFile = struct {
         var at: usize = 0;
         for (new_lines) |l| {
             @memcpy(buf[at .. at + l.len], l);
-            blankSpaces(buf[at .. at + l.len]);
+            tab_format.blankSpaces(buf[at .. at + l.len]);
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
@@ -375,10 +374,11 @@ pub const FortranFile = struct {
     /// Whether a line of the text is read otherwise than it is written:
     /// comment markers, debug lines read as code, OpenMP conditional lines,
     /// fixed-form lines of a file that switches forms or past
-    /// `fixed_columns`
+    /// `fixed_columns`, TAB-format lines
     fn rewrites(self: *const FortranFile) bool {
         if (self.form_switched or self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
         if (self.fixed) if (self.fixed_columns) |n| if (fixed_columns.anyLong(self.lines.items, n)) return true;
+        if (tab_format.any(self.lines.items)) return true;
         if (!self.openmp_conditional) return false;
         for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
         return false;
@@ -409,6 +409,7 @@ pub const FortranFile = struct {
     }
 
     fn rewriteLine(self: *const FortranFile, line: []u8) void {
+        tab_format.blankLine(self.fixed, line);
         if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
         if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
         if (self.fixed) if (self.fixed_columns) |n| fixed_columns.blank(line, n);
@@ -423,7 +424,7 @@ pub const FortranFile = struct {
     /// The `hash` of a file's text, whose tabs and form feeds become
     /// spaces
     pub fn textHash(text: []u8) u64 {
-        blankSpaces(text);
+        tab_format.blankSpaces(text);
         return std.hash.Wyhash.hash(0, text);
     }
 
@@ -503,9 +504,10 @@ pub const FortranFile = struct {
         if (backward) {
             // a fixed-form line continues a statement by its column 6, a
             // free-form one when the code line before it ends with `&`
-            const continued = if (self.fixed) helpers.isFixedCont(curr_line) else true;
+            const cont = if (self.fixed) helpers.fixedContStart(curr_line) else null;
+            const continued = !self.fixed or cont != null;
             if (self.fixed) {
-                if (continued) curr_line = try std.mem.concat(a, u8, &.{ "      ", str.from(curr_line, 6) });
+                if (cont) |c| curr_line = try contLine(a, curr_line, c);
             } else if (helpers.freeContEnd(curr_line)) |e| {
                 curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), curr_line[e..] });
             }
@@ -520,9 +522,10 @@ pub const FortranFile = struct {
                 var part: []const u8 = undefined;
                 var first = false;
                 if (self.fixed) {
-                    first = !helpers.isFixedCont(raw);
+                    const c = helpers.fixedContStart(raw);
+                    first = c == null;
                     part = try fixedNoComment(a, raw);
-                    if (!first) part = try std.mem.concat(a, u8, &.{ "      ", str.from(part, 6) });
+                    if (c) |start| part = try contLine(a, part, start);
                 } else {
                     const no_comm = str.beforeFirst(try helpers.stripStrings(a, raw, true), "!");
                     const cont_ind = std.mem.findScalarLast(u8, no_comm, '&') orelse break;
@@ -562,12 +565,12 @@ pub const FortranFile = struct {
                 i += 1;
                 var part = next;
                 if (self.fixed) {
-                    if (!helpers.isFixedCont(next)) break;
+                    const c = helpers.fixedContStart(next) orelse break;
                     // a comment ends its line only: one before a continuation
                     // must not cut off the rest of the statement (hansec #202)
                     cut = try fixedNoComment(a, line);
                     if (last) |l| post_lines.items[l] = cut else curr_line = cut;
-                    part = try std.mem.concat(a, u8, &.{ "      ", str.from(next, 6) });
+                    part = try contLine(a, next, c);
                 } else if (helpers.freeContEnd(next)) |e| part = next[e..];
                 try post_lines.appendNTimes(a, "", skipped);
                 skipped = 0;
@@ -607,7 +610,7 @@ pub const FortranFile = struct {
             var i = line_no + 1;
             while (self.getLine(i, false)) |l| : (i += 1) {
                 if (std.mem.trim(u8, l, " \t\r").len == 0 or helpers.isFixedComment(l) or l[0] == '#') continue;
-                return l.len > 5 and l[5] != ' ' and l[5] != '0';
+                return helpers.fixedContMark(l) != null;
             }
             return false;
         }
@@ -697,7 +700,7 @@ pub const FortranFile = struct {
                     const stripped = try helpers.stripStrings(a, line, true);
                     // a `!` in column 6 of a fixed-form line marks a
                     // continuation, not a comment
-                    const from: usize = if (self.fixed and helpers.isFixedCont(line)) 6 else 0;
+                    const from: usize = if (self.fixed) helpers.fixedContStart(line) orelse 0 else 0;
                     const has_comment = std.mem.findScalarPos(u8, stripped, from, '!');
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
                     const code_len = str.codepointLen(code);
@@ -866,17 +869,6 @@ test "getCodeLine: lines that are no code do not end a statement, and keep their
     try std.testing.expectEqualStrings("      x = f(a,", fb.pre[0]);
     const ff = try f.getCodeLine(a, 0, true, false, false, false);
     try std.testing.expectEqual(@as(usize, 2), ff.post.len);
-}
-
-test "form feeds and tabs are read as spaces, as loaded and as edited" {
-    const f = try FortranFile.create(std.testing.allocator, "/w/a.f90", null);
-    defer f.destroy();
-    _ = try f.setText("program p\n\x0c\tinteger :: a\nend program p\n");
-    try std.testing.expectEqualStrings("  integer :: a", f.getLine(1, false).?);
-    _ = try f.applyChange(.{ .text = "\x0c\tinteger :: b\n", .range = .{ .sl = 2, .sc = 0, .el = 2, .ec = 0 } });
-    try std.testing.expectEqualStrings("  integer :: b", f.getLine(2, false).?);
-    _ = try f.applyChange(.{ .text = "\x0c", .range = .{ .sl = 1, .sc = 0, .el = 1, .ec = 1 } });
-    try std.testing.expectEqualStrings("  integer :: a", f.getLine(1, false).?);
 }
 
 test "d_lines code: zfls reads the D of a debug line as a blank, changes apply to the editor's text" {
