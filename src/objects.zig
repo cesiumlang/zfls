@@ -45,6 +45,7 @@ pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
 pub const findThroughUse = objects_resolve.findThroughUse;
 pub const findAllThroughUse = objects_resolve.findAllThroughUse;
+pub const renamingModule = objects_resolve.renamingModule;
 pub const comesThrough = objects_resolve.comesThrough;
 pub const findInWorkspace = objects_resolve.findInWorkspace;
 pub const declaredProcedure = objects_resolve.declaredProcedure;

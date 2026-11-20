@@ -218,6 +218,39 @@ pub fn findAllThroughUse(env: Env, scope: *Obj, name_lower: []const u8, out: *st
     _ = try walk.search(scope, name_lower);
 }
 
+/// Where `scope` gets `name_lower` by USE from a module that has it by a
+/// rename (`use a, only: name => other` there): that module, the name
+/// there and the line of its USE statement. Null when the name comes by
+/// no such module, or is declared in the module it comes from (#480).
+pub fn renamingModule(env: Env, scope: *Obj, name_lower: []const u8) Allocator.Error!?struct { mod: *Obj, name: []const u8, use_line: usize } {
+    var seen: std.AutoHashMapUnmanaged(struct { *Obj, u64 }, void) = .empty;
+    var cur_scope = scope;
+    var cur_name = name_lower;
+    // a name comes from one module: follow it, the first that has it
+    outer: for (0..1000) |_| {
+        if (cur_scope.data != .scope) return null;
+        for (cur_scope.scopeDataConst().use.items) |u| {
+            if (u.is_import or !env.tree.contains(u.mod_name)) continue;
+            const mod = env.global(cur_scope.file_ast, u.mod_name) orelse continue;
+            const there = u.nameThere(cur_name) orelse continue;
+            if (try checkScope(env, mod, there, true, null)) |_| return null;
+            if (!exportsUsedName(mod, there)) continue;
+            for (mod.scopeDataConst().use.items) |mu| {
+                if (!mu.is_import and mu.rename_map.get(there) != null) return .{ .mod = mod, .name = there, .use_line = mu.line_number };
+            }
+            const gop = try seen.getOrPut(env.tmp, .{ mod, std.hash.Wyhash.hash(0, there) });
+            if (gop.found_existing) continue;
+            // only if the name comes through `mod` at all
+            if (try findThroughUse(env, mod, there, true) == null) continue;
+            cur_scope = mod;
+            cur_name = there;
+            continue :outer;
+        }
+        return null;
+    }
+    return null;
+}
+
 /// Whether what `name_lower` stands for in `scope` by USE (as
 /// `findThroughUse` finds it) comes through module `via`, where it is
 /// named `via_name`: through the rename of a USE statement there, say.
