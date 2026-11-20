@@ -329,3 +329,27 @@ test "hover on the file name of an #include or INCLUDE shows the file it reads, 
     try std.testing.expect(std.mem.find(u8, lit, "CHARACTER(LEN=6)") != null);
     try std.testing.expect(std.mem.find(u8, lit, "Literal constant") != null);
 }
+
+test "F2018 EVENT POST, EVENT WAIT, FORM TEAM, CHANGE TEAM and FAIL IMAGE are statements, not names (#538)" {
+    const w = try h.Workspace.init(&.{.{ .name = "c.f90", .text =
+        \\program coarr
+        \\  use iso_fortran_env, only: event_type, team_type
+        \\  implicit none
+        \\  type(event_type) :: ev[*]
+        \\  type(team_type) :: team
+        \\  integer :: me, s
+        \\  me = this_image()
+        \\  event post (ev[1])
+        \\  if (me == 1) event wait (ev)
+        \\  form team (1, team)
+        \\  change team (team)
+        \\    s = team_number()
+        \\  end team
+        \\  sync team (team)
+        \\  if (me == 2) fail image
+        \\end program coarr
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("c.f90");
+}
