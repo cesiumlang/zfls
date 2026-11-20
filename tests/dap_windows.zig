@@ -244,7 +244,13 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     try check(std.mem.eql(u8, str(frames[1], "name") orelse "", "MAIN") and (caller_line == call_line or caller_line == call_line + 1), "called by MAIN at line {d} ({s}:{d})", .{ call_line, str(frames[1], "name") orelse "?", caller_line });
     if (caller_line != call_line) std.debug.print("known gap: the caller's line is that of the return address ({d}), not the CALL's ({d})\n", .{ caller_line, call_line });
     var scopes = items(try c.request("scopes", .{ .frameId = int(frames[0], "id").? }), "scopes");
-    gap("work's arguments (#381, #382, #384)", try scopeVariables(c, scopes, "Locals"));
+    // work's dummy arguments: their addresses are in the frame (LLVM's
+    // S_DEFRANGE_REGISTER_REL_INDIR)
+    const args = try scopeVariables(c, scopes, "Locals");
+    try check(std.mem.eql(u8, valueOf(args, "p"), "point(x=9.0, y=-2.0, id=7)"), "p = point(x=9.0, y=-2.0, id=7) ({s})", .{valueOf(args, "p")});
+    // (CLASS(point): its declared type's components)
+    try check(std.mem.eql(u8, valueOf(args, "t"), "point(x=1.5, y=-2.0, id=7)"), "t = point(x=1.5, y=-2.0, id=7) ({s})", .{valueOf(args, "t")});
+    gap("work's arrays, CHARACTER(*) and CLASS arguments (#382, #384)", args);
     // the module variables, by Flang's public names (`_QMgridEncells`)
     // with the types of CodeView's own (`ncells`)
     const grid = try moduleVariables(c, scopes, "grid");

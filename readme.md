@@ -203,8 +203,9 @@ Run Fortran File and Debug Fortran File are the VS Code extension's;
     gdb's).
 12. LLVM Flang's `-g` on Windows writes debug information of Microsoft's
     format only, with which Windows's engine has breakpoints, the stack,
-    stepping, the module variables and the stops at Flang's runtime errors
-    and ERROR STOP, but not yet the other variables. A program built with `-gdwarf-4`
+    stepping, the module variables, the scalar and derived-type dummy
+    arguments and the stops at Flang's runtime errors and ERROR STOP, but
+    not yet the other variables. A program built with `-gdwarf-4`
     and linked with `-Wl,-debug:dwarf` has DWARF too, which gdb reads
     (tested in CI with Flang 23 and MSYS2's gdb): the variables, a
     polymorphic object or array with its dynamic type's components, and stops at
@@ -526,8 +527,9 @@ on Linux and Windows, lldb-dap on macOS.
   by lines, and shows the variables as Fortran: dbghelp says where each
   is, and zfls's declarations its type, kind and rank; arrays are read
   through Intel's descriptors. For LLVM Flang's programs it has
-  breakpoints, the stack, stepping, the module variables and the stops at
-  runtime errors, not yet the other variables; gdb reads them from a build
+  breakpoints, the stack, stepping, the module variables, the scalar and
+  derived-type dummy arguments and the stops at runtime errors, not yet the
+  other variables; gdb reads them from a build
   with `-gdwarf-4 -Wl,-debug:dwarf`.
 
 With gdb and the engine, the module variables that the frame's line sees
