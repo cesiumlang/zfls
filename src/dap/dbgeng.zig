@@ -728,11 +728,24 @@ pub const Engine = struct {
     /// `ncells`) at its public symbol's (`_QMgridEncells`), which keeps two
     /// modules' variables of one name apart
     pub fn dataAt(self: *Engine, a: Allocator, mod_base: u64, name: []const u8, address: u64) !?Variable {
-        var ctx: Collect = .{ .a = a, .engine = self };
-        _ = SymEnumSymbols(self.process, mod_base, try a.dupeSentinel(u8, name, 0), &Collect.onSymbol, &ctx);
-        if (ctx.failed) return error.OutOfMemory;
-        for (ctx.out.items) |v| if (v.address == address and v.type_index != 0) return v;
+        for (try self.globalsNamed(a, mod_base, name)) |v| if (v.address == address and v.type_index != 0) return v;
         return null;
+    }
+
+    /// The global symbols of the module at `mod_base` whose names match
+    /// `mask` (dbghelp's, with `*`): variables with their types, and public
+    /// symbols without
+    pub fn globalsNamed(self: *Engine, a: Allocator, mod_base: u64, mask: []const u8) ![]Variable {
+        var ctx: Collect = .{ .a = a, .engine = self };
+        _ = SymEnumSymbols(self.process, mod_base, try a.dupeSentinel(u8, mask, 0), &Collect.onSymbol, &ctx);
+        if (ctx.failed) return error.OutOfMemory;
+        return ctx.out.items;
+    }
+
+    /// The base of the module of an address (a frame's instruction)
+    pub fn moduleBase(self: *Engine, address: u64) ?u64 {
+        var base: u64 = 0;
+        return if (succeeded(self.symbols.GetModuleByOffset(address, 0, null, &base))) base else null;
     }
 
     /// Reads the program's memory: the bytes read

@@ -283,7 +283,22 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     // a POINTER scalar (`ip => goal`): its target's value
     try check(std.mem.eql(u8, valueOf(locals, "ip"), "5"), "ip = 5 ({s})", .{valueOf(locals, "ip")});
     try check(std.mem.eql(u8, valueOf(locals, "m"), "[2×3]"), "m = [2×3] ({s})", .{valueOf(locals, "m")});
-    gap("the main program's variables, v, big, tg, goal, none, nothing among them (#383)", locals);
+    // the main program's variables that Flang makes static: globals of
+    // their own names, not the frame's
+    const statics = [_][2][]const u8{
+        .{ "v", "[6.0, 2.0, 3.0]" },
+        .{ "big", "[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, …]" },
+        .{ "none", "not allocated" },
+        .{ "nothing", "not associated" },
+        .{ "goal", "5" },
+        .{ "tg", "tagged(point=…, tag='hello   ', w=…)" },
+        .{ "pts", "[point(…), point(…)]" },
+    };
+    for (statics) |x| try check(std.mem.eql(u8, valueOf(locals, x[0]), x[1]), "{s} = {s} ({s})", .{ x[0], x[1], valueOf(locals, x[0]) });
+    const big = items(try c.request("variables", .{ .variablesReference = int(named(locals, "big").?, "variablesReference").? }), "variables");
+    try check(big.len == 10 and std.mem.eql(u8, str(big[9], "name") orelse "", "(901:1000)"), "big in 10 sections, the last (901:1000) ({d})", .{big.len});
+    const tgw = try c.request("evaluate", .{ .expression = "tg%w", .frameId = int(frames[0], "id").?, .context = "watch" });
+    try check(std.mem.eql(u8, str(tgw, "result") orelse "", "[0.25, 0.25]"), "tg%w = [0.25, 0.25] ({s})", .{str(tgw, "result") orelse "?"});
     // a module variable by its local name (`use counters, only: nhits => hits`)
     const counters = try moduleVariables(c, scopes, "counters");
     try check(std.mem.eql(u8, valueOf(counters, "nhits => hits"), "3"), "nhits => hits = 3 ({s})", .{valueOf(counters, "nhits => hits")});
