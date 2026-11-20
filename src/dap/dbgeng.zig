@@ -71,6 +71,7 @@ const SrcCodeInfoW = extern struct {
 };
 extern "dbghelp" fn SymEnumLinesW(h: usize, base: u64, obj: ?[*:0]const u16, file: ?[*:0]const u16, cb: *const fn (*SrcCodeInfoW, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 extern "dbghelp" fn SymFromName(h: usize, name: [*:0]const u8, info: *SymbolInfo) callconv(.winapi) i32;
+extern "dbghelp" fn SymEnumerateModulesW64(h: usize, cb: *const fn ([*:0]const u16, u64, ?*anyopaque) callconv(.winapi) i32, ctx: ?*anyopaque) callconv(.winapi) i32;
 
 const SYMFLAG_REGISTER = 0x8;
 const SYMFLAG_REGREL = 0x10;
@@ -411,13 +412,20 @@ pub const Engine = struct {
         return out;
     }
 
-    /// A breakpoint at a symbol (`MAIN__`, a runtime's function), maybe once
+    /// A breakpoint at a symbol (`MAIN__`, `_QQmain`, a runtime's
+    /// function), maybe once: at its address in the loaded modules (see
+    /// `global`), else deferred until a module that has it loads
     pub fn addSymbolBreakpoint(self: *Engine, a: Allocator, symbol: []const u8, one_shot: bool) !Breakpoint {
         var bp: ?*dbg.IDebugBreakpoint2 = null;
         try ok(self.control.AddBreakpoint2(DEBUG_BREAKPOINT_CODE, DEBUG_ANY_ID, &bp));
         const b = bp.?;
-        const wexpr = try std.unicode.utf8ToUtf16LeAllocZ(a, symbol);
-        _ = b.SetOffsetExpressionWide(wexpr.ptr);
+        if (try self.global(a, symbol)) |g| {
+            try ok(b.SetOffset(g.address));
+        } else {
+            // the engine's expression, without the `_` that dbghelp drops
+            const wexpr = try std.unicode.utf8ToUtf16LeAllocZ(a, withoutUnderscore(symbol));
+            _ = b.SetOffsetExpressionWide(wexpr.ptr);
+        }
         try ok(b.AddFlags(DEBUG_BREAKPOINT_ENABLED | if (one_shot) DEBUG_BREAKPOINT_ONE_SHOT else 0));
         var id: u32 = 0;
         try ok(b.GetId(&id));
@@ -649,15 +657,74 @@ pub const Engine = struct {
         return v[0].Anonymous.Anonymous.I64;
     }
 
-    /// A global (a module variable: `GRID_mp_CELLS`, `_QMgridEcells`)
+    /// A global (a module variable: `GRID_mp_CELLS`, `_QMgridEcells`; a
+    /// function: `_QQmain`, `for__issue_diagnostic`), by the name the
+    /// compiler wrote. dbghelp, with the engine's options, drops the leading
+    /// `_` of C's names (`_QQmain` is `QQmain`), and finds a name without
+    /// its module's name (`grid!QQmain`) only in the modules whose symbols
+    /// are loaded already: so both names, unqualified, then in each module.
+    /// A public symbol (LLVM Flang's `_QMgridEcells`) has no type: see
+    /// `dataAt`
     pub fn global(self: *Engine, a: Allocator, name: []const u8) !?Variable {
         var buf: [@sizeOf(SymbolInfo) + 512]u8 align(8) = undefined;
         const info: *SymbolInfo = @ptrCast(&buf);
+        const plain = withoutUnderscore(name);
+        const names: []const []const u8 = if (plain.len < name.len) &.{ name, plain } else &.{name};
+        const found = found: {
+            for (names) |n| if (fromName(self.process, info, try a.dupeSentinel(u8, n, 0))) break :found true;
+            for (try self.moduleNames(a)) |m| {
+                for (names) |n| if (fromName(self.process, info, try a.printSentinel("{s}!{s}", .{ m, n }, 0))) break :found true;
+            }
+            break :found false;
+        };
+        if (!found) return null;
+        return .{ .name = try a.dupe(u8, name), .address = info.Address, .size = info.Size, .type_index = info.TypeIndex, .mod_base = info.ModBase, .parameter = false };
+    }
+
+    fn fromName(process: usize, info: *SymbolInfo, name: [:0]const u8) bool {
         info.SizeOfStruct = @sizeOf(SymbolInfo);
         info.MaxNameLen = 512;
-        const z = try a.dupeSentinel(u8, name, 0);
-        if (SymFromName(self.process, z.ptr, info) == 0) return null;
-        return .{ .name = try a.dupe(u8, name), .address = info.Address, .size = info.Size, .type_index = info.TypeIndex, .mod_base = info.ModBase, .parameter = false };
+        return SymFromName(process, name.ptr, info) != 0;
+    }
+
+    /// dbghelp's names of the loaded modules (`grid`, `ntdll`), which are
+    /// not always the engine's (`grid_exe`)
+    fn moduleNames(self: *Engine, a: Allocator) ![]const []const u8 {
+        var names: Names = .{ .a = a };
+        _ = SymEnumerateModulesW64(self.process, &Names.onModule, &names);
+        if (names.failed) return error.OutOfMemory;
+        return names.out.items;
+    }
+
+    const Names = struct {
+        a: Allocator,
+        out: std.ArrayList([]const u8) = .empty,
+        failed: bool = false,
+
+        fn onModule(name: [*:0]const u16, _: u64, raw: ?*anyopaque) callconv(.winapi) i32 {
+            const n: *Names = @ptrCast(@alignCast(raw.?));
+            const utf8 = std.unicode.utf16LeToUtf8Alloc(n.a, std.mem.span(name)) catch {
+                n.failed = true;
+                return 0;
+            };
+            n.out.append(n.a, utf8) catch {
+                n.failed = true;
+                return 0;
+            };
+            return 1;
+        }
+    };
+
+    /// The variable `name` of the module at `mod_base` with a type, at
+    /// `address`: LLVM Flang's module variable (CodeView's `S_GDATA32`,
+    /// `ncells`) at its public symbol's (`_QMgridEncells`), which keeps two
+    /// modules' variables of one name apart
+    pub fn dataAt(self: *Engine, a: Allocator, mod_base: u64, name: []const u8, address: u64) !?Variable {
+        var ctx: Collect = .{ .a = a, .engine = self };
+        _ = SymEnumSymbols(self.process, mod_base, try a.dupeSentinel(u8, name, 0), &Collect.onSymbol, &ctx);
+        if (ctx.failed) return error.OutOfMemory;
+        for (ctx.out.items) |v| if (v.address == address and v.type_index != 0) return v;
+        return null;
     }
 
     /// Reads the program's memory: the bytes read
@@ -729,6 +796,12 @@ pub const Engine = struct {
         _ = self.client.DetachProcesses();
     }
 };
+
+/// A C name as dbghelp gives it, with the engine's options (SYMOPT_UNDNAME):
+/// without its leading `_` (`_QQmain` -> `QQmain`)
+fn withoutUnderscore(name: []const u8) []const u8 {
+    return if (name.len > 1 and name[0] == '_') name[1..] else name;
+}
 
 comptime {
     if (builtin.target.os.tag != .windows) @compileError("dbgeng is Windows's");

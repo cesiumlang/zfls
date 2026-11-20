@@ -620,7 +620,9 @@ With Windows's Debugger Engine, zfls reads the variables itself: dbghelp
 (of the engine) says where each is, zfls's index of the sources (the
 workspace folder) its type, kind and rank, and Intel's array descriptors
 their bounds; a polymorphic object shows its declared type's components.
-The program runs in a console window of its own (`"console":
+Of LLVM Flang's programs built with `-g`, the engine shows the module
+variables and stops at Flang's runtime errors and ERROR STOP, but not yet
+the other variables. The program runs in a console window of its own (`"console":
 "internalConsole"`: none, its output is then lost). Hovers, watches and
 the Debug Console take a variable, its components and elements (`p%x`,
 `a(2,-1)`, `grid::cells`).
