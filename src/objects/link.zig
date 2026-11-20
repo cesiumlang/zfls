@@ -129,6 +129,7 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             if (self.ifaceData().generic) for (self.childList()) |child| {
                 if (child.kind.isSubroutine()) try mems.append(self.al(), child);
             };
+            try resolveExtended(env, self);
         },
         .subroutine => try self.resolveArgLink(env.tmp),
         .function => {
@@ -190,6 +191,63 @@ fn specificOf(env: Env, generic: *Obj, scope: *Obj, name: []const u8) Allocator.
     }
     if (try objects.findThroughUse(env, scope, try std.ascii.allocLowerString(env.tmp, name), false)) |v| return v;
     return findInScope(env, scope.parent, name, .{});
+}
+
+/// Whether `o` is a generic interface with a generic name (not an
+/// OPERATOR or ASSIGNMENT block, whose blocks the operator requests
+/// gather over the workspace)
+fn isNamedGeneric(o: *const Obj) bool {
+    return o.kind == .interface and o.ifaceDataConst().generic and o.name.len > 0 and o.name[0] != '#';
+}
+
+/// A generic is one with the other interface blocks of its name that it
+/// sees (#478): those of its scope, those that USE brings in (of every
+/// module that has the name), or else that its host has; and so those
+/// blocks' own in turn. Their specifics are appended to `self`'s, which
+/// lists them in `extends`.
+fn resolveExtended(env: Env, self: *Obj) Allocator.Error!void {
+    const iface = self.ifaceData();
+    iface.extends.clearRetainingCapacity();
+    if (!isNamedGeneric(self)) return;
+    const scope = self.parent orelse return;
+    if (scope.kind == .type) return;
+    var seen: std.ArrayList(*Obj) = .empty;
+    try seen.append(env.tmp, self);
+    try addBlocks(env, self, scope, try std.ascii.allocLowerString(env.tmp, self.name), &seen);
+    for (seen.items[1..]) |g| try iface.extends.append(self.al(), g);
+}
+
+/// For `resolveExtended`: the blocks of generic `name` in `scope` not yet
+/// `seen`, and then those `scope` sees of the name
+fn addBlocks(env: Env, self: *Obj, scope: *Obj, name: []const u8, seen: *std.ArrayList(*Obj)) Allocator.Error!void {
+    for (scope.childList()) |g| {
+        if (!isNamedGeneric(g) or !std.ascii.eqlIgnoreCase(g.name, name)) continue;
+        if (std.mem.findScalar(*Obj, seen.items, g) != null) continue;
+        try seen.append(env.tmp, g);
+        const p = g.parent orelse continue;
+        const mems = &self.ifaceData().mems;
+        for (g.scopeData().members.items) |member| {
+            const m = (try specificOf(env, g, p, member)) orelse continue;
+            if (std.mem.findScalar(*Obj, mems.items, m) == null) try mems.append(self.al(), m);
+        }
+        for (g.childList()) |m| {
+            if (m.kind.isSubroutine() and std.mem.findScalar(*Obj, mems.items, m) == null) try mems.append(self.al(), m);
+        }
+    }
+    var used: std.ArrayList(*Obj) = .empty;
+    try objects.findAllThroughUse(env, scope, name, &used);
+    for (used.items) |g| {
+        if (!isNamedGeneric(g) or std.mem.findScalar(*Obj, seen.items, g) != null) continue;
+        const p = g.parent orelse continue;
+        try addBlocks(env, self, p, try std.ascii.allocLowerString(env.tmp, g.name), seen);
+    }
+    if (used.items.len > 0) return;
+    // the host's: not of an interface body, which has none
+    const host = scope.parent orelse return;
+    if (host.kind == .interface or scope.kind == .module or scope.kind == .submodule) return;
+    // a name of the host that is no generic hides those it sees
+    if (try findInScope(env, host, name, .{ .local_only = true })) |o| if (!isNamedGeneric(o)) return;
+    try addBlocks(env, self, host, name, seen);
 }
 
 /// `t`: for the time of the call (a page allocator's arena for each of a

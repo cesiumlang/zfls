@@ -28,6 +28,7 @@ test {
     _ = @import("formatting.zig");
     _ = @import("form_switch.zig");
     _ = @import("generics.zig");
+    _ = @import("generics_use.zig");
     _ = @import("initialization.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");

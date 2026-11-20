@@ -44,6 +44,7 @@ pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
 pub const findThroughUse = objects_resolve.findThroughUse;
+pub const findAllThroughUse = objects_resolve.findAllThroughUse;
 pub const comesThrough = objects_resolve.comesThrough;
 pub const findInWorkspace = objects_resolve.findInWorkspace;
 pub const declaredProcedure = objects_resolve.declaredProcedure;
@@ -212,6 +213,10 @@ pub const Interface = struct {
     /// `interface assignment(=)`: its interface bodies are its specifics
     /// (#472), as are the names of its procedure statements
     generic: bool = false,
+    /// The other interface blocks of a generic's name that make one generic
+    /// with it (#478): in its scope, by USE, from its host. Their specifics
+    /// are among `mems`.
+    extends: std.ArrayList(*Obj) = .empty,
 };
 
 pub const Associate = struct {

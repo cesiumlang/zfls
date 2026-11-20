@@ -208,6 +208,16 @@ pub fn findThroughUse(env: Env, scope: *Obj, name_lower: []const u8, outside: bo
     return walk.search(scope, name_lower);
 }
 
+/// Everything `name_lower` stands for in `scope` by its USE statements, as
+/// `findThroughUse` finds the first: each object of the name in a module
+/// that a USE statement brings it from, appended to `out` once. A module
+/// that has the name itself is not searched further (#478: the generic
+/// interfaces of one name that are one generic there).
+pub fn findAllThroughUse(env: Env, scope: *Obj, name_lower: []const u8, out: *std.ArrayList(*Obj)) Allocator.Error!void {
+    var walk: UseWalk = .{ .env = env, .name = name_lower, .all = out };
+    _ = try walk.search(scope, name_lower);
+}
+
 /// Whether what `name_lower` stands for in `scope` by USE (as
 /// `findThroughUse` finds it) comes through module `via`, where it is
 /// named `via_name`: through the rename of a USE statement there, say.
@@ -232,6 +242,9 @@ const UseWalk = struct {
     via: ?struct { *Obj, []const u8 } = null,
     on_path: bool = false,
     found_on_path: bool = false,
+    /// For `findAllThroughUse`: where every object found goes, the walk
+    /// going on
+    all: ?*std.ArrayList(*Obj) = null,
 
     /// Search the modules `scope` uses for `name`, its name in `scope`
     fn search(w: *UseWalk, scope: *Obj, name: []const u8) Allocator.Error!?*Obj {
@@ -239,9 +252,13 @@ const UseWalk = struct {
         for (scope.scopeDataConst().use.items) |u| {
             if (u.is_import or !w.env.tree.contains(u.mod_name)) continue;
             const mod = w.env.global(scope.file_ast, u.mod_name) orelse continue;
-            if (std.mem.eql(u8, u.mod_name, w.name)) return w.found(mod);
+            if (w.all == null and std.mem.eql(u8, u.mod_name, w.name)) return w.found(mod);
             const there = u.nameThere(name) orelse continue;
-            if (try checkScope(w.env, mod, there, true, null)) |v| return w.found(v);
+            if (try checkScope(w.env, mod, there, true, null)) |v| {
+                const all = w.all orelse return w.found(v);
+                if (std.mem.findScalar(*Obj, all.items, v) == null) try all.append(w.env.tmp, v);
+                continue;
+            }
             if (!exportsUsedName(mod, there)) continue;
             const gop = try w.seen.getOrPut(w.env.tmp, .{ mod, std.hash.Wyhash.hash(0, there) });
             if (gop.found_existing) continue;

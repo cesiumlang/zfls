@@ -75,6 +75,18 @@ fn isSelfNamedSpecificOf(generic: *const Obj, specific: *const Obj) bool {
     return false;
 }
 
+/// Whether `x` and `y` are generic interfaces of which one extends the
+/// other (#478: an interface block of a generic's name that it has by USE
+/// or from its host): one generic, one name
+pub fn isExtendedGenericPair(x: *const Obj, y: *const Obj) bool {
+    return extends(x, y) or extends(y, x);
+}
+
+fn extends(generic: *const Obj, other: *const Obj) bool {
+    if (generic.kind != .interface or other.kind != .interface or generic == other) return false;
+    return std.mem.findScalar(*Obj, generic.ifaceDataConst().extends.items, @constCast(other)) != null;
+}
+
 /// The scope that `o` is a name of: its parent, or for an interface body
 /// the scope around its interface block (#474)
 fn ownerOf(o: *const Obj) ?*const Obj {
@@ -254,6 +266,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                 };
                 if (std.mem.eql(u8, def_fqsn, var_def.fqsn) or in_cache or isImplicitResult(def_obj, var_def) or
                     isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
+                    isExtendedGenericPair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
                     (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
                 {
@@ -337,6 +350,8 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
         // an interface body of a module's interface block is a name of the
         // module, which other files use (#474)
         if (parent.kind == .interface) if (parent.parent) |p| if (p.kind == .module or p.kind == .submodule) return .{ .type_mem = false, .restrict = null };
+        // a generic of a procedure that extends one of a module (#478)
+        if (def_obj.kind == .interface and def_obj.ifaceDataConst().extends.items.len > 0) return .{ .type_mem = false, .restrict = null };
         if (parent.getType(false) == C.TypeId.class) {
             type_mem = true;
         } else {
