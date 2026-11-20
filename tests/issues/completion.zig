@@ -493,6 +493,72 @@ const undeclared_args = [_]h.File{.{ .name = "m.f90", .text = "module m\n" ++
     "  end subroutine\n" ++
     "end module m\n" }};
 
+// the space at the end of a line is where the cursor is
+const abstract_names = [_]h.File{
+    .{ .name = "a.f90", .text = "module a\n" ++
+        "  implicit none\n" ++
+        "  private\n" ++
+        "  public :: cb, run\n" ++
+        "  abstract interface\n" ++
+        "    subroutine cb(x)\n" ++
+        "      integer, intent(in) :: x\n" ++
+        "    end subroutine\n" ++
+        "    subroutine hidden_cb()\n" ++
+        "    end subroutine\n" ++
+        "  end interface\n" ++
+        "contains\n" ++
+        "  subroutine run(f)\n" ++
+        "    procedure(cb) :: f\n" ++
+        "  end subroutine\n" ++
+        "end module a\n" },
+    .{ .name = "b.f90", .text = "module b\n" ++
+        "  use a, only: cb\n" ++
+        "end module b\n" },
+    .{ .name = "u.f90", .text = "subroutine s()\n" ++
+        "use a, only: \n" ++
+        "end subroutine s\n" ++
+        "subroutine t()\n" ++
+        "use b, only: \n" ++
+        "end subroutine t\n" ++
+        "subroutine v()\n" ++
+        "use a, only: c\n" ++
+        "end subroutine v\n" ++
+        "module c\n" ++
+        "use a\n" ++
+        "private\n" ++
+        "public :: \n" ++
+        "interface\n" ++
+        "subroutine q(g)\n" ++
+        "import :: \n" ++
+        "end subroutine\n" ++
+        "end interface\n" ++
+        "contains\n" ++
+        "subroutine w()\n" ++
+        "call c\n" ++
+        "end subroutine w\n" ++
+        "end module c\n" },
+};
+
+test "completion of a USE ONLY list, a PUBLIC and an IMPORT statement offers abstract interfaces (#481)" {
+    const w = try h.Workspace.init(&abstract_names, .{});
+    defer w.deinit();
+    // the module's public names, its abstract interface among them
+    var got = (try labelsAtEnd(w, "u.f90", 1)) orelse return h.unmet("use a, only: null", .{});
+    try h.expect(got.len == 2 and has(got, "cb") and has(got, "run"), "use a, only: {any}", .{got});
+    // one a module has by USE
+    got = (try labelsAtEnd(w, "u.f90", 4)) orelse return h.unmet("use b, only: null", .{});
+    try h.expect(got.len == 1 and has(got, "cb"), "use b, only: {any}", .{got});
+    got = (try labelsAtEnd(w, "u.f90", 7)) orelse return h.unmet("use a, only: c null", .{});
+    try h.expect(has(got, "cb"), "use a, only: c {any}", .{got});
+    // the names a PUBLIC statement and an IMPORT statement can name
+    for ([_]i64{ 12, 15 }) |line| {
+        got = (try labelsAtEnd(w, "u.f90", line)) orelse return h.unmet("line {d}: null", .{line});
+        try h.expect(has(got, "cb") and !has(got, "hidden_cb"), "line {d}: {any}", .{ line, got });
+    }
+    // not where a procedure is called
+    if (try labelsAtEnd(w, "u.f90", 20)) |calls_c| try h.expect(!has(calls_c, "cb"), "call c: {any}", .{calls_c});
+}
+
 /// The labels completion gives at the end of 0-based line `line`, or
 /// null when it answers null
 fn labelsAtEnd(w: *h.Workspace, name: []const u8, line: i64) !?[]const []const u8 {
