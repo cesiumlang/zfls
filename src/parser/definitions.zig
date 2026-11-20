@@ -55,7 +55,9 @@ pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const [
 /// `SUBMODULE (ancestor[:parent]) name`
 pub const SmodInfo = struct { name: []const u8, ancestor: []const u8, parent: []const u8 };
 
-pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
+/// `[ABSTRACT] INTERFACE [name]`; `generic`: named, or `OPERATOR(...)` or
+/// `ASSIGNMENT(=)` (#472)
+pub const InterInfo = struct { name: ?[]const u8, abstract: bool, generic: bool = false };
 
 pub const VisInfo = struct { private: bool, obj_names: []const []const u8 };
 
@@ -491,8 +493,8 @@ pub fn readIntDef(a: Allocator, line: []const u8) E!?DefResult {
     const int_name = try std.ascii.allocLowerString(a, raw);
     const is_abstract = m.group(1) != null;
     if (int_name.len == 0) return .{ .int = .{ .name = null, .abstract = is_abstract } };
-    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false } };
-    return .{ .int = .{ .name = raw, .abstract = is_abstract } };
+    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false, .generic = true } };
+    return .{ .int = .{ .name = raw, .abstract = is_abstract, .generic = !is_abstract } };
 }
 
 pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {

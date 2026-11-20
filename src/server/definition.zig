@@ -154,8 +154,14 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
 /// `interface sync` with `module procedure sync`: that specific, when the
 /// name at 1-based `line` of `ast` is the specific's own, on its SUBROUTINE
 /// or FUNCTION and END statements or a procedure statement of the
-/// interface (`scope`); else null, the name being the generic's.
+/// interface (`scope`); else null, the name being the generic's. And of an
+/// interface body that has the name of its generic (#472), `interface h`
+/// with `subroutine h(n)`: the generic, on the INTERFACE and END INTERFACE
+/// statements.
 fn selfNamedSpecific(v: *Obj, ast: *const Ast, scope: ?*Obj, line: usize) ?*Obj {
+    if (v.parent) |g| if (g.kind == .interface and g.ifaceDataConst().generic and std.ascii.eqlIgnoreCase(g.name, v.name)) {
+        return if (g.file_ast == ast and (line == g.sline or line == g.eline)) g else null;
+    };
     if (v.kind != .interface) return null;
     for (v.memList()) |m| {
         if (m == v or !std.ascii.eqlIgnoreCase(m.name, v.name)) continue;

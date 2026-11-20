@@ -308,3 +308,144 @@ test "a generic that has the name of one of its specifics: hover, definition, re
     try h.expect(waits == 1, "wait offered {d} times, not once", .{waits});
     try w.expectNoDiagnostics("m.f90");
 }
+
+const bodies = h.File{ .name = "m.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  type :: v_t
+    \\    real :: x
+    \\  end type
+    \\  interface f
+    \\    subroutine f1(x)
+    \\      integer, intent(in) :: x
+    \\    end subroutine
+    \\    subroutine f2(x)
+    \\      real, intent(in) :: x
+    \\    end subroutine
+    \\  end interface
+    \\  interface g
+    \\    module procedure g1
+    \\    function g2(x) result(r)
+    \\      real, intent(in) :: x
+    \\      real :: r
+    \\    end function
+    \\  end interface
+    \\  interface h
+    \\    subroutine h(n)
+    \\      integer, intent(in) :: n
+    \\    end subroutine
+    \\  end interface
+    \\  interface operator(.add.)
+    \\    function add_v(a, b) result(c)
+    \\      import :: v_t
+    \\      type(v_t), intent(in) :: a, b
+    \\      type(v_t) :: c
+    \\    end function
+    \\  end interface
+    \\  interface assignment(=)
+    \\    subroutine set_v(a, r)
+    \\      import :: v_t
+    \\      type(v_t), intent(out) :: a
+    \\      real, intent(in) :: r
+    \\    end subroutine
+    \\  end interface
+    \\  interface
+    \\    subroutine ext(k)
+    \\      integer, intent(in) :: k
+    \\    end subroutine
+    \\  end interface
+    \\  abstract interface
+    \\    subroutine cb(k)
+    \\      integer, intent(in) :: k
+    \\    end subroutine
+    \\  end interface
+    \\contains
+    \\  function g1(x) result(r)
+    \\    integer, intent(in) :: x
+    \\    integer :: r
+    \\    r = x
+    \\  end function
+    \\end module
+    \\
+};
+
+const bodies_user = h.File{ .name = "u.f90", .text =
+    \\program p
+    \\  use m
+    \\  implicit none
+    \\  type(v_t) :: u, v
+    \\  procedure(cb), pointer :: pc => null()
+    \\  call f(1)
+    \\  call f(1.0)
+    \\  print *, g(1), g(1.0)
+    \\  call h(2)
+    \\  call ext(3)
+    \\  u = 1.0
+    \\  v = u .add. u
+    \\  call f
+    \\end program
+    \\
+};
+
+/// That hover at `plus` characters into the first `needle` of `name` shows
+/// `want` and not `not`
+fn expectHoverOnly(w: *h.Workspace, name: []const u8, needle: []const u8, plus: usize, want: []const u8, not: []const u8) !void {
+    const got = (try w.hover(name, w.pos(name, needle, 0, plus))) orelse return h.unmet("no hover on {s}", .{needle});
+    try h.expect(std.mem.find(u8, got, want) != null and std.mem.find(u8, got, not) == null, "hover on {s}: {s}", .{ needle, got });
+}
+
+test "a generic whose specifics are interface bodies: hover, signature help, definition, references, completion (#472)" {
+    const w = try h.Workspace.init(&.{ bodies, bodies_user }, .{ .settings = .{ .use_signature_help = true } });
+    defer w.deinit();
+    // hover: the specifics, or the one of a call's arguments
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "interface f", 0, 10), "SUBROUTINE f1(x)");
+    try w.expectHoverContains("m.f90", w.pos("m.f90", "interface f", 0, 10), "SUBROUTINE f2(x)");
+    try expectHoverOnly(w, "u.f90", "f(1)", 0, "SUBROUTINE f1(x)", "f2");
+    try expectHoverOnly(w, "u.f90", "f(1.0)", 0, "SUBROUTINE f2(x)", "f1");
+    // a module procedure and an interface body of one generic
+    try expectHoverOnly(w, "u.f90", "g(1)", 0, "FUNCTION g1(x)", "g2");
+    try expectHoverOnly(w, "u.f90", "g(1.0)", 0, "FUNCTION g2(x)", "g1");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "h(2)", 0, 0), "SUBROUTINE h(n)");
+    // signature help: each specific, the one of the arguments active
+    for ([_]struct { []const u8, usize, []const u8 }{
+        .{ "f(1)", 3, "f1(" },
+        .{ "f(1.0)", 5, "f2(" },
+        .{ "g(1.0)", 5, "g2(" },
+    }) |c| {
+        const sig = (try w.signature("u.f90", w.pos("u.f90", c[0], 0, c[1]))) orelse return h.unmet("no signature help on {s}", .{c[0]});
+        try h.expect(sig.count == 2 and std.mem.startsWith(u8, sig.label, c[2]), "signature help on {s}: {d}, {s}", .{ c[0], sig.count, sig.label });
+    }
+    // definition: a call goes to the specific of its arguments (#273); an
+    // interface body of the generic's name is the generic on the
+    // INTERFACE statement (as #469 for a module procedure)
+    try expectDefIn(w, "u.f90", "f(1)", 0, 7);
+    try expectDefIn(w, "u.f90", "f(1.0)", 0, 10);
+    try expectDefIn(w, "u.f90", "g(1)", 0, 51);
+    try expectDefIn(w, "u.f90", "g(1.0)", 0, 16);
+    try expectDefIn(w, "u.f90", "h(2)", 0, 22);
+    try expectDefIn(w, "m.f90", "interface h", 10, 21);
+    try expectDefIn(w, "m.f90", "subroutine h", 11, 22);
+    // references: the generic's name
+    const refs = try w.references("u.f90", w.pos("u.f90", "f(1)", 0, 0));
+    try h.expect(refs.len == 4, "references of f: {d}, not 4", .{refs.len});
+    for ([_]struct { []const u8, []const u8, usize }{ .{ "u.f90", "h(2)", 0 }, .{ "m.f90", "interface h", 10 } }) |at| {
+        const hr = try w.references(at[0], w.pos(at[0], at[1], 0, at[2]));
+        try h.expect(hr.len == 2, "references of the generic h from {s}: {d}, not 2", .{ at[1], hr.len });
+    }
+    // a defined operator and a defined assignment by interface bodies
+    try w.expectHoverContains("u.f90", w.pos("u.f90", ".add.", 0, 1), "FUNCTION add_v(a, b)");
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "= 1.0", 0, 0), "SUBROUTINE set_v(a, r)");
+    // completion: the generic, by its specifics' calls
+    var fs: usize = 0;
+    for (try w.completionItems("u.f90", w.pos("u.f90", "call f\n", 0, 6))) |it| {
+        if (std.mem.eql(u8, it.label, "f") and std.mem.eql(u8, it.detail, "SUBROUTINE f(x)")) fs += 1;
+    }
+    try h.expect(fs == 1, "f offered {d} times, not once", .{fs});
+    // an interface block without a generic specification and an abstract
+    // one: as they were
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "ext(3)", 0, 0), "SUBROUTINE ext(k)");
+    try expectDefIn(w, "u.f90", "ext(3)", 0, 41);
+    try w.expectHoverContains("u.f90", w.pos("u.f90", "cb)", 0, 0), "SUBROUTINE cb(k)");
+    try w.expectNoDiagnostics("m.f90");
+    try w.expectNoDiagnostics("u.f90");
+}

@@ -500,6 +500,7 @@ pub const Parser = struct {
                     name = try a.print("#GEN_INT{d}", .{counters.interface});
                 }
                 const o = try Obj.newInterface(ast, line_no, name, info.abstract);
+                o.ifaceData().generic = info.generic;
                 try ast.addScope(o, &R().END_INT, true, true);
                 p.dbg("{s} !!! INTERFACE - Ln:{d}", .{ line, line_no });
             },
