@@ -344,7 +344,7 @@ pub fn parse(a: Allocator, id: Id, output: []const u8) ![]Message {
     defer p.deinit();
     switch (id) {
         .gfortran => try p.gfortran(output),
-        .ifx, .ifort => try p.intel(output),
+        .ifx, .ifort => try intel.parse(&p, output),
         .nagfor => try p.nag(output),
         .lfortran => try p.lfortran(output),
         .nvfortran => try p.nvfortran(output),
@@ -452,42 +452,6 @@ pub const Parser = struct {
                 continue;
             }
             _ = try p.driver(text);
-        }
-    }
-
-    // --- Intel ifx and ifort ------------------------------------------------
-
-    fn intelSeverity(sev: []const u8) Severity {
-        if (std.ascii.eqlIgnoreCase(sev, "warning")) return .warning;
-        if (std.ascii.eqlIgnoreCase(sev, "remark") or std.ascii.eqlIgnoreCase(sev, "info")) return .info;
-        return .@"error";
-    }
-
-    fn intel(p: *Parser, output: []const u8) !void {
-        // `file(line): error #6404: message   [NAME]`, then the source line
-        // and a caret line `-----^`; fpp prints `file(line): #error: message`
-        const msg_re = try p.re("^(?P<file>.+?)\\((?P<ln>\\d+)\\): (?:#)?(?P<sev>catastrophic error|fatal error|error|warning|remark|info)(?: #(?P<code>\\d+))?: (?P<msg>.*)$", regex.I);
-        const caret = try p.re("^(?P<dashes>[-.]*)\\^\\s*$", .{});
-        const drv = try p.re("^(?:ifx|ifort|icx)(?:\\.exe)?: (?:command line )?(?P<sev>error|warning) #\\d+: (?P<msg>.+)$", regex.I);
-        var all: std.ArrayList([]const u8) = .empty;
-        var it = lines(output);
-        while (it.next()) |raw| try all.append(p.a, trimCr(raw));
-        for (all.items, 0..) |text, i| {
-            const m = msg_re.match(text) orelse {
-                if (drv.match(text)) |d| try p.push(null, 0, null, intelSeverity(d.named(drv, "sev").?), text, null);
-                continue;
-            };
-            var column: ?usize = null;
-            // the source line and the caret line follow the message
-            var j = i + 1;
-            while (j <= i + 2 and j < all.items.len) : (j += 1) {
-                if (caret.match(all.items[j])) |c| {
-                    column = c.named(caret, "dashes").?.len + 1;
-                    break;
-                }
-                if (msg_re.match(all.items[j]) != null) break;
-            }
-            try p.push(m.named(msg_re, "file"), num(m.named(msg_re, "ln")), column, intelSeverity(m.named(msg_re, "sev").?), m.named(msg_re, "msg").?, m.named(msg_re, "code"));
         }
     }
 
@@ -683,27 +647,6 @@ test "gfortran's -Wtabs at the TAB-format line" {
     , &.{
         "-:4:1 warning: Nonconforming tab character in column 1 of line 4 [-Wtabs]",
         "-:6:3 error: Nonconforming tab character in column 3 of line 6 [-Werror=tabs]",
-    });
-}
-
-test "ifx and ifort messages" {
-    try expectBrief(.ifx,
-        \\test.f90(3): error #6404: This name does not have a type, and must have an explicit type.   [X]
-        \\  x = 1
-        \\--^
-        \\C:\work\test.f90(7): warning #6717: This name has not been given an explicit type.   [Y]
-        \\      y = 2
-        \\------^
-        \\test.f90(9): remark #7712: This variable has not been used.   [Z]
-        \\test.f90(2): #error: unsupported configuration
-        \\test.f90(12): catastrophic error: Too many errors, exiting
-        \\compilation aborted for test.f90 (code 1)
-    , &.{
-        "test.f90:3:3 error: This name does not have a type, and must have an explicit type.   [X] [6404]",
-        "C:\\work\\test.f90:7:7 warning: This name has not been given an explicit type.   [Y] [6717]",
-        "test.f90:9:- info: This variable has not been used.   [Z] [7712]",
-        "test.f90:2:- error: unsupported configuration",
-        "test.f90:12:- error: Too many errors, exiting",
     });
 }
 
