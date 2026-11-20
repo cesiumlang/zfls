@@ -156,6 +156,8 @@ STUBS = {
     "setuptools_scm.py": "def get_version(*a, **k):\n    return '0.0.0'\n",
 }
 
+# The places build_requests asks about: names, numbers, logical literals and
+# character literals
 WORD = re.compile(
     r"[a-z_][\w$]*|\d+(\.\d*)?|\.(true|false)\.|'[^']*'|\"[^\"]*\"", re.I
 )
@@ -276,10 +278,6 @@ def run_server(cmd: list[str], stream: str, env=None) -> dict:
         elif "method" in m:
             out["notifications"].append(m)
     return out
-
-
-# build_requests's WORD: this one, which rebinds the one above
-WORD = re.compile(r"[A-Za-z_]\w*")
 
 
 def parse_args():
