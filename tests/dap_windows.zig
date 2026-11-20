@@ -6,13 +6,13 @@
 //!
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
 //! tests/dap/grid.f90 built with `-g` (linked with zfls's ifx kit: `--kit`,
-//! which `zig build` gives, else the one next to zfls): what the engine does with Flang's programs today, the
-//! breakpoints, stopAtEntry, the stack, a main program's variable, the
-//! module variables, stepping and the filter of Fortran runtime errors (at
-//! a runtime error; tests/dap/stops.f90: at ERROR STOP, not at STOP). What
-//! it does not do yet is printed as known gaps and not checked: the dummy
-//! arguments (#381, #382, #384), most of the main program's variables
-//! (#383), the caller's line (#441).
+//! which `zig build` gives, else the one next to zfls): the breakpoints,
+//! stopAtEntry, the stack, the variables (dummy arguments: arrays through
+//! Flang's descriptors, CHARACTER(*), CLASS with its dynamic type; the main
+//! program's, static ones too; module variables), stepping and the filter
+//! of Fortran runtime errors (at a runtime error; tests/dap/stops.f90: at
+//! ERROR STOP, not at STOP). What it does not do yet is printed as a known
+//! gap and not checked: the caller's line (#441).
 //!
 //!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--kit DIR]
 
@@ -248,8 +248,16 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     // S_DEFRANGE_REGISTER_REL_INDIR)
     const args = try scopeVariables(c, scopes, "Locals");
     try check(std.mem.eql(u8, valueOf(args, "p"), "point(x=9.0, y=-2.0, id=7)"), "p = point(x=9.0, y=-2.0, id=7) ({s})", .{valueOf(args, "p")});
-    // (CLASS(point): its declared type's components)
-    try check(std.mem.eql(u8, valueOf(args, "t"), "point(x=1.5, y=-2.0, id=7)"), "t = point(x=1.5, y=-2.0, id=7) ({s})", .{valueOf(args, "t")});
+    // CLASS(point) of a tagged: its dynamic type, which its descriptor's
+    // addendum names (`_QMgridEXdtXtagged`)
+    const t = named(args, "t");
+    try check(t != null and std.mem.eql(u8, str(t.?, "type") orelse "", "CLASS(point)") and std.mem.startsWith(u8, valueOf(args, "t"), "tagged("), "t: CLASS(point) = tagged(…) ({s})", .{valueOf(args, "t")});
+    const tc = items(try c.request("variables", .{ .variablesReference = int(t.?, "variablesReference").? }), "variables");
+    try check(std.mem.eql(u8, valueOf(tc, "tag"), "'hello   '") and std.mem.eql(u8, valueOf(tc, "w"), "[0.25, 0.25]"), "t%tag = 'hello   ', t%w = [0.25, 0.25] ({s}, {s})", .{ valueOf(tc, "tag"), valueOf(tc, "w") });
+    const tid = try c.request("evaluate", .{ .expression = "t%point%id", .frameId = int(frames[0], "id").?, .context = "watch" });
+    try check(std.mem.eql(u8, str(tid, "result") orelse "", "7"), "t%point%id = 7 ({s})", .{str(tid, "result") orelse "?"});
+    // CHARACTER(LEN=*): its length, a hidden local (`._QMgridFworkEs1`)
+    try check(std.mem.eql(u8, valueOf(args, "s"), "'abcdef'"), "s = 'abcdef' ({s})", .{valueOf(args, "s")});
     // assumed-shape arrays: Flang's descriptors (ISO_Fortran_binding's)
     try check(std.mem.eql(u8, valueOf(args, "a"), "[6.0, 2.0, 3.0]"), "a = [6.0, 2.0, 3.0] ({s})", .{valueOf(args, "a")});
     try check(std.mem.eql(u8, valueOf(args, "b"), "[2×3]"), "b = [2×3] ({s})", .{valueOf(args, "b")});
@@ -257,12 +265,11 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
     try check(std.mem.eql(u8, valueOf(b_cols, "(:,1)"), "[-10, -20]"), "b(:,1) = [-10, -20] ({s})", .{valueOf(b_cols, "(:,1)")});
     const b21 = try c.request("evaluate", .{ .expression = "b(2,1)", .frameId = int(frames[0], "id").?, .context = "watch" });
     try check(std.mem.eql(u8, str(b21, "result") orelse "", "-20"), "b(2,1) = -20 ({s})", .{str(b21, "result") orelse "?"});
-    // CLASS(point) array: its elements by the descriptor's stride (the
-    // dynamic type's size), with the declared type's components
-    try check(std.mem.eql(u8, valueOf(args, "ts"), "[point(…), point(…)]"), "ts = [point(…), point(…)] ({s})", .{valueOf(args, "ts")});
-    const ts2 = try c.request("evaluate", .{ .expression = "ts(2)%id", .frameId = int(frames[0], "id").?, .context = "watch" });
-    try check(std.mem.eql(u8, str(ts2, "result") orelse "", "7"), "ts(2)%id = 7 ({s})", .{str(ts2, "result") orelse "?"});
-    gap("work's CHARACTER(*) and CLASS arguments (#384)", args);
+    // CLASS(point) array of labeled: its elements by the descriptor's
+    // stride, as their dynamic type
+    try check(std.mem.eql(u8, valueOf(args, "ts"), "[labeled(…), labeled(…)]"), "ts = [labeled(…), labeled(…)] ({s})", .{valueOf(args, "ts")});
+    const ts2 = try c.request("evaluate", .{ .expression = "ts(2)%label", .frameId = int(frames[0], "id").?, .context = "watch" });
+    try check(std.mem.eql(u8, str(ts2, "result") orelse "", "5"), "ts(2)%label = 5 ({s})", .{str(ts2, "result") orelse "?"});
     // the module variables, by Flang's public names (`_QMgridEncells`)
     // with the types of CodeView's own (`ncells`)
     const grid = try moduleVariables(c, scopes, "grid");
@@ -292,7 +299,7 @@ fn runFlang(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, work_
         .{ "nothing", "not associated" },
         .{ "goal", "5" },
         .{ "tg", "tagged(point=…, tag='hello   ', w=…)" },
-        .{ "pts", "[point(…), point(…)]" },
+        .{ "pts", "[labeled(…), labeled(…)]" },
     };
     for (statics) |x| try check(std.mem.eql(u8, valueOf(locals, x[0]), x[1]), "{s} = {s} ({s})", .{ x[0], x[1], valueOf(locals, x[0]) });
     const big = items(try c.request("variables", .{ .variablesReference = int(named(locals, "big").?, "variablesReference").? }), "variables");
