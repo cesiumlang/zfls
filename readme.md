@@ -1380,7 +1380,9 @@ zfls deliberately differs from fortls in a few places:
 - DEC structures are read (fortls #171): `STRUCTURE /name/` is a derived
   type, `RECORD /name/ a, b` declares variables of it, the fields of
   `UNION`/`MAP` blocks are fields of the structure, and a nested structure
-  declares the fields its name list gives. `.` separates a component when it
+  declares the fields its name list gives. Its type is one of the scope
+  around the outermost structure, as compilers make it, so `RECORD
+  /inner/ r` can name it there. `.` separates a component when it
   follows a name or `)` and does not start an operator (`a.and.b`), as in
   `rec.field` or `arr(i).field` (hansec #45). fortls reads none of these.
 - A statement function (`f(x) = x**2 + 1` in the specification part of a

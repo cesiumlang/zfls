@@ -62,30 +62,6 @@ pub const rules = [_]Rule{
         .kind = .variable,
         .why = "an INCLUDE file's names are its own tree's in zfls, which a workspace links into the including scope (no not-declared warnings for them); --debug_parser prints the including file's tree alone",
     },
-    .{
-        .file = "tests/flang/dec_structure.f90*",
-        .entity = "*::inner*",
-        .diff = .missing,
-        .why = "a STRUCTURE nested in another declares its type in the scope for Flang, inside the outer structure for zfls",
-    },
-    .{
-        .file = "tests/flang/dec_structure.f90",
-        .entity = "use_dec::pt::inner*",
-        .diff = .extra,
-        .why = "a STRUCTURE nested in another declares its type in the scope for Flang, inside the outer structure for zfls",
-    },
-    .{
-        .file = "tests/flang/dec_structure.f90 > dec_structure.mod",
-        .entity = "dec_structure::move::point*",
-        .diff = .missing,
-        .why = "a STRUCTURE nested in another (as Flang writes `segment` in the interface of `move`) declares its type in the scope for Flang, inside the outer structure for zfls",
-    },
-    .{
-        .file = "tests/flang/dec_structure.f90 > dec_structure.mod",
-        .entity = "dec_structure::move::segment::point*",
-        .diff = .extra,
-        .why = "a STRUCTURE nested in another (as Flang writes `segment` in the interface of `move`) declares its type in the scope for Flang, inside the outer structure for zfls",
-    },
     // what Flang reads otherwise than the compiler zfls follows
     .{
         .file = "tests/flang/intel_dir_if.f90",

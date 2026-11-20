@@ -364,3 +364,35 @@ test "NAMELIST groups are symbols; WRITE (*, NL) names the group (#556, #520)" {
         if (std.mem.eql(u8, s, "p/nl")) break;
     } else return h.unmet("p/nl not in {any}", .{symbols});
 }
+
+test "a STRUCTURE nested in another declares its type in the enclosing scope (#557)" {
+    const w = try h.Workspace.init(&.{.{ .name = "d.f90", .text =
+        \\program use_dec
+        \\  implicit none
+        \\  structure /pt/
+        \\    real :: x
+        \\    structure /inner/ nested
+        \\      integer :: k
+        \\    end structure
+        \\  end structure
+        \\  record /pt/ p
+        \\  record /inner/ q
+        \\  p%nested%k = 2
+        \\  q.k = p.x
+        \\end program use_dec
+        \\
+    }}, .{ .hierarchical_symbols = true });
+    defer w.deinit();
+    try w.expectNoDiagnostics("d.f90");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "q.k", 0, 0), "inner");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "q.k", 0, 2), "INTEGER :: k");
+    try w.expectHoverContains("d.f90", w.pos("d.f90", "nested%k", 0, 7), "INTEGER :: k");
+    const def = (try w.definition("d.f90", w.pos("d.f90", "/inner/ q", 0, 1))) orelse return h.unmet("no definition of /inner/", .{});
+    try h.expect(def.line == 4, "inner defined on line {d}", .{def.line});
+    const symbols = try w.symbolPaths("d.f90");
+    for ([_][]const u8{ "use_dec/inner", "use_dec/inner/k", "use_dec/pt/nested" }) |want| {
+        for (symbols) |s| {
+            if (std.mem.eql(u8, s, want)) break;
+        } else return h.unmet("{s} not in {any}", .{ want, symbols });
+    }
+}
