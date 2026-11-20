@@ -111,7 +111,10 @@ pub fn fullRelink(self: *Server, a: Allocator) !void {
             };
             if (s.kind.isSubroutine()) s.procData().link_obj = null;
             if (s.procDataOpt()) |p| if (p.linked_from_interface) s.resetInterfaceCopy();
-            if (s.kind == .interface) s.ifaceData().mems.clearRetainingCapacity();
+            if (s.kind == .interface) {
+                s.ifaceData().mems.clearRetainingCapacity();
+                s.ifaceData().extends.clearRetainingCapacity();
+            }
             if (s.kind == .type) {
                 s.typeData().inherit_var = null;
                 s.scopeData().in_children.clearRetainingCapacity();
