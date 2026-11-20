@@ -422,23 +422,32 @@ fn scopes(s: *Session, a: Allocator, frame: ?i64, r: Value) !void {
 /// The module variables a line of a file sees, from zfls's index of the
 /// sources (the launch's `sourceRoot`, else its `cwd`)
 fn moduleVariablesAt(s: *Session, a: Allocator, file: []const u8, line: i64) ![]vars.ModuleVariable {
-    if (!s.g.indexed) {
-        s.g.indexed = true;
-        if (s.g.source_root) |root| declarations.index(s, a, root);
-    }
+    indexed(s, a);
     const srv = s.server orelse return &.{};
     const items = srv.dispatchPublic(a, "zfls/moduleVariables", try json.from(a, .{
         .textDocument = .{ .uri = try paths.pathToUri(a, file) },
         .position = .{ .line = @max(line - 1, 0), .character = 0 },
     })) catch return &.{};
     var out: std.ArrayList(vars.ModuleVariable) = .empty;
-    for (json.items(items)) |it| try out.append(a, .{
-        .module = json.str(json.get(it, "module")) orelse continue,
-        .name = json.str(json.get(it, "name")) orelse continue,
-        .local = json.str(json.get(it, "local")) orelse json.str(json.get(it, "name")).?,
-        .type = json.str(json.get(it, "type")) orelse "",
-    });
+    for (json.items(items)) |it| {
+        // an intrinsic module's names are constants, not the program's
+        if (declarations.isIntrinsicModule(s, json.str(json.get(it, "module")) orelse "")) continue;
+        try out.append(a, .{
+            .module = json.str(json.get(it, "module")) orelse continue,
+            .name = json.str(json.get(it, "name")) orelse continue,
+            .local = json.str(json.get(it, "local")) orelse json.str(json.get(it, "name")).?,
+            .type = json.str(json.get(it, "type")) orelse "",
+        });
+    }
     return out.items;
+}
+
+/// zfls's index of the sources (the launch's `sourceRoot`, else its
+/// `cwd`), made the first time it is needed
+fn indexed(s: *Session, a: Allocator) void {
+    if (s.g.indexed) return;
+    s.g.indexed = true;
+    if (s.g.source_root) |root| declarations.index(s, a, root);
 }
 
 fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
@@ -462,6 +471,26 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     } else false;
     try forwarded.put(a, "context", .{ .string = if (known) context else "watch" });
     const r = try gdb.request(s, a, "evaluate", Value{ .object = forwarded });
+    // a variable of a module's COMMON block, which gdb does not know
+    // (`cx`, `blk_var(2)`), by its convenience variable
+    const head = std.mem.findAny(u8, expr, "(%") orelse expr.len;
+    if (!gdb.isSuccess(r)) if (try moduleOf(s, a, expr[0..head], frame)) |mv| if (try gdb_values.commonMember(s, a, mv.module, mv.name, frame)) |cv| {
+        var got = cv;
+        if (head < expr.len) {
+            const e = try a.print("{s}{s}", .{ cv.evaluate_name.?, expr[head..] });
+            const rr = try gdb.request(s, a, "evaluate", try vars.evalArgs(a, e, frame, "watch"));
+            if (!gdb.isSuccess(rr)) return gdb.respondWith(s, a, req, rr);
+            got = .{
+                .name = expr,
+                .value = json.str(json.path(rr, &.{ "body", "result" })) orelse "",
+                .type = json.str(json.path(rr, &.{ "body", "type" })),
+                .ref = json.int(json.path(rr, &.{ "body", "variablesReference" })) orelse 0,
+                .evaluate_name = e,
+            };
+        }
+        const v = try vars.present(s, a, got, expr, got.evaluate_name, frame, null, null);
+        return s.respond(a, req, .{ .result = v.value, .type = v.type, .variablesReference = v.ref });
+    };
     if (gdb.isSuccess(r)) if (r.object.getPtr("body")) |body| if (body.* == .object) {
         const got: vars.Variable = .{
             .name = expr,
@@ -487,6 +516,7 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 fn moduleOf(s: *Session, a: Allocator, expr: []const u8, frame: ?i64) !?struct { module: []const u8, name: []const u8 } {
     const e = std.mem.trim(u8, expr, " ");
     for (e) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != ':') return null;
+    indexed(s, a);
     if (std.mem.find(u8, e, "::")) |sep| return .{ .module = e[0..sep], .name = e[sep + 2 ..] };
     const f = s.g.frames.get(frame orelse return null) orelse return null;
     for (try moduleVariablesAt(s, a, f.file orelse return null, f.line)) |mv| {

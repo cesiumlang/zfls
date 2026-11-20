@@ -161,6 +161,15 @@ pub fn moduleNamed(s: *Session, name: []const u8) ?*const Obj {
     return null;
 }
 
+/// Whether `name` is an intrinsic module of zfls's tables (no module of the
+/// sources): its named constants are no program's variables
+pub fn isIntrinsicModule(s: *Session, name: []const u8) bool {
+    const srv = s.server orelse return false;
+    if (moduleNamed(s, name) != null) return false;
+    for (srv.intr.mods) |m| if (std.ascii.eqlIgnoreCase(m.name, name)) return true;
+    return false;
+}
+
 /// The declaration of a module's variable
 pub fn moduleDecl(s: *Session, a: Allocator, module: []const u8, name: []const u8) ?Decl {
     const mod = moduleNamed(s, module) orelse return null;
