@@ -230,7 +230,7 @@ const standard = [_]Module{
         .{ .name = "omp_sched_kind", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "omp_sync_hint_kind", .kind = .variable, .desc = "INTEGER" },
     } },
-    .{ .name = "openacc", .members = &.{
+    .{ .name = "openacc", .use = "openacc_kinds", .members = &.{
         .{ .name = "openacc_version", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "acc_device_property_kind", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "acc_get_num_devices", .kind = .function, .args = "dev_type", .return_type = "INTEGER", .children = &.{
@@ -459,6 +459,8 @@ const standard = [_]Module{
         .{ .name = "acc_device_host", .kind = .variable, .desc = "INTEGER(KIND=acc_device_kind)" },
         .{ .name = "acc_device_not_host", .kind = .variable, .desc = "INTEGER(KIND=acc_device_kind)" },
         .{ .name = "acc_device_nvidia", .kind = .variable, .desc = "INTEGER(KIND=acc_device_kind)" },
+        .{ .name = "acc_device_radeon", .kind = .variable, .desc = "INTEGER(KIND=acc_device_kind)" },
+        .{ .name = "acc_device_current", .kind = .variable, .desc = "INTEGER(KIND=acc_device_kind)" },
         .{ .name = "acc_handle_kind", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "acc_async_noval", .kind = .variable, .desc = "INTEGER(KIND=acc_handle_kind)" },
         .{ .name = "acc_async_sync", .kind = .variable, .desc = "INTEGER(KIND=acc_handle_kind)" },
