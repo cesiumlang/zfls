@@ -36,16 +36,22 @@ pub fn setTypeMask(def: bool) Server.TypeMask {
 }
 
 pub fn childCandidates(a: Allocator, scope: *Obj, only_list: ?*const objects.StrSet, filter_public: bool, req_abstract: bool, out: *std.ArrayList(*Obj)) !void {
-    for (try scope.getChildren(a, filter_public)) |child| {
-        if (req_abstract) {
-            if (child.isAbstract()) try childCandidates(a, child, only_list, filter_public, false, out);
-        } else {
-            if (child.isExternalInt()) {
-                try childCandidates(a, child, only_list, filter_public, false, out);
-            } else {
-                if (!try inOnlyList(a, only_list, child.name)) continue;
-                try out.append(a, child);
-            }
+    if (!req_abstract) for (try scope.getChildren(a, filter_public)) |child| {
+        // an interface block without a name, but a named generic
+        if (child.isExternalInt()) continue;
+        if (try inOnlyList(a, only_list, child.name)) try out.append(a, child);
+    };
+    // the interface bodies of its interface blocks (of its abstract ones,
+    // for `req_abstract`) are names of the scope, public or not as its own
+    // names (as `checkScope` finds them, #474); one that has the name of its
+    // generic is offered by the generic
+    for (scope.childList()) |child| {
+        if (child.kind != .interface or child.isAbstract() != req_abstract) continue;
+        for (child.childList()) |body| {
+            if (!child.bodiesAreNames(body.name)) continue;
+            const private = body.vis == .private or (scope.def_vis == .private and body.vis != .public);
+            if (filter_public and private) continue;
+            if (try inOnlyList(a, only_list, body.name)) try out.append(a, body);
         }
     }
     if (req_abstract) return;

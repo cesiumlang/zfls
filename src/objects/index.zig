@@ -2,9 +2,10 @@
 //! each name, ignoring case, the positions in the child list where the
 //! name can be found. A position holds a name when the child has it, when
 //! the child is an `ENUM` with an enumerator of that name, or when the
-//! child is a generic interface (`#GEN_INT`) that holds it. `checkScope`
-//! visits those positions in order and applies the same rules as it does
-//! when it walks every child, so a lookup finds what the walk would.
+//! child is an interface block with an interface body of that name (#474).
+//! `checkScope` visits those positions in order and applies the same rules
+//! as it does when it walks every child, so a lookup finds what the walk
+//! would.
 //!
 //! The index is built at a scope's first lookup and built again after its
 //! children change (`changed`). Only scopes with many children get one:
@@ -93,7 +94,7 @@ pub fn of(scope: *Obj) std.mem.Allocator.Error!?*const ChildIndex {
 fn addNames(a: std.mem.Allocator, index: *ChildIndex, obj: *const Obj, pos: u32) std.mem.Allocator.Error!void {
     try add(a, index, obj.name, pos);
     if (obj.kind == .enum_) for (obj.childList()) |e| try add(a, index, e.name, pos);
-    if (std.mem.startsWith(u8, obj.name, "#GEN_INT")) for (obj.childList()) |c| try addNames(a, index, c, pos);
+    if (obj.kind == .interface) for (obj.childList()) |c| try addNames(a, index, c, pos);
 }
 
 fn add(a: std.mem.Allocator, index: *ChildIndex, name: []const u8, pos: u32) std.mem.Allocator.Error!void {
@@ -111,11 +112,11 @@ fn add(a: std.mem.Allocator, index: *ChildIndex, name: []const u8, pos: u32) std
 
 /// Mark the index of `scope` out of date after its children changed, and
 /// those of the scopes whose index holds its children's names: the scope
-/// is an `ENUM` or a generic interface there
+/// is an `ENUM` or an interface block there
 pub fn changed(scope: *Obj) void {
     var s: ?*Obj = scope;
     while (s) |o| : (s = o.parent) {
         if (o.data == .scope) o.scopeData().index.valid = false;
-        if (o.kind != .enum_ and !std.mem.startsWith(u8, o.name, "#GEN_INT")) return;
+        if (o.kind != .enum_ and o.kind != .interface) return;
     }
 }

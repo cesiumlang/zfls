@@ -311,6 +311,9 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
         // the implementation of a separate module procedure may be in
         // another file (hansec #168)
         if (parent.kind == .interface and def_obj.isModScope() and def_obj.linkObj() != null) return .{ .type_mem = false, .restrict = null };
+        // an interface body of a module's interface block is a name of the
+        // module, which other files use (#474)
+        if (parent.kind == .interface) if (parent.parent) |p| if (p.kind == .module or p.kind == .submodule) return .{ .type_mem = false, .restrict = null };
         if (parent.getType(false) == C.TypeId.class) {
             type_mem = true;
         } else {

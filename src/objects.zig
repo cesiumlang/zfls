@@ -700,6 +700,15 @@ pub const Obj = struct {
         return self.kind == .interface and self.ifaceDataConst().external;
     }
 
+    /// Whether the interface bodies of this interface block are names of
+    /// the scope around it, as the procedures they declare are: those of
+    /// every interface block, an unnamed (`#GEN_INT`), abstract, OPERATOR or
+    /// ASSIGNMENT one and a named generic one (#474), but for a body that
+    /// has the generic's name, which is the generic's there
+    pub fn bodiesAreNames(self: *const Obj, name: []const u8) bool {
+        return self.kind == .interface and !std.ascii.eqlIgnoreCase(self.name, name);
+    }
+
     pub fn isAbstract(self: *const Obj) bool {
         return self.kind == .interface and self.ifaceDataConst().abstract;
     }
