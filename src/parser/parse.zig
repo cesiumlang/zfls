@@ -27,6 +27,12 @@ const DefResult = @import("definitions.zig").DefResult;
 const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
 const plain_docs = @import("plain_docs.zig");
 const attributes = @import("attributes.zig");
+const doc_comments = @import("doc_comments.zig");
+const entities = @import("entities.zig");
+const entityLength = entities.entityLength;
+const afterEntitySpecs = entities.afterEntitySpecs;
+const parseImpDim = entities.parseImpDim;
+const parseImpChar = entities.parseImpChar;
 
 pub fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
     if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
@@ -760,104 +766,12 @@ pub const Parser = struct {
         return true;
     }
 
-    fn setSingleLineDocstring(p: *Parser, line: []const u8) !void {
-        p.docs = .empty;
-        const mark = helpers.docMark(false, line) orelse return;
-        const doc = str.strip(line[mark + 1 ..]);
-        if (doc.len > 0) try p.docs.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, doc));
-    }
-
-    fn formatDocs(p: *Parser, docs: []const []const u8) ![]const u8 {
-        const a = p.scratch.allocator();
-        if (docs.len == 1) return docs[0];
-        var docstr: std.ArrayList(u8) = .empty;
-        var has_args = true;
-        var idx_args: isize = -1;
-        for (docs) |line| {
-            if (std.mem.startsWith(u8, line, "@brief")) {
-                try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@brief", "")));
-                try docstr.append(a, '\n');
-            } else if (std.mem.startsWith(u8, line, "@param")) {
-                if (has_args) {
-                    try docstr.appendSlice(a, "\n**Parameters:**  \n");
-                    has_args = false;
-                    idx_args = @intCast(docstr.items.len);
-                }
-                try docstr.appendSlice(a, try R().DOC_PARAM.sub(a, "  \\n`\\1` - ", try std.mem.concat(a, u8, &.{ line, " " })));
-            } else if (std.mem.startsWith(u8, line, "@return")) {
-                try docstr.appendSlice(a, "\n**Returns:**  \n");
-                try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@return", "")));
-                try docstr.append(a, '\n');
-            } else {
-                try docstr.appendSlice(a, str.strip(line));
-                try docstr.append(a, '\n');
-            }
-        }
-        if (idx_args > 0) {
-            const ia: usize = @intCast(idx_args);
-            const head = str.slice(docstr.items, 0, idx_args - 3);
-            const tail = try str.replaceFirst(a, docstr.items[ia..], "  \n ", "");
-            return std.mem.concat(a, u8, &.{ head, tail });
-        }
-        return docstr.items;
-    }
-
-    fn addLineComment(p: *Parser) !void {
-        if (p.docs.items.len > 0) {
-            const fd = try p.formatDocs(p.docs.items);
-            try p.file_ast.addDoc(fd, false);
-            p.dbg("{s} !!! Doc string - Line:{d}", .{ fd, p.cur_line });
-            p.docs.clearRetainingCapacity();
-        }
-    }
-
-    /// A block of plain comment lines (`hover_plain_comments`) from line
-    /// `ln` (1-based): noted as documentation; returns the index of the
-    /// line after it, or null when the line is no plain comment
-    fn parsePlainDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
-        if (plain_docs.lineText(p.file.fixed, line) == null) return null;
-        try p.addLineComment();
-        const sa = p.scratch.allocator();
-        const blk = try plain_docs.readBlock(sa, p.file, ln - 1);
-        if (blk.lines.len > 0) try p.plain.addBlock(sa, p.file, try p.formatDocs(blk.lines), ln, blk.next, p.file_ast.last_obj);
-        return blk.next;
-    }
-
-    /// Parse documentation strings; returns the new line number, or null when the line is no documentation
-    fn parseDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
-        const fixed = p.file.fixed;
-        if (!helpers.isComment(fixed, line)) {
-            try p.addLineComment();
-            return null;
-        }
-        const mark = helpers.docMark(fixed, line) orelse {
-            try p.addLineComment();
-            return null;
-        };
-        const sa = p.scratch.allocator();
-        // get_docstring
-        try p.docs.append(sa, str.strip(line[mark + 1 ..]));
-        const predocmark = line[mark] == '>';
-        var new_ln = ln;
-        const n = p.file.nLines();
-        if (ln < n) {
-            var i = ln;
-            while (i < n) : (i += 1) {
-                const next_line = p.file.getLine(i, true) orelse "";
-                const next_mark = helpers.docMark(fixed, next_line) orelse {
-                    new_ln = i;
-                    break;
-                };
-                try p.docs.append(sa, str.strip(next_line[next_mark + 1 ..]));
-            }
-        }
-        var total: usize = 0;
-        for (p.docs.items) |d| total += d.len;
-        if (total > 0) try p.file_ast.addDoc(try p.formatDocs(p.docs.items), predocmark);
-        for (p.docs.items, 0..) |d, k| p.dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + k });
-        p.docs.clearRetainingCapacity();
-        return new_ln;
-    }
+    // documentation comments (doc_comments.zig)
+    const setSingleLineDocstring = doc_comments.setSingleLineDocstring;
+    pub const formatDocs = doc_comments.formatDocs;
+    pub const addLineComment = doc_comments.addLineComment;
+    const parsePlainDocs = doc_comments.parsePlainDocs;
+    const parseDocs = doc_comments.parseDocs;
 };
 
 pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, case_type: i32) !?*Obj {
@@ -881,88 +795,4 @@ pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, va
         return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{});
     }
     return null;
-}
-
-pub const Split = struct { line: []const u8, extra: ?[]const u8 };
-
-/// The type parameters of an entity with its own length `len` (`*8`,
-/// `*(n)`) declared with `kind` (`*(*)`, `(len=5)`, `(KIND=4, LEN=200)`):
-/// the length replaces the declaration's, a KIND stays
-pub fn entityLength(a: Allocator, kind: ?[]const u8, len: []const u8) ![]const u8 {
-    const k = kind orelse return len;
-    if (k.len < 2 or k[0] != '(' or std.ascii.findIgnoreCase(k, "kind") == null) return len;
-    var value = str.strip(len[1..]);
-    if (value.len > 1 and value[0] == '(' and value[value.len - 1] == ')') value = value[1 .. value.len - 1];
-    var out: std.ArrayList(u8) = .empty;
-    try out.append(a, '(');
-    for (try helpers.splitArgs(a, k[1 .. k.len - 1])) |item| {
-        const t = str.strip(item);
-        if (!std.ascii.startsWithIgnoreCase(t, "kind")) continue;
-        try out.appendSlice(a, t);
-        try out.appendSlice(a, ", ");
-    }
-    try out.print(a, "LEN={s})", .{value});
-    return out.items;
-}
-
-/// `s` after the bounds, cobounds and length that may follow an entity's
-/// name in a declaration: `(3)[*]*10 = ...`
-pub fn afterEntitySpecs(s: []const u8) []const u8 {
-    var t = str.lstrip(s);
-    if (t.len > 0 and t[0] == '(') {
-        const m = helpers.findParenMatch(t[1..]);
-        if (m >= 0) t = str.lstrip(t[@as(usize, @intCast(m)) + 2 ..]);
-    }
-    if (t.len > 0 and t[0] == '[') {
-        if (std.mem.findScalar(u8, t, ']')) |c| t = str.lstrip(t[c + 1 ..]);
-    }
-    if (t.len > 0 and t[0] == '*') {
-        t = str.lstrip(t[1..]);
-        if (t.len > 0 and t[0] == '(') {
-            const m = helpers.findParenMatch(t[1..]);
-            if (m >= 0) t = t[@as(usize, @intCast(m)) + 2 ..];
-        } else {
-            while (t.len > 0 and std.ascii.isDigit(t[0])) t = t[1..];
-        }
-    }
-    return str.lstrip(t);
-}
-
-/// Parse the implicit dimension of an array e.g. var(3,4)
-pub fn parseImpDim(a: Allocator, line: []const u8) !Split {
-    const m = R().IMP_DIM.match(line) orelse return .{ .line = line, .extra = null };
-    const i = helpers.findParenMatch(line[m.end(1)..]);
-    if (i < 0) return .{ .line = line, .extra = null };
-    const iu: usize = @intCast(i);
-    const dims = line[m.start(1) .. m.end(1) + iu + 1];
-    const rest = try std.mem.concat(a, u8, &.{ line[0..m.start(1)], line[m.end(1) + iu + 1 ..] });
-    return .{ .line = rest, .extra = try std.mem.concat(a, u8, &.{ "dimension", dims }) };
-}
-
-/// Parse the implicit character length from a variable e.g. var_name*10
-pub fn parseImpChar(a: Allocator, line: []const u8) !Split {
-    const m = R().IMP_CHAR.match(line) orelse return .{ .line = line, .extra = null };
-    const g2 = m.group(2).?;
-    var char_len: []const u8 = undefined;
-    if (std.mem.eql(u8, g2, "(")) {
-        const i = helpers.findParenMatch(line[m.end(2)..]);
-        if (i < 0) return .{ .line = line, .extra = null };
-        char_len = line[m.start(2) .. m.end(2) + @as(usize, @intCast(i)) + 1];
-    } else {
-        char_len = g2;
-    }
-    return .{ .line = m.group(1).?, .extra = try std.mem.concat(a, u8, &.{ "*", char_len }) };
-}
-
-test "an entity's own length replaces its declaration's, a KIND stays" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    try std.testing.expectEqualStrings("*8", try entityLength(a, "*(*)", "*8"));
-    try std.testing.expectEqualStrings("*10", try entityLength(a, null, "*10"));
-    try std.testing.expectEqualStrings("*4", try entityLength(a, "(len=5)", "*4"));
-    try std.testing.expectEqualStrings("(KIND=4, LEN=100)", try entityLength(a, "(KIND=4, LEN=200)", "*100"));
-    try std.testing.expectEqualStrings("(KIND=4, LEN=LEN(B))", try entityLength(a, "(KIND=4)", "*(LEN(B))"));
-    try std.testing.expectEqualStrings("= 'x'", afterEntitySpecs("(3)[*]*10 = 'x'"));
-    try std.testing.expectEqualStrings("= 1", afterEntitySpecs("*(len(a)) = 1"));
 }
