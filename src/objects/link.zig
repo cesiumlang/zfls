@@ -122,6 +122,13 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             for (self.scopeData().members.items) |member| {
                 if (try specificOf(env, self, p, member)) |m| try mems.append(self.al(), m);
             }
+            // and the interface bodies of a generic (#472); those of an
+            // interface block that has no generic specification declare
+            // external procedures, and those of an abstract one, abstract
+            // interfaces: names of the scope around, no specifics
+            if (self.ifaceData().generic) for (self.childList()) |child| {
+                if (child.kind.isSubroutine()) try mems.append(self.al(), child);
+            };
         },
         .subroutine => try self.resolveArgLink(env.tmp),
         .function => {

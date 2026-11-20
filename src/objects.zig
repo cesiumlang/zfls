@@ -208,6 +208,10 @@ pub const Interface = struct {
     mems: std.ArrayList(*Obj) = .empty,
     external: bool = false,
     abstract: bool = false,
+    /// A generic interface, `interface f`, `interface operator(.op.)` or
+    /// `interface assignment(=)`: its interface bodies are its specifics
+    /// (#472), as are the names of its procedure statements
+    generic: bool = false,
 };
 
 pub const Associate = struct {
