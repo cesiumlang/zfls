@@ -74,6 +74,7 @@ const show = variables.show;
 const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
 const choice = @import("choice.zig");
+const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
 
@@ -471,6 +472,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             try gdb_requests.initializeAgain(s, a);
         }
         s.backend = want.backend;
+        if (std.mem.eql(u8, command, "launch")) coarrays.noteImages(s, a, args);
         return if (lldb_wanted) lldb.launch(s, a, req, args) else gdb_requests.launch(s, a, req, args);
     }
     switch (s.backend) {
