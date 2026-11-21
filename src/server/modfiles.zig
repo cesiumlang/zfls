@@ -30,6 +30,7 @@ const linking = @import("linking.zig");
 const workspace = @import("workspace.zig");
 const cache = @import("cache.zig");
 const compiler_sources = @import("compiler_sources.zig");
+const shipped = @import("../compilers/shipped.zig");
 
 /// Whether `head`, the beginning of a file, is that of a module file of
 /// LLVM Flang's: `!mod$`, after a UTF-8 BOM or not
@@ -102,9 +103,12 @@ pub fn add(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
     while (todo.pop()) |f| {
         const ast = f.ast orelse continue;
         for (ast.scope_list.items) |scope| for (scope.scopeDataConst().use.items) |u| {
-            if (u.is_import or self.obj_tree.contains(u.mod_name)) continue;
+            if (u.is_import) continue;
+            // zfls's table's OpenMP modules give way to the compiler's own
+            const table = if (self.obj_tree.get(u.mod_name)) |e| (if (e.path == null) true else continue) else false;
+            if (table and !shipped.replacesTable(u.mod_name)) continue;
             if (dirs == null) dirs = try searchDirs(self, a);
-            const module_file = try find(self.io, a, dirs.?, u.mod_name);
+            const module_file = if (table) null else try find(self.io, a, dirs.?, u.mod_name);
             const path = module_file orelse (try compiler_sources.find(self, a, u.mod_name)) orelse continue;
             if (self.workspace.contains(path)) continue;
             const nf = load(self, path, module_file != null) catch |e| {

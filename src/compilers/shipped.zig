@@ -1,12 +1,14 @@
 //! The module sources a compiler ships with its `.mod` files, which zfls
 //! indexes for the modules nothing else defines (server/compiler_sources.zig):
 //! ifx's and ifort's `opt/compiler/include/*.f90` (`ifport`, `ifcore`,
-//! `kernel32`, ..., #513).
+//! `kernel32`, ..., #513), gfortran's `finclude/*.f90` (`omp_lib`,
+//! `openacc`, #544).
 
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const paths = @import("../paths.zig");
+const tools = @import("../server/tools.zig");
 
 /// Module names (lowercase) and the files that define them
 pub const Modules = std.array_hash_map.String([]const u8);
@@ -23,6 +25,31 @@ pub fn intelDir(io: Io, a: Allocator, exe: []const u8) !?[]const u8 {
         if (paths.isFile(io, try std.Io.Dir.path.join(a, &.{ dir, "ifcore.f90" }))) return dir;
     }
     return null;
+}
+
+/// The `finclude` directory of gfortran `exe`, from
+/// `-print-file-name=finclude` (which prints the name alone when there is
+/// none): MSYS2's gfortran 16.1 `lib/gcc/x86_64-w64-mingw32/16.1.0/finclude`
+/// has `omp_lib.f90` and `openacc.f90`
+pub fn gfortranDir(io: Io, a: Allocator, exe: []const u8, env: ?*const std.process.Environ.Map) ?[]const u8 {
+    const r = tools.run(a, io, .{
+        .argv = &.{ exe, "-print-file-name=finclude" },
+        .environ_map = tools.withExeDir(a, env, exe) catch return null,
+        .timeout = tools.seconds(10),
+    }) catch return null;
+    if (!r.term.success()) return null;
+    const dir = std.mem.trim(u8, r.stdout, " \t\r\n");
+    if (!std.Io.Dir.path.isAbsolute(dir) or !paths.isDir(io, dir)) return null;
+    return std.Io.Dir.path.resolveAlloc(a, &.{dir}) catch null;
+}
+
+/// Whether module `name` (lowercase) of a compiler's sources comes before
+/// that of zfls's table: OpenMP's and OpenACC's, whose routines differ
+/// between compilers and versions (gfortran 16's `omp_lib` has 73 the
+/// table has not), but not the intrinsic modules
+pub fn replacesTable(name: []const u8) bool {
+    for ([_][]const u8{ "omp_lib", "omp_lib_kinds", "openacc", "openacc_kinds" }) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
 }
 
 /// Adds to `out` (in `out_a`) the modules that the `.f90` files of `dir`
