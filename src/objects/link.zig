@@ -81,9 +81,14 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             v.type_obj = null;
             const ln = v.link_name orelse return;
             if (self.parent) |p| {
-                if (try findInScope(env, p, ln, .{})) |l| {
+                // the associate name of SELECT TYPE or RANK: its selector,
+                // with its rank (`it => items(i)`)
+                const is_select = p.getType(false) == C.TypeId.select;
+                const found = if (is_select) try selectorVariable(env, p, ln) else try findInScope(env, p, ln, .{});
+                if (found) |l| {
                     if (!self.linkLoops(l)) v.link_obj = l;
                 }
+                if (is_select and v.link_obj != null) v.slice_rank = try selector.associateRank(env, p, ln, self.sline, v.link_obj);
             }
         },
         .method => {
@@ -152,22 +157,12 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             for (self.assocData().links.items) |*assoc| {
                 const v = assoc.var_.varData();
                 v.link_obj = null;
-                const name = try R().PAREN_CONTENT.sub(env.tmp, "", assoc.link_name);
-                var var_obj: ?*Obj = null;
-                if (selector.isDesignator(name)) {
-                    const var_stack = try helpers.getVarStack(env.tmp, name);
-                    if (var_stack.len > 1) {
-                        if (try climbTypeTree(env, var_stack, outer)) |type_scope| {
-                            var_obj = try findInScope(env, type_scope, var_stack[var_stack.len - 1], .{});
-                        }
-                    } else {
-                        var_obj = try findInScope(env, outer, str.strip(name), .{});
-                    }
-                }
-                if (var_obj) |o| if (!assoc.var_.linkLoops(o)) {
+                if (try selectorVariable(env, outer, assoc.link_name)) |o| if (!assoc.var_.linkLoops(o)) {
                     v.link_obj = o;
+                    v.slice_rank = try selector.associateRank(env, outer, assoc.link_name, self.sline, o);
                     continue;
                 };
+                v.slice_rank = try selector.associateRank(env, outer, assoc.link_name, self.sline, null);
                 // a literal or an expression: its type
                 const t = try selector.typeOf(env, outer, assoc.link_name, self.sline);
                 v.desc = if (t) |typ| try self.al().dupe(u8, typ.desc) else "UNKNOWN";
@@ -176,6 +171,17 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         },
         else => {},
     }
+}
+
+/// The variable or component that selector `text` names in `scope`, its
+/// subscripts aside (`x`, `t%c`, `b(:, 1)`), or null for an expression
+fn selectorVariable(env: Env, scope: *Obj, text: []const u8) Allocator.Error!?*Obj {
+    const name = try R().PAREN_CONTENT.sub(env.tmp, "", text);
+    if (!selector.isDesignator(name)) return null;
+    const var_stack = try helpers.getVarStack(env.tmp, name);
+    if (var_stack.len == 1) return findInScope(env, scope, str.strip(name), .{});
+    const type_scope = (try climbTypeTree(env, var_stack, scope)) orelse return null;
+    return findInScope(env, type_scope, var_stack[var_stack.len - 1], .{});
 }
 
 /// The specific procedure `name` of generic interface `generic`, whose

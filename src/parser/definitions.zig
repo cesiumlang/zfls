@@ -353,7 +353,12 @@ pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
         } else if (std.ascii.startsWithIgnoreCase(word, "type") or std.ascii.startsWithIgnoreCase(word, "rank")) {
             st = 2;
         }
-        return .{ .select = .{ .type = st, .binding = m.group(2), .desc = null } };
+        // the whole selector, with its subscripts: `it => items(i)`
+        var binding = m.group(2);
+        const open = m.end(0) - binding.?.len - 1;
+        const close = helpers.findParenMatch(line[open + 1 ..]);
+        if (close >= 0) binding = line[open + 1 .. open + 1 + @as(usize, @intCast(close))];
+        return .{ .select = .{ .type = st, .binding = binding, .desc = null } };
     }
     if (R().SELECT_TYPE.match(line)) |m| {
         var buf: [5]u8 = undefined;

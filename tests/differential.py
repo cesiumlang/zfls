@@ -36,6 +36,7 @@ from differential_known import (
     first_difference,
     forget_associate_types,
     generic_specific_definition,
+    ignore_associate_attributes,
     ignore_conditional_attributes,
     ignore_param_strings,
     ignore_slice_dimensions,
@@ -59,6 +60,7 @@ from differential_known import (
     on_zfls_only_intrinsic,
     own_file_definition,
     ref_key,
+    select_bound,
     separate_procedure_refs,
     two_forms_item,
     untyped_by_fortls,
@@ -374,6 +376,7 @@ def main() -> int:
         source = path.read_text(encoding="utf-8", errors="replace")
         assoc = associate_names(source)
         bound = associate_bound(source)
+        bound_names = bound | select_bound(source)
         src_lines = source.splitlines()
         cond_attrs = conditional_attributes(source)
         macros = macro_names(path, source)
@@ -392,6 +395,9 @@ def main() -> int:
             if assoc and kind in ("hover", "completion"):
                 a = ignore_slice_dimensions(a, assoc)
                 b = ignore_slice_dimensions(b, assoc)
+            if bound_names and kind in ("hover", "completion"):
+                a = ignore_associate_attributes(a, bound_names)
+                b = ignore_associate_attributes(b, bound_names)
             if bound and kind in ("hover", "completion"):
                 untyped = untyped_by_fortls(a, bound)
                 if untyped:

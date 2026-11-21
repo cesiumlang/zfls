@@ -475,13 +475,6 @@ pub const Parser = struct {
                     const bind_name = str.strip(parts[0]);
                     const link = str.strip(parts[1]);
                     const v = try Obj.newVariable(ast, line_no, bind_name, "UNKNOWN", &.{}, .{});
-                    if (helpers.getParenSubstring(link)) |subscripts| {
-                        var rank: i32 = 0;
-                        for (try helpers.splitArgs(a, subscripts)) |sub| {
-                            if (std.mem.findScalar(u8, sub, ':') != null) rank += 1;
-                        }
-                        v.varData().slice_rank = rank;
-                    }
                     try o.assocData().links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
