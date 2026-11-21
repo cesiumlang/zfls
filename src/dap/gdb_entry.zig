@@ -53,18 +53,30 @@ pub fn atLaunch(s: *Session, a: Allocator, program: ?[]const u8, cwd: ?[]const u
     s.g.entry_function = null;
     s.g.entry_breakpoint = null;
     s.g.entry_hit = false;
-    const p = program orelse return false;
-    const path = if (cwd) |c| (if (std.Io.Dir.path.isAbsolute(p)) p else std.Io.Dir.path.join(a, &.{ c, p }) catch p) else p;
+    const path = programPath(a, program, cwd) orelse return false;
     s.g.entry_function = entryFunction(s.io, path, s.g.lfortran);
     return s.g.entry_function != null;
+}
+
+/// The path of `program`, relative to `cwd`
+pub fn programPath(a: Allocator, program: ?[]const u8, cwd: ?[]const u8) ?[]const u8 {
+    const p = program orelse return null;
+    if (p.len == 0) return null;
+    const c = cwd orelse return p;
+    return if (std.Io.Dir.path.isAbsolute(p)) p else std.Io.Dir.path.join(a, &.{ c, p }) catch p;
 }
 
 /// The function of the adapter's stop at the start of the program at
 /// `path`; null for gdb's own
 pub fn entryFunction(io: Io, path: []const u8, is_lfortran: bool) ?[]const u8 {
     if (programHas(io, path, flang_main)) return flang_main;
-    if (programHas(io, path, ifx_runtime_init) and programHas(io, path, ifx_main)) return ifx_main;
+    if (isIfx(io, path)) return ifx_main;
     return if (is_lfortran) lfortran_main else null;
+}
+
+/// Whether the program at `path` is Intel ifx's
+pub fn isIfx(io: Io, path: []const u8) bool {
+    return programHas(io, path, ifx_runtime_init) and programHas(io, path, ifx_main);
 }
 
 test "the stop at the start: Flang's and ifx's main programs, not gfortran's" {

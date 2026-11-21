@@ -2,7 +2,8 @@
 //! ifx`): building with `ifx -g -O0 -check bounds`, and a session on
 //! tests/dap/grid.f90 as far as Intel's DWARF goes in gdb: line
 //! breakpoints, the stack, a step, an integer variable, and the stop at the
-//! runtime error of a bound exceeded (`for__issue_diagnostic`, #492). The
+//! runtime error of a bound exceeded (`for__issue_diagnostic`, #492), and
+//! polymorphic objects and arrays by their dynamic type (#667). The
 //! variables of each stop are shown, for what Intel's DWARF gives gdb.
 
 const std = @import("std");
@@ -101,13 +102,26 @@ pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
         if (eql(str(sc, "name"), "Registers")) continue;
         show(str(sc, "name") orelse "?", items(try c.request("variables", .{ .variablesReference = int(sc, "variablesReference") orelse 0 }), "variables"));
     }
+    // polymorphic: t a tagged, ts(:) of labeled, by their descriptors (#667)
+    const args = try scopeVariables(c, int(stack[0], "id").?, "Arguments");
+    const t = named(args, "t") orelse Value.null;
+    try check(eql(str(t, "type"), "class(point)") and std.mem.startsWith(u8, str(t, "value") orelse "", "tagged("), "t: {s} = {s}", .{ str(t, "type") orelse "?", str(t, "value") orelse "?" });
+    const tc = items(try c.request("variables", .{ .variablesReference = int(t, "variablesReference") orelse 0 }), "variables");
+    const tag = named(tc, "tag") orelse Value.null;
+    try check(eql(str(tag, "value"), "'hello   '"), "t%tag = {s}", .{str(tag, "value") orelse "?"});
+    const ts = named(args, "ts") orelse Value.null;
+    try check(eql(str(ts, "type"), "class(point) (2)") and eql(str(ts, "value"), "[labeled(…), labeled(…)]"), "ts: {s} = {s}", .{ str(ts, "type") orelse "?", str(ts, "value") orelse "?" });
 
     // in the main program
     _ = try c.request("continue", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     stack = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(int(stack[0], "line") == s.main_line, "stopped in main ({?d})", .{int(stack[0], "line")});
-    show("Locals", try scopeVariables(c, int(stack[0], "id").?, "Locals"));
+    const main_locals = try scopeVariables(c, int(stack[0], "id").?, "Locals");
+    show("Locals", main_locals);
+    // class(point), allocatable :: pts(:), of labeled (#667)
+    const pts = named(main_locals, "pts") orelse Value.null;
+    try check(eql(str(pts, "type"), "class(point) (2)") and eql(str(pts, "value"), "[labeled(…), labeled(…)]"), "pts: {s} = {s}", .{ str(pts, "type") orelse "?", str(pts, "value") orelse "?" });
 
     // a step: k = 4
     _ = try c.request("next", .{ .threadId = thread });
