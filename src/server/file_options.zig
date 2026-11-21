@@ -36,6 +36,11 @@ pub fn apply(self: *Server, f: *FortranFile) error{OutOfMemory}!void {
     {
         f.fixed_columns = 72;
     };
+    // a TAB-format line's TAB against the line length, as the command's
+    // compiler counts it (#585)
+    if (cmd) |c| if (c.args.len > 0) if (compiler_names.idOf(c.args[0])) |id| {
+        f.fixed_tab_wide = id == .gfortran or id == .flang;
+    };
     if (o.d_lines_code) |code| f.d_lines_code = code;
     f.implicit_none = o.implicit_none;
     f.default_kinds = default_kinds.parse(args);

@@ -348,6 +348,7 @@ pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileErro
     f.openmp_conditional = !self.s.disable_openmp_conditional;
     f.d_lines_code = self.s.dLinesCode();
     f.fixed_columns = self.s.fixedColumns();
+    f.fixed_tab_wide = self.s.fixedTabWide();
     errdefer f.destroy();
     file_options.apply(self, f) catch return error.OutOfMemory;
     // from the index cache during initialization
@@ -638,6 +639,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?pa
         nf.openmp_conditional = !self.s.disable_openmp_conditional;
         nf.d_lines_code = self.s.dLinesCode();
         nf.fixed_columns = self.s.fixedColumns();
+        nf.fixed_tab_wide = self.s.fixedTabWide();
         file_options.apply(self, nf) catch return error.OutOfMemory;
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
@@ -768,6 +770,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             nf.fixed_columns = self.s.fixedColumns();
+            nf.fixed_tab_wide = self.s.fixedTabWide();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
@@ -800,6 +803,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             nf.fixed_columns = self.s.fixedColumns();
+            nf.fixed_tab_wide = self.s.fixedTabWide();
             try file_options.apply(self, nf);
             created = nf;
             if (!paths.isFile(self.io, filepath)) {

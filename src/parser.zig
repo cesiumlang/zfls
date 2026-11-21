@@ -253,6 +253,9 @@ pub const FortranFile = struct {
     /// `fixed_line_length`: the columns of a fixed-form code line past it
     /// are blanks in `lines` (parser/fixed_columns.zig); null: no limit
     fixed_columns: ?usize = null,
+    /// A TAB-format line's TAB stands for the columns up to 6 against
+    /// `fixed_columns` (gfortran's and LLVM Flang's count), not for one
+    fixed_tab_wide: bool = false,
     /// ifx's `!DEC$ FIXEDFORMLINESIZE:n` lines (parser/line_size.zig), owned
     /// by `gpa`
     line_sizes: []line_size.Directive = &.{},
@@ -433,10 +436,12 @@ pub const FortranFile = struct {
     }
 
     fn rewriteLine(self: *const FortranFile, line: []u8, i: usize) void {
+        // the limit before the TAB becomes a blank
+        const limit = if (self.fixed) if (self.fixedLimitAt(i, self.fixed_columns)) |n| fixed_columns.tabLimit(line, n, self.fixed_tab_wide) else null else null;
         tab_format.blankLine(self.fixed, line);
         if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
         if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
-        if (self.fixed) if (self.fixedLimitAt(i, self.fixed_columns)) |n| fixed_columns.blank(line, n);
+        if (limit) |n| fixed_columns.blank(line, n);
         if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
     }
 
