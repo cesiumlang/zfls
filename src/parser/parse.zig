@@ -363,10 +363,11 @@ pub const Parser = struct {
                     if (procedure_def) {
                         new_var = try Obj.newMethod(ast, line_no, name, desc, mk.ids, mk.info, info.var_kind, link_name);
                     } else {
+                        // a data pointer's initial target is not what it
+                        // stands for, `p(:) => t` (#700)
                         new_var = try Obj.newVariable(ast, line_no, name, desc, mk.ids, .{
                             .keyword_info = mk.info,
                             .kind = kind,
-                            .link_obj = link_name,
                         });
                         if (new_var.isParameter()) {
                             const r = helpers.findWordInLine(line, name);
