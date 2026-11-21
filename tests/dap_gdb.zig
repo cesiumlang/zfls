@@ -3,7 +3,8 @@
 //! with DWARF, `-gdwarf-4 -Wl,-debug:dwarf`, and linked with zfls's ifx kit
 //! when it is next to zfls) or of LFortran's (`--compiler lfortran`, not
 //! on Windows, where LFortran refuses `-g`; its own session is
-//! tests/dap_lfortran.zig's): breakpoints, the stack, the variables as
+//! tests/dap_lfortran.zig's) or of Intel ifx's (`--compiler ifx`, Linux;
+//! its own session is tests/dap_ifx_gdb.zig's): breakpoints, the stack, the variables as
 //! Fortran (subscripts, sections, previews, not allocated, pointers, a
 //! polymorphic argument, hidden lengths left out), the module variables of
 //! a line, setting values, expressions, a Fortran runtime error, stopping
@@ -15,9 +16,9 @@
 //! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
 //! Adapter Protocol (gdb 14 or later).
 //!
-//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang|lfortran] [--fc FC] [--gdb GDB] [--kit DIR]
+//!     dap_gdb --zfls ZFLS [--compiler gfortran|flang|lfortran|ifx] [--fc FC] [--gdb GDB] [--kit DIR]
 //!
-//! GFORTRAN (or FLANG, LFORTRAN) and GDB in the environment name them too. `--kit`
+//! GFORTRAN (or FLANG, LFORTRAN, IFX) and GDB in the environment name them too. `--kit`
 //! names the ifx kit for Flang on Windows (`zig build` gives its own, #442);
 //! a link with it must read nothing of Visual Studio's.
 
@@ -31,6 +32,7 @@ const lsp = @import("lsp_client");
 
 const dap = @import("dap_client.zig");
 const dap_lfortran = @import("dap_lfortran.zig");
+const dap_ifx_gdb = @import("dap_ifx_gdb.zig");
 const dap_gfortran = @import("dap_gfortran.zig");
 const Client = dap.Client;
 const get = dap.get;
@@ -42,7 +44,7 @@ const check = dap.check;
 
 const source = "tests/dap/grid.f90";
 
-const Compiler = enum { gfortran, flang, lfortran };
+const Compiler = enum { gfortran, flang, lfortran, ifx };
 
 const Setup = struct {
     zfls: []const u8,
@@ -87,14 +89,19 @@ pub fn main(init: std.process.Init) !u8 {
         } else break;
     }
     if (i != argv.len or zfls_exe == null or compiler == null) {
-        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang|lfortran] [--fc FC] [--gdb GDB] [--kit DIR]\n", .{});
+        std.debug.print("usage: dap_gdb --zfls ZFLS [--compiler gfortran|flang|lfortran|ifx] [--fc FC] [--gdb GDB] [--kit DIR]\n", .{});
         return 2;
     }
     const fc = fc_arg orelse switch (compiler.?) {
         .gfortran => init.environ_map.get("GFORTRAN") orelse "gfortran",
         .flang => init.environ_map.get("FLANG") orelse "flang",
         .lfortran => init.environ_map.get("LFORTRAN") orelse "lfortran",
+        .ifx => init.environ_map.get("IFX") orelse "ifx",
     };
+    if (compiler.? == .ifx and builtin.target.os.tag == .windows) {
+        std.debug.print("skipped: ifx's programs on Windows have Microsoft's debug information, the Debugger Engine's (tests/dap_windows.zig)\n", .{});
+        return 0;
+    }
     if (compiler.? == .lfortran and builtin.target.os.tag == .windows) {
         std.debug.print("skipped: LFortran for Windows refuses -g (#176)\n", .{});
         return 0;
@@ -131,7 +138,7 @@ pub fn main(init: std.process.Init) !u8 {
         .build_env = switch (compiler.?) {
             .flang => if (builtin.target.os.tag == .windows) try dap.flangKitEnv(io, a, init.environ_map, zfls_path, kit) else null,
             .lfortran => try dap_lfortran.buildEnv(io, a, init.environ_map, fc),
-            .gfortran => null,
+            .gfortran, .ifx => null,
         },
         .dir = tmp,
         .src = src,
@@ -172,6 +179,12 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
         },
         // its checks of bounds are on by default
         .lfortran => try argv.append(a, "-g"),
+        // conda-forge's: its runtime's directory the program's run path
+        .ifx => {
+            try argv.appendSlice(a, &.{ "-g", "-O0", "-check", "bounds" });
+            const exe = Io.Dir.cwd().realPathFileAlloc(io, setup.fc, a) catch setup.fc;
+            try argv.append(a, try a.print("-Wl,-rpath,{s}", .{try std.Io.Dir.path.join(a, &.{ std.Io.Dir.path.dirname(exe) orelse ".", "..", "lib" })}));
+        },
         .flang => if (builtin.target.os.tag == .windows) {
             try argv.appendSlice(a, &.{ "-gdwarf-4", "-O0", "-Wl,-debug:dwarf" });
             // lld-link's list of what it read, for the check below
@@ -277,6 +290,15 @@ fn listed(a: Allocator, vars: []Value) ![]const u8 {
 }
 
 fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .ifx) return dap_ifx_gdb.walkThrough(io, gpa, .{
+        .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb },
+        .program = setup.program,
+        .src = setup.src,
+        .dir = setup.dir,
+        .work_line = setup.work_line,
+        .call_line = setup.call_line,
+        .main_line = setup.main_line,
+    });
     if (setup.compiler == .lfortran) return dap_lfortran.walkThrough(io, gpa, .{
         .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb },
         .program = setup.program,
@@ -434,6 +456,9 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
 }
 
 fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
+    // gdb's `start` stops in the C `main` of Intel's runtime, at no line,
+    // not in the main program, `MAIN__` (ifx 2026.2, gdb 15.1)
+    if (setup.compiler == .ifx) return std.debug.print("skipped: ifx's main program is not gdb's start\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const c = try start(io, gpa, setup);
@@ -532,6 +557,9 @@ fn crash(io: Io, gpa: Allocator, setup: Setup) !void {
     const said = try c.outputText(a);
     if (setup.compiler == .gfortran and builtin.target.os.tag == .windows) {
         try check(code == 3, "the program exited with 3 ({d})", .{code});
+    } else if (setup.compiler == .ifx) {
+        // Intel's runtime catches the signal: "forrtl: severe (174): SIGSEGV"
+        try check(code == 174, "the program exited with 174 ({d})", .{code});
     } else try check(code == 128 + 11 and contains(said, "SIGSEGV (11)"), "ended by SIGSEGV: {d}, said: {s}", .{ code, said[said.len -| 200..] });
     _ = try c.event("terminated");
 }
