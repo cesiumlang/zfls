@@ -7,7 +7,8 @@
 //! with a definition of `pp_defs`, an include directory of `include_dirs`,
 //! and the unsaved text of an edit (`compiler_on_change`); with Flang and
 //! gfortran also a `.f77` file, a debug line (a comment), an error in an
-//! included file and a preprocessed `.fpp` file (lower case)
+//! included file and a preprocessed `.fpp` file (lower case); with gfortran
+//! a message about two places (GCC 10 and later) and a missing `#include`
 //! (`zig build test-compiler`). Skipped without the compiler.
 //!
 //!     compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran] [--path EXE]
@@ -35,6 +36,10 @@ const Case = struct {
     file: []const u8,
     want: []const Want,
     absent: []const []const u8 = &.{},
+    /// Lines (1-based) that must have no message of the compiler's
+    quiet: []const i64 = &.{},
+    /// The compiler's major version the case needs (gfortran's)
+    min_version: u32 = 0,
 };
 
 /// A compiler under test: its `compiler_diagnostics` name (also the source
@@ -161,6 +166,15 @@ const compilers = [_]Compiler{
             .{ .file = "lower.fpp", .want = &.{
                 .{ .line = 10, .text = "Symbol 'undeclared_fpp' at (1) has no IMPLICIT type" },
             }, .absent = &.{ "not_defined_branch", "from_define", "Illegal preprocessor directive" } },
+            // a message about two places, which GCC 10 to 16 print as two
+            // lines, the first only `(1)`: one message (#522); GCC 9 has none
+            .{ .file = "two_places.f90", .want = &.{
+                .{ .line = 3, .text = "Type mismatch between actual argument at (1) and actual argument at (2)" },
+            }, .quiet = &.{4}, .min_version = 10 },
+            // a missing #include, which cpp places on the line after it (#524)
+            .{ .file = "missing_include.F90", .want = &.{
+                .{ .line = 3, .text = "missing.h: No such file or directory" },
+            }, .quiet = &.{4} },
         },
         .edited = .{ .line = 8, .text = "Symbol 'undeclared_edit' at (1) has no IMPLICIT type" },
     },
@@ -236,7 +250,14 @@ pub fn main(init: std.process.Init) !u8 {
     try c.send("initialized", struct {}{}, null);
 
     var failures: std.ArrayList([]const u8) = .empty;
+    const major = zfls.compilers_gfortran.parseVersion(version.stdout) orelse 0;
+    var checked: usize = 0;
     for (compiler.cases) |case| {
+        if (case.min_version > major) {
+            std.debug.print("skipped: {s} (version {d} or later)\n", .{ case.file, case.min_version });
+            continue;
+        }
+        checked += 1;
         const path = try std.Io.Dir.path.join(a, &.{ work, case.file });
         const uri = try zfls.paths.pathToUri(a, path);
         try c.send("textDocument/didOpen", .{ .textDocument = .{
@@ -247,6 +268,9 @@ pub fn main(init: std.process.Init) !u8 {
         } }, null);
         const diags = try waitFor(io, a, c, compiler.name, uri, null);
         try expectCase(a, &failures, compiler.name, case.file, diags, case.want, case.absent);
+        for (case.quiet) |line| for (diags) |d| if (lineOf(d) == line) {
+            try failures.append(a, try a.print("{s}: line {d}: \"{s}\", where it should have nothing", .{ case.file, line, message(d) }));
+        };
     }
 
     // an unsaved edit: its text is checked, from a copy
@@ -270,7 +294,7 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("zfls's stderr:\n{s}\n", .{c.stderr.items});
         return 1;
     }
-    std.debug.print("ok   {d} files and an edit checked with {s}\n", .{ compiler.cases.len, compiler.name });
+    std.debug.print("ok   {d} files and an edit checked with {s}\n", .{ checked, compiler.name });
     return 0;
 }
 
