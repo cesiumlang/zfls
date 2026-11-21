@@ -10,7 +10,8 @@
 //! Flang's (`compiler_diagnostics`), the directory of its intrinsic
 //! modules (`cudadevice`, `__fortran_builtins`, ...); then the modules
 //! that those use. The `.mod` files of other compilers (gfortran's are
-//! compressed, Intel's binary) are not read.
+//! compressed, Intel's binary) are not read, but the sources Intel's
+//! compilers ship are (compiler_sources.zig).
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -28,6 +29,7 @@ const definition = @import("definition.zig");
 const linking = @import("linking.zig");
 const workspace = @import("workspace.zig");
 const cache = @import("cache.zig");
+const compiler_sources = @import("compiler_sources.zig");
 
 /// Whether `head`, the beginning of a file, is that of a module file of
 /// LLVM Flang's: `!mod$`, after a UTF-8 BOM or not
@@ -73,11 +75,12 @@ fn find(io: Io, a: Allocator, dirs: []const []const u8, name: []const u8) !?[]co
     return null;
 }
 
-/// Reads and parses a module file, as free-form source
-fn load(self: *Server, path: []const u8) parser.FileError!*FortranFile {
+/// Reads and parses a module file (`module_file`), as free-form source, or
+/// a compiler's module source in the form of its name
+fn load(self: *Server, path: []const u8, module_file: bool) parser.FileError!*FortranFile {
     const f = try FortranFile.create(self.gpa, path, null);
     errdefer f.destroy();
-    f.forced_form = .free;
+    if (module_file) f.forced_form = .free;
     f.comment_markers = self.s.comment_markers.slice();
     f.openmp_conditional = !self.s.disable_openmp_conditional;
     _ = try f.setTextOwned(try cache.read(self, path));
@@ -87,9 +90,10 @@ fn load(self: *Server, path: []const u8) parser.FileError!*FortranFile {
     return f;
 }
 
-/// The module files that the USE statements of `of` (else of every file)
-/// need, and those that theirs need, read and put in the tree: whether
-/// one was added (which a relink then links in)
+/// The module files (else the compiler's module sources) that the USE
+/// statements of `of` (else of every file) need, and those that theirs
+/// need, read and put in the tree: whether one was added (which a relink
+/// then links in)
 pub fn add(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
     var todo: std.ArrayList(*FortranFile) = .empty;
     if (of) |f| try todo.append(a, f) else try todo.appendSlice(a, self.workspace.values());
@@ -100,10 +104,10 @@ pub fn add(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
         for (ast.scope_list.items) |scope| for (scope.scopeDataConst().use.items) |u| {
             if (u.is_import or self.obj_tree.contains(u.mod_name)) continue;
             if (dirs == null) dirs = try searchDirs(self, a);
-            if (dirs.?.len == 0) return added;
-            const path = (try find(self.io, a, dirs.?, u.mod_name)) orelse continue;
+            const module_file = try find(self.io, a, dirs.?, u.mod_name);
+            const path = module_file orelse (try compiler_sources.find(self, a, u.mod_name)) orelse continue;
             if (self.workspace.contains(path)) continue;
-            const nf = load(self, path) catch |e| {
+            const nf = load(self, path, module_file != null) catch |e| {
                 self.log.info("{s}, the module file of {s}: {s}", .{ path, u.mod_name, parser.describeFileError(e) });
                 continue;
             };
@@ -113,7 +117,7 @@ pub fn add(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
                 try self.workspace.put(self.gpa, nf.path, nf);
             }
             try linking.addToTree(self, nf);
-            self.log.info("{s}: module {s} from its module file", .{ path, u.mod_name });
+            self.log.info("{s}: module {s} from its {s}", .{ path, u.mod_name, if (module_file != null) "module file" else "compiler's source" });
             try todo.append(a, nf);
             added = true;
         };

@@ -54,6 +54,7 @@ pub const compilers_flang = @import("compilers/flang.zig");
 pub const compilers_flang_modules = @import("compilers/flang_modules.zig");
 pub const compilers_intel = @import("compilers/intel.zig");
 pub const compilers_gfortran = @import("compilers/gfortran.zig");
+pub const compilers_shipped = @import("compilers/shipped.zig");
 pub const command_options = @import("command_options.zig");
 pub const default_kinds = @import("default_kinds.zig");
 pub const compilers_predefined = @import("compilers/predefined.zig");

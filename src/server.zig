@@ -45,6 +45,7 @@ const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const compiler_version = @import("server/compiler_version.zig");
 const compiler_macros = @import("server/compiler_macros.zig");
+const compiler_sources = @import("server/compiler_sources.zig");
 const source_form = @import("server/source_form.zig");
 const convert = @import("server/convert.zig");
 const build_command = @import("server/build_command.zig");
@@ -184,6 +185,9 @@ pub const Server = struct {
     /// The symbols each compiler predefines, by executable (in `arena`;
     /// compiler_macros.zig)
     compiler_macros: std.array_hash_map.String(compiler_macros.Known) = .empty,
+    /// The modules of the sources each compiler ships, by executable (in
+    /// `arena`; compiler_sources.zig)
+    compiler_sources: std.array_hash_map.String(compiler_sources.Known) = .empty,
     /// Those in `pp_defs` (compiler_macros.zig)
     default_macros: compiler_macros.Default = .{},
     /// The formatting problems posted (hashes of their keys), each once

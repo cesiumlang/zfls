@@ -50,6 +50,7 @@ test {
     _ = @import("plain_comments.zig");
     _ = @import("predefined_macros.zig");
     _ = @import("pp_conditions.zig");
+    _ = @import("compiler_sources.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
     _ = @import("macros.zig");
