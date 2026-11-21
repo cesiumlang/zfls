@@ -761,6 +761,15 @@ jobs:
         if: matrix.target == 'x86_64-windows'
         run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "$IFX"
 
+      # and on Intel ifx's (IFX, conda-forge's), built with -g -check bounds:
+      # Intel's DWARF in gdb, the stop at a bound exceeded
+      # (for__issue_diagnostic) and at ERROR STOP (for_error_stop_quiet)
+      - name: zfls dap with gdb on an ifx program (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler ifx
+
       # and on LFortran's (-g, which LFortran for Windows refuses): its
       # integer variables, the runtime error of a bound exceeded, ERROR STOP
       - name: zfls dap with gdb on an LFortran program (Linux x64)
