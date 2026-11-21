@@ -169,9 +169,7 @@ pub const Checker = struct {
     /// The kinds of the file that declares `v` (else of the file checked),
     /// with the `!DEC$ REAL:n` before its program unit
     fn kindsOf(c: *const Checker, v: *const Obj) default_kinds.Kinds {
-        const f = v.file_ast.file orelse return c.kinds;
-        const unit = unit_kinds.unitOf(v) orelse return f.default_kinds;
-        return unit_kinds.ofUnit(f.default_kinds, f.lines.items, v.file_ast, unit);
+        return unit_kinds.ofDeclaration(v) orelse c.kinds;
     }
 
     /// The kinds of a literal in `scope` of the file checked

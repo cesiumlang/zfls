@@ -54,6 +54,14 @@ pub fn ofUnit(k: Kinds, lines: []const []const u8, ast: *const objects.Ast, unit
     return out;
 }
 
+/// The kinds of the file that declares `v`, with the directives before its
+/// program unit; null for an object of no file
+pub fn ofDeclaration(v: *const Obj) ?Kinds {
+    const f = v.file_ast.file orelse return null;
+    const unit = unitOf(v) orelse return f.default_kinds;
+    return ofUnit(f.default_kinds, f.lines.items, v.file_ast, unit);
+}
+
 /// The program unit `v` is in: its outermost scope
 pub fn unitOf(v: *const Obj) ?*const Obj {
     var cur: *const Obj = v.parent orelse return null;

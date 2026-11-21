@@ -28,6 +28,31 @@ pub const Kinds = struct {
         };
         return if (n == 4) k.integer4 else n;
     }
+
+    /// The type and kind that `k` gives type `desc` written without a kind
+    /// (`REAL`, `DOUBLE PRECISION`), when not its kind without options
+    pub fn implied(k: Kinds, desc: []const u8) ?struct { name: []const u8, kind: u8 } {
+        const Implied = struct { name: []const u8, written: []const u8, kind: u8, default: u8 };
+        const all = [_]Implied{
+            .{ .name = "REAL", .written = "REAL", .kind = k.real, .default = 4 },
+            .{ .name = "COMPLEX", .written = "COMPLEX", .kind = k.real, .default = 4 },
+            .{ .name = "INTEGER", .written = "INTEGER", .kind = k.integer, .default = 4 },
+            .{ .name = "LOGICAL", .written = "LOGICAL", .kind = k.integer, .default = 4 },
+            .{ .name = "REAL", .written = "DOUBLEPRECISION", .kind = k.double, .default = 8 },
+            .{ .name = "COMPLEX", .written = "DOUBLECOMPLEX", .kind = k.double, .default = 8 },
+        };
+        var buf: [16]u8 = undefined;
+        var n: usize = 0;
+        for (desc) |c| if (c != ' ') {
+            if (n == buf.len) return null;
+            buf[n] = std.ascii.toUpper(c);
+            n += 1;
+        };
+        for (all) |t| if (std.mem.eql(u8, buf[0..n], t.written)) {
+            return if (t.kind == t.default) null else .{ .name = t.name, .kind = t.kind };
+        };
+        return null;
+    }
 };
 
 /// The kinds of the options `args`; the last of each kind wins
@@ -115,6 +140,24 @@ test "gfortran's default kinds" {
     try testing.expectEqual(@as(i64, 8), p.promoted(false, 4));
     try testing.expectEqual(@as(i64, 2), p.promoted(false, 2));
     try testing.expectEqual(Kinds{}, parse(&.{ "-Wall", "-O2" }));
+}
+
+test "the kinds the options give a type written without one" {
+    // gfortran 16.1 -fdefault-real-8 -fdefault-integer-8 (its parse tree)
+    const g = parse(&.{ "-fdefault-real-8", "-fdefault-integer-8" });
+    try testing.expectEqual(@as(u8, 8), g.implied("REAL").?.kind);
+    try testing.expectEqual(@as(u8, 8), g.implied("LOGICAL").?.kind);
+    const d = g.implied("DOUBLE PRECISION").?;
+    try testing.expectEqualStrings("REAL", d.name);
+    try testing.expectEqual(@as(u8, 16), d.kind);
+    try testing.expectEqualStrings("COMPLEX", g.implied("DOUBLE COMPLEX").?.name);
+    try testing.expect(g.implied("CHARACTER") == null);
+    // ifx 2026.2.0 /real-size:64 (its listing): DOUBLE PRECISION stays R(8)
+    const i = parse(&.{"/real-size:64"});
+    try testing.expectEqual(@as(u8, 8), i.implied("COMPLEX").?.kind);
+    try testing.expect(i.implied("DOUBLE PRECISION") == null);
+    try testing.expect(i.implied("INTEGER") == null);
+    try testing.expect((Kinds{}).implied("REAL") == null);
 }
 
 test "Intel's default kinds" {
