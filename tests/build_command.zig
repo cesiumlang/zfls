@@ -1,7 +1,8 @@
 //! A Fortran file built with the command that `zfls build-command`
 //! answers, and its program run with the answered environment: gfortran
-//! by default, LLVM Flang or another with --compiler (on Windows x64 linked
-//! with the ifx kit of --kit) (`zig build test-build-command`). Skipped
+//! by default, LLVM Flang, ifx or another with --compiler (on Windows x64
+//! linked with the ifx kit of --kit; ifx's own modules found, as
+//! conda-forge's does not) (`zig build test-build-command`). Skipped
 //! without the compiler.
 //!
 //!     build_command --zfls ZFLS [--compiler C] [--kit DIR]
@@ -16,7 +17,8 @@ const source =
     \\  implicit none
     \\contains
     \\  subroutine greet()
-    \\    print '(a)', 'hello from zfls build-command'
+    \\    use, intrinsic :: iso_fortran_env, only: output_unit
+    \\    write (output_unit, '(a)') 'hello from zfls build-command'
     \\  end subroutine greet
     \\end module greeting
     \\

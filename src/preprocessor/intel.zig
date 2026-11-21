@@ -90,8 +90,18 @@ fn upper(a: Allocator, name: []const u8) ![]u8 {
 }
 
 /// The Fortran operators (`.AND.`, `.EQ.`, `/=`, ...) of a condition written
-/// as `evalPpIf` takes them (`&&`, `==`, `!=`), its names in upper case
+/// as `evalPpIf` takes them (`&&`, `==`, `!=`), its names in upper case; a
+/// `!` starts a comment
 pub fn cCondition(a: Allocator, expr: []const u8) ![]const u8 {
+    const code = expr[0 .. std.mem.findScalar(u8, expr, '!') orelse expr.len];
+    const out = try cOperators(a, code);
+    for (out) |*c| c.* = std.ascii.toUpper(c.*);
+    return out;
+}
+
+/// The Fortran operators of a condition written as C's, the rest as it is:
+/// Intel's fpp (and Flang's preprocessor) takes them in `#if` (#507)
+pub fn cOperators(a: Allocator, expr: []const u8) ![]u8 {
     const ops = [_][2][]const u8{
         .{ "AND", "&&" },  .{ "OR", "||" }, .{ "NOT", "!" }, .{ "EQV", "==" },
         .{ "NEQV", "!=" }, .{ "EQ", "==" }, .{ "NE", "!=" }, .{ "LT", "<" },
@@ -102,7 +112,6 @@ pub fn cCondition(a: Allocator, expr: []const u8) ![]const u8 {
     var i: usize = 0;
     outer: while (i < expr.len) {
         const c = expr[i];
-        if (c == '!') break; // a comment
         if (c == '/' and i + 1 < expr.len and expr[i + 1] == '=') {
             try out.appendSlice(a, " != ");
             i += 2;
@@ -118,7 +127,7 @@ pub fn cCondition(a: Allocator, expr: []const u8) ![]const u8 {
                 };
             }
         }
-        try out.append(a, std.ascii.toUpper(c));
+        try out.append(a, c);
         i += 1;
     }
     return out.items;
@@ -260,6 +269,12 @@ test "Fortran operators in conditions" {
     try testing.expect(!try holds(a, "(VER .LT. 3)", &symbols));
     try testing.expect(try holds(a, "DEFINED (new)", &symbols));
     try testing.expect(!try holds(a, "DEFINED (OLD)", &symbols));
+    // C's condition with Fortran's operators: names keep their case, `!`
+    // stays C's
+    try testing.expectEqualStrings("a && b", try cOperators(a, "a.and.b"));
+    try testing.expectEqualStrings("!defined(B) && A  !=  1", try cOperators(a, "!defined(B) && A /= 1"));
+    try testing.expect(pp.evalPpIf(a, " defined(VER) .and. VER .gt. 2 .and. .not. defined(OLD)", &symbols));
+    try testing.expect(!pp.evalPpIf(a, " VER .eq. 2 .or. .false.", &symbols));
 }
 
 fn testSkips(a: Allocator, lines: []const []const u8, fixed: bool, defs: ?*const pp.Defs) ![]const pp.Skip {

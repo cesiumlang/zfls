@@ -14,12 +14,6 @@ pub fn isLong(line: []const u8, columns: usize) bool {
     return line.len > columns and !helpers.isFixedComment(line) and !helpers.isPpDirective(line);
 }
 
-/// Whether a code line of `lines` reaches past `columns`
-pub fn anyLong(lines: []const []const u8, columns: usize) bool {
-    for (lines) |l| if (isLong(l, columns)) return true;
-    return false;
-}
-
 /// Makes the columns of fixed-form code line `line` past `columns` blanks
 pub fn blank(line: []u8, columns: usize) void {
     if (isLong(line, columns)) @memset(line[columns..], ' ');
@@ -41,8 +35,8 @@ test "the columns past fixed_line_length are blanks in code lines only" {
     var directive = "#define LONG_MACRO_NAME 1".*;
     blank(&directive, 10);
     try std.testing.expectEqualStrings("#define LONG_MACRO_NAME 1", &directive);
-    try std.testing.expect(anyLong(&.{ "      X = 1", "      Y = 2      , Z" }, 12));
-    try std.testing.expect(!anyLong(&.{ "      X = 1", "C     A LONG COMMENT LINE" }, 12));
+    try std.testing.expect(isLong("      Y = 2      , Z", 12));
+    try std.testing.expect(!isLong("C     A LONG COMMENT LINE", 12));
     try std.testing.expectEqualStrings("      X = 1", code("      X = 1    ! C", 11));
     try std.testing.expectEqualStrings("      X = 1    ! C", code("      X = 1    ! C", null));
 }

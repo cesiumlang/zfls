@@ -1,8 +1,8 @@
-//! Linking on Windows without Visual Studio: LLVM Flang's and LFortran's
-//! programs link with lld-link and zfls's ifx kit (a startup object and
-//! import libraries of Windows's C runtime) instead of Visual Studio's
-//! linker and libraries. The readme's "ifx without Visual Studio" has the
-//! same by hand.
+//! Linking on Windows without Visual Studio: ifx's, LLVM Flang's and
+//! LFortran's programs link with lld-link and zfls's ifx kit (a startup
+//! object and import libraries of Windows's C runtime) instead of Visual
+//! Studio's linker and libraries. The readme's "ifx without Visual Studio"
+//! has the same by hand.
 
 const std = @import("std");
 const run_env = @import("env.zig");
@@ -44,14 +44,15 @@ fn visualStudio(env: *const Environ.Map) bool {
     return run_env.lookup(env, .windows, "VCToolsInstallDir") != null;
 }
 
-/// `LIB`, the kit's directory first, and `LINK`, which lld-link reads as
-/// arguments: the kit's startup object and import libraries first
-fn kitVars(a: Allocator, kit_dir: []const u8, env: *const Environ.Map) ![2]Var {
+/// `LIB`, the kit's directory first (then `lib_dir`, the compiler's
+/// libraries), and `LINK`, which lld-link reads as arguments: the kit's
+/// startup object and import libraries first
+fn kitVars(a: Allocator, kit_dir: []const u8, lib_dir: ?[]const u8, env: *const Environ.Map) ![2]Var {
     const lib = run_env.lookup(env, .windows, "LIB");
     const link = run_env.lookup(env, .windows, "LINK");
     const shim = try a.print("\"{s}\\zfls_ifx_shim.obj\"", .{kit_dir});
     return .{
-        .{ .name = "LIB", .value = try run_env.join(a, ";", &.{ kit_dir, if (lib) |v| v.value else null }) },
+        .{ .name = "LIB", .value = try run_env.join(a, ";", &.{ kit_dir, lib_dir, if (lib) |v| v.value else null }) },
         .{ .name = "LINK", .value = try run_env.join(a, " ", &.{ shim, kit_libs, if (link) |v| v.value else null }) },
     };
 }
@@ -65,8 +66,28 @@ pub fn flang(a: Allocator, kit_dir: []const u8, user_args: ?[]const []const u8, 
     for (user_args orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "-fuse-ld=") or std.mem.startsWith(u8, arg, "-fms-runtime-lib=")) return null;
     }
-    const vars = try a.dupe(Var, &try kitVars(a, kit_dir, env));
+    const vars = try a.dupe(Var, &try kitVars(a, kit_dir, null, env));
     return .{ .args = &flang_args, .env = vars };
+}
+
+/// ifx's arguments for the kit: the C runtime in DLLs, which the kit's
+/// import libraries are, and Intel's lld-link (`bin\compiler\lld-link.exe`)
+pub const ifx_args = [_][]const u8{ "/MD", "/fuse-ld=lld" };
+
+/// How ifx links with the kit in `kit_dir` and its own libraries in
+/// `lib_dir` (conda-forge's `Library\lib`): ifx runs its lld-link, which
+/// with `LIB` set does not look for Visual Studio. Null in a Visual Studio
+/// environment, and when the build's arguments (`user_args`) choose the
+/// linker or the C runtime.
+pub fn ifx(a: Allocator, kit_dir: []const u8, lib_dir: ?[]const u8, user_args: ?[]const []const u8, env: *const Environ.Map) !?Link {
+    if (visualStudio(env)) return null;
+    for (user_args orelse &.{}) |arg| {
+        if (arg.len < 2 or (arg[0] != '/' and arg[0] != '-')) continue;
+        const opt = arg[1..];
+        for ([_][]const u8{ "fuse-ld=", "MT", "MDd", "libs:" }) |p| if (std.mem.startsWith(u8, opt, p)) return null;
+    }
+    const vars = try a.dupe(Var, &try kitVars(a, kit_dir, lib_dir, env));
+    return .{ .args = &ifx_args, .env = vars };
 }
 
 /// How LFortran links with the kit in `kit_dir`: it runs `link` from the
@@ -74,7 +95,7 @@ pub fn flang(a: Allocator, kit_dir: []const u8, user_args: ?[]const []const u8, 
 /// (`linkScript`). Null in a Visual Studio environment.
 pub fn lfortran(a: Allocator, kit_dir: []const u8, link_dir: []const u8, env: *const Environ.Map) !?Link {
     if (visualStudio(env)) return null;
-    const vars = try kitVars(a, kit_dir, env);
+    const vars = try kitVars(a, kit_dir, null, env);
     return .{ .env = try a.dupe(Var, &.{ try run_env.prependPath(a, env, .windows, link_dir), vars[0], vars[1] }) };
 }
 
@@ -136,4 +157,28 @@ test "LLVM Flang on Windows links with lld-link and the ifx kit, unless Visual S
     try testing.expect(try flang(a, kit, &.{"-g"}, &env) != null);
     try env.put("VCToolsInstallDir", "C:\\VS\\MSVC\\14.4");
     try testing.expectEqual(null, try flang(a, kit, null, &env));
+}
+
+test "ifx on Windows links with its lld-link and the ifx kit, unless Visual Studio's environment is set up" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const kit = "C:\\zfls\\bin\\ifx-kit";
+    const lib = "C:\\conda\\Library\\lib";
+    var env: Environ.Map = .init(a);
+    try env.put("Path", "C:\\Windows");
+    const link = (try ifx(a, kit, lib, null, &env)).?;
+    try testing.expectEqualDeep(@as([]const []const u8, &ifx_args), link.args);
+    try expectVars(&.{
+        .{ .name = "LIB", .value = kit ++ ";" ++ lib },
+        .{ .name = "LINK", .value = "\"C:\\zfls\\bin\\ifx-kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" },
+    }, link.env);
+    try env.put("LIB", "C:\\sdk");
+    try testing.expectEqualStrings(kit ++ ";C:\\sdk", (try ifx(a, kit, null, &.{ "/Zi", "/MD" }, &env)).?.env[0].value);
+    // the build's own choice of linker or C runtime
+    for ([_][]const u8{ "/MT", "/MTd", "-MDd", "/libs:static", "/fuse-ld=link" }) |arg| {
+        try testing.expectEqual(null, try ifx(a, kit, lib, &.{ "/Zi", arg }, &env));
+    }
+    try env.put("VCToolsInstallDir", "C:\\VS\\MSVC\\14.4");
+    try testing.expectEqual(null, try ifx(a, kit, lib, null, &env));
 }
