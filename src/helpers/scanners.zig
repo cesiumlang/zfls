@@ -195,7 +195,8 @@ pub fn isPpDirective(line: []const u8) bool {
     return i < line.len and regex.isWordChar(line[i]);
 }
 
-/// A Fortran name in a line: a letter or `_`, then word characters or `$`
+/// A Fortran name in a line: `$`s, a letter or `_`, then word characters
+/// or `$`
 pub const Word = struct {
     start: usize,
     end: usize,
@@ -210,12 +211,18 @@ pub const WordIterator = struct {
     pub fn next(self: *WordIterator) ?Word {
         const l = self.line;
         var i = self.pos;
-        while (i < l.len and !(std.ascii.isAlphabetic(l[i]) or l[i] == '_')) i += 1;
-        if (i >= l.len) {
+        // `$`s first, then a letter or `_` (ifx's and Flang's `$$lib$random`)
+        const start = while (i < l.len) : (i += 1) {
+            if (std.ascii.isAlphabetic(l[i]) or l[i] == '_') break i;
+            if (l[i] != '$') continue;
+            var j = i;
+            while (j < l.len and l[j] == '$') j += 1;
+            if (j < l.len and (std.ascii.isAlphabetic(l[j]) or l[j] == '_')) break i;
+            i = j - 1;
+        } else {
             self.pos = l.len;
             return null;
-        }
-        const start = i;
+        };
         i += 1;
         while (i < l.len and (regex.isWordChar(l[i]) or l[i] == '$')) i += 1;
         self.pos = i;

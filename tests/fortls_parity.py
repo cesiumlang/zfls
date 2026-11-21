@@ -184,7 +184,8 @@ def zfls_only_item(x) -> bool:
     one that adds a USE statement, or an intrinsic fortls does not know."""
     if not isinstance(x, dict):
         return False
-    if str(x.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
+    # (not a variable of the same name: `int1`, Intel's INT1)
+    if str(x.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and x.get("kind") != 6:
         return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in x:

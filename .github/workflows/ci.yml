@@ -739,6 +739,12 @@ jobs:
         if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
         run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "$FLANG"
 
+      # and with conda-forge's ifx (IFX), its modules found and its programs
+      # linked with its lld-link and the package's ifx kit
+      - name: Run Fortran File's build with ifx (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "$IFX"
+
       # and on LFortran's (-g, which LFortran for Windows refuses): its
       # integer variables, the runtime error of a bound exceeded, ERROR STOP
       - name: zfls dap with gdb on an LFortran program (Linux x64)

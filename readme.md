@@ -20,12 +20,12 @@ A Fortran language server written in Zig. zfls is a native port of [fortls](http
 - Code actions: implementing deferred type-bound procedures, adding `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as `real(8)`, extracting statements into a subroutine, and (Source Actions) the keywords of a file in upper, lower or title case
 - Formatting of documents and selections with findent, fprettify, Codee's formatter, forformat or a command of the user's (see [Formatting](#formatting)), and conversion of a file between fixed and free form with findent (see [Converting the source form](#converting-the-source-form))
 - Include directories and preprocessor definitions from the project's `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see [Build files](#build-files))
-- Fixed and free source form (also switched within a file by LLVM Flang's `!dir$ fixed` and `!dir$ free`), line continuations, Doxygen and FORD style documentation comments, OpenMP conditional compilation lines (`!$ x = 1`) read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
+- Fixed and free source form (also switched within a file by LLVM Flang's `!dir$ fixed` and `!dir$ free`, and ifx's `!DEC$ NOFREEFORM` and `!DEC$ FREEFORM`), line continuations, Doxygen and FORD style documentation comments, OpenMP conditional compilation lines (`!$ x = 1`) read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`, `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit), `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn` (`incl_suffixes` adds more); one table (`src/suffixes.zig`) decides the source form, the Fortran entries of `compile_commands.json` and the VS Code extension's file associations
 - DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and `.` between a variable and its component (`rec.field`)
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures, signature help in a kernel launch (`call k<<<grid, block>>>(...)`), `.cuf` files
 - Namelist files (`.nml`, `.namelist`, or a document the client opens with the language `FortranNamelist`): an outline of their groups and the variables each sets; they are never parsed as Fortran nor diagnosed
-- C preprocessor support (`#if`/`#ifdef`/`#elif`, object and function-like macros, `#include`), and Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`, `!DIR$ IF (expr)`; see [Intel conditional compilation](#intel-conditional-compilation)); go to definition of a macro goes to the `#define` in effect at the use, in the file or a header, and references and highlights list its uses and the directives that name it
+- C preprocessor support (`#if`/`#ifdef`/`#elif`, also with Fortran's operators as Intel's fpp takes them, `#if N .gt. 5 .and. .not. defined(X)`; object and function-like macros, `#include`; `__LINE__`, `__FILE__`, `__DATE__` and `__TIME__`), and Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`, `!DIR$ IF (expr)`; see [Intel conditional compilation](#intel-conditional-compilation)); go to definition of a macro goes to the `#define` in effect at the use, in the file or a header, and references and highlights list its uses and the directives that name it
 - Documentation for intrinsic procedures (with the specific names, such as `DSQRT` and `DCMPLX`, and those of Fortran 2018 and 2023), statements, keywords and the intrinsic modules (`iso_fortran_env`, OpenMP, OpenACC, ...); stubs of the MPI modules `mpi` and `mpi_f08`
 - Compiler diagnostics from gfortran, ifx, ifort, LLVM Flang, nvfortran, nagfor or LFortran, next to zfls's own, and the linters fortitude and Codee (see [Compiler diagnostics](#compiler-diagnostics) and [Linters](#linters))
 - A debug adapter, `zfls dap`, that shows a program's variables as Fortran (see [A debugger](#a-debugger-zfls-dap)), and for a debugger of any kind the module variables a line sees, inline values and the tests of a file
@@ -73,7 +73,13 @@ The parser reads these in every file, whichever compiler is configured; the colu
 | `!DIR$ IGNORE_TKR`: no argument checks for the dummy arguments it names | – | – | – | ✓ | ✓ | – | – |
 | `!GCC$ ATTRIBUTES NO_ARG_CHECK` (gfortran), `!DIR$ ATTRIBUTES NO_ARG_CHECK` (Intel): no argument checks for the dummy arguments it names | ✓ | ✓ | ✓ | – | – | – | – |
 | `!DIR$ FIXED`, `!DIR$ FREE`: the source form of the lines after them | – | – | – | ✓ | – | – | – |
+| `!DEC$ NOFREEFORM`, `!DEC$ FREEFORM` (also `!DIR$`): the source form of the lines after them | – | ✓ | ✓ | – | – | – | – |
+| `!DEC$ FIXEDFORMLINESIZE:n` (also `!DIR$`): the line length of the fixed-form lines after it, in place of `fixed_line_length` | – | ✓ | ✓ | – | – | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| `AUTOMATIC` and `STATIC` (DEC) statements and attributes (gfortran's with `-fdec-static`) | ✓ | ✓ | ✓ | – | – | – | – |
+| `VIRTUAL` (DEC's `DIMENSION`), `PARAMETER` without parentheses (`PARAMETER N = 10`, of the type of its value) | – | ✓ | ✓ | – | – | – | – |
+| `$` in names, also first (`subroutine $$lib$random`; gfortran's with `-fdollar-ok`, after the first character) | ✓ | ✓ | ✓ | ✓ | – | – | – |
+| DEC's I/O statements: `ENCODE`, `DECODE`, `ACCEPT`, `DEFINE FILE`, `FIND`, the record of `READ (u'r)` | – | ✓ | ✓ | – | – | – | – |
 | TAB-format fixed form (DEC): a TAB in columns 1 to 6 stands for them, a nonzero digit after it marks a continuation line | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ○ |
 
 5. gfortran's with `-fdec-structure`.
@@ -239,9 +245,19 @@ flang -fms-runtime-lib=dll -fuse-ld=lld hello.f90 -o hello.exe
 
 zfls's build of a file to run does this too, outside a Visual Studio environment.
 
+An ifx whose own `ifx.cfg` does not choose its linker, such as conda-forge's (`ifx_win-64`, whose `ifx.cfg` is empty), links the same way: `/MD /fuse-ld=lld` has it run its own `lld-link` (in `Library\bin\compiler`), and `LIB` names the kit and ifx's libraries (`Library\lib`). Conda-forge's ifx does not find its own modules either (`iso_fortran_env`; its activation script adds them to `FFLAGS`), so `/I` names them:
+
+```bat
+set LIB=C:\zfls\ifx-kit;C:\conda\envs\ifx\Library\lib
+set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib
+ifx /MD /fuse-ld=lld /IC:\conda\envs\ifx\opt\compiler\include\intel64 hello.f90
+```
+
+zfls's build of a file to run does this for such an ifx, outside a Visual Studio environment, and leaves alone one whose `ifx.cfg` chooses the linker (`zfls setup-ifx`'s) or one that `IFXCFG` gives a configuration.
+
 ### Building a file to run or debug (`zfls/buildCommand`)
 
-zfls says how to build a Fortran file into a program to run or debug, so that every editor builds it the same way (the VS Code extension's Run Fortran File and Debug Fortran File run this build as a task): the compiler's default options for a debug build (`-g -O0`; `/Zi /Od` for ifx and ifort on Windows; `-g -O0 -static-libgfortran -static-libquadmath` for MinGW's gfortran, so that gdb stops at the errors its runtime raises; `-gdwarf-4 -O0 -Wl,-debug:dwarf` for LLVM Flang on Windows where it has an `lld-link`, for gdb; `-g` for LFortran, none on Windows), the file's directory on the include path, a directory of its own per source file in zfls's cache (`run` in it) for the program and the module and object files, and on Windows the link of LLVM Flang's and LFortran's programs with zfls's ifx kit (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)). It answers the request `zfls/buildCommand`, and the same on the command line:
+zfls says how to build a Fortran file into a program to run or debug, so that every editor builds it the same way (the VS Code extension's Run Fortran File and Debug Fortran File run this build as a task): the compiler's default options for a debug build (`-g -O0`; `/Zi /Od` for ifx and ifort on Windows; `-g -O0 -static-libgfortran -static-libquadmath` for MinGW's gfortran, so that gdb stops at the errors its runtime raises; `-gdwarf-4 -O0 -Wl,-debug:dwarf` for LLVM Flang on Windows where it has an `lld-link`, for gdb; `-g` for LFortran, none on Windows), the file's directory on the include path, a directory of its own per source file in zfls's cache (`run` in it) for the program and the module and object files, the modules of conda-forge's ifx (`-I`, `/I` on Windows), and on Windows the link of ifx's, LLVM Flang's and LFortran's programs with zfls's ifx kit (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)). It answers the request `zfls/buildCommand`, and the same on the command line:
 
 ```sh
 zfls build-command hello.f90 [--compiler C] [--compiler-path P] [--output-dir D] [--kit DIR] [-- ARGS...]
@@ -263,7 +279,7 @@ The request's parameters are `textDocument`, `compiler` (a name looked up on the
 }
 ```
 
-Run `compiler` with `args` in `cwd`, with `env` added to the environment (on Windows, the kit's `LIB` and `LINK`), then `program` with `runEnv` added (on Windows, the compiler's directory first on the `PATH`, for its runtime libraries). `debugInfo` is the program's debug information (`dwarf`, or `pdb` for Microsoft's) and `debugger` the debugger of `zfls dap` that fits it (`gdb`, `lldb` on macOS, `dbgeng` for a PDB; see [A debugger](#a-debugger-zfls-dap)). `note` says why a build links otherwise than it could (no ifx kit, no `lld-link`). Without a `textDocument`, the answer has only the compiler's part (`compiler`, `name`, `debugInfo`, `debugger`, `runEnv`), for a program built otherwise.
+Run `compiler` with `args` in `cwd`, with `env` added to the environment (on Windows, the compiler's directory first on the `PATH`, which MinGW's gfortran needs for its `f951` when it is given by its path, and the kit's `LIB` and `LINK`); when the answer has `linkArgs`, the build is in two steps: `args` compiles (`-c`), and `compiler` with `linkArgs`, run the same way, links. Then run `program` with `runEnv` added (on Windows, the compiler's directory first on the `PATH`, for its runtime libraries). `debugInfo` is the program's debug information (`dwarf`, or `pdb` for Microsoft's) and `debugger` the debugger of `zfls dap` that fits it (`gdb`, `lldb` on macOS, `dbgeng` for a PDB; see [A debugger](#a-debugger-zfls-dap)). `note` says why a build links otherwise than it could (no ifx kit, no `lld-link`). Nix's gfortran on macOS builds in two steps: its wrapper sets `DEVELOPER_DIR` to Nix's SDK, so the `dsymutil` that a `-g` build runs after linking finds no tool (`error: tool 'dsymutil' not found`) and the build fails; linked apart, the program has no `.dSYM`, and lldb reads the debug information from the object file, which stays in `cwd`. Without a `textDocument`, the answer has only the compiler's part (`compiler`, `name`, `debugInfo`, `debugger`, `runEnv`), for a program built otherwise.
 
 With Neovim, a command that builds the current file and runs it in a terminal:
 
@@ -273,11 +289,17 @@ vim.api.nvim_create_user_command("FortranRun", function()
   client:request("zfls/buildCommand", { textDocument = vim.lsp.util.make_text_document_params() }, function(_, cmd)
     if not cmd then return vim.notify("zfls: no compiler", vim.log.levels.ERROR) end
     local env = vim.tbl_extend("force", vim.fn.environ(), cmd.env, cmd.runEnv)
-    vim.system(vim.list_extend({ cmd.compiler }, cmd.args), { cwd = cmd.cwd, env = env, text = true }, vim.schedule_wrap(function(built)
-      if built.code ~= 0 then return vim.notify(built.stderr, vim.log.levels.ERROR) end
+    local function step(args, after)
+      vim.system(vim.list_extend({ cmd.compiler }, args), { cwd = cmd.cwd, env = env, text = true }, vim.schedule_wrap(function(built)
+        if built.code ~= 0 then return vim.notify(built.stderr, vim.log.levels.ERROR) end
+        after()
+      end))
+    end
+    local function run()
       vim.cmd.split()
       vim.fn.jobstart({ cmd.program }, { term = true, env = cmd.runEnv })
-    end))
+    end
+    step(cmd.args, cmd.linkArgs and function() step(cmd.linkArgs, run) end or run)
   end)
 end, {})
 ```
@@ -296,15 +318,16 @@ With Emacs, through `compile`:
           (append (mapcar (lambda (v) (format "%s=%s" (car v) (cdr v)))
                           (append (alist-get 'env cmd) (alist-get 'runEnv cmd)))
                   process-environment)))
-    (compile (concat (mapconcat #'shell-quote-argument (cons (alist-get 'compiler cmd) (append (alist-get 'args cmd) nil)) " ")
-                     " && " (shell-quote-argument (alist-get 'program cmd))))))
+    (cl-flet ((step (key) (when-let* ((args (alist-get key cmd)))
+                            (concat (mapconcat #'shell-quote-argument (cons (alist-get 'compiler cmd) (append args nil)) " ") " && "))))
+      (compile (concat (step 'args) (step 'linkArgs) (shell-quote-argument (alist-get 'program cmd)))))))
 ```
 
 With Helix, a key in `config.toml` (Linux and macOS, where the answer's environments are empty; with `jq`):
 
 ```toml
 [keys.normal.space]
-r = ":run-shell-command zfls build-command %{buffer_name} | jq -r '\"cd \" + (.cwd | @sh) + \" && \" + ([.compiler] + .args | map(@sh) | join(\" \")) + \" && \" + (.program | @sh)' | sh"
+r = ":run-shell-command zfls build-command %{buffer_name} | jq -r '\"cd \" + (.cwd | @sh) + \" && \" + ([.compiler] + .args | map(@sh) | join(\" \")) + (if .linkArgs then \" && \" + ([.compiler] + .linkArgs | map(@sh) | join(\" \")) else \"\" end) + \" && \" + (.program | @sh)' | sh"
 ```
 
 ### A debugger (`zfls dap`)

@@ -10,7 +10,7 @@ const Def = struct { []const u8, []const u8, bool };
 
 /// (field name, pattern, ignore case)
 const defs = [_]Def{
-    .{ "USE", "[ ]*USE([, ]+(?:INTRINSIC|NON_INTRINSIC))?[ :]+(\\w*)([, ]+ONLY[ :]+)?", true },
+    .{ "USE", "[ ]*USE([, ]+(?:INTRINSIC|NON_INTRINSIC))?[ :]+([\\w$]*)([, ]+ONLY[ :]+)?", true },
     .{ "IMPORT", "[ ]*IMPORT" ++
         "(?:" ++
         "[ ]*,[ ]*(?P<spec>ALL|NONE)" ++
@@ -23,12 +23,12 @@ const defs = [_]Def{
     .{ "CONTAINS", "[ ]*(CONTAINS)[ ]*$", true },
     .{ "IMPLICIT", "[ ]*IMPLICIT[ ]+([a-z]*)", true },
     .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE)\\b(?![,\\)][ ]*)", true },
-    .{ "SUB", "[ ]*SUBROUTINE[ ]+(\\w+)", true },
+    .{ "SUB", "[ ]*SUBROUTINE[ ]+([\\w$]+)", true },
     .{ "END_SUB", "SUBROUTINE", true },
-    .{ "FUN", "[ ]*FUNCTION[ ]+(\\w+)", true },
-    .{ "RESULT", "RESULT[ ]*\\((\\w*)\\)", true },
+    .{ "FUN", "[ ]*FUNCTION[ ]+([\\w$]+)", true },
+    .{ "RESULT", "RESULT[ ]*\\(([\\w$]*)\\)", true },
     .{ "END_FUN", "FUNCTION", true },
-    .{ "MOD", "[ ]*MODULE[ ]+(\\w+)", true },
+    .{ "MOD", "[ ]*MODULE[ ]+([\\w$]+)", true },
     .{ "END_MOD", "MODULE", true },
     .{ "SUBMOD", "[ ]*SUBMODULE[ ]*\\(", true },
     .{ "END_SMOD", "SUBMODULE", true },
@@ -57,13 +57,13 @@ const defs = [_]Def{
     // an assignment to an element of an array named rank)
     .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([ ]*[\\w*]*[ ]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
     .{ "END_SELECT", "SELECT", true },
-    .{ "PROG", "[ ]*PROGRAM[ ]+(\\w+)", true },
+    .{ "PROG", "[ ]*PROGRAM[ ]+([\\w$]+)", true },
     .{ "END_PROG", "PROGRAM", true },
-    .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*(\\w*)", true },
+    .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*([\\w$]*)", true },
     .{ "END_INT", "INTERFACE", true },
     .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK[ ]*DATA|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
         "|TYPE|STRUCTURE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
-        "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?!\\W)|$)", true },
+        "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?![^\\w$])|$)", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
     .{ "EXTENDS", "EXTENDS[ ]*\\((\\w*)\\)", true },
     .{ "GENERIC_PRO", "[ ]*(GENERIC)[, ]*(PRIVATE|PUBLIC)?[ ]*::[ ]*[a-z]", true },
@@ -90,10 +90,10 @@ const defs = [_]Def{
     .{ "PARAMETER_VAL", "\\w*[\\s\\&]*=(([\\s\\&]*[\\w\\.\\-\\+\\*\\/\\'\\\"])*)", true },
     .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS\\(\\w*\\))", true },
     .{ "VIS", "[ ]*\\b(PUBLIC|PRIVATE)\\b", true },
-    .{ "WORD", "[a-z_][\\w\\$]*", true },
+    .{ "WORD", "\\$*[a-z_][\\w\\$]*", true },
     .{ "NUMBER", "[\\+\\-]?(\\b\\d+\\.?\\d*|\\.\\d+)(_\\w+|d[\\+\\-]?\\d+|e[\\+\\-]?\\d+(_\\w+)?)?(?!\\w)", true },
     .{ "LOGICAL", ".true.|.false.", true },
-    .{ "SUB_PAREN", "\\([\\w, ]*\\)", true },
+    .{ "SUB_PAREN", "\\([\\w$, ]*\\)", true },
     .{ "SQ_STRING", "\\'[^\\']*\\'", true },
     .{ "DQ_STRING", "\\\"[^\\\"]*\\\"", true },
     // a preprocessor `#include "file"` or `#include <file>`, and its file name

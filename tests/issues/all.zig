@@ -24,6 +24,7 @@ test {
     _ = @import("doc_math.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("dollar_names.zig");
     _ = @import("ends.zig");
     _ = @import("extensions.zig");
     _ = @import("cuda_prefix.zig");
@@ -38,10 +39,13 @@ test {
     _ = @import("includes.zig");
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
+    _ = @import("intrinsics_intel.zig");
     _ = @import("hover_declarations.zig");
     _ = @import("hover_types.zig");
     _ = @import("intel_directives.zig");
+    _ = @import("intel_line_size.zig");
     _ = @import("plain_comments.zig");
+    _ = @import("predefined_macros.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
     _ = @import("macros.zig");
