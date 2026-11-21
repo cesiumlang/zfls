@@ -35,6 +35,7 @@ const definition = @import("definition.zig");
 const references = @import("references.zig");
 const bindc = @import("bindc.zig");
 const calls = @import("calls.zig");
+const compiler_macros = @import("compiler_macros.zig");
 
 /// Whether the workspace keeps summaries at all
 pub fn wanted(self: *const Server) bool {
@@ -80,7 +81,10 @@ fn parseFull(self: *Server, f: *FortranFile) parser.FileError!*Ast {
             };
             break :blk o;
         };
-        break :blk f.prepare(self.io, &self.pp_defs, self.s.include_dirs.slice(), opts) catch |e| return failed(e);
+        var defs_arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer defs_arena.deinit();
+        const defs = compiler_macros.defsFor(self, defs_arena.allocator(), f) catch return error.OutOfMemory;
+        break :blk f.prepare(self.io, defs, self.s.include_dirs.slice(), opts) catch |e| return failed(e);
     };
     return f.parsePrepared(out, opts) catch |e| failed(e);
 }
