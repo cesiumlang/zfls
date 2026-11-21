@@ -80,7 +80,8 @@ def zfls_only_item(item) -> bool:
     statement (hansec #62), or an intrinsic that fortls does not know."""
     if not isinstance(item, dict):
         return False
-    if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
+    # (not a variable of the same name: `int1`, Intel's INT1)
+    if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and item.get("kind") != 6:
         return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in item:
