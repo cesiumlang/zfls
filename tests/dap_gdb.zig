@@ -309,6 +309,9 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     _ = try c.request("setFunctionBreakpoints", .{ .breakpoints = [_]u8{} });
     _ = try c.request("configurationDone", .{});
     _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+    // no `gdb` in the configuration: the program's DWARF chose gdb, and zfls dap said so (#578)
+    const said = try c.outputText(a);
+    try check(std.mem.find(u8, said, "has DWARF debug information: debugging with gdb") != null, "the choice of gdb said: {s}", .{said});
 
     // in work: its arguments
     var stopped = get(try c.event("stopped"), "body").?;

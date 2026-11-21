@@ -72,6 +72,7 @@ pub const ifxsetup = @import("ifxsetup.zig");
 pub const executables = @import("executables.zig");
 pub const compiler_names = @import("compiler_names.zig");
 pub const run_debugger = @import("run/debugger.zig");
+pub const run_debug_info = @import("run/debug_info.zig");
 pub const run_compiler = @import("run/compiler.zig");
 pub const run_env = @import("run/env.zig");
 pub const run_kit = @import("run/kit.zig");
@@ -88,6 +89,7 @@ pub const dap_lldb = @import("dap/lldb.zig");
 pub const dap_gdb_entry = @import("dap/gdb_entry.zig");
 pub const dap_gdb_exit = @import("dap/gdb_exit.zig");
 pub const dap_lfortran = @import("dap/lfortran.zig");
+pub const dap_choice = @import("dap/choice.zig");
 
 test {
     std.testing.refAllDecls(@This());

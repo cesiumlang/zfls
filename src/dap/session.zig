@@ -73,6 +73,7 @@ const children = variables.children;
 const show = variables.show;
 const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
+const choice = @import("choice.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
 
@@ -238,7 +239,7 @@ pub const Session = struct {
         s.send(a, .{ .type = "event", .event = name, .body = body });
     }
 
-    fn output(s: *Session, a: Allocator, text: []const u8) void {
+    pub fn output(s: *Session, a: Allocator, text: []const u8) void {
         s.event(a, "output", .{ .category = "console", .output = text });
     }
 
@@ -449,7 +450,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
     const args = json.get(req, "arguments");
     if (std.mem.eql(u8, command, "initialize")) return initialize(s, a, req, args);
     if (std.mem.eql(u8, command, "launch") or std.mem.eql(u8, command, "attach")) {
-        if (s.want_dbgeng or flag(args, "dbgeng")) {
+        if (s.want_dbgeng or flag(args, "dbgeng") or choice.engineFits(s, a, args)) {
             if (!is_windows) return s.fail(a, req, "dbgeng: Windows's Debugger Engine is only on Windows");
             gdb.stop(s);
             if (!s.engine_ready.load(.acquire)) {
