@@ -7,7 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Obj = @import("../objects.zig").Obj;
 
-pub const Category = enum { unknown, integer, real, complex, logical, character, derived };
+pub const Category = enum { unknown, integer, real, complex, logical, character, derived, unsigned };
 
 /// The type of an argument
 pub const Typed = struct {
@@ -139,6 +139,7 @@ pub fn varCategory(v: *const Obj) Category {
 pub fn category(desc_in: []const u8) Category {
     const desc = std.mem.trim(u8, desc_in, " ");
     if (std.ascii.startsWithIgnoreCase(desc, "integer")) return .integer;
+    if (std.ascii.startsWithIgnoreCase(desc, "unsigned")) return .unsigned;
     if (std.ascii.startsWithIgnoreCase(desc, "real") or std.ascii.startsWithIgnoreCase(desc, "double precision")) return .real;
     if (std.ascii.startsWithIgnoreCase(desc, "complex") or std.ascii.startsWithIgnoreCase(desc, "double complex")) return .complex;
     if (std.ascii.startsWithIgnoreCase(desc, "logical")) return .logical;
@@ -173,6 +174,11 @@ pub fn literalCategory(arg: []const u8) ?Category {
     // a kind suffix
     if (std.mem.findScalar(u8, t, '_')) |u| t = t[0..u];
     if (t.len == 0 or !(std.ascii.isDigit(t[0]) or t[0] == '.')) return null;
+    // an unsigned one, `42u` (gfortran's `-funsigned`)
+    if (t.len > 1 and (t[t.len - 1] == 'u' or t[t.len - 1] == 'U')) {
+        for (t[0 .. t.len - 1]) |ch| if (!std.ascii.isDigit(ch)) return null;
+        return if (arg[0] == '-') null else .unsigned;
+    }
     var real = false;
     for (t, 0..) |ch, i| {
         if (std.ascii.isDigit(ch)) continue;
@@ -223,6 +229,7 @@ pub fn selectedRealKind(p: ?i64, r: ?i64) ?i64 {
 pub fn typeName(cat: Category) []const u8 {
     return switch (cat) {
         .integer => "INTEGER",
+        .unsigned => "UNSIGNED",
         .real => "REAL",
         .complex => "COMPLEX",
         .logical => "LOGICAL",

@@ -67,6 +67,7 @@ test {
     _ = @import("fpm_targets.zig");
     _ = @import("pull_diagnostics.zig");
     _ = @import("use.zig");
+    _ = @import("unsigned.zig");
     _ = @import("unused.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");

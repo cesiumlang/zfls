@@ -97,6 +97,7 @@ fn typeIn(env: Env, scope: *Obj, e: []const u8, line_no: usize, depth: usize) Al
         .complex => .{ .desc = "COMPLEX" },
         .logical => .{ .desc = "LOGICAL" },
         .character => .{ .desc = "CHARACTER" },
+        .unsigned => .{ .desc = "UNSIGNED" },
         .derived, .unknown => null,
     };
 }
