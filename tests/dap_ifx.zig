@@ -13,6 +13,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
+const zfls = @import("zfls");
 const dap = @import("dap_client.zig");
 const Client = dap.Client;
 const get = dap.get;
@@ -35,11 +36,13 @@ pub fn run(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Env
     };
     const banner = if (version.stderr.len > 0) version.stderr else version.stdout;
     std.debug.print("-- {s}\n", .{std.mem.trimEnd(u8, banner[0 .. std.mem.findScalar(u8, banner, '\n') orelse banner.len], "\r")});
-    // the long path (not `EMANSP~1`): ifx writes it in the PDB, and zfls
-    // finds the frames' files in its index of the root by it
-    const tmp = Io.Dir.cwd().realPathFileAlloc(io, tmp_given, a) catch tmp_given;
+    // built by the long path, so that the PDB names it; the source root as
+    // given, also by its short path (`EMANSP~1`, as `%TEMP%` gives it),
+    // which zfls indexes by the long one (#614)
+    const tmp = tmp_given;
+    const long = try zfls.paths.longName(a, try a.dupe(u8, tmp_given));
     const env = try environment(io, a, environ, ifx);
-    const grid = (try build(io, a, ifx, env, kit, tmp, "grid")) orelse return 1;
+    const grid = (try build(io, a, ifx, env, kit, long, "grid")) orelse return 1;
     {
         const c = try Client.startEnv(io, gpa, &.{ exe_zfls, "dap" }, env);
         defer c.deinit();
