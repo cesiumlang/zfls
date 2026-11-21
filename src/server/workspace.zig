@@ -46,6 +46,7 @@ const modfiles = @import("modfiles.zig");
 const summary = @import("summary.zig");
 const file_options = @import("file_options.zig");
 const source_form = @import("source_form.zig");
+const compiler_macros = @import("compiler_macros.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -354,7 +355,10 @@ pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileErro
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
     const opts = parseOptions(self);
-    const prepared = f.prepare(self.io, &self.pp_defs, self.s.include_dirs.slice(), opts) catch return error.ParseFailed;
+    var defs_arena = std.heap.ArenaAllocator.init(self.gpa);
+    defer defs_arena.deinit();
+    const defs = compiler_macros.defsFor(self, defs_arena.allocator(), f) catch return error.OutOfMemory;
+    const prepared = f.prepare(self.io, defs, self.s.include_dirs.slice(), opts) catch return error.ParseFailed;
     // or its AST from the index cache
     const ast = cache.parseFile(self, f, prepared, opts, rest) catch return error.ParseFailed;
     // Emulate Python's recursion limit (deeply nested scopes)
@@ -512,8 +516,9 @@ pub fn serveOnChange(self: *Server, a: Allocator, params: lsp.DidChangeParams) !
         // full relink, as is the memory of replaced ASTs reclaimed
         if (try addNeededFiles(self, a, file) or self.retired.items.len >= 16) try linking.fullRelink(self, a);
     } else if (file.preproc) {
-        const out = try file.preprocess(self.io, &self.pp_defs, &.{}, null);
-        try self.mergePpDefs(&out.defs);
+        const defs = try compiler_macros.defsFor(self, a, file);
+        const out = try file.preprocess(self.io, defs, &.{}, null);
+        try self.mergePpDefs(&out.defs, defs);
     }
     // zfls's diagnostics of the new text follow after a pause
     // (diagnostics_change_delay), as does the compiler's check of it
@@ -827,14 +832,17 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         }
     }
     const f = file orelse return error.FileNotFound;
-    const ast_new = f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), parseOptions(self)) catch {
+    var defs_arena = std.heap.ArenaAllocator.init(self.gpa);
+    defer defs_arena.deinit();
+    const defs = try compiler_macros.defsFor(self, defs_arena.allocator(), f);
+    const ast_new = f.parse(self.io, defs, self.s.include_dirs.slice(), parseOptions(self)) catch {
         self.log.err("Error while parsing file {s}", .{filepath});
         return error.ParseFailed;
     };
     {
         // everything that can fail before the new AST is installed
         errdefer ast_new.destroy();
-        try self.mergePpDefs(&f.pp_defs);
+        try self.mergePpDefs(&f.pp_defs, defs);
         if (!self.workspace.contains(f.path)) {
             try self.workspace.put(self.gpa, f.path, f);
             created = null;
