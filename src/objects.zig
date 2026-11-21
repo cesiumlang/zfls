@@ -263,9 +263,15 @@ pub const Variable = struct {
     group: Group = .none,
     /// Of a group: the names it lists, as written (`a, b(10)`)
     members: []const u8 = "",
+    /// A Cray pointer or pointee (`p` and `b` of `POINTER (p, b)`)
+    cray: ?Cray = null,
 };
 
 pub const Group = enum { none, common, namelist };
+
+/// What a Cray pointer statement makes a variable: the pointer or the
+/// pointee, and the name of the other
+pub const Cray = struct { role: enum { pointer, pointee }, other: []const u8 };
 
 /// A built-in procedure, keyword or statement
 pub const Intrinsic = struct {

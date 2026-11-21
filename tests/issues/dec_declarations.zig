@@ -1,6 +1,7 @@
 //! DEC's declarations, which ifx (and gfortran, with its options) accepts:
 //! the AUTOMATIC, STATIC and VIRTUAL statements and PARAMETER without
-//! parentheses (#503; the ifx and gfortran audits, #489 and #488).
+//! parentheses (#503; the ifx and gfortran audits, #489 and #488), and Cray
+//! pointers (#692).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -85,4 +86,33 @@ test "a PARAMETER without parentheses gives an argument the type of its value" {
     try std.testing.expectEqual(1, errors.items.len);
     try std.testing.expectEqual(14, errors.items[0].line);
     try std.testing.expect(std.mem.find(u8, errors.items[0].message, "takei") != null);
+}
+
+test "Cray pointers: the pointer an address, the pointee with the bounds of the POINTER statement (#692)" {
+    // gfortran -fcray-pointer, ifx and Flang: ptr INTEGER(8), arr(n, 2) of
+    // rank 2
+    const w = try h.Workspace.init(&.{.{ .name = "c.f90", .text =
+        \\subroutine cray(n)
+        \\  implicit none
+        \\  integer :: n
+        \\  real :: pointee(10)
+        \\  pointer (ptr, pointee), (p2, arr(n, 2))
+        \\  real :: arr
+        \\  print *, ptr, pointee(1), p2, arr(1, 1)
+        \\end subroutine cray
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("c.f90");
+    const line = "print *, ptr, pointee(1), p2, arr(1, 1)";
+    const want = [_]struct { []const u8, []const u8 }{
+        .{ "ptr", "INTEGER(8) :: ptr" },
+        .{ "ptr", "Cray pointer to `pointee`" },
+        .{ "pointee", "REAL, DIMENSION(10) :: pointee" },
+        .{ "pointee", "Cray pointee of `ptr`" },
+        .{ "p2", "INTEGER(8) :: p2" },
+        .{ "arr", "REAL, DIMENSION(n, 2) :: arr" },
+        .{ "arr", "Cray pointee of `p2`" },
+    };
+    for (want) |c| try w.expectHoverContains("c.f90", w.pos("c.f90", line, 0, std.mem.find(u8, line, c[0]).?), c[1]);
 }
