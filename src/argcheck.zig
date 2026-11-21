@@ -57,9 +57,9 @@ pub const Match = union(enum) {
     rank,
 };
 
-/// The rank of a dummy argument's DIMENSION (`:,:` 2, `*` 1), or null
-/// when it cannot be told
-fn rankOf(dims: ?[]const u8) ?usize {
+/// The rank of a DIMENSION (`:,:` 2, `*` 1), or null when it cannot be
+/// told
+pub fn rankOf(dims: ?[]const u8) ?usize {
     const d = std.mem.trim(u8, dims orelse return null, " ");
     if (d.len == 0) return null;
     var n: usize = 1;
@@ -450,7 +450,7 @@ pub const Checker = struct {
                 return null;
             }
             const t = (try c.exprType(inner, scope, line_no, depth + 1)) orelse return null;
-            return .{ .cat = t.cat, .array = t.array };
+            return .{ .cat = t.cat, .array = t.array, .rank = t.rank };
         }
         // an array constructor: the type of its first element
         if ((e[0] == '[' and e[e.len - 1] == ']') or (e.len >= 4 and std.mem.startsWith(u8, e, "(/") and std.mem.endsWith(u8, e, "/)"))) {
@@ -459,11 +459,12 @@ pub const Checker = struct {
             if (std.mem.find(u8, inner, "::") != null or std.mem.findScalar(u8, inner, '=') != null) return null;
             const first = inner[0 .. topLevel(inner, ',') orelse inner.len];
             const t = (try c.exprType(first, scope, line_no, depth + 1)) orelse return null;
-            return .{ .cat = t.cat, .array = true };
+            return .{ .cat = t.cat, .array = true, .rank = 1 };
         }
         // operands and the operators between them
         var cat: Category = .unknown;
         var array = false;
+        var rank: usize = 0;
         var relational = false;
         var logical_op = false;
         var concat = false;
@@ -487,6 +488,7 @@ pub const Checker = struct {
                 const t = (try c.exprType(e[i..end], scope, line_no, depth + 1)) orelse return null;
                 operands += 1;
                 array = array or t.array;
+                rank = @max(rank, t.rank);
                 cat = if (operands == 1) t.cat else promote(cat, t.cat);
                 i = end;
                 want_operand = false;
@@ -521,10 +523,10 @@ pub const Checker = struct {
         }
         if (want_operand or operands < 2) return null;
         if (cat == .unknown) return null;
-        if (relational or logical_op) return .{ .cat = .logical, .array = array };
-        if (concat) return if (cat == .character) .{ .cat = .character, .array = array } else null;
+        if (relational or logical_op) return .{ .cat = .logical, .array = array, .rank = rank };
+        if (concat) return if (cat == .character) .{ .cat = .character, .array = array, .rank = rank } else null;
         if (!numeric(cat)) return null;
-        return .{ .cat = cat, .array = array };
+        return .{ .cat = cat, .array = array, .rank = rank };
     }
 
     /// The type of a variable or a part of one: `x`, `a(i)` (a scalar),
@@ -533,6 +535,8 @@ pub const Checker = struct {
     fn designator(c: *Checker, e: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
         var v: ?*Obj = null;
         var array = false;
+        // the rank of the part that has one
+        var rank: usize = 0;
         var i: usize = 0;
         while (true) {
             const ns = i;
@@ -553,14 +557,17 @@ pub const Checker = struct {
                 const close = matching(e, i) orelse return null;
                 if (groups == 0 and is_array) {
                     subscripted = true;
-                    if (try c.isSection(e[i + 1 .. close], scope, line_no, depth)) |sec| {
-                        if (sec) array = true;
-                    } else return null;
+                    const sec = (try c.sectionRank(e[i + 1 .. close], scope, line_no, depth)) orelse return null;
+                    if (sec > 0) array = true;
+                    rank = @max(rank, sec);
                 } else if (varCategory(obj) != .character) return null;
                 i = close + 1;
                 while (i < e.len and e[i] == ' ') i += 1;
             }
-            if (is_array and !subscripted) array = true;
+            if (is_array and !subscripted) {
+                array = true;
+                rank = @max(rank, rankOf(obj.keyword_info.dimension) orelse 0);
+            }
             v = obj;
             if (i < e.len and e[i] == '%') {
                 i += 1;
@@ -571,7 +578,7 @@ pub const Checker = struct {
         }
         if (i != e.len) return null;
         const obj = v.?;
-        return .{ .cat = varCategory(obj), .array = array, .designator = true, .obj = obj };
+        return .{ .cat = varCategory(obj), .array = array, .rank = rank, .designator = true, .obj = obj };
     }
 
     /// A component of a variable of derived type, in its type or a type
@@ -588,23 +595,24 @@ pub const Checker = struct {
         return null;
     }
 
-    /// Whether subscripts select a section (a `:`, or an array as a
-    /// subscript); null when a subscript's type cannot be told
-    fn isSection(c: *Checker, subs: []const u8, scope: ?*Obj, line_no: usize, depth: usize) !?bool {
-        var section = false;
+    /// The rank of the section that subscripts select: the number of `:`
+    /// and of arrays (vector subscripts) among them, 0 for an element; null
+    /// when a subscript's type cannot be told
+    fn sectionRank(c: *Checker, subs: []const u8, scope: ?*Obj, line_no: usize, depth: usize) !?usize {
+        var rank: usize = 0;
         var start: usize = 0;
         while (start <= subs.len) {
             const end = if (topLevel(subs[start..], ',')) |k| start + k else subs.len;
             const sub = std.mem.trim(u8, subs[start..end], " ");
             if (topLevel(sub, ':') != null) {
-                section = true;
+                rank += 1;
             } else if (sub.len > 0) {
                 const t = (try c.exprType(sub, scope, line_no, depth + 1)) orelse return null;
-                if (t.array) section = true;
+                if (t.array) rank += 1;
             }
             start = end + 1;
         }
-        return section;
+        return rank;
     }
 
     /// The kind of a variable's type, as gfortran numbers kinds (4 for a

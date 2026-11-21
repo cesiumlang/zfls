@@ -323,6 +323,33 @@ def associate_bound(source: str) -> set:
     return out
 
 
+SELECT_STMT = re.compile(r"^\s*(?:\w+\s*:\s*)?select\s*(?:type|rank)\s*\(\s*(\w+)\s*=>", re.I | re.M)
+NOT_INHERITED = re.compile(r", (?:INTENT\([^)\n]*\)|ALLOCATABLE|POINTER|OPTIONAL|SAVE|VALUE|PROTECTED|TARGET)(?=,|$)", re.I)
+
+
+def select_bound(source: str) -> set:
+    """Lowercase names that SELECT TYPE and SELECT RANK statements of a
+    source file bind."""
+    return {m.group(1).lower() for m in SELECT_STMT.finditer(source)}
+
+
+def ignore_associate_attributes(v, names: set):
+    """fortls gives an associate name all the attributes of its selector;
+    zfls only those the standard gives it (TARGET for a POINTER, not
+    INTENT nor ALLOCATABLE; #691). Compare such names' declarations without
+    them."""
+    if isinstance(v, dict):
+        return {k: ignore_associate_attributes(x, names) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ignore_associate_attributes(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return NOT_INHERITED.sub("", m.group(1)) + m.group(2) + m.group(3) if m.group(3).lower() in names else m.group(0)
+
+        return re.sub(r"^([^\n]*?)( :: )(\w+)$", repl, v, flags=re.M)
+    return v
+
+
 def untyped_by_fortls(v, names: set) -> set:
     """The names of `names` that fortls's answer `v` gives the type UNKNOWN
     (in a hover, or as the detail of a completion item)."""
@@ -441,6 +468,15 @@ def on_enumerator_statement(lines: list, line: int) -> bool:
     if not (0 <= line < len(lines)):
         return False
     return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
+
+
+def on_parenthesized_kind(lines: list, line: int) -> bool:
+    """Whether the line declares with a kind in parentheses, `INTEGER((4))
+    x` (#690), whose names fortls does not read (its FIXME)."""
+    if not (0 <= line < len(lines)):
+        return False
+    pattern = r"\s*(integer|real|complex|logical|character)\s*\(\s*\("
+    return re.match(pattern, lines[line], re.I) is not None
 
 
 def on_import_statement(lines: list, line: int) -> bool:

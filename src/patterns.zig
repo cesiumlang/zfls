@@ -80,8 +80,8 @@ const defs = [_]Def{
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
         "|EXTERNAL|CLASS|TYPE|BYTE|UNSIGNED)", true },
-    // `()`: PROCEDURE() of no interface
-    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
+    // `()`: PROCEDURE() of no interface; `((4))`: a kind in parentheses
+    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:(]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
         "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++

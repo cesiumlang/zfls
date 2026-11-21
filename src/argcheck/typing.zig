@@ -14,6 +14,8 @@ pub const Category = enum { unknown, integer, real, complex, logical, character,
 pub const Typed = struct {
     cat: Category,
     array: bool = false,
+    /// of an array, its rank when it can be told, else 0
+    rank: usize = 0,
     literal: bool = false,
     /// a variable or a part of one (an element may start an array)
     designator: bool = false,

@@ -257,28 +257,48 @@ pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) 
 }
 
 pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
-    if (self.linkObj()) |l| {
-        if (self.varDataConst().slice_rank >= 0 and l.kind == .variable) {
-            // a name bound to a section has the rank of the section, not
-            // of the array it is cut from (upstream #108)
-            var ids: std.ArrayList(C.Kw) = .empty;
-            for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
-            var info = l.keyword_info.*;
-            info.dimension = null;
-            if (self.varDataConst().slice_rank > 0) {
-                try ids.append(a, KW.dimension);
-                var dims: std.ArrayList(u8) = .empty;
-                for (0..@as(usize, @intCast(self.varDataConst().slice_rank))) |i| {
-                    if (i > 0) try dims.append(a, ',');
-                    try dims.append(a, ':');
-                }
-                info.dimension = dims.items;
-            }
-            return helpers.getKeywords(a, ids.items, info);
-        }
-        return helpers.getKeywords(a, l.keywords.items, l.keyword_info.*);
+    const link = self.linkObj();
+    if (!isAssociateName(self)) {
+        const from = link orelse self;
+        return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
     }
-    return helpers.getKeywords(a, self.keywords.items, self.keyword_info.*);
+    const from = link orelse self;
+    if (from.kind != .variable) return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
+    // an associate name has the attributes of its selector that the
+    // standard gives it (TARGET for a POINTER), not ALLOCATABLE, INTENT, ...;
+    // and the rank of what it is bound to: a section of an array, not the
+    // array it is cut from (upstream #108), or an expression (#691)
+    const slice_rank = self.varDataConst().slice_rank;
+    var ids: std.ArrayList(C.Kw) = .empty;
+    for (from.keywords.items) |id| {
+        const kept: ?C.Kw = switch (id) {
+            .dimension => if (slice_rank < 0) id else null,
+            .codimension, .target, .asynchronous, .@"volatile", .contiguous => id,
+            .pointer => .target,
+            else => null,
+        };
+        if (kept) |k| if (std.mem.findScalar(C.Kw, ids.items, k) == null) try ids.append(a, k);
+    }
+    var info = from.keyword_info.*;
+    if (slice_rank >= 0) info.dimension = null;
+    if (slice_rank > 0) {
+        try ids.append(a, KW.dimension);
+        var dims: std.ArrayList(u8) = .empty;
+        for (0..@as(usize, @intCast(slice_rank))) |i| {
+            if (i > 0) try dims.append(a, ',');
+            try dims.append(a, ':');
+        }
+        info.dimension = dims.items;
+    }
+    return helpers.getKeywords(a, ids.items, info);
+}
+
+/// Whether variable `self` is the associate name of an ASSOCIATE, SELECT
+/// TYPE or SELECT RANK construct
+fn isAssociateName(self: *const Obj) bool {
+    if (self.kind != .variable) return false;
+    const p = self.parent orelse return false;
+    return p.kind == .associate or p.getType(false) == C.TypeId.select;
 }
 
 pub fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: ?usize) !void {

@@ -249,8 +249,9 @@ pub const Variable = struct {
     is_const: bool = false,
     is_external: bool = false,
     param_val: ?[]const u8 = null,
-    /// For an ASSOCIATE name bound to an array element or section, `b(:, 1)`:
-    /// the number of dimensions that remain (the sections), else -1
+    /// For an ASSOCIATE name: the rank of what it stands for when that is not
+    /// the rank of the variable it is linked to (`b(:, 1)`), or of the
+    /// expression it is bound to; else -1
     slice_rank: i32 = -1,
     link_name: ?[]const u8 = null,
     /// What the variable stands for: the procedure of a procedure pointer or
