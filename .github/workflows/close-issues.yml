@@ -1,0 +1,18 @@
+# Closes the issues a pull request names ("Closes #N") when it is merged
+# into dev; GitHub does that by itself only for the default branch.
+# pull_request, not pull_request_target: the latter always runs the
+# default branch's copy of this file, which reaches main only on a release.
+name: Close issues
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [dev]
+
+permissions:
+  issues: write
+
+jobs:
+  close:
+    if: github.event.pull_request.merged
+    uses: cesiumlang/.github/.github/workflows/close-issues.yml@main

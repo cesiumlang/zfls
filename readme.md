@@ -153,7 +153,7 @@ Each release also publishes `zfls-v<version>-src.tar.gz`, the sources with its s
 
 The extension replaces the Modern Fortran extension (it registers the same Fortran languages, grammars and snippets, with zfls instead of fortls) and recommends disabling Modern Fortran when both are enabled; see its [README](editors/vscode/README.md#replacing-modern-fortran).
 
-To work on it (Node.js 20 or later):
+To work on it: Node.js is the version in `.node-version`, which the `.envrc` selects through [fnm](https://github.com/Schniz/fnm) when [direnv](https://direnv.net) is installed (CI's workflows read it too).
 
 ```sh
 cd editors/vscode
@@ -161,6 +161,10 @@ npm ci
 npm run typecheck
 ZFLS_PATH=../../zig-out/bin/zfls npm test   # in a downloaded VS Code
 ```
+
+- `engines.vscode` is zfls's oldest supported VS Code (1.102); `@types/vscode` matches it, and `@types/node` and esbuild's target follow its Node.js (22).
+- Dependencies are pinned to exact versions and kept free of `npm audit` findings.
+- `overrides` in `package.json` forces `minimatch` 11.0.9: `@vscode/vsce` 4.1.1 and `vscode-languageclient` 11.0.0 ask for `^10.2.6`, which has [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) (fixed in 11.0.1). Drop the override once they depend on a fixed version.
 
 ## Usage
 

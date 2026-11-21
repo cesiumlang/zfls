@@ -29,9 +29,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
-  # 4.1.0: the first release with --oidc
-  VSCE_VERSION: 4.1.0
+  # 4.1.0: the first release with --oidc; the version package.json pins
+  VSCE_VERSION: 4.1.1
 
 jobs:
   publish:
@@ -40,9 +39,15 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
+      # only for .node-version
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .node-version
+          sparse-checkout-cone-mode: false
+
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
 
       # the platform packages, each with its zfls; and the universal one,
       # without a zfls, which the Marketplace serves to platforms with no

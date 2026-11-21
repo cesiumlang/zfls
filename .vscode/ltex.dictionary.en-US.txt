@@ -527,3 +527,4 @@ FFLAGS
 alist
 bufnr
 defun
+direnv
