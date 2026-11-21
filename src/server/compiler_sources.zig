@@ -18,6 +18,8 @@ const compiler_version = @import("compiler_version.zig");
 /// The modules of an executable's sources (in the server's arena)
 pub const Known = shipped.Modules;
 
+const no_modules: Known = .empty;
+
 /// The source file of module `name` (lowercase) that the compiler check's
 /// compiler of either form ships, if one does
 pub fn find(self: *Server, a: Allocator, name: []const u8) !?[]const u8 {
@@ -40,6 +42,8 @@ fn modulesOf(self: *Server, a: Allocator, id: compilers.Id, exe: []const u8) !*c
     const sa = self.arena.allocator();
     var k: Known = .empty;
     const found = if (id == .gfortran) shipped.gfortranDir(self.io, a, exe, self.toolEnv()) else try shipped.intelDir(self.io, a, exe);
+    // a gfortran that did not answer is asked again (not executable yet)
+    if (found == null and id == .gfortran) return &no_modules;
     if (found) |dir| {
         try shipped.scan(self.io, a, sa, dir, &k);
         self.log.info("{s}: {d} modules in the sources of {s}", .{ dir, k.count(), exe });
