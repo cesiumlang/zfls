@@ -5,7 +5,7 @@
 //! runtime error of a bound exceeded (`for__issue_diagnostic`, #492), and
 //! polymorphic objects and arrays by their dynamic type (#667), without
 //! the hidden length of a CHARACTER argument (#679), and the module
-//! variables (#680). The variables of each stop are shown, for what
+//! variables (#680), not also among the main program's locals (#683). The variables of each stop are shown, for what
 //! Intel's DWARF gives gdb.
 
 const std = @import("std");
@@ -156,6 +156,9 @@ pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
     try checkVariable(main_grid, "ncells", "42", "grid::ncells");
     try check(named(main_grid, "secret") == null, "no private secret in main", .{});
     try checkVariable(try moduleVariables(c, int(stack[0], "id").?, "counters"), "nhits => hits", "3", "counters::hits");
+    // grid's variables that main uses are not also locals; its own are (#683)
+    for ([_][]const u8{ "cx", "cy", "gname", "origin" }) |n| try check(named(main_locals, n) == null, "{s} not among main's locals", .{n});
+    for ([_][]const u8{ "k", "ip", "dl", "goal", "v", "m", "big" }) |n| try check(named(main_locals, n) != null, "{s} among main's locals", .{n});
 
     // a step: k = 4
     _ = try c.request("next", .{ .threadId = thread });
