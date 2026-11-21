@@ -71,6 +71,9 @@ pub const Node = struct {
         chunks: u64,
         modules: []const ModuleVariable,
         module: []const ModuleVariable,
+        /// Children read otherwise than through gdb (an array of
+        /// CHARACTER of kind 4's elements)
+        values: []const Variable,
     },
     frame: ?i64 = null,
     ctx: Context = .{},
@@ -131,6 +134,7 @@ pub fn add(s: *Session, n: Node) !i64 {
         .section => |e| .{ .section = try na.dupe(u8, e) },
         .modules => |vs| .{ .modules = try dupeVars(na, vs) },
         .module => |vs| .{ .module = try dupeVars(na, vs) },
+        .values => |vs| .{ .values = try dupeValues(na, vs) },
     };
     out.ctx = .{
         .evaluate_name = if (n.ctx.evaluate_name) |e| try na.dupe(u8, e) else null,
@@ -147,6 +151,18 @@ pub fn add(s: *Session, n: Node) !i64 {
 fn dupeVars(na: Allocator, vs: []const ModuleVariable) ![]const ModuleVariable {
     const out = try na.alloc(ModuleVariable, vs.len);
     for (vs, out) |v, *o| o.* = .{ .module = try na.dupe(u8, v.module), .name = try na.dupe(u8, v.name), .local = try na.dupe(u8, v.local), .type = try na.dupe(u8, v.type) };
+    return out;
+}
+
+/// Variables without children (`Node.values`): their strings copied
+fn dupeValues(na: Allocator, vs: []const Variable) ![]const Variable {
+    const out = try na.alloc(Variable, vs.len);
+    for (vs, out) |v, *o| o.* = .{
+        .name = try na.dupe(u8, v.name),
+        .value = try na.dupe(u8, v.value),
+        .type = if (v.type) |t| try na.dupe(u8, t) else null,
+        .evaluate_name = if (v.evaluate_name) |e| try na.dupe(u8, e) else null,
+    };
     return out;
 }
 
@@ -273,6 +289,7 @@ pub fn children(s: *Session, a: Allocator, ref: i64, node: Node) anyerror![]Vari
             try setNames(s, ref, out, names);
             return out;
         },
+        .values => |vs| return a.dupe(Variable, vs),
         .chunks => |count| {
             const cs = try fortran.chunks(a, count);
             const out = try a.alloc(Variable, cs.len);
@@ -398,6 +415,18 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
     // a CHARACTER of kind 4, whose type reads as an array
     if (at) |t| if (sub == null) if (try gdb_values.wideCharacter(s, a, t, evaluate_name, frame)) |text| {
         out.value = text;
+        return out;
+    };
+    // an array of them, whose type has the length first
+    if (at) |t| if (sub == null) if (try gdb_values.wideArray(s, a, t, evaluate_name, frame)) |elements| {
+        const dims = t.dims[1..];
+        if (dims.len == 1) {
+            const texts = try a.alloc([]const u8, elements.len);
+            for (elements, texts) |e, *x| x.* = e.value;
+            out.value = try fortran.arrayPreview(a, texts, elements.len);
+        } else out.value = try fortran.shapePreview(a, dims);
+        out.type = try gdb_values.wideArrayType(a, t);
+        out.ref = try add(s, .{ .kind = .{ .values = elements }, .frame = frame });
         return out;
     };
     // a string whose type reads as an array of characters (a dummy's of
