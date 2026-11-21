@@ -18,6 +18,7 @@ test {
     _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
     _ = @import("dec_declarations.zig");
+    _ = @import("dec_io.zig");
     _ = @import("dlines.zig");
     _ = @import("diagnostics.zig");
     _ = @import("doc_math.zig");
