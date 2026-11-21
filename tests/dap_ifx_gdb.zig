@@ -3,8 +3,9 @@
 //! tests/dap/grid.f90 as far as Intel's DWARF goes in gdb: line
 //! breakpoints, the stack, a step, an integer variable, and the stop at the
 //! runtime error of a bound exceeded (`for__issue_diagnostic`, #492), and
-//! polymorphic objects and arrays by their dynamic type (#667). The
-//! variables of each stop are shown, for what Intel's DWARF gives gdb.
+//! polymorphic objects and arrays by their dynamic type (#667), without
+//! the hidden length of a CHARACTER argument (#679). The variables of each
+//! stop are shown, for what Intel's DWARF gives gdb.
 
 const std = @import("std");
 const Io = std.Io;
@@ -102,8 +103,14 @@ pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
         if (eql(str(sc, "name"), "Registers")) continue;
         show(str(sc, "name") orelse "?", items(try c.request("variables", .{ .variablesReference = int(sc, "variablesReference") orelse 0 }), "variables"));
     }
-    // polymorphic: t a tagged, ts(:) of labeled, by their descriptors (#667)
     const args = try scopeVariables(c, int(stack[0], "id").?, "Arguments");
+    // s's hidden length, a local `S.len` of ifx's, left out (#679)
+    const s_arg = named(args, "s") orelse Value.null;
+    try check(eql(str(s_arg, "value"), "'abcdef'"), "s = {s} ({s})", .{ str(s_arg, "value") orelse "?", str(s_arg, "type") orelse "?" });
+    for (try scopeVariables(c, int(stack[0], "id").?, "Locals")) |x| {
+        try check(std.mem.findScalar(u8, str(x, "name") orelse "", '.') == null, "no hidden length in Locals: {s}", .{str(x, "name") orelse "?"});
+    }
+    // polymorphic: t a tagged, ts(:) of labeled, by their descriptors (#667)
     const t = named(args, "t") orelse Value.null;
     try check(eql(str(t, "type"), "class(point)") and std.mem.startsWith(u8, str(t, "value") orelse "", "tagged("), "t: {s} = {s}", .{ str(t, "type") orelse "?", str(t, "value") orelse "?" });
     const tc = items(try c.request("variables", .{ .variablesReference = int(t, "variablesReference") orelse 0 }), "variables");

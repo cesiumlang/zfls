@@ -344,9 +344,16 @@ pub fn isNullPointer(value: []const u8) bool {
 
 pub const Named = struct { name: []const u8, type: ?[]const u8 };
 
-/// Whether a variable is gfortran's hidden length of a CHARACTER argument
-/// (`_s` for `s`), which the program never names
+/// Whether a variable is a hidden length of a CHARACTER argument, which the
+/// program never names: gfortran's `_s` for `s`, or ifx's `S.len` (a local,
+/// apart from the argument; no Fortran name has a dot)
 pub fn isHiddenLength(name: []const u8, siblings: []const Named) bool {
+    if (std.mem.endsWith(u8, name, ".len")) {
+        const of = name[0 .. name.len - ".len".len];
+        if (of.len == 0 or !std.ascii.isAlphabetic(of[0])) return false;
+        for (of) |c| if (!std.ascii.isAlphanumeric(c) and c != '_') return false;
+        return true;
+    }
     if (name.len < 2 or name[0] != '_') return false;
     const of = name[1..];
     for (of) |c| if (!std.ascii.isAlphanumeric(c) and c != '_') return false;
@@ -696,6 +703,16 @@ test "gfortran's hidden lengths of CHARACTER arguments" {
     try std.testing.expect(isHiddenLength("_s", &args));
     try std.testing.expect(!isHiddenLength("_n", &args));
     try std.testing.expect(!isHiddenLength("s", &args));
+}
+
+test "ifx's hidden lengths of CHARACTER arguments" {
+    // work's Locals in gdb 15.1, ifx 2026.2 on Linux (#679)
+    try std.testing.expect(isHiddenLength("S.len", &.{}));
+    try std.testing.expect(isHiddenLength("my_name2.len", &.{}));
+    try std.testing.expect(!isHiddenLength(".len", &.{}));
+    try std.testing.expect(!isHiddenLength("_s.len", &.{}));
+    try std.testing.expect(!isHiddenLength("a%b.len", &.{}));
+    try std.testing.expect(!isHiddenLength("len", &.{}));
 }
 
 test "the dynamic type of a polymorphic object" {

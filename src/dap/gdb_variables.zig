@@ -4,7 +4,7 @@
 //! each variable (Add to Watch, Copy as Expression, setting values),
 //! previews of arrays and derived types, "not allocated" and "not
 //! associated", pointers as their targets, a polymorphic object (CLASS)
-//! with the components of its dynamic type, gfortran's hidden lengths of
+//! with the components of its dynamic type, gfortran's and ifx's hidden lengths of
 //! CHARACTER arguments and LFortran's temporaries left out, and the module
 //! variables that a frame's line sees (zfls's index of the sources).
 //! Part of `Session` (session.zig): each function takes it as `s`.
@@ -241,7 +241,7 @@ fn gdbChildren(s: *Session, a: Allocator, ref: i64) ![]Variable {
     return out;
 }
 
-/// `kids` without gfortran's hidden lengths, and without LFortran's
+/// `kids` without the hidden lengths of gfortran and ifx, and without LFortran's
 /// temporaries in an LFortran program
 fn hiddenFilter(a: Allocator, kids: []const Variable, lfortran_program: bool) ![]Variable {
     const named = try a.alloc(fortran.Named, kids.len);
