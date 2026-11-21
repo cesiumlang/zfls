@@ -12,6 +12,7 @@ pub fn eql(x: []const u8, y: []const u8) bool {
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
+const win32 = @import("win32");
 
 const is_windows = builtin.target.os.tag == .windows;
 
@@ -113,6 +114,27 @@ pub fn realpath(io: Io, a: Allocator, p: []const u8) ![]u8 {
     return rp[0..rp.len];
 }
 
+/// On Windows, the long form of a path that has 8.3 short names in it
+/// (`C:\Users\EMANSP~1\x`, as `%TEMP%` gives it), as the file system and
+/// compilers' debug information name it; `p` itself otherwise, also when
+/// it does not exist. Takes `p`, allocated with `a`.
+pub fn longName(a: Allocator, p: []u8) ![]u8 {
+    if (!is_windows) return p;
+    if (std.mem.findScalar(u8, p, '~') == null) return p;
+    const wide = std.unicode.wtf8ToWtf16LeAllocZ(a, p) catch return p;
+    defer a.free(wide);
+    // the length it needs (with the terminating 0), then the path
+    const need = win32.kernel32.GetLongPathNameW(wide.ptr, null, 0);
+    if (need == 0) return p;
+    const buf = try a.allocSentinel(u16, need, 0);
+    defer a.free(buf);
+    const n = win32.kernel32.GetLongPathNameW(wide.ptr, buf.ptr, need + 1);
+    if (n == 0 or n > need) return p;
+    const long = try std.unicode.wtf16LeToWtf8Alloc(a, buf[0..n]);
+    a.free(p);
+    return long;
+}
+
 pub fn isFile(io: Io, p: []const u8) bool {
     const st = Io.Dir.cwd().statFile(io, p, .{}) catch return false;
     return st.kind == .file;
@@ -183,9 +205,9 @@ pub fn isVirtualUri(s: []const u8) bool {
 /// document that is not a file is its own path
 pub fn pathFromUri(io: Io, a: Allocator, uri: []const u8) ![]u8 {
     if (isVirtualUri(uri)) return a.dupe(u8, uri);
-    if (!std.mem.startsWith(u8, uri, "file://")) return abspath(a, uri);
+    if (!std.mem.startsWith(u8, uri, "file://")) return longName(a, try abspath(a, uri));
     const p = try uriPath(a, uri["file://".len..], is_windows);
-    return realpath(io, a, p);
+    return longName(a, try realpath(io, a, p));
 }
 
 fn isDriveAt(s: []const u8, at: usize) bool {
@@ -320,4 +342,42 @@ test "uri round trip" {
     const u = try unquote(a, q);
     defer a.free(u);
     try std.testing.expectEqualStrings("C:/a b/c.f90", u);
+}
+
+/// The 8.3 short form of an existing path (Windows), or null where the
+/// volume makes no short names
+pub fn shortName(a: Allocator, p: []const u8) !?[]u8 {
+    if (!is_windows) return null;
+    const wide = try std.unicode.wtf8ToWtf16LeAllocZ(a, p);
+    defer a.free(wide);
+    const need = win32.kernel32.GetShortPathNameW(wide.ptr, null, 0);
+    if (need == 0) return null;
+    const buf = try a.allocSentinel(u16, need, 0);
+    defer a.free(buf);
+    const n = win32.kernel32.GetShortPathNameW(wide.ptr, buf.ptr, need + 1);
+    if (n == 0 or n > need) return null;
+    const short = try std.unicode.wtf16LeToWtf8Alloc(a, buf[0..n]);
+    if (std.mem.findScalar(u8, short, '~') == null) {
+        a.free(short);
+        return null;
+    }
+    return short;
+}
+
+test "a path by its 8.3 short name, as its long one" {
+    if (!is_windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "a long directory name/source file.f90");
+    const long = try tmp.dir.realPathFileAlloc(io, "a long directory name/source file.f90", a);
+    const short = try shortName(a, long) orelse return error.SkipZigTest;
+    try std.testing.expect(!std.mem.eql(u8, short, long));
+    try std.testing.expectEqualStrings(long, try longName(a, short));
+    // a name that does not exist, and one without a short name, unchanged
+    try std.testing.expectEqualStrings("C:\\NO~1\\x.f90", try longName(a, try a.dupe(u8, "C:\\NO~1\\x.f90")));
+    try std.testing.expectEqualStrings(long, try longName(a, try a.dupe(u8, long)));
 }
