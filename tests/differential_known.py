@@ -470,6 +470,15 @@ def on_enumerator_statement(lines: list, line: int) -> bool:
     return re.match(r"\s*enumerator\b", lines[line], re.I) is not None
 
 
+def on_parenthesized_kind(lines: list, line: int) -> bool:
+    """Whether the line declares with a kind in parentheses, `INTEGER((4))
+    x` (#690), whose names fortls does not read (its FIXME)."""
+    if not (0 <= line < len(lines)):
+        return False
+    pattern = r"\s*(integer|real|complex|logical|character)\s*\(\s*\("
+    return re.match(pattern, lines[line], re.I) is not None
+
+
 def on_import_statement(lines: list, line: int) -> bool:
     """Whether the line is an IMPORT statement, where zfls completes every
     name the host sees (#486) and fortls only those the interface body's

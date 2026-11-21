@@ -14,11 +14,10 @@ const Known = struct {
 
 /// fortls's corpus (`_fortls/test/test_source`), which CI checks
 const all = [_]Known{
-    .{ .file = "test_kinds_and_dims.f90", .diff = "missing in zfls: character_len_parsing::int_kind_imp (variable)", .why = "zfls, as fortls (its FIXME), does not read a kind in double parentheses, `INTEGER((4))`" },
     .{ .file = "preproc_else.F90", .diff = "missing in zfls: preprocessor_else::var (variable)", .why = "a dummy argument that nothing declares: gfortran types it implicitly, zfls has no object for it" },
     .{ .file = "test_rename_intrinsic.f90", .diff = "only in zfls: test_rename_intrinsic::size (procedure)", .why = "gfortran gives a generic interface named like an intrinsic (`size`) the intrinsic's INTRINSIC-PROC, which the oracle leaves out" },
     .{ .file = "test_abstract.f90", .diff = "only in zfls: test_abstract::test (procedure)", .why = "gfortran's symbol of `PROCEDURE(abs_interface) :: test` is IFSRC-IFBODY, as interface bodies are, which the oracle leaves out" },
-    .{ .file = "test_submod.F90", .diff = "missing in zfls: points_a::point_dist::distance (variable)", .why = "the result of a separate module procedure comes from its interface in the ancestor module, which zfls attaches only when linking a workspace, as `--debug_parser` does not" },
+    .{ .file = "test_submod.F90", .diff = "missing in zfls: points_a::point_dist::distance (variable)", .why = "the result of a separate module procedure comes from its interface in the ancestor module, which zfls attaches only in a workspace, not in `--debug_parser`" },
 };
 
 pub fn isKnown(file: []const u8, diff: []const u8) bool {

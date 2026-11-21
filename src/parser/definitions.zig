@@ -143,13 +143,14 @@ pub fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
     const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
     var kind_str: []const u8 = try std.mem.replaceOwned(u8, a, m.group(1).?, " ", "");
     var rest = line[m.end(0)..];
-    // `()` is whole
+    // `()` is whole; the match of `((4))` ends inside the inner parentheses
     if (std.mem.findScalar(u8, kind_str, '(') != null and !std.mem.endsWith(u8, kind_str, ")")) {
-        const mc = helpers.findParenMatch(rest);
+        const open = std.mem.findScalar(u8, line, '(').?;
+        const mc = helpers.findParenMatch(line[open + 1 ..]);
         if (mc < 0) return null; // Incomplete kind specification
-        const mcu: usize = @intCast(mc);
-        kind_str = try std.mem.concat(a, u8, &.{ kind_str, str.strip(rest[0 .. mcu + 1]) });
-        rest = rest[mcu + 1 ..];
+        const end = open + 1 + @as(usize, @intCast(mc)) + 1;
+        kind_str = try std.mem.concat(a, u8, &.{ kind_str, str.strip(line[m.end(0)..end]) });
+        rest = line[end..];
     }
     return .{ .kind = kind_str, .line = rest };
 }
@@ -827,6 +828,12 @@ test "read definitions" {
     try std.testing.expectEqualStrings("(kind=8)", r.var_.var_kind.?);
     try std.testing.expectEqual(@as(usize, 2), r.var_.var_names.?.len);
     try std.testing.expectEqualStrings("INTENT(IN)", r.var_.keywords[0]);
+    // a kind in parentheses (#690)
+    for ([_]struct { []const u8, []const u8 }{ .{ "INTEGER((4)) INT_KIND_IMP", "((4))" }, .{ "real ((8)+0) :: x", "((8)+0)" } }) |c| {
+        const p = (try readVarDef(a, c[0], null, false)).?;
+        try std.testing.expectEqualStrings(c[1], p.var_.var_kind.?);
+        try std.testing.expectEqual(@as(usize, 1), p.var_.var_names.?.len);
+    }
 
     const f = (try readFunDef(a, "pure real function foo(a, b) result(c)", null, false)).?;
     try std.testing.expectEqualStrings("foo", f.fun.name);
