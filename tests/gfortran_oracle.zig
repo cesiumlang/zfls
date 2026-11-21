@@ -5,14 +5,18 @@
 //! `-fdump-fortran-original`. The user-declared scopes and entities found by
 //! gfortran (modules, procedures, derived types and their components,
 //! type-bound procedures, variables and parameters) are compared with the
-//! object tree zfls prints with `--debug_parser`. gfortran serves as an
+//! object tree zfls prints with `--debug_parser`, and each variable's type
+//! and kind, rank, ALLOCATABLE, POINTER, TARGET and INTENT with what zfls's
+//! hover declares (gfortran_oracle/types.zig, #551). gfortran serves as an
 //! independent oracle for the Fortran semantics zfls approximates with
-//! line-based parsing.
+//! line-based parsing. The differences known, each with its reason, are in
+//! gfortran_oracle/known.zig.
 //!
 //!     gfortran_oracle [--gfortran EXE] [--zfls EXE] [-v] [PATH ...]
 //!
 //! PATH defaults to tests/fortran (the zfls fixtures) and tests/gfortran
-//! (gfortran's dialect). Directories are searched recursively; files
+//! (gfortran's dialect); CI also runs it on fortls's corpus
+//! (`_fortls/test/test_source`). Directories are searched recursively; files
 //! gfortran rejects are skipped (and fail the run for the fixtures, which
 //! are all valid Fortran). A fixture can give gfortran or zfls arguments on
 //! an `oracle-gfortran-args:` / `oracle-zfls-args:` line among its first
@@ -24,6 +28,8 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const lsp = @import("lsp_client");
 const util = @import("oracle_util.zig");
+const types = @import("gfortran_oracle/types.zig");
+const known = @import("gfortran_oracle/known.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 
@@ -130,6 +136,8 @@ fn lastPart(s: []const u8, sep: []const u8) []const u8 {
 const Gfortran = struct {
     entities: Entities = .empty,
     dummies: Names = .empty,
+    /// what the dump says of each variable
+    vars: std.StringHashMapUnmanaged(types.Var) = .empty,
 };
 
 /// The entities in gfortran's dump of `text` (`-fdump-fortran-original`)
@@ -142,6 +150,11 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
     var parents: std.StringHashMapUnmanaged([]const u8) = .empty;
     const Ns = struct { indent: usize, path: []const u8 };
     var stack: std.ArrayList(Ns) = .empty;
+    // the components of each DEC structure, union and map (by the dump's
+    // name), and the structures to give fields
+    var records: std.StringHashMapUnmanaged([]const types.Component) = .empty;
+    const Pending = struct { fq: []const u8, name: []const u8 };
+    var structures: std.ArrayList(Pending) = .empty;
     var i: usize = 0;
     while (i < lines.items.len) {
         const line = lines.items[i];
@@ -211,7 +224,14 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             (tokens.contains("USED-IN-SUBMODULE") and !tokens.contains("MODULE-PROCEDURE"));
         if (skip) continue;
         const fq = try a.print("{s}::{s}", .{ ns, name });
-        if (tokens.contains("DERIVED")) {
+        if (tokens.contains("STRUCTURE") or tokens.contains("UNION")) {
+            // DEC's: a structure is a type, whose unions' maps' fields are
+            // its own
+            try records.put(a, sym.name, try types.components(a, block));
+            if (types.isArtificial(sym.name)) continue;
+            try out.entities.put(a, fq, .type);
+            try structures.append(a, .{ .fq = fq, .name = sym.name });
+        } else if (tokens.contains("DERIVED")) {
             try out.entities.put(a, fq, .type);
             var in_components = false;
             for (block) |b| {
@@ -238,8 +258,14 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             if (!gop.found_existing) gop.value_ptr.* = .procedure;
         } else if (tokens.contains("VARIABLE") or tokens.contains("PARAMETER")) {
             try out.entities.put(a, fq, .variable);
+            try out.vars.put(a, fq, types.varOf(block));
             if (tokens.contains("DUMMY")) try out.dummies.put(a, fq, {});
         }
+    }
+    for (structures.items) |s| {
+        var names: std.ArrayList([]const u8) = .empty;
+        try types.fields(a, &records, s.name, &names);
+        for (names.items) |f| try out.entities.put(a, try a.print("{s}::{s}", .{ s.fq, try lower(a, f) }), .variable);
     }
     return out;
 }
@@ -248,6 +274,8 @@ const Zfls = struct {
     entities: Entities = .empty,
     /// MODULE PROCEDURE bodies
     bodies: Names = .empty,
+    /// the first line of each variable's hover (its Declarations)
+    decls: std.StringHashMapUnmanaged([]const u8) = .empty,
 };
 
 /// The entities of zfls's object tree (`--debug_parser` output), null when
@@ -266,6 +294,15 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
         const fqsn = line[colon + 2 ..];
         if (fqsn.len == 0 or std.mem.findAny(u8, fqsn, " \t") != null) continue;
         try rows.append(a, .{ .kind = kind, .fqsn = fqsn });
+    }
+    var declared: std.StringHashMapUnmanaged([]const u8) = .empty;
+    if (std.mem.find(u8, out, "\nDeclarations")) |d| {
+        var lines = std.mem.splitScalar(u8, out[d..], '\n');
+        while (lines.next()) |raw| {
+            const line = std.mem.trimEnd(u8, raw, "\r");
+            const sep = std.mem.find(u8, line, ": ") orelse continue;
+            try declared.put(a, line[0..sep], line[sep + 2 ..]);
+        }
     }
     // block, select, do, where, if, associate and enum scopes
     var constructs: Names = .empty;
@@ -289,6 +326,7 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
         }
         if (r.kind == -1) try res.bodies.put(a, kept.items, {});
         try res.entities.put(a, kept.items, zflsKind(r.kind));
+        if (declared.get(r.fqsn)) |d| try res.decls.put(a, kept.items, d);
     }
     // scopes found by gfortran as namespaces, not entities
     var i: usize = 0;
@@ -414,25 +452,34 @@ pub fn main(init: std.process.Init) !u8 {
             if (got.bodies.contains(scope)) _ = ref.entities.swapRemove(d.*);
         }
         checked += 1;
-        var missing: std.ArrayList([]const u8) = .empty;
-        var extra: std.ArrayList([]const u8) = .empty;
-        var kinds: std.ArrayList([]const u8) = .empty;
+        var diffs: std.ArrayList([]const u8) = .empty;
         for (ref.entities.keys(), ref.entities.values()) |name, kind| {
             if (got.entities.get(name)) |zk| {
-                if (!sameKind(kind, zk)) try kinds.append(a, name);
-            } else try missing.append(a, name);
+                if (!sameKind(kind, zk)) try diffs.append(a, try a.print("kind differs: {s} gfortran={s} zfls={s}", .{ name, @tagName(kind), @tagName(zk) }));
+            } else try diffs.append(a, try a.print("missing in zfls: {s} ({s})", .{ name, @tagName(kind) }));
         }
-        for (got.entities.keys()) |name| if (!ref.entities.contains(name)) try extra.append(a, name);
-        for ([_]*std.ArrayList([]const u8){ &missing, &extra, &kinds }) |l| std.mem.sort([]const u8, l.items, {}, util.lessThan);
-        if (missing.items.len + extra.items.len + kinds.items.len == 0) {
-            std.debug.print("OK   {s}: {d} entities\n", .{ src, ref.entities.count() });
+        for (got.entities.keys(), got.entities.values()) |name, zk| if (!ref.entities.contains(name))
+            try diffs.append(a, try a.print("only in zfls: {s} ({s})", .{ name, @tagName(zk) }));
+        var vit = ref.vars.iterator();
+        while (vit.next()) |e| {
+            const decl = got.decls.get(e.key_ptr.*) orelse continue;
+            if (try types.mismatch(a, e.value_ptr.*, decl)) |why| try diffs.append(a, try a.print("differs: {s}: {s}", .{ e.key_ptr.*, why }));
+        }
+        std.mem.sort([]const u8, diffs.items, {}, util.lessThan);
+        const base = std.Io.Dir.path.basename(src);
+        var unexpected: std.ArrayList([]const u8) = .empty;
+        var expected: usize = 0;
+        for (diffs.items) |d| {
+            if (known.isKnown(base, d)) expected += 1 else try unexpected.append(a, d);
+        }
+        if (unexpected.items.len == 0) {
+            std.debug.print("OK   {s}: {d} entities, {d} known differences\n", .{ src, ref.entities.count(), expected });
+            if (verbose) for (diffs.items) |d| std.debug.print("   known: {s}\n", .{d});
             continue;
         }
         mismatched += 1;
         std.debug.print("FAIL {s}\n", .{src});
-        for (missing.items) |n| std.debug.print("   missing in zfls: {s} ({s})\n", .{ n, @tagName(ref.entities.get(n).?) });
-        for (extra.items) |n| std.debug.print("   only in zfls:    {s} ({s})\n", .{ n, @tagName(got.entities.get(n).?) });
-        for (kinds.items) |n| std.debug.print("   kind differs:    {s} gfortran={s} zfls={s}\n", .{ n, @tagName(ref.entities.get(n).?), @tagName(got.entities.get(n).?) });
+        for (unexpected.items) |d| std.debug.print("   {s}\n", .{d});
     }
     std.debug.print("\n{d} files checked, {d} with differences\n", .{ checked, mismatched });
     return if (mismatched > 0) 1 else 0;

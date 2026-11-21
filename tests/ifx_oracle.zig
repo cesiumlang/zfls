@@ -5,7 +5,7 @@
 //! Each file is compiled with `ifx /c /list /show:map` (Linux `-c -list
 //! -show map`); its SYMBOL CROSS REFERENCE, SUBPROGRAMS and TYPE COMPONENTS
 //! (ifx_oracle/listing.zig) are compared with the Object Tree and the
-//! Declarations of `zfls --debug_parser` (ifx_oracle/zfls.zig): the
+//! Declarations of `zfls --debug_parser` (oracle_zfls.zig): the
 //! procedures, program units, derived types, their components and
 //! type-bound procedures, and the variables, with their types and kinds,
 //! ranks, ALLOCATABLE, POINTER, TARGET and INTENT. ifx names a host's or a
@@ -27,7 +27,7 @@ const Allocator = std.mem.Allocator;
 const lsp = @import("lsp_client");
 const util = @import("oracle_util.zig");
 const listing = @import("ifx_oracle/listing.zig");
-const zfls_side = @import("ifx_oracle/zfls.zig");
+const zfls_side = @import("oracle_zfls.zig");
 const known = @import("ifx_oracle/known.zig");
 
 const is_windows = sysinfo.target.os.tag == .windows;
@@ -131,6 +131,26 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     return out;
 }
 
+/// Whether ifx's `listed` (`R(8)`, `C(16)` in bytes, `CHAR`, `RECORD`, a
+/// type's name) is type `t`
+fn ifxType(a: Allocator, t: zfls_side.Type, listed: []const u8) !bool {
+    return switch (t) {
+        .character => std.mem.eql(u8, listed, "CHAR"),
+        .derived => |d| std.ascii.eqlIgnoreCase(listed, d.name) or std.mem.eql(u8, listed, "RECORD"),
+        .intrinsic => |i| std.mem.eql(u8, listed, try a.print("{c}({d})", .{ i.name[0], @as(u16, i.kind) * @as(u16, if (i.name[0] == 'C') 2 else 1) })),
+    };
+}
+
+test ifxType {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expect(try ifxType(a, .{ .intrinsic = .{ .name = "COMPLEX", .kind = 8 } }, "C(16)"));
+    try std.testing.expect(try ifxType(a, .{ .intrinsic = .{ .name = "REAL", .kind = 4 } }, "R(4)"));
+    try std.testing.expect(!try ifxType(a, .{ .intrinsic = .{ .name = "INTEGER", .kind = 4 } }, "I(8)"));
+    try std.testing.expect(try ifxType(a, .{ .derived = .{ .name = "SHAPE", .class = true } }, "RECORD"));
+}
+
 fn hasInterfaceVar(objs: []const zfls_side.Object, name: []const u8) bool {
     for (objs) |o| if (o.kind == 6 and std.mem.eql(u8, o.name(), name)) return true;
     return false;
@@ -157,10 +177,8 @@ fn mismatch(a: Allocator, o: zfls_side.Object, e: listing.Entry) !?[]const u8 {
     const decl = o.declaration orelse return null;
     // the type and attributes, not the name nor the value
     const up = try std.ascii.allocUpperString(a, decl[0 .. std.mem.find(u8, decl, " :: ") orelse decl.len]);
-    if (e.type.len > 0) if (try zfls_side.ifxTypes(a, zfls_side.typeSpec(decl))) |want| {
-        var ok = false;
-        for (want) |w| ok = ok or std.ascii.eqlIgnoreCase(w, e.type);
-        if (!ok) return try a.print("type {s}, ifx {s}", .{ zfls_side.typeSpec(decl), e.type });
+    if (e.type.len > 0) if (try zfls_side.typeOf(a, zfls_side.typeSpec(decl))) |t| {
+        if (!try ifxType(a, t, e.type)) return try a.print("type {s}, ifx {s}", .{ zfls_side.typeSpec(decl), e.type });
     };
     const r = zfls_side.rank(up);
     if ((e.rank orelse 0) != r) return try a.print("rank {d}, ifx {?d}", .{ r, e.rank });
