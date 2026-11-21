@@ -10,6 +10,8 @@ const sysinfo = @import("builtin");
 const compilers = @import("../compilers.zig");
 const compiler_names = @import("../compiler_names.zig");
 const intel = @import("../compilers/intel.zig");
+const flang_modules = @import("../compilers/flang_modules.zig");
+const tools = @import("../server/tools.zig");
 const executables = @import("../executables.zig");
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
@@ -117,7 +119,7 @@ pub fn plan(a: Allocator, ctx: Context, r: Request) !?Answer {
     const program = try std.Io.Dir.path.join(a, &.{ out_dir, try programName(a, source, os) });
     var note: ?[]const u8 = null;
     const link = try kitLink(a, ctx, id, exe, lld, r.args, &note);
-    ans.args = try compiler.buildArgs(a, k, source, program, r.args, try std.mem.concat(a, []const u8, &.{ try modules(a, ctx.io, id, exe), link.args }));
+    ans.args = try compiler.buildArgs(a, k, source, program, r.args, try std.mem.concat(a, []const u8, &.{ try modules(a, ctx, id, exe), link.args }));
     ans.cwd = out_dir;
     ans.env = .{ .items = link.env };
     ans.program = program;
@@ -131,12 +133,23 @@ fn lldLink(a: Allocator, ctx: Context, exe: []const u8) !?[]const u8 {
         try executables.onPath(a, ctx.io, ctx.env, "lld-link");
 }
 
-/// The include option for the modules of an ifx whose driver does not find
-/// them (conda-forge's: `intel.moduleDir`)
-fn modules(a: Allocator, io: Io, id: ?compilers.Id, exe: []const u8) ![]const []const u8 {
-    if (id != .ifx and id != .ifort) return &.{};
-    const dir = try intel.moduleDir(io, a, exe) orelse return &.{};
-    return compilers.include(a, id.?, dir, .{ .windows = os == .windows, .mod_dir = "" });
+/// The options for the intrinsic modules of a compiler whose driver does
+/// not find them, as the compiler check passes them: conda-forge's ifx
+/// (`intel.moduleDir`) and conda-forge's LLVM Flang for Linux
+/// (`flang_modules.intrinsicModules`, from its `--version`)
+fn modules(a: Allocator, ctx: Context, id: ?compilers.Id, exe: []const u8) ![]const []const u8 {
+    switch (id orelse return &.{}) {
+        .ifx, .ifort => {
+            const dir = try intel.moduleDir(ctx.io, a, exe) orelse return &.{};
+            return compilers.include(a, id.?, dir, .{ .windows = os == .windows, .mod_dir = "" });
+        },
+        .flang => {
+            const r = tools.run(a, ctx.io, .{ .argv = &.{ exe, "--version" }, .environ_map = ctx.env, .timeout = tools.seconds(10) }) catch return &.{};
+            const dir = try flang_modules.intrinsicModules(ctx.io, a, r.stdout) orelse return &.{};
+            return a.dupe([]const u8, &.{ "-fintrinsic-modules-path", dir });
+        },
+        else => return &.{},
+    }
 }
 
 /// How ifx, LLVM Flang and LFortran link on Windows: with lld-link and the
