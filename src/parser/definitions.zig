@@ -617,7 +617,7 @@ pub fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
 /// anchored at the start of the line, after spaces; the words are those its
 /// pattern (VAR, SUB, FUN, BLOCK_DATA, ...) can begin with.
 pub const def_tests = [_]DefTestEntry{
-    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type", "byte" } },
+    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type", "byte", "unsigned" } },
     .{ .read = readSubDef1, .starts = &(.{"subroutine"} ++ proc_prefixes) },
     .{ .read = readFunDef1, .starts = &(.{"function"} ++ proc_prefixes) },
     .{ .read = readBlockDataDef, .starts = &.{"block"} },
@@ -681,9 +681,9 @@ pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
 /// The words of a procedure's prefix that may come before its CUDA
 /// Fortran `attributes(...)`, and the types of a function's result
 const prefix_words = [_][]const u8{
-    "pure",    "impure", "elemental", "recursive",       "non_recursive", "module", "simple",
-    "integer", "real",   "complex",   "logical",         "character",     "double", "precision",
-    "type",    "class",  "byte",      "doubleprecision", "doublecomplex",
+    "pure",    "impure", "elemental", "recursive",       "non_recursive", "module",   "simple",
+    "integer", "real",   "complex",   "logical",         "character",     "double",   "precision",
+    "type",    "class",  "byte",      "doubleprecision", "doublecomplex", "unsigned",
 };
 
 /// A procedure statement with the CUDA Fortran prefix `attributes(...)`

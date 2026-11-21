@@ -78,6 +78,7 @@ The parser reads these in every file, whichever compiler is configured; the colu
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 | `AUTOMATIC` and `STATIC` (DEC) statements and attributes (gfortran's with `-fdec-static`) | ✓ | ✓ | ✓ | – | – | – | – |
 | `VIRTUAL` (DEC's `DIMENSION`), `PARAMETER` without parentheses (`PARAMETER N = 10`, of the type of its value) | – | ✓ | ✓ | – | – | – | – |
+| `UNSIGNED` (`unsigned(kind=8)`, `42u`, `SELECTED_UNSIGNED_KIND`, `UINT`; with `-funsigned`, gfortran's from GCC 15) | ✓ | – | – | ✓ | – | – | ○ |
 | `$` in names, also first (`subroutine $$lib$random`; gfortran's with `-fdollar-ok`, after the first character) | ✓ | ✓ | ✓ | ✓ | – | – | – |
 | DEC's I/O statements: `ENCODE`, `DECODE`, `ACCEPT`, `DEFINE FILE`, `FIND`, the record of `READ (u'r)` | – | ✓ | ✓ | – | – | – | – |
 | TAB-format fixed form (DEC): a TAB in columns 1 to 6 stands for them, a nonzero digit after it marks a continuation line | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ○ |

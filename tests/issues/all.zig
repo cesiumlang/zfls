@@ -67,6 +67,7 @@ test {
     _ = @import("fpm_targets.zig");
     _ = @import("pull_diagnostics.zig");
     _ = @import("use.zig");
+    _ = @import("unsigned.zig");
     _ = @import("unused.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
@@ -74,6 +75,7 @@ test {
     _ = @import("compiler_flang.zig");
     _ = @import("compiler_intel.zig");
     _ = @import("compiler_gfortran.zig");
+    _ = @import("compiler_tabs.zig");
     _ = @import("compiler_includes.zig");
     _ = @import("compiler_include_globs.zig");
     _ = @import("flang_modules.zig");
