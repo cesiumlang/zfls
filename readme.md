@@ -239,9 +239,19 @@ flang -fms-runtime-lib=dll -fuse-ld=lld hello.f90 -o hello.exe
 
 zfls's build of a file to run does this too, outside a Visual Studio environment.
 
+An ifx whose own `ifx.cfg` does not choose its linker, such as conda-forge's (`ifx_win-64`, whose `ifx.cfg` is empty), links the same way: `/MD /fuse-ld=lld` has it run its own `lld-link` (in `Library\bin\compiler`), and `LIB` names the kit and ifx's libraries (`Library\lib`). Conda-forge's ifx does not find its own modules either (`iso_fortran_env`; its activation script adds them to `FFLAGS`), so `/I` names them:
+
+```bat
+set LIB=C:\zfls\ifx-kit;C:\conda\envs\ifx\Library\lib
+set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib
+ifx /MD /fuse-ld=lld /IC:\conda\envs\ifx\opt\compiler\include\intel64 hello.f90
+```
+
+zfls's build of a file to run does this for such an ifx, outside a Visual Studio environment, and leaves alone one whose `ifx.cfg` chooses the linker (`zfls setup-ifx`'s) or one that `IFXCFG` gives a configuration.
+
 ### Building a file to run or debug (`zfls/buildCommand`)
 
-zfls says how to build a Fortran file into a program to run or debug, so that every editor builds it the same way (the VS Code extension's Run Fortran File and Debug Fortran File run this build as a task): the compiler's default options for a debug build (`-g -O0`; `/Zi /Od` for ifx and ifort on Windows; `-g -O0 -static-libgfortran -static-libquadmath` for MinGW's gfortran, so that gdb stops at the errors its runtime raises; `-gdwarf-4 -O0 -Wl,-debug:dwarf` for LLVM Flang on Windows where it has an `lld-link`, for gdb; `-g` for LFortran, none on Windows), the file's directory on the include path, a directory of its own per source file in zfls's cache (`run` in it) for the program and the module and object files, and on Windows the link of LLVM Flang's and LFortran's programs with zfls's ifx kit (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)). It answers the request `zfls/buildCommand`, and the same on the command line:
+zfls says how to build a Fortran file into a program to run or debug, so that every editor builds it the same way (the VS Code extension's Run Fortran File and Debug Fortran File run this build as a task): the compiler's default options for a debug build (`-g -O0`; `/Zi /Od` for ifx and ifort on Windows; `-g -O0 -static-libgfortran -static-libquadmath` for MinGW's gfortran, so that gdb stops at the errors its runtime raises; `-gdwarf-4 -O0 -Wl,-debug:dwarf` for LLVM Flang on Windows where it has an `lld-link`, for gdb; `-g` for LFortran, none on Windows), the file's directory on the include path, a directory of its own per source file in zfls's cache (`run` in it) for the program and the module and object files, the modules of conda-forge's ifx (`-I`, `/I` on Windows), and on Windows the link of ifx's, LLVM Flang's and LFortran's programs with zfls's ifx kit (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)). It answers the request `zfls/buildCommand`, and the same on the command line:
 
 ```sh
 zfls build-command hello.f90 [--compiler C] [--compiler-path P] [--output-dir D] [--kit DIR] [-- ARGS...]
