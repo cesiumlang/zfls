@@ -66,11 +66,12 @@ test "zfls's own platform's default agrees with the gfortran there (CI: every pl
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const exe = std.c.getenv("GFORTRAN") orelse "gfortran";
+    var env = try std.testing.environ.createMap(a);
+    const exe = env.get("GFORTRAN") orelse "gfortran";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const dir = try tmp.dir.realPathFileAlloc(io, ".", a);
-    const defs = zfls.compilers_predefined.ask(a, a, .gfortran, std.mem.span(exe), .{ .io = io, .env = null, .work_dir = dir, .cwd = null, .openmp = false }) orelse return error.SkipZigTest;
+    const defs = zfls.compilers_predefined.ask(a, a, .gfortran, exe, .{ .io = io, .env = &env, .work_dir = dir, .cwd = null, .openmp = false }) orelse return error.SkipZigTest;
     var real10 = false;
     for (defs) |d| if (std.mem.eql(u8, d.name, "__GFC_REAL_10__")) {
         real10 = true;
