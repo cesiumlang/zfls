@@ -1,7 +1,9 @@
 //! The symbols a compiler predefines, asked of it: gfortran's, from
 //! `gfortran -cpp -dM -E` of an empty input (#541), and ifx's and ifort's,
-//! which have no `-dM`, from `-fpp -E` of a probe file that tests each name
-//! of `intel_names` (#509); with OpenMP's option when `openmp`
+//! which have no `-dM` (ifx 2026.2.0 on Linux: "ignoring unknown option
+//! '-dM'"), from the `-D` options its driver gives fpp (`-###`, #656), else
+//! from `-fpp -E` of a probe file that tests each name of `intel_names`
+//! (#509); with OpenMP's option when `openmp`
 //! (`_OPENMP`). gfortran predefines no target macros (`_WIN32`,
 //! `__linux__`, `__x86_64__`: gfortran 16.1 of MSYS2). For the server
 //! (server/compiler_macros.zig) and `--debug_parser` (debug.zig).
@@ -110,11 +112,13 @@ fn gfortranMacros(a: Allocator, out_a: Allocator, exe: []const u8, how: Ask) ?[]
     return parseDefines(out_a, r.stdout) catch null;
 }
 
-/// Intel's: its preprocessor's output of the probe file
+/// Intel's: the `-D` options its driver gives fpp, else its preprocessor's
+/// output of the probe file
 fn intelMacros(a: Allocator, out_a: Allocator, exe: []const u8, how: Ask) ?[]const Macro {
     Io.Dir.cwd().createDirPath(how.io, how.work_dir) catch return null;
     const probe = std.Io.Dir.path.join(a, &.{ how.work_dir, "zfls_predefined.F90" }) catch return null;
     Io.Dir.cwd().writeFile(how.io, .{ .sub_path = probe, .data = probeText(a) catch return null }) catch return null;
+    if (intelDriverMacros(a, out_a, exe, probe, how)) |defs| return defs;
     var argv: std.ArrayList([]const u8) = .empty;
     argv.appendSlice(a, if (is_windows) &.{ exe, "/nologo", "/fpp", "/E" } else &.{ exe, "-fpp", "-E" }) catch return null;
     if (how.openmp) argv.append(a, if (is_windows) "/Qopenmp" else "-qopenmp") catch return null;
@@ -127,6 +131,48 @@ fn intelMacros(a: Allocator, out_a: Allocator, exe: []const u8, how: Ask) ?[]con
     }) catch return null;
     if (!r.term.success()) return null;
     return parseProbe(out_a, r.stdout) catch null;
+}
+
+/// The `-D` options of the fpp command that `-###` prints (it runs
+/// nothing), null when there is none
+fn intelDriverMacros(a: Allocator, out_a: Allocator, exe: []const u8, probe: []const u8, how: Ask) ?[]const Macro {
+    var argv: std.ArrayList([]const u8) = .empty;
+    argv.appendSlice(a, if (is_windows) &.{ exe, "/nologo", "-###", "/fpp", "/c" } else &.{ exe, "-###", "-fpp", "-c" }) catch return null;
+    if (how.openmp) argv.append(a, if (is_windows) "/Qopenmp" else "-qopenmp") catch return null;
+    argv.append(a, probe) catch return null;
+    const r = tools.run(a, how.io, .{
+        .argv = argv.items,
+        .cwd = how.work_dir,
+        .environ_map = tools.withExeDir(a, how.env, exe) catch return null,
+        .timeout = tools.seconds(20),
+    }) catch return null;
+    const defs = (parseDriver(out_a, r.stderr) catch return null) orelse (parseDriver(out_a, r.stdout) catch return null) orelse return null;
+    return if (defs.len > 0) defs else null;
+}
+
+/// The `-DNAME=VALUE` (`-DNAME`: 1) of the line of `-###` output that runs
+/// fpp: `"<bin>/fpp"    "-D__INTEL_LLVM_COMPILER=20260200" ... "-I." ...`
+fn parseDriver(a: Allocator, output: []const u8) !?[]const Macro {
+    var it = compilers.lines(output);
+    while (it.next()) |raw| {
+        var parts = std.mem.splitScalar(u8, compilers.trimCr(raw), '"');
+        _ = parts.next() orelse continue;
+        const cmd = parts.next() orelse continue;
+        var base = cmd[if (std.mem.findLastAny(u8, cmd, "/\\")) |i| i + 1 else 0..];
+        if (std.ascii.endsWithIgnoreCase(base, ".exe")) base = base[0 .. base.len - 4];
+        if (!std.mem.eql(u8, base, "fpp")) continue;
+        var out: std.ArrayList(Macro) = .empty;
+        // the quoted arguments are every other part
+        var quoted = false;
+        while (parts.next()) |p| : (quoted = !quoted) {
+            if (!quoted or !std.mem.startsWith(u8, p, "-D") or p.len == 2) continue;
+            const def = p[2..];
+            const eq = std.mem.findScalar(u8, def, '=');
+            try out.append(a, .{ .name = try a.dupe(u8, def[0 .. eq orelse def.len]), .value = if (eq) |e| try a.dupe(u8, def[e + 1 ..]) else "1" });
+        }
+        return out.items;
+    }
+    return null;
 }
 
 /// The `#define NAME VALUE` lines of `-dM` output (object-like macros only)
@@ -183,6 +229,35 @@ test "ifx's predefined symbols, from its preprocessed probe file" {
     try std.testing.expectEqualStrings("_M_X64", defs[3].name);
     try std.testing.expectEqualStrings("100", defs[3].value);
     try std.testing.expectEqualStrings("_OPENMP", defs[4].name);
+}
+
+test "ifx's predefined symbols, from the fpp command of -###" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // conda-forge's ifx 2026.2.0 on Linux x64 (CI), `-### -fpp -qopenmp -c`
+    const linux = "\"/home/runner/work/_temp/ifx/bin/fpp\"    \"-D__INTEL_LLVM_COMPILER=20260200\" \"-D__INTEL_LLVM_COMPILER_UPDATE=0\" " ++
+        "\"-D__INTEL_COMPILER=20260200\" \"-D__INTEL_COMPILER_UPDATE=0\" \"-D__unix__\" \"-D__unix\" \"-D__linux__\" \"-D__linux\" " ++
+        "\"-D__gnu_linux__\" \"-Dunix\" \"-Dlinux\" \"-D__ELF__\" \"-D__x86_64\" \"-D__x86_64__\" \"-D__amd64\" \"-D__amd64__\" " ++
+        "\"-D__INTEL_COMPILER_BUILD_DATE=20261001\" \"-D_OPENMP=202011\" \"-D__MMX__\" \"-D__SSE__\" \"-D__SSE_MATH__\" \"-D__SSE2__\" " ++
+        "\"-D__SSE2_MATH__\" \"-D__pentium4\" \"-D__pentium4__\" \"-D__tune_pentium4__\" \"-I.\" \"-I/usr/include\" \"-4Ycpp\" \"x.F90\"\n" ++
+        "\"/home/runner/work/_temp/ifx/bin/compiler/xfortcom\"    \"-triple\" \"x86_64-unknown-linux-gnu\" \"-D__WRONG\"\n";
+    const l = (try parseDriver(a, linux)).?;
+    try std.testing.expectEqual(@as(usize, 26), l.len);
+    try std.testing.expectEqualStrings("__INTEL_LLVM_COMPILER_UPDATE", l[1].name);
+    try std.testing.expectEqualStrings("0", l[1].value);
+    try std.testing.expectEqualStrings("__unix__", l[4].name);
+    try std.testing.expectEqualStrings("1", l[4].value);
+    try std.testing.expectEqualStrings("_OPENMP", l[17].name);
+    try std.testing.expectEqualStrings("202011", l[17].value);
+    for (l) |d| try std.testing.expect(!std.mem.eql(u8, d.name, "_WIN32"));
+    // ifx 2026.2.0 on Windows, `-### /fpp /c` (an excerpt)
+    const win = "\"C:\\ifx\\Library\\bin\\fpp\"    \"-D__INTEL_LLVM_COMPILER=20260200\" \"-D_WIN32\" \"-D_M_X64=100\" \"-D_MSC_FULL_VER=150011209\" \"-D_MSC_EXTENSIONS\" \"-D_MT\" \"-I.\" \"ops.F90\"\r\n";
+    const w = (try parseDriver(a, win)).?;
+    try std.testing.expectEqual(@as(usize, 6), w.len);
+    try std.testing.expectEqualStrings("_M_X64", w[2].name);
+    try std.testing.expectEqualStrings("100", w[2].value);
+    try std.testing.expect((try parseDriver(a, "ifx: command line warning #10006: ignoring unknown option '-dM'\n")) == null);
 }
 
 test "gfortran's predefined macros, from -dM" {

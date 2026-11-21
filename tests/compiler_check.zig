@@ -268,6 +268,10 @@ pub fn main(init: std.process.Init) !u8 {
     // absolute, with its drive on Windows (Git Bash's TMPDIR is `/c/...`),
     // so that the root's URI names the same directory
     const tmp = try Io.Dir.cwd().realPathFileAlloc(io, try lsp.tempDir(io, a, init.environ_map, "zfls_compiler_"), a);
+    // kept, for a look, when a case fails
+    var keep = false;
+    defer if (keep) std.debug.print("kept {s}\n", .{tmp}) else Io.Dir.cwd().deleteTree(io, tmp) catch {};
+    errdefer keep = true;
     const work = try std.Io.Dir.path.join(a, &.{ tmp, "work" });
     try lsp.copyTree(io, a, fixtures, work);
     // zfls's cache (the copies of unsaved text) in the test's directory
@@ -298,6 +302,7 @@ pub fn main(init: std.process.Init) !u8 {
     });
     if (initialized.object.get("error")) |e| {
         std.debug.print("FAIL initialize: {s}\n", .{try std.json.Stringify.valueAlloc(a, e, .{})});
+        keep = true;
         return 1;
     }
     try c.send("initialized", struct {}{}, null);
@@ -345,6 +350,7 @@ pub fn main(init: std.process.Init) !u8 {
     for (failures.items) |f| std.debug.print("FAIL {s}\n", .{f});
     if (failures.items.len > 0) {
         std.debug.print("zfls's stderr:\n{s}\n", .{c.stderr.items});
+        keep = true;
         return 1;
     }
     std.debug.print("ok   {d} files and an edit checked with {s}\n", .{ checked, compiler.name });
