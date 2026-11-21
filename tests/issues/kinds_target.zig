@@ -62,7 +62,7 @@ test "selected_real_kind(18) is 10 with a gfortran that has REAL(10), 16 with on
     try h.expect(try kindErrors(false) == 0, "a REAL(10) mismatch without __GFC_REAL_10__", .{});
 }
 
-test "zfls's own platform's default agrees with the gfortran there (CI: every platform's)" {
+test "a gfortran has REAL(10) where it targets x86, as zfls's default has it there (CI: every platform's)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -76,5 +76,13 @@ test "zfls's own platform's default agrees with the gfortran there (CI: every pl
     for (defs) |d| if (std.mem.eql(u8, d.name, "__GFC_REAL_10__")) {
         real10 = true;
     };
+    // its target, which an emulated one does not share with zfls (MSYS2's
+    // x86-64 gfortran on Windows on Arm)
+    const r = std.process.run(a, io, .{ .argv = &.{ exe, "-dumpmachine" }, .environ_map = &env, .create_no_window = true }) catch return error.SkipZigTest;
+    const machine = std.mem.trim(u8, r.stdout, " \r\n");
+    const x86 = std.mem.startsWith(u8, machine, "x86_64") or std.mem.startsWith(u8, machine, "i686") or std.mem.startsWith(u8, machine, "i386");
+    try h.expect(real10 == x86, "gfortran {s} ({s}) has REAL(10): {}", .{ exe, machine, real10 });
+    const ours = @tagName(sysinfo.target.cpu.arch);
+    if (!std.mem.startsWith(u8, machine, ours)) return;
     try h.expect(real10 == zfls.argcheck_typing.native_real10, "gfortran {s} has REAL(10): {}, zfls's default: {}", .{ exe, real10, zfls.argcheck_typing.native_real10 });
 }
