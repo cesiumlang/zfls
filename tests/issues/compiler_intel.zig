@@ -91,7 +91,10 @@ test "conda-forge's ifx: its modules, where its driver does not look, are passed
     const opt = if (is_windows) " /I" else " -I";
     var it = std.mem.tokenizeAny(u8, calls, "\r\n");
     var n: usize = 0;
-    while (it.next()) |call| : (n += 1) {
+    while (it.next()) |call| {
+        // the probe of its predefined symbols (compiler_macros.zig, #509)
+        if (std.mem.find(u8, call, "zfls_predefined.F90") != null) continue;
+        n += 1;
         const at = std.mem.find(u8, call, dir) orelse return h.unmet("no {s} in {s}", .{ dir, call });
         const start = std.mem.findLast(u8, call[0..at], opt) orelse return h.unmet("{s} without {s}: {s}", .{ dir, opt, call });
         try h.expect(std.mem.findScalar(u8, call[start + 1 .. at], ' ') == null, "{s} is not an include directory: {s}", .{ dir, call });
