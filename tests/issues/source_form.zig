@@ -123,3 +123,33 @@ test "a change of the associations applies to the open documents (#686)" {
     told = try w.sentWith("zfls/sourceForm");
     try h.expect(told.len == 3 and std.mem.find(u8, told[2], "\"languageId\":\"FortranFixedForm\"") != null, "told {any}", .{told});
 }
+
+test "re-indexing keeps the editor's form (#688)" {
+    const f90 = h.File{ .name = "fixed.f90", .text = fixed_fpp.text };
+    const w = try h.Workspace.init(&.{f90}, .{});
+    defer w.deinit();
+    try w.open("fixed.f90", "FortranFixedForm");
+    try h.expect(try w.isFixed("fixed.f90"), "not fixed at open", .{});
+    try w.changeConfiguration("{\"zfls\": {\"include_dirs\": [\"inc\"]}}");
+    try h.expect(try w.isFixed("fixed.f90"), "not fixed after re-indexing", .{});
+}
+
+test "re-indexing keeps the user's choice for a .fpp (#688)" {
+    const w = try h.Workspace.init(&.{ fixed_fpp, free_fpp }, .{});
+    defer w.deinit();
+    try w.open("old.fpp", "FortranFreeForm");
+    try w.close("old.fpp");
+    try w.open("old.fpp", "FortranFixedForm");
+    // Change Language Mode to free form
+    try w.close("old.fpp");
+    try w.open("old.fpp", "FortranFreeForm");
+    try h.expect(!try w.isFixed("old.fpp"), "the user's free form is not kept", .{});
+    try w.changeConfiguration("{\"zfls\": {\"include_dirs\": [\"inc\"]}}");
+    try h.expect(!try w.isFixed("old.fpp"), "the user's free form is not kept after re-indexing", .{});
+    try h.expect((try w.sentWith("zfls/sourceForm")).len == 1, "told again after re-indexing", .{});
+    // reopened in the user's language: still the user's
+    try w.close("old.fpp");
+    try w.open("old.fpp", "FortranFreeForm");
+    try h.expect(!try w.isFixed("old.fpp"), "the user's free form is not kept when reopened", .{});
+    try h.expect((try w.sentWith("zfls/sourceForm")).len == 1, "told when reopened", .{});
+}
