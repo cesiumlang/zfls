@@ -213,3 +213,26 @@ test "hover of a declaration shows it as written: values, strings, lengths, one 
     for (try w.inlayHints("m.f90")) |hint| found = found or std.mem.find(u8, hint.label, "[1, 2, 3]") != null;
     try h.expect(found, "no inlay hint = [1, 2, 3] on the use of arr", .{});
 }
+
+test "a pointer initialized with `=> target` hovers as itself, not its target (#700)" {
+    const w = try h.Workspace.init(&.{.{ .name = "p.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  real, target :: t(3)
+        \\  real, pointer :: p(:) => t
+        \\  integer, target :: t2(2, 2)
+        \\  integer, pointer :: r(:, :) => t2, s => null()
+        \\contains
+        \\  subroutine use_them()
+        \\    print *, p, r, s
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    for ([_]struct { usize, []const u8 }{
+        .{ 0, "REAL, POINTER, DIMENSION(:) :: p" },
+        .{ 3, "INTEGER, POINTER, DIMENSION(:, :) :: r" },
+        .{ 6, "INTEGER, POINTER :: s" },
+    }) |case| try expectDecl(w, "p.f90", w.pos("p.f90", "p, r, s", 0, case[0]), case[1]);
+}
