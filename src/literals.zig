@@ -132,6 +132,10 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
                 while (i < c.len and std.ascii.isDigit(c[i])) i += 1;
             }
         }
+        // an unsigned one, `42u`, `3u_uk` (gfortran's `-funsigned`)
+        const unsigned = !real and exponent == 0 and i < c.len and (c[i] == 'u' or c[i] == 'U') and
+            (i + 1 >= c.len or !isWord(c[i + 1]) or c[i + 1] == '_');
+        if (unsigned) i += 1;
         var kind: ?[]const u8 = null;
         if (i + 1 < c.len and c[i] == '_' and isWord(c[i + 1])) {
             const ks = i + 1;
@@ -147,7 +151,7 @@ pub fn at(a: Allocator, line: []const u8, col: usize) !?Literal {
         if (col < s or col >= i) continue;
         if (exponent == 'd') return .{ .type = "DOUBLE PRECISION" };
         if (exponent == 'q') return .{ .type = "REAL(16)" };
-        const t = if (real or exponent != 0) "REAL" else "INTEGER";
+        const t = if (real or exponent != 0) "REAL" else if (unsigned) "UNSIGNED" else "INTEGER";
         return .{ .type = if (kind) |k| try a.print("{s}({s})", .{ t, k }) else t };
     }
     return null;

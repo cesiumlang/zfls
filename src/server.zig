@@ -45,6 +45,7 @@ const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const compiler_version = @import("server/compiler_version.zig");
 const compiler_macros = @import("server/compiler_macros.zig");
+const source_form = @import("server/source_form.zig");
 const convert = @import("server/convert.zig");
 const build_command = @import("server/build_command.zig");
 const fpm_targets = @import("server/fpm_targets.zig");
@@ -194,6 +195,9 @@ pub const Server = struct {
     /// Namelist documents opened in zfls (namelist.zig): their text only,
     /// for their outline, never parsed as Fortran (keys owned by `gpa`)
     nml_docs: std.StringHashMapUnmanaged(*FortranFile) = .empty,
+    /// The forms zfls told the editor of the `.fpp` files it opened, by
+    /// path (keys owned by `gpa`; source_form.zig)
+    source_forms: std.StringHashMapUnmanaged(source_form.State) = .empty,
     /// The declarations of the workspace's C names in its C files, found
     /// when go to definition first needed them
     c_index: ?*bindc.CIndex = null,
@@ -259,6 +263,7 @@ pub const Server = struct {
             e.value_ptr.*.destroy();
         }
         self.nml_docs.deinit(self.gpa);
+        source_form.deinit(self);
         cache.wait(self);
         for (self.workspace.values()) |f| {
             if (f.ast) |ast| ast.destroy();

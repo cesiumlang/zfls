@@ -79,7 +79,7 @@ const defs = [_]Def{
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
-        "|EXTERNAL|CLASS|TYPE|BYTE)", true },
+        "|EXTERNAL|CLASS|TYPE|BYTE|UNSIGNED)", true },
     // `()`: PROCEDURE() of no interface
     .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++

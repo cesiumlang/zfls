@@ -528,9 +528,10 @@ const statement_keywords = [_][]const u8{
                "event",         "form",        "change",          "fail",
     // DEC's AUTOMATIC, STATIC (ifx, gfortran's `-fdec-static`) and VIRTUAL
     // (ifx), and its I/O statements ENCODE, DECODE, ACCEPT, DEFINE FILE and
-    // FIND (ifx)
+    // FIND (ifx); UNSIGNED (gfortran 15 and later, `-funsigned`; LLVM
+    // Flang's too)
     "automatic",       "static",        "virtual",     "encode",          "decode",
-    "accept",          "define",        "find",
+    "accept",          "define",        "find",        "unsigned",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -548,7 +549,7 @@ const spec_keywords = [_][]const u8{
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
     "record",      "union",       "map",          "attributes",      "byte",          "automatic",
-    "static",      "virtual",
+    "static",      "virtual",     "unsigned",
 };
 
 fn isSpecKeyword(word: []const u8) bool {
@@ -558,10 +559,10 @@ fn isSpecKeyword(word: []const u8) bool {
 
 /// Keywords that appear inside executable statements, never names there
 const inner_keywords = [_][]const u8{
-    "then",    "while",  "concurrent", "to",         "default", "is",      "none",
-    "only",    "result", "local",      "local_init", "shared",  "reduce",  "all",
-    "images",  "memory", "team",       "integer",    "real",    "logical", "character",
-    "complex", "double", "precision",  "type",       "class",
+    "then",    "while",  "concurrent", "to",         "default", "is",       "none",
+    "only",    "result", "local",      "local_init", "shared",  "reduce",   "all",
+    "images",  "memory", "team",       "integer",    "real",    "logical",  "character",
+    "complex", "double", "precision",  "type",       "class",   "unsigned",
 };
 
 /// Words that are keywords wherever they are written (when no name of that

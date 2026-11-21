@@ -1,7 +1,8 @@
 //! DEC's TAB-format fixed form (#491): a line whose TAB in columns 1 to 6
 //! stands for the columns up to 6, a nonzero digit after it marking a
 //! continuation line. ifx, ifort, gfortran and Flang read such a `.f` file
-//! as fixed form, and so does zfls, also for the compiler check.
+//! as fixed form, and so does zfls, also for the compiler check, and
+//! counts the TAB for `fixed_line_length` as the compiler does (#585).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -63,4 +64,22 @@ test "#491 the compiler checks a file with TAB-format lines as fixed form" {
     const calls = try w.tmp.dir.readFileAlloc(io, "gf.log", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(calls);
     try h.expect(std.mem.find(u8, calls, "-ffixed-form") != null and std.mem.find(u8, calls, "-ffree-form") == null, "gfortran called with {s}", .{calls});
+}
+
+/// `<TAB>INTEGER SHORT1, ... EDGE70`: EDGE70 in columns 65 to 70 when the
+/// TAB is one column (ifx), 70 to 75 when it is the columns up to 6
+/// (gfortran, Flang), past 72
+const edge = [_]h.File{.{ .name = "e.f", .text = "      MODULE E\n      IMPLICIT NONE\n\tINTEGER SHORT1,                                                EDGE70\n      END MODULE\n" }};
+
+test "fixed_line_length on a TAB-format line counts the TAB as the compiler does (#585)" {
+    // without a compiler, as ifx
+    for ([_]struct { ?[]const u8, bool }{ .{ "gfortran", false }, .{ "flang", false }, .{ "ifx", true }, .{ null, true } }) |c| {
+        const w = try h.Workspace.init(&edge, .{ .settings = .{ .fixed_line_length = 72, .compiler_diagnostics = c[0] } });
+        defer w.deinit();
+        const shown = try w.hover("e.f", w.pos("e.f", "EDGE70", 0, 1));
+        // the name as the compiler reads it: EDGE70, or EDG
+        const has = if (shown) |x| std.ascii.findIgnoreCase(x, "EDGE70") != null else false;
+        try h.expect(has == c[1], "{s}: EDGE70 {s}", .{ c[0] orelse "no compiler", if (has) "declared" else "not declared" });
+        try w.expectHoverContains("e.f", w.pos("e.f", "SHORT1", 0, 1), "INTEGER");
+    }
 }

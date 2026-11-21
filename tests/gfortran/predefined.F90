@@ -2,5 +2,7 @@
 module predefined
   implicit none
   integer :: lines(__LINE__)
-  character(len=*), parameter :: here = __FILE__, day = __DATE__, now = __TIME__
+  character(len=*), parameter :: here = __FILE__
+  character(len=*), parameter :: day = __DATE__
+  character(len=*), parameter :: now = __TIME__
 end module predefined
