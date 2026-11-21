@@ -1,5 +1,6 @@
 //! Part of the parser (parser.zig): LLVM Flang's `!dir$ fixed` and `!dir$
-//! free`, which switch a file's source form for the lines after them. A
+//! free`, and ifx's `!DEC$ NOFREEFORM` and `!DEC$ FREEFORM` (also with
+//! `!DIR$`), which switch a file's source form for the lines after them. A
 //! file that switches is read in free form: the lines of its fixed-form
 //! parts are rewritten as free-form ones in the text zfls reads, column
 //! for column (a comment's `C` or `*` becomes `!`, a continuation's column
@@ -10,12 +11,14 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const fixed_columns = @import("fixed_columns.zig");
+const line_size = @import("line_size.zig");
 const helpers = @import("../helpers.zig");
 
 pub const Form = enum { fixed, free };
 
 /// The form that line `line` switches to, if it is `!dir$ fixed` or `!dir$
-/// free` (in any case; in fixed form also `c` or `*` in column 1)
+/// free` (Flang's), `!dec$ nofreeform` or `!dec$ freeform` (ifx's, also
+/// with `dir$`), in any case; in fixed form also `c` or `*` in column 1
 pub fn directive(fixed: bool, line: []const u8) ?Form {
     var rest = line;
     if (fixed and rest.len > 0 and (rest[0] == 'c' or rest[0] == 'C' or rest[0] == '*')) {
@@ -25,11 +28,16 @@ pub fn directive(fixed: bool, line: []const u8) ?Form {
         if (rest.len == 0 or rest[0] != '!') return null;
         rest = rest[1..];
     }
-    if (!std.ascii.startsWithIgnoreCase(rest, "dir$")) return null;
+    const dir = std.ascii.startsWithIgnoreCase(rest, "dir$");
+    if (!dir and !std.ascii.startsWithIgnoreCase(rest, "dec$")) return null;
     rest = std.mem.trim(u8, rest[4..], " \t\r");
     if (std.mem.findScalar(u8, rest, '!')) |i| rest = std.mem.trimEnd(u8, rest[0..i], " \t");
-    if (std.ascii.eqlIgnoreCase(rest, "fixed")) return .fixed;
-    if (std.ascii.eqlIgnoreCase(rest, "free")) return .free;
+    // Flang's; ifx takes it for no directive (remark #5140)
+    if (dir and std.ascii.eqlIgnoreCase(rest, "fixed")) return .fixed;
+    if (dir and std.ascii.eqlIgnoreCase(rest, "free")) return .free;
+    // ifx's, which Flang does not have
+    if (std.ascii.eqlIgnoreCase(rest, "nofreeform")) return .fixed;
+    if (std.ascii.eqlIgnoreCase(rest, "freeform")) return .free;
     return null;
 }
 
@@ -86,9 +94,9 @@ fn codeEnd(line: []const u8) usize {
 
 /// The lines of a file of form `fixed` that switches (`switches`) as free
 /// form: a copy of them in one buffer (each followed by `\n`), owned by
-/// `gpa`, with its lines. The columns of a fixed-form code line past
-/// `columns` (`fixed_line_length`) are blanks.
-pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: ?usize, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+/// `gpa`, with its lines. The columns of a fixed-form code line past its
+/// length in `columns` (`fixed_line_length`, FIXEDFORMLINESIZE) are blanks.
+pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: line_size.Limits, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
     // the form of each line, and whether its code needs an `&` appended
     const forms = try gpa.alloc(Form, raw.len);
     defer gpa.free(forms);
@@ -109,7 +117,7 @@ pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: ?usize, 
         }
         if (isFixedComment(l, d_lines_code) or (l.len > 0 and l[0] == '#')) continue;
         if (isFixedContinuation(l)) if (last_code) |c| {
-            const code = fixed_columns.code(raw[c], columns);
+            const code = fixed_columns.code(raw[c], columns.at(c));
             const end = codeEnd(code);
             amp[c] = if (end > 1 and code[end - 1] == ' ') .blank else .insert;
         };
@@ -128,7 +136,7 @@ pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: ?usize, 
         const line = text[at .. at + l.len + @intFromBool(amp[i] == .insert)];
         @memcpy(line[0..l.len], l);
         if (forms[i] == .fixed) {
-            if (columns) |c| if (!isFixedComment(l, d_lines_code)) fixed_columns.blank(line[0..l.len], c);
+            if (columns.at(i)) |c| if (!isFixedComment(l, d_lines_code)) fixed_columns.blank(line[0..l.len], c);
             n = fixedLine(line, l.len, amp[i], d_lines_code);
         }
         lines.appendAssumeCapacity(line[0..n]);
@@ -177,7 +185,13 @@ test "the directives that switch the form" {
     try std.testing.expectEqual(Form.free, directive(true, "cdir$ free").?);
     try std.testing.expectEqual(Form.free, directive(true, "*DIR$ FREE").?);
     try std.testing.expect(directive(false, "cdir$ free") == null);
-    try std.testing.expect(directive(false, "!dir$ freeform") == null);
+    // ifx's, with either prefix
+    try std.testing.expectEqual(Form.free, directive(false, "!dir$ freeform").?);
+    try std.testing.expectEqual(Form.fixed, directive(false, "!DEC$ NOFREEFORM").?);
+    try std.testing.expectEqual(Form.free, directive(true, "CDEC$ FREEFORM").?);
+    try std.testing.expectEqual(Form.fixed, directive(true, "*dec$ nofreeform ! back").?);
+    try std.testing.expect(directive(false, "!dec$ fixed") == null);
+    try std.testing.expect(directive(false, "!dec$ freeforms") == null);
     try std.testing.expect(directive(false, "!dir$ ignore_tkr a") == null);
     try std.testing.expect(directive(false, "! dir$ free") == null);
     try std.testing.expect(switches(false, &.{ "module m", "!dir$ fixed", "      end" }));
@@ -209,7 +223,7 @@ test "fixed-form lines as free form" {
         "!dir$ free",
         "end module",
     };
-    const out = try asFree(gpa, false, false, null, &raw);
+    const out = try asFree(gpa, false, false, .{ .default = null }, &raw);
     defer gpa.free(out.text);
     var lines = out.lines;
     defer lines.deinit(gpa);
@@ -235,7 +249,7 @@ test "fixed-form lines as free form" {
     try std.testing.expectEqual(lines.items.len, std.mem.count(u8, out.text, "\n"));
     // a fixed-form file that switches to free form; debug lines as code
     const raw2 = [_][]const u8{ "      X = 1", "D     X = 2", "!dir$ free", "x = 3 + &", "  4" };
-    const out2 = try asFree(gpa, true, true, null, &raw2);
+    const out2 = try asFree(gpa, true, true, .{ .default = null }, &raw2);
     defer gpa.free(out2.text);
     var lines2 = out2.lines;
     defer lines2.deinit(gpa);
@@ -244,7 +258,7 @@ test "fixed-form lines as free form" {
     try std.testing.expectEqualStrings("  4", lines2.items[4]);
     // the columns past fixed_line_length, of the fixed-form lines only
     const raw3 = [_][]const u8{ "      X = 1 + Y", "     &    + Z", "!dir$ free", "x = 3 + long_free_line" };
-    const out3 = try asFree(gpa, true, false, 13, &raw3);
+    const out3 = try asFree(gpa, true, false, .{ .default = 13 }, &raw3);
     defer gpa.free(out3.text);
     var lines3 = out3.lines;
     defer lines3.deinit(gpa);

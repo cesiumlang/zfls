@@ -78,6 +78,13 @@ pub fn stringEnd(s: []const u8, open: usize) ?usize {
     return null;
 }
 
+/// Whether the apostrophe at `s[i]` is DEC's record mark of `READ (u'r)`,
+/// `FIND (u'r)` (ifx), no literal: right after a digit or a letter, with
+/// no other apostrophe after it on the line, as ifx's scanner has it
+pub fn isRecordMark(s: []const u8, i: usize) bool {
+    return s[i] == '\'' and i > 0 and std.ascii.isAlphanumeric(s[i - 1]) and std.mem.findScalarPos(u8, s, i + 1, '\'') == null;
+}
+
 /// Strips string literals from code line, found from left to right: the
 /// first quote opens a literal and only the same kind closes it.
 /// `maintain_len` blanks their contents instead of removing them. A literal
@@ -560,6 +567,15 @@ pub fn getKeywords(a: Allocator, ids: []const constants.Kw, info: KeywordInfo) !
 }
 
 const testing = std.testing;
+
+test "DEC's record mark is no literal" {
+    try testing.expect(isRecordMark("read (3'5) a", 7));
+    try testing.expect(isRecordMark("find (iu'irec)", 8));
+    try testing.expect(!isRecordMark("print *, 'abc'", 9));
+    try testing.expect(!isRecordMark("x = z'7f'", 5));
+    // ifx reads a literal to the next apostrophe, even in a comment
+    try testing.expect(!isRecordMark("read (3'5) a ! it's", 7));
+}
 
 test "helper functions" {
     patterns.init();

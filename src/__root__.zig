@@ -20,6 +20,7 @@ pub const parser = @import("parser.zig");
 pub const parser_openmp = @import("parser/openmp.zig");
 pub const parser_form_switch = @import("parser/form_switch.zig");
 pub const parser_fixed_columns = @import("parser/fixed_columns.zig");
+pub const parser_line_size = @import("parser/line_size.zig");
 pub const parser_stmt_functions = @import("parser/stmt_functions.zig");
 pub const parser_entries = @import("parser/entries.zig");
 pub const parser_groups = @import("parser/groups.zig");

@@ -29,6 +29,7 @@ const changes = @import("parser/changes.zig");
 const openmp = @import("parser/openmp.zig");
 const form_switch = @import("parser/form_switch.zig");
 const fixed_columns = @import("parser/fixed_columns.zig");
+const line_size = @import("parser/line_size.zig");
 const tab_format = @import("parser/tab_format.zig");
 const pp_intel = @import("preprocessor/intel.zig");
 
@@ -244,6 +245,9 @@ pub const FortranFile = struct {
     /// `fixed_line_length`: the columns of a fixed-form code line past it
     /// are blanks in `lines` (parser/fixed_columns.zig); null: no limit
     fixed_columns: ?usize = null,
+    /// ifx's `!DEC$ FIXEDFORMLINESIZE:n` lines (parser/line_size.zig), owned
+    /// by `gpa`
+    line_sizes: []line_size.Directive = &.{},
 
     pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
         const self = try gpa.create(FortranFile);
@@ -276,6 +280,7 @@ pub const FortranFile = struct {
         self.lines.deinit(self.gpa);
         self.gpa.free(self.raw_text);
         self.raw_lines.deinit(self.gpa);
+        self.gpa.free(self.line_sizes);
         self.pp_arena.deinit();
         self.gpa.free(self.path);
         self.gpa.destroy(self);
@@ -364,6 +369,8 @@ pub const FortranFile = struct {
         self.text = buf;
         self.lines = new_lines;
         self.resetPp();
+        self.gpa.free(self.line_sizes);
+        self.line_sizes = line_size.directives(self.gpa, new_lines.items) catch &.{};
         if (!self.rewrites()) return;
         // without memory for the copy, the text is read as it is
         const code = self.codeCopy(buf, new_lines.items) catch return;
@@ -379,7 +386,7 @@ pub const FortranFile = struct {
     /// `fixed_columns`, TAB-format lines
     fn rewrites(self: *const FortranFile) bool {
         if (self.form_switched or self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
-        if (self.fixed) if (self.fixed_columns) |n| if (fixed_columns.anyLong(self.lines.items, n)) return true;
+        if (self.fixed) for (self.lines.items, 0..) |l, i| if (self.fixedLimitAt(i, self.fixed_columns)) |n| if (fixed_columns.isLong(l, n)) return true;
         if (tab_format.any(self.lines.items)) return true;
         if (!self.openmp_conditional) return false;
         for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
@@ -392,8 +399,9 @@ pub const FortranFile = struct {
     /// the columns past `fixed_columns` blanks
     fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
         if (self.form_switched) {
-            const out = try form_switch.asFree(self.gpa, self.declared_fixed, self.d_lines_code, self.fixed_columns, raw);
-            for (out.lines.items) |l| self.rewriteLine(@constCast(l));
+            const limits: line_size.Limits = .{ .default = self.fixed_columns, .directives = self.line_sizes };
+            const out = try form_switch.asFree(self.gpa, self.declared_fixed, self.d_lines_code, limits, raw);
+            for (out.lines.items, 0..) |l, i| self.rewriteLine(@constCast(l), i);
             return .{ .text = out.text, .lines = out.lines };
         }
         const text = try self.gpa.dupe(u8, buf);
@@ -401,20 +409,26 @@ pub const FortranFile = struct {
         var lines: std.ArrayList([]const u8) = .empty;
         errdefer lines.deinit(self.gpa);
         try lines.ensureTotalCapacity(self.gpa, raw.len);
-        for (raw) |l| {
+        for (raw, 0..) |l, i| {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
-            self.rewriteLine(line);
+            self.rewriteLine(line, i);
             lines.appendAssumeCapacity(line);
         }
         return .{ .text = text, .lines = lines };
     }
 
-    fn rewriteLine(self: *const FortranFile, line: []u8) void {
+    /// The line length of fixed-form line `i` (0-based): `default`
+    /// (`fixed_line_length`) or that of a FIXEDFORMLINESIZE before it
+    pub fn fixedLimitAt(self: *const FortranFile, i: usize, default: ?usize) ?usize {
+        return (line_size.Limits{ .default = default, .directives = self.line_sizes }).at(i);
+    }
+
+    fn rewriteLine(self: *const FortranFile, line: []u8, i: usize) void {
         tab_format.blankLine(self.fixed, line);
         if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
         if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
-        if (self.fixed) if (self.fixed_columns) |n| fixed_columns.blank(line, n);
+        if (self.fixed) if (self.fixedLimitAt(i, self.fixed_columns)) |n| fixed_columns.blank(line, n);
         if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
     }
 

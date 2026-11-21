@@ -239,7 +239,7 @@ const Tokenizer = struct {
         if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
         // the columns past the code of a fixed-form line are a comment
         var line = raw;
-        if (t.fixed_limit) |n| if (t.file.fixed and raw.len > n) {
+        if (t.file.fixedLimitAt(ln, t.fixed_limit)) |n| if (t.file.fixed and raw.len > n) {
             line = raw[0..n];
             if (t.unknown == null) try t.add(ln, raw, n, raw.len, .{ .type = .comment });
         };
@@ -317,6 +317,7 @@ const Tokenizer = struct {
                 if (isSecondKeyword(k, w.str)) {
                     // `else if (x) then`
                     if (std.ascii.eqlIgnoreCase(w.str, "if")) st.cond = true;
+                    if (std.ascii.eqlIgnoreCase(w.str, "file")) st.define_file = true;
                     continue;
                 }
             }
@@ -360,6 +361,9 @@ const Tokenizer = struct {
             if (obj) |o| if (o.kind == .variable) if (o.parent) |p| {
                 if (p.kind == .function and p.sline == ln + 1 and o.nameLowerEql(p.name)) obj = p;
             };
+            // the form of DEFINE FILE: U, F, E or L (unformatted, formatted,
+            // either, list-directed)
+            if (obj == null and st.define_file and st.depth == 1 and w.str.len == 1 and std.mem.findScalar(u8, "ufelUFEL", w.str[0]) != null) continue;
             const o = obj orelse {
                 // a name that ASSOCIATE or SELECT TYPE defines (`this =>
                 // self`), or a piece of a token split over two lines
@@ -426,6 +430,9 @@ const Stmt = struct {
     in_end: bool = false,
     /// the word before, on this line
     prev: ?[]const u8 = null,
+    /// DEC's DEFINE FILE, whose form is a letter (`define file 3 (100, 10,
+    /// u, iv)`)
+    define_file: bool = false,
 
     fn punctuation(s: *Stmt, chars: []const u8) void {
         for (chars) |c| switch (c) {
@@ -442,6 +449,7 @@ const Stmt = struct {
                 s.depth = 0;
                 s.in_end = false;
                 s.prev = null;
+                s.define_file = false;
             },
             else => {},
         };
@@ -471,7 +479,10 @@ fn blankLiterals(a: Allocator, line: []const u8, from: usize, open: ?u8) !Litera
                 i += 1;
             } else quote = null;
         } else switch (c) {
-            '\'', '"' => quote = c,
+            '\'' => if (!helpers.isRecordMark(line, i)) {
+                quote = c;
+            },
+            '"' => quote = c,
             '!' => return .{ .code = out, .comment = i, .open = null },
             else => {},
         }
@@ -516,8 +527,10 @@ const statement_keywords = [_][]const u8{
     // FAIL IMAGE (#538)
                "event",         "form",        "change",          "fail",
     // DEC's AUTOMATIC, STATIC (ifx, gfortran's `-fdec-static`) and VIRTUAL
-    // (ifx)
-    "automatic",       "static",        "virtual",
+    // (ifx), and its I/O statements ENCODE, DECODE, ACCEPT, DEFINE FILE and
+    // FIND (ifx)
+    "automatic",       "static",        "virtual",     "encode",          "decode",
+    "accept",          "define",        "find",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -654,6 +667,7 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
         .{ "module", "procedure" }, .{ "module", "function" }, .{ "module", "subroutine" },
         .{ "event", "post" },       .{ "event", "wait" },      .{ "form", "team" },
         .{ "change", "team" },      .{ "fail", "image" },      .{ "sync", "team" },
+        .{ "define", "file" },
     };
     for (pairs) |p| if (std.ascii.eqlIgnoreCase(first, p[0]) and std.ascii.eqlIgnoreCase(word, p[1])) return true;
     if (std.ascii.eqlIgnoreCase(first, "end")) return isStatementKeyword(word) or std.ascii.eqlIgnoreCase(word, "team");
