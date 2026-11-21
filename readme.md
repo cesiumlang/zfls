@@ -20,7 +20,7 @@ A Fortran language server written in Zig. zfls is a native port of [fortls](http
 - Code actions: implementing deferred type-bound procedures, adding `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as `real(8)`, extracting statements into a subroutine, and (Source Actions) the keywords of a file in upper, lower or title case
 - Formatting of documents and selections with findent, fprettify, Codee's formatter, forformat or a command of the user's (see [Formatting](#formatting)), and conversion of a file between fixed and free form with findent (see [Converting the source form](#converting-the-source-form))
 - Include directories and preprocessor definitions from the project's `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see [Build files](#build-files))
-- Fixed and free source form (also switched within a file by LLVM Flang's `!dir$ fixed` and `!dir$ free`), line continuations, Doxygen and FORD style documentation comments, OpenMP conditional compilation lines (`!$ x = 1`) read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
+- Fixed and free source form (also switched within a file by LLVM Flang's `!dir$ fixed` and `!dir$ free`, and ifx's `!DEC$ NOFREEFORM` and `!DEC$ FREEFORM`), line continuations, Doxygen and FORD style documentation comments, OpenMP conditional compilation lines (`!$ x = 1`) read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`, `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit), `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn` (`incl_suffixes` adds more); one table (`src/suffixes.zig`) decides the source form, the Fortran entries of `compile_commands.json` and the VS Code extension's file associations
 - DEC extensions: `STRUCTURE` (nested too), `RECORD`, `UNION`/`MAP`, and `.` between a variable and its component (`rec.field`)
 - CUDA Fortran: `attributes(global)` and `attributes(device)` procedures, signature help in a kernel launch (`call k<<<grid, block>>>(...)`), `.cuf` files
@@ -73,7 +73,11 @@ The parser reads these in every file, whichever compiler is configured; the colu
 | `!DIR$ IGNORE_TKR`: no argument checks for the dummy arguments it names | – | – | – | ✓ | ✓ | – | – |
 | `!GCC$ ATTRIBUTES NO_ARG_CHECK` (gfortran), `!DIR$ ATTRIBUTES NO_ARG_CHECK` (Intel): no argument checks for the dummy arguments it names | ✓ | ✓ | ✓ | – | – | – | – |
 | `!DIR$ FIXED`, `!DIR$ FREE`: the source form of the lines after them | – | – | – | ✓ | – | – | – |
+| `!DEC$ NOFREEFORM`, `!DEC$ FREEFORM` (also `!DIR$`): the source form of the lines after them | – | ✓ | ✓ | – | – | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| `AUTOMATIC` and `STATIC` (DEC) statements and attributes (gfortran's with `-fdec-static`) | ✓ | ✓ | ✓ | – | – | – | – |
+| `VIRTUAL` (DEC's `DIMENSION`), `PARAMETER` without parentheses (`PARAMETER N = 10`, of the type of its value) | – | ✓ | ✓ | – | – | – | – |
+| DEC's I/O statements: `ENCODE`, `DECODE`, `ACCEPT`, `DEFINE FILE`, `FIND`, the record of `READ (u'r)` | – | ✓ | ✓ | – | – | – | – |
 | TAB-format fixed form (DEC): a TAB in columns 1 to 6 stands for them, a nonzero digit after it marks a continuation line | ✓ | ✓ | ✓ | ✓ | ○ | ○ | ○ |
 
 5. gfortran's with `-fdec-structure`.
