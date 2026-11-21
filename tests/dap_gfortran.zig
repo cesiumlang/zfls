@@ -4,8 +4,9 @@
 //! an error raised inside libgfortran stops (`RANDOM_SEED`; on Windows the
 //! program links libgfortran statically, as Debug Fortran File does, #531),
 //! ERROR STOP with a text and with `quiet=` stops, as with `-fcoarray=lib`
-//! (#532, when libcaf_single links), and with gdb a CHARACTER of kind 4
-//! (#533). For tests/dap_gdb.zig and tests/dap_lldb.zig.
+//! (#532, when libcaf_single links), with gdb a CHARACTER of kind 4
+//! (#533), and a program linked with libcaf_shmem, whose images the
+//! launch says are not followed (#616). For tests/dap_gdb.zig and tests/dap_lldb.zig.
 
 const std = @import("std");
 const sysinfo = @import("builtin");
@@ -64,6 +65,8 @@ pub fn run(io: Io, gpa: Allocator, argv: []const []const u8, fc: []const u8, dir
         try runCase(io, gpa, argv, exe, dir, c, if (c.marker) |m| lineOf(text, m) else 0);
     }
     if (gdb) try wide(io, gpa, argv, exe, dir, src, lineOf(text, "stop here: wide"));
+    // images as processes of their own (-lcaf_shmem): said at the launch
+    try imagesApart(io, gpa, argv, fc, dir);
     // ERROR STOP with -fcoarray=lib, where libcaf_single is there
     const caf_src = try std.Io.Dir.path.join(a, &.{ dir, "caf.f90" });
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = caf_src, .data = "program caf\n  integer :: x[*]\n  x = 1\n  error stop 'caf'\nend program caf\n" });
@@ -98,6 +101,36 @@ fn build(io: Io, a: Allocator, fc: []const u8, dir: []const u8, src: []const u8,
     }
     if (sysinfo.target.os.tag == .macos) _ = std.process.run(a, io, .{ .argv = &.{ "dsymutil", exe }, .cwd = .{ .path = dir } }) catch {};
     return exe;
+}
+
+/// A program of coarrays linked with libcaf_shmem (GCC 16), whose images
+/// are child processes: the launch says that the debugger does not follow
+/// them, and names `-lcaf_single`; one linked with libcaf_single is not
+/// told so (#616). Skipped where there is no libcaf_shmem.
+fn imagesApart(io: Io, gpa: Allocator, argv: []const []const u8, fc: []const u8, dir: []const u8) !void {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src = try std.Io.Dir.path.join(a, &.{ dir, "images.f90" });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = "program images\n  integer :: x[*]\n  x = this_image()\n  print *, x\nend program images\n" });
+    for ([_][]const u8{ "shmem", "single" }) |lib| {
+        const exe = (try build(io, a, fc, dir, src, try a.print("images_{s}", .{lib}), &.{ "-fcoarray=lib", try a.print("-lcaf_{s}", .{lib}) })) orelse {
+            if (std.mem.eql(u8, lib, "shmem")) return std.debug.print("skipped: -lcaf_shmem (GCC 16)\n", .{});
+            return error.BuildFailed;
+        };
+        const c = try Client.start(io, gpa, argv);
+        defer c.deinit();
+        defer end(c);
+        _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path" });
+        const launched = try c.send("launch", .{ .program = exe, .cwd = dir });
+        _ = try c.event("initialized");
+        _ = try c.request("configurationDone", .{});
+        _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+        _ = try c.event("exited");
+        const said = try c.outputText(a);
+        const told = std.mem.find(u8, said, "processes of their own") != null and std.mem.find(u8, said, "-lcaf_single") != null;
+        try check(told == std.mem.eql(u8, lib, "shmem"), "-lcaf_{s}: the launch {s} that the images are not followed", .{ lib, if (told) "said" else "did not say" });
+    }
 }
 
 fn runCase(io: Io, gpa: Allocator, argv: []const []const u8, exe: []const u8, dir: []const u8, case: Case, line: i64) !void {
