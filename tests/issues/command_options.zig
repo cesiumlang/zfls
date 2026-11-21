@@ -1,5 +1,5 @@
 //! A file read as its command in compile_commands.json says (#542): its
-//! source form, fixed-form line length (gfortran's 72 by default), debug
+//! source form, fixed-form line length (gfortran's and ifx's 72 by default), debug
 //! lines and `-fimplicit-none`. No compiler runs.
 
 const std = @import("std");
@@ -16,6 +16,15 @@ const fixedf90 = h.File{ .name = "fixedf90.f90", .text = "C     fixed form with 
 const long = h.File{ .name = "long.f", .text = "      PROGRAM LONG\n      IMPLICIT NONE\n      INTEGER I\n      I = 1                                                             + IGNORED_TAIL\n      END\n" };
 const dl = h.File{ .name = "dl.f", .text = "      PROGRAM DL\n      IMPLICIT NONE\n      INTEGER I\n      I = 1\nD     PRINT *, DEBUG_ONLY\n      END\n" };
 const impl = h.File{ .name = "impl.f90", .text = "program impl\n  x = 1.0\n  print *, x\nend program impl\n" };
+
+test "an ifx command's fixed form has 72 columns (#542, #519)" {
+    // ifx 2026.2.0's listing (/list /show:map) of `INTEGER NARROW` then,
+    // past column 72, `,CUT`: no CUT
+    const db = h.File{ .name = "compile_commands.json", .text = "[{\"directory\": \".\", \"file\": \"long.f\", \"command\": \"ifx /c long.f\"}]\n" };
+    const w = try h.Workspace.init(&.{ db, long }, .{});
+    defer w.deinit();
+    try h.expect(!mentions(try w.diagnostics("long.f"), "IGNORED_TAIL"), "long.f is read past column 72", .{});
+}
 
 fn mentions(ds: []const h.Diagnostic, text: []const u8) bool {
     for (ds) |d| if (std.ascii.findIgnoreCase(d.message, text) != null) return true;
