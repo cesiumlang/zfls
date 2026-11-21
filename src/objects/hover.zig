@@ -121,8 +121,12 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
             };
         },
         .variable => {
-            const doc_str = self.getDocumentation();
+            var doc_str = self.getDocumentation();
             const v = self.varDataConst();
+            if (v.cray) |c| {
+                const note = try a.print("Cray {s} `{s}`", .{ if (c.role == .pointer) "pointer to" else "pointee of", c.other });
+                doc_str = if (doc_str) |d| try a.print("{s}  \n{s}", .{ note, d }) else note;
+            }
             switch (v.group) {
                 .none => {},
                 .common => return .{ .msg = try a.print("COMMON {s} {s}", .{ self.name, v.members }), .docs = doc_str },

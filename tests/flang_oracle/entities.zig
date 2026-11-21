@@ -106,12 +106,12 @@ const Walk = struct {
     /// The kind of a symbol of `s`, or null for one that is not declared
     /// there: a name it has by USE or host association, a name Flang made
     /// (`.c.`, `.dt.`, `.n.`, ...: CompilerCreated), an intrinsic, an undeclared name typed
-    /// implicitly, a parent component, a construct name, and the external
+    /// implicitly (a Cray pointee is declared), a parent component, a construct name, and the external
     /// procedures referenced, which Flang lists in the global scope
     fn classify(self: Walk, s: *const dump.Scope, sym: dump.Symbol) Error!?Kind {
         const d = sym.details;
         if (sym.hasFlag("CompilerCreated")) return null;
-        if (sym.hasFlag("Implicit") or sym.hasFlag("ParentComp")) return null;
+        if ((sym.hasFlag("Implicit") and !sym.hasFlag("CrayPointee")) or sym.hasFlag("ParentComp")) return null;
         for ([_][]const u8{ "Use", "UseError", "HostAssoc", "Misc" }) |skip| if (std.mem.eql(u8, d, skip)) return null;
         const global = s.parent == null;
         if (std.mem.eql(u8, d, "ProcEntity")) {
