@@ -11,6 +11,10 @@
 //! line (gdb 15.1, LFortran 0.69.0, Linux). For its programs the adapter's
 //! stop is a temporary breakpoint at the first line of `main`, which gdb's
 //! Python finds in the line table and sets before the program runs.
+//! Intel ifx's main program is `MAIN__`, which Intel's C `main` calls:
+//! gdb's `start` stops in that `main`, at no line (ifx 2026.2, gdb 15.1,
+//! Linux), so the adapter's stop is a function breakpoint on `MAIN__`, as
+//! for Flang's.
 
 const std = @import("std");
 const Io = std.Io;
@@ -25,6 +29,13 @@ const gdb_requests = @import("gdb_requests.zig");
 /// LLVM Flang's main program
 pub const flang_main = "_QQmain";
 
+/// Intel ifx's main program
+pub const ifx_main = "MAIN__";
+
+/// A function that Intel's C `main` calls, in every ifx program and in no
+/// gfortran program (whose main program is a `MAIN__` too)
+const ifx_runtime_init = "for_rtl_init_";
+
 /// LFortran's main program (C's)
 pub const lfortran_main = "main";
 
@@ -35,22 +46,44 @@ pub const lfortran_main = "main";
 const lfortran_entry_python = "python import gdb;s=gdb.lookup_global_symbol('main');b=gdb.block_for_pc(int(s.value().address));l=[e for e in s.symtab.linetable() if b.start<=e.pc<b.end and e.line>0];f=s.symtab.fullname();f=\"'%s'\"%f if ' ' in f else f;p='%s:%d'%(f,min(l,key=lambda e:e.pc).line) if l else 'main';print('zfls-entry %d'%gdb.Breakpoint(p,temporary=True).number)";
 
 /// At `launch` with `stopAtEntry`: the adapter's own stop at the start,
-/// when `program` (relative to `cwd`) is LLVM Flang's or LFortran's (as
-/// `s.g.lfortran` says). True when it is, and gdb's stop at the start is
-/// not wanted.
+/// when `program` (relative to `cwd`) is LLVM Flang's, ifx's or LFortran's
+/// (as `s.g.lfortran` says). True when it is, and gdb's stop at the start
+/// is not wanted.
 pub fn atLaunch(s: *Session, a: Allocator, program: ?[]const u8, cwd: ?[]const u8) bool {
     s.g.entry_function = null;
     s.g.entry_breakpoint = null;
     s.g.entry_hit = false;
     const p = program orelse return false;
     const path = if (cwd) |c| (if (std.Io.Dir.path.isAbsolute(p)) p else std.Io.Dir.path.join(a, &.{ c, p }) catch p) else p;
-    if (programHas(s.io, path, flang_main)) {
-        s.g.entry_function = flang_main;
-        return true;
+    s.g.entry_function = entryFunction(s.io, path, s.g.lfortran);
+    return s.g.entry_function != null;
+}
+
+/// The function of the adapter's stop at the start of the program at
+/// `path`; null for gdb's own
+pub fn entryFunction(io: Io, path: []const u8, is_lfortran: bool) ?[]const u8 {
+    if (programHas(io, path, flang_main)) return flang_main;
+    if (programHas(io, path, ifx_runtime_init) and programHas(io, path, ifx_main)) return ifx_main;
+    return if (is_lfortran) lfortran_main else null;
+}
+
+test "the stop at the start: Flang's and ifx's main programs, not gfortran's" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const cases = [_]struct { []const u8, ?[]const u8 }{
+        .{ "x\x00_QQmain\x00main\x00x", flang_main },
+        .{ "x\x00main\x00for_rtl_init_\x00MAIN__\x00x", ifx_main },
+        // gfortran's
+        .{ "x\x00main\x00_gfortran_set_args\x00MAIN__\x00x", null },
+    };
+    for (cases) |c| {
+        const bytes, const want = c;
+        try tmp.dir.writeFile(io, .{ .sub_path = "p", .data = bytes });
+        const path = try tmp.dir.realPathFileAlloc(io, "p", std.testing.allocator);
+        defer std.testing.allocator.free(path);
+        try std.testing.expectEqualDeep(want, entryFunction(io, path, false));
     }
-    if (!s.g.lfortran) return false;
-    s.g.entry_function = lfortran_main;
-    return true;
 }
 
 /// At `configurationDone`, before the program runs: the breakpoint of the

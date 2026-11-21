@@ -37,8 +37,8 @@ pub const State = struct {
     /// left out of the variables, and no module variables scope
     lfortran: bool = false,
     /// The breakpoint of the stop at the start: lldb's (lldb.zig), or
-    /// gdb's on LLVM Flang's main program (gdb_entry.zig), whose function
-    /// is `entry_function`
+    /// gdb's on the main program of LLVM Flang or ifx (gdb_entry.zig),
+    /// whose function is `entry_function`
     entry_breakpoint: ?i64 = null,
     entry_hit: bool = false,
     entry_function: ?[]const u8 = null,

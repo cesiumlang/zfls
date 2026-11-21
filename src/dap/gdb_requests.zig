@@ -127,7 +127,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         try o.put(a, "env", try environment(s, a, json.get(args, "env")));
         const at_entry = json.get(args, "stopAtEntry");
         const wanted = at_entry != null and at_entry.? == .bool and at_entry.?.bool;
-        // LLVM Flang's main program: the adapter's own stop
+        // the main program of LLVM Flang, ifx or LFortran: the adapter's own stop
         const own = wanted and gdb_entry.atLaunch(s, a, program, cwd);
         try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = wanted and !own });
     } else {
