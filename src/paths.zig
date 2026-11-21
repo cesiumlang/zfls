@@ -119,7 +119,8 @@ pub fn realpath(io: Io, a: Allocator, p: []const u8) ![]u8 {
 /// compilers' debug information name it; `p` itself otherwise, also when
 /// it does not exist. Takes `p`, allocated with `a`.
 pub fn longName(a: Allocator, p: []u8) ![]u8 {
-    if (!is_windows or std.mem.findScalar(u8, p, '~') == null) return p;
+    if (!is_windows) return p;
+    if (std.mem.findScalar(u8, p, '~') == null) return p;
     const wide = std.unicode.wtf8ToWtf16LeAllocZ(a, p) catch return p;
     defer a.free(wide);
     // the length it needs (with the terminating 0), then the path
