@@ -36,12 +36,18 @@ pub const State = struct {
     /// The program launched is LFortran's (lfortran.zig): its temporaries
     /// left out of the variables, and no module variables scope
     lfortran: bool = false,
+    /// The program launched is Intel ifx's: its polymorphic objects read
+    /// from their descriptors (ifx_class.zig)
+    ifx: bool = false,
     /// The breakpoint of the stop at the start: lldb's (lldb.zig), or
     /// gdb's on the main program of LLVM Flang or ifx (gdb_entry.zig),
     /// whose function is `entry_function`
     entry_breakpoint: ?i64 = null,
     entry_hit: bool = false,
     entry_function: ?[]const u8 = null,
+    /// gdb's Python keeps runtime-error breakpoints that were pending
+    /// enabled (gdb_pending.zig)
+    keeps_pending: bool = false,
     /// The client asked for a pause, which lldb-dap's stop calls an
     /// exception (the signal SIGSTOP)
     pausing: bool = false,

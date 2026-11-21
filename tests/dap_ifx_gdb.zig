@@ -2,8 +2,11 @@
 //! ifx`): building with `ifx -g -O0 -check bounds`, and a session on
 //! tests/dap/grid.f90 as far as Intel's DWARF goes in gdb: line
 //! breakpoints, the stack, a step, an integer variable, and the stop at the
-//! runtime error of a bound exceeded (`for__issue_diagnostic`, #492). The
-//! variables of each stop are shown, for what Intel's DWARF gives gdb.
+//! runtime error of a bound exceeded (`for__issue_diagnostic`, #492), and
+//! polymorphic objects and arrays by their dynamic type (#667), without
+//! the hidden length of a CHARACTER argument (#679), and the module
+//! variables (#680), not also among the main program's locals (#683). The variables of each stop are shown, for what
+//! Intel's DWARF gives gdb.
 
 const std = @import("std");
 const Io = std.Io;
@@ -76,6 +79,17 @@ fn named(vars: []Value, name: []const u8) ?Value {
     return null;
 }
 
+/// The variables of `module` in the frame's "Module variables" scope
+fn moduleVariables(c: *Client, frame: i64, module: []const u8) ![]Value {
+    const m = named(try scopeVariables(c, frame, "Module variables"), module) orelse return &.{};
+    return items(try c.request("variables", .{ .variablesReference = int(m, "variablesReference") orelse 0 }), "variables");
+}
+
+fn checkVariable(vars: []Value, name: []const u8, value: []const u8, evaluate_name: []const u8) !void {
+    const v = named(vars, name) orelse Value.null;
+    try check(eql(str(v, "value"), value) and eql(str(v, "evaluateName"), evaluate_name), "{s} = {s} ({s})", .{ name, str(v, "value") orelse "?", str(v, "evaluateName") orelse "?" });
+}
+
 pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
     const c = try Client.start(io, gpa, s.argv);
     defer c.deinit();
@@ -101,13 +115,50 @@ pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
         if (eql(str(sc, "name"), "Registers")) continue;
         show(str(sc, "name") orelse "?", items(try c.request("variables", .{ .variablesReference = int(sc, "variablesReference") orelse 0 }), "variables"));
     }
+    const args = try scopeVariables(c, int(stack[0], "id").?, "Arguments");
+    // s's hidden length, a local `S.len` of ifx's, left out (#679)
+    const s_arg = named(args, "s") orelse Value.null;
+    try check(eql(str(s_arg, "value"), "'abcdef'"), "s = {s} ({s})", .{ str(s_arg, "value") orelse "?", str(s_arg, "type") orelse "?" });
+    for (try scopeVariables(c, int(stack[0], "id").?, "Locals")) |x| {
+        try check(std.mem.findScalar(u8, str(x, "name") orelse "", '.') == null, "no hidden length in Locals: {s}", .{str(x, "name") orelse "?"});
+    }
+    // polymorphic: t a tagged, ts(:) of labeled, by their descriptors (#667)
+    const t = named(args, "t") orelse Value.null;
+    try check(eql(str(t, "type"), "class(point)") and std.mem.startsWith(u8, str(t, "value") orelse "", "tagged("), "t: {s} = {s}", .{ str(t, "type") orelse "?", str(t, "value") orelse "?" });
+    const tc = items(try c.request("variables", .{ .variablesReference = int(t, "variablesReference") orelse 0 }), "variables");
+    const tag = named(tc, "tag") orelse Value.null;
+    try check(eql(str(tag, "value"), "'hello   '"), "t%tag = {s}", .{str(tag, "value") orelse "?"});
+    const ts = named(args, "ts") orelse Value.null;
+    try check(eql(str(ts, "type"), "class(point) (2)") and eql(str(ts, "value"), "[labeled(…), labeled(…)]"), "ts: {s} = {s}", .{ str(ts, "type") orelse "?", str(ts, "value") orelse "?" });
+    // module grid's variables, its private one and COMMON block's too (#680)
+    const grid = try moduleVariables(c, int(stack[0], "id").?, "grid");
+    show("grid", grid);
+    try checkVariable(grid, "ncells", "42", "grid::ncells");
+    try checkVariable(grid, "secret", "99", "grid::secret");
+    try checkVariable(grid, "origin", "point(x=9.0, y=-2.0, id=7)", "grid::origin");
+    try checkVariable(grid, "gname", "'grid name'", "grid::gname");
+    try checkVariable(grid, "cx", "1.5", "grid::cx");
+    try checkVariable(grid, "cy", "2.5", "grid::cy");
 
     // in the main program
     _ = try c.request("continue", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;
     stack = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(int(stack[0], "line") == s.main_line, "stopped in main ({?d})", .{int(stack[0], "line")});
-    show("Locals", try scopeVariables(c, int(stack[0], "id").?, "Locals"));
+    const main_locals = try scopeVariables(c, int(stack[0], "id").?, "Locals");
+    show("Locals", main_locals);
+    // class(point), allocatable :: pts(:), of labeled (#667)
+    const pts = named(main_locals, "pts") orelse Value.null;
+    try check(eql(str(pts, "type"), "class(point) (2)") and eql(str(pts, "value"), "[labeled(…), labeled(…)]"), "pts: {s} = {s}", .{ str(pts, "type") orelse "?", str(pts, "value") orelse "?" });
+    // the modules it uses: grid's public variables, and counters' renamed (#680)
+    const main_grid = try moduleVariables(c, int(stack[0], "id").?, "grid");
+    show("grid", main_grid);
+    try checkVariable(main_grid, "ncells", "42", "grid::ncells");
+    try check(named(main_grid, "secret") == null, "no private secret in main", .{});
+    try checkVariable(try moduleVariables(c, int(stack[0], "id").?, "counters"), "nhits => hits", "3", "counters::hits");
+    // grid's variables that main uses are not also locals; its own are (#683)
+    for ([_][]const u8{ "cx", "cy", "gname", "origin" }) |n| try check(named(main_locals, n) == null, "{s} not among main's locals", .{n});
+    for ([_][]const u8{ "k", "ip", "dl", "goal", "v", "m", "big" }) |n| try check(named(main_locals, n) != null, "{s} among main's locals", .{n});
 
     // a step: k = 4
     _ = try c.request("next", .{ .threadId = thread });
