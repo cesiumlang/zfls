@@ -565,6 +565,22 @@ jobs:
           "$RUNNER_TEMP/flang/bin/flang" --version
           echo "FLANG=$RUNNER_TEMP/flang/bin/flang" >> "$GITHUB_ENV"
 
+      # Intel's ifx from conda-forge, without the compilers its package
+      # links with (the runner's gcc and ld do): for
+      # tests/compiler_check.zig (IFX)
+      - name: Intel ifx (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          for wait in 15 30 60 0; do
+            MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/ifx" -c conda-forge ifx_impl_linux-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing ifx failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/ifx/bin/ifx" --version
+          echo "IFX=$RUNNER_TEMP/ifx/bin/ifx" >> "$GITHUB_ENV"
+
       - name: Unit tests
         run: zig build test --summary failures
 
@@ -823,6 +839,12 @@ jobs:
             ran=$((ran + 1))
           done
           echo "$ran other gfortrans checked" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # and with ifx (IFX, conda-forge's), also on a .f08 file, a TAB-format
+      # line and fpp's #error
+      - name: The compiler check with ifx (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler ifx
 
       - name: Version under test
         run: |

@@ -371,11 +371,18 @@ pub fn main(init: std.process.Init) !u8 {
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, "-cpp");
         if (std.mem.eql(u8, ext_lower, ".f") or std.mem.eql(u8, ext_lower, ".for")) try cmd.append(a, "-ffixed-form");
         const text = try Io.Dir.cwd().readFileAlloc(io, src, a, .limited(1 << 24));
-        try cmd.appendSlice(a, try util.headerArgs(a, text, "oracle-gfortran-args:"));
+        const own_args = try util.headerArgs(a, text, "oracle-gfortran-args:");
+        try cmd.appendSlice(a, own_args);
         try cmd.append(a, abs);
         const g = try util.run(io, a, cmd.items, workdir, &gf_env);
         if (!g.ok) {
             const why = util.failure(g);
+            // an option of the fixture's that this gfortran has not
+            // (`-funsigned` before GCC 15)
+            if (own_args.len > 0 and std.mem.find(u8, why, "unrecognized command-line option") != null) {
+                std.debug.print("SKIP {s} (this gfortran has not its options: {s})\n", .{ src, why });
+                continue;
+            }
             if (fixtures) {
                 std.debug.print("FAIL {s}: rejected by gfortran: {s}\n", .{ src, why });
                 mismatched += 1;
