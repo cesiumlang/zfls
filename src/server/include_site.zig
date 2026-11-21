@@ -5,6 +5,9 @@
 //! Flang prints ("included here", `compilers.Message.include_site`). That
 //! line is the INCLUDE statement or `#include` directive of the file
 //! checked that names the file, or that names a file which includes it.
+//! gfortran's `-Wtabs` names no file at all ("Nonconforming tab character
+//! in column 1 of line 2"): when the file checked has no TAB there, the
+//! file is the first included one that has (#586).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -124,6 +127,17 @@ pub fn fill(a: Allocator, io: Io, job: *const compile.Job, lines: []const []cons
     var dirs: ?[]const []const u8 = null;
     for (msgs) |*m| {
         if (m.include_site != null) continue;
+        if (m.file == null and job.id == .gfortran and isTabWarning(m.message)) {
+            if (m.line == 0 or m.column == null or hasTab(lines, m.line, m.column.?)) continue;
+            if (dirs == null) dirs = try includeDirs(a, job.cwd, job.args);
+            var via: std.ArrayList(Hop) = .empty;
+            var found: ?[]const u8 = null;
+            const line = (try findTab(a, io, lines, paths.dirname(job.path), dirs.?, m.line, m.column.?, &via, &found, 0)) orelse continue;
+            m.file = found;
+            m.include_site = .{ .file = job.path, .line = line, .column = null, .message = "included here" };
+            for (via.items) |v| try m.related.append(a, .{ .file = v.file, .line = v.line, .column = null, .message = "included here" });
+            continue;
+        }
         const file = m.file orelse continue;
         if (try messages.isHere(a, job, here.items, file)) continue;
         if (dirs == null) dirs = try includeDirs(a, job.cwd, job.args);
@@ -136,6 +150,65 @@ pub fn fill(a: Allocator, io: Io, job: *const compile.Job, lines: []const []cons
         m.include_site = .{ .file = job.path, .line = line, .column = null, .message = "included here" };
         for (via.items) |v| try m.related.append(a, .{ .file = v.file, .line = v.line, .column = null, .message = "included here" });
     }
+}
+
+/// gfortran's `-Wtabs` warning (or error, with `-Werror`)
+fn isTabWarning(message: []const u8) bool {
+    return std.mem.startsWith(u8, message, "Nonconforming tab character in column ");
+}
+
+/// Whether line `line` of `lines` has a TAB in column `column` (1-based)
+fn hasTab(lines: []const []const u8, line: usize, column: usize) bool {
+    if (line == 0 or line > lines.len or column == 0) return false;
+    const l = lines[line - 1];
+    return column <= l.len and l[column - 1] == '\t';
+}
+
+/// The line (1-based) of `lines` that includes the first file, in the order
+/// gfortran reads them, whose line `line` has a TAB in column `column`
+/// (`found`), directly or through the files it includes (`via`, as `find`)
+fn findTab(a: Allocator, io: Io, lines: []const []const u8, dir: []const u8, dirs: []const []const u8, line: usize, column: usize, via: *std.ArrayList(Hop), found: *?[]const u8, depth: usize) !?usize {
+    if (depth >= max_depth) return null;
+    for (lines, 0..) |l, i| {
+        const name = named(l) orelse continue;
+        const p = (try resolve(a, io, name, dir, dirs)) orelse continue;
+        const text = Io.Dir.cwd().readFileAlloc(io, p, a, .limited(16 * 1024 * 1024)) catch continue;
+        const inner = try compile.splitLines(a, text);
+        if (hasTab(inner, line, column)) {
+            found.* = p;
+            return i + 1;
+        }
+        if (try findTab(a, io, inner, paths.dirname(p), dirs, line, column, via, found, depth + 1)) |n| {
+            try via.append(a, .{ .file = p, .line = n });
+            return i + 1;
+        }
+    }
+    return null;
+}
+
+test "gfortran's -Wtabs of an included file: at the INCLUDE line (#586)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    patterns.init();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "tabbed.inc", .data = "C     an include with a TAB-format line\n\tI = 1\n" });
+    const dir = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const path = try paths.join(a, &.{ dir, "ti.f" });
+    const gf = testJob(arena, .gfortran, path, dir, &.{path});
+    const ti = [_][]const u8{ "      PROGRAM TI", "      IMPLICIT NONE", "      INTEGER I", "      INCLUDE 'tabbed.inc'", "      PRINT *, I", "      END" };
+    // MSYS2's gfortran 16.1, -Wall
+    const msgs = try compilers.parse(a, .gfortran, "f951.exe: Warning: Nonconforming tab character in column 1 of line 2 [-Wtabs]\n");
+    try fill(a, io, &gf, &ti, &.{path}, msgs);
+    try std.testing.expectEqual(@as(usize, 4), msgs[0].include_site.?.line);
+    try std.testing.expectEqualStrings(try paths.join(a, &.{ dir, "tabbed.inc" }), msgs[0].file.?);
+    // a TAB of the file checked itself: left there
+    const own = [_][]const u8{ "      PROGRAM T", "\tI = 1", "      INCLUDE 'tabbed.inc'", "      END" };
+    const again = try compilers.parse(a, .gfortran, "f951.exe: Warning: Nonconforming tab character in column 1 of line 2 [-Wtabs]\n");
+    try fill(a, io, &gf, &own, &.{path}, again);
+    try std.testing.expect(again[0].include_site == null and again[0].file == null);
 }
 
 fn testJob(arena: std.heap.ArenaAllocator, id: compilers.Id, path: []const u8, cwd: []const u8, args: []const []const u8) compile.Job {
