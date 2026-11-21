@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const paths = @import("../paths.zig");
 const parser = @import("../parser.zig");
 const compilers = @import("../compilers.zig");
+const compiler_names = @import("../compiler_names.zig");
 const project = @import("../project.zig");
 const definition = @import("definition.zig");
 
@@ -65,7 +66,7 @@ pub fn checkSetting(self: *Server, a: Allocator) !void {
 /// The executables to try: those of `compiler_path` (`configured`: a file,
 /// or a directory that holds the compiler), else the compiler of the
 /// file's command (`cmd`) when it is one of the compiler's names (with a
-/// version, a target or not: `namesCompiler`), then those names, found on
+/// version, a target or not: `compiler_names.namesCompiler`), then those names, found on
 /// the PATH
 pub fn executables(self: *Server, a: Allocator, id: compilers.Id, configured_path: ?[]const u8, cmd: ?project.Command) ![]const []const u8 {
     const names = compilers.executables(id);
@@ -73,8 +74,8 @@ pub fn executables(self: *Server, a: Allocator, id: compilers.Id, configured_pat
         const c = cmd orelse return names;
         if (c.args.len == 0) return names;
         const exe = c.args[0];
-        const base = unversionedName(exe);
-        for (names) |n| if (namesCompiler(base, n)) {
+        const base = compiler_names.unversionedName(exe);
+        for (names) |n| if (compiler_names.namesCompiler(base, n)) {
             const has_dir = std.mem.findAny(u8, exe, "/\\") != null;
             const path = if (has_dir and !std.Io.Dir.path.isAbsolute(exe)) try paths.join(a, &.{ c.dir, exe }) else exe;
             const out = try a.alloc([]const u8, names.len + 1);
@@ -90,71 +91,6 @@ pub fn executables(self: *Server, a: Allocator, id: compilers.Id, configured_pat
     var out: std.ArrayList([]const u8) = .empty;
     for (names) |n| try out.append(a, try paths.join(a, &.{ p, if (is_windows) try a.print("{s}.exe", .{n}) else n }));
     return out.items;
-}
-
-/// The name of a compiler's executable without its directory, `.exe` and
-/// version: `C:\x\flang-new-23.exe` and `flang-21` are flang-new and flang
-/// (Ubuntu's and Nix's names), `gfortran-14` is gfortran
-pub fn unversionedName(exe: []const u8) []const u8 {
-    var base = exe[if (std.mem.findLastAny(u8, exe, "/\\")) |i| i + 1 else 0..];
-    if (std.ascii.endsWithIgnoreCase(base, ".exe")) base = base[0 .. base.len - 4];
-    // `-N`, `-N.N`, ...: digits and dots after the last `-`, starting and
-    // ending with a digit
-    const dash = std.mem.findScalarLast(u8, base, '-') orelse return base;
-    const version = base[dash + 1 ..];
-    if (version.len == 0 or !std.ascii.isDigit(version[0]) or !std.ascii.isDigit(version[version.len - 1])) return base;
-    for (version) |ch| if (!std.ascii.isDigit(ch) and ch != '.') return base;
-    return base[0..dash];
-}
-
-/// Whether `base`, a command's compiler without its directory, `.exe` and
-/// version (`unversionedName`), is the compiler `name`: also with a target
-/// before it, as toolchains name theirs (MSYS2's
-/// `x86_64-w64-mingw32-gfortran`, conda-forge's
-/// `x86_64-conda-linux-gnu-gfortran`, Debian's `x86_64-linux-gnu-gfortran`),
-/// or MacPorts' `-mp` after it (`gfortran-mp-14`)
-pub fn namesCompiler(base: []const u8, name: []const u8) bool {
-    const b = if (std.mem.endsWith(u8, base, "-mp")) base[0 .. base.len - 3] else base;
-    if (std.mem.eql(u8, b, name)) return true;
-    return b.len > name.len + 1 and std.mem.endsWith(u8, b, name) and b[b.len - name.len - 1] == '-';
-}
-
-test "a command's compiler: with a version, a target, or MacPorts' -mp" {
-    const cases = [_]struct { []const u8, []const u8, bool }{
-        .{ "C:/msys64/ucrt64/bin/x86_64-w64-mingw32-gfortran.exe", "gfortran", true },
-        .{ "/opt/conda/bin/x86_64-conda-linux-gnu-gfortran", "gfortran", true },
-        .{ "x86_64-apple-darwin13.4.0-gfortran", "gfortran", true },
-        .{ "/usr/bin/x86_64-linux-gnu-gfortran-13", "gfortran", true },
-        .{ "/opt/local/bin/gfortran-mp-14", "gfortran", true },
-        .{ "gfortran-14", "gfortran", true },
-        .{ "gfortran", "gfortran", true },
-        .{ "x86_64-conda-linux-gnu-flang-new", "flang-new", true },
-        .{ "flang-new-19", "flang", false },
-        .{ "mygfortran", "gfortran", false },
-        .{ "-gfortran", "gfortran", false },
-        .{ "gfortran-wrapper", "gfortran", false },
-        .{ "x86_64-w64-mingw32-gcc", "gfortran", false },
-    };
-    for (cases) |c| {
-        if (namesCompiler(unversionedName(c[0]), c[1]) != c[2]) {
-            std.debug.print("{s} as {s}: expected {}\n", .{ c[0], c[1], c[2] });
-            return error.TestUnexpectedResult;
-        }
-    }
-}
-
-test "a compiler's name, without its directory, .exe and version" {
-    try std.testing.expectEqualStrings("flang-new", unversionedName("C:\\x\\bin\\flang-new-23.exe"));
-    try std.testing.expectEqualStrings("flang-new", unversionedName("/usr/bin/flang-new-19"));
-    try std.testing.expectEqualStrings("flang", unversionedName("/nix/store/x-flang-21.1.8/bin/flang-21"));
-    try std.testing.expectEqualStrings("flang", unversionedName("flang-23.1.EXE"));
-    try std.testing.expectEqualStrings("gfortran", unversionedName("gfortran-14"));
-    try std.testing.expectEqualStrings("flang", unversionedName("C:/x/flang.exe"));
-    try std.testing.expectEqualStrings("flang-new", unversionedName("flang-new"));
-    // no version
-    try std.testing.expectEqualStrings("flang-", unversionedName("flang-"));
-    try std.testing.expectEqualStrings("flang-1.", unversionedName("flang-1."));
-    try std.testing.expectEqualStrings("flang-x1", unversionedName("flang-x1"));
 }
 
 /// The command of `file` in compile_commands.json (or of another file in

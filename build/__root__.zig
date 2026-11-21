@@ -189,6 +189,14 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .needs_fortls = false,
         },
         .{
+            .name = "build_command",
+            .root = "tests/build_command.zig",
+            .step = "test-build-command",
+            .desc = "Build a Fortran file with the command zfls build-command answers and run its program: gfortran, or another with -- --compiler C (LLVM Flang linked with the ifx kit on Windows x64) (skipped without the compiler)",
+            .needs_fortls = false,
+            .needs_kit = true,
+        },
+        .{
             .name = "compiler_check",
             .root = "tests/compiler_check.zig",
             .step = "test-compiler",

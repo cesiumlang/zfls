@@ -83,7 +83,7 @@ Not a compiler's own, and read for all of them: the C preprocessor, fypp files, 
 
 ### Running and debugging
 
-Run Fortran File and Debug Fortran File are the VS Code extension's; `zfls dap` is for any editor (see [A debugger](#a-debugger-zfls-dap)).
+Run Fortran File and Debug Fortran File are the VS Code extension's, with the build zfls answers for any editor (see [Building a file to run or debug](#building-a-file-to-run-or-debug-zflsbuildcommand)); `zfls dap` is for any editor (see [A debugger](#a-debugger-zfls-dap)).
 
 | | gfortran | ifx | ifort | flang | nvfortran | nagfor | lfortran |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
@@ -227,7 +227,7 @@ set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib k
 lfortran hello.f90 -o hello.exe
 ```
 
-The VS Code extension's **Run Fortran File** sets this up itself.
+zfls's build of a file to run (`zfls build-command`, the VS Code extension's **Run Fortran File**) sets this up itself (see [Building a file to run or debug](#building-a-file-to-run-or-debug-zflsbuildcommand)).
 
 The kit links LLVM Flang's programs too. Flang's runtime (`flang_rt.runtime.dynamic.lib`, C++ built against Microsoft's `/MD` runtime) needs its static initializers run before the program, which the kit's startup code does, and a few functions of Microsoft's static libraries, which are in the startup object too. Flang runs `lld-link` itself (`-fuse-ld=lld`, with conda-forge's `lld` next to `flang`), and `-fms-runtime-lib=dll` has it use the C runtime in DLLs; with `LIB` set, neither Flang nor `lld-link` looks for Visual Studio's libraries:
 
@@ -237,7 +237,75 @@ set LINK="C:\zfls\ifx-kit\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib k
 flang -fms-runtime-lib=dll -fuse-ld=lld hello.f90 -o hello.exe
 ```
 
-Run Fortran File does this too, outside a Visual Studio environment.
+zfls's build of a file to run does this too, outside a Visual Studio environment.
+
+### Building a file to run or debug (`zfls/buildCommand`)
+
+zfls says how to build a Fortran file into a program to run or debug, so that every editor builds it the same way (the VS Code extension's Run Fortran File and Debug Fortran File run this build as a task): the compiler's default options for a debug build (`-g -O0`; `/Zi /Od` for ifx and ifort on Windows; `-g -O0 -static-libgfortran -static-libquadmath` for MinGW's gfortran, so that gdb stops at the errors its runtime raises; `-gdwarf-4 -O0 -Wl,-debug:dwarf` for LLVM Flang on Windows where it has an `lld-link`, for gdb; `-g` for LFortran, none on Windows), the file's directory on the include path, a directory of its own per source file in zfls's cache (`run` in it) for the program and the module and object files, and on Windows the link of LLVM Flang's and LFortran's programs with zfls's ifx kit (see [ifx without Visual Studio](#ifx-without-visual-studio-windows-x64)). It answers the request `zfls/buildCommand`, and the same on the command line:
+
+```sh
+zfls build-command hello.f90 [--compiler C] [--compiler-path P] [--output-dir D] [--kit DIR] [-- ARGS...]
+```
+
+The request's parameters are `textDocument`, `compiler` (a name looked up on the `PATH`, or a path; `gfortran` by default), `compilerPath` (its file or directory, relative to the workspace), `args` (the build's options in place of the defaults), `outputDirectory` and `env` (values in place of the environment's, such as `{"Path": "${env:Path}"}` for a tasks.json). The answer, `null` when the compiler is not found:
+
+```json
+{
+  "compiler": "/usr/bin/gfortran",
+  "name": "gfortran",
+  "debugInfo": "dwarf",
+  "debugger": "gdb",
+  "runEnv": {},
+  "args": ["-g", "-O0", "-I/work", "-o", "/home/me/.cache/zfls/run/hello-1a2b3c4d5e/hello", "/work/hello.f90"],
+  "cwd": "/home/me/.cache/zfls/run/hello-1a2b3c4d5e",
+  "env": {},
+  "program": "/home/me/.cache/zfls/run/hello-1a2b3c4d5e/hello"
+}
+```
+
+Run `compiler` with `args` in `cwd`, with `env` added to the environment (on Windows, the kit's `LIB` and `LINK`), then `program` with `runEnv` added (on Windows, the compiler's directory first on the `PATH`, for its runtime libraries). `debugInfo` is the program's debug information (`dwarf`, or `pdb` for Microsoft's) and `debugger` the debugger of `zfls dap` that fits it (`gdb`, `lldb` on macOS, `dbgeng` for a PDB; see [A debugger](#a-debugger-zfls-dap)). `note` says why a build links otherwise than it could (no ifx kit, no `lld-link`). Without a `textDocument`, the answer has only the compiler's part (`compiler`, `name`, `debugInfo`, `debugger`, `runEnv`), for a program built otherwise.
+
+With Neovim, a command that builds the current file and runs it in a terminal:
+
+```lua
+vim.api.nvim_create_user_command("FortranRun", function()
+  local client = vim.lsp.get_clients({ name = "zfls", bufnr = 0 })[1]
+  client:request("zfls/buildCommand", { textDocument = vim.lsp.util.make_text_document_params() }, function(_, cmd)
+    if not cmd then return vim.notify("zfls: no compiler", vim.log.levels.ERROR) end
+    local env = vim.tbl_extend("force", vim.fn.environ(), cmd.env, cmd.runEnv)
+    vim.system(vim.list_extend({ cmd.compiler }, cmd.args), { cwd = cmd.cwd, env = env, text = true }, vim.schedule_wrap(function(built)
+      if built.code ~= 0 then return vim.notify(built.stderr, vim.log.levels.ERROR) end
+      vim.cmd.split()
+      vim.fn.jobstart({ cmd.program }, { term = true, env = cmd.runEnv })
+    end))
+  end)
+end, {})
+```
+
+With Emacs, through `compile`:
+
+```elisp
+(defun zfls-run-file ()
+  "Build the current Fortran file with the command zfls answers, and run it."
+  (interactive)
+  (let* ((cmd (json-parse-string
+               (shell-command-to-string (concat "zfls build-command " (shell-quote-argument buffer-file-name)))
+               :object-type 'alist))
+         (default-directory (file-name-as-directory (alist-get 'cwd cmd)))
+         (process-environment
+          (append (mapcar (lambda (v) (format "%s=%s" (car v) (cdr v)))
+                          (append (alist-get 'env cmd) (alist-get 'runEnv cmd)))
+                  process-environment)))
+    (compile (concat (mapconcat #'shell-quote-argument (cons (alist-get 'compiler cmd) (append (alist-get 'args cmd) nil)) " ")
+                     " && " (shell-quote-argument (alist-get 'program cmd))))))
+```
+
+With Helix, a key in `config.toml` (Linux and macOS, where the answer's environments are empty; with `jq`):
+
+```toml
+[keys.normal.space]
+r = ":run-shell-command zfls build-command %{buffer_name} | jq -r '\"cd \" + (.cwd | @sh) + \" && \" + ([.compiler] + .args | map(@sh) | join(\" \")) + \" && \" + (.program | @sh)' | sh"
+```
 
 ### A debugger (`zfls dap`)
 

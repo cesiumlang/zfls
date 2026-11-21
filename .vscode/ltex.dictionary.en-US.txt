@@ -524,5 +524,8 @@ msvcrt
 getcwd
 cudadevice
 FFLAGS
+alist
+bufnr
+defun
 direnv
 vadimcn

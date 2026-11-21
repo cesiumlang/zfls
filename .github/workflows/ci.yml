@@ -694,7 +694,8 @@ jobs:
           echo "IFX=$(cygpath -w "$tmp/ifx/Library/bin/ifx.exe")" >> "$GITHUB_ENV"
 
       # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
-      # tests/gfortran_oracle.zig, tests/flang_oracle.zig, tests/stress_edit.zig)
+      # tests/build_command.zig, tests/gfortran_oracle.zig, tests/flang_oracle.zig,
+      # tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
 
@@ -725,6 +726,18 @@ jobs:
         env:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler flang
+
+      # A Fortran file built with the command zfls answers (zfls
+      # build-command, Run Fortran File's build) and its program run: with
+      # gfortran (GFORTRAN names MSYS2's on Windows x64; skipped where there
+      # is none), and with LLVM Flang (FLANG), on Windows x64 linked with
+      # the package's ifx kit
+      - name: Run Fortran File's build with gfortran
+        run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "${GFORTRAN:-gfortran}"
+
+      - name: Run Fortran File's build with LLVM Flang (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "$FLANG"
 
       # and on LFortran's (-g, which LFortran for Windows refuses): its
       # integer variables, the runtime error of a bound exceeded, ERROR STOP

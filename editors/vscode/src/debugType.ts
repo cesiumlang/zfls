@@ -14,11 +14,11 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { TargetKind } from "./fpm";
-import { FpmProject, buildTarget, findProjects, fpmCompiler, fpmExecutable, fpmFlangDwarf, listTargets, projectOf } from "./fpmCommands";
+import { FpmProject, buildTarget, debugBuild, findProjects, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
 import { findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
-import { adapterArgs, compilerKind, fortranLaunch, parseProcesses, runtimeEnv } from "./run";
-import { chooseInstalledDebugger, gdbFor, lldbWanted } from "./runFile";
-import { expandVariables, findExecutable } from "./tools";
+import { CompilerInfo, adapterArgs, fortranLaunch, parseProcesses } from "./run";
+import { chooseInstalledDebugger, compilerInfo, gdbFor, lldbWanted } from "./runFile";
+import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
 export const DEBUG_TYPE = "fortran";
@@ -117,46 +117,49 @@ async function resolve(
     return attach(folder, config, log);
   }
   let program: string | undefined;
-  let compilerName: string;
-  let compilerExe: string | undefined;
   let cwd: string | undefined = typeof config.cwd === "string" && config.cwd ? config.cwd : undefined;
+  const configuredCompiler = typeof config.compiler === "string" && config.compiler ? config.compiler : undefined;
+  // `"dbgeng": true` says the program has Microsoft's debug information
+  const dbgeng = process.platform === "win32" && config.dbgeng === true;
   if (typeof config.fpmTarget === "string" && config.fpmTarget) {
     const project = fpmProjectFor(folder, cwd);
     if (!project) {
       void vscode.window.showErrorMessage(vscode.l10n.t("zfls: no fpm.toml for the fpm target {0}.", config.fpmTarget));
       return undefined;
     }
-    const compiler = fpmCompiler(project);
-    compilerName = typeof config.compiler === "string" ? config.compiler : compiler.name;
-    compilerExe = findExecutable(compilerName) ?? compiler.exe;
+    const build = await debugBuild(project);
+    const compiler = configuredCompiler ? await compilerInfo(vscode.Uri.file(project.root), configuredCompiler) : build.compiler;
     const kind: TargetKind = ["executable", "example", "test"].includes(config.fpmTargetKind) ? config.fpmTargetKind : "executable";
     cwd ??= project.root;
-    const msvc = msvcProgram(config, compilerExe ?? compilerName, fpmFlangDwarf(project));
-    const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
+    const msvc = (configuredCompiler ? compiler?.debugInfo === "pdb" : build.msvc) || dbgeng;
+    const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compiler?.compiler), usesLldb(config, scope));
     if (!debugType) {
       return undefined;
     }
-    program = await buildTarget(project, { kind, name: config.fpmTarget }, log);
+    program = await buildTarget(project, { kind, name: config.fpmTarget }, build.options, log);
     if (!program) {
       return undefined;
     }
-    return finish(config, debugType, program, cwd, compilerExe, scope, log, msvc);
+    return finish(config, debugType, program, cwd, compiler, scope, log, msvc);
   }
   if (typeof config.program !== "string" || !config.program) {
     void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran launch configuration needs a program or an fpmTarget."));
     return undefined;
   }
   program = path.resolve(folder?.uri.fsPath ?? "", config.program);
-  compilerName = typeof config.compiler === "string" && config.compiler ? config.compiler : run.get<string>("compiler", "gfortran");
   const configuredPath = expandVariables(run.get<string>("compilerPath", "").trim(), folderVariables(folder));
-  compilerExe = findExecutable(compilerName, configuredPath, folder?.uri.fsPath);
+  const compiler = await compilerInfo(
+    scope ?? vscode.Uri.file(path.dirname(program)),
+    configuredCompiler ?? run.get<string>("compiler", "gfortran"),
+    /[\\/]/.test(configuredPath) ? path.resolve(folder?.uri.fsPath ?? "", configuredPath) : configuredPath,
+  );
   cwd ??= path.dirname(program);
-  const msvc = msvcProgram(config, compilerExe ?? compilerName);
-  const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe), usesLldb(config, scope));
+  const msvc = compiler?.debugInfo === "pdb" || dbgeng;
+  const debugType = await pick(run, config, msvc, gdbFor(scope ?? vscode.Uri.file(cwd), compiler?.compiler), usesLldb(config, scope));
   if (!debugType) {
     return undefined;
   }
-  return finish(config, debugType, program, cwd, compilerExe, scope, log, msvc);
+  return finish(config, debugType, program, cwd, compiler, scope, log, msvc);
 }
 
 /** An attach configuration: zfls's debugger, attached to a process
@@ -295,18 +298,10 @@ function fpmProjectFor(folder: vscode.WorkspaceFolder | undefined, cwd: string |
   return dir ? projectOf(vscode.Uri.file(path.join(dir, "fpm.toml"))) : undefined;
 }
 
-/** Whether the program has Microsoft's debug information only (ifx's and
- * ifort's on Windows), for Windows's Debugger Engine or the Visual Studio
- * debugger: LLVM Flang's when the configuration says `"dbgeng": true`
- * (built with `-g`, not `-gdwarf-4`), or `flangDwarf` is false */
-function msvcProgram(config: vscode.DebugConfiguration, compiler: string, flangDwarf = true): boolean {
-  return compilerKind(compiler, process.platform, flangDwarf).msvc || (process.platform === "win32" && config.dbgeng === true);
-}
-
 /** The debugger: the configuration's, else zfls.run.debugger's, among
- * those installed; programs with Microsoft's debug information only
- * (`msvcProgram`) need Windows's Debugger Engine or the Visual Studio
- * debugger */
+ * those installed; programs with Microsoft's debug information only (as
+ * zfls says of the compiler, or `"dbgeng": true`) need Windows's Debugger
+ * Engine or the Visual Studio debugger */
 function pick(
   run: vscode.WorkspaceConfiguration,
   config: vscode.DebugConfiguration,
@@ -324,7 +319,7 @@ function finish(
   type: Parameters<typeof fortranLaunch>[1]["type"],
   program: string,
   cwd: string,
-  compilerExe: string | undefined,
+  compiler: CompilerInfo | undefined,
   scope: vscode.Uri | undefined,
   log: vscode.LogOutputChannel,
   msvc: boolean,
@@ -333,9 +328,9 @@ function finish(
     type,
     program,
     cwd,
-    runtimeEnv: compilerExe ? runtimeEnv(compilerExe, process.platform, process.env) : {},
+    runtimeEnv: compiler?.runEnv ?? {},
     platform: process.platform,
-    gdbPath: gdbFor(scope ?? vscode.Uri.file(cwd), compilerExe),
+    gdbPath: gdbFor(scope ?? vscode.Uri.file(cwd), compiler?.compiler),
     lldb: usesLldb(config, scope) !== false,
     msvc,
     sourceRoot: scope?.fsPath,

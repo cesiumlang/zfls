@@ -45,6 +45,7 @@ const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const compiler_version = @import("server/compiler_version.zig");
 const convert = @import("server/convert.zig");
+const build_command = @import("server/build_command.zig");
 const pending = @import("server/pending.zig");
 const pull = @import("server/pull.zig");
 const format = @import("server/format.zig");
@@ -458,6 +459,7 @@ pub const Server = struct {
         compiler_check,
         compiler_clear,
         convert_form,
+        build_command,
         bind_c,
         bind_c_targets,
         bind_c_references,
@@ -526,6 +528,7 @@ pub const Server = struct {
         .{ "zfls/compilerCheck", .compiler_check },
         .{ "zfls/compilerClear", .compiler_clear },
         .{ "zfls/convertForm", .convert_form },
+        .{ "zfls/buildCommand", .build_command },
         .{ "textDocument/didOpen", .did_open },
         .{ "textDocument/didSave", .did_save },
         .{ "textDocument/didClose", .did_close },
@@ -594,6 +597,7 @@ pub const Server = struct {
             .compiler_check => compile.serveCheck(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .compiler_clear => compile.serveClear(self, a),
             .convert_form => convert.serveConvertForm(self, a, try json.decode(convert.Params, a, params)),
+            .build_command => build_command.serveBuildCommand(self, a, try json.decode(build_command.Params, a, params)),
             .initialized => blk: {
                 configuration.watchConfigFiles(self, a);
                 if (self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);

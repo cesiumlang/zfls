@@ -1,115 +1,20 @@
 // Plain Node.js tests (no VS Code) of the run and debug helpers:
-// `npm run unit`.
+// `npm run unit`. zfls's answer to `zfls/buildCommand` (the compiler's
+// arguments, the output directory, the kit's link) is tested in Zig
+// (src/run/, tests/issues/build_command.zig).
 
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
 import {
-  buildArgs,
   adapterArgs,
   chooseDebugger,
-  compilerKind,
-  compilerName,
-  flangKitLink,
   fortranLaunch,
   launchConfiguration,
-  lfortranLinkEnv,
-  linkScript,
-  outputDirFor,
   parseProcesses,
-  programPath,
-  runtimeEnv,
   upsertByKey,
   workspaceRelative,
 } from "../../src/run";
-
-test("compiler names", () => {
-  assert.equal(compilerName("gfortran"), "gfortran");
-  assert.equal(compilerName("/usr/bin/gfortran-14"), "gfortran");
-  assert.equal(compilerName("C:\\oneAPI\\bin\\ifx.exe"), "ifx");
-  assert.equal(compilerName("flang-new-19"), "flang-new");
-  // toolchains' names, with the target before it
-  assert.equal(compilerName("x86_64-w64-mingw32-gfortran.exe"), "gfortran");
-  assert.equal(compilerName("/opt/conda/bin/x86_64-conda-linux-gnu-gfortran"), "gfortran");
-  assert.equal(compilerName("/usr/bin/x86_64-linux-gnu-gfortran-13"), "gfortran");
-  assert.equal(compilerName("/opt/local/bin/gfortran-mp-14"), "gfortran");
-  assert.equal(compilerName("x86_64-conda-linux-gnu-flang-new"), "flang-new");
-  assert.equal(compilerName("mygfortran"), "mygfortran");
-});
-
-test("compiler kinds", () => {
-  assert.deepEqual(compilerKind("ifx", "win32"), { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] });
-  assert.deepEqual(compilerKind("ifx", "linux"), { argStyle: "gnu", msvc: false, defaultArgs: ["-g", "-O0"] });
-  assert.equal(compilerKind("gfortran.exe", "win32").msvc, false);
-  // MinGW's gfortran: its runtime linked in, for gdb's stops in it
-  assert.deepEqual(compilerKind("C:/msys64/ucrt64/bin/gfortran.exe", "win32").defaultArgs, ["-g", "-O0", "-static-libgfortran", "-static-libquadmath"]);
-  assert.deepEqual(compilerKind("x86_64-w64-mingw32-gfortran.exe", "win32").defaultArgs, ["-g", "-O0", "-static-libgfortran", "-static-libquadmath"]);
-  assert.deepEqual(compilerKind("gfortran", "linux").defaultArgs, ["-g", "-O0"]);
-  // LLVM Flang on Windows: DWARF for gdb, kept by lld-link; without an
-  // lld-link, Microsoft's debug information only
-  assert.deepEqual(compilerKind("flang-new", "win32"), {
-    argStyle: "gnu",
-    msvc: false,
-    defaultArgs: ["-gdwarf-4", "-O0", "-Wl,-debug:dwarf"],
-  });
-  assert.deepEqual(compilerKind("C:\\flang\\bin\\flang.exe", "win32", false), { argStyle: "gnu", msvc: true, defaultArgs: ["-g", "-O0"] });
-  assert.deepEqual(compilerKind("flang", "linux"), { argStyle: "gnu", msvc: false, defaultArgs: ["-g", "-O0"] });
-  assert.equal(compilerKind("flang", "darwin").msvc, false);
-  assert.deepEqual(compilerKind("lfortran", "linux").defaultArgs, ["-g"]);
-  // LFortran for Windows refuses -g
-  assert.deepEqual(compilerKind("lfortran", "win32").defaultArgs, []);
-});
-
-test("build arguments, GNU style", () => {
-  const src = path.join("/p", "src", "main.f90");
-  const exe = path.join("/out", "main");
-  assert.deepEqual(buildArgs(compilerKind("gfortran", "linux"), src, exe, undefined), [
-    "-g",
-    "-O0",
-    `-I${path.dirname(src)}`,
-    "-o",
-    exe,
-    src,
-  ]);
-  assert.deepEqual(buildArgs(compilerKind("gfortran", "linux"), src, exe, ["-O2", "-fcheck=all"]), [
-    "-O2",
-    "-fcheck=all",
-    `-I${path.dirname(src)}`,
-    "-o",
-    exe,
-    src,
-  ]);
-  assert.deepEqual(buildArgs(compilerKind("gfortran", "linux"), src, exe, []), [`-I${path.dirname(src)}`, "-o", exe, src]);
-});
-
-test("build arguments, Intel on Windows", () => {
-  const src = path.join("C:", "p q", "main.f90");
-  const exe = path.join("C:", "out", "main.exe");
-  assert.deepEqual(buildArgs(compilerKind("ifx", "win32"), src, exe, undefined), [
-    "/nologo",
-    "/Zi",
-    "/Od",
-    `/I${path.dirname(src)}`,
-    `/exe:${exe}`,
-    src,
-  ]);
-});
-
-test("each source gets its own output directory", () => {
-  const base = "/storage/run";
-  const a = outputDirFor(base, "/p/a/main.f90", "linux");
-  const b = outputDirFor(base, "/p/b/main.f90", "linux");
-  assert.notEqual(a, b);
-  assert.equal(path.posix.dirname(a), base);
-  assert.match(path.posix.basename(a), /^main-[0-9a-f]{10}$/);
-  assert.equal(a, outputDirFor(base, "/p/a/main.f90", "linux"));
-  // Windows paths that differ only in case are the same file
-  const win = outputDirFor("C:\\storage", "C:\\P\\main.f90", "win32");
-  assert.equal(win, outputDirFor("C:\\storage", "c:\\p\\main.f90", "win32"));
-  assert.match(win, /^C:\\storage\\main-[0-9a-f]{10}$/);
-  assert.equal(programPath("/out", "/p/hello.F90", "linux"), "/out/hello");
-  assert.equal(programPath("C:\\out", "C:\\p\\hello.f", "win32"), "C:\\out\\hello.exe");
-});
 
 test("the first installed debugger is used", () => {
   const has = (...ids: string[]) => (id: string) => ids.includes(id);
@@ -217,51 +122,6 @@ test("the processes to attach to", () => {
   assert.deepEqual(win[1], { pid: 1234, name: "prog.exe", command: "prog.exe" });
   const ps = parseProcesses("    1 /sbin/init splash\n 4242 /home/me/solver -n 3\n", "linux");
   assert.deepEqual(ps[1], { pid: 4242, name: "solver", command: "/home/me/solver -n 3" });
-});
-
-test("the compiler's directory goes on the PATH on Windows", () => {
-  const compiler = "C:\\mingw64\\bin\\gfortran.exe";
-  assert.deepEqual(runtimeEnv(compiler, "linux", { PATH: "/usr/bin" }), {});
-  assert.deepEqual(runtimeEnv(compiler, "win32", { Path: "C:\\Windows" }), { Path: "C:\\mingw64\\bin;C:\\Windows" });
-  assert.deepEqual(runtimeEnv(compiler, "win32", { Path: "C:\\MinGW64\\bin\\;C:\\Windows" }), {});
-});
-
-test("LFortran on Windows links with lld-link and the ifx kit, unless Visual Studio's environment is set up", () => {
-  const kit = "C:\\zfls\\bin\\ifx-kit";
-  const env = lfortranLinkEnv(kit, "C:\\store\\link", { Path: "C:\\Windows", LINK: "/DEBUG" });
-  assert.deepEqual(env, {
-    Path: "C:\\store\\link;C:\\Windows",
-    LIB: kit,
-    LINK: '"C:\\zfls\\bin\\ifx-kit\\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib /DEBUG',
-  });
-  assert.equal(lfortranLinkEnv(kit, "C:\\l", { PATH: "C:\\x", LIB: "C:\\sdk" })?.LIB, `${kit};C:\\sdk`);
-  assert.equal(lfortranLinkEnv(kit, "C:\\l", { VCToolsInstallDir: "C:\\VS\\MSVC\\14.4" }), undefined);
-  // `link` runs lld-link where it is
-  assert.equal(linkScript("C:\\conda\\Library\\bin\\lld-link.exe"), '@"C:\\conda\\Library\\bin\\lld-link.exe" %*\r\n');
-});
-
-test("LLVM Flang on Windows links with lld-link and the ifx kit, unless Visual Studio's environment is set up", () => {
-  const kit = "C:\\zfls\\bin\\ifx-kit";
-  assert.deepEqual(flangKitLink(kit, undefined, { Path: "C:\\Windows", LINK: "/DEBUG" }), {
-    args: ["-fms-runtime-lib=dll", "-fuse-ld=lld"],
-    env: {
-      LIB: kit,
-      LINK: '"C:\\zfls\\bin\\ifx-kit\\zfls_ifx_shim.obj" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib /DEBUG',
-    },
-  });
-  assert.equal(flangKitLink(kit, ["-g"], { LIB: "C:\\sdk" })?.env.LIB, `${kit};C:\\sdk`);
-  assert.equal(flangKitLink(kit, undefined, { VCToolsInstallDir: "C:\\VS\\MSVC\\14.4" }), undefined);
-  // the build's own choice of linker or C runtime
-  assert.equal(flangKitLink(kit, ["-g", "-fuse-ld=link"], {}), undefined);
-  assert.equal(flangKitLink(kit, ["-fms-runtime-lib=static"], {}), undefined);
-  // after the build's arguments, before the source
-  const kind = compilerKind("flang", "win32");
-  assert.deepEqual(buildArgs(kind, "C:\\w\\a.f90", "C:\\o\\a.exe", undefined, ["-fuse-ld=lld"]).slice(0, 4), [
-    "-gdwarf-4",
-    "-O0",
-    "-Wl,-debug:dwarf",
-    "-fuse-ld=lld",
-  ]);
 });
 
 test("entries are replaced by name", () => {
