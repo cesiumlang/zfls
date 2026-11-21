@@ -456,9 +456,6 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
 }
 
 fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
-    // gdb's `start` stops in the C `main` of Intel's runtime, at no line,
-    // not in the main program, `MAIN__` (ifx 2026.2, gdb 15.1)
-    if (setup.compiler == .ifx) return std.debug.print("skipped: ifx's main program is not gdb's start\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const c = try start(io, gpa, setup);
