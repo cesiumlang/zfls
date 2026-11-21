@@ -14,7 +14,8 @@
 //! A change applies at once. One of the settings that decide what is
 //! indexed (source directories, include directories, definitions, ...)
 //! re-indexes the workspace, keeping the editor's text of the open
-//! documents. One that turns on signature help, code actions or formatting
+//! documents; one that chooses the compiler of the compiler check or its
+//! arguments also checks them again. One that turns on signature help, code actions or formatting
 //! when the server did not announce them registers them with the client
 //! where it allows that (`client/registerCapability`); others tell the user
 //! to restart the server.
@@ -83,15 +84,25 @@ pub const State = struct {
 };
 
 /// The settings read when the workspace is indexed: changing one
-/// re-indexes it (the compiler's: for the symbols it predefines,
-/// compiler_macros.zig)
+/// re-indexes it (the compiler's: for its modules and the symbols it
+/// predefines, compiler_sources.zig and compiler_macros.zig; its
+/// arguments: for how it reads files, file_options.zig)
 const index_settings = [_][]const u8{
-    "source_dirs",              "incl_suffixes",            "excl_suffixes",        "excl_paths",
-    "comment_markers",          "d_lines",                  "sort_keywords",        "recursion_limit",
-    "lowercase_intrinsics",     "pp_suffixes",              "include_dirs",         "pp_defs",
-    "compile_commands",         "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
-    "disable_intel_directives", "fixed_line_length",        "compiler_diagnostics", "compiler_diagnostics_fixed",
-    "compiler_path",            "compiler_path_fixed",
+    "source_dirs",                  "incl_suffixes",            "excl_suffixes",        "excl_paths",
+    "comment_markers",              "d_lines",                  "sort_keywords",        "recursion_limit",
+    "lowercase_intrinsics",         "pp_suffixes",              "include_dirs",         "pp_defs",
+    "compile_commands",             "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
+    "disable_intel_directives",     "fixed_line_length",        "compiler_diagnostics", "compiler_diagnostics_fixed",
+    "compiler_path",                "compiler_path_fixed",      "compiler_args",        "compiler_args_fixed",
+    "compiler_no_compile_commands",
+};
+
+/// The settings that choose the compiler of the compiler check or its
+/// arguments: changing one checks the open documents again (#693)
+const compiler_settings = [_][]const u8{
+    "compiler_diagnostics",     "compiler_diagnostics_fixed", "compiler_path",                "compiler_path_fixed",
+    "compiler_args",            "compiler_args_fixed",        "compiler_no_compile_commands", "compile_commands",
+    "disable_compile_commands",
 };
 
 fn isIndexSetting(comptime name: []const u8) bool {
@@ -291,6 +302,11 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
         }
     }
     if (!same(&prev, &next, "file_associations")) try source_form.associationsChanged(self, a);
+    var compiler_changed = false;
+    inline for (compiler_settings) |name| if (!same(&prev, &next, name)) {
+        compiler_changed = true;
+    };
+    if (compiler_changed) try recheck(self, a);
     if (!same(&prev, &next, "debug_log") and self.s.debug_log) try workspace.configLogger(self);
     try workspace.logOptions(self, a);
     if (!same(&prev, &next, "diagnostic_severity")) try diagnostics.checkDiagnosticSeverity(self, a);
@@ -354,6 +370,16 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
         try linking.fullRelink(self, a);
     }
     clangd.start(self, a);
+}
+
+/// Runs the compiler check of the open documents again, of their editors'
+/// text
+fn recheck(self: *Server, a: Allocator) !void {
+    if (self.s.disable_diagnostics) return;
+    var it = self.open_docs.keyIterator();
+    while (it.next()) |k| {
+        compile.check(self, a, try paths.pathToUri(a, k.*), k.*, .now) catch |e| self.log.err("compiler diagnostics of {s}: {s}", .{ k.*, @errorName(e) });
+    }
 }
 
 /// Registers the providers the settings now ask for that the client does

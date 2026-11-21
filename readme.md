@@ -201,7 +201,7 @@ vim.lsp.enable("zfls")
 
 Each source takes over from the one before: the command line, the user configuration file, the editor's settings, the project's configuration file. A change applies at once:
 
-- One of the options that decide what is indexed (`source_dirs`, `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`, `pp_defs`, `pp_suffixes`, `comment_markers`, `d_lines`, `compile_commands`, ...) indexes the workspace again, keeping the unsaved text of the open documents. Set those in `initializationOptions` (Neovim's `init_options`) to index once at start-up.
+- One of the options that decide what is indexed (`source_dirs`, `excl_paths`, `incl_suffixes`, `excl_suffixes`, `include_dirs`, `pp_defs`, `pp_suffixes`, `comment_markers`, `d_lines`, `compile_commands`, ...) indexes the workspace again, keeping the unsaved text of the open documents. So does one that chooses the compiler of the compiler check or its arguments (`compiler_diagnostics`, `compiler_path`, `compiler_args`, their `_fixed` forms, `compiler_no_compile_commands`): the compiler's modules and predefined symbols are read again, and the open documents checked again. Set those in `initializationOptions` (Neovim's `init_options`) to index once at start-up.
 - Turning on signature help, code actions or formatting registers them with an editor that allows that (`client/registerCapability`); others are told to restart zfls. Turning one off makes it answer nothing.
 - The diagnostics of the open documents are published again.
 
