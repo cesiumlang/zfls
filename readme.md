@@ -263,7 +263,7 @@ The request's parameters are `textDocument`, `compiler` (a name looked up on the
 }
 ```
 
-Run `compiler` with `args` in `cwd`, with `env` added to the environment (on Windows, the kit's `LIB` and `LINK`), then `program` with `runEnv` added (on Windows, the compiler's directory first on the `PATH`, for its runtime libraries). `debugInfo` is the program's debug information (`dwarf`, or `pdb` for Microsoft's) and `debugger` the debugger of `zfls dap` that fits it (`gdb`, `lldb` on macOS, `dbgeng` for a PDB; see [A debugger](#a-debugger-zfls-dap)). `note` says why a build links otherwise than it could (no ifx kit, no `lld-link`). Without a `textDocument`, the answer has only the compiler's part (`compiler`, `name`, `debugInfo`, `debugger`, `runEnv`), for a program built otherwise.
+Run `compiler` with `args` in `cwd`, with `env` added to the environment (on Windows, the compiler's directory first on the `PATH`, which MinGW's gfortran needs for its `f951` when it is given by its path, and the kit's `LIB` and `LINK`); when the answer has `linkArgs`, the build is in two steps: `args` compiles (`-c`), and `compiler` with `linkArgs`, run the same way, links. Then run `program` with `runEnv` added (on Windows, the compiler's directory first on the `PATH`, for its runtime libraries). `debugInfo` is the program's debug information (`dwarf`, or `pdb` for Microsoft's) and `debugger` the debugger of `zfls dap` that fits it (`gdb`, `lldb` on macOS, `dbgeng` for a PDB; see [A debugger](#a-debugger-zfls-dap)). `note` says why a build links otherwise than it could (no ifx kit, no `lld-link`). Nix's gfortran on macOS builds in two steps: its wrapper sets `DEVELOPER_DIR` to Nix's SDK, so the `dsymutil` that a `-g` build runs after linking finds no tool (`error: tool 'dsymutil' not found`) and the build fails; linked apart, the program has no `.dSYM`, and lldb reads the debug information from the object file, which stays in `cwd`. Without a `textDocument`, the answer has only the compiler's part (`compiler`, `name`, `debugInfo`, `debugger`, `runEnv`), for a program built otherwise.
 
 With Neovim, a command that builds the current file and runs it in a terminal:
 
@@ -273,11 +273,17 @@ vim.api.nvim_create_user_command("FortranRun", function()
   client:request("zfls/buildCommand", { textDocument = vim.lsp.util.make_text_document_params() }, function(_, cmd)
     if not cmd then return vim.notify("zfls: no compiler", vim.log.levels.ERROR) end
     local env = vim.tbl_extend("force", vim.fn.environ(), cmd.env, cmd.runEnv)
-    vim.system(vim.list_extend({ cmd.compiler }, cmd.args), { cwd = cmd.cwd, env = env, text = true }, vim.schedule_wrap(function(built)
-      if built.code ~= 0 then return vim.notify(built.stderr, vim.log.levels.ERROR) end
+    local function step(args, after)
+      vim.system(vim.list_extend({ cmd.compiler }, args), { cwd = cmd.cwd, env = env, text = true }, vim.schedule_wrap(function(built)
+        if built.code ~= 0 then return vim.notify(built.stderr, vim.log.levels.ERROR) end
+        after()
+      end))
+    end
+    local function run()
       vim.cmd.split()
       vim.fn.jobstart({ cmd.program }, { term = true, env = cmd.runEnv })
-    end))
+    end
+    step(cmd.args, cmd.linkArgs and function() step(cmd.linkArgs, run) end or run)
   end)
 end, {})
 ```
@@ -296,15 +302,16 @@ With Emacs, through `compile`:
           (append (mapcar (lambda (v) (format "%s=%s" (car v) (cdr v)))
                           (append (alist-get 'env cmd) (alist-get 'runEnv cmd)))
                   process-environment)))
-    (compile (concat (mapconcat #'shell-quote-argument (cons (alist-get 'compiler cmd) (append (alist-get 'args cmd) nil)) " ")
-                     " && " (shell-quote-argument (alist-get 'program cmd))))))
+    (cl-flet ((step (key) (when-let* ((args (alist-get key cmd)))
+                            (concat (mapconcat #'shell-quote-argument (cons (alist-get 'compiler cmd) (append args nil)) " ") " && "))))
+      (compile (concat (step 'args) (step 'linkArgs) (shell-quote-argument (alist-get 'program cmd)))))))
 ```
 
 With Helix, a key in `config.toml` (Linux and macOS, where the answer's environments are empty; with `jq`):
 
 ```toml
 [keys.normal.space]
-r = ":run-shell-command zfls build-command %{buffer_name} | jq -r '\"cd \" + (.cwd | @sh) + \" && \" + ([.compiler] + .args | map(@sh) | join(\" \")) + \" && \" + (.program | @sh)' | sh"
+r = ":run-shell-command zfls build-command %{buffer_name} | jq -r '\"cd \" + (.cwd | @sh) + \" && \" + ([.compiler] + .args | map(@sh) | join(\" \")) + (if .linkArgs then \" && \" + ([.compiler] + .linkArgs | map(@sh) | join(\" \")) else \"\" end) + \" && \" + (.program | @sh)' | sh"
 ```
 
 ### A debugger (`zfls dap`)

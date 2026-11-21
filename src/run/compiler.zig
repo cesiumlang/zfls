@@ -67,14 +67,67 @@ pub fn buildArgs(
     user_args: ?[]const []const u8,
     link_args: []const []const u8,
 ) ![]const []const u8 {
+    return argsOf(a, k, source, program, user_args, link_args, false);
+}
+
+/// The first of a build in two steps: as `buildArgs`, but compiling
+/// `source` into the object file `object` only (`-c`)
+pub fn compileArgs(
+    a: Allocator,
+    k: Kind,
+    source: []const u8,
+    object: []const u8,
+    user_args: ?[]const []const u8,
+    extra_args: []const []const u8,
+) ![]const []const u8 {
+    return argsOf(a, k, source, object, user_args, extra_args, true);
+}
+
+/// The second: `object` linked into `program`, with the user's options (or
+/// the kind's defaults) and the linker's
+pub fn linkArgs(
+    a: Allocator,
+    k: Kind,
+    object: []const u8,
+    program: []const u8,
+    user_args: ?[]const []const u8,
+    link_args: []const []const u8,
+) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
-    const dir = std.Io.Dir.path.dirname(source) orelse ".";
     if (k.style == .intel_windows) try out.append(a, "/nologo");
     try out.appendSlice(a, user_args orelse k.default_args);
     try out.appendSlice(a, link_args);
     switch (k.style) {
-        .intel_windows => try out.appendSlice(a, &.{ try a.print("/I{s}", .{dir}), try a.print("/exe:{s}", .{program}) }),
-        .gnu => try out.appendSlice(a, &.{ try a.print("-I{s}", .{dir}), "-o", program }),
+        .intel_windows => try out.append(a, try a.print("/exe:{s}", .{program})),
+        .gnu => try out.appendSlice(a, &.{ "-o", program }),
+    }
+    try out.append(a, object);
+    return out.items;
+}
+
+fn argsOf(
+    a: Allocator,
+    k: Kind,
+    source: []const u8,
+    out_file: []const u8,
+    user_args: ?[]const []const u8,
+    extra_args: []const []const u8,
+    compile_only: bool,
+) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    const dir = std.Io.Dir.path.dirname(source) orelse ".";
+    if (k.style == .intel_windows) try out.append(a, "/nologo");
+    try out.appendSlice(a, user_args orelse k.default_args);
+    try out.appendSlice(a, extra_args);
+    switch (k.style) {
+        .intel_windows => {
+            if (compile_only) try out.append(a, "/c");
+            try out.appendSlice(a, &.{ try a.print("/I{s}", .{dir}), try a.print("/{s}{s}", .{ if (compile_only) "Fo" else "exe:", out_file }) });
+        },
+        .gnu => {
+            if (compile_only) try out.append(a, "-c");
+            try out.appendSlice(a, &.{ try a.print("-I{s}", .{dir}), "-o", out_file });
+        },
     }
     try out.append(a, source);
     return out.items;
@@ -132,4 +185,16 @@ test "build arguments, Intel on Windows" {
         &.{ "/nologo", "/Zi", "/Od", try a.print("/I{s}", .{dir}), "/exe:out/main.exe", src },
         try buildArgs(a, kind(.ifx, .windows, true), src, "out/main.exe", null, &.{}),
     );
+}
+
+test "build arguments in two steps: compile, then link" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const gnu = kind(.gfortran, .macos, true);
+    const src = try std.Io.Dir.path.join(a, &.{ "p", "main.f90" });
+    const inc = try a.print("-I{s}", .{std.Io.Dir.path.dirname(src).?});
+    try expectArgs(&.{ "-g", "-O0", "-c", inc, "-o", "out/main.o", src }, try compileArgs(a, gnu, src, "out/main.o", null, &.{}));
+    try expectArgs(&.{ "-g", "-O0", "-o", "out/main", "out/main.o" }, try linkArgs(a, gnu, "out/main.o", "out/main", null, &.{}));
+    try expectArgs(&.{ "-O2", "-lblas", "-o", "out/main", "out/main.o" }, try linkArgs(a, gnu, "out/main.o", "out/main", &.{ "-O2", "-lblas" }, &.{}));
 }
