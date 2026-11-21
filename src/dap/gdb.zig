@@ -42,6 +42,9 @@ pub const State = struct {
     entry_breakpoint: ?i64 = null,
     entry_hit: bool = false,
     entry_function: ?[]const u8 = null,
+    /// gdb's Python keeps runtime-error breakpoints that were pending
+    /// enabled (gdb_pending.zig)
+    keeps_pending: bool = false,
     /// The client asked for a pause, which lldb-dap's stop calls an
     /// exception (the signal SIGSTOP)
     pausing: bool = false,

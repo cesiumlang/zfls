@@ -34,16 +34,12 @@ const Case = struct {
     exit: i64,
     /// In the messages, when not the argument
     label: ?[]const u8 = null,
-    /// Raised inside libgfortran, not called by the program: on Linux, with
-    /// a shared libgfortran.so, zfls dap's breakpoints there do not stop
-    /// yet (gdb 15.1 by itself does)
-    inside: bool = false,
 };
 
 const cases = [_]Case{
-    .{ .arg = "open", .stop = "Fortran runtime error", .marker = "the I/O error", .exit = 2, .inside = true },
+    .{ .arg = "open", .stop = "Fortran runtime error", .marker = "the I/O error", .exit = 2 },
     .{ .arg = "iostat", .stop = null, .exit = 0 },
-    .{ .arg = "seed", .stop = "Fortran runtime error", .marker = "raised inside libgfortran", .exit = 2, .inside = true },
+    .{ .arg = "seed", .stop = "Fortran runtime error", .marker = "raised inside libgfortran", .exit = 2 },
     .{ .arg = "text", .stop = "ERROR STOP", .marker = "error stop 'text'", .exit = 1 },
     .{ .arg = "quiet", .stop = "ERROR STOP", .marker = "quiet=.true.", .exit = 4 },
 };
@@ -59,10 +55,6 @@ pub fn run(io: Io, gpa: Allocator, argv: []const []const u8, fc: []const u8, dir
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = text });
     const exe = (try build(io, a, fc, dir, src, "runtime", &.{})) orelse return error.BuildFailed;
     for (cases) |c| {
-        if (c.inside and gdb and sysinfo.target.os.tag == .linux) {
-            std.debug.print("skipped: {s}, inside the shared libgfortran on Linux\n", .{c.arg});
-            continue;
-        }
         try runCase(io, gpa, argv, exe, dir, c, if (c.marker) |m| lineOf(text, m) else 0);
     }
     // on Windows also linked with libgfortran-5.dll, whose functions gdb

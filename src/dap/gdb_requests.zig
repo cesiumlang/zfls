@@ -29,6 +29,7 @@ const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
 const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
+const gdb_pending = @import("gdb_pending.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const gdb_values = @import("gdb_values.zig");
@@ -349,6 +350,12 @@ pub fn syncFunctions(s: *Session, a: Allocator) !Value {
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     s.g.error_breakpoints.clearRetainingCapacity();
     const bps = json.items(json.path(r, &.{ "body", "breakpoints" }));
+    // those with a condition, pending: kept enabled (#665)
+    if (bps.len >= user.len + ours.len) {
+        const conditional = try a.alloc(bool, ours.len);
+        for (ours, conditional) |b, *c| c.* = b.condition != null;
+        try gdb_pending.keep(s, a, bps[user.len..][0..ours.len], conditional);
+    }
     for (ours, 0..) |b, i| {
         if (user.len + i >= bps.len) break;
         const id = json.int(json.get(bps[user.len + i], "id")) orelse continue;
