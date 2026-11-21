@@ -212,14 +212,18 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
         };
         if (tokens.contains("MODULE-PROCEDURE") and tokens.contains("EXTERNAL") and !tokens.contains("CONTAINED"))
             try tokens.put(a, "IFSRC-IFBODY", {});
-        // gfortran 13 and 14 print no IFSRC-IFBODY for an interface body
-        // either (14.4: `(PROCEDURE MODULE-PROC EXTERNAL SUBROUTINE ...)`):
-        // an external procedure with arguments that nothing contains
-        if (tokens.contains("PROCEDURE") and tokens.contains("EXTERNAL") and !tokens.contains("CONTAINED") and !tokens.contains("IFSRC-DECL")) {
-            for (block) |b| if (std.mem.startsWith(u8, trimmed(b), "Formal arglist:")) {
-                try tokens.put(a, "IFSRC-IFBODY", {});
-                break;
-            };
+        // gfortran 13 and 14 print no IFSRC-IFBODY (16 does), which these
+        // are (14.4): an interface body (`MODULE-PROC EXTERNAL`) or a
+        // procedure declaration (`IMPLICIT-SAVE EXTERNAL`), not an EXTERNAL
+        // statement (`EXTERNAL-PROC EXTERNAL`); a dummy procedure of an
+        // interface body (`DUMMY` without EXTERNAL; one of `procedure(i)`
+        // is `EXTERNAL DUMMY`, as an EXTERNAL statement's is); a submodule's
+        // copy of a separate module procedure it does not implement
+        if (tokens.contains("PROCEDURE") and !tokens.contains("CONTAINED") and !tokens.contains("IFSRC-DECL")) {
+            const body = (tokens.contains("EXTERNAL") and !tokens.contains("EXTERNAL-PROC") and !tokens.contains("DUMMY")) or
+                (tokens.contains("DUMMY") and !tokens.contains("EXTERNAL")) or
+                tokens.contains("MODULE-PROCEDURE");
+            if (body) try tokens.put(a, "IFSRC-IFBODY", {});
         }
         if (parents.get(ns)) |parent| {
             const in_parent = try a.print("{s}::{s}", .{ parent, name });
