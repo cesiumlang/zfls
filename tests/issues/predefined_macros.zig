@@ -113,3 +113,63 @@ test "gfortran: its predefined macros in #ifdef and #if (#541)" {
     try h.expect(std.mem.find(u8, got, "INTEGER") != null, "hover on gf_only: {s}", .{got});
     try h.expect((try w.hover("p.F90", w.pos("p.F90", "not_gfortran", 0, 0))) == null, "not_gfortran is in an active branch", .{});
 }
+
+/// A stand-in gfortran 9 (`-dM`), for the fixed form
+const gfortran9: h.File = if (is_windows)
+    .{ .name = "gfortran9.cmd", .text = "@echo off\r\necho %* | findstr /c:\" -dM \" >nul && (echo #define __GFORTRAN__ 1& echo #define __GNUC__ 9& exit /b 0)\r\nexit /b 0\r\n" }
+else
+    .{ .name = "gfortran9.sh", .text = "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) printf '#define __GFORTRAN__ 1\\n#define __GNUC__ 9\\n'; exit 0;; esac\nexit 0\n" };
+
+/// Whether `name` is declared in an active branch of `file`
+fn active(w: *h.Workspace, file: []const u8, name: []const u8) !bool {
+    const got = (try w.hover(file, w.pos(file, name, 0, 0))) orelse return false;
+    return std.mem.find(u8, got, "INTEGER") != null;
+}
+
+test "gfortran: the fixed form's compiler's macros for fixed-form files (#657)" {
+    const free = h.File{ .name = "p.F90", .text = "program p\n#if __GNUC__ >= 16\n  integer :: new_free\n#else\n  integer :: old_free\n#endif\nend program p\n" };
+    const fixed = h.File{ .name = "q.F", .text = "      PROGRAM Q\n#if __GNUC__ < 10\n      INTEGER OLDFIX\n#else\n      INTEGER NEWFIX\n#endif\n      END\n" };
+    const opts = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran.name ++ "\", \"compiler_path_fixed\": \"" ++ gfortran9.name ++ "\"}";
+    const w = try h.Workspace.init(&.{ free, fixed, gfortran, gfortran9 }, .{ .init_options = opts });
+    defer w.deinit();
+    if (!is_windows) {
+        try w.tmp.dir.setFilePermissions(io, gfortran.name, .executable_file, .{});
+        try w.tmp.dir.setFilePermissions(io, gfortran9.name, .executable_file, .{});
+        try w.changeConfiguration("{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran.name ++ "\", \"compiler_path_fixed\": \"" ++ gfortran9.name ++ "\", \"pp_defs\": {\"ZFLS_X\": \"\"}}");
+    }
+    try w.open("p.F90", "fortran");
+    try w.open("q.F", "fortran");
+    try h.expect(try active(w, "p.F90", "new_free"), "new_free is in an inactive branch", .{});
+    try h.expect(!try active(w, "p.F90", "old_free"), "old_free is in an active branch", .{});
+    try h.expect(try active(w, "q.F", "OLDFIX"), "OLDFIX is in an inactive branch", .{});
+    try h.expect(!try active(w, "q.F", "NEWFIX"), "NEWFIX is in an active branch", .{});
+}
+
+/// A stand-in gfortran that predefines `__OPTIMIZE__` with `-O2` (as
+/// gfortran 16.1 does)
+const gfortran_opt: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho %* | findstr /c:\" -dM \" >nul || exit /b 0\r\necho #define __GFORTRAN__ 1\r\necho %* | findstr /c:\" -O2 \" >nul && echo #define __OPTIMIZE__ 1\r\nexit /b 0\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) ;; *) exit 0;; esac\necho '#define __GFORTRAN__ 1'\ncase \" $* \" in *\" -O2 \"*) echo '#define __OPTIMIZE__ 1';; esac\nexit 0\n" };
+
+test "gfortran: the macros of each file's command's options (#657)" {
+    const src = "program {s}\n#ifdef __OPTIMIZE__\n  integer :: optimized\n#else\n  integer :: plain\n#endif\nend program {s}\n";
+    const db = h.File{ .name = "compile_commands.json", .text = "[{\"directory\": \".\", \"file\": \"a.F90\", \"command\": \"gfortran -O2 -c a.F90\"},\n {\"directory\": \".\", \"file\": \"b.F90\", \"command\": \"gfortran -c b.F90\"}]\n" };
+    const opts = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran_opt.name ++ "\"}";
+    const w = try h.Workspace.init(&.{
+        db,
+        gfortran_opt,
+        .{ .name = "a.F90", .text = std.fmt.comptimePrint(src, .{ "a", "a" }) },
+        .{ .name = "b.F90", .text = std.fmt.comptimePrint(src, .{ "b", "b" }) },
+    }, .{ .init_options = opts });
+    defer w.deinit();
+    if (!is_windows) {
+        try w.tmp.dir.setFilePermissions(io, gfortran_opt.name, .executable_file, .{});
+        try w.changeConfiguration("{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran_opt.name ++ "\", \"pp_defs\": {\"ZFLS_X\": \"\"}}");
+    }
+    try w.open("a.F90", "fortran");
+    try w.open("b.F90", "fortran");
+    try h.expect(try active(w, "a.F90", "optimized"), "a.F90 (-O2): optimized is in an inactive branch", .{});
+    try h.expect(!try active(w, "b.F90", "optimized"), "b.F90: optimized is in an active branch", .{});
+    try h.expect(try active(w, "b.F90", "plain"), "b.F90: plain is in an inactive branch", .{});
+}

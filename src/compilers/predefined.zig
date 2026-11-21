@@ -26,6 +26,8 @@ pub const Ask = struct {
     /// where gfortran runs (null: zfls's own directory)
     cwd: ?[]const u8,
     openmp: bool,
+    /// options that change what it predefines (`relevantArgs`)
+    args: []const []const u8 = &.{},
 };
 
 /// The names Intel's compilers may predefine (ifx 2026.2 on Windows:
@@ -56,11 +58,45 @@ pub fn ask(a: Allocator, out_a: Allocator, id: compilers.Id, exe: []const u8, ho
     };
 }
 
+/// The options of `args` (a command's, `compiler_args`) that change what
+/// compiler `id` predefines: gfortran's `-O...` (`__OPTIMIZE__`), `-m...`
+/// (`-m32`, `-march=`), `-f...` (`-fopenacc`, `-ffast-math`), but not
+/// `-fpreprocessed`, which leaves nothing to preprocess, nor
+/// `-fintrinsic-modules-path` (gfortran 16.1). None of Intel's.
+pub fn relevantArgs(a: Allocator, id: compilers.Id, args: []const []const u8) ![]const []const u8 {
+    if (id != .gfortran) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const x = args[i];
+        if (std.mem.eql(u8, x, "-fintrinsic-modules-path")) {
+            i += 1;
+            continue;
+        }
+        if (std.mem.startsWith(u8, x, "-fintrinsic-modules-path=") or std.mem.eql(u8, x, "-fpreprocessed")) continue;
+        if (std.mem.startsWith(u8, x, "-O") or (x.len > 2 and (std.mem.startsWith(u8, x, "-m") or std.mem.startsWith(u8, x, "-f")))) try out.append(a, x);
+    }
+    return out.items;
+}
+
+test "the options that change gfortran's predefined macros" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const got = try relevantArgs(a, .gfortran, &.{ "-c", "-O2", "-I", "inc", "-fintrinsic-modules-path", "/m", "-ffast-math", "-fpreprocessed", "-march=native", "-Wall", "x.f" });
+    try std.testing.expectEqual(@as(usize, 3), got.len);
+    try std.testing.expectEqualStrings("-O2", got[0]);
+    try std.testing.expectEqualStrings("-ffast-math", got[1]);
+    try std.testing.expectEqualStrings("-march=native", got[2]);
+    try std.testing.expectEqual(@as(usize, 0), (try relevantArgs(a, .ifx, &.{"/O2"})).len);
+}
+
 /// gfortran's: `-dM` of its preprocessor, on an empty input
 fn gfortranMacros(a: Allocator, out_a: Allocator, exe: []const u8, how: Ask) ?[]const Macro {
     var argv: std.ArrayList([]const u8) = .empty;
     argv.appendSlice(a, &.{ exe, "-cpp", "-dM", "-E", "-x", "f95-cpp-input" }) catch return null;
     if (how.openmp) argv.append(a, "-fopenmp") catch return null;
+    argv.appendSlice(a, how.args) catch return null;
     argv.append(a, "-") catch return null;
     const r = tools.run(a, how.io, .{
         .argv = argv.items,
