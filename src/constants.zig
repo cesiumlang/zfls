@@ -29,6 +29,9 @@ pub const Kw = enum(u8) {
     asynchronous,
     protected,
     value,
+    // DEC's, of ifx and gfortran (`-fdec-static`)
+    automatic,
+    static,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {

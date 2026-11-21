@@ -15,6 +15,8 @@ const C = @import("../constants.zig");
 const objects = @import("../objects.zig");
 const implicit = @import("../implicit.zig");
 const definitions = @import("definitions.zig");
+const literals = @import("../literals.zig");
+const typing = @import("../argcheck/typing.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
 const Kw = C.Kw;
@@ -33,9 +35,14 @@ pub const Attr = struct {
     /// the pointer of a Cray pointer, `p` of `POINTER (p, b)`: an integer
     /// variable the statement declares, not an attribute
     cray_pointer: bool = false,
+    /// a constant of DEC's `PARAMETER name = value` (ifx): of the type of
+    /// its value, not the implicit type of its name
+    typed_by_value: bool = false,
 };
 
-/// The statements and the attribute each gives
+/// The statements and the attribute each gives; DEC's VIRTUAL (ifx) is
+/// DIMENSION, and AUTOMATIC and STATIC are DEC's (ifx, gfortran's
+/// `-fdec-static`)
 const statements = [_]struct { []const u8, Kw }{
     .{ "dimension", .dimension },     .{ "codimension", .codimension },
     .{ "allocatable", .allocatable }, .{ "pointer", .pointer },
@@ -43,7 +50,8 @@ const statements = [_]struct { []const u8, Kw }{
     .{ "intent", .intent },           .{ "save", .save },
     .{ "volatile", .@"volatile" },    .{ "asynchronous", .asynchronous },
     .{ "contiguous", .contiguous },   .{ "protected", .protected },
-    .{ "value", .value },
+    .{ "value", .value },             .{ "virtual", .dimension },
+    .{ "automatic", .automatic },     .{ "static", .static },
 };
 
 fn isWordChar(c: u8) bool {
@@ -92,6 +100,7 @@ pub fn read(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *std.A
         }
         return true;
     }
+    if (try decParameter(a, line, scope, ln, out)) return true;
     const s = std.mem.trimStart(u8, line, " \t");
     var n: usize = 0;
     while (n < s.len and std.ascii.isAlphabetic(s[n])) n += 1;
@@ -149,6 +158,30 @@ pub fn read(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *std.A
     return true;
 }
 
+/// DEC's `PARAMETER n = 10, s = 'ab'` (ifx): constants without
+/// parentheses, each of the type of its value
+fn decParameter(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *std.ArrayList(Attr)) !bool {
+    const s = std.mem.trimStart(u8, line, " \t");
+    const key = "parameter";
+    if (s.len <= key.len or !std.ascii.startsWithIgnoreCase(s, key) or (s[key.len] != ' ' and s[key.len] != '\t')) return false;
+    const list = str.strip(s[key.len..]);
+    if (list.len == 0 or !std.ascii.isAlphabetic(list[0])) return false;
+    const items = try helpers.splitArgs(a, list);
+    for (items) |item| {
+        const eq = std.mem.findScalar(u8, item, '=') orelse return false;
+        const name = str.strip(item[0..eq]);
+        if (name.len == 0 or !std.ascii.isAlphabetic(name[0])) return false;
+        for (name) |c| if (!isWordChar(c)) return false;
+        if (eq + 1 < item.len and item[eq + 1] == '=') return false;
+    }
+    for (items) |item| {
+        const eq = std.mem.findScalar(u8, item, '=').?;
+        const value = try helpers.collapseBlanks(a, item[eq + 1 ..]);
+        try add(a, out, .{ .scope = scope, .line = ln, .name = str.strip(item[0..eq]), .kw = .parameter, .text = value, .typed_by_value = true });
+    }
+    return true;
+}
+
 /// `POINTER (p, b), (q, c)`: Cray pointers, an extension of gfortran, ifx
 /// and LLVM Flang; each pointer `p` is an integer variable the statement
 /// declares (its pointee `b` is declared as any variable)
@@ -185,7 +218,10 @@ pub fn apply(ast: *Ast, a: Allocator, attrs: []const Attr, sort: bool) !void {
         }
         const v = for (scope.childList()) |child| {
             if (child.nameLowerEql(at.name)) break child;
-        } else (try implicitVariable(ast, a, scope, at)) orelse continue;
+        } else (if (at.typed_by_value)
+            try valueTypedVariable(ast, a, scope, at)
+        else
+            try implicitVariable(ast, a, scope, at)) orelse continue;
         if (!v.kind.isVariable()) continue;
         var info = v.keyword_info.*;
         const had = v.hasKeyword(at.kw);
@@ -218,6 +254,18 @@ pub fn apply(ast: *Ast, a: Allocator, attrs: []const Attr, sort: bool) !void {
 fn implicitVariable(ast: *Ast, a: Allocator, scope: *Obj, at: Attr) !?*Obj {
     const type_name = implicit.typeOf(scope, at.name) orelse return null;
     return newVariable(ast, a, scope, at, type_name);
+}
+
+/// A constant of the type of its value `at.text` when that is a literal,
+/// else of the implicit type of its name (null under IMPLICIT NONE)
+fn valueTypedVariable(ast: *Ast, a: Allocator, scope: *Obj, at: Attr) !?*Obj {
+    const value = at.text orelse "";
+    if (typing.literalCategory(value) != null) {
+        const sign: usize = if (value.len > 0 and (value[0] == '-' or value[0] == '+')) 1 else 0;
+        if (try literals.at(a, value, sign)) |lit| if (!std.mem.eql(u8, lit.type, "BOZ"))
+            return newVariable(ast, a, scope, at, lit.type);
+    }
+    return implicitVariable(ast, a, scope, at);
 }
 
 /// The type of a Cray pointer: an address, as LLVM Flang has it on 64-bit
@@ -268,6 +316,28 @@ test "attribute statements" {
     }
     // statements that only start with the word of one
     for ([_][]const u8{ "save = 1", "pointer(1) = 2", "dimension(3) = 1", "target%x = 2", "value", "intent(sideways) :: x", "optional_x = 1" }) |line| {
+        try testing.expect(!try read(a, line, null, 1, &out));
+    }
+    // DEC's statements (ifx): VIRTUAL, AUTOMATIC, STATIC; PARAMETER
+    // without parentheses, typed by its values
+    out.clearRetainingCapacity();
+    try testing.expect(try read(a, "virtual w(5)", null, 1, &out));
+    try testing.expect(try read(a, "automatic :: tmp", null, 1, &out));
+    try testing.expect(try read(a, "STATIC calls", null, 1, &out));
+    try testing.expect(try read(a, "PARAMETER NMAX = 10, s = 'a=b'", null, 1, &out));
+    const dec = [_]struct { []const u8, Kw, ?[]const u8 }{
+        .{ "w", .dimension, "5" },     .{ "tmp", .automatic, null },
+        .{ "calls", .static, null },   .{ "NMAX", .parameter, "10" },
+        .{ "s", .parameter, "'a=b'" },
+    };
+    try testing.expectEqual(dec.len, out.items.len);
+    for (dec, out.items) |w, got| {
+        try testing.expectEqualStrings(w[0], got.name);
+        try testing.expectEqual(w[1], got.kw);
+        if (w[2]) |t| try testing.expectEqualStrings(t, got.text.?) else try testing.expect(got.text == null);
+        try testing.expectEqual(w[1] == .parameter, got.typed_by_value);
+    }
+    for ([_][]const u8{ "parameter x", "parameter = 3", "parameter x == 1", "virtual = 2", "static(1) = 2" }) |line| {
         try testing.expect(!try read(a, line, null, 1, &out));
     }
     // Cray pointers: the pointers, not the pointees
