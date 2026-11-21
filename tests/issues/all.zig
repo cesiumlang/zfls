@@ -41,6 +41,7 @@ test {
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
     _ = @import("intrinsics_intel.zig");
+    _ = @import("kinds_target.zig");
     _ = @import("hover_declarations.zig");
     _ = @import("hover_types.zig");
     _ = @import("intel_directives.zig");

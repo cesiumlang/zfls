@@ -4,6 +4,7 @@
 //! list.
 
 const std = @import("std");
+const sysinfo = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Obj = @import("../objects.zig").Obj;
 
@@ -216,11 +217,18 @@ pub fn selectedIntKind(r: i64) ?i64 {
     return null;
 }
 
-/// gfortran's SELECTED_REAL_KIND on x86-64: the smallest kind with the
-/// precision and range (REAL(10) is x87 extended precision)
-pub fn selectedRealKind(p: ?i64, r: ?i64) ?i64 {
+/// Whether the compiler has REAL(10), x87 extended precision: gfortran's
+/// and LLVM Flang's on x86 have it, not on aarch64 (#548), and Intel's
+/// compilers not at all
+pub const native_real10 = sysinfo.target.cpu.arch.isX86();
+
+/// SELECTED_REAL_KIND of gfortran and LLVM Flang: the smallest kind with
+/// the precision and range, REAL(10) only where the compiler has it
+/// (`real10`)
+pub fn selectedRealKind(p: ?i64, r: ?i64, real10: bool) ?i64 {
     if (p == null and r == null) return null;
     for ([_][3]i64{ .{ 6, 37, 4 }, .{ 15, 307, 8 }, .{ 18, 4931, 10 }, .{ 33, 4931, 16 } }) |k| {
+        if (k[2] == 10 and !real10) continue;
         if ((p orelse 0) <= k[0] and (r orelse 0) <= k[1]) return k[2];
     }
     return null;
@@ -238,10 +246,14 @@ pub fn typeName(cat: Category) []const u8 {
 }
 
 test "selected kinds" {
-    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(15, 307));
-    try std.testing.expectEqual(@as(?i64, 4), selectedRealKind(6, null));
-    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(null, 100));
-    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(30, null));
+    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(15, 307, true));
+    try std.testing.expectEqual(@as(?i64, 4), selectedRealKind(6, null, true));
+    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(null, 100, true));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(30, null, true));
+    // x87's REAL(10), and without it (aarch64, ifx)
+    try std.testing.expectEqual(@as(?i64, 10), selectedRealKind(18, null, true));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(18, null, false));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(null, 400, false));
     try std.testing.expectEqual(@as(?i64, 8), selectedIntKind(18));
     try std.testing.expectEqual(@as(?i64, 4), selectedIntKind(9));
 }
