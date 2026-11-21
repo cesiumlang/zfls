@@ -116,3 +116,76 @@ test "!DEC$ REAL:8 sets the default REAL kind of the next program unit only" {
     for (try w.diagnostics("r8.f90")) |d| if (d.severity == 1) try lines.append(w.a(), d.line);
     try h.expect(lines.items.len == 1 and lines.items[0] == 20, "errors on lines {any}", .{lines.items});
 }
+
+const hover_mod = h.File{ .name = "hk.f90", .text =
+    \\module hk
+    \\  real :: inmod
+    \\  integer :: icount
+    \\  logical :: flag
+    \\  double precision :: d
+    \\  real(4) :: r4
+    \\contains
+    \\  subroutine s(x)
+    \\    real, intent(in) :: x
+    \\    print *, x
+    \\  end subroutine s
+    \\end module hk
+    \\
+};
+
+/// A workspace of `hover_mod` compiled with `command`
+fn hoverWorkspace(comptime command: []const u8) !*h.Workspace {
+    const db = h.File{ .name = "compile_commands.json", .text = "[{\"directory\": \".\", \"file\": \"hk.f90\", \"command\": \"" ++ command ++ "\"}]\n" };
+    return h.Workspace.init(&.{ db, hover_mod }, .{});
+}
+
+test "hover: the kinds of gfortran's -fdefault-real-8 -fdefault-integer-8 (#655)" {
+    // gfortran 16.1's parse tree: inmod (REAL 8), icount (INTEGER 8), flag
+    // (LOGICAL 8), d (REAL 16), r4 (REAL 4), x (REAL 8)
+    const w = try hoverWorkspace("gfortran -fdefault-real-8 -fdefault-integer-8 -c hk.f90");
+    defer w.deinit();
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "inmod", 0, 1), "REAL(8) :: inmod");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "icount", 0, 1), "INTEGER(8) :: icount");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "flag", 0, 1), "LOGICAL(8) :: flag");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", ":: d", 0, 3), "REAL(16) :: d");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "r4", 0, 1), "REAL(4) :: r4");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "print *, x", 0, 9), "REAL(8), INTENT(IN) :: x");
+}
+
+test "hover: the kinds of ifx's /real-size:64 /integer-size:64 (#655)" {
+    // ifx 2026.2.0's listing (/show:map): INMOD R(8), ICOUNT I(8), FLAG
+    // L(8), D R(8), R4 R(4), X R(8)
+    const w = try hoverWorkspace("ifx /real-size:64 /integer-size:64 /c hk.f90");
+    defer w.deinit();
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "inmod", 0, 1), "REAL(8) :: inmod");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "icount", 0, 1), "INTEGER(8) :: icount");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "flag", 0, 1), "LOGICAL(8) :: flag");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", ":: d", 0, 3), "DOUBLE PRECISION :: d");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "r4", 0, 1), "REAL(4) :: r4");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "print *, x", 0, 9), "REAL(8), INTENT(IN) :: x");
+}
+
+test "hover: without the options, the types as written (#655)" {
+    const w = try hoverWorkspace("gfortran -c hk.f90");
+    defer w.deinit();
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", "inmod", 0, 1), "REAL :: inmod");
+    try w.expectHoverContains("hk.f90", w.pos("hk.f90", ":: d", 0, 3), "DOUBLE PRECISION :: d");
+}
+
+test "hover: !DEC$ REAL:8 gives its program unit's REAL kind 8 (#655)" {
+    // ifx: R(8) for the module's, R(4) for the program's (#512)
+    const w = try h.Workspace.init(&.{.{ .name = "r8h.f90", .text =
+        \\!DEC$ REAL:8
+        \\module r8hm
+        \\  real :: inmod
+        \\end module r8hm
+        \\program r8hp
+        \\  real :: inprog
+        \\  inprog = 1
+        \\end program r8hp
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("r8h.f90", w.pos("r8h.f90", "inmod", 0, 1), "REAL(8) :: inmod");
+    try w.expectHoverContains("r8h.f90", w.pos("r8h.f90", "inprog", 1, 1), "REAL :: inprog");
+}

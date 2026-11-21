@@ -9,6 +9,7 @@ const C = @import("../constants.zig");
 const KW = C.KW;
 
 const objects = @import("../objects.zig");
+const unit_kinds = @import("../argcheck/unit_kinds.zig");
 const Obj = objects.Obj;
 
 pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize) Allocator.Error!Obj.Snippet {
@@ -128,7 +129,7 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
                 .namelist => return .{ .msg = try a.print("NAMELIST /{s}/ {s}", .{ self.name, v.members }), .docs = doc_str },
             }
             var parts: std.ArrayList([]const u8) = .empty;
-            try parts.append(a, try self.getDesc(a));
+            try parts.append(a, try declaredType(self, a));
             try parts.appendSlice(a, try self.getKeywordStrings(a));
             var hover = try std.mem.join(a, ", ", parts.items);
             if (!std.mem.startsWith(u8, hover, "#")) hover = try a.print("{s} :: {s}", .{ hover, self.name });
@@ -160,6 +161,17 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
         .intrinsic => return .{ .msg = null, .docs = self.doc_str },
         else => return .{},
     }
+}
+
+/// The type of variable `self`, with the kind that its file's options give
+/// a type written without one (`REAL(8)` for `REAL` with
+/// `-fdefault-real-8`, #655)
+fn declaredType(self: *const Obj, a: Allocator) ![]const u8 {
+    const desc = try self.getDesc(a);
+    if (self.linkObj() != null) return desc;
+    const kinds = unit_kinds.ofDeclaration(self) orelse return desc;
+    const t = kinds.implied(desc) orelse return desc;
+    return a.print("{s}({d})", .{ t.name, t.kind });
 }
 
 /// The lines inside a type's block that `getTypeBlock` shows at most
