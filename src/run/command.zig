@@ -86,9 +86,17 @@ pub const Answer = struct {
     runEnv: Vars,
     /// The compiler's arguments
     args: ?[]const []const u8 = null,
+    /// A build in two steps: `args` compiles only (`-c`), then the
+    /// compiler run again with these, in `cwd` with `env`, links the
+    /// program. Nix's gfortran on macOS, whose link of a `-g` build fails
+    /// to run dsymutil; lldb reads the object file's debug information,
+    /// which stays in `cwd`.
+    linkArgs: ?[]const []const u8 = null,
     /// The directory the build runs in (module and object files go there)
     cwd: ?[]const u8 = null,
-    /// The build's environment beyond the editor's
+    /// The build's environment beyond the editor's: on Windows the
+    /// compiler's directory first on the `PATH` too (MinGW's gfortran runs
+    /// its `f951` with its DLLs there)
     env: ?Vars = null,
     program: ?[]const u8 = null,
     /// Why the build links otherwise than it could (no ifx kit, no lld-link)
@@ -118,13 +126,45 @@ pub fn plan(a: Allocator, ctx: Context, r: Request) !?Answer {
     try Io.Dir.cwd().createDirPath(ctx.io, out_dir);
     const program = try std.Io.Dir.path.join(a, &.{ out_dir, try programName(a, source, os) });
     var note: ?[]const u8 = null;
-    const link = try kitLink(a, ctx, id, exe, lld, r.args, &note);
-    ans.args = try compiler.buildArgs(a, k, source, program, r.args, try std.mem.concat(a, []const u8, &.{ try modules(a, ctx, id, exe), link.args }));
+    // the build's PATH has the compiler's directory as the program's does
+    var build_ctx = ctx;
+    var build_base: Environ.Map = undefined;
+    if (ans.runEnv.items.len > 0) {
+        build_base = try ctx.base_env.clone(a);
+        try build_base.put(ans.runEnv.items[0].name, ans.runEnv.items[0].value);
+        build_ctx.base_env = &build_base;
+    }
+    const link = try kitLink(a, build_ctx, id, exe, lld, r.args, &note);
+    const extra = try std.mem.concat(a, []const u8, &.{ try modules(a, ctx, id, exe), link.args });
+    if (twoSteps(os, id, try paths.realpath(ctx.io, a, exe))) {
+        const object = try a.print("{s}.o", .{program});
+        ans.args = try compiler.compileArgs(a, k, source, object, r.args, extra);
+        ans.linkArgs = try compiler.linkArgs(a, k, object, program, r.args, link.args);
+    } else {
+        ans.args = try compiler.buildArgs(a, k, source, program, r.args, extra);
+    }
     ans.cwd = out_dir;
-    ans.env = .{ .items = link.env };
+    ans.env = .{ .items = try buildEnv(a, ans.runEnv.items, link.env) };
     ans.program = program;
     ans.note = note;
     return ans;
+}
+
+/// Whether the build is in two steps (`Answer.linkArgs`): Nix's gfortran
+/// on macOS (`real` is its executable with links resolved), whose wrapper
+/// sets `DEVELOPER_DIR` to Nix's SDK, where the dsymutil that collect2 runs
+/// after a `-g` link (`/usr/bin/dsymutil`, Xcode's shim) finds no tool
+fn twoSteps(target: Os, id: ?compilers.Id, real: []const u8) bool {
+    return target == .macos and id == .gfortran and std.mem.startsWith(u8, real, "/nix/store/");
+}
+
+/// The build's environment: the linker's (`link`), and the compiler's
+/// directory on the `PATH` (`path`, from `runtimeEnv`) unless the linker's
+/// sets the `PATH` already (LFortran's, from a base with that directory)
+fn buildEnv(a: Allocator, path: []const Var, link: []const Var) ![]const Var {
+    if (path.len == 0) return link;
+    for (link) |v| if (std.ascii.eqlIgnoreCase(v.name, path[0].name)) return link;
+    return std.mem.concat(a, Var, &.{ path, link });
 }
 
 /// The lld-link next to `exe` (conda-forge's `lld`), else on the `PATH`
@@ -272,6 +312,28 @@ test "the compiler's directory goes on the PATH on Windows" {
     try testing.expectEqual(0, (try runtimeEnv(a, &env, .windows, "C:\\mingw64\\bin")).len);
 }
 
+test "Nix's gfortran on macOS builds in two steps" {
+    try testing.expect(twoSteps(.macos, .gfortran, "/nix/store/yd7f-gfortran-wrapper-15.3.0/bin/gfortran"));
+    try testing.expect(!twoSteps(.macos, .gfortran, "/usr/local/Cellar/gcc/15.2.0/bin/gfortran-15"));
+    try testing.expect(!twoSteps(.linux, .gfortran, "/nix/store/x-gfortran-wrapper-15.3.0/bin/gfortran"));
+    try testing.expect(!twoSteps(.macos, .flang, "/nix/store/x-flang/bin/flang"));
+}
+
+test "the build's PATH has the compiler's directory, unless the linker's PATH has it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const path: []const Var = &.{.{ .name = "Path", .value = "C:\\msys64\\ucrt64\\bin;C:\\Windows" }};
+    const lib: Var = .{ .name = "LIB", .value = "C:\\kit" };
+    try testing.expectEqual(0, (try buildEnv(a, &.{}, &.{})).len);
+    const both = try buildEnv(a, path, &.{lib});
+    try testing.expectEqual(2, both.len);
+    try testing.expectEqualStrings("Path", both[0].name);
+    try testing.expectEqualStrings("LIB", both[1].name);
+    const lfortran: []const Var = &.{ .{ .name = "PATH", .value = "C:\\link;C:\\msys64\\ucrt64\\bin;C:\\Windows" }, lib };
+    try testing.expectEqual(lfortran.ptr, (try buildEnv(a, path, lfortran)).ptr);
+}
+
 test "conda-forge's ifx on Windows: its modules, and its lld-link with the ifx kit unless its configuration chooses the linker" {
     if (os != .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
@@ -292,7 +354,8 @@ test "conda-forge's ifx on Windows: its modules, and its lld-link with the ifx k
         }
     }.f;
     var env: Environ.Map = .init(a);
-    try env.put("Path", "C:\\Windows");
+    // ifx's directory on the PATH already: the build's environment is the kit's only
+    try env.put("Path", try a.print("{s};C:\\Windows", .{try at(a, root, "env/Library/bin")}));
     var ctx: Context = .{ .io = io, .env = &env, .base_env = &env, .cache_dir = null, .kit_dir = try at(a, root, "kit") };
     const req: Request = .{ .source = try at(a, root, "hello.f90"), .compiler = "ifx", .compiler_path = try at(a, root, "env/Library/bin"), .output_dir = try at(a, root, "out") };
     const modules_opt = try a.print("/I{s}", .{try at(a, root, "env/opt/compiler/include/intel64")});

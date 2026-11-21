@@ -108,6 +108,25 @@ test "zfls/buildCommand: without a file, only the compiler's part; null without 
     try std.testing.expect(none == .null);
 }
 
+test "zfls/buildCommand: on Windows a compiler given by its path has its directory on the build's PATH too (#543)" {
+    if (!windows) return error.SkipZigTest;
+    const w = try init();
+    defer w.deinit();
+    const v = try w.zflsRequest("zfls/buildCommand", .{
+        .textDocument = .{ .uri = try w.uri("src/hello.f90") },
+        .compilerPath = "tools/gfortran-14" ++ exe,
+        .outputDirectory = "out",
+    });
+    const tools = try native(w, "tools");
+    for ([_][]const u8{ "env", "runEnv" }) |key| {
+        var it = h.json.get(v, key).?.object.iterator();
+        const path = while (it.next()) |e| {
+            if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "PATH")) break e.value_ptr.string;
+        } else return error.TestExpectedEqual;
+        try std.testing.expect(std.ascii.startsWithIgnoreCase(path, tools));
+    }
+}
+
 test "zfls/buildCommand: conda-forge's ifx on Windows finds its modules and links with its lld-link and the ifx kit (#510)" {
     if (!windows) return error.SkipZigTest;
     const w = try h.Workspace.init(&.{
