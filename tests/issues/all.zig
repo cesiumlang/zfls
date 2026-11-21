@@ -24,6 +24,7 @@ test {
     _ = @import("doc_math.zig");
     _ = @import("compiler_work_dir.zig");
     _ = @import("documents.zig");
+    _ = @import("dollar_names.zig");
     _ = @import("ends.zig");
     _ = @import("extensions.zig");
     _ = @import("cuda_prefix.zig");
