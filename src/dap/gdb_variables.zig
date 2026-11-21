@@ -5,8 +5,9 @@
 //! previews of arrays and derived types, "not allocated" and "not
 //! associated", pointers as their targets, a polymorphic object (CLASS)
 //! with the components of its dynamic type, gfortran's and ifx's hidden lengths of
-//! CHARACTER arguments and LFortran's temporaries left out, and the module
-//! variables that a frame's line sees (zfls's index of the sources).
+//! CHARACTER arguments, LFortran's temporaries and ifx's repeats of module
+//! variables among the locals left out, and the module variables that a
+//! frame's line sees (zfls's index of the sources).
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -16,6 +17,7 @@ const json = @import("../json.zig");
 const fortran = @import("fortran.zig");
 const lfortran = @import("lfortran.zig");
 const ifx_class = @import("ifx_class.zig");
+const ifx_use = @import("ifx_use.zig");
 const ArrayContext = fortran.ArrayContext;
 const Value = json.Value;
 
@@ -50,6 +52,9 @@ pub const Context = struct {
     count: ?u64 = null,
     /// The node is gdb's scope of registers: `$rax`
     registers: bool = false,
+    /// For ifx's locals: the module variables the line sees, which ifx
+    /// repeats among them (ifx_use.zig)
+    used: []const ModuleVariable = &.{},
     /// For a polymorphic object shown as its dynamic type: the components
     /// of its declared type, which the object's expression names
     /// (`t%_data%x`) while the others need gdb's pointer to it
@@ -142,6 +147,7 @@ pub fn add(s: *Session, n: Node) !i64 {
         .array = if (n.ctx.array) |c| try c.dupe(na) else null,
         .count = n.ctx.count,
         .registers = n.ctx.registers,
+        .used = try dupeVars(na, n.ctx.used),
         .declared = if (n.ctx.declared) |d| .{ .expr = try na.dupe(u8, d.expr), .names = try dupeStrings(na, d.names) } else null,
     };
     out.names = &.{};
@@ -311,7 +317,9 @@ pub fn children(s: *Session, a: Allocator, ref: i64, node: Node) anyerror![]Vari
                 for (cs, out) |c, *o| o.* = try chunk(s, a, array, c, node.frame);
                 return out;
             };
-            return convertAndRecord(s, a, ref, try gdbChildren(s, a, gref), node);
+            var kids = try gdbChildren(s, a, gref);
+            if (node.ctx.used.len > 0) kids = try ifx_use.withoutUsed(s, a, kids, node.ctx.used, node.frame);
+            return convertAndRecord(s, a, ref, kids, node);
         },
     }
 }

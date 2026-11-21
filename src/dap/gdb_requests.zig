@@ -408,20 +408,26 @@ fn setExceptions(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 /// gdb's scopes of a frame, and the module variables its line sees
 fn scopes(s: *Session, a: Allocator, frame: ?i64, r: Value) !void {
     const list = &(r.object.getPtr("body") orelse return).object.getPtr("scopes").?.array;
+    // LFortran's debug information has no module variables (#366)
+    const modvars: []vars.ModuleVariable = if (s.g.lfortran) &.{} else blk: {
+        const f = s.g.frames.get(frame orelse break :blk &.{}) orelse break :blk &.{};
+        break :blk try moduleVariablesAt(s, a, f.file orelse break :blk &.{}, f.line);
+    };
     for (list.items) |*sc| {
         if (sc.* != .object) continue;
         const ref = json.int(json.get(sc.*, "variablesReference")) orelse 0;
         if (ref != 0) {
-            const registers = std.mem.eql(u8, json.str(json.get(sc.*, "presentationHint")) orelse "", "registers") or std.mem.eql(u8, json.str(json.get(sc.*, "name")) orelse "", "Registers");
-            try sc.object.put(a, "variablesReference", .{ .integer = try vars.add(s, .{ .kind = .{ .gdb = ref }, .frame = frame, .ctx = .{ .registers = registers } }) });
+            const hint = json.str(json.get(sc.*, "presentationHint")) orelse "";
+            const name = json.str(json.get(sc.*, "name")) orelse "";
+            const registers = std.mem.eql(u8, hint, "registers") or std.mem.eql(u8, name, "Registers");
+            const locals = std.mem.eql(u8, hint, "locals") or std.mem.eql(u8, name, "Locals");
+            // ifx repeats the module variables a program unit uses among its locals
+            const used: []const vars.ModuleVariable = if (locals and s.g.ifx and !s.g.lldb) modvars else &.{};
+            try sc.object.put(a, "variablesReference", .{ .integer = try vars.add(s, .{ .kind = .{ .gdb = ref }, .frame = frame, .ctx = .{ .registers = registers, .used = used } }) });
         }
         _ = sc.object.orderedRemove("namedVariables");
         _ = sc.object.orderedRemove("indexedVariables");
     }
-    // LFortran's debug information has no module variables (#366)
-    if (s.g.lfortran) return;
-    const f = s.g.frames.get(frame orelse return) orelse return;
-    const modvars = try moduleVariablesAt(s, a, f.file orelse return, f.line);
     if (modvars.len == 0) return;
     // after the frame's own: its locals, or its arguments when it has none
     var at: ?usize = null;
