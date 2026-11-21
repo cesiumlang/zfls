@@ -124,6 +124,8 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     }
     for (l.symbols) |e| {
         if (!has(&.{ "Local", "Dummy", "Param", "Result" }, e.object)) continue;
+        // Linux ifx's own name of a function's result, `dnrm@0`
+        if (std.mem.findScalar(u8, e.name, '@') != null) continue;
         if (!vars.contains(e.name) and !procs.contains(e.name) and !hasInterfaceVar(objs, e.name))
             try out.append(a, try a.print("missing in zfls: variable {s} ({s})", .{ e.name, e.object }));
     }
