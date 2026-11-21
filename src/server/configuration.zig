@@ -34,6 +34,7 @@ const patterns = @import("../patterns.zig");
 const paths = @import("../paths.zig");
 const C = @import("../constants.zig");
 const settings_mod = @import("../settings.zig");
+const parser = @import("../parser.zig");
 
 const Settings = settings_mod.Settings;
 const Value = json.Value;
@@ -303,17 +304,17 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
 }
 
 /// Indexes the workspace again under `next`, as `initialize` did, keeping
-/// the editor's text of the open documents
+/// the editor's text and form of the open documents (#688)
 fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
     const sa = self.arena.allocator();
-    const Doc = struct { path: []const u8, lines: []const []const u8 };
+    const Doc = struct { path: []const u8, lines: []const []const u8, form: ?parser.SourceForm };
     var docs: std.ArrayList(Doc) = .empty;
     var it = self.open_docs.keyIterator();
     while (it.next()) |k| {
         const f = self.workspace.get(k.*) orelse continue;
         const lines = try a.alloc([]const u8, f.editLines().len);
         for (f.editLines(), lines) |l, *d| d.* = try a.dupe(u8, l);
-        try docs.append(a, .{ .path = try a.dupe(u8, k.*), .lines = lines });
+        try docs.append(a, .{ .path = try a.dupe(u8, k.*), .lines = lines, .form = f.forced_form });
     }
     cache.wait(self);
     clangd.stop(self);
@@ -342,6 +343,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
         // one outside the source directories, read as when it was opened
         if (!self.workspace.contains(d.path)) _ = workspace.updateWorkspaceFile(self, d.path, true, true, false) catch {};
         const f = self.workspace.get(d.path) orelse continue;
+        f.forced_form = d.form;
         try f.setContents(d.lines, true);
         _ = workspace.updateWorkspaceFile(self, d.path, false, false, false) catch |e| {
             self.log.err("re-indexing {s}: {s}", .{ d.path, @errorName(e) });
