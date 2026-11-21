@@ -733,7 +733,8 @@ pub fn splitLines(a: Allocator, text: []const u8) ![]const []const u8 {
 /// backslashes
 pub fn comparable(a: Allocator, cwd: []const u8, p: []const u8) ![]const u8 {
     const abs = if (std.Io.Dir.path.isAbsolute(p)) p else try paths.join(a, &.{ cwd, p });
-    const n = try paths.normpath(a, abs);
+    // a short name (`EMANSP~1`) as the long one, which the index has
+    const n = try paths.longName(a, try paths.normpath(a, abs));
     if (!is_windows) return n;
     for (n) |*c| c.* = if (c.* == '/') '\\' else std.ascii.toLower(c.*);
     return n;
