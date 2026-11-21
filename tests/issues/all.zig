@@ -76,6 +76,7 @@ test {
     _ = @import("compiler_flang.zig");
     _ = @import("compiler_intel.zig");
     _ = @import("compiler_gfortran.zig");
+    _ = @import("compiler_tabs.zig");
     _ = @import("compiler_includes.zig");
     _ = @import("compiler_include_globs.zig");
     _ = @import("flang_modules.zig");
