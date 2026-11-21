@@ -54,6 +54,7 @@ from differential_known import (
     on_include_directive,
     on_include_line,
     on_macro,
+    on_parenthesized_kind,
     on_use_rename_original,
     on_user_operator,
     on_zfls_only_intrinsic,
@@ -490,6 +491,14 @@ def main() -> int:
                 and on_enumerator_statement(src_lines, pos.get("line", -1))
             ):
                 # the enumerators of an ENUM, which fortls does not read
+                continue
+            if (
+                kind in ("hover", "definition", "references")
+                and a is None
+                and on_parenthesized_kind(src_lines, pos.get("line", -1))
+            ):
+                # a kind in parentheses, `INTEGER((4)) x` (#690), whose
+                # names fortls does not read
                 continue
             if (
                 kind == "completion"
