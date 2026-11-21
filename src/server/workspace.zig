@@ -213,6 +213,15 @@ pub fn resolveGlobsInPaths(self: *Server, a: Allocator) !void {
         }
     }
     self.s.include_dirs = inc;
+
+    // the compiler check's include directories, and fypp's `-I`: glob
+    // patterns expanded, other paths kept, existing or not (#580)
+    var cinc: settings_mod.StrList = .{};
+    for (try glob.expandDirs(self.io, sa, self.s.compiler_include_dirs.slice(), self.root_path)) |d| try cinc.add(sa, d);
+    self.s.compiler_include_dirs = cinc;
+    var fypp: settings_mod.StrList = .{};
+    for (try glob.expandIncludeArgs(self.io, sa, self.s.compiler_fypp_args.slice(), self.root_path)) |x| try fypp.add(sa, x);
+    self.s.compiler_fypp_args = fypp;
     _ = a;
 }
 

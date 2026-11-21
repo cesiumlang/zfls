@@ -82,7 +82,8 @@ fn walkInto(io: Io, a: Allocator, dir: []const u8, out: *std.ArrayList(WalkEntry
     }
 }
 
-fn hasWildcard(s: []const u8) bool {
+/// Whether a path has glob characters (`*`, `?`, `[`)
+pub fn hasWildcard(s: []const u8) bool {
     return std.mem.findAny(u8, s, "*?[") != null;
 }
 
@@ -253,6 +254,63 @@ pub fn resolveGlobs(io: Io, a: Allocator, glob_path: []const u8, root_path: ?[]c
         if (!dup) try out.append(a, rp);
     }
     return out.items;
+}
+
+/// Include directories: each glob pattern replaced by the directories it
+/// matches (`resolveGlobs`), other paths kept as they are, existing or not
+pub fn expandDirs(io: Io, a: Allocator, dirs: []const []const u8, root_path: ?[]const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    for (dirs) |d| {
+        if (!hasWildcard(d)) {
+            try out.append(a, d);
+            continue;
+        }
+        for (try resolveGlobs(io, a, d, root_path)) |r| if (paths.isDir(io, r)) try out.append(a, r);
+    }
+    return out.items;
+}
+
+/// A tool's arguments with each `-I` of a glob pattern replaced by an `-I`
+/// per directory it matches (`expandDirs`)
+pub fn expandIncludeArgs(io: Io, a: Allocator, args: []const []const u8, root_path: ?[]const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    for (args) |arg| {
+        if (!std.mem.startsWith(u8, arg, "-I") or !hasWildcard(arg[2..])) {
+            try out.append(a, arg);
+            continue;
+        }
+        for (try expandDirs(io, a, &.{arg[2..]}, root_path)) |d| try out.append(a, try a.print("-I{s}", .{d}));
+    }
+    return out.items;
+}
+
+test "include directories and -I arguments: glob patterns expanded to directories" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    for ([_][]const u8{ "build/a/include", "build/b/include", "build/b/src" }) |d| try tmp.dir.createDirPath(io, d);
+    try tmp.dir.writeFile(io, .{ .sub_path = "build/file.txt", .data = "" });
+    const root = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const in = struct {
+        fn dir(x: std.mem.Allocator, r: []const u8, rel: []const u8) ![]const u8 {
+            return std.Io.Dir.path.resolveAlloc(x, &.{ r, rel });
+        }
+    }.dir;
+    const dirs = try expandDirs(io, a, &.{ "build/*/include", "no/such/dir" }, root);
+    try std.testing.expectEqual(@as(usize, 3), dirs.len);
+    try std.testing.expectEqualStrings(try in(a, root, "build/a/include"), dirs[0]);
+    try std.testing.expectEqualStrings(try in(a, root, "build/b/include"), dirs[1]);
+    try std.testing.expectEqualStrings("no/such/dir", dirs[2]);
+    // only directories match
+    try std.testing.expectEqual(@as(usize, 2), (try expandDirs(io, a, &.{"build/*"}, root)).len);
+    const args = try expandIncludeArgs(io, a, &.{ "-DX=1", "-Ibuild/[a]/*", "-Iinc" }, root);
+    try std.testing.expectEqual(@as(usize, 3), args.len);
+    try std.testing.expectEqualStrings("-DX=1", args[0]);
+    try std.testing.expectEqualStrings(try a.print("-I{s}", .{try in(a, root, "build/a/include")}), args[1]);
+    try std.testing.expectEqualStrings("-Iinc", args[2]);
 }
 
 test "fnmatch" {

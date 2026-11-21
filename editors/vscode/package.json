@@ -1615,21 +1615,24 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --minify --sourcemap",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node22 --minify --sourcemap",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p test",
     "package": "vsce package --no-dependencies",
-    "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node20 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node20",
+    "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node22 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node22",
     "test": "npm run build && npm run build-test && node out/runTest.js",
-    "unit": "esbuild test/unit/*.test.ts --bundle --alias:vscode=./test/unit/vscode.ts --outdir=out/unit --platform=node --target=node20 --format=cjs && node --test out/unit/*.test.js"
+    "unit": "esbuild test/unit/*.test.ts --bundle --alias:vscode=./test/unit/vscode.ts --outdir=out/unit --platform=node --target=node22 --format=cjs && node --test out/unit/*.test.js"
+  },
+  "overrides": {
+    "minimatch": "11.0.9"
   },
   "dependencies": {
-    "vscode-languageclient": "10.1.2"
+    "vscode-languageclient": "11.0.0"
   },
   "devDependencies": {
-    "@types/node": "20.19.0",
+    "@types/node": "22.20.5",
     "@types/vscode": "1.102.0",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "4.0.0",
+    "@vscode/vsce": "4.1.1",
     "esbuild": "0.28.2",
     "typescript": "7.0.2",
     "vscode-oniguruma": "2.0.1",

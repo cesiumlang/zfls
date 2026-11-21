@@ -25,7 +25,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
   OVSX_VERSION: 1.2.0
 
 jobs:
@@ -35,9 +34,15 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
+      # only for .node-version
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .node-version
+          sparse-checkout-cone-mode: false
+
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
 
       # the platform packages, each with its zfls (the universal package
       # goes to the Marketplace only)
