@@ -173,3 +173,40 @@ test "gfortran: the macros of each file's command's options (#657)" {
     try h.expect(!try active(w, "b.F90", "optimized"), "b.F90: optimized is in an active branch", .{});
     try h.expect(try active(w, "b.F90", "plain"), "b.F90: plain is in an inactive branch", .{});
 }
+
+/// A stand-in gfortran (`-dM`) that makes `probes/<option>` for its `-mk...`
+/// option, and `probes/dup<option>` when it was asked with it before
+const gfortran_once: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho %* | findstr /c:\" -dM \" >nul || exit /b 0\r\nfor %%a in (%*) do echo %%a| findstr /b /c:\"-mk\" >nul && (mkdir probes\\%%a 2>nul || mkdir probes\\dup%%a 2>nul)\r\necho #define __GFORTRAN__ 1\r\nexit /b 0\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) ;; *) exit 0;; esac\nfor x in \"$@\"; do case $x in -mk*) mkdir probes/$x 2>/dev/null || mkdir probes/dup$x 2>/dev/null;; esac; done\nsleep 0.1\necho '#define __GFORTRAN__ 1'\n" };
+
+test "gfortran: the indexing threads ask each command's options once (#703)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // 32 files, of 8 option sets
+    const sets = 8;
+    var files: std.ArrayList(h.File) = .empty;
+    var db: std.ArrayList(u8) = .empty;
+    try db.append(a, '[');
+    for (0..32) |i| {
+        const name = try a.print("m{d}.F90", .{i});
+        try files.append(a, .{ .name = name, .text = try a.print("module m{d}\nend module m{d}\n", .{ i, i }) });
+        try db.print(a, "{s}{{\"directory\": \".\", \"file\": \"{s}\", \"command\": \"gfortran -mk{d} -c {s}\"}}\n", .{ if (i > 0) "," else "", name, i % sets, name });
+    }
+    try db.appendSlice(a, "]\n");
+    try files.appendSlice(a, &.{ gfortran_once, .{ .name = "compile_commands.json", .text = db.items }, .{ .name = "probes/keep", .text = "" } });
+    const opts = "\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran_once.name ++ "\", \"nthreads\": 8";
+    const w = try h.Workspace.init(files.items, .{ .init_options = "{" ++ opts ++ "}" });
+    defer w.deinit();
+    if (!is_windows) {
+        // executable only now: the settings again, which index again
+        try w.tmp.dir.setFilePermissions(io, gfortran_once.name, .executable_file, .{});
+        try w.changeConfiguration("{" ++ opts ++ ", \"pp_defs\": {\"ZFLS_X\": \"\"}}");
+    }
+    for (0..sets) |k| {
+        try h.expect(h.zfls.paths.isDir(io, try w.path(try a.print("probes/-mk{d}", .{k}))), "-mk{d}: not asked", .{k});
+        try h.expect(!h.zfls.paths.isDir(io, try w.path(try a.print("probes/dup-mk{d}", .{k}))), "-mk{d}: asked more than once", .{k});
+    }
+}
