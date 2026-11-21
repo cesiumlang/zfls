@@ -83,7 +83,7 @@ async function fpmConfigurations(): Promise<vscode.DebugConfiguration[]> {
     if (!fpm) {
       continue;
     }
-    const where = projects.length > 1 ? ` (${project.manifest.name ?? path.basename(project.root)})` : "";
+    const where = projects.length > 1 ? ` (${project.name})` : "";
     for (const kind of ["executable", "example", "test"] as TargetKind[]) {
       for (const name of await listTargets(project, kind, fpm)) {
         out.push({
@@ -123,7 +123,7 @@ async function resolve(
   // `"dbgeng": true` says the program has Microsoft's debug information
   const dbgeng = process.platform === "win32" && config.dbgeng === true;
   if (typeof config.fpmTarget === "string" && config.fpmTarget) {
-    const project = fpmProjectFor(folder, cwd);
+    const project = await fpmProjectFor(folder, cwd);
     if (!project) {
       void vscode.window.showErrorMessage(vscode.l10n.t("zfls: no fpm.toml for the fpm target {0}.", config.fpmTarget));
       return undefined;
@@ -294,9 +294,9 @@ async function pickProcess(): Promise<string | undefined> {
   return picked ? String(picked.pid) : undefined;
 }
 
-function fpmProjectFor(folder: vscode.WorkspaceFolder | undefined, cwd: string | undefined): FpmProject | undefined {
+function fpmProjectFor(folder: vscode.WorkspaceFolder | undefined, cwd: string | undefined): Promise<FpmProject | undefined> {
   const dir = cwd ?? folder?.uri.fsPath;
-  return dir ? projectOf(vscode.Uri.file(path.join(dir, "fpm.toml"))) : undefined;
+  return dir ? projectOf(vscode.Uri.file(path.join(dir, "fpm.toml"))) : Promise.resolve(undefined);
 }
 
 /** The debugger: the configuration's, else zfls.run.debugger's, among

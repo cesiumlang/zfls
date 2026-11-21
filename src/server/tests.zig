@@ -67,7 +67,7 @@ const PfProgram = struct {
 /// The files of the workspace that `wanted` takes, in `dir` and below, but
 /// in hidden directories and those of builds (fpm's dependencies are in
 /// build/dependencies, CMake's fetched ones in _deps)
-fn filesBelow(self: *Server, a: Allocator, dir: []const u8, wanted: *const fn ([]const u8) bool, out: *std.ArrayList([]const u8), depth: usize) !void {
+pub fn filesBelow(self: *Server, a: Allocator, dir: []const u8, wanted: *const fn ([]const u8) bool, out: *std.ArrayList([]const u8), depth: usize) !void {
     if (depth > 32) return;
     const entries = glob.listEntries(self.io, a, dir) catch return;
     for (entries) |e| {
@@ -83,7 +83,7 @@ fn filesBelow(self: *Server, a: Allocator, dir: []const u8, wanted: *const fn ([
     }
 }
 
-fn isManifest(name: []const u8) bool {
+pub fn isManifest(name: []const u8) bool {
     return std.mem.eql(u8, name, "fpm.toml");
 }
 
@@ -95,13 +95,13 @@ fn isPfOrCmake(name: []const u8) bool {
 const Source = struct { file: *FortranFile, ast: *Ast };
 
 /// The sources the request reads: the workspace's, else parsed once
-const Sources = struct {
+pub const Sources = struct {
     server: *Server,
     a: Allocator,
     parsed: std.StringHashMapUnmanaged(?Source) = .empty,
 
     /// The file, or null when it cannot be read or parsed
-    fn get(s: *Sources, path: []const u8) !?Source {
+    pub fn get(s: *Sources, path: []const u8) !?Source {
         if (s.server.workspace.get(path)) |f| if (f.ast) |ast| return .{ .file = f, .ast = ast };
         const gop = try s.parsed.getOrPut(s.a, path);
         if (!gop.found_existing) gop.value_ptr.* = s.parse(path) catch |e| switch (e) {
@@ -172,7 +172,7 @@ pub fn serveFpmTests(self: *Server, a: Allocator) !Value {
 
 /// A test target, with the suites its program makes and the tests their
 /// collect procedures return, in the sources next to the program
-fn fpmTarget(self: *Server, a: Allocator, sources: *Sources, t: fpm.TestTarget) !FpmTarget {
+fn fpmTarget(self: *Server, a: Allocator, sources: *Sources, t: fpm.Target) !FpmTarget {
     const src = (try sources.get(t.main)) orelse return .{ .name = t.name };
     const uri = try paths.pathToUri(a, t.main);
     const program = fpm.mainProgram(src.ast);

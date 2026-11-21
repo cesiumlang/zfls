@@ -381,6 +381,10 @@ Three requests of zfls's own let an editor ask its C language server instead: `z
 
 `textDocument/inlineValue` gives, while a debugger is stopped, the places from the first line of the procedure (or program) that holds the stop down to the stop where its variables are used: its locals and dummy arguments, its host procedures', and the module variables the line sees, under the names `zfls dap` lists them by. The editor then shows each one's value at the end of its line (VS Code: `debug.inlineValues`). Named constants, components, procedures, types, strings and comments are left out.
 
+### fpm targets, for tasks and Run/Debug
+
+`zfls/fpmTargets` (no parameters) gives each fpm project of the workspace (a directory with an `fpm.toml`) with its `name` (`fpm.toml`'s, else the directory's), its `uri`, its `auto` switches (`executable`, `test`, `example`: `[build]`'s `auto-executables`, `auto-tests` and `auto-examples`) and its `targets`: the `[[executable]]`, `[[test]]` and `[[example]]` tables of `fpm.toml`, and, where the switch is on, each main program in `app/`, `test/` or `example/` and below that no table names, named after its file, as fpm makes them (`auto`). A target has its `kind`, `name` and the `uri` of its main program. The VS Code extension runs and debugs a target with it when Run or Debug Fortran File is asked of its main program, and names the projects with it; an editor can map a file to the `fpm run` or `fpm test` that runs it the same way. zfls looks through the workspace as for the tests below.
+
 ### Tests, for a test explorer
 
 Two requests of zfls's own (no parameters) give the tests of the workspace, for an editor's test explorer to list, run and report (the VS Code extension's Testing view does):

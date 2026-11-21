@@ -46,6 +46,7 @@ const compile = @import("server/compile.zig");
 const compiler_version = @import("server/compiler_version.zig");
 const convert = @import("server/convert.zig");
 const build_command = @import("server/build_command.zig");
+const fpm_targets = @import("server/fpm_targets.zig");
 const pending = @import("server/pending.zig");
 const pull = @import("server/pull.zig");
 const format = @import("server/format.zig");
@@ -465,6 +466,7 @@ pub const Server = struct {
         bind_c_references,
         module_variables,
         fpm_tests,
+        fpm_targets,
         pfunit_tests,
         initialized,
         did_open,
@@ -524,6 +526,7 @@ pub const Server = struct {
         .{ "zfls/bindCReferences", .bind_c_references },
         .{ "zfls/moduleVariables", .module_variables },
         .{ "zfls/fpmTests", .fpm_tests },
+        .{ "zfls/fpmTargets", .fpm_targets },
         .{ "zfls/pfunitTests", .pfunit_tests },
         .{ "zfls/compilerCheck", .compiler_check },
         .{ "zfls/compilerClear", .compiler_clear },
@@ -593,6 +596,7 @@ pub const Server = struct {
             .bind_c_references => bindc.serveBindCReferences(self, a, params),
             .module_variables => modvars.serveModuleVariables(self, a, try json.decode(lsp.PositionParams, a, params)),
             .fpm_tests => tests.serveFpmTests(self, a),
+            .fpm_targets => fpm_targets.serveFpmTargets(self, a),
             .pfunit_tests => tests.servePfunitTests(self, a),
             .compiler_check => compile.serveCheck(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .compiler_clear => compile.serveClear(self, a),
