@@ -362,7 +362,7 @@ fn modDir(self: *Server, a: Allocator, id: compilers.Id, version: ?u32) ![]const
 }
 
 /// zfls's directory `kind` (`mod`, `work`) for the root
-fn cacheDir(self: *Server, a: Allocator, kind: []const u8) ![]const u8 {
+pub fn cacheDir(self: *Server, a: Allocator, kind: []const u8) ![]const u8 {
     const base = paths.cacheDir() orelse return paths.join(a, &.{ self.root_path, ".zfls", kind });
     return paths.join(a, &.{ base, kind, try pathKey(a, self.root_path) });
 }

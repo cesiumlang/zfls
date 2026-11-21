@@ -44,6 +44,7 @@ const hints = @import("server/hints.zig");
 const calls = @import("server/calls.zig");
 const compile = @import("server/compile.zig");
 const compiler_version = @import("server/compiler_version.zig");
+const compiler_macros = @import("server/compiler_macros.zig");
 const convert = @import("server/convert.zig");
 const build_command = @import("server/build_command.zig");
 const fpm_targets = @import("server/fpm_targets.zig");
@@ -179,6 +180,9 @@ pub const Server = struct {
     /// The compiler check's compilers' versions, by executable (in `arena`;
     /// compiler_version.zig)
     compiler_versions: std.array_hash_map.String(compiler_version.Known) = .empty,
+    /// The symbols each compiler predefines, by executable (in `arena`;
+    /// compiler_macros.zig)
+    compiler_macros: std.array_hash_map.String(compiler_macros.Known) = .empty,
     /// The formatting problems posted (hashes of their keys), each once
     format_reported: std.ArrayList(u64) = .empty,
     /// The thread that runs fortitude and Codee, once it has a job
@@ -298,6 +302,8 @@ pub const Server = struct {
         for (self.s.pp_defs.items) |d| {
             try self.pp_defs.put(a, try a.dupe(u8, d.name), .{ .value = try a.dupe(u8, d.value) });
         }
+        // then the compiler check's compiler's own (#509)
+        try compiler_macros.add(self);
     }
 
     /// `self.pp_defs = {**self.pp_defs, **file_obj.pp_defs}`

@@ -81,13 +81,15 @@ pub const State = struct {
 };
 
 /// The settings read when the workspace is indexed: changing one
-/// re-indexes it
+/// re-indexes it (the compiler's: for the symbols it predefines,
+/// compiler_macros.zig)
 const index_settings = [_][]const u8{
     "source_dirs",              "incl_suffixes",            "excl_suffixes",        "excl_paths",
     "comment_markers",          "d_lines",                  "sort_keywords",        "recursion_limit",
     "lowercase_intrinsics",     "pp_suffixes",              "include_dirs",         "pp_defs",
     "compile_commands",         "disable_compile_commands", "hover_plain_comments", "disable_openmp_conditional",
-    "disable_intel_directives", "fixed_line_length",
+    "disable_intel_directives", "fixed_line_length",        "compiler_diagnostics", "compiler_diagnostics_fixed",
+    "compiler_path",            "compiler_path_fixed",
 };
 
 fn isIndexSetting(comptime name: []const u8) bool {
