@@ -310,16 +310,17 @@ jobs:
       - name: Source is formatted (zig fmt)
         run: zig fmt --check build build.zig build.zig.zon src tests tools
 
-      # Downloads (lazy ones too) are retried: a dropped connection to a
-      # package host should not fail the run
+      # Downloads are retried: a dropped connection to a
+      # package host should not fail the run. Only what zfls's build needs
+      # is fetched, not rstd's lazy QEMU test images
       - name: Fetch dependencies
         run: |
           for wait in 15 30 60 120; do
-            zig build --fetch=all && exit 0
+            zig build --fetch && exit 0
             echo "::warning::fetching dependencies failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          zig build --fetch=all
+          zig build --fetch
 
       # Only differs from the checkout when the version is already released
       # (such a run is tested but not released)
@@ -460,16 +461,17 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      # Downloads (lazy ones too) are retried: a dropped connection to a
-      # package host should not fail the run
+      # Downloads are retried: a dropped connection to a
+      # package host should not fail the run. Only what zfls's build needs
+      # is fetched, not rstd's lazy QEMU test images
       - name: Fetch dependencies
         run: |
           for wait in 15 30 60 120; do
-            zig build --fetch=all && exit 0
+            zig build --fetch && exit 0
             echo "::warning::fetching dependencies failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          zig build --fetch=all
+          zig build --fetch
 
       # gfortran is the oracle for symbol extraction; the oracle test is
       # skipped where none is available (Windows on Arm). gdb is the
