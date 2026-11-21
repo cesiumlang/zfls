@@ -83,3 +83,26 @@ pub fn collect(io: Io, a: Allocator, paths: []const []const u8, wanted: *const f
     }
     return files.items;
 }
+
+/// The arguments a fixture gives the compiler or zfls, on a comment line
+/// of its first ten that has `key` (`oracle-zfls-args: --d_lines code`)
+pub fn headerArgs(a: Allocator, text: []const u8, key: []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var n: usize = 0;
+    while (lines.next()) |l| : (n += 1) {
+        if (n == 10) break;
+        const k = std.mem.find(u8, l, key) orelse continue;
+        var words = std.mem.tokenizeAny(u8, l[k + key.len ..], " \t\r");
+        while (words.next()) |w| try out.append(a, w);
+    }
+    return out.items;
+}
+
+test headerArgs {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const got = try headerArgs(arena.allocator(), "C     TEXT\r\nC     oracle-zfls-args: --d_lines code\r\n", "oracle-zfls-args:");
+    try std.testing.expectEqual(2, got.len);
+    try std.testing.expectEqualStrings("code", got[1]);
+}

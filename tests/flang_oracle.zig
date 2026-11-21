@@ -182,8 +182,8 @@ const Oracle = struct {
         const abs = try Io.Dir.cwd().realPathFileAlloc(self.io, src, a);
         const dir = try self.newDir();
         const text = try Io.Dir.cwd().readFileAlloc(self.io, src, a, .limited(1 << 24));
-        const flang_args = try headerArgs(a, text, "oracle-flang-args:");
-        const zfls_args = try headerArgs(a, text, "oracle-zfls-args:");
+        const flang_args = try util.headerArgs(a, text, "oracle-flang-args:");
+        const zfls_args = try util.headerArgs(a, text, "oracle-zfls-args:");
         const got = try self.zflsTree(key, abs, zfls_args) orelse return;
         // the suffix's form, the form zfls detects for one of none (`.fpp`,
         // which Flang reads as fixed form)
@@ -232,21 +232,6 @@ const Oracle = struct {
 fn readFlang(a: Allocator, global: *const dump.Scope, module: ?[]const u8, unknown: *?entities.Unknown) entities.Error!?Entities {
     if (module) |m| return entities.fromFlangModule(a, global, m, unknown);
     return try entities.fromFlang(a, global, unknown);
-}
-
-/// The arguments a fixture gives Flang or zfls, on a comment line of its
-/// first ten that has `key` (`oracle-zfls-args: --d_lines code`)
-fn headerArgs(a: Allocator, text: []const u8, key: []const u8) ![]const []const u8 {
-    var out: std.ArrayList([]const u8) = .empty;
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    var n: usize = 0;
-    while (lines.next()) |l| : (n += 1) {
-        if (n == 10) break;
-        const k = std.mem.find(u8, l, key) orelse continue;
-        var words = std.mem.tokenizeAny(u8, l[k + key.len ..], " \t\r");
-        while (words.next()) |w| try out.append(a, w);
-    }
-    return out.items;
 }
 
 /// `path` with forward slashes, as the known differences name files
@@ -335,15 +320,8 @@ pub fn main(init: std.process.Init) !u8 {
     return if (o.failed > 0) 1 else 0;
 }
 
-test headerArgs {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const got = try headerArgs(arena.allocator(), "C     TEXT\r\nC     oracle-zfls-args: --d_lines code\r\n", "oracle-zfls-args:");
-    try std.testing.expectEqual(2, got.len);
-    try std.testing.expectEqualStrings("code", got[1]);
-}
-
 test {
+    _ = util;
     _ = dump;
     _ = entities;
     _ = known;

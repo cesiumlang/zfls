@@ -11,9 +11,12 @@
 //!
 //!     gfortran_oracle [--gfortran EXE] [--zfls EXE] [-v] [PATH ...]
 //!
-//! PATH defaults to tests/fortran (the zfls fixtures). Directories are
-//! searched recursively; files gfortran rejects are skipped (and fail the
-//! run for the fixtures, which are all valid Fortran).
+//! PATH defaults to tests/fortran (the zfls fixtures) and tests/gfortran
+//! (gfortran's dialect). Directories are searched recursively; files
+//! gfortran rejects are skipped (and fail the run for the fixtures, which
+//! are all valid Fortran). A fixture can give gfortran or zfls arguments on
+//! an `oracle-gfortran-args:` / `oracle-zfls-args:` line among its first
+//! ten (`! oracle-gfortran-args: -fdec-static`).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -353,7 +356,7 @@ pub fn main(init: std.process.Init) !u8 {
     // every fixture is valid Fortran; other corpora may contain files that
     // are not
     const fixtures = paths.items.len == 0;
-    if (fixtures) try paths.append(a, "tests/fortran");
+    if (fixtures) try paths.appendSlice(a, &.{ "tests/fortran", "tests/gfortran" });
     const files = try util.collect(io, a, paths.items, isFortran);
     const workdir = try lsp.tempDir(io, a, env, "zfls_gfortran_");
     defer Io.Dir.cwd().deleteTree(io, workdir) catch {};
@@ -367,6 +370,8 @@ pub fn main(init: std.process.Init) !u8 {
         const ext_lower = try lower(a, ext);
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, "-cpp");
         if (std.mem.eql(u8, ext_lower, ".f") or std.mem.eql(u8, ext_lower, ".for")) try cmd.append(a, "-ffixed-form");
+        const text = try Io.Dir.cwd().readFileAlloc(io, src, a, .limited(1 << 24));
+        try cmd.appendSlice(a, try util.headerArgs(a, text, "oracle-gfortran-args:"));
         try cmd.append(a, abs);
         const g = try util.run(io, a, cmd.items, workdir, &gf_env);
         if (!g.ok) {
@@ -378,7 +383,10 @@ pub fn main(init: std.process.Init) !u8 {
             continue;
         }
         var ref = try gfortranEntities(a, g.stdout);
-        const z = try util.run(io, a, &.{ zfls, "--debug_parser", "--debug_filepath", abs }, null, null);
+        var zcmd: std.ArrayList([]const u8) = .empty;
+        try zcmd.appendSlice(a, &.{ zfls, "--debug_parser", "--debug_filepath", abs });
+        try zcmd.appendSlice(a, try util.headerArgs(a, text, "oracle-zfls-args:"));
+        const z = try util.run(io, a, zcmd.items, null, null);
         var got = (try zflsEntities(a, z.stdout)) orelse {
             std.debug.print("FAIL {s}: zfls produced no object tree\n", .{src});
             mismatched += 1;
