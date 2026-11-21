@@ -26,6 +26,7 @@ import { lensCommandsFeature, ProtocolPosition, referenceArgs } from "./codeLens
 
 import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
 import { appliesLive, ServerSettings } from "./settingsSync";
+import { languageToSet, SourceFormNote } from "./sourceForm";
 import { checkSuperseded } from "./superseded";
 import { FORTRAN_FILES, serverExecutable } from "./tools";
 import { folderVariables } from "./variables";
@@ -604,6 +605,17 @@ async function showCompileOrder(): Promise<void> {
   await vscode.window.showTextDocument(md, { preview: true });
 }
 
+/** Gives the document of `note` the language of the form zfls detected
+ * (`zfls/sourceForm`); the server decides when, this only applies it */
+async function applySourceForm(client: LanguageClient, note: SourceFormNote): Promise<void> {
+  const uri = client.protocol2CodeConverter.asUri(note.uri).toString();
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri);
+  const language = doc ? languageToSet(doc.languageId, note) : null;
+  if (doc && language) {
+    await vscode.languages.setTextDocumentLanguage(doc, language);
+  }
+}
+
 function disposeWatchers(key: string): void {
   for (const w of watchers.get(key) ?? []) {
     w.dispose();
@@ -676,6 +688,8 @@ async function startClient(
     void vscode.window.showErrorMessage(vscode.l10n.t("zfls failed to start: {0}", String(err)));
     return undefined;
   }
+  // the form zfls detected of a `.fpp` document: its language (#632)
+  client.onNotification("zfls/sourceForm", (note: SourceFormNote) => void applySourceForm(client, note));
   serverState.set(root.toString(), { folder, settings });
   // a setting changed while it started
   const now = serverSettings(folder);
