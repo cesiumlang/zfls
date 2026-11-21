@@ -1,7 +1,8 @@
 //! A Fortran file built with the command that `zfls build-command`
 //! answers, and its program run with the answered environment: gfortran
-//! by default, LLVM Flang or another with --compiler (on Windows x64 linked
-//! with the ifx kit of --kit) (`zig build test-build-command`). Skipped
+//! by default, LLVM Flang, ifx or another with --compiler (on Windows x64
+//! linked with the ifx kit of --kit; ifx's own modules found, as
+//! conda-forge's does not) (`zig build test-build-command`). Skipped
 //! without the compiler.
 //!
 //!     build_command --zfls ZFLS [--compiler C] [--kit DIR]
@@ -16,7 +17,8 @@ const source =
     \\  implicit none
     \\contains
     \\  subroutine greet()
-    \\    print '(a)', 'hello from zfls build-command'
+    \\    use, intrinsic :: iso_fortran_env, only: output_unit
+    \\    write (output_unit, '(a)') 'hello from zfls build-command'
     \\  end subroutine greet
     \\end module greeting
     \\
@@ -71,15 +73,20 @@ pub fn main(init: std.process.Init) !u8 {
     const answer = try json.parseFromSliceLeaky(json.Value, a, answered.stdout, .{});
     std.debug.print("{s}\n", .{answered.stdout});
 
-    // the build, in its directory, with its environment
-    var build_argv: std.ArrayList([]const u8) = .empty;
-    try build_argv.append(a, str(answer, "compiler"));
-    for (answer.object.get("args").?.array.items) |arg| try build_argv.append(a, arg.string);
+    // the build, in its directory, with its environment; then its link,
+    // for a build in two steps (Nix's gfortran on macOS)
     const build_env = try withVars(a, init.environ_map, answer.object.get("env").?);
-    const built = try std.process.run(a, io, .{ .argv = build_argv.items, .cwd = .{ .path = str(answer, "cwd") }, .environ_map = &build_env });
-    if (!built.term.success()) {
-        std.debug.print("FAIL the build: {s}{s}\n", .{ built.stdout, built.stderr });
-        return 1;
+    for ([_][]const u8{ "args", "linkArgs" }) |key| {
+        const args = answer.object.get(key) orelse continue;
+        if (args != .array) continue;
+        var build_argv: std.ArrayList([]const u8) = .empty;
+        try build_argv.append(a, str(answer, "compiler"));
+        for (args.array.items) |arg| try build_argv.append(a, arg.string);
+        const built = try std.process.run(a, io, .{ .argv = build_argv.items, .cwd = .{ .path = str(answer, "cwd") }, .environ_map = &build_env });
+        if (!built.term.success()) {
+            std.debug.print("FAIL the build ({s}): {s}{s}\n", .{ key, built.stdout, built.stderr });
+            return 1;
+        }
     }
 
     // the program, with its environment

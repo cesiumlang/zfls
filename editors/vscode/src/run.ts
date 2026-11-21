@@ -23,6 +23,9 @@ export interface CompilerInfo {
 /** zfls's answer to `zfls/buildCommand` for a file */
 export interface BuildCommand extends CompilerInfo {
   args: string[];
+  /** A build in two steps: `args` compiles, then the compiler with these
+   * links (Nix's gfortran on macOS) */
+  linkArgs?: string[];
   /** Where the build runs and module files go */
   cwd: string;
   /** The build's environment beyond the editor's */

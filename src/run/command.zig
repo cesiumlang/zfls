@@ -9,6 +9,9 @@ const std = @import("std");
 const sysinfo = @import("builtin");
 const compilers = @import("../compilers.zig");
 const compiler_names = @import("../compiler_names.zig");
+const intel = @import("../compilers/intel.zig");
+const flang_modules = @import("../compilers/flang_modules.zig");
+const tools = @import("../server/tools.zig");
 const executables = @import("../executables.zig");
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
@@ -83,9 +86,17 @@ pub const Answer = struct {
     runEnv: Vars,
     /// The compiler's arguments
     args: ?[]const []const u8 = null,
+    /// A build in two steps: `args` compiles only (`-c`), then the
+    /// compiler run again with these, in `cwd` with `env`, links the
+    /// program. Nix's gfortran on macOS, whose link of a `-g` build fails
+    /// to run dsymutil; lldb reads the object file's debug information,
+    /// which stays in `cwd`.
+    linkArgs: ?[]const []const u8 = null,
     /// The directory the build runs in (module and object files go there)
     cwd: ?[]const u8 = null,
-    /// The build's environment beyond the editor's
+    /// The build's environment beyond the editor's: on Windows the
+    /// compiler's directory first on the `PATH` too (MinGW's gfortran runs
+    /// its `f951` with its DLLs there)
     env: ?Vars = null,
     program: ?[]const u8 = null,
     /// Why the build links otherwise than it could (no ifx kit, no lld-link)
@@ -115,13 +126,45 @@ pub fn plan(a: Allocator, ctx: Context, r: Request) !?Answer {
     try Io.Dir.cwd().createDirPath(ctx.io, out_dir);
     const program = try std.Io.Dir.path.join(a, &.{ out_dir, try programName(a, source, os) });
     var note: ?[]const u8 = null;
-    const link = try kitLink(a, ctx, id, lld, r.args, &note);
-    ans.args = try compiler.buildArgs(a, k, source, program, r.args, link.args);
+    // the build's PATH has the compiler's directory as the program's does
+    var build_ctx = ctx;
+    var build_base: Environ.Map = undefined;
+    if (ans.runEnv.items.len > 0) {
+        build_base = try ctx.base_env.clone(a);
+        try build_base.put(ans.runEnv.items[0].name, ans.runEnv.items[0].value);
+        build_ctx.base_env = &build_base;
+    }
+    const link = try kitLink(a, build_ctx, id, exe, lld, r.args, &note);
+    const extra = try std.mem.concat(a, []const u8, &.{ try modules(a, ctx, id, exe), link.args });
+    if (twoSteps(os, id, try paths.realpath(ctx.io, a, exe))) {
+        const object = try a.print("{s}.o", .{program});
+        ans.args = try compiler.compileArgs(a, k, source, object, r.args, extra);
+        ans.linkArgs = try compiler.linkArgs(a, k, object, program, r.args, link.args);
+    } else {
+        ans.args = try compiler.buildArgs(a, k, source, program, r.args, extra);
+    }
     ans.cwd = out_dir;
-    ans.env = .{ .items = link.env };
+    ans.env = .{ .items = try buildEnv(a, ans.runEnv.items, link.env) };
     ans.program = program;
     ans.note = note;
     return ans;
+}
+
+/// Whether the build is in two steps (`Answer.linkArgs`): Nix's gfortran
+/// on macOS (`real` is its executable with links resolved), whose wrapper
+/// sets `DEVELOPER_DIR` to Nix's SDK, where the dsymutil that collect2 runs
+/// after a `-g` link (`/usr/bin/dsymutil`, Xcode's shim) finds no tool
+fn twoSteps(target: Os, id: ?compilers.Id, real: []const u8) bool {
+    return target == .macos and id == .gfortran and std.mem.startsWith(u8, real, "/nix/store/");
+}
+
+/// The build's environment: the linker's (`link`), and the compiler's
+/// directory on the `PATH` (`path`, from `runtimeEnv`) unless the linker's
+/// sets the `PATH` already (LFortran's, from a base with that directory)
+fn buildEnv(a: Allocator, path: []const Var, link: []const Var) ![]const Var {
+    if (path.len == 0) return link;
+    for (link) |v| if (std.ascii.eqlIgnoreCase(v.name, path[0].name)) return link;
+    return std.mem.concat(a, Var, &.{ path, link });
 }
 
 /// The lld-link next to `exe` (conda-forge's `lld`), else on the `PATH`
@@ -130,12 +173,33 @@ fn lldLink(a: Allocator, ctx: Context, exe: []const u8) !?[]const u8 {
         try executables.onPath(a, ctx.io, ctx.env, "lld-link");
 }
 
-/// How LLVM Flang and LFortran link on Windows: with lld-link and the ifx
-/// kit when both are there, outside a Visual Studio environment; `note`
+/// The options for the intrinsic modules of a compiler whose driver does
+/// not find them, as the compiler check passes them: conda-forge's ifx
+/// (`intel.moduleDir`) and conda-forge's LLVM Flang for Linux
+/// (`flang_modules.intrinsicModules`, from its `--version`)
+fn modules(a: Allocator, ctx: Context, id: ?compilers.Id, exe: []const u8) ![]const []const u8 {
+    switch (id orelse return &.{}) {
+        .ifx, .ifort => {
+            const dir = try intel.moduleDir(ctx.io, a, exe) orelse return &.{};
+            return compilers.include(a, id.?, dir, .{ .windows = os == .windows, .mod_dir = "" });
+        },
+        .flang => {
+            const r = tools.run(a, ctx.io, .{ .argv = &.{ exe, "--version" }, .environ_map = ctx.env, .timeout = tools.seconds(10) }) catch return &.{};
+            const dir = try flang_modules.intrinsicModules(ctx.io, a, r.stdout) orelse return &.{};
+            return a.dupe([]const u8, &.{ "-fintrinsic-modules-path", dir });
+        },
+        else => return &.{},
+    }
+}
+
+/// How ifx, LLVM Flang and LFortran link on Windows: with lld-link and the
+/// ifx kit when both are there, outside a Visual Studio environment; `note`
 /// says why not
-fn kitLink(a: Allocator, ctx: Context, id: ?compilers.Id, lld: ?[]const u8, user_args: ?[]const []const u8, note: *?[]const u8) !kit.Link {
+fn kitLink(a: Allocator, ctx: Context, id: ?compilers.Id, exe: []const u8, lld: ?[]const u8, user_args: ?[]const []const u8, note: *?[]const u8) !kit.Link {
     const c = id orelse return .{};
-    if (os != .windows or (c != .flang and c != .lfortran)) return .{};
+    if (os != .windows) return .{};
+    if (c == .ifx) return ifxLink(a, ctx, exe, user_args, note);
+    if (c != .flang and c != .lfortran) return .{};
     const label = if (c == .flang) "LLVM Flang" else "LFortran";
     const kit_dir = ctx.kit_dir orelse {
         note.* = try a.print("{s} links with Visual Studio's link: no ifx kit next to zfls", .{label});
@@ -150,6 +214,30 @@ fn kitLink(a: Allocator, ctx: Context, id: ?compilers.Id, lld: ?[]const u8, user
     const link_dir = try std.Io.Dir.path.join(a, &.{ cache, "lfortran-link" });
     try writeIfChanged(a, ctx.io, link_dir, "link.cmd", try kit.linkScript(a, lld_link));
     return try kit.lfortran(a, kit_dir, link_dir, ctx.base_env) orelse .{};
+}
+
+/// How ifx links on Windows: as its configuration says when that chooses
+/// the linker (`zfls setup-ifx`'s `bin\ifx.cfg`, or one `IFXCFG` names),
+/// else with its own lld-link and the kit (conda-forge's ifx, whose
+/// `ifx.cfg` is empty, would need Visual Studio's `link.exe`)
+fn ifxLink(a: Allocator, ctx: Context, exe: []const u8, user_args: ?[]const []const u8, note: *?[]const u8) !kit.Link {
+    const bin = paths.dirname(exe);
+    if (run_env.lookup(ctx.env, .windows, "IFXCFG")) |v| if (v.value.len > 0) return .{};
+    const cfg = try std.Io.Dir.path.join(a, &.{ bin, "ifx.cfg" });
+    if (Io.Dir.cwd().readFileAlloc(ctx.io, cfg, a, .limited(1 << 16))) |text| {
+        if (std.mem.find(u8, text, "fuse-ld") != null) return .{};
+    } else |_| {}
+    const kit_dir = ctx.kit_dir orelse {
+        note.* = "ifx links with Visual Studio's link: no ifx kit next to zfls";
+        return .{};
+    };
+    const lld_dir = try std.Io.Dir.path.join(a, &.{ bin, "compiler" });
+    if (try executables.inDir(a, ctx.io, ctx.env, lld_dir, "lld-link") == null) {
+        note.* = "ifx links with Visual Studio's link: no lld-link in its bin\\compiler";
+        return .{};
+    }
+    const lib = try std.Io.Dir.path.join(a, &.{ paths.dirname(bin), "lib" });
+    return try kit.ifx(a, kit_dir, if (paths.isDir(ctx.io, lib)) lib else null, user_args, ctx.base_env) orelse .{};
 }
 
 fn writeIfChanged(a: Allocator, io: Io, dir: []const u8, name: []const u8, data: []const u8) !void {
@@ -222,4 +310,86 @@ test "the compiler's directory goes on the PATH on Windows" {
     try testing.expectEqualStrings("C:\\mingw64\\bin;C:\\Windows", added[0].value);
     try env.put("Path", "C:\\MinGW64\\bin\\;C:\\Windows");
     try testing.expectEqual(0, (try runtimeEnv(a, &env, .windows, "C:\\mingw64\\bin")).len);
+}
+
+test "Nix's gfortran on macOS builds in two steps" {
+    try testing.expect(twoSteps(.macos, .gfortran, "/nix/store/yd7f-gfortran-wrapper-15.3.0/bin/gfortran"));
+    try testing.expect(!twoSteps(.macos, .gfortran, "/usr/local/Cellar/gcc/15.2.0/bin/gfortran-15"));
+    try testing.expect(!twoSteps(.linux, .gfortran, "/nix/store/x-gfortran-wrapper-15.3.0/bin/gfortran"));
+    try testing.expect(!twoSteps(.macos, .flang, "/nix/store/x-flang/bin/flang"));
+}
+
+test "the build's PATH has the compiler's directory, unless the linker's PATH has it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const path: []const Var = &.{.{ .name = "Path", .value = "C:\\msys64\\ucrt64\\bin;C:\\Windows" }};
+    const lib: Var = .{ .name = "LIB", .value = "C:\\kit" };
+    try testing.expectEqual(0, (try buildEnv(a, &.{}, &.{})).len);
+    const both = try buildEnv(a, path, &.{lib});
+    try testing.expectEqual(2, both.len);
+    try testing.expectEqualStrings("Path", both[0].name);
+    try testing.expectEqualStrings("LIB", both[1].name);
+    const lfortran: []const Var = &.{ .{ .name = "PATH", .value = "C:\\link;C:\\msys64\\ucrt64\\bin;C:\\Windows" }, lib };
+    try testing.expectEqual(lfortran.ptr, (try buildEnv(a, path, lfortran)).ptr);
+}
+
+test "conda-forge's ifx on Windows: its modules, and its lld-link with the ifx kit unless its configuration chooses the linker" {
+    if (os != .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = testing.io;
+    for ([_][]const u8{ "env/Library/bin/ifx.exe", "env/Library/bin/compiler/lld-link.exe", "env/opt/compiler/include/intel64/ifcore.mod", "kit/zfls_ifx_shim.obj", "hello.f90" }) |f| {
+        if (std.Io.Dir.path.dirname(f)) |d| try tmp.dir.createDirPath(io, d);
+        try tmp.dir.writeFile(io, .{ .sub_path = f, .data = "" });
+    }
+    try tmp.dir.createDirPath(io, "env/Library/lib");
+    const root = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const at = struct {
+        fn f(x: Allocator, r: []const u8, rel: []const u8) ![]const u8 {
+            return paths.normpath(x, try std.Io.Dir.path.join(x, &.{ r, rel }));
+        }
+    }.f;
+    var env: Environ.Map = .init(a);
+    // ifx's directory on the PATH already: the build's environment is the kit's only
+    try env.put("Path", try a.print("{s};C:\\Windows", .{try at(a, root, "env/Library/bin")}));
+    var ctx: Context = .{ .io = io, .env = &env, .base_env = &env, .cache_dir = null, .kit_dir = try at(a, root, "kit") };
+    const req: Request = .{ .source = try at(a, root, "hello.f90"), .compiler = "ifx", .compiler_path = try at(a, root, "env/Library/bin"), .output_dir = try at(a, root, "out") };
+    const modules_opt = try a.print("/I{s}", .{try at(a, root, "env/opt/compiler/include/intel64")});
+
+    const ans = (try plan(a, ctx, req)).?;
+    try expectArgsWith(ans.args.?, &.{ "/MD", "/fuse-ld=lld", modules_opt });
+    try testing.expectEqualStrings("LIB", ans.env.?.items[0].name);
+    try testing.expectEqualStrings(try a.print("{s};{s}", .{ ctx.kit_dir.?, try at(a, root, "env/Library/lib") }), ans.env.?.items[0].value);
+    try testing.expectEqual(null, ans.note);
+
+    // without the kit: a note, and the modules still
+    ctx.kit_dir = null;
+    const no_kit = (try plan(a, ctx, req)).?;
+    try expectArgsWith(no_kit.args.?, &.{modules_opt});
+    try testing.expect(std.mem.find(u8, no_kit.note.?, "no ifx kit") != null);
+    ctx.kit_dir = try at(a, root, "kit");
+
+    // `zfls setup-ifx`'s ifx.cfg, or IFXCFG: as the configuration says
+    try tmp.dir.writeFile(io, .{ .sub_path = "env/Library/bin/ifx.cfg", .data = "/MD /fuse-ld=lld \"/Qoption,link,C:\\ifx\\zfls\\zfls_ifx_shim.obj\"\n" });
+    try testing.expectEqual(0, (try plan(a, ctx, req)).?.env.?.items.len);
+    try tmp.dir.writeFile(io, .{ .sub_path = "env/Library/bin/ifx.cfg", .data = "" });
+    try env.put("IFXCFG", "C:\\mine\\ifx.cfg");
+    const own = (try plan(a, ctx, req)).?;
+    try testing.expectEqual(0, own.env.?.items.len);
+    try testing.expectEqual(null, own.note);
+}
+
+fn expectArgsWith(args: []const []const u8, wanted: []const []const u8) !void {
+    for (wanted) |w| {
+        for (args) |x| {
+            if (std.mem.eql(u8, x, w)) break;
+        } else {
+            std.debug.print("{s} not in {any}\n", .{ w, args });
+            return error.TestExpectedEqual;
+        }
+    }
 }

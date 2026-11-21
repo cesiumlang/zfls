@@ -107,3 +107,50 @@ test "zfls/buildCommand: without a file, only the compiler's part; null without 
     });
     try std.testing.expect(none == .null);
 }
+
+test "zfls/buildCommand: on Windows a compiler given by its path has its directory on the build's PATH too (#543)" {
+    if (!windows) return error.SkipZigTest;
+    const w = try init();
+    defer w.deinit();
+    const v = try w.zflsRequest("zfls/buildCommand", .{
+        .textDocument = .{ .uri = try w.uri("src/hello.f90") },
+        .compilerPath = "tools/gfortran-14" ++ exe,
+        .outputDirectory = "out",
+    });
+    const tools = try native(w, "tools");
+    for ([_][]const u8{ "env", "runEnv" }) |key| {
+        var it = h.json.get(v, key).?.object.iterator();
+        const path = while (it.next()) |e| {
+            if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "PATH")) break e.value_ptr.string;
+        } else return error.TestExpectedEqual;
+        try std.testing.expect(std.ascii.startsWithIgnoreCase(path, tools));
+    }
+}
+
+test "zfls/buildCommand: conda-forge's ifx on Windows finds its modules and links with its lld-link and the ifx kit (#510)" {
+    if (!windows) return error.SkipZigTest;
+    const w = try h.Workspace.init(&.{
+        .{ .name = "src/hello.f90", .text = "program hello\nuse iso_fortran_env\nend program hello\n" },
+        .{ .name = "env/Library/bin/ifx.exe", .text = "" },
+        .{ .name = "env/Library/bin/ifx.cfg", .text = "" },
+        .{ .name = "env/Library/bin/compiler/lld-link.exe", .text = "" },
+        .{ .name = "env/opt/compiler/include/intel64/iso_fortran_env.modintr", .text = "" },
+    }, .{});
+    defer w.deinit();
+    const v = try w.zflsRequest("zfls/buildCommand", .{
+        .textDocument = .{ .uri = try w.uri("src/hello.f90") },
+        .compiler = "ifx",
+        .compilerPath = "env/Library/bin",
+        .outputDirectory = "out",
+    });
+    const modules = try std.mem.concat(w.a(), u8, &.{ "/I", try native(w, "env/opt/compiler/include/intel64") });
+    var has_modules = false;
+    var has_lld = false;
+    for (args(v)) |x| {
+        if (std.mem.eql(u8, x.string, modules)) has_modules = true;
+        if (std.mem.eql(u8, x.string, "/fuse-ld=lld")) has_lld = true;
+    }
+    try std.testing.expect(has_modules);
+    // with the kit next to zfls, its lld-link; without it, a note says so
+    if (!has_lld) try std.testing.expect(std.mem.find(u8, str(v, "note"), "no ifx kit") != null);
+}
