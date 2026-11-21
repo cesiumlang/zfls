@@ -4,7 +4,6 @@
 
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { expandDirectoryGlob } from "./lint/paths";
 import { FORMATTERS, type ServerSettings } from "./settingsSync";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
@@ -120,14 +119,15 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   return args;
 }
 
-/** Directories of a setting, with variables resolved and globs expanded */
+/** Directories of a setting, with variables resolved, relative to the
+ * workspace folder; zfls expands the glob patterns among them */
 function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefined): string[] {
   const base = folder?.uri.fsPath;
   const dirs = patterns.filter((p) => p.trim()).map((p) => {
     const dir = resolvePath(p, folder);
     return base && !path.isAbsolute(dir) ? path.join(base, dir) : dir;
   });
-  return [...new Set(dirs.flatMap(expandDirectoryGlob))];
+  return [...new Set(dirs)];
 }
 
 /** The zfls options of the compiler that checks files (zfls's compiler
