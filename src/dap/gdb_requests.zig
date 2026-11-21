@@ -18,6 +18,7 @@ const json = @import("../json.zig");
 const paths = @import("../paths.zig");
 const fortran = @import("fortran.zig");
 const runtime_errors = @import("runtime_errors.zig");
+const gdb_dll = @import("gdb_dll.zig");
 const Value = json.Value;
 
 const session = @import("session.zig");
@@ -100,6 +101,8 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const program = json.str(json.get(args, "program"));
     const cwd = json.str(json.get(args, "cwd"));
     s.g.lfortran = lfortran.isProgram(s.io, a, program, cwd);
+    s.g.dll_breakpoints.clearRetainingCapacity();
+    if (std.mem.eql(u8, command, "launch")) try gdb_dll.atLaunch(s, a, program, cwd);
     if (s.g.source_root) |r| s.gpa.free(r);
     const root = json.str(json.get(args, "sourceRoot")) orelse cwd orelse if (program) |p| std.Io.Dir.path.dirname(p) else null;
     s.g.source_root = if (root) |r| try s.gpa.dupe(u8, r) else null;
@@ -333,7 +336,13 @@ pub fn syncFunctions(s: *Session, a: Allocator) !Value {
     const user = if (s.g.user_functions.len > 0) json.items(json.parse(a, s.g.user_functions) catch Value.null) else &.{};
     try list.appendSlice(user);
     if (s.g.lldb) return gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
-    const ours: []const runtime_errors.GdbBreakpoint = if (s.g.runtime_errors) runtime_errors.gdb_breakpoints else &.{};
+    // gfortran's in its DLL: gdb_dll.zig's, not by name (a name finds the
+    // program's import thunk only)
+    var kept: std.ArrayList(runtime_errors.GdbBreakpoint) = .empty;
+    if (s.g.runtime_errors) for (runtime_errors.gdb_breakpoints) |b| {
+        if (!(s.g.gfortran_dll and gdb_dll.isDllFunction(b.name))) try kept.append(a, b);
+    };
+    const ours: []const runtime_errors.GdbBreakpoint = kept.items;
     // Flang's STOP functions: only at ERROR STOP
     for (ours) |b| try list.append(if (b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
     if (s.g.entry_function) |f| try list.append(try json.from(a, .{ .name = f }));
@@ -370,7 +379,10 @@ fn setExceptions(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const r = try gdb.request(s, a, "setExceptionBreakpoints", .{ .filters = Value{ .array = filters }, .filterOptions = Value{ .array = options } });
     if (wanted != s.g.runtime_errors) {
         s.g.runtime_errors = wanted;
-        if (s.g.lldb) try lldb.syncErrors(s, a) else _ = try syncFunctions(s, a);
+        if (s.g.lldb) try lldb.syncErrors(s, a) else {
+            _ = try syncFunctions(s, a);
+            try gdb_dll.enable(s, a, wanted);
+        }
     }
     if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
     const theirs = json.items(json.path(r, &.{ "body", "breakpoints" }));
@@ -618,7 +630,8 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
         vars.clear(s);
         var hit: ?[]const u8 = null;
         for (json.items(json.get(body, "hitBreakpointIds"))) |id| {
-            if (s.g.error_breakpoints.get(json.int(id) orelse continue)) |f| {
+            const n = json.int(id) orelse continue;
+            if (s.g.error_breakpoints.get(n) orelse gdb_dll.functionOf(s, a, n)) |f| {
                 hit = f;
                 break;
             }
