@@ -13,6 +13,7 @@ import {
 import { toggleComments } from "./comments";
 import { INJECTION_FILE, isMarkerGrammar, markerGrammarText } from "./commentMarkers";
 import { registerRunCommands } from "./runFile";
+import { BuildCommand, BuildCommandParams, CompilerInfo } from "./run";
 import { BindC, C_LANGUAGES, identifierAt, isCFile, uniqueByPlace } from "./interop";
 import { registerFpm } from "./fpmCommands";
 import { registerFpmTests } from "./fpmTests";
@@ -49,7 +50,7 @@ let context: vscode.ExtensionContext;
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   context = ctx;
   output = vscode.window.createOutputChannel("zfls", { log: true });
-  registerRunCommands(context, output, () => findServer(context, vscode.workspace.workspaceFolders?.[0]).command);
+  registerRunCommands(context, output, sendBuildCommand);
   registerFpm(context, output);
   registerFpmTests(context, output, folderClients);
   registerPfunitTests(context, output, folderClients);
@@ -443,6 +444,28 @@ async function clearCompilerDiagnostics(): Promise<void> {
     const client = await pending;
     await client?.sendRequest("zfls/compilerClear");
   }
+}
+
+/** `zfls/buildCommand` to the server of a Fortran file (started if need
+ * be), or without a file to that of the folder of `uri`, else to any
+ * running: undefined when none runs */
+async function sendBuildCommand(uri: vscode.Uri, params: BuildCommandParams): Promise<BuildCommand | CompilerInfo | null | undefined> {
+  let client = params.textDocument ? await clientForUri(uri) : undefined;
+  if (!client) {
+    const inFolder = vscode.workspace.getWorkspaceFolder(uri);
+    const folder = inFolder ? outermost(inFolder) : undefined;
+    if (folder) {
+      await startOnce(folder.uri, folder);
+      client = await clients.get(folder.uri.toString());
+    }
+  }
+  for (const pending of client ? [] : clients.values()) {
+    client = (await pending) ?? undefined;
+    if (client?.isRunning()) {
+      break;
+    }
+  }
+  return client?.isRunning() ? client.sendRequest<BuildCommand | CompilerInfo | null>("zfls/buildCommand", params) : undefined;
 }
 
 /** The language client of the server of a Fortran file, started if need be */

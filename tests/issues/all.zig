@@ -12,6 +12,7 @@ test {
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
     _ = @import("convert.zig");
+    _ = @import("build_command.zig");
     _ = @import("compiler_fixed.zig");
     _ = @import("corpus.zig");
     _ = @import("debug_options.zig");

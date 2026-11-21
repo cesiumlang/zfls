@@ -15,6 +15,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const stdio = @import("stdio.zig");
+const ifx_kit = @import("run/kit.zig");
 const Allocator = std.mem.Allocator;
 
 /// A zip archive in memory or in a file; it may follow other data (a
@@ -333,7 +334,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
         const base = env.get("LOCALAPPDATA") orelse return fail(io, a, "LOCALAPPDATA is not set: give --dest", .{});
         break :blk try std.Io.Dir.path.join(a, &.{ base, "zfls", "ifx", version.? });
     };
-    const kit_dir = kit orelse try findKit(io, a) orelse
+    const kit_dir = kit orelse try ifx_kit.find(a, io) orelse
         return fail(io, a, "zfls's ifx kit is not next to zfls (ifx-kit, or ../lib/ifx): give --kit", .{});
 
     var files: usize = 0;
@@ -383,18 +384,6 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
         }));
     }
     return 0;
-}
-
-/// The ifx kit next to zfls: `ifx-kit` beside it (release packages), or
-/// `../lib/ifx` (zig build's prefix)
-fn findKit(io: Io, a: Allocator) !?[]const u8 {
-    const exe_dir = std.process.executableDirPathAlloc(io, a) catch return null;
-    for ([_][]const []const u8{ &.{ exe_dir, "ifx-kit" }, &.{ exe_dir, "..", "lib", "ifx" } }) |parts| {
-        const dir = try std.Io.Dir.path.join(a, parts);
-        const shim = try std.Io.Dir.path.join(a, &.{ dir, "zfls_ifx_shim.obj" });
-        if (Io.Dir.cwd().access(io, shim, .{})) |_| return dir else |_| {}
-    }
-    return null;
 }
 
 fn writeFile(io: Io, path: []const u8, data: []const u8) !void {

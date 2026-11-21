@@ -104,6 +104,7 @@
   "zfls: the compiler {0} was not found in {1} (zfls.run.compilerPath). Install it, or set zfls.run.compiler and zfls.run.compilerPath.": "zfls: the compiler {0} was not found in {1} (zfls.run.compilerPath). Install it, or set zfls.run.compiler and zfls.run.compilerPath.",
   "zfls: the compiler {0} was not found on the PATH. Install it, or set zfls.run.compiler and zfls.run.compilerPath.": "zfls: the compiler {0} was not found on the PATH. Install it, or set zfls.run.compiler and zfls.run.compilerPath.",
   "zfls: the conversion failed: {0}": "zfls: the conversion failed: {0}",
+  "zfls: the zfls language server is not running; Run Fortran File needs it to build {0}.": "zfls: the zfls language server is not running; Run Fortran File needs it to build {0}.",
   "zfls: the {0} debugger did not start; see the Debug Console.": "zfls: the {0} debugger did not start; see the Debug Console.",
   "zfls: there is no fpm.toml in the workspace.": "zfls: there is no fpm.toml in the workspace.",
   "zfls: there is no zfls at {0}, which zfls.path names.": "zfls: there is no zfls at {0}, which zfls.path names.",

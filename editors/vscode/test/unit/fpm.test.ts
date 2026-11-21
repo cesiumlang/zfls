@@ -161,11 +161,15 @@ test("test-drive's results", () => {
 });
 
 test("a debug build's flags: DWARF for LLVM Flang on Windows, unless asked for (#430)", () => {
-  assert.equal(fpmDwarfFlags(undefined, "flang", "win32"), FPM_FLANG_DWARF_FLAGS);
-  assert.equal(fpmDwarfFlags("-O1", "C:\\pixi\\bin\\flang-new.exe", "win32"), "-O1 -gdwarf-4 -Wl,-debug:dwarf");
-  assert.equal(fpmDwarfFlags("-gdwarf-5 -Wl,-debug:dwarf", "flang", "win32"), "-gdwarf-5 -Wl,-debug:dwarf");
+  const flang = { name: "flang", debugInfo: "dwarf" } as const;
+  assert.equal(fpmDwarfFlags(undefined, flang, "win32"), FPM_FLANG_DWARF_FLAGS);
+  assert.equal(fpmDwarfFlags("-O1", flang, "win32"), "-O1 -gdwarf-4 -Wl,-debug:dwarf");
+  assert.equal(fpmDwarfFlags("-gdwarf-5 -Wl,-debug:dwarf", flang, "win32"), "-gdwarf-5 -Wl,-debug:dwarf");
+  // without lld-link, zfls says Microsoft's debug information
+  assert.equal(fpmDwarfFlags(undefined, { name: "flang", debugInfo: "pdb" }, "win32"), undefined);
   // elsewhere, and other compilers: as they are
-  assert.equal(fpmDwarfFlags(undefined, "flang", "linux"), undefined);
-  assert.equal(fpmDwarfFlags("-g", "gfortran", "win32"), "-g");
-  assert.equal(fpmDwarfFlags(undefined, "ifx", "win32"), undefined);
+  assert.equal(fpmDwarfFlags(undefined, flang, "linux"), undefined);
+  assert.equal(fpmDwarfFlags("-g", { name: "gfortran", debugInfo: "dwarf" }, "win32"), "-g");
+  assert.equal(fpmDwarfFlags(undefined, { name: "ifx", debugInfo: "pdb" }, "win32"), undefined);
+  assert.equal(fpmDwarfFlags(undefined, undefined, "win32"), undefined);
 });

@@ -1,124 +1,46 @@
-// The pure parts of running and debugging a single Fortran file: compiler
-// arguments, where the program goes, which debugger to use and its launch
-// configuration. No `vscode` import (see test/unit).
+// The pure parts of running and debugging a single Fortran file: what
+// zfls answers about building it (`zfls/buildCommand`), which debugger to
+// use and its launch configuration. zfls chooses the compiler's
+// arguments, where the program goes and how it links; this module only
+// turns its answer into VS Code's. No `vscode` import (see test/unit).
 
-import * as crypto from "node:crypto";
 import * as path from "node:path";
 
-/** How a compiler takes its options */
-export type ArgStyle = "gnu" | "intel-windows";
-
-export interface CompilerKind {
-  argStyle: ArgStyle;
-  /** Whether its programs have Microsoft's debug information (PDB) only,
-   * which needs Windows's Debugger Engine or cppvsdbg rather than gdb */
-  msvc: boolean;
-  /** The arguments when zfls.run.buildArgs is not set: debug info, no
-   * optimization */
-  defaultArgs: string[];
+/** What concerns the compiler, in zfls's answer: also without a file */
+export interface CompilerInfo {
+  /** The compiler's executable */
+  compiler: string;
+  /** The compiler zfls knows it as (`gfortran`, `flang`, ...) */
+  name: string | null;
+  /** The format of its programs' debug information */
+  debugInfo: "dwarf" | "pdb";
+  /** The debugger of `zfls dap` that fits its programs */
+  debugger: "gdb" | "lldb" | "dbgeng";
+  /** The program's environment beyond the editor's (its runtime libraries) */
+  runEnv: Record<string, string>;
 }
 
-/** The compiler's name without directory, extension or version suffix:
- * `C:\x\ifx.exe` -> `ifx`, `gfortran-14` -> `gfortran`. */
-export function compilerName(compiler: string): string {
-  const base = path.basename(compiler.replace(/\\/g, "/")).toLowerCase();
-  const name = base.replace(/\.exe$/, "").replace(/-\d+(\.\d+)*$/, "").replace(/-mp$/, "");
-  // a target before it (`x86_64-w64-mingw32-gfortran`,
-  // `x86_64-conda-linux-gnu-gfortran`), as toolchains name their compilers
-  for (const known of ["gfortran", "flang-new", "flang", "ifx", "ifort", "lfortran", "nvfortran", "nagfor"]) {
-    if (name.endsWith(`-${known}`) && name.length > known.length + 1) return known;
-  }
-  return name;
+/** zfls's answer to `zfls/buildCommand` for a file */
+export interface BuildCommand extends CompilerInfo {
+  args: string[];
+  /** Where the build runs and module files go */
+  cwd: string;
+  /** The build's environment beyond the editor's */
+  env: Record<string, string>;
+  program: string;
+  /** Why the build links otherwise than it could */
+  note?: string;
 }
 
-/** LLVM Flang's debug build on Windows (`compilerKind`): `-gdwarf-4` writes
- * DWARF as well as Microsoft's debug information, and has Flang link with
- * lld-link, which `-debug:dwarf` has keep the DWARF in the program (and
- * still write the PDB) */
-export const FLANG_DWARF_ARGS = ["-gdwarf-4", "-O0", "-Wl,-debug:dwarf"];
-
-/** gfortran's debug build on Windows (`compilerKind`): libgfortran and
- * libquadmath linked statically, so that the Fortran runtime errors filter
- * stops at errors that the runtime raises itself (`RANDOM_SEED`, `MATMUL`,
- * I/O), whose functions gdb finds in the program but not in the DLL */
-export const GFORTRAN_WINDOWS_ARGS = ["-g", "-O0", "-static-libgfortran", "-static-libquadmath"];
-
-/**
- * How `compiler` takes its options and what its programs are, on
- * `platform`. LLVM Flang's programs on Windows are of the MSVC ABI, but
- * debugged with gdb (zfls's), for DWARF (`FLANG_DWARF_ARGS`), unless
- * `flangDwarf` is false: they have only Microsoft's debug information
- * (`-g`, which Visual Studio's link keeps; there is no lld-link), for
- * Windows's Debugger Engine.
- */
-export function compilerKind(compiler: string, platform: NodeJS.Platform, flangDwarf = true): CompilerKind {
-  const name = compilerName(compiler);
-  const windows = platform === "win32";
-  if ((name === "ifx" || name === "ifort") && windows) {
-    return { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] };
-  }
-  if (name === "lfortran") {
-    // conda-forge's LFortran for Windows is built without its runtime
-    // stacktrace, and refuses -g ("The `runtime stacktrace` is not
-    // enabled")
-    return { argStyle: "gnu", msvc: windows, defaultArgs: windows ? [] : ["-g"] };
-  }
-  if (windows && (name === "flang" || name === "flang-new") && flangDwarf) {
-    return { argStyle: "gnu", msvc: false, defaultArgs: [...FLANG_DWARF_ARGS] };
-  }
-  // MinGW's gfortran: its runtime linked in, since gdb reads no symbols of
-  // libgfortran-5.dll and so cannot stop at the errors raised inside it
-  if (windows && name === "gfortran") {
-    return { argStyle: "gnu", msvc: false, defaultArgs: [...GFORTRAN_WINDOWS_ARGS] };
-  }
-  // LLVM Flang's `-g` on Windows: Microsoft's debug information only
-  const msvc = windows && (name === "flang" || name === "flang-new");
-  return { argStyle: "gnu", msvc, defaultArgs: ["-g", "-O0"] };
-}
-
-/**
- * The compiler arguments that build `source` into `exe`, run in the output
- * directory (where module and object files then go). The directory of the
- * source is on the include path, for its include files and modules.
- */
-export function buildArgs(
-  kind: CompilerKind,
-  source: string,
-  exe: string,
-  userArgs: readonly string[] | undefined,
-  linkArgs: readonly string[] = [],
-): string[] {
-  const args = userArgs ?? kind.defaultArgs;
-  const dir = path.dirname(source);
-  if (kind.argStyle === "intel-windows") {
-    return ["/nologo", ...args, ...linkArgs, `/I${dir}`, `/exe:${exe}`, source];
-  }
-  return [...args, ...linkArgs, `-I${dir}`, "-o", exe, source];
-}
-
-/**
- * The directory for the program built from `source`: under `base` (the
- * extension's storage), a directory per source file, so that files of the
- * same name and their module files do not collide.
- */
-export function outputDirFor(base: string, source: string, platform: NodeJS.Platform = process.platform): string {
-  const key = platform === "win32" ? source.toLowerCase() : source;
-  const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 10);
-  return pathFor(platform).join(base, `${stem(source, platform)}-${hash}`);
-}
-
-/** The program file for `source` in `dir` */
-export function programPath(dir: string, source: string, platform: NodeJS.Platform = process.platform): string {
-  return pathFor(platform).join(dir, stem(source, platform) + (platform === "win32" ? ".exe" : ""));
-}
-
-function pathFor(platform: NodeJS.Platform): path.PlatformPath {
-  return platform === "win32" ? path.win32 : path.posix;
-}
-
-function stem(file: string, platform: NodeJS.Platform): string {
-  const p = pathFor(platform);
-  return p.basename(file, p.extname(file));
+export interface BuildCommandParams {
+  /** Without one, the answer is only the compiler's part */
+  textDocument?: { uri: string };
+  compiler?: string;
+  compilerPath?: string;
+  args?: string[];
+  outputDirectory?: string;
+  /** Values in place of the environment's, for the answer's additions */
+  env?: Record<string, string>;
 }
 
 // Debuggers
@@ -301,99 +223,6 @@ export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
 /** CDT GDB takes the program arguments as one string, split by gdb */
 function quoteGdbArg(arg: string): string {
   return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `"${arg.replace(/(["\\$`])/g, "\\$1")}"`;
-}
-
-/**
- * The environment additions for running a program built by `compiler` on
- * Windows: its directory first on the PATH, for the compiler's runtime
- * libraries (libgfortran-5.dll and the like) when it is not on the PATH.
- */
-export function runtimeEnv(
-  compilerExe: string,
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
-  if (platform !== "win32") {
-    return {};
-  }
-  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "Path";
-  const dir = path.win32.dirname(compilerExe);
-  const current = env[key] ?? "";
-  const entries = current.split(";").map((e) => e.replace(/[\\/]+$/, "").toLowerCase());
-  if (entries.includes(dir.replace(/[\\/]+$/, "").toLowerCase())) {
-    return {};
-  }
-  return { [key]: current ? `${dir};${current}` : dir };
-}
-
-/** The libraries of zfls's ifx kit that LFortran's and LLVM Flang's
- * programs need */
-const KIT_LIBS = ["msvcrt.lib", "ucrt.lib", "vcruntime.lib", "kernel32.lib"];
-
-/**
- * The environment in which LFortran (on Windows) links its program with
- * lld-link and zfls's ifx kit (`kitDir`) rather than Visual Studio's linker
- * and libraries: LFortran runs `link` from the PATH, so `linkDir`, put
- * first, holds a `link` that runs lld-link (`linkScript`); `LINK` (which
- * lld-link reads as arguments) adds the kit's startup object and import
- * libraries, and `LIB` the kit's directory. Undefined in a Visual Studio
- * environment
- * (`VCToolsInstallDir`), where Visual Studio's linker links.
- */
-export function lfortranLinkEnv(kitDir: string, linkDir: string, env: NodeJS.ProcessEnv): Record<string, string> | undefined {
-  if (env.VCToolsInstallDir) {
-    return undefined;
-  }
-  const join = (sep: string, ...parts: (string | undefined)[]) => parts.filter((p) => p).join(sep);
-  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "Path";
-  const shim = path.win32.join(kitDir, "zfls_ifx_shim.obj");
-  return {
-    [pathKey]: join(";", linkDir, env[pathKey]),
-    LIB: join(";", kitDir, env.LIB),
-    LINK: join(" ", `"${shim}"`, ...KIT_LIBS, env.LINK),
-  };
-}
-
-/** LLVM Flang's arguments for linking with zfls's ifx kit (`flangKitLink`):
- * the C runtime in DLLs (`/MD`, which the kit's import libraries are;
- * Flang's default is the static `/MT`), and lld-link */
-export const FLANG_KIT_ARGS = ["-fms-runtime-lib=dll", "-fuse-ld=lld"];
-
-/**
- * How LLVM Flang (on Windows) links its program with lld-link and zfls's
- * ifx kit (`kitDir`) rather than Visual Studio's linker and libraries: the
- * arguments (`FLANG_KIT_ARGS`), and the environment, in which `LIB` is the
- * kit's directory and `LINK` (which lld-link reads as arguments) adds the
- * kit's startup object and import libraries. With `LIB` set, neither Flang
- * nor lld-link looks for Visual Studio's libraries. Undefined in a Visual
- * Studio environment (`VCToolsInstallDir`), where Visual Studio's linker
- * links, and when the build's arguments (`userArgs`) choose the linker or
- * the C runtime.
- */
-export function flangKitLink(
-  kitDir: string,
-  userArgs: readonly string[] | undefined,
-  env: NodeJS.ProcessEnv,
-): { args: string[]; env: Record<string, string> } | undefined {
-  if (env.VCToolsInstallDir || userArgs?.some((a) => /^-f(use-ld|ms-runtime-lib)=/.test(a))) {
-    return undefined;
-  }
-  const join = (sep: string, ...parts: (string | undefined)[]) => parts.filter((p) => p).join(sep);
-  const shim = path.win32.join(kitDir, "zfls_ifx_shim.obj");
-  return {
-    args: [...FLANG_KIT_ARGS],
-    env: {
-      LIB: join(";", kitDir, env.LIB),
-      LINK: join(" ", `"${shim}"`, ...KIT_LIBS, env.LINK),
-    },
-  };
-}
-
-/** The `link.cmd` that stands for Visual Studio's `link` (`lfortranLinkEnv`):
- * lld-link run where it is, so that it finds its DLLs (a copy of
- * conda-forge's elsewhere would not) */
-export function linkScript(lldLink: string): string {
-  return `@"${lldLink}" %*\r\n`;
 }
 
 export interface ProcessInfo {

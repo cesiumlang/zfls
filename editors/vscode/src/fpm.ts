@@ -4,7 +4,7 @@
 // `vscode` import (see test/unit).
 
 import * as path from "node:path";
-import { compilerName } from "./run";
+import { CompilerInfo } from "./run";
 
 export type TargetKind = "executable" | "test" | "example";
 
@@ -201,17 +201,26 @@ export const FPM_FLANG_DWARF_FLAGS = "-gdwarf-4 -Wl,-debug:dwarf";
 
 /**
  * fpm's flags (`--flag`, zfls.fpm.flags) for debugging a target built by
- * `compiler` on `platform`: for LLVM Flang on Windows, whose `-g` (fpm's)
- * writes Microsoft's debug information only, with DWARF for gdb
- * (`FPM_FLANG_DWARF_FLAGS`; fpm passes `--flag` to the link too), unless
- * they already ask for DWARF; else `flags` as they are.
+ * `compiler` (zfls's answer for it) on `platform`: for LLVM Flang on
+ * Windows, whose `-g` (fpm's) writes Microsoft's debug information only,
+ * with DWARF for gdb (`FPM_FLANG_DWARF_FLAGS`; fpm passes `--flag` to the
+ * link too) where zfls says its programs can have DWARF (it links with
+ * lld-link), unless they already ask for DWARF; else `flags` as they are.
  */
-export function fpmDwarfFlags(flags: string | undefined, compiler: string, platform: NodeJS.Platform): string | undefined {
-  const name = compilerName(compiler);
-  if (platform !== "win32" || (name !== "flang" && name !== "flang-new") || /(^|\s)-gdwarf/.test(flags ?? "")) {
+export function fpmDwarfFlags(
+  flags: string | undefined,
+  compiler: Pick<CompilerInfo, "name" | "debugInfo"> | undefined,
+  platform: NodeJS.Platform,
+): string | undefined {
+  if (platform !== "win32" || compiler?.name !== "flang" || compiler.debugInfo !== "dwarf" || hasDwarf(flags)) {
     return flags;
   }
   return flags ? `${flags} ${FPM_FLANG_DWARF_FLAGS}` : FPM_FLANG_DWARF_FLAGS;
+}
+
+/** Whether fpm's flags ask for DWARF */
+export function hasDwarf(flags: string | undefined): boolean {
+  return /(^|\s)-gdwarf/.test(flags ?? "");
 }
 
 /** `--profile`, `--compiler` and `--flag`, then the extra arguments */

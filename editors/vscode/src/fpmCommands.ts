@@ -13,6 +13,7 @@ import {
   TargetKind,
   TaskCommand,
   fpmDwarfFlags,
+  hasDwarf,
   isProgram,
   listArgs,
   parseList,
@@ -22,8 +23,8 @@ import {
   targetOfFile,
   taskArgs,
 } from "./fpm";
-import { compilerKind, launchConfiguration, runtimeEnv } from "./run";
-import { addFileRunner, chooseInstalledDebugger, gdbFor, lldLinkFor, runTask } from "./runFile";
+import { CompilerInfo, launchConfiguration } from "./run";
+import { addFileRunner, chooseInstalledDebugger, compilerInfo, gdbFor, runTask } from "./runFile";
 import { expandVariables, findExecutable, runProcess } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -164,23 +165,24 @@ export function fpmExecutable(project: FpmProject, quiet = false): string | unde
   return fpm;
 }
 
-/** Whether the debug builds of fpm targets with LLVM Flang on Windows have
- * DWARF, for gdb (`debugBuildOptions`): when zfls.fpm.flags ask for it, or
- * the extension adds it */
-export function fpmFlangDwarf(project: FpmProject): boolean {
-  return /(^|\s)-gdwarf/.test(debugBuildOptions(project).flags ?? "");
+/** A target's debug build: its options, the compiler zfls finds, and
+ * whether its programs have Microsoft's debug information only */
+export interface DebugBuild {
+  options: BuildOptions;
+  compiler: CompilerInfo | undefined;
+  msvc: boolean;
 }
 
-/** The build options of a target's debug build: zfls.fpm's, with DWARF for
- * LLVM Flang on Windows (`fpmDwarfFlags`) where it links with lld-link
- * (next to `flang` or on the PATH; with `-gdwarf-4` Flang's driver
- * chooses it) */
-export function debugBuildOptions(project: FpmProject): BuildOptions {
+/** The debug build of the project's targets: zfls.fpm's options, with DWARF
+ * for LLVM Flang on Windows (`fpmDwarfFlags`) where zfls says it links with
+ * lld-link; its programs have Microsoft's debug information only when zfls
+ * says so of the compiler and the flags do not ask for DWARF */
+export async function debugBuild(project: FpmProject): Promise<DebugBuild> {
   const opts = buildOptions(project);
-  const compiler = fpmCompiler(project);
-  const exe = compiler.exe ?? compiler.name;
-  const flags = fpmDwarfFlags(opts.flags, exe, process.platform);
-  return flags !== opts.flags && lldLinkFor(exe) !== undefined ? { ...opts, flags } : opts;
+  const compiler = await fpmCompiler(project);
+  const flags = fpmDwarfFlags(opts.flags, compiler, process.platform);
+  const options = { ...opts, flags };
+  return { options, compiler, msvc: compiler?.debugInfo === "pdb" && !(compiler.name === "flang" && hasDwarf(flags)) };
 }
 
 /** zfls.fpm.profile, compiler, flags and args */
@@ -358,28 +360,29 @@ export async function runTarget(project: FpmProject, target: Target): Promise<vo
   await vscode.tasks.executeTask(task);
 }
 
-/** The compiler that fpm builds with: zfls.fpm.compiler, else FPM_FC,
- * else gfortran; its executable when it is found */
-export function fpmCompiler(project: FpmProject): { name: string; exe: string | undefined } {
+/** The compiler that fpm builds with (zfls.fpm.compiler, else FPM_FC, else
+ * gfortran), as zfls finds it */
+export function fpmCompiler(project: FpmProject): Promise<CompilerInfo | undefined> {
   const name = buildOptions(project).compiler ?? process.env.FPM_FC ?? "gfortran";
-  return { name, exe: findExecutable(name) };
+  return compilerInfo(vscode.Uri.file(project.root), name);
 }
 
 /**
- * Builds a target with fpm for debugging (`debugBuildOptions`), in a
+ * Builds a target with fpm for debugging (`debugBuild`'s options), in a
  * terminal where its errors are seen, and gives its program (from
  * `--runner echo`), or undefined after saying why.
  */
 export async function buildTarget(
   project: FpmProject,
   target: Target,
+  options: BuildOptions,
   log: vscode.LogOutputChannel,
 ): Promise<string | undefined> {
   const fpm = fpmExecutable(project);
   if (!fpm) {
     return undefined;
   }
-  const echo = runArgs(target, debugBuildOptions(project), [], "echo");
+  const echo = runArgs(target, options, [], "echo");
   log.info(`[fpm] ${fpm} ${echo.join(" ")} (in ${project.root})`);
   const build = new vscode.Task(
     { type: "fpm", command: "build", target: target.name } as FpmTaskDefinition,
@@ -427,17 +430,16 @@ export async function debugTarget(
   if (!fpmExecutable(project)) {
     return false;
   }
-  const compiler = fpmCompiler(project);
-  const kind = compilerKind(compiler.exe ?? compiler.name, process.platform, fpmFlangDwarf(project));
+  const build = await debugBuild(project);
   const scope = vscode.Uri.file(project.root);
   const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
-  const gdbPath = gdbFor(scope, compiler.exe);
+  const gdbPath = gdbFor(scope, build.compiler?.compiler);
   // choose the debugger first: no point building for a debugger that is not there
-  const debugType = await chooseInstalledDebugger(preference, kind.msvc, gdbPath);
+  const debugType = await chooseInstalledDebugger(preference, build.msvc, gdbPath);
   if (!debugType) {
     return false;
   }
-  const program = await buildTarget(project, target, log);
+  const program = await buildTarget(project, target, build.options, log);
   if (!program) {
     return false;
   }
@@ -447,10 +449,10 @@ export async function debugTarget(
     program,
     args: [...programArgs(project), ...extraArgs],
     cwd: project.root,
-    env: compiler.exe ? runtimeEnv(compiler.exe, process.platform, process.env) : {},
+    env: build.compiler?.runEnv ?? {},
     platform: process.platform,
     gdbPath,
-    msvc: kind.msvc,
+    msvc: build.msvc,
     sourceRoot: project.root,
   }) as vscode.DebugConfiguration;
   log.info(`[fpm] debugging with ${JSON.stringify(config)}`);
