@@ -103,17 +103,24 @@ async function runOrDebug(log: vscode.LogOutputChannel, uri: vscode.Uri | undefi
     }
   }
   const { build } = plan;
-  log.info(`[run] ${build.compiler} ${build.args.join(" ")} (in ${build.cwd})`);
-  const built = await runTask(
-    new vscode.Task(
-      { type: "zfls", task: "build" },
-      plan.folder ?? vscode.TaskScope.Workspace,
-      `build ${path.basename(plan.source)}`,
-      "zfls",
-      new vscode.ProcessExecution(build.compiler, build.args, { cwd: build.cwd, env: build.env }),
-      [],
-    ),
-  );
+  let built: number | undefined | { error: unknown } = 0;
+  // a build in two steps: the compile, then the link
+  for (const [task, args] of [["build", build.args], ["link", build.linkArgs]] as const) {
+    if (!args || built !== 0) {
+      continue;
+    }
+    log.info(`[run] ${build.compiler} ${args.join(" ")} (in ${build.cwd})`);
+    built = await runTask(
+      new vscode.Task(
+        { type: "zfls", task },
+        plan.folder ?? vscode.TaskScope.Workspace,
+        `${task} ${path.basename(plan.source)}`,
+        "zfls",
+        new vscode.ProcessExecution(build.compiler, [...args], { cwd: build.cwd, env: build.env }),
+        [],
+      ),
+    );
+  }
   if (built !== 0) {
     if (typeof built !== "number") {
       const why = built ? `: ${String(built.error)}` : "";
@@ -402,15 +409,20 @@ async function generateLaunchConfig(uri: vscode.Uri | undefined): Promise<void> 
   // the compiler as configured when it is on the PATH, so the task works on
   // other machines too
   const command = findExecutable(compilerName, "", undefined) === build.compiler ? compilerName : build.compiler;
-  const task: Record<string, unknown> = {
-    label,
+  const object = `${build.program}.o`;
+  const taskOf = (taskLabel: string, args: string[]): Record<string, unknown> => ({
+    label: taskLabel,
     type: "process",
     command,
-    args: build.args.map((a) => replaceAll(a, [plan.source, build.program, path.dirname(plan.source)], rel)),
+    args: args.map((a) => replaceAll(a, [object, plan.source, build.program, path.dirname(plan.source)], rel)),
     options: { cwd: rel(build.cwd), ...(Object.keys(build.env).length > 0 ? { env: build.env } : {}) },
     group: "build",
     problemMatcher: [],
-  };
+  });
+  // a build in two steps: the link task depends on the compile task
+  const compileLabel = `zfls: compile ${base}`;
+  const compileTask = build.linkArgs ? taskOf(compileLabel, build.args) : undefined;
+  const task = build.linkArgs ? { ...taskOf(label, build.linkArgs), dependsOn: compileLabel } : taskOf(label, build.args);
   const launch = launchConfiguration({
     name: `Debug ${base}`,
     type: debugType,
@@ -429,7 +441,8 @@ async function generateLaunchConfig(uri: vscode.Uri | undefined): Promise<void> 
   if (!tasksConfig.inspect<string>("version")?.workspaceFolderValue) {
     await tasksConfig.update("version", "2.0.0", vscode.ConfigurationTarget.WorkspaceFolder);
   }
-  await tasksConfig.update("tasks", upsertByKey(tasks, task, "label"), vscode.ConfigurationTarget.WorkspaceFolder);
+  const withCompile = compileTask ? upsertByKey(tasks, compileTask, "label") : tasks;
+  await tasksConfig.update("tasks", upsertByKey(withCompile, task, "label"), vscode.ConfigurationTarget.WorkspaceFolder);
   const launchConfig = vscode.workspace.getConfiguration("launch", folder.uri);
   const configs = launchConfig.inspect<Record<string, unknown>[]>("configurations")?.workspaceFolderValue ?? [];
   if (!launchConfig.inspect<string>("version")?.workspaceFolderValue) {

@@ -163,6 +163,10 @@ pub const Options = struct {
     /// folder on a network share is (a test is skipped off Windows and
     /// where the share cannot be reached)
     unc_root: bool = false,
+    /// the workspace is opened by its 8.3 short path (`C:\Users\EMANSP~1\...`,
+    /// as `%TEMP%` gives it; a test is skipped off Windows and where the
+    /// volume makes no short names)
+    short_root: bool = false,
     /// the client resolves the documentation of completion items
     /// (`completionItem/resolve`)
     completion_resolve: bool = false,
@@ -235,6 +239,7 @@ pub const Workspace = struct {
             w.root = try aa.print("\\\\localhost\\{c}${s}", .{ std.ascii.toLower(w.root[0]), w.root[2..] });
             if (!paths.isDir(io, w.root)) return error.SkipZigTest;
         }
+        if (opts.short_root) w.root = try paths.shortName(aa, w.root) orelse return error.SkipZigTest;
         w.log = Logger.init(io);
         w.log.stderr_level = .off;
         var settings = opts.settings;

@@ -362,3 +362,19 @@ test "fpp's messages, which name the file by its name only, are about the file c
     const gds = try toDiagnostics(a, &gjob, text, try compilers.parse(a, .gfortran, "ppinc.F90:5:2: Error: #error FOO must not be set\n"), &.{path});
     try std.testing.expectEqual(@as(usize, 4), gds[0].range.start.line);
 }
+
+test "a message about the file checked, which the compiler names by its short path (#614)" {
+    if (!is_windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "a long directory name");
+    try tmp.dir.writeFile(io, .{ .sub_path = "a long directory name/main.f90", .data = "" });
+    const long = try tmp.dir.realPathFileAlloc(io, "a long directory name/main.f90", a);
+    const short = try paths.shortName(a, long) orelse return error.SkipZigTest;
+    const job: Job = .{ .arena = arena, .uri = "", .path = long, .id = .gfortran, .exes = &.{}, .compiler_path = null, .cwd = paths.dirname(long), .deps = &.{}, .deps_fixed = &.{}, .deps_cwd = &.{}, .args = &.{}, .fixed = false, .work_dir = paths.dirname(long) };
+    try std.testing.expect(try isHere(a, &job, &.{try comparable(a, job.cwd, long)}, short));
+}

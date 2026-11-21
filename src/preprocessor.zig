@@ -14,6 +14,8 @@ const paths = @import("paths.zig");
 const helpers = @import("helpers.zig");
 const parser = @import("parser.zig");
 const macro = @import("preprocessor/macro.zig");
+const intel = @import("preprocessor/intel.zig");
+const predefined = @import("preprocessor/predefined.zig");
 
 fn R() *const patterns.Patterns {
     return patterns.get();
@@ -123,7 +125,9 @@ fn replaceOps(a: Allocator, expr: []const u8) ![]const u8 {
 
 /// Evaluate a preprocessor `#if` condition
 pub fn evalPpIf(a: Allocator, text: []const u8, defs: *const Defs) bool {
-    const step1 = R().DEFINED.subFn(a, text, ReplaceCtx{ .defs = defs }, replDefined) catch return false;
+    // Fortran's operators too, as Intel's fpp takes them
+    const c_text = intel.cOperators(a, text) catch return false;
+    const step1 = R().DEFINED.subFn(a, c_text, ReplaceCtx{ .defs = defs }, replDefined) catch return false;
     const step2 = replaceVars(a, step1, defs) catch return false;
     const expr = replaceOps(a, step2) catch return false;
     var ev: PyEval = .{ .a = a, .src = expr };
@@ -578,13 +582,16 @@ pub fn preprocessFile(
         };
         if (!dup) try include_dirs.append(a, d);
     }
-    return preprocessInner(a, io, contents, pp_defs, &include_dirs, 0, trace);
+    const name = if (file_path) |fp| std.Io.Dir.path.basename(fp) else "";
+    return preprocessInner(a, io, contents, name, pp_defs, &include_dirs, 0, trace);
 }
 
 fn preprocessInner(
     a: Allocator,
     io: Io,
     contents: []const []const u8,
+    /// the file's name, for `__FILE__`
+    file_name: []const u8,
     pp_defs: ?*const Defs,
     include_dirs: *std.ArrayList([]const u8),
     depth: usize,
@@ -768,7 +775,7 @@ fn preprocessInner(
                     };
                     if (!dup) try include_dirs.append(a, dir);
                     parser.Trace.print(trace, "\n!!! Parsing include file '{s}'", .{ip});
-                    const res = try preprocessInner(a, io, inc_lines, &defs_tmp, include_dirs, depth + 1, trace);
+                    const res = try preprocessInner(a, io, inc_lines, std.Io.Dir.path.basename(ip), &defs_tmp, include_dirs, depth + 1, trace);
                     defs_tmp = res.defs;
                     parser.Trace.print(trace, "!!! Completed parsing include file\n", .{});
                 } else |_| {
@@ -801,6 +808,7 @@ fn preprocessInner(
                 line = res.out;
             }
         }
+        if (try predefined.expand(a, line, .{ .io = io, .file = file_name, .line = i + 1 }, &defs_tmp)) |l| line = l;
         try output.append(a, line);
     }
     return .{
