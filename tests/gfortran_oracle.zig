@@ -212,6 +212,15 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
         };
         if (tokens.contains("MODULE-PROCEDURE") and tokens.contains("EXTERNAL") and !tokens.contains("CONTAINED"))
             try tokens.put(a, "IFSRC-IFBODY", {});
+        // gfortran 13 and 14 print no IFSRC-IFBODY for an interface body
+        // either (14.4: `(PROCEDURE MODULE-PROC EXTERNAL SUBROUTINE ...)`):
+        // an external procedure with arguments that nothing contains
+        if (tokens.contains("PROCEDURE") and tokens.contains("EXTERNAL") and !tokens.contains("CONTAINED") and !tokens.contains("IFSRC-DECL")) {
+            for (block) |b| if (std.mem.startsWith(u8, trimmed(b), "Formal arglist:")) {
+                try tokens.put(a, "IFSRC-IFBODY", {});
+                break;
+            };
+        }
         if (parents.get(ns)) |parent| {
             const in_parent = try a.print("{s}::{s}", .{ parent, name });
             if (out.entities.contains(in_parent) and !tokens.contains("CONTAINED")) try tokens.put(a, "USED-IN-SUBMODULE", {});
