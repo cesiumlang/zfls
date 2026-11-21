@@ -183,8 +183,11 @@ pub const Server = struct {
     /// compiler_version.zig)
     compiler_versions: std.array_hash_map.String(compiler_version.Known) = .empty,
     /// The symbols each compiler predefines, by executable (in `arena`;
-    /// compiler_macros.zig)
+    /// compiler_macros.zig), under `macro_lock`
     compiler_macros: std.array_hash_map.String(compiler_macros.Known) = .empty,
+    /// Held across a probe, by the threads that index: `compiler_macros`
+    /// and what it allocates from `arena`
+    macro_lock: Io.Mutex = .init,
     /// The modules of the sources each compiler ships, by executable (in
     /// `arena`; compiler_sources.zig)
     compiler_sources: std.array_hash_map.String(compiler_sources.Known) = .empty,

@@ -138,12 +138,15 @@ fn macrosOf(self: *Server, a: Allocator, p: Probe) ?struct { defs: []const Macro
 }
 
 /// The symbols `exe` (of compiler `id`) predefines with `args`, null when
-/// it does not run
+/// it does not run (on any thread)
 fn macrosOfExe(self: *Server, a: Allocator, id: compilers.Id, exe: []const u8, args: []const []const u8, openmp: bool) ?[]const Macro {
     const stamp = compiler_version.stampOf(self.io, a, exe, self.toolEnv());
     var key: std.ArrayList(u8) = .empty;
     key.appendSlice(a, exe) catch return null;
     for (args) |x| key.print(a, "\x00{s}", .{x}) catch return null;
+    // the indexing threads': one probe of each, into the server's arena
+    self.macro_lock.lockUncancelable(self.io);
+    defer self.macro_lock.unlock(self.io);
     if (self.compiler_macros.get(key.items)) |k| if (std.meta.eql(k.stamp, stamp) and k.openmp == openmp) return k.defs;
     const work_dir = compile.cacheDir(self, a, "work") catch return null;
     // not before the workspace's root is known, without a cache directory:
