@@ -5,6 +5,7 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("associate.zig");
+    _ = @import("command_options.zig");
     _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
