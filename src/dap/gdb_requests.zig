@@ -471,24 +471,20 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     } else false;
     try forwarded.put(a, "context", .{ .string = if (known) context else "watch" });
     const r = try gdb.request(s, a, "evaluate", Value{ .object = forwarded });
-    // a variable of a module's COMMON block, which gdb does not know
-    // (`cx`, `blk_var(2)`), by its convenience variable
+    // the variables of a module's COMMON block, which gdb does not know
+    // (`cx`, `cm(2,3)`, `cx + 1`), each by its convenience variable
     const head = std.mem.findAny(u8, expr, "(%") orelse expr.len;
-    if (!gdb.isSuccess(r)) if (try moduleOf(s, a, expr[0..head], frame)) |mv| if (try gdb_values.commonMember(s, a, mv.module, mv.name, frame)) |cv| {
-        var got = cv;
-        if (head < expr.len) {
-            const e = try a.print("{s}{s}", .{ cv.evaluate_name.?, expr[head..] });
-            const rr = try gdb.request(s, a, "evaluate", try vars.evalArgs(a, e, frame, "watch"));
-            if (!gdb.isSuccess(rr)) return gdb.respondWith(s, a, req, rr);
-            got = .{
-                .name = expr,
-                .value = json.str(json.path(rr, &.{ "body", "result" })) orelse "",
-                .type = json.str(json.path(rr, &.{ "body", "type" })),
-                .ref = json.int(json.path(rr, &.{ "body", "variablesReference" })) orelse 0,
-                .evaluate_name = e,
-            };
-        }
-        const v = try vars.present(s, a, got, expr, got.evaluate_name, frame, null, null);
+    if (!gdb.isSuccess(r)) if (try withCommons(s, a, expr, frame)) |e| {
+        const rr = try gdb.request(s, a, "evaluate", try vars.evalArgs(a, e, frame, "watch"));
+        if (!gdb.isSuccess(rr)) return gdb.respondWith(s, a, req, rr);
+        const got: vars.Variable = .{
+            .name = expr,
+            .value = json.str(json.path(rr, &.{ "body", "result" })) orelse "",
+            .type = json.str(json.path(rr, &.{ "body", "type" })),
+            .ref = json.int(json.path(rr, &.{ "body", "variablesReference" })) orelse 0,
+            .evaluate_name = e,
+        };
+        const v = try vars.present(s, a, got, expr, e, frame, null, null);
         return s.respond(a, req, .{ .result = v.value, .type = v.type, .variablesReference = v.ref });
     };
     // an element of an array of CHARACTER of kind 4, whose length gdb
@@ -535,6 +531,45 @@ fn moduleOf(s: *Session, a: Allocator, expr: []const u8, frame: ?i64) !?struct {
         if (std.ascii.eqlIgnoreCase(mv.local, e)) return .{ .module = mv.module, .name = mv.name };
     }
     return null;
+}
+
+/// `expr` with each name in it of a module's COMMON variable (`cx`,
+/// `grid::cx`) as its convenience variable (`$zfls_3`); null when it names
+/// none. Names after `%` (components) and in strings are left alone.
+fn withCommons(s: *Session, a: Allocator, expr: []const u8, frame: ?i64) !?[]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var any = false;
+    var i: usize = 0;
+    while (i < expr.len) {
+        const c = expr[i];
+        if (c == '\'' or c == '"') {
+            const end = std.mem.findScalarPos(u8, expr, i + 1, c) orelse expr.len - 1;
+            try out.appendSlice(a, expr[i .. end + 1]);
+            i = end + 1;
+            continue;
+        }
+        const starts = std.ascii.isAlphabetic(c) and (i == 0 or !(isNameChar(expr[i - 1]) or expr[i - 1] == '%' or expr[i - 1] == '$'));
+        if (!starts) {
+            try out.append(a, c);
+            i += 1;
+            continue;
+        }
+        var j = i;
+        while (j < expr.len and (isNameChar(expr[j]) or (expr[j] == ':' and j + 1 < expr.len and expr[j + 1] == ':'))) j += if (expr[j] == ':') 2 else 1;
+        const name = expr[i..j];
+        i = j;
+        if (try moduleOf(s, a, name, frame)) |mv| if (try gdb_values.commonMember(s, a, mv.module, mv.name, frame)) |cv| {
+            try out.appendSlice(a, cv.evaluate_name.?);
+            any = true;
+            continue;
+        };
+        try out.appendSlice(a, name);
+    }
+    return if (any) out.items else null;
+}
+
+fn isNameChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
 /// `setVariable`: by the variable's Fortran expression when it has one
