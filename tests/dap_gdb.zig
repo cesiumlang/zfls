@@ -144,7 +144,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -687,4 +687,69 @@ fn terminal(io: Io, gpa: Allocator, setup: Setup) !void {
     var r = term.stdout.?.readerStreaming(io, &buf);
     while (r.interface.takeByte()) |ch| try screen.append(a, ch) else |_| {}
     try check(contains(screen.items, "read 42"), "the program read 42 in its terminal", .{});
+}
+
+/// CHARACTER of kind 4 (gfortran's `selected_char_kind('ISO_10646')`): a
+/// scalar, and arrays of them, whose type gdb gives with the length as a
+/// first dimension, as Fortran strings with their subscripts (#533, #617)
+fn wideCharacters(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran only\n", .{});
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src = try std.Io.Dir.path.join(a, &.{ setup.dir, "wide.f90" });
+    const exe = try std.Io.Dir.path.join(a, &.{ setup.dir, if (builtin.target.os.tag == .windows) "wide.exe" else "wide" });
+    const text =
+        \\program wide
+        \\  implicit none
+        \\  integer, parameter :: ucs4 = selected_char_kind('ISO_10646')
+        \\  character(kind=ucs4, len=3) :: grid(3,2)
+        \\  character(kind=ucs4, len=4) :: row(2)
+        \\  character(kind=ucs4, len=5) :: word
+        \\  grid = ucs4_'abc'
+        \\  grid(2,1) = ucs4_'x' // char(int(z'EB'), ucs4) // ucs4_'y'
+        \\  row = [ucs4_'wxyz', ucs4_'1234']
+        \\  word = ucs4_'h' // char(int(z'EB'), ucs4) // ucs4_'llo'
+        \\  print *, len(grid), size(row), len(word) ! stop here
+        \\end program wide
+        \\
+    ;
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = text });
+    try build(io, a, setup, src, exe, &.{});
+
+    const c = try start(io, gpa, setup);
+    defer c.deinit();
+    defer end(c);
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
+    const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir });
+    _ = try c.event("initialized");
+    _ = try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = lineOf(text, "stop here") }} });
+    _ = try c.request("configurationDone", .{});
+    _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+    const stopped = get(try c.event("stopped"), "body").?;
+    const thread = int(stopped, "threadId").?;
+    const stack = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
+    const frame = int(stack[0], "id").?;
+    const scopes = items(try c.request("scopes", .{ .frameId = frame }), "scopes");
+    const locals = try variables(c, try named(scopes, "Locals"));
+    const word = try named(locals, "word");
+    try check(eql(str(word, "value"), "4_'h\u{EB}llo'"), "word = {s}", .{str(word, "value").?});
+    const row = try named(locals, "row");
+    try check(eql(str(row, "value"), "[4_'wxyz', 4_'1234']") and eql(str(row, "type"), "character(kind=4,len=4) (2)"), "row = {s} ({s})", .{ str(row, "value").?, str(row, "type") orelse "?" });
+    const row2 = try named(try variables(c, row), "(2)");
+    try check(eql(str(row2, "value"), "4_'1234'"), "row(2) = {s}", .{str(row2, "value").?});
+    const grid = try named(locals, "grid");
+    try check(eql(str(grid, "value"), "[3\u{D7}2]") and eql(str(grid, "type"), "character(kind=4,len=3) (3,2)"), "grid = {s} ({s})", .{ str(grid, "value").?, str(grid, "type") orelse "?" });
+    const elements = try variables(c, grid);
+    try check(elements.len == 6, "grid has 6 elements ({d})", .{elements.len});
+    const g21 = try named(elements, "(2,1)");
+    try check(eql(str(g21, "value"), "4_'x\u{EB}y'") and eql(str(try named(elements, "(3,2)"), "value"), "4_'abc'"), "grid(2,1) = {s}", .{str(g21, "value").?});
+    // an element by its Fortran subscripts, which gdb takes without the length's
+    const e21 = try c.request("evaluate", .{ .expression = "grid(2,1)", .frameId = frame, .context = "watch" });
+    try check(eql(str(e21, "result"), "4_'x\u{EB}y'"), "evaluate grid(2,1) = {s}", .{str(e21, "result") orelse "?"});
+    const by_name = try c.request("evaluate", .{ .expression = str(g21, "evaluateName").?, .frameId = frame, .context = "watch" });
+    try check(eql(str(by_name, "result"), "4_'x\u{EB}y'"), "evaluate {s} = {s}", .{ str(g21, "evaluateName").?, str(by_name, "result") orelse "?" });
+    _ = try c.request("continue", .{ .threadId = thread });
+    const exited = get(try c.event("exited"), "body").?;
+    try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
 }

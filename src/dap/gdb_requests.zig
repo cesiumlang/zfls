@@ -491,6 +491,18 @@ fn evaluate(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         const v = try vars.present(s, a, got, expr, got.evaluate_name, frame, null, null);
         return s.respond(a, req, .{ .result = v.value, .type = v.type, .variablesReference = v.ref });
     };
+    // an element of an array of CHARACTER of kind 4, whose length gdb
+    // takes for its first dimension: `w(2,1)` is gdb's `w(:,2,1)`
+    if (!gdb.isSuccess(r) and head < expr.len and expr[head] == '(' and expr[expr.len - 1] == ')') {
+        const e = try a.print("{s}(:,{s}", .{ expr[0..head], expr[head + 1 ..] });
+        const rr = try gdb.request(s, a, "evaluate", try vars.evalArgs(a, e, frame, "watch"));
+        const t = json.str(json.path(rr, &.{ "body", "type" })) orelse "";
+        if (gdb.isSuccess(rr) and gdb_values.characterKind(t) == 4) {
+            const got: vars.Variable = .{ .name = expr, .value = json.str(json.path(rr, &.{ "body", "result" })) orelse "", .type = t, .evaluate_name = e };
+            const v = try vars.present(s, a, got, expr, e, frame, null, null);
+            return s.respond(a, req, .{ .result = v.value, .type = v.type, .variablesReference = v.ref });
+        }
+    }
     if (gdb.isSuccess(r)) if (r.object.getPtr("body")) |body| if (body.* == .object) {
         const got: vars.Variable = .{
             .name = expr,
