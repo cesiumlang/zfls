@@ -9,9 +9,9 @@
 //! those of the build files), then, when the compiler check is LLVM
 //! Flang's (`compiler_diagnostics`), the directory of its intrinsic
 //! modules (`cudadevice`, `__fortran_builtins`, ...); then the modules
-//! that those use. The `.mod` files of other compilers (gfortran's are
-//! compressed, Intel's binary) are not read, but the sources Intel's
-//! compilers ship are (compiler_sources.zig).
+//! that those use. gfortran's `.mod` files (gzip) give their interface as
+//! Fortran (gfortran_modules.zig); Intel's are binary, not read, but the
+//! sources Intel's compilers ship are (compiler_sources.zig).
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -30,6 +30,7 @@ const linking = @import("linking.zig");
 const workspace = @import("workspace.zig");
 const cache = @import("cache.zig");
 const compiler_sources = @import("compiler_sources.zig");
+const gfortran_modules = @import("gfortran_modules.zig");
 const shipped = @import("../compilers/shipped.zig");
 
 /// Whether `head`, the beginning of a file, is that of a module file of
@@ -109,7 +110,8 @@ pub fn add(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
             if (table and !shipped.replacesTable(u.mod_name)) continue;
             if (dirs == null) dirs = try searchDirs(self, a);
             const module_file = if (table) null else try find(self.io, a, dirs.?, u.mod_name);
-            const path = module_file orelse (try compiler_sources.find(self, a, u.mod_name)) orelse continue;
+            const gfortran_file = if (table or module_file != null) null else try gfortran_modules.find(self, a, dirs.?, u.mod_name);
+            const path = module_file orelse gfortran_file orelse (try compiler_sources.find(self, a, u.mod_name)) orelse continue;
             if (self.workspace.contains(path)) continue;
             const nf = load(self, path, module_file != null) catch |e| {
                 self.log.info("{s}, the module file of {s}: {s}", .{ path, u.mod_name, parser.describeFileError(e) });
@@ -121,7 +123,7 @@ pub fn add(self: *Server, a: Allocator, of: ?*FortranFile) !bool {
                 try self.workspace.put(self.gpa, nf.path, nf);
             }
             try linking.addToTree(self, nf);
-            self.log.info("{s}: module {s} from its {s}", .{ path, u.mod_name, if (module_file != null) "module file" else "compiler's source" });
+            self.log.info("{s}: module {s} from its {s}", .{ path, u.mod_name, if (module_file != null) "module file" else if (gfortran_file != null) "gfortran module file" else "compiler's source" });
             try todo.append(a, nf);
             added = true;
         };

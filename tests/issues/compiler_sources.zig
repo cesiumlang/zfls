@@ -118,8 +118,10 @@ test "use omp_lib: the module from the finclude sources of the compiler check's 
     const w = try h.Workspace.init(&.{ rc, gfortran, omp_lib, src }, .{ .init_options = opts });
     defer w.deinit();
     if (!is_windows) {
+        // executable only now: the workspace indexed again (pp_defs), which
+        // asks it
         try w.tmp.dir.setFilePermissions(io, gfortran.name, .executable_file, .{});
-        try w.changeConfiguration(opts);
+        try w.changeConfiguration("{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran.name ++ "\", \"pp_defs\": {\"ZFLS_X\": \"\"}}");
     }
     try w.open("o.f90", "fortran");
     for (try w.diagnostics("o.f90")) |d| try h.expect(d.severity > 2, "{d}: {s}", .{ d.line, d.message });
