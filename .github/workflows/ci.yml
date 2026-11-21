@@ -870,7 +870,11 @@ jobs:
         run: python tests/fortls_parity.py --zfls "$ZFLS" --fortls "$FORTLS"
 
       - name: gfortran oracle
-        run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
+        run: |
+          zig-out/bin/gfortran_oracle --zfls "$ZFLS"
+          # and fortls's corpus, its known differences in
+          # tests/gfortran_oracle/known.zig
+          zig-out/bin/gfortran_oracle --zfls "$ZFLS" _fortls/test/test_source
 
       # LLVM Flang is the oracle of the corpus, of its own dialect and quirks
       # (tests/flang), of the module files it writes and of its intrinsic

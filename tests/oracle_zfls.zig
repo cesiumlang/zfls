@@ -1,6 +1,7 @@
-//! zfls's side of the ifx oracle (ifx_oracle.zig): the objects of
+//! zfls's side of the ifx and gfortran oracles (ifx_oracle.zig,
+//! gfortran_oracle.zig): the objects of
 //! `--debug_parser`'s Object Tree and what hover shows of each variable
-//! (its Declarations), and the ifx type a declaration's type spec is.
+//! (its Declarations), and what a declaration's type spec says.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -120,45 +121,48 @@ pub fn rank(decl: []const u8) usize {
     return n;
 }
 
-/// The types an ifx listing may show for type spec `spec`; null when the
-/// spec does not tell (a named kind, `REAL(dp)`)
-pub fn ifxTypes(a: Allocator, spec_in: []const u8) !?[]const []const u8 {
+/// What a type spec says: an intrinsic type and its kind, a derived type
+pub const Type = union(enum) {
+    /// `REAL`, `INTEGER`, `LOGICAL`, `COMPLEX` (its kind, not its bytes)
+    intrinsic: struct { name: []const u8, kind: u8 },
+    character,
+    /// `TYPE(x)` (`class` false) or `CLASS(x)`, `x` uppercase
+    derived: struct { name: []const u8, class: bool },
+};
+
+/// The type of type spec `spec`; null when the spec does not tell (a named
+/// kind, `REAL(dp)`)
+pub fn typeOf(a: Allocator, spec_in: []const u8) !?Type {
     const spec = try std.ascii.allocUpperString(a, spec_in);
-    if (std.mem.startsWith(u8, spec, "CHARACTER")) return &.{"CHAR"};
-    if (std.mem.eql(u8, spec, "DOUBLE PRECISION")) return &.{"R(8)"};
-    if (std.mem.eql(u8, spec, "DOUBLE COMPLEX")) return &.{"C(16)"};
-    if (std.mem.eql(u8, spec, "BYTE")) return &.{"I(1)"};
+    if (std.mem.startsWith(u8, spec, "CHARACTER")) return .character;
+    if (std.mem.eql(u8, spec, "DOUBLE PRECISION")) return .{ .intrinsic = .{ .name = "REAL", .kind = 8 } };
+    if (std.mem.eql(u8, spec, "DOUBLE COMPLEX")) return .{ .intrinsic = .{ .name = "COMPLEX", .kind = 8 } };
+    if (std.mem.eql(u8, spec, "BYTE")) return .{ .intrinsic = .{ .name = "INTEGER", .kind = 1 } };
     if (std.mem.startsWith(u8, spec, "TYPE(") or std.mem.startsWith(u8, spec, "CLASS(")) {
-        const inner = spec[std.mem.findScalar(u8, spec, '(').? + 1 .. spec.len - 1];
-        return try a.dupe([]const u8, &.{ inner, "RECORD" });
+        const open = std.mem.findScalar(u8, spec, '(').?;
+        return .{ .derived = .{ .name = spec[open + 1 .. spec.len - 1], .class = spec[0] == 'C' } };
     }
-    const Base = struct { name: []const u8, letter: []const u8, default: u8, bytes_per_kind: u8 };
-    for ([_]Base{
-        .{ .name = "REAL", .letter = "R", .default = 4, .bytes_per_kind = 1 },
-        .{ .name = "INTEGER", .letter = "I", .default = 4, .bytes_per_kind = 1 },
-        .{ .name = "LOGICAL", .letter = "L", .default = 4, .bytes_per_kind = 1 },
-        .{ .name = "COMPLEX", .letter = "C", .default = 4, .bytes_per_kind = 2 },
-    }) |b| {
-        if (!std.mem.startsWith(u8, spec, b.name)) continue;
-        var rest = spec[b.name.len..];
-        var kind: u8 = b.default;
+    for ([_][]const u8{ "REAL", "INTEGER", "LOGICAL", "COMPLEX" }) |name| {
+        if (!std.mem.startsWith(u8, spec, name)) continue;
+        var rest = spec[name.len..];
+        var kind: u8 = 4;
         if (rest.len > 0) {
             if (rest[0] == '*') {
                 kind = std.fmt.parseInt(u8, rest[1..], 10) catch return null;
                 // COMPLEX*16 is COMPLEX(8)
-                if (b.bytes_per_kind == 2) kind /= 2;
+                if (std.mem.eql(u8, name, "COMPLEX")) kind /= 2;
             } else if (rest[0] == '(' and rest[rest.len - 1] == ')') {
                 rest = rest[1 .. rest.len - 1];
                 if (std.mem.startsWith(u8, rest, "KIND=")) rest = rest["KIND=".len..];
                 kind = std.fmt.parseInt(u8, std.mem.trim(u8, rest, " "), 10) catch return null;
             } else return null;
         }
-        return try a.dupe([]const u8, &.{try a.print("{s}({d})", .{ b.letter, @as(u16, kind) * b.bytes_per_kind })});
+        return .{ .intrinsic = .{ .name = name, .kind = kind } };
     }
     return null;
 }
 
-test "the ifx type of a declaration" {
+test "the type of a declaration" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -166,10 +170,9 @@ test "the ifx type of a declaration" {
     try std.testing.expectEqualStrings("CHARACTER(len=16)", typeSpec("CHARACTER(len=16) :: label"));
     try std.testing.expectEqual(@as(usize, 2), rank("INTEGER, ALLOCATABLE, DIMENSION(:,size(a, 1)) :: x"));
     try std.testing.expectEqual(@as(usize, 0), rank("INTEGER :: n"));
-    try std.testing.expectEqualStrings("R(4)", (try ifxTypes(a, "REAL")).?[0]);
-    try std.testing.expectEqualStrings("I(8)", (try ifxTypes(a, "integer(kind=8)")).?[0]);
-    try std.testing.expectEqualStrings("C(16)", (try ifxTypes(a, "COMPLEX(8)")).?[0]);
-    try std.testing.expectEqualStrings("C(16)", (try ifxTypes(a, "COMPLEX*16")).?[0]);
-    try std.testing.expectEqualStrings("SHAPE", (try ifxTypes(a, "CLASS(shape)")).?[0]);
-    try std.testing.expect((try ifxTypes(a, "REAL(dp)")) == null);
+    try std.testing.expectEqual(@as(u8, 4), (try typeOf(a, "REAL")).?.intrinsic.kind);
+    try std.testing.expectEqual(@as(u8, 8), (try typeOf(a, "integer(kind=8)")).?.intrinsic.kind);
+    try std.testing.expectEqual(@as(u8, 8), (try typeOf(a, "COMPLEX*16")).?.intrinsic.kind);
+    try std.testing.expectEqualStrings("SHAPE", (try typeOf(a, "CLASS(shape)")).?.derived.name);
+    try std.testing.expect((try typeOf(a, "REAL(dp)")) == null);
 }
