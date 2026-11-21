@@ -384,7 +384,9 @@ pub fn main(init: std.process.Init) !u8 {
         }
         var ref = try gfortranEntities(a, g.stdout);
         var zcmd: std.ArrayList([]const u8) = .empty;
-        try zcmd.appendSlice(a, &.{ zfls, "--debug_parser", "--debug_filepath", abs });
+        // gfortran's predefined macros, as zfls takes them of the compiler
+        // check's compiler (#541)
+        try zcmd.appendSlice(a, &.{ zfls, "--debug_parser", "--debug_filepath", abs, "--compiler_diagnostics", "gfortran", "--compiler_path", gfortran });
         try zcmd.appendSlice(a, try util.headerArgs(a, text, "oracle-zfls-args:"));
         const z = try util.run(io, a, zcmd.items, null, null);
         var got = (try zflsEntities(a, z.stdout)) orelse {
