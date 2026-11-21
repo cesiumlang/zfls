@@ -713,7 +713,7 @@ jobs:
 
       # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
       # tests/build_command.zig, tests/gfortran_oracle.zig, tests/flang_oracle.zig,
-      # tests/stress_edit.zig)
+      # tests/ifx_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
 
@@ -878,6 +878,13 @@ jobs:
       - name: Flang oracle (Linux x64, Windows x64)
         if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
         run: zig-out/bin/flang_oracle --zfls "$ZFLS" --flang "$FLANG"
+
+      # ifx's listings are the oracle of the corpus and of Intel's dialect
+      # (tests/ifx), with the options a fixture gives (IFX, conda-forge's,
+      # installed above for the compiler check)
+      - name: ifx oracle (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/ifx_oracle --zfls "$ZFLS" --ifx "$IFX"
 
       - name: Stress sessions
         run: |

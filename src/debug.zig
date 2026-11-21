@@ -17,6 +17,8 @@ const server_mod = @import("server.zig");
 const Logger = @import("logger.zig");
 const compilers = @import("compilers.zig");
 const predefined = @import("compilers/predefined.zig");
+const default_kinds = @import("default_kinds.zig");
+const command_options = @import("command_options.zig");
 const Settings = settings_mod.Settings;
 const Value = json.Value;
 
@@ -221,6 +223,19 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     // as the server reads the file (workspace.loadFile)
     file.d_lines_code = cfg.d_lines_code;
     file.fixed_columns = cfg.fixed_columns;
+    // as the options of `compiler_args` say (server/file_options.zig), for
+    // the oracles
+    if (s.compiler_args) |l| {
+        const ro = command_options.parse(l.slice());
+        if (ro.fixed) |fixed| file.command_form = if (fixed) .fixed else .free;
+        if (ro.columns) |c| file.fixed_columns = switch (c) {
+            .limit => |n| n,
+            .none => null,
+        };
+        if (ro.d_lines_code) |code| file.d_lines_code = code;
+        file.implicit_none = ro.implicit_none;
+        file.default_kinds = default_kinds.parse(l.slice());
+    }
     _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
     o.print("  Detected format: {s}\n", .{if (file.fixed) "fixed" else "free"});
     o.print("\n{s}\nParser Output\n{s}\n\n", .{ sep80, sep80 });
@@ -251,7 +266,23 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
     while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
+    // what hover shows of each variable, for the oracles' types and kinds
+    o.print("\n{s}\nDeclarations\n{s}\n\n", .{ sep80, sep80 });
+    var seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
+    for (try ast.getScopes(a, null)) |obj| try printDeclarations(a, o, obj, &seen);
     separator(o);
+}
+
+/// `fqsn: declaration` of each variable under `obj` (each once), the
+/// first line of its hover
+fn printDeclarations(a: Allocator, o: *Out, obj: *objects.Obj, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void)) !void {
+    for (try obj.getChildren(a, false)) |child| {
+        if ((try seen.getOrPut(a, child)).found_existing) continue;
+        if (child.kind == .variable) if ((try child.getHover(a, false, null)).msg) |msg| {
+            o.print("{s}: {s}\n", .{ child.fqsn, msg[0 .. std.mem.findScalar(u8, msg, '\n') orelse msg.len] });
+        };
+        try printDeclarations(a, o, child, seen);
+    }
 }
 
 fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {

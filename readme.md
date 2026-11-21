@@ -572,6 +572,7 @@ findent rewrites a fixed-form source as free form (`-ifixed -ofree`), and a free
 | `zig build test-parity` | fortls's server test suite, replayed against zfls |
 | `zig build test-oracle` | symbols of `tests/fortran` and `tests/gfortran` (gfortran's dialect, a fixture's options on its `oracle-gfortran-args:` line) against gfortran parse trees |
 | `zig build test-flang-oracle` | symbols of `tests/fortran` and `tests/flang` (LLVM Flang's dialect and quirks), of the module files Flang writes of them and of Flang's intrinsic modules, against Flang's scope trees (`-fc1 -fdebug-dump-symbols`); the differences known, each with its reason, are in `tests/flang_oracle/known.zig` |
+| `zig build test-ifx-oracle` | symbols of `tests/fortran` and `tests/ifx` (Intel's dialect, a fixture's options on its `oracle-ifx-args:` and `oracle-zfls-args:` lines), with their types and kinds, ranks, ALLOCATABLE, POINTER, TARGET and INTENT, against ifx's listings (`/list /show:map`); the differences known, each with its reason, are in `tests/ifx_oracle/known.zig` |
 | `zig build test-stress` | long randomized editing sessions (crashes, leaks, stale state) |
 | `zig build test-compiler` | the compiler check (`compiler_diagnostics`) of `tests/compiler` with a real LFortran (`-- --compiler flang`: LLVM Flang; `--path EXE` names the compiler) |
 | `zig build test-stdio` | zfls on standard streams opened for overlapped I/O, as Git Bash's pipes are (Windows; part of `zig build test` there) |
