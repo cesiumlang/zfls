@@ -154,7 +154,7 @@ pub fn commonMember(s: *Session, a: Allocator, module: []const u8, name: []const
     const mod = declarations.moduleNamed(s, module) orelse return null;
     const place = declarations.commonPlace(a, mod, name) orelse return null;
     if (place.block.len == 0) return null;
-    const t = gdbType(a, declarations.moduleDecl(s, a, module, name) orelse return null) orelse return null;
+    const t = gdbType(a, module, declarations.moduleDecl(s, a, module, name) orelse return null) orelse return null;
     s.g.convenience += 1;
     const variable = try a.print("zfls_{d}", .{s.g.convenience});
     const py = try a.print("python v=gdb.Value(int(gdb.parse_and_eval('&{s}_'))+{d}).cast(({s}).pointer()).dereference();gdb.set_convenience_variable('{s}',v);print('zfls-common')", .{ try std.ascii.allocLowerString(a, place.block), place.offset, t, variable });
@@ -172,19 +172,33 @@ pub fn commonMember(s: *Session, a: Allocator, module: []const u8, name: []const
     };
 }
 
-/// gdb's Python of a declaration's type (`gdb.lookup_type('real(kind=4)')`,
-/// `.array(1,3)` for one dimension): integers, reals and complexes; null
-/// for another type or more dimensions
-fn gdbType(a: Allocator, d: declarations.Decl) ?[]const u8 {
-    const t = switch (d.t.kind) {
+/// gdb's Python of the type of a declaration of `module`
+/// (`gdb.lookup_type('real(kind=4)')`, `.array(1,3)` for each dimension,
+/// the first innermost, as Fortran lays them out): integers, reals,
+/// complexes, logicals, CHARACTER of a constant length, and a derived type
+/// of the module's that gdb knows (`blocks::point`, when the program has
+/// it elsewhere than in the block); null for another type, or a shape that
+/// is not constant
+fn gdbType(a: Allocator, module: []const u8, d: declarations.Decl) ?[]const u8 {
+    var t = switch (d.t.kind) {
         .integer => a.print("gdb.lookup_type('integer(kind={d})')", .{d.t.size}),
         .real => a.print("gdb.lookup_type('real(kind={d})')", .{d.t.size}),
         .complex => a.print("gdb.lookup_type('complex(kind={d})')", .{d.t.size / 2}),
+        .logical => a.print("gdb.lookup_type('logical(kind={d})')", .{d.t.size}),
+        .character => if (d.t.size == 0) return null else a.print("gdb.lookup_type('character(kind=1)').array(1,{d})", .{d.t.size}),
+        .derived => if (d.t.polymorphic or d.t.name.len == 0) return null else a.print("gdb.lookup_type('{s}::{s}')", .{ lower(a, module) orelse return null, lower(a, d.t.name) orelse return null }),
         else => return null,
     } catch return null;
-    if (d.dims.len == 0) return t;
-    if (d.dims.len > 1 or d.dims[0].lo == null or d.dims[0].hi == null) return null;
-    return a.print("{s}.array({d},{d})", .{ t, d.dims[0].lo.?, d.dims[0].hi.? }) catch null;
+    for (d.dims) |dim| {
+        const lo = dim.lo orelse return null;
+        const hi = dim.hi orelse return null;
+        t = a.print("{s}.array({d},{d})", .{ t, lo, hi }) catch return null;
+    }
+    return t;
+}
+
+fn lower(a: Allocator, x: []const u8) ?[]const u8 {
+    return std.ascii.allocLowerString(a, x) catch null;
 }
 
 /// The kind of gdb's CHARACTER type (`character(kind=4)`): 4; 1 for

@@ -144,7 +144,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -749,6 +749,87 @@ fn wideCharacters(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(eql(str(e21, "result"), "4_'x\u{EB}y'"), "evaluate grid(2,1) = {s}", .{str(e21, "result") orelse "?"});
     const by_name = try c.request("evaluate", .{ .expression = str(g21, "evaluateName").?, .frameId = frame, .context = "watch" });
     try check(eql(str(by_name, "result"), "4_'x\u{EB}y'"), "evaluate {s} = {s}", .{ str(g21, "evaluateName").?, str(by_name, "result") orelse "?" });
+    _ = try c.request("continue", .{ .threadId = thread });
+    const exited = get(try c.event("exited"), "body").?;
+    try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
+}
+
+/// A module's COMMON block, of which gfortran's DWARF has only the block's
+/// symbol: its variables of every type and shape in the module's scope,
+/// and in expressions with operators (#547, #618)
+fn commonBlocks(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran only\n", .{});
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src = try std.Io.Dir.path.join(a, &.{ setup.dir, "blocks.f90" });
+    const exe = try std.Io.Dir.path.join(a, &.{ setup.dir, if (builtin.target.os.tag == .windows) "blocks.exe" else "blocks" });
+    const text =
+        \\module blocks
+        \\  implicit none
+        \\  type :: point
+        \\    sequence
+        \\    real :: x
+        \\    integer :: id
+        \\  end type
+        \\  real :: cx
+        \\  integer :: cm(2,3)
+        \\  logical :: cl
+        \\  character(len=4) :: cs
+        \\  complex :: cz
+        \\  type(point) :: cp
+        \\  common /blk/ cx, cm, cl, cs, cz
+        \\  common /pts/ cp
+        \\end module
+        \\program main
+        \\  use blocks
+        \\  implicit none
+        \\  integer :: i, j
+        \\  type(point) :: lp
+        \\  cx = 1.5
+        \\  do j = 1, 3
+        \\    do i = 1, 2
+        \\      cm(i,j) = 10*i + j
+        \\    end do
+        \\  end do
+        \\  cl = .true.
+        \\  cs = 'abcd'
+        \\  cz = (1.0, -2.0)
+        \\  cp = point(9.0, 7)
+        \\  lp = cp
+        \\  print *, cx, cm, cl, cs, cz, lp%id ! stop here
+        \\end program
+        \\
+    ;
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = text });
+    try build(io, a, setup, src, exe, &.{});
+
+    const c = try start(io, gpa, setup);
+    defer c.deinit();
+    defer end(c);
+    _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
+    const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir, .sourceRoot = setup.dir });
+    _ = try c.event("initialized");
+    _ = try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = lineOf(text, "stop here") }} });
+    _ = try c.request("configurationDone", .{});
+    _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
+    const stopped = get(try c.event("stopped"), "body").?;
+    const thread = int(stopped, "threadId").?;
+    const stack = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
+    const frame = int(stack[0], "id").?;
+    const scopes = items(try c.request("scopes", .{ .frameId = frame }), "scopes");
+    const blocks = try variables(c, try named(try variables(c, try named(scopes, "Module variables")), "blocks"));
+    const want = [_][2][]const u8{ .{ "cx", "1.5" }, .{ "cl", ".TRUE." }, .{ "cs", "'abcd'" }, .{ "cz", "(1.0, -2.0)" }, .{ "cp", "point(x=9.0, id=7)" } };
+    for (want) |w| try check(eql(str(try named(blocks, w[0]), "value"), w[1]), "blocks::{s} = {s} ({s})", .{ w[0], str(try named(blocks, w[0]), "value").?, w[1] });
+    const cm = try named(blocks, "cm");
+    try check(eql(str(cm, "value"), "[2\u{D7}3]"), "blocks::cm = {s}", .{str(cm, "value").?});
+    const column = try named(try variables(c, cm), "(:,3)");
+    try check(eql(str(column, "value"), "[13, 23]"), "cm(:,3) = {s}", .{str(column, "value").?});
+    const exprs = [_][2][]const u8{ .{ "cm(2,3)", "23" }, .{ "cx + 1", "2.5" }, .{ "cm(2,3) + cx", "24.5" }, .{ "cl .and. .true.", ".TRUE." }, .{ "cp%x", "9.0" }, .{ "blocks::cm(1,2)", "12" } };
+    for (exprs) |e| {
+        const r = try c.request("evaluate", .{ .expression = e[0], .frameId = frame, .context = "watch" });
+        try check(eql(str(r, "result"), e[1]), "evaluate {s} = {s} ({s})", .{ e[0], str(r, "result") orelse "?", e[1] });
+    }
     _ = try c.request("continue", .{ .threadId = thread });
     const exited = get(try c.event("exited"), "body").?;
     try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
