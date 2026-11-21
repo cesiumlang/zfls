@@ -57,6 +57,7 @@ test {
     _ = @import("user_config.zig");
     _ = @import("parsing.zig");
     _ = @import("project.zig");
+    _ = @import("fpm_targets.zig");
     _ = @import("pull_diagnostics.zig");
     _ = @import("use.zig");
     _ = @import("unused.zig");

@@ -1,28 +1,27 @@
-// fpm (Fortran Package Manager) projects: their tasks (type `fpm`), running
-// and debugging their targets (zfls.fpm.run, zfls.fpm.debug), and Run and
-// Debug Fortran File on the main program of a target. The test explorer is
-// in fpmTests.ts.
+// fpm (Fortran Package Manager) projects, as zfls finds them
+// (`zfls/fpmTargets`): their tasks (type `fpm`), running and debugging
+// their targets (zfls.fpm.run, zfls.fpm.debug), and Run and Debug Fortran
+// File on the main program of a target. The test explorer is in
+// fpmTests.ts.
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   BuildOptions,
-  Manifest,
+  FoundProject,
   Target,
   TargetKind,
   TaskCommand,
   fpmDwarfFlags,
   hasDwarf,
-  isProgram,
   listArgs,
   parseList,
-  parseManifest,
   parseRunnerEcho,
   runArgs,
   targetOfFile,
   taskArgs,
 } from "./fpm";
+import type { Servers } from "./fpmTests";
 import { CompilerInfo, launchConfiguration } from "./run";
 import { addFileRunner, chooseInstalledDebugger, compilerInfo, gdbFor, runTask } from "./runFile";
 import { expandVariables, findExecutable, runProcess } from "./tools";
@@ -32,7 +31,11 @@ import { folderVariables } from "./variables";
 export interface FpmProject {
   root: string;
   folder: vscode.WorkspaceFolder | undefined;
-  manifest: Manifest;
+  /** fpm.toml's `name`, else the directory's */
+  name: string;
+  /** Its targets and their main programs, as zfls finds them; empty when
+   * not asked */
+  targets: (Target & { main: string })[];
 }
 
 /** A task of tasks.json, or one this extension provides */
@@ -55,11 +58,11 @@ const PROBLEM_MATCHERS = ["$zfls-gfortran", "$zfls-intel"];
  * the C locale, so that the compiler writes "Error" and "Warning" in English */
 const MATCHER_ENV = { LC_ALL: "C" };
 
-/** Directories whose fpm.toml files are not projects of the workspace:
- * fpm's dependencies are in build/dependencies */
-const NOT_PROJECTS = "**/{build,node_modules,.git}/**";
+/** The zfls servers, which find the projects */
+let servers: Servers = async () => [];
 
-export function registerFpm(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
+export function registerFpm(context: vscode.ExtensionContext, log: vscode.LogOutputChannel, zfls: Servers): void {
+  servers = zfls;
   context.subscriptions.push(
     vscode.tasks.registerTaskProvider("fpm", {
       provideTasks: () => provideTasks(),
@@ -72,11 +75,8 @@ export function registerFpm(context: vscode.ExtensionContext, log: vscode.LogOut
     if (!vscode.workspace.getConfiguration("zfls.fpm", document.uri).get<boolean>("runFile", true)) {
       return false;
     }
-    const project = projectOf(document.uri);
-    if (!project || !isProgram(document.getText())) {
-      return false;
-    }
-    const target = targetOfFile(project.manifest, project.root, document.uri.fsPath);
+    const project = await projectOf(document.uri);
+    const target = project && targetOfFile(project.targets, document.uri.fsPath);
     if (!target) {
       return false;
     }
@@ -86,53 +86,40 @@ export function registerFpm(context: vscode.ExtensionContext, log: vscode.LogOut
 }
 
 /** The fpm project of a file: the nearest directory above it with an
- * fpm.toml, inside its workspace folder */
-export function projectOf(uri: vscode.Uri): FpmProject | undefined {
+ * fpm.toml, as zfls finds the projects */
+export async function projectOf(uri: vscode.Uri): Promise<FpmProject | undefined> {
   if (uri.scheme !== "file") {
     return undefined;
   }
-  const folder = vscode.workspace.getWorkspaceFolder(uri);
-  const top = folder?.uri.fsPath;
-  let dir = path.dirname(uri.fsPath);
-  for (;;) {
-    const project = readProject(dir, folder);
-    if (project) {
-      return project;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir || (top !== undefined && path.relative(top, dir) === "")) {
-      return undefined;
-    }
-    dir = parent;
-  }
+  const inside = (p: FpmProject): boolean => {
+    const rel = path.relative(p.root, uri.fsPath);
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  };
+  // the innermost: the longest root
+  return (await findProjects()).filter(inside).sort((a, b) => b.root.length - a.root.length)[0];
 }
 
-/** The fpm project of a directory with an fpm.toml */
-export function projectAt(root: string): FpmProject | undefined {
-  return readProject(root, vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root)));
+/** A project by its directory, without asking zfls for its targets */
+export function projectAt(root: string): FpmProject {
+  return { root, folder: vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root)), name: path.basename(root), targets: [] };
 }
 
-function readProject(root: string, folder: vscode.WorkspaceFolder | undefined): FpmProject | undefined {
-  let text: string;
-  try {
-    text = fs.readFileSync(path.join(root, "fpm.toml"), "utf8");
-  } catch {
-    return undefined;
-  }
-  return { root, folder, manifest: parseManifest(text) };
-}
-
-/** The fpm projects of the workspace */
+/** The fpm projects of the workspace, as the zfls servers find them */
 export async function findProjects(): Promise<FpmProject[]> {
-  const files = await vscode.workspace.findFiles("**/fpm.toml", NOT_PROJECTS);
-  const projects: FpmProject[] = [];
-  for (const file of files.sort((a, b) => a.fsPath.localeCompare(b.fsPath))) {
-    const p = readProject(path.dirname(file.fsPath), vscode.workspace.getWorkspaceFolder(file));
-    if (p) {
-      projects.push(p);
+  const byRoot = new Map<string, FpmProject>();
+  for (const client of await servers()) {
+    const found = (await client.sendRequest<FoundProject[] | null>("zfls/fpmTargets", {})) ?? [];
+    for (const p of found) {
+      const root = vscode.Uri.parse(p.uri).fsPath;
+      byRoot.set(root, {
+        root,
+        folder: vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root)),
+        name: p.name,
+        targets: p.targets.map((x) => ({ kind: x.kind, name: x.name, main: vscode.Uri.parse(x.uri).fsPath })),
+      });
     }
   }
-  return projects;
+  return [...byRoot.values()].sort((a, b) => a.root.localeCompare(b.root));
 }
 
 /** The fpm executable of zfls.fpm.path, or undefined with a message */
@@ -259,8 +246,7 @@ function resolveTask(task: vscode.Task): vscode.Task | undefined {
   if (!folder) {
     return undefined;
   }
-  const root = def.cwd ? path.resolve(folder.uri.fsPath, def.cwd) : folder.uri.fsPath;
-  const project = readProject(root, folder) ?? { root, folder, manifest: parseManifest("") };
+  const project = projectAt(def.cwd ? path.resolve(folder.uri.fsPath, def.cwd) : folder.uri.fsPath);
   return fpmTask(project, def, task.name, fpmExecutable(project, true) ?? "fpm");
 }
 
@@ -297,7 +283,7 @@ async function runOrDebugTarget(log: vscode.LogOutputChannel, debug: boolean): P
     return;
   }
   const editor = vscode.window.activeTextEditor?.document;
-  const current = editor && targetOfFile(project.manifest, project.root, editor.uri.fsPath);
+  const current = editor && targetOfFile(project.targets, editor.uri.fsPath);
   const items = targets.map((t) => ({ label: t.name, description: t.kind, target: t }));
   items.sort((a, b) => Number(isTarget(b.target, current)) - Number(isTarget(a.target, current)));
   const picked =
@@ -316,7 +302,7 @@ function isTarget(a: Target, b: Target | undefined): boolean {
 
 async function pickProject(): Promise<FpmProject | undefined> {
   const active = vscode.window.activeTextEditor?.document.uri;
-  const own = active && projectOf(active);
+  const own = active && (await projectOf(active));
   if (own) {
     return own;
   }
@@ -328,7 +314,7 @@ async function pickProject(): Promise<FpmProject | undefined> {
     return projects[0];
   }
   const picked = await vscode.window.showQuickPick(
-    projects.map((p) => ({ label: p.manifest.name ?? path.basename(p.root), description: p.root, project: p })),
+    projects.map((p) => ({ label: p.name, description: p.root, project: p })),
     { placeHolder: vscode.l10n.t("fpm project") },
   );
   return picked?.project;

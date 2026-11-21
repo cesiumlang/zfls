@@ -1,7 +1,7 @@
 // The pure parts of the fpm (Fortran Package Manager) support: the targets
-// of fpm.toml, the arguments of fpm commands, reading fpm's and
-// test-drive's output, and the tests zfls finds (`zfls/fpmTests`). No
-// `vscode` import (see test/unit).
+// zfls finds (`zfls/fpmTargets`), the arguments of fpm commands, reading
+// fpm's and test-drive's output, and the tests zfls finds (`zfls/fpmTests`).
+// No `vscode` import (see test/unit).
 
 import * as path from "node:path";
 import { CompilerInfo } from "./run";
@@ -14,135 +14,36 @@ export interface Target {
   name: string;
 }
 
-/** A `[[executable]]`, `[[test]]` or `[[example]]` table of fpm.toml */
-export interface ManifestTarget extends Target {
-  sourceDir: string;
-  main: string;
+/** A target as zfls finds it: a table of fpm.toml, or a main program of
+ * `app/`, `test/` or `example/` (`auto`) */
+export interface FoundTarget extends Target {
+  /** Its main program's file */
+  uri: string;
+  auto: boolean;
 }
 
-export interface Manifest {
-  name?: string;
-  targets: ManifestTarget[];
+/** An fpm project as zfls finds it (`zfls/fpmTargets`) */
+export interface FoundProject {
+  /** fpm.toml's `name`, else the directory's */
+  name: string;
+  /** The directory of its fpm.toml */
+  uri: string;
   /** `auto-executables`, `auto-tests` and `auto-examples` of `[build]` */
   auto: Record<TargetKind, boolean>;
+  targets: FoundTarget[];
 }
 
-/** Where fpm looks for the programs of each kind of target */
-export const DEFAULT_DIRS: Record<TargetKind, string> = { executable: "app", test: "test", example: "example" };
-
-const TABLES: Record<string, TargetKind> = { executable: "executable", test: "test", example: "example" };
-
-/**
- * The targets of fpm.toml and its `[build]` switches. Enough of TOML for
- * them: `[[kind]]` tables of string keys, and booleans in `[build]`.
- */
-export function parseManifest(text: string): Manifest {
-  // a UTF-8 byte-order mark (Windows PowerShell 5.1 writes one)
-  text = text.replace(/^\uFEFF/, "");
-  const manifest: Manifest = { targets: [], auto: { executable: true, test: true, example: true } };
-  let table = "";
-  let target: Partial<ManifestTarget> | undefined;
-  const finish = (): void => {
-    if (target?.kind && target.name) {
-      manifest.targets.push({
-        kind: target.kind,
-        name: target.name,
-        sourceDir: target.sourceDir ?? DEFAULT_DIRS[target.kind],
-        main: target.main ?? "main.f90",
-      });
-    }
-    target = undefined;
-  };
-  for (const raw of text.split(/\r?\n/)) {
-    const line = stripComment(raw).trim();
-    if (!line) {
-      continue;
-    }
-    const header = /^\[\[\s*([\w-]+)\s*\]\]$/.exec(line) ?? /^\[\s*([\w.-]+)\s*\]$/.exec(line);
-    if (header) {
-      finish();
-      table = header[1];
-      if (line.startsWith("[[") && table in TABLES) {
-        target = { kind: TABLES[table] };
-      }
-      continue;
-    }
-    const kv = /^([\w-]+)\s*=\s*(.+)$/.exec(line);
-    if (!kv) {
-      continue;
-    }
-    const [, key, value] = kv;
-    const str = /^"([^"]*)"$|^'([^']*)'$/.exec(value);
-    const text = str ? (str[1] ?? str[2]) : undefined;
-    if (target) {
-      if (key === "name" && text !== undefined) {
-        target.name = text;
-      } else if (key === "source-dir" && text !== undefined) {
-        target.sourceDir = text;
-      } else if (key === "main" && text !== undefined) {
-        target.main = text;
-      }
-    } else if (table === "" && key === "name" && text !== undefined) {
-      manifest.name = text;
-    } else if (table === "build" && /^auto-(executables|tests|examples)$/.test(key)) {
-      const kind: TargetKind = key === "auto-executables" ? "executable" : key === "auto-tests" ? "test" : "example";
-      manifest.auto[kind] = value.trim() !== "false";
-    }
-  }
-  finish();
-  return manifest;
-}
-
-/** `line` without a `#` comment outside strings */
-function stripComment(line: string): string {
-  let quote = "";
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (quote) {
-      if (c === quote) {
-        quote = "";
-      }
-    } else if (c === '"' || c === "'") {
-      quote = c;
-    } else if (c === "#") {
-      return line.slice(0, i);
-    }
-  }
-  return line;
-}
-
-/** Whether `text` is a main program (fpm makes a target of each in `app`,
- * `test` and `example`) */
-export function isProgram(text: string): boolean {
-  return /^[ \t]*program[ \t]+\w+/im.test(text);
-}
-
-/**
- * The target that `file` (a main program) is the source of: a target of
- * fpm.toml whose `main` it is, else, when fpm finds targets by themselves,
- * the program in `app`, `test` or `example` (or a directory below), named
- * after the file.
- */
+/** The target that `file` is the main program of, among `targets` (their
+ * main programs' paths) */
 export function targetOfFile(
-  manifest: Manifest,
-  root: string,
+  targets: readonly (Target & { main: string })[],
   file: string,
-  pathMod: path.PlatformPath = path,
+  platform: NodeJS.Platform = process.platform,
 ): Target | undefined {
-  const same = (a: string, b: string): boolean =>
-    pathMod === path.win32 ? a.toLowerCase() === b.toLowerCase() : a === b;
-  for (const t of manifest.targets) {
-    if (same(pathMod.resolve(root, t.sourceDir, t.main), pathMod.resolve(file))) {
-      return { kind: t.kind, name: t.name };
-    }
-  }
-  const rel = pathMod.relative(root, file).split(pathMod.sep);
-  for (const kind of Object.keys(DEFAULT_DIRS) as TargetKind[]) {
-    if (manifest.auto[kind] && rel.length > 1 && same(rel[0], DEFAULT_DIRS[kind])) {
-      return { kind, name: pathMod.basename(file, pathMod.extname(file)) };
-    }
-  }
-  return undefined;
+  const p = platform === "win32" ? path.win32 : path.posix;
+  const key = (f: string): string => (platform === "win32" ? p.resolve(f).toLowerCase() : p.resolve(f));
+  const t = targets.find((x) => key(x.main) === key(file));
+  return t && { kind: t.kind, name: t.name };
 }
 
 /** What to pass to every fpm command that builds */

@@ -1,16 +1,14 @@
-// Plain Node.js tests (no VS Code) of the fpm support: fpm.toml, fpm's
-// arguments and output, test-drive's results: `npm run unit`. zfls finds
-// the tests (src/fpm.zig).
+// Plain Node.js tests (no VS Code) of the fpm support: fpm's arguments and
+// output, test-drive's results: `npm run unit`. zfls reads fpm.toml and
+// finds the targets and tests (src/fpm.zig, tests/issues/fpm_targets.zig).
 
 import * as assert from "node:assert/strict";
-import * as path from "node:path";
 import { test } from "node:test";
 import {
   FPM_FLANG_DWARF_FLAGS,
   fpmDwarfFlags,
   listArgs,
   parseList,
-  parseManifest,
   parseRunnerEcho,
   parseTestDrive,
   runArgs,
@@ -18,56 +16,16 @@ import {
   taskArgs,
 } from "../../src/fpm";
 
-const MANIFEST = `
-name = "demo"   # the package
-version = "0.1.0"
-
-[build]
-auto-examples = false
-
-[[executable]]
-name = "second"
-source-dir = "app2"
-main = "main.f90"
-
-[[test]]
-name = 'unit'
-source-dir = "tests/unit"
-
-[dev-dependencies]
-test-drive.git = "https://github.com/fortran-lang/test-drive"
-`;
-
-test("fpm.toml: the name, the targets and the auto-discovery switches", () => {
-  const m = parseManifest(MANIFEST);
-  assert.equal(m.name, "demo");
-  assert.deepEqual(m.targets, [
-    { kind: "executable", name: "second", sourceDir: "app2", main: "main.f90" },
-    { kind: "test", name: "unit", sourceDir: "tests/unit", main: "main.f90" },
-  ]);
-  assert.deepEqual(m.auto, { executable: true, test: true, example: false });
-});
-
-test("fpm.toml with a UTF-8 byte-order mark (#407)", () => {
-  for (const mark of ["", "\uFEFF"]) {
-    const m = parseManifest(`${mark}[build]\nauto-examples = false\n`);
-    assert.deepEqual(m.auto, { executable: true, test: true, example: false });
-  }
-});
-
-test("the target of a main program", () => {
-  const m = parseManifest(MANIFEST);
-  const root = path.posix.join("/", "p");
-  const of = (f: string): unknown => targetOfFile(m, root, path.posix.join(root, f), path.posix);
-  assert.deepEqual(of("app2/main.f90"), { kind: "executable", name: "second" });
-  assert.deepEqual(of("tests/unit/main.f90"), { kind: "test", name: "unit" });
-  // found by fpm: named after the file
-  assert.deepEqual(of("app/tool.f90"), { kind: "executable", name: "tool" });
-  assert.deepEqual(of("test/sub/check.F90"), { kind: "test", name: "check" });
-  // auto-examples = false; a library file
-  assert.equal(of("example/ex1.f90"), undefined);
-  assert.equal(of("src/lib.f90"), undefined);
-  assert.equal(of("app.f90"), undefined);
+test("the target of a main program, among those zfls found", () => {
+  const targets = [
+    { kind: "executable" as const, name: "second", main: "/p/app2/main.f90" },
+    { kind: "test" as const, name: "check", main: "/p/test/sub/check.F90" },
+  ];
+  assert.deepEqual(targetOfFile(targets, "/p/app2/main.f90", "linux"), { kind: "executable", name: "second" });
+  assert.deepEqual(targetOfFile(targets, "/p/test/sub/../sub/check.F90", "linux"), { kind: "test", name: "check" });
+  assert.equal(targetOfFile(targets, "/p/src/lib.f90", "linux"), undefined);
+  // without case on Windows
+  assert.deepEqual(targetOfFile([{ kind: "test", name: "t", main: "C:\\P\\test\\t.f90" }], "c:\\p\\test\\T.F90", "win32"), { kind: "test", name: "t" });
 });
 
 test("the arguments of fpm's commands", () => {
