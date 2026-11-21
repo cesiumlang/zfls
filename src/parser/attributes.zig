@@ -35,6 +35,8 @@ pub const Attr = struct {
     /// the pointer of a Cray pointer, `p` of `POINTER (p, b)`: an integer
     /// variable the statement declares, not an attribute
     cray_pointer: bool = false,
+    /// of a Cray pointer or its pointee, the other's name (`b` of `p`)
+    cray_other: ?[]const u8 = null,
     /// a constant of DEC's `PARAMETER name = value` (ifx): of the type of
     /// its value, not the implicit type of its name
     typed_by_value: bool = false,
@@ -56,6 +58,12 @@ const statements = [_]struct { []const u8, Kw }{
 
 fn isWordChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == '$';
+}
+
+fn isName(s: []const u8) bool {
+    if (s.len == 0 or !std.ascii.isAlphabetic(s[0])) return false;
+    for (s) |c| if (!isWordChar(c)) return false;
+    return true;
 }
 
 /// The text between the bracket at `s[0]` and its match, or null
@@ -84,6 +92,7 @@ fn add(a: Allocator, out: *std.ArrayList(Attr), at: Attr) !void {
     var copy = at;
     copy.name = try a.dupe(u8, at.name);
     copy.text = try str.dupeOpt(a, at.text);
+    copy.cray_other = try str.dupeOpt(a, at.cray_other);
     try out.append(a, copy);
 }
 
@@ -182,18 +191,28 @@ fn decParameter(a: Allocator, line: []const u8, scope: ?*Obj, ln: usize, out: *s
     return true;
 }
 
-/// `POINTER (p, b), (q, c)`: Cray pointers, an extension of gfortran, ifx
-/// and LLVM Flang; each pointer `p` is an integer variable the statement
-/// declares (its pointee `b` is declared as any variable)
+/// `POINTER (p, b), (q, c(10))`: Cray pointers, an extension of gfortran,
+/// ifx and LLVM Flang; each pointer `p` is an integer variable the
+/// statement declares, and its pointee `b` a variable declared as any
+/// other, which takes the bounds the statement gives it
 fn crayPointers(a: Allocator, list_in: []const u8, scope: ?*Obj, ln: usize, out: *std.ArrayList(Attr)) !bool {
     var list = list_in;
     var any = false;
     while (bracketed(list, '(', ')')) |pair| {
         const comma = std.mem.findScalar(u8, pair, ',') orelse return any;
         const name = str.strip(pair[0..comma]);
-        if (name.len == 0 or !std.ascii.isAlphabetic(name[0])) return any;
-        for (name) |c| if (!isWordChar(c)) return any;
-        try add(a, out, .{ .scope = scope, .line = ln, .name = name, .kw = .pointer, .cray_pointer = true });
+        if (!isName(name)) return any;
+        const rest = str.strip(pair[comma + 1 ..]);
+        var e: usize = 0;
+        while (e < rest.len and isWordChar(rest[e])) e += 1;
+        const pointee = rest[0..e];
+        if (!isName(pointee)) return any;
+        const after = std.mem.trimStart(u8, rest[e..], " \t");
+        const dims = bracketed(after, '(', ')');
+        if (after.len > 0 and (dims == null or dims.?.len + 2 != after.len)) return any;
+        try add(a, out, .{ .scope = scope, .line = ln, .name = name, .kw = .pointer, .cray_pointer = true, .cray_other = pointee });
+        try add(a, out, .{ .scope = scope, .line = ln, .name = pointee, .kw = .pointer, .cray_other = name });
+        if (dims) |d| try add(a, out, .{ .scope = scope, .line = ln, .name = pointee, .kw = .dimension, .text = str.strip(d) });
         any = true;
         list = std.mem.trimStart(u8, list[pair.len + 2 ..], " \t");
         if (list.len == 0 or list[0] != ',') break;
@@ -210,19 +229,20 @@ pub fn apply(ast: *Ast, a: Allocator, attrs: []const Attr, sort: bool) !void {
     for (attrs) |at| {
         const scope = at.scope orelse ast.none_scope orelse continue;
         if (scope.data != .scope) continue;
-        if (at.cray_pointer) {
-            for (scope.childList()) |child| {
-                if (child.nameLowerEql(at.name)) break;
-            } else _ = try newVariable(ast, a, scope, at, cray_pointer_type);
-            continue;
-        }
         const v = for (scope.childList()) |child| {
             if (child.nameLowerEql(at.name)) break child;
-        } else (if (at.typed_by_value)
+        } else (if (at.cray_pointer)
+            try newVariable(ast, a, scope, at, cray_pointer_type)
+        else if (at.typed_by_value)
             try valueTypedVariable(ast, a, scope, at)
         else
             try implicitVariable(ast, a, scope, at)) orelse continue;
         if (!v.kind.isVariable()) continue;
+        // a Cray pointer or pointee, no attribute
+        if (at.cray_other) |other| {
+            if (v.kind == .variable) v.varData().cray = .{ .role = if (at.cray_pointer) .pointer else .pointee, .other = try pa.dupe(u8, other) };
+            continue;
+        }
         var info = v.keyword_info.*;
         const had = v.hasKeyword(at.kw);
         switch (at.kw) {
@@ -340,11 +360,20 @@ test "attribute statements" {
     for ([_][]const u8{ "parameter x", "parameter = 3", "parameter x == 1", "virtual = 2", "static(1) = 2" }) |line| {
         try testing.expect(!try read(a, line, null, 1, &out));
     }
-    // Cray pointers: the pointers, not the pointees
+    // Cray pointers: the pointers, their pointees and the pointees' bounds
+    // (#692)
     out.clearRetainingCapacity();
-    try testing.expect(try read(a, "pointer (p, b), (q2, c(10))", null, 1, &out));
-    try testing.expectEqual(2, out.items.len);
-    try testing.expectEqualStrings("p", out.items[0].name);
-    try testing.expectEqualStrings("q2", out.items[1].name);
-    try testing.expect(out.items[0].cray_pointer and out.items[1].cray_pointer);
+    try testing.expect(try read(a, "pointer (p, b), (q2, c(n, 2))", null, 1, &out));
+    const cray = [_]struct { []const u8, bool, ?[]const u8, ?[]const u8 }{
+        .{ "p", true, "b", null },     .{ "b", false, "p", null },
+        .{ "q2", true, "c", null },    .{ "c", false, "q2", null },
+        .{ "c", false, null, "n, 2" },
+    };
+    try testing.expectEqual(cray.len, out.items.len);
+    for (cray, out.items) |w, got| {
+        try testing.expectEqualStrings(w[0], got.name);
+        try testing.expectEqual(w[1], got.cray_pointer);
+        if (w[2]) |o| try testing.expectEqualStrings(o, got.cray_other.?) else try testing.expect(got.cray_other == null);
+        if (w[3]) |t| try testing.expectEqualStrings(t, got.text.?) else try testing.expect(got.text == null);
+    }
 }
