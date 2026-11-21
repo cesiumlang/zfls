@@ -2,7 +2,7 @@
 //! Fortran operators in `#if`, and `__LINE__`, `__FILE__`, `__DATE__`,
 //! `__TIME__` of fpp and gfortran's cpp (#507), and the symbols the
 //! compiler check's compiler predefines, asked of a stand-in compiler
-//! (#509; the audits, #488, #489).
+//! (ifx #509, gfortran #541; the audits, #488, #489).
 
 const std = @import("std");
 const sysinfo = @import("builtin");
@@ -90,4 +90,26 @@ test "ifx: its predefined symbols in #ifdef, #if and !DEC$ IF (#509)" {
         try h.expect(std.mem.find(u8, got, "INTEGER") != null, "hover at {s}: {s}", .{ at, got });
     }
     try h.expect((try w.hover("p.F90", w.pos("p.F90", "not_intel", 0, 0))) == null, "not_intel is in an active branch", .{});
+}
+
+/// A stand-in gfortran that predefines `__GFORTRAN__` and `__GNUC__` (`-dM`)
+const gfortran: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho %* | findstr /c:\" -dM \" >nul && (echo #define __GFORTRAN__ 1& echo #define __GNUC__ 16& exit /b 0)\r\necho gfortran: error: logged 1>&2\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) printf '#define __GFORTRAN__ 1\\n#define __GNUC__ 16\\n'; exit 0;; esac\necho 'gfortran: error: logged' >&2\n" };
+
+test "gfortran: its predefined macros in #ifdef and #if (#541)" {
+    const pp = h.File{ .name = "p.F90", .text = "program p\n  implicit none\n#ifdef __GFORTRAN__\n  integer :: gf_only\n#else\n  integer :: not_gfortran\n#endif\n#if __GNUC__ >= 9\n  gf_only = 1\n#endif\nend program p\n" };
+    const opts = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran.name ++ "\"}";
+    const w = try h.Workspace.init(&.{ pp, gfortran }, .{ .init_options = opts });
+    defer w.deinit();
+    if (!is_windows) {
+        // executable only now: the settings again, which ask it
+        try w.tmp.dir.setFilePermissions(io, gfortran.name, .executable_file, .{});
+        try w.changeConfiguration("{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ gfortran.name ++ "\", \"pp_defs\": {\"ZFLS_X\": \"\"}}");
+    }
+    try w.open("p.F90", "fortran");
+    const got = (try w.hover("p.F90", w.pos("p.F90", "gf_only", 1, 0))) orelse return h.unmet("no hover on gf_only in #if __GNUC__ >= 9", .{});
+    try h.expect(std.mem.find(u8, got, "INTEGER") != null, "hover on gf_only: {s}", .{got});
+    try h.expect((try w.hover("p.F90", w.pos("p.F90", "not_gfortran", 0, 0))) == null, "not_gfortran is in an active branch", .{});
 }

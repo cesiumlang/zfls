@@ -5,6 +5,7 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("associate.zig");
+    _ = @import("command_options.zig");
     _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
@@ -17,6 +18,7 @@ test {
     _ = @import("corpus.zig");
     _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
+    _ = @import("default_kinds.zig");
     _ = @import("dec_declarations.zig");
     _ = @import("dec_io.zig");
     _ = @import("dlines.zig");
@@ -40,6 +42,7 @@ test {
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
     _ = @import("intrinsics_intel.zig");
+    _ = @import("kinds_target.zig");
     _ = @import("hover_declarations.zig");
     _ = @import("hover_types.zig");
     _ = @import("intel_directives.zig");
@@ -59,6 +62,7 @@ test {
     _ = @import("settings.zig");
     _ = @import("short_paths.zig");
     _ = @import("signature.zig");
+    _ = @import("source_form.zig");
     _ = @import("summaries.zig");
     _ = @import("tab_format.zig");
     _ = @import("user_config.zig");
@@ -67,6 +71,7 @@ test {
     _ = @import("fpm_targets.zig");
     _ = @import("pull_diagnostics.zig");
     _ = @import("use.zig");
+    _ = @import("unsigned.zig");
     _ = @import("unused.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
@@ -74,6 +79,7 @@ test {
     _ = @import("compiler_flang.zig");
     _ = @import("compiler_intel.zig");
     _ = @import("compiler_gfortran.zig");
+    _ = @import("compiler_tabs.zig");
     _ = @import("compiler_includes.zig");
     _ = @import("compiler_include_globs.zig");
     _ = @import("flang_modules.zig");

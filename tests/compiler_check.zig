@@ -1,5 +1,5 @@
 //! The compiler check (`compiler_diagnostics`) against a real compiler,
-//! LFortran, LLVM Flang or gfortran: zfls, started as an editor starts it, checks
+//! LFortran, LLVM Flang, gfortran or ifx: zfls, started as an editor starts it, checks
 //! the files of tests/compiler when they are opened, and each must get the
 //! compiler's errors it has and none of those it has not: a program that
 //! uses a module of the workspace (compiled first, for its .mod file),
@@ -7,13 +7,15 @@
 //! with a definition of `pp_defs`, an include directory of `include_dirs`,
 //! and the unsaved text of an edit (`compiler_on_change`); with Flang and
 //! gfortran also a `.f77` file, a debug line (a comment), an error in an
-//! included file and a preprocessed `.fpp` file (lower case)
+//! included file and a preprocessed `.fpp` file (lower case); with gfortran
+//! a message about two places (GCC 10 and later) and a missing `#include`
 //! (`zig build test-compiler`). Skipped without the compiler.
 //!
-//!     compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran] [--path EXE]
+//!     compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran|ifx] [--path EXE]
 //!
-//! LFORTRAN, FLANG or GFORTRAN in the environment names the compiler's
-//! executable too.
+//! LFORTRAN, FLANG, GFORTRAN or IFX in the environment names the compiler's
+//! executable too. With ifx also a `.f08` file, a TAB-format line and fpp's
+//! `#error`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -35,6 +37,10 @@ const Case = struct {
     file: []const u8,
     want: []const Want,
     absent: []const []const u8 = &.{},
+    /// Lines (1-based) that must have no message of the compiler's
+    quiet: []const i64 = &.{},
+    /// The compiler's major version the case needs (gfortran's)
+    min_version: u32 = 0,
 };
 
 /// A compiler under test: its `compiler_diagnostics` name (also the source
@@ -161,8 +167,69 @@ const compilers = [_]Compiler{
             .{ .file = "lower.fpp", .want = &.{
                 .{ .line = 10, .text = "Symbol 'undeclared_fpp' at (1) has no IMPLICIT type" },
             }, .absent = &.{ "not_defined_branch", "from_define", "Illegal preprocessor directive" } },
+            // a message about two places, which GCC 10 to 16 print as two
+            // lines, the first only `(1)`: one message (#522); GCC 9 has none
+            .{ .file = "two_places.f90", .want = &.{
+                .{ .line = 3, .text = "Type mismatch between actual argument at (1) and actual argument at (2)" },
+            }, .quiet = &.{4}, .min_version = 10 },
+            // a missing #include, which cpp places on the line after it (#524)
+            .{ .file = "missing_include.F90", .want = &.{
+                .{ .line = 3, .text = "missing.h: No such file or directory" },
+            }, .quiet = &.{4} },
         },
         .edited = .{ .line = 8, .text = "Symbol 'undeclared_edit' at (1) has no IMPLICIT type" },
+    },
+    .{
+        .name = "ifx",
+        .env = "IFX",
+        .cases = &.{
+            .{ .file = "main.f90", .want = &.{
+                .{ .line = 8, .text = "This name does not have a type, and must have an explicit type." },
+                .{ .line = 9, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"compiled module file"} },
+            .{ .file = "implicit.f90", .want = &.{
+                .{ .line = 5, .text = "The type of the actual argument differs from the type of the dummy argument." },
+            }, .absent = &.{"does not have a type"} },
+            .{ .file = "legacy.f", .want = &.{
+                .{ .line = 6, .text = "The type of the actual argument differs from the type of the dummy argument." },
+            }, .absent = &.{"does not have a type"} },
+            .{ .file = "defines.F90", .want = &.{
+                .{ .line = 8, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"FROM_DEFINE"} },
+            .{ .file = "includes.f90", .want = &.{
+                .{ .line = 6, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{ "Cannot open include file", "INCLUDED_N" } },
+            // a suffix the driver takes for an object's: /Tf (#497)
+            .{ .file = "old.f77", .want = &.{
+                .{ .line = 5, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"unrecognized source type"} },
+            .{ .file = "modern.f08", .want = &.{
+                .{ .line = 4, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"unrecognized source type"} },
+            .{ .file = "dlines.f", .want = &.{
+                .{ .line = 6, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"DVAR"} },
+            // an error in an included file is at the INCLUDE line (#496)
+            .{ .file = "incerr.f90", .want = &.{
+                .{ .line = 4, .text = "This name does not have a type, and must have an explicit type." },
+            } },
+            // a TAB-format line: fixed form, not /free (#491)
+            .{ .file = "tabs.f", .want = &.{
+                .{ .line = 5, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"Syntax error"} },
+            // fpp's #error at its line (#495)
+            .{ .file = "pperror.F90", .want = &.{
+                .{ .line = 4, .text = "zfls error directive" },
+            } },
+            .{ .file = "lower.fpp", .want = &.{
+                .{ .line = 10, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{ "NOT_DEFINED_BRANCH", "FROM_DEFINE" } },
+            // conda-forge's ifx finds its own modules (#498)
+            .{ .file = "intrinsic_modules.f90", .want = &.{
+                .{ .line = 8, .text = "This name does not have a type, and must have an explicit type." },
+            }, .absent = &.{"compiled module file"} },
+        },
+        .edited = .{ .line = 8, .text = "This name does not have a type, and must have an explicit type." },
     },
 };
 
@@ -187,7 +254,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, cc.name, name)) break cc;
     } else null;
     if (i != argv.len or zfls_exe == null or known == null) {
-        std.debug.print("usage: compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran] [--path EXE]\n", .{});
+        std.debug.print("usage: compiler_check --zfls ZFLS [--compiler lfortran|flang|gfortran|ifx] [--path EXE]\n", .{});
         return 2;
     }
     const compiler = known.?;
@@ -236,7 +303,14 @@ pub fn main(init: std.process.Init) !u8 {
     try c.send("initialized", struct {}{}, null);
 
     var failures: std.ArrayList([]const u8) = .empty;
+    const major = zfls.compilers_gfortran.parseVersion(version.stdout) orelse 0;
+    var checked: usize = 0;
     for (compiler.cases) |case| {
+        if (case.min_version > major) {
+            std.debug.print("skipped: {s} (version {d} or later)\n", .{ case.file, case.min_version });
+            continue;
+        }
+        checked += 1;
         const path = try std.Io.Dir.path.join(a, &.{ work, case.file });
         const uri = try zfls.paths.pathToUri(a, path);
         try c.send("textDocument/didOpen", .{ .textDocument = .{
@@ -247,6 +321,9 @@ pub fn main(init: std.process.Init) !u8 {
         } }, null);
         const diags = try waitFor(io, a, c, compiler.name, uri, null);
         try expectCase(a, &failures, compiler.name, case.file, diags, case.want, case.absent);
+        for (case.quiet) |line| for (diags) |d| if (lineOf(d) == line) {
+            try failures.append(a, try a.print("{s}: line {d}: \"{s}\", where it should have nothing", .{ case.file, line, message(d) }));
+        };
     }
 
     // an unsaved edit: its text is checked, from a copy
@@ -270,7 +347,7 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("zfls's stderr:\n{s}\n", .{c.stderr.items});
         return 1;
     }
-    std.debug.print("ok   {d} files and an edit checked with {s}\n", .{ compiler.cases.len, compiler.name });
+    std.debug.print("ok   {d} files and an edit checked with {s}\n", .{ checked, compiler.name });
     return 0;
 }
 
@@ -287,7 +364,7 @@ fn waitFor(io: Io, a: Allocator, c: *lsp.Client, source: []const u8, uri: []cons
         const ours = try compilerDiagnostics(a, source, c.diagnosticsOf(uri));
         if (ours.len > 0) {
             const found = if (needle) |n| for (ours) |d| {
-                if (std.mem.find(u8, message(d), n) != null) break true;
+                if (std.ascii.findIgnoreCase(message(d), n) != null) break true;
             } else false else true;
             if (found) return ours;
         }
@@ -333,7 +410,8 @@ fn expectCase(a: Allocator, failures: *std.ArrayList([]const u8), compiler: []co
             if (lineOf(d) == w.line and std.mem.find(u8, message(d), w.text) != null) break;
         } else try failures.append(a, try a.print("{s}: no \"{s}\" on line {d}; got:{s}", .{ name, w.text, w.line, try listing(a, diags) }));
     }
-    for (absent) |x| for (diags) |d| if (std.mem.find(u8, message(d), x) != null) {
+    // without case: Intel's messages name a variable in capitals
+    for (absent) |x| for (diags) |d| if (std.ascii.findIgnoreCase(message(d), x) != null) {
         try failures.append(a, try a.print("{s}: line {d}: \"{s}\", which it should not have", .{ name, lineOf(d), message(d) }));
     };
 }

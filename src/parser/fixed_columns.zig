@@ -19,10 +19,36 @@ pub fn blank(line: []u8, columns: usize) void {
     if (isLong(line, columns)) @memset(line[columns..], ' ');
 }
 
+/// The bytes of `line` within `columns`: `columns`, but on a TAB-format
+/// line whose TAB the compiler counts as the columns up to 6 (`wide`, as
+/// gfortran and LLVM Flang do; up to 5 before a continuation digit, which
+/// is column 6) as many fewer as the TAB stands for beyond one (#585)
+pub fn tabLimit(line: []const u8, columns: usize, wide: bool) usize {
+    if (!wide or columns < 6) return columns;
+    const i = helpers.tabFormatTab(line) orelse return columns;
+    const cont = helpers.tabContStart(line) != null;
+    // bytes up to the TAB, the TAB (and the digit), then columns 7 and on
+    return i + 1 + @intFromBool(cont) + (columns - 6);
+}
+
 /// `line` without the columns past `columns` when it is a code line
 pub fn code(line: []const u8, columns: ?usize) []const u8 {
     const n = columns orelse return line;
     return if (isLong(line, n)) line[0..n] else line;
+}
+
+test "a TAB-format line's limit, as gfortran and Flang count its TAB" {
+    // ll.f: `<TAB>IA = 1 ... + UNDECL`, UNDECL in columns 70 to 75 for
+    // gfortran and Flang with -ffixed-line-length 72: they read `UND`
+    const ll = "\tIA = 1                                                       + UNDECL";
+    try std.testing.expectEqual(@as(usize, 72), tabLimit(ll, 72, false));
+    try std.testing.expectEqual(@as(usize, 67), tabLimit(ll, 72, true));
+    try std.testing.expectEqualStrings("UND", code(ll, tabLimit(ll, 72, true))[64..]);
+    // a continuation digit is column 6; after a label the TAB still ends at 6
+    try std.testing.expectEqual(@as(usize, 68), tabLimit("\t1 X", 72, true));
+    try std.testing.expectEqual(@as(usize, 69), tabLimit("10\tX = 1", 72, true));
+    // no TAB-format line, no change
+    try std.testing.expectEqual(@as(usize, 72), tabLimit("      X = 1", 72, true));
 }
 
 test "the columns past fixed_line_length are blanks in code lines only" {

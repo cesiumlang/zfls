@@ -44,6 +44,8 @@ const lenses = @import("lenses.zig");
 const linking = @import("linking.zig");
 const modfiles = @import("modfiles.zig");
 const summary = @import("summary.zig");
+const file_options = @import("file_options.zig");
+const source_form = @import("source_form.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -346,7 +348,9 @@ pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileErro
     f.openmp_conditional = !self.s.disable_openmp_conditional;
     f.d_lines_code = self.s.dLinesCode();
     f.fixed_columns = self.s.fixedColumns();
+    f.fixed_tab_wide = self.s.fixedTabWide();
     errdefer f.destroy();
+    file_options.apply(self, f) catch return error.OutOfMemory;
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
     const opts = parseOptions(self);
@@ -553,9 +557,12 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     if (did_close) {
         if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
         pending.cancel(self, uri);
+        source_form.closed(self, filepath);
     }
     // the form the editor's language names, while the document is open
-    const form: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    // (for a `.fpp`, zfls's detection, unless the user chose, #632)
+    const language: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    const form = source_form.opened(self, filepath, language);
     if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
         // a document that was never saved, or whose file is gone: it leaves
@@ -590,6 +597,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     };
     // an opened summary is parsed in full again, as it was
     if (did_open) if (self.workspace.get(filepath)) |f| if (summary.dormant(f)) try summary.wake(self, a, &.{f});
+    if (did_open) try source_form.tell(self, a, uri, filepath, language);
     // the files parsed in full for requests rest again, but for a closed
     // one, whose diagnostics are of its full AST
     const slept = !did_close and try summary.sleepAll(self, a);
@@ -631,6 +639,8 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?pa
         nf.openmp_conditional = !self.s.disable_openmp_conditional;
         nf.d_lines_code = self.s.dLinesCode();
         nf.fixed_columns = self.s.fixedColumns();
+        nf.fixed_tab_wide = self.s.fixedTabWide();
+        file_options.apply(self, nf) catch return error.OutOfMemory;
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
     };
@@ -760,6 +770,7 @@ pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: 
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             nf.fixed_columns = self.s.fixedColumns();
+            nf.fixed_tab_wide = self.s.fixedTabWide();
             errdefer nf.destroy();
             try self.workspace.put(self.gpa, nf.path, nf);
             break :blk nf;
@@ -792,6 +803,8 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             nf.fixed_columns = self.s.fixedColumns();
+            nf.fixed_tab_wide = self.s.fixedTabWide();
+            try file_options.apply(self, nf);
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;

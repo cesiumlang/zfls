@@ -67,7 +67,11 @@ test "fixed-form files are checked with compiler_diagnostics_fixed, and so are t
     try std.testing.expect(std.mem.find(u8, calls, "m.f90") != null);
     try std.testing.expect(std.mem.find(u8, calls, "b.f") != null);
     try std.testing.expect(std.mem.find(u8, calls, "-DFIXEDARG") != null);
-    try std.testing.expectError(error.FileNotFound, w.tmp.dir.statFile(io, "free.log", .{}));
+    // the free form's compiler is asked only what it predefines (#541)
+    if (w.tmp.dir.readFileAlloc(io, "free.log", std.testing.allocator, .limited(1 << 20))) |early| {
+        defer std.testing.allocator.free(early);
+        try std.testing.expect(std.mem.find(u8, early, "b.f") == null and std.mem.find(u8, early, "m.f90") == null);
+    } else |_| {}
     try expectChecked(w, "c.f90", "free");
     const free_calls = try log(w, "free.log");
     defer std.testing.allocator.free(free_calls);

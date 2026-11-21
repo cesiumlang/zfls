@@ -237,3 +237,24 @@ test "gfortran: the code of a warning made an error by -Werror is the warning's"
         "warn.f90:6:6 error: Possible change of value in conversion from REAL(4) to INTEGER(4) at (1) [-Wconversion]",
     });
 }
+
+test "gfortran's preprocessor: #error, #warning and a missing #include" {
+    // the same from MSYS2's gfortran 16.1 and Nix's 9.5, 13.2, 14.4 and
+    // 15.3, with -fno-diagnostics-show-caret -cpp
+    try compilers.expectBrief(.gfortran,
+        \\pperr.F90:4:2: Error: #error zfls error directive
+        \\ppwarn.F90:1:2: Warning: #warning zfls warning directive [-Wcpp]
+        \\ppmiss.F90:4:2: Fatal Error: missing.h: No such file or directory
+        \\compilation terminated.
+    , &.{
+        "pperr.F90:4:2 error: #error zfls error directive",
+        "ppwarn.F90:1:2 warning: #warning zfls warning directive [-Wcpp]",
+        "ppmiss.F90:4:2 error: missing.h: No such file or directory",
+    });
+    // and in the caret format (16.1): a locus line, the excerpt, the message
+    try compilers.expectBrief(.gfortran, "pperr.F90:4:2:\r\n\r\n    4 | #error zfls error directive\r\n      |  1~~~~\r\nError: #error zfls error directive\r\n" ++
+        "ppmiss.F90:4:2:\r\n\r\n    4 |   print *, 1\r\n      |  1~~~~~~~~~~\r\nFatal Error: missing.h: No such file or directory\r\ncompilation terminated.\r\n", &.{
+        "pperr.F90:4:2 error: #error zfls error directive",
+        "ppmiss.F90:4:2 error: missing.h: No such file or directory",
+    });
+}

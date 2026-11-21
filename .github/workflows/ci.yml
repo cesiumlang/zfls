@@ -565,6 +565,22 @@ jobs:
           "$RUNNER_TEMP/flang/bin/flang" --version
           echo "FLANG=$RUNNER_TEMP/flang/bin/flang" >> "$GITHUB_ENV"
 
+      # Intel's ifx from conda-forge, without the compilers its package
+      # links with (the runner's gcc and ld do): for
+      # tests/compiler_check.zig (IFX)
+      - name: Intel ifx (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          for wait in 15 30 60 0; do
+            MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/ifx" -c conda-forge ifx_impl_linux-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing ifx failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/ifx/bin/ifx" --version
+          echo "IFX=$RUNNER_TEMP/ifx/bin/ifx" >> "$GITHUB_ENV"
+
       - name: Unit tests
         run: zig build test --summary failures
 
@@ -803,11 +819,32 @@ jobs:
         if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
         run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler flang
 
-      # and with gfortran (GFORTRAN on Windows, MSYS2's), also on a .f77
-      # file and a lower-case .fpp file
-      - name: The compiler check with gfortran (Linux x64, Windows x64)
-        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+      # and with gfortran on every platform that has one (GFORTRAN on
+      # Windows x64, MSYS2's; Homebrew's on macOS; none on Windows on Arm,
+      # where it is skipped), also on a .f77 file, a lower-case .fpp file, a
+      # message about two places and a missing #include
+      - name: The compiler check with gfortran
         run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler gfortran
+
+      # and with the image's other gfortrans (Ubuntu 24.04 has some beside
+      # its default), installed already: their messages' formats
+      - name: The compiler check with the image's other gfortrans (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          ran=0
+          for v in 9 10 11 12 13 14 15; do
+            gf=$(command -v "gfortran-$v") || continue
+            echo "-- $gf"
+            zig-out/bin/compiler_check --zfls "$ZFLS" --compiler gfortran --path "$gf"
+            ran=$((ran + 1))
+          done
+          echo "$ran other gfortrans checked" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # and with ifx (IFX, conda-forge's), also on a .f08 file, a TAB-format
+      # line and fpp's #error
+      - name: The compiler check with ifx (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler ifx
 
       - name: Version under test
         run: |

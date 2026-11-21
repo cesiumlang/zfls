@@ -2,8 +2,9 @@
 //! line, through a stand-in gfortran that logs its arguments: the files of
 //! suffixes its driver does not know (#521), a missing `#include` (#524),
 //! the messages without a file (#525), a directory of .mod files for each
-//! major version (#526), the compiler's directory on its PATH (#528), and
-//! the error of a used module's file (#546).
+//! major version (#526), the compiler's directory on its PATH (#528), the
+//! error of a used module's file (#546), and the preprocessor's #error and
+//! #warning (#587).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -166,4 +167,31 @@ test "gfortran: the error of a used module's file with \"Cannot open module file
     const sent = (try w.waitForSent("textDocument/publishDiagnostics", "Cannot open module file", 60)) orelse return error.NoCompilerDiagnostics;
     try h.expect(std.mem.find(u8, sent, "(k.f18 did not compile)") != null, "the message does not name k.f18: {s}", .{sent});
     try h.expect(std.mem.find(u8, sent, "k.f18 did not compile: Symbol 'x' at (1) has no IMPLICIT type") != null, "no related error of k.f18: {s}", .{sent});
+}
+
+/// A stand-in gfortran that gives what gfortran's cpp says of `#warning`
+/// on line 1 and `#error` on line 4 (GCC 9 to 16 alike)
+const directives: h.File = if (is_windows)
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho d.F90:1:2: Warning: #warning zfls warning directive [-Wcpp] 1>&2\r\necho d.F90:4:2: Error: #error zfls error directive 1>&2\r\nexit /b 1\r\n" }
+else
+    .{ .name = "gfortran.sh", .text = "#!/bin/sh\necho 'd.F90:1:2: Warning: #warning zfls warning directive [-Wcpp]' >&2\necho 'd.F90:4:2: Error: #error zfls error directive' >&2\nexit 1\n" };
+
+test "gfortran: #error and #warning at their lines, an error and a warning (#587)" {
+    const pp = h.File{ .name = "d.F90", .text = "#warning zfls warning directive\nprogram d\n  implicit none\n#error zfls error directive\nend program d\n" };
+    const w = try h.Workspace.init(&.{ pp, directives }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ directives.name ++ "\"}" });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(io, directives.name, .executable_file, .{});
+    try w.open("d.F90", "fortran");
+    const sent = (try w.waitForSent("textDocument/publishDiagnostics", "#error zfls error directive", 60)) orelse return error.NoCompilerDiagnostics;
+    const mark = "\"range\":{\"start\":{\"line\":";
+    for ([_]struct { []const u8, []const u8, []const u8 }{
+        .{ "\"message\":\"#error zfls error directive\"", "3,\"character\":1}", "\"severity\":1" },
+        .{ "\"message\":\"#warning zfls warning directive", "0,\"character\":1}", "\"severity\":2" },
+    }) |c| {
+        const at = std.mem.find(u8, sent, c[0]) orelse return h.unmet("no {s}: {s}", .{ c[0], sent });
+        const r = std.mem.findLast(u8, sent[0..at], mark) orelse return h.unmet("no range in {s}", .{sent});
+        try h.expect(std.mem.startsWith(u8, sent[r + mark.len ..], c[1]), "{s} not at its line: {s}", .{ c[0], sent[r..at] });
+        const end = std.mem.findScalarPos(u8, sent, at, '}') orelse sent.len;
+        try h.expect(std.mem.find(u8, sent[r..end], c[2]) != null, "{s} without {s}: {s}", .{ c[0], c[2], sent[r..end] });
+    }
 }
