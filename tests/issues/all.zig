@@ -5,6 +5,7 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("associate.zig");
+    _ = @import("command_options.zig");
     _ = @import("compile_commands.zig");
     _ = @import("completion.zig");
     _ = @import("compiler_locale.zig");
@@ -17,6 +18,7 @@ test {
     _ = @import("corpus.zig");
     _ = @import("debug_options.zig");
     _ = @import("debugging.zig");
+    _ = @import("default_kinds.zig");
     _ = @import("dec_declarations.zig");
     _ = @import("dec_io.zig");
     _ = @import("dlines.zig");
@@ -40,6 +42,7 @@ test {
     _ = @import("hover_arguments.zig");
     _ = @import("hover.zig");
     _ = @import("intrinsics_intel.zig");
+    _ = @import("kinds_target.zig");
     _ = @import("hover_declarations.zig");
     _ = @import("hover_types.zig");
     _ = @import("intel_directives.zig");

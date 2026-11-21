@@ -27,6 +27,7 @@ const lsp = @import("lsp_client");
 
 const dap = @import("dap_client.zig");
 const dap_lfortran = @import("dap_lfortran.zig");
+const dap_gfortran = @import("dap_gfortran.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -120,7 +121,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, {s}\n", .{ setup.program, lldb_dap });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "attaching", attach }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "attaching", attach }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -332,6 +333,13 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
 /// ERROR STOP in a program built with `-g` aborts there before it calls
 /// its runtime's function ("The stack address was not found in any shared
 /// library or the main program")
+/// gfortran's runtime errors and stops beyond grid.f90's
+/// (tests/dap_gfortran.zig)
+fn gfortranRuntime(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran only\n", .{});
+    try dap_gfortran.run(io, gpa, &.{ setup.zfls, "dap", "--lldb", setup.lldb }, setup.fc, setup.dir, false);
+}
+
 fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
     if (setup.compiler == .lfortran and builtin.target.os.tag == .macos) return std.debug.print("skipped: LFortran's ERROR STOP aborts in a -g program on macOS\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);

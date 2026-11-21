@@ -15,6 +15,8 @@ const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
 const KW = @import("constants.zig").KW;
 const typing = @import("argcheck/typing.zig");
+const default_kinds = @import("default_kinds.zig");
+const unit_kinds = @import("argcheck/unit_kinds.zig");
 const ignore_tkr = @import("argcheck/ignore_tkr.zig");
 const Category = typing.Category;
 const Typed = typing.Typed;
@@ -159,6 +161,24 @@ pub const Checker = struct {
     /// the `!dir$ ignore_tkr` and `NO_ARG_CHECK` directives of each
     /// procedure called, read once
     tkr: std.AutoHashMapUnmanaged(*const Obj, []const ignore_tkr.Entry) = .empty,
+    /// the compiler has REAL(10) (`typing.native_real10`)
+    real10: bool = typing.native_real10,
+    /// the kinds of the types without one, of the file checked's options
+    kinds: default_kinds.Kinds = .{},
+
+    /// The kinds of the file that declares `v` (else of the file checked),
+    /// with the `!DEC$ REAL:n` before its program unit
+    fn kindsOf(c: *const Checker, v: *const Obj) default_kinds.Kinds {
+        return unit_kinds.ofDeclaration(v) orelse c.kinds;
+    }
+
+    /// The kinds of a literal in `scope` of the file checked
+    fn kindsIn(c: *const Checker, scope: ?*Obj) default_kinds.Kinds {
+        var unit: *const Obj = scope orelse return c.kinds;
+        while (unit.parent) |p| unit = p;
+        const f = c.ast.file orelse return c.kinds;
+        return unit_kinds.ofUnit(c.kinds, f.lines.items, c.ast, unit);
+    }
 
     fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
@@ -592,13 +612,16 @@ pub const Checker = struct {
     fn kindOfVar(c: *Checker, v: *Obj) !?i64 {
         if (v.kind != .variable) return null;
         const desc = std.mem.trim(u8, v.descOf(), " ");
-        if (std.ascii.startsWithIgnoreCase(desc, "double")) return 8;
+        const k = c.kindsOf(v);
+        if (std.ascii.startsWithIgnoreCase(desc, "double")) return k.double;
+        const cat = category(desc);
+        const real = cat == .real or cat == .complex;
         const spec = std.mem.trim(u8, v.varDataConst().vkind orelse "", " ");
-        if (spec.len == 0) return 4;
+        if (spec.len == 0) return if (real) k.real else if (cat == .integer or cat == .logical) k.integer else 4;
         if (spec[0] == '*') {
             const n = std.fmt.parseInt(i64, std.mem.trim(u8, spec[1..], " "), 10) catch return null;
             // COMPLEX*16 is two REAL(8)
-            return if (category(desc) == .complex) @divTrunc(n, 2) else n;
+            return k.promoted(real, if (cat == .complex) @divTrunc(n, 2) else n);
         }
         if (spec[0] != '(' or spec[spec.len - 1] != ')') return null;
         var inner = std.mem.trim(u8, spec[1 .. spec.len - 1], " ");
@@ -606,20 +629,26 @@ pub const Checker = struct {
             if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, inner[0..eq], " "), "kind")) return null;
             inner = std.mem.trim(u8, inner[eq + 1 ..], " ");
         }
-        return c.kindValue(inner, v.parent, v.sline, 0);
+        const n = (try c.kindValue(inner, v.parent, v.sline, 0)) orelse return null;
+        return k.promoted(real, n);
     }
 
     /// The kind of a literal argument (`1.0` 4, `1d0` 8, `1.0_dp` that of
     /// `dp`)
     fn literalKind(c: *Checker, lit: []const u8, scope: ?*Obj, line_no: usize) !?i64 {
-        if (lit[0] == '.') if (std.ascii.startsWithIgnoreCase(lit, ".true.") or std.ascii.startsWithIgnoreCase(lit, ".false.")) return 4;
-        if (std.mem.findScalarLast(u8, lit, '_')) |u| return c.kindValue(lit[u + 1 ..], scope, line_no, 0);
+        const k = c.kindsIn(scope);
+        if (lit[0] == '.') if (std.ascii.startsWithIgnoreCase(lit, ".true.") or std.ascii.startsWithIgnoreCase(lit, ".false.")) return k.integer;
+        const real = literalCategory(lit) == .real;
+        if (std.mem.findScalarLast(u8, lit, '_')) |u| {
+            const n = (try c.kindValue(lit[u + 1 ..], scope, line_no, 0)) orelse return null;
+            return k.promoted(real, n);
+        }
         for (lit) |ch| switch (ch) {
-            'd', 'D' => return 8,
+            'd', 'D' => return k.double,
             'q', 'Q' => return 16,
             else => {},
         };
-        return 4;
+        return if (real) k.real else k.integer;
     }
 
     /// The value of a kind expression: a number, a named constant (of
@@ -669,7 +698,7 @@ pub const Checker = struct {
             if (which == 'p') p = n else if (which == 'r') r = n else return null;
         }
         if (!real) return selectedIntKind(p orelse return null);
-        return selectedRealKind(p, r);
+        return selectedRealKind(p, r, c.real10);
     }
 
     /// `x = ...` (also `x(i) = `, `x%c = `) for an INTENT(IN) dummy argument
@@ -753,10 +782,10 @@ pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, e
     return c.exprType(expr, scope, line_no, 0);
 }
 
-/// `files`: the workspace's
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile) ![]const Problem {
+/// `files`: the workspace's; `real10`: the compiler has REAL(10)
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool) ![]const Problem {
     const n = file.nLines();
-    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n) };
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10, .kinds = file.default_kinds };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);

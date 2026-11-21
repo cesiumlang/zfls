@@ -184,6 +184,8 @@ pub const Server = struct {
     /// The symbols each compiler predefines, by executable (in `arena`;
     /// compiler_macros.zig)
     compiler_macros: std.array_hash_map.String(compiler_macros.Known) = .empty,
+    /// Those in `pp_defs` (compiler_macros.zig)
+    default_macros: compiler_macros.Default = .{},
     /// The formatting problems posted (hashes of their keys), each once
     format_reported: std.ArrayList(u64) = .empty,
     /// The thread that runs fortitude and Codee, once it has a job
@@ -311,22 +313,27 @@ pub const Server = struct {
         try compiler_macros.add(self);
     }
 
-    /// `self.pp_defs = {**self.pp_defs, **file_obj.pp_defs}`
-    pub fn mergePpDefs(self: *Server, defs: *const pp.Defs) !void {
+    /// `self.pp_defs = {**self.pp_defs, **file_obj.pp_defs}`, but for what
+    /// the file was preprocessed with (`from`: its compiler's symbols,
+    /// compiler_macros.zig)
+    pub fn mergePpDefs(self: *Server, defs: *const pp.Defs, from: *const pp.Defs) !void {
         const a = self.pp_defs_arena.allocator();
         var it = defs.iterator();
         while (it.next()) |e| {
-            const existing = self.pp_defs.get(e.key_ptr.*);
-            const same = existing != null and std.mem.eql(u8, existing.?.value, e.value_ptr.value) and
-                ((existing.?.args == null) == (e.value_ptr.args == null)) and
-                (existing.?.args == null or std.mem.eql(u8, existing.?.args.?, e.value_ptr.args.?));
-            if (same) continue;
+            if (sameDef(&self.pp_defs, e.key_ptr.*, e.value_ptr.*) or sameDef(from, e.key_ptr.*, e.value_ptr.*)) continue;
             const key = if (self.pp_defs.getKey(e.key_ptr.*)) |k| k else try a.dupe(u8, e.key_ptr.*);
             try self.pp_defs.put(a, key, .{
                 .args = try str.dupeOpt(a, e.value_ptr.args),
                 .value = try a.dupe(u8, e.value_ptr.value),
             });
         }
+    }
+
+    fn sameDef(defs: *const pp.Defs, name: []const u8, d: pp.Def) bool {
+        const existing = defs.get(name) orelse return false;
+        return std.mem.eql(u8, existing.value, d.value) and
+            ((existing.args == null) == (d.args == null)) and
+            (existing.args == null or std.mem.eql(u8, existing.args.?, d.args.?));
     }
 
     pub fn env(self: *Server, tmp: Allocator) objects.Env {

@@ -7,6 +7,15 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const objects = @import("objects.zig");
 const Obj = objects.Obj;
+const Ast = objects.Ast;
+
+/// IMPLICIT NONE in each program unit of `ast` that has no IMPLICIT
+/// statement (`-fimplicit-none`); the units inside them inherit it
+pub fn noneByDefault(ast: *Ast) void {
+    for (ast.scope_list.items) |sc| {
+        if (sc.parent == null and sc.implicit_vars == null) sc.implicit_vars = false;
+    }
+}
 
 /// The type of the names whose first letter is in `first`..`last`
 /// (lowercase)

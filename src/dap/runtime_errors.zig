@@ -94,10 +94,12 @@ const intel_error_stops = [_]Function{
 pub const gdb_functions = [_]Function{
     .{ .name = "_gfortran_runtime_error" },
     // every I/O error (an OPEN of a missing file, a READ of bad data):
-    // `generate_error_common(st_parameter_common *, int family, const char
-    // *message)`, which then ends the program unless the statement handles
-    // the error
-    .{ .name = "_gfortran_generate_error_common", .io_flags = .{ .argument = 0, .handled = gfortran_io_handled } },
+    // `generate_error(st_parameter_common *, int family, const char
+    // *message)`, which ends the program unless the statement handles the
+    // error. Not `generate_error_common`, which it calls: Ubuntu's
+    // libgfortran.so.5 (GCC 14.2) does not export it, and its OPEN errors
+    // do not reach the exported one
+    .{ .name = "_gfortran_generate_error", .io_flags = .{ .argument = 0, .handled = gfortran_io_handled } },
     .{ .name = "_gfortran_runtime_error_at" },
     .{ .name = "_gfortran_os_error" },
     .{ .name = "_gfortran_os_error_at" },
@@ -379,7 +381,7 @@ test "the register of ERROR STOP's argument of Flang's STOP functions" {
             try std.testing.expectEqualStrings("$r8l", b.condition.?);
         } else if (std.mem.eql(u8, b.name, "_lcompilers_print_error")) {
             try std.testing.expect(std.mem.startsWith(u8, b.condition.?, "*(unsigned short *)$rcx == 0x7325 && "));
-        } else if (std.mem.eql(u8, b.name, "_gfortran_generate_error_common")) {
+        } else if (std.mem.eql(u8, b.name, "_gfortran_generate_error")) {
             try std.testing.expectEqualStrings("(*(int *)$rcx & 0x2c) == 0", b.condition.?);
         } else try std.testing.expect(b.condition == null);
     }
@@ -392,9 +394,10 @@ test "the register of ERROR STOP's argument of Flang's STOP functions" {
 }
 
 test "gfortran's I/O errors: only those its statement does not handle (#530)" {
-    const io = comptime find("_gfortran_generate_error_common").?.io_flags.?;
+    const io = comptime find("_gfortran_generate_error").?.io_flags.?;
     try std.testing.expectEqual(@as(u2, 0), io.argument);
-    try std.testing.expect(!isErrorStop("_gfortran_generate_error_common"));
+    try std.testing.expect(!isErrorStop("_gfortran_generate_error"));
+    try std.testing.expect(find("_gfortran_generate_error_common") == null);
     // the flags lldb read on macOS (GCC 15): an OPEN of a missing file and a
     // READ of bad data stop, the OPEN with IOSTAT= does not
     for ([_]struct { u32, bool }{ .{ 0x01800300, true }, .{ 0x00004080, true }, .{ 0x01800320, false }, .{ 0x4, false }, .{ 0x8, false } }) |c| {

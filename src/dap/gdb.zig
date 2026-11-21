@@ -103,6 +103,10 @@ pub const State = struct {
     runtime_errors: bool = false,
     /// gdb's ids of the breakpoints on the runtime's error functions
     error_breakpoints: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
+    /// The program links gfortran's runtime DLL (gdb_dll.zig), and the
+    /// internal breakpoints there, by gdb's number
+    gfortran_dll: bool = false,
+    dll_breakpoints: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
     last_error: ?[]const u8 = null,
     /// The client supports `runInTerminal`
     run_in_terminal: bool = false,
@@ -549,6 +553,7 @@ pub fn deinit(s: *Session) void {
     if (s.g.source_root) |r| s.gpa.free(r);
     if (s.g.held_launch) |h| s.gpa.free(h);
     s.g.error_breakpoints.deinit(s.gpa);
+    s.g.dll_breakpoints.deinit(s.gpa);
     s.g.frames.deinit(s.gpa);
     s.g.nodes.deinit(s.gpa);
     if (s.g.nodes_arena) |*n| n.deinit();

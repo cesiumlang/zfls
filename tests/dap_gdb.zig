@@ -33,6 +33,7 @@ const lsp = @import("lsp_client");
 const dap = @import("dap_client.zig");
 const dap_lfortran = @import("dap_lfortran.zig");
 const dap_ifx_gdb = @import("dap_ifx_gdb.zig");
+const dap_gfortran = @import("dap_gfortran.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -151,7 +152,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -455,6 +456,9 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
 }
 
 fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
+    // gdb's `start` stops in the C `main` of Intel's runtime, at no line,
+    // not in the main program, `MAIN__` (ifx 2026.2, gdb 15.1)
+    if (setup.compiler == .ifx) return std.debug.print("skipped: ifx's main program is not gdb's start\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const c = try start(io, gpa, setup);
@@ -513,6 +517,13 @@ fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
     try dap_lfortran.errorStop(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, exe, setup.dir);
 }
 
+/// gfortran's runtime errors and stops beyond grid.f90's
+/// (tests/dap_gfortran.zig)
+fn gfortranRuntime(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran only\n", .{});
+    try dap_gfortran.run(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, setup.fc, setup.dir, true);
+}
+
 /// A program that a signal ends (SIGSEGV): its exit code is 128 + 11, and
 /// the signal is named (#440). gfortran's runtime on Windows catches the
 /// signal and exits with 3 (MinGW's C runtime).
@@ -546,6 +557,9 @@ fn crash(io: Io, gpa: Allocator, setup: Setup) !void {
     const said = try c.outputText(a);
     if (setup.compiler == .gfortran and builtin.target.os.tag == .windows) {
         try check(code == 3, "the program exited with 3 ({d})", .{code});
+    } else if (setup.compiler == .ifx) {
+        // Intel's runtime catches the signal: "forrtl: severe (174): SIGSEGV"
+        try check(code == 174, "the program exited with 174 ({d})", .{code});
     } else try check(code == 128 + 11 and contains(said, "SIGSEGV (11)"), "ended by SIGSEGV: {d}, said: {s}", .{ code, said[said.len -| 200..] });
     _ = try c.event("terminated");
 }
