@@ -150,3 +150,74 @@ test "an associate name has the rank of its selector and the attributes it gives
     };
     for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", "print *,", 0, @intCast(std.mem.find(u8, "print *, sec, vec, el, ex, sub, ab, ad, ap", c[0]).?)), c[1]);
 }
+
+test "SELECT TYPE: TYPE IS and CLASS IS names have the selector's rank and the guard's type (#701)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  type :: base_t
+        \\    integer :: id = 0
+        \\  end type
+        \\  type, extends(base_t) :: child_t
+        \\    real :: value = 0.0
+        \\  end type
+        \\contains
+        \\  subroutine s(items, ptrs, any)
+        \\    class(base_t), intent(in) :: items(:)
+        \\    class(base_t), pointer :: ptrs(:, :)
+        \\    class(*), intent(in) :: any(:)
+        \\    select type (it => items)
+        \\    type is (base_t)
+        \\      print *, size(it)
+        \\    class is (child_t)
+        \\      print *, size(it)
+        \\    class default
+        \\      print *, size(it)
+        \\    end select
+        \\    select type (el => items(1))
+        \\    type is (child_t)
+        \\      print *, el%value
+        \\    end select
+        \\    select type (pp => ptrs)
+        \\    type is (child_t)
+        \\      print *, pp(1, 1)%value
+        \\    end select
+        \\    select type (items)
+        \\    type is (child_t)
+        \\      print *, items(1)%value
+        \\    class default
+        \\      print *, size(items)
+        \\    end select
+        \\    select type (x => any)
+        \\    type is (real(8))
+        \\      call takes(x)
+        \\    type is (character(len=*))
+        \\      print *, x(2)
+        \\    end select
+        \\  end subroutine
+        \\  subroutine takes(v)
+        \\    real(8), intent(in) :: v(:)
+        \\    print *, v
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    const want = [_]struct { []const u8, usize, []const u8 }{
+        .{ "size(it)", 0, "TYPE(base_t), DIMENSION(:) :: it" },
+        .{ "size(it)", 1, "CLASS(child_t), DIMENSION(:) :: it" },
+        .{ "size(it)", 2, "CLASS(base_t), DIMENSION(:) :: it" },
+        .{ "el%value", 0, "TYPE(child_t) :: el" },
+        .{ "pp(1, 1)", 0, "TYPE(child_t), TARGET, DIMENSION(:, :) :: pp" },
+        .{ "items(1)%value", 0, "TYPE(child_t), DIMENSION(:) :: items" },
+        .{ "size(items)", 0, "CLASS(base_t), DIMENSION(:) :: items" },
+        .{ "takes(x)", 0, "REAL(8), DIMENSION(:) :: x" },
+        .{ "x(2)", 0, "CHARACTER(len=*), DIMENSION(:) :: x" },
+    };
+    for (want) |c| {
+        const plus: usize = if (std.mem.startsWith(u8, c[0], "size(")) 5 else if (std.mem.startsWith(u8, c[0], "takes(")) 6 else 0;
+        try w.expectHoverContains("t.f90", w.pos("t.f90", c[0], c[1], plus), c[2]);
+    }
+    // an intrinsic guard's name is of that type, not a derived one
+    try w.expectNoDiagnostics("t.f90");
+}

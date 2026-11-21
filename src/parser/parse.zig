@@ -492,8 +492,10 @@ pub const Parser = struct {
                 const name = try a.print("#SELECT{d}", .{counters.select});
                 const o = try Obj.newSelect(ast, line_no, name, info);
                 try ast.addScope(o, &R().END_SELECT, true, true);
-                const var_desc = try a.print("{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
-                if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.type)) |v| try ast.addVariable(v);
+                // a type guard's type, else that of a SELECT statement
+                // (whose associate names have their selector's)
+                const var_desc = if (info.type == 3) info.desc.? else try a.print("{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
+                if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.kind, info.type)) |v| try ast.addVariable(v);
                 p.dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
             },
             .typ => |info| {
@@ -813,7 +815,7 @@ pub const Parser = struct {
     const parseDocs = doc_comments.parseDocs;
 };
 
-pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, case_type: i32) !?*Obj {
+pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, kind: ?[]const u8, case_type: i32) !?*Obj {
     const parent = self.parent orelse return null;
     if (parent.getType(false) != C.TypeId.select) return null;
     var binding_name: ?[]const u8 = null;
@@ -826,12 +828,13 @@ pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, va
     // selector
     if (binding_name != null and case_type != 4 and case_type != 5) bound_var = null;
     if (binding_name) |bn| {
-        return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .link_obj = bound_var });
+        return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .kind = kind, .link_obj = bound_var });
     } else if (case_type == 5) {
         // `select rank (a)`: a is the selector itself
         return null;
     } else if (bound_var) |bv| {
-        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{});
+        // the selector names itself: in CLASS DEFAULT it is the selector
+        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{ .kind = kind, .link_obj = if (case_type == 4) bv else null });
     }
     return null;
 }

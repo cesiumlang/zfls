@@ -30,11 +30,12 @@ const lsp = @import("lsp_client");
 const util = @import("oracle_util.zig");
 const types = @import("gfortran_oracle/types.zig");
 const known = @import("gfortran_oracle/known.zig");
+const guards = @import("gfortran_oracle/guards.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 
 /// gfortran symbol attributes of entities zfls does not report
-const skip_attrs = [_][]const u8{ "ARTIFICIAL", "INTRINSIC-PROC", "USE-ASSOC", "MODULE", "PROGRAM", "IFSRC-IFBODY" };
+const skip_attrs = [_][]const u8{ "ARTIFICIAL", "INTRINSIC-PROC", "USE-ASSOC", "MODULE", "PROGRAM", "IFSRC-IFBODY", "UNLIMITED-POLYMORPHIC" };
 /// Attributes of procedures declared in the file (as opposed to procedures
 /// that are only called)
 const declared_proc_attrs = [_][]const u8{ "IFSRC-DECL", "CONTAINED", "MODULE-PROC", "GENERIC", "DUMMY", "EXTERNAL" };
@@ -138,6 +139,8 @@ const Gfortran = struct {
     dummies: Names = .empty,
     /// what the dump says of each variable
     vars: std.StringHashMapUnmanaged(types.Var) = .empty,
+    /// the temporaries of SELECT TYPE's type guards
+    temps: std.ArrayList(guards.Temp) = .empty,
 };
 
 /// The entities in gfortran's dump of `text` (`-fdump-fortran-original`)
@@ -229,8 +232,14 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             const in_parent = try a.print("{s}::{s}", .{ parent, name });
             if (out.entities.contains(in_parent) and !tokens.contains("CONTAINED")) try tokens.put(a, "USED-IN-SUBMODULE", {});
         }
+        if (guards.isTemp(name) and tokens.contains("SELECT-TYPE-TEMPORARY")) {
+            try out.temps.append(a, .{ .ns = ns, .name = name, .v = types.varOf(block) });
+            continue;
+        }
         const skip = from_host or
             std.mem.startsWith(u8, name, "_") or
+            // gfortran's own procedures (`__copy_character_1`)
+            std.mem.startsWith(u8, lastPart(ns, "::"), "_") or
             std.mem.eql(u8, name, lastPart(ns, "::")) or
             has(&skip_attrs, &tokens) or
             // parent-module entities seen from a submodule
@@ -289,6 +298,8 @@ const Zfls = struct {
     bodies: Names = .empty,
     /// the first line of each variable's hover (its Declarations)
     decls: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// all of them, of the names that constructs flatten into one
+    all_decls: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
 };
 
 /// The entities of zfls's object tree (`--debug_parser` output), null when
@@ -339,7 +350,15 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
         }
         if (r.kind == -1) try res.bodies.put(a, kept.items, {});
         try res.entities.put(a, kept.items, zflsKind(r.kind));
-        if (declared.get(r.fqsn)) |d| try res.decls.put(a, kept.items, d);
+        if (declared.get(r.fqsn)) |d| {
+            try res.decls.put(a, kept.items, d);
+            const gop = try res.all_decls.getOrPut(a, kept.items);
+            if (!gop.found_existing) gop.value_ptr.* = .empty;
+            // the tree lists an object under each scope it is in
+            for (gop.value_ptr.items) |o| {
+                if (std.mem.eql(u8, o, d)) break;
+            } else try gop.value_ptr.append(a, d);
+        }
     }
     // scopes found by gfortran as namespaces, not entities
     var i: usize = 0;
@@ -473,8 +492,12 @@ pub fn main(init: std.process.Init) !u8 {
         }
         for (got.entities.keys(), got.entities.values()) |name, zk| if (!ref.entities.contains(name))
             try diffs.append(a, try a.print("only in zfls: {s} ({s})", .{ name, @tagName(zk) }));
+        // the associate names of type guards, with gfortran's temporaries
+        const guarded = try guards.names(a, ref.temps.items, &got.all_decls);
+        try guards.check(a, &diffs, &ref.vars, ref.temps.items, &got.all_decls);
         var vit = ref.vars.iterator();
         while (vit.next()) |e| {
+            if (guarded.contains(e.key_ptr.*)) continue;
             const decl = got.decls.get(e.key_ptr.*) orelse continue;
             if (try types.mismatch(a, e.value_ptr.*, decl)) |why| try diffs.append(a, try a.print("differs: {s}: {s}", .{ e.key_ptr.*, why }));
         }
@@ -496,6 +519,10 @@ pub fn main(init: std.process.Init) !u8 {
     }
     std.debug.print("\n{d} files checked, {d} with differences\n", .{ checked, mismatched });
     return if (mismatched > 0) 1 else 0;
+}
+
+test {
+    _ = guards;
 }
 
 test "dump parsing" {
