@@ -11,6 +11,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const fixed_columns = @import("fixed_columns.zig");
+const line_size = @import("line_size.zig");
 const helpers = @import("../helpers.zig");
 
 pub const Form = enum { fixed, free };
@@ -93,9 +94,9 @@ fn codeEnd(line: []const u8) usize {
 
 /// The lines of a file of form `fixed` that switches (`switches`) as free
 /// form: a copy of them in one buffer (each followed by `\n`), owned by
-/// `gpa`, with its lines. The columns of a fixed-form code line past
-/// `columns` (`fixed_line_length`) are blanks.
-pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: ?usize, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+/// `gpa`, with its lines. The columns of a fixed-form code line past its
+/// length in `columns` (`fixed_line_length`, FIXEDFORMLINESIZE) are blanks.
+pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: line_size.Limits, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
     // the form of each line, and whether its code needs an `&` appended
     const forms = try gpa.alloc(Form, raw.len);
     defer gpa.free(forms);
@@ -116,7 +117,7 @@ pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: ?usize, 
         }
         if (isFixedComment(l, d_lines_code) or (l.len > 0 and l[0] == '#')) continue;
         if (isFixedContinuation(l)) if (last_code) |c| {
-            const code = fixed_columns.code(raw[c], columns);
+            const code = fixed_columns.code(raw[c], columns.at(c));
             const end = codeEnd(code);
             amp[c] = if (end > 1 and code[end - 1] == ' ') .blank else .insert;
         };
@@ -135,7 +136,7 @@ pub fn asFree(gpa: Allocator, fixed: bool, d_lines_code: bool, columns: ?usize, 
         const line = text[at .. at + l.len + @intFromBool(amp[i] == .insert)];
         @memcpy(line[0..l.len], l);
         if (forms[i] == .fixed) {
-            if (columns) |c| if (!isFixedComment(l, d_lines_code)) fixed_columns.blank(line[0..l.len], c);
+            if (columns.at(i)) |c| if (!isFixedComment(l, d_lines_code)) fixed_columns.blank(line[0..l.len], c);
             n = fixedLine(line, l.len, amp[i], d_lines_code);
         }
         lines.appendAssumeCapacity(line[0..n]);
@@ -222,7 +223,7 @@ test "fixed-form lines as free form" {
         "!dir$ free",
         "end module",
     };
-    const out = try asFree(gpa, false, false, null, &raw);
+    const out = try asFree(gpa, false, false, .{ .default = null }, &raw);
     defer gpa.free(out.text);
     var lines = out.lines;
     defer lines.deinit(gpa);
@@ -248,7 +249,7 @@ test "fixed-form lines as free form" {
     try std.testing.expectEqual(lines.items.len, std.mem.count(u8, out.text, "\n"));
     // a fixed-form file that switches to free form; debug lines as code
     const raw2 = [_][]const u8{ "      X = 1", "D     X = 2", "!dir$ free", "x = 3 + &", "  4" };
-    const out2 = try asFree(gpa, true, true, null, &raw2);
+    const out2 = try asFree(gpa, true, true, .{ .default = null }, &raw2);
     defer gpa.free(out2.text);
     var lines2 = out2.lines;
     defer lines2.deinit(gpa);
@@ -257,7 +258,7 @@ test "fixed-form lines as free form" {
     try std.testing.expectEqualStrings("  4", lines2.items[4]);
     // the columns past fixed_line_length, of the fixed-form lines only
     const raw3 = [_][]const u8{ "      X = 1 + Y", "     &    + Z", "!dir$ free", "x = 3 + long_free_line" };
-    const out3 = try asFree(gpa, true, false, 13, &raw3);
+    const out3 = try asFree(gpa, true, false, .{ .default = 13 }, &raw3);
     defer gpa.free(out3.text);
     var lines3 = out3.lines;
     defer lines3.deinit(gpa);

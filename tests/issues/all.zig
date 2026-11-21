@@ -42,6 +42,7 @@ test {
     _ = @import("hover_declarations.zig");
     _ = @import("hover_types.zig");
     _ = @import("intel_directives.zig");
+    _ = @import("intel_line_size.zig");
     _ = @import("plain_comments.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");

@@ -239,7 +239,7 @@ const Tokenizer = struct {
         if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
         // the columns past the code of a fixed-form line are a comment
         var line = raw;
-        if (t.fixed_limit) |n| if (t.file.fixed and raw.len > n) {
+        if (t.file.fixedLimitAt(ln, t.fixed_limit)) |n| if (t.file.fixed and raw.len > n) {
             line = raw[0..n];
             if (t.unknown == null) try t.add(ln, raw, n, raw.len, .{ .type = .comment });
         };

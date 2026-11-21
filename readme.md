@@ -74,6 +74,7 @@ The parser reads these in every file, whichever compiler is configured; the colu
 | `!GCC$ ATTRIBUTES NO_ARG_CHECK` (gfortran), `!DIR$ ATTRIBUTES NO_ARG_CHECK` (Intel): no argument checks for the dummy arguments it names | ✓ | ✓ | ✓ | – | – | – | – |
 | `!DIR$ FIXED`, `!DIR$ FREE`: the source form of the lines after them | – | – | – | ✓ | – | – | – |
 | `!DEC$ NOFREEFORM`, `!DEC$ FREEFORM` (also `!DIR$`): the source form of the lines after them | – | ✓ | ✓ | – | – | – | – |
+| `!DEC$ FIXEDFORMLINESIZE:n` (also `!DIR$`): the line length of the fixed-form lines after it, in place of `fixed_line_length` | – | ✓ | ✓ | – | – | – | – |
 | [Debug lines](#debug-lines) (`D` in column 1 of fixed form) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 | `AUTOMATIC` and `STATIC` (DEC) statements and attributes (gfortran's with `-fdec-static`) | ✓ | ✓ | ✓ | – | – | – | – |
 | `VIRTUAL` (DEC's `DIMENSION`), `PARAMETER` without parentheses (`PARAMETER N = 10`, of the type of its value) | – | ✓ | ✓ | – | – | – | – |
