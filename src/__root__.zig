@@ -35,6 +35,7 @@ pub const json5 = @import("json5.zig");
 pub const intrinsics = @import("intrinsics.zig");
 pub const settings = @import("settings.zig");
 pub const glob = @import("glob.zig");
+pub const vscode_glob = @import("vscode_glob.zig");
 pub const jsonrpc = @import("jsonrpc.zig");
 pub const logger = @import("logger.zig");
 pub const stdio = @import("stdio.zig");

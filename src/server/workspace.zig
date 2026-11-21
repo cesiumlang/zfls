@@ -565,9 +565,9 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         source_form.closed(self, filepath);
     }
     // the form the editor's language names, while the document is open
-    // (for a `.fpp`, zfls's detection, unless the user chose, #632)
+    // (for a `.fpp`, zfls's detection, unless the user chose, #632, #686)
     const language: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
-    const form = source_form.opened(self, filepath, language);
+    const form = try source_form.opened(self, a, filepath, language);
     if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
         // a document that was never saved, or whose file is gone: it leaves

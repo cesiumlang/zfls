@@ -5,6 +5,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { FORMATTERS, type ServerSettings } from "./settingsSync";
+import { fileAssociations } from "./sourceForm";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -109,6 +110,10 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
         }
         break;
     }
+  }
+  const associations = editorAssociations();
+  if (Object.keys(associations).length > 0) {
+    args.push("--file_associations", JSON.stringify(associations));
   }
   args.push(...linterArguments(folder));
   args.push(...formattingArguments(folder));
@@ -329,7 +334,20 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
         break;
     }
   }
-  return { ...out, ...linterSettings(folder), ...formattingSettings(folder), ...fortitudeSettings(folder), ...codeeSettings(folder) };
+  return {
+    ...out,
+    file_associations: editorAssociations(),
+    ...linterSettings(folder),
+    ...formattingSettings(folder),
+    ...fortitudeSettings(folder),
+    ...codeeSettings(folder),
+  };
+}
+
+/** `files.associations` for zfls (`fileAssociations`): as VS Code's
+ * languages read it, of no folder */
+function editorAssociations(): Record<string, string> {
+  return fileAssociations(vscode.workspace.getConfiguration("files").get<unknown>("associations"));
 }
 
 /** The compiler of fixed-form files (`zfls.linter.fixedCompiler`, its path
@@ -458,6 +476,7 @@ export function affectsServer(e: vscode.ConfigurationChangeEvent): boolean {
     e.affectsConfiguration("zfls.fortitude") ||
     e.affectsConfiguration("zfls.codee") ||
     e.affectsConfiguration("zfls.formatting") ||
+    e.affectsConfiguration("files.associations") ||
     OPTIONS.some((o) => e.affectsConfiguration(`zfls.${o.setting}`))
   );
 }

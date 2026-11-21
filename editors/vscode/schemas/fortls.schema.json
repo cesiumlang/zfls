@@ -62,6 +62,14 @@
         "null"
       ]
     },
+    "file_associations": {
+      "description": "The editor's languages of files by glob pattern, as VS Code's files.associations, e.g. {\"*.fpp\": \"FortranFixedForm\"}: a .fpp file whose language is FortranFreeForm or FortranFixedForm is read in that form, not as its text suggests (a pattern with / matches the absolute path, one without the file name; the longest matching pattern wins)",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
     "nthreads": {
       "description": "Number of threads to use during workspace initialization (default: 4)",
       "type": "integer",

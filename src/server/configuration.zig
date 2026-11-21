@@ -49,6 +49,7 @@ const format = @import("format.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
+const source_form = @import("source_form.zig");
 const project = @import("../project.zig");
 
 pub const signature_triggers: []const []const u8 = &.{ "(", "," };
@@ -288,6 +289,7 @@ fn apply(self: *Server, a: Allocator, next: Settings, force_reindex: bool) !void
             clangd.start(self, a);
         }
     }
+    if (!same(&prev, &next, "file_associations")) try source_form.associationsChanged(self, a);
     if (!same(&prev, &next, "debug_log") and self.s.debug_log) try workspace.configLogger(self);
     try workspace.logOptions(self, a);
     if (!same(&prev, &next, "diagnostic_severity")) try diagnostics.checkDiagnosticSeverity(self, a);

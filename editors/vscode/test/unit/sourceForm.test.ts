@@ -4,7 +4,7 @@
 
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { languageToSet } from "../../src/sourceForm";
+import { fileAssociations, languageToSet } from "../../src/sourceForm";
 
 const fixed = { uri: "file:///w/a.fpp", form: "fixed", languageId: "FortranFixedForm" } as const;
 const free = { uri: "file:///w/b.fpp", form: "free", languageId: "FortranFreeForm" } as const;
@@ -21,4 +21,15 @@ test("a document of the form's language already, or of no form's, is left as it 
   assert.equal(languageToSet("FortranNamelist", fixed), null);
   assert.equal(languageToSet("plaintext", fixed), null);
   assert.equal(languageToSet("FortranFreeForm", { ...fixed, languageId: "c" }), null);
+});
+
+test("files.associations goes to zfls as it is, but for languages that are not strings (#686)", () => {
+  const value = { "*.fpp": "FortranFixedForm", "**/gen/*.fpp": "FortranFreeForm", "*.md": "markdown", "*.x": 3, "*.y": null };
+  assert.deepEqual(fileAssociations(value), {
+    "*.fpp": "FortranFixedForm",
+    "**/gen/*.fpp": "FortranFreeForm",
+    "*.md": "markdown",
+  });
+  assert.deepEqual(fileAssociations(undefined), {});
+  assert.deepEqual(fileAssociations(["*.fpp"]), {});
 });

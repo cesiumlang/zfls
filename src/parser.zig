@@ -187,7 +187,10 @@ pub const FortranFile = struct {
     /// language: `formOfLanguage`), which comes before the form that its
     /// name and text suggest
     forced_form: ?SourceForm = null,
-    /// The form of the file's command (`-ffixed-form`), after the editor's
+    /// The form the editor's file associations give a `.fpp` file, after
+    /// the editor's language (server/source_form.zig)
+    associated_form: ?SourceForm = null,
+    /// The form of the file's command (`-ffixed-form`), after those
     command_form: ?SourceForm = null,
     /// `-fimplicit-none`: IMPLICIT NONE where no IMPLICIT statement is
     implicit_none: bool = false,
@@ -294,13 +297,13 @@ pub const FortranFile = struct {
     }
 
     /// Whether the file is in fixed form: as the editor says, if it does
-    /// (`forced_form`). A file named as free-form source
+    /// (`forced_form`, `associated_form`). A file named as free-form source
     /// (`.f90`, `.F08`, ...) is not, as compilers decide: its text cannot
     /// tell when no line is indented 1 to 4 columns nor ends with `&` (the
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
     fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
-        if (self.forced_form orelse self.command_form) |form| return form == .fixed;
+        if (self.forced_form orelse self.associated_form orelse self.command_form) |form| return form == .fixed;
         if (suffixes.formOf(self.path) == .free) return false;
         return helpers.detectFixedFormat(lines);
     }

@@ -44,6 +44,10 @@ pub const PpDef = struct { name: []const u8, value: []const u8 };
 /// `warning`, `information` or `hint`
 pub const DiagLevel = struct { code: []const u8, level: []const u8 };
 
+/// A glob pattern of `file_associations` and the editor language of the
+/// files it matches (VS Code's `files.associations`)
+pub const Association = struct { pattern: []const u8, language: []const u8 };
+
 pub const Settings = struct {
     // General options
     config: []const u8 = ".fortlsrc",
@@ -70,6 +74,10 @@ pub const Settings = struct {
     /// How a fixed-form line with D or d in column 1 (a debug line) is
     /// read: `comment` (null: the default) or `code`
     d_lines: ?[]const u8 = null,
+    /// The editor's languages of files by glob pattern (VS Code's
+    /// `files.associations`): a `.fpp` file given `FortranFreeForm` or
+    /// `FortranFixedForm` is read in that form (server/source_form.zig)
+    file_associations: std.ArrayList(Association) = .empty,
     // Autocomplete options
     autocomplete_no_prefix: bool = false,
     /// Do not offer names of modules that are not used yet (with the USE
@@ -288,6 +296,16 @@ pub fn applyDiagnosticSeverity(a: Allocator, s: *Settings, v: json.Value) !void 
     }
 }
 
+/// Store a JSON `file_associations` value, `{"pattern": "language"}`; a
+/// language that is not a string is left out, as VS Code does
+pub fn applyFileAssociations(a: Allocator, s: *Settings, v: json.Value) !void {
+    s.file_associations = .empty;
+    if (v != .object) return;
+    for (v.object.keys(), v.object.values()) |k, x| {
+        if (x == .string) try s.file_associations.append(a, .{ .pattern = k, .language = x.string });
+    }
+}
+
 /// String form of a JSON scalar as Python's `str()` would render it
 pub fn jsonScalarString(a: Allocator, v: json.Value) ![]const u8 {
     return switch (v) {
@@ -368,6 +386,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "comment_markers")) |v| s.comment_markers = try jsonList(a, v);
     s.disable_openmp_conditional = jsonBool(json.get(cfg, "disable_openmp_conditional"), s.disable_openmp_conditional);
     if (json.get(cfg, "d_lines")) |v| s.d_lines = json.str(v);
+    if (json.get(cfg, "file_associations")) |v| try applyFileAssociations(a, s, v);
     // General options
     s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
     s.notify_init = jsonBool(json.get(cfg, "notify_init"), s.notify_init);
@@ -474,7 +493,7 @@ pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
             ?StrList => if (v) |l| {
                 @field(out, name) = StrList{ .items = try l.items.clone(a) };
             },
-            std.ArrayList(PpDef), std.ArrayList(DiagLevel) => @field(out, name) = try v.clone(a),
+            std.ArrayList(PpDef), std.ArrayList(DiagLevel), std.ArrayList(Association) => @field(out, name) = try v.clone(a),
             else => {},
         }
     }
@@ -499,10 +518,14 @@ pub fn toJson(a: Allocator, s: *const Settings) Allocator.Error!json.Value {
             const out: json.Value = switch (@FieldType(Settings, name)) {
                 StrList => try json.from(a, v.slice()),
                 ?StrList => if (v) |l| try json.from(a, l.slice()) else .null,
-                std.ArrayList(PpDef), std.ArrayList(DiagLevel) => blk: {
+                std.ArrayList(PpDef), std.ArrayList(DiagLevel), std.ArrayList(Association) => blk: {
                     var m: json.ObjectMap = .empty;
                     for (v.items) |x| {
-                        const kv = if (@TypeOf(x) == PpDef) .{ x.name, x.value } else .{ x.code, x.level };
+                        const kv = switch (@TypeOf(x)) {
+                            PpDef => .{ x.name, x.value },
+                            DiagLevel => .{ x.code, x.level },
+                            else => .{ x.pattern, x.language },
+                        };
                         try m.put(a, kv[0], .{ .string = kv[1] });
                     }
                     break :blk .{ .object = m };
