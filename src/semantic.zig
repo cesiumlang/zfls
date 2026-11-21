@@ -515,6 +515,9 @@ const statement_keywords = [_][]const u8{
     // Fortran 2018's EVENT POST, EVENT WAIT, FORM TEAM, CHANGE TEAM and
     // FAIL IMAGE (#538)
                "event",         "form",        "change",          "fail",
+    // DEC's AUTOMATIC, STATIC (ifx, gfortran's `-fdec-static`) and VIRTUAL
+    // (ifx)
+    "automatic",       "static",        "virtual",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -531,7 +534,8 @@ const spec_keywords = [_][]const u8{
     "protected",   "public",      "pure",         "real",            "recursive",     "save",
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
-    "record",      "union",       "map",          "attributes",      "byte",
+    "record",      "union",       "map",          "attributes",      "byte",          "automatic",
+    "static",      "virtual",
 };
 
 fn isSpecKeyword(word: []const u8) bool {
