@@ -31,6 +31,7 @@ const lsp = @import("lsp_client");
 
 const dap = @import("dap_client.zig");
 const dap_lfortran = @import("dap_lfortran.zig");
+const dap_gfortran = @import("dap_gfortran.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -144,7 +145,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -489,6 +490,13 @@ fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = try Io.Dir.cwd().readFileAlloc(io, "tests/dap/stops.f90", a, .limited(1 << 16)) });
     try build(io, a, setup, src, exe, &.{});
     try dap_lfortran.errorStop(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, exe, setup.dir);
+}
+
+/// gfortran's runtime errors and stops beyond grid.f90's
+/// (tests/dap_gfortran.zig)
+fn gfortranRuntime(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran only\n", .{});
+    try dap_gfortran.run(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, setup.fc, setup.dir, true);
 }
 
 /// A program that a signal ends (SIGSEGV): its exit code is 128 + 11, and
