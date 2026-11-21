@@ -266,7 +266,10 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
     while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
-    // what hover shows of each variable, for the oracles' types and kinds
+    // what hover shows of each variable, for the oracles' types and kinds,
+    // with the file's links resolved as a workspace of it alone would
+    var tree: objects.ObjTree = .empty;
+    try ast.resolveLinks(.{ .tree = &tree, .tmp = a }, 0);
     o.print("\n{s}\nDeclarations\n{s}\n\n", .{ sep80, sep80 });
     var seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
     for (try ast.getScopes(a, null)) |obj| try printDeclarations(a, o, obj, &seen);
