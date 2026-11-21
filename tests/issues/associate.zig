@@ -121,3 +121,32 @@ test "the types of associate names bound to literals, expressions and intrinsic 
     }
     try w.expectNoDiagnostics("t.f90");
 }
+
+test "an associate name has the rank of its selector and the attributes it gives (#691)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\subroutine s(d)
+        \\  implicit none
+        \\  real, intent(in) :: d(:)
+        \\  real :: b(10, 3), c(4)
+        \\  real, pointer :: pt(:)
+        \\  integer :: idx(2)
+        \\  character(len=8) :: str
+        \\  associate (sec => b(:, 1), vec => b(idx, 2), el => b(1, 2), ex => c + 1.0, sub => str(2:4), ab => abs(b), ad => d, ap => pt)
+        \\    print *, sec, vec, el, ex, sub, ab, ad, ap
+        \\  end associate
+        \\end subroutine
+        \\
+    }}, .{});
+    defer w.deinit();
+    const want = [_]struct { []const u8, []const u8 }{
+        .{ "sec", "REAL, DIMENSION(:) :: sec" },
+        .{ "vec", "REAL, DIMENSION(:) :: vec" },
+        .{ "el", "REAL :: el" },
+        .{ "ex", "REAL, DIMENSION(:) :: ex" },
+        .{ "sub", "CHARACTER(len=8) :: sub" },
+        .{ "ab", "REAL, DIMENSION(:,:) :: ab" },
+        .{ "ad", "REAL, DIMENSION(:) :: ad" },
+        .{ "ap", "REAL, TARGET, DIMENSION(:) :: ap" },
+    };
+    for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", "print *,", 0, @intCast(std.mem.find(u8, "print *, sec, vec, el, ex, sub, ab, ad, ap", c[0]).?)), c[1]);
+}

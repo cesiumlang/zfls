@@ -3,7 +3,7 @@
 //! (`1.0`, `'abc'`, `7_8`), a call of an intrinsic function whose result
 //! type is fixed or that of its first argument (`size(x)`, `abs(r)`), or
 //! an expression of variables and literals with intrinsic operators
-//! (`x(1) + 2`).
+//! (`x(1) + 2`); and its rank (#691).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -13,6 +13,7 @@ const Env = objects.Env;
 const literals = @import("../literals.zig");
 const argcheck = @import("../argcheck.zig");
 const typing = @import("../argcheck/typing.zig");
+const helpers = @import("../helpers.zig");
 
 /// A declared type: `INTEGER` and `(8)`
 pub const Type = struct { desc: []const u8, kind: ?[]const u8 = null };
@@ -40,6 +41,10 @@ const fixed_results = [_]struct { []const u8, []const u8 }{
 /// The intrinsic functions whose result has the type of their first
 /// argument
 const same_results = "abs sqrt exp log log10 sin cos tan asin acos atan atan2 sinh cosh tanh mod modulo sign max min sum product maxval minval dot_product matmul transpose merge huge tiny epsilon spacing nearest fraction aint anint dim iand ior ieor not ishft ishftc ibset ibclr ibits reshape pack unpack spread cshift eoshift";
+
+/// The elemental intrinsic functions: their result has the rank of their
+/// array arguments
+const elemental = "abs sqrt exp log log10 sin cos tan asin acos atan atan2 sinh cosh tanh mod modulo sign max min dim aint anint int nint floor ceiling real float sngl dble dfloat cmplx conjg aimag char achar ichar iachar iand ior ieor not ishft ishftc ibset ibclr ibits btest merge spacing nearest fraction exponent len_trim adjustl adjustr index scan verify lge lgt lle llt popcnt poppar leadz trailz";
 
 fn inList(list: []const u8, name: []const u8) bool {
     var it = std.mem.tokenizeScalar(u8, list, ' ');
@@ -100,6 +105,61 @@ fn typeIn(env: Env, scope: *Obj, e: []const u8, line_no: usize, depth: usize) Al
         .unsigned => .{ .desc = "UNSIGNED" },
         .derived, .unknown => null,
     };
+}
+
+/// The rank of selector `text` in `scope` (1-based `line_no`): of a
+/// variable, its section or element (`b(:, 1)`, `b(v, 2)` with an array
+/// `v`), an expression of them with intrinsic operators, or a call of an
+/// elemental intrinsic function; null when it cannot be told
+pub fn rankOf(env: Env, scope: *Obj, text: []const u8, line_no: usize) Allocator.Error!?usize {
+    return rankIn(env, scope, std.mem.trim(u8, text, " \t"), line_no, 0);
+}
+
+fn rankIn(env: Env, scope: *Obj, e: []const u8, line_no: usize, depth: usize) Allocator.Error!?usize {
+    if (e.len == 0 or depth > 4) return null;
+    if (typing.literalCategory(e) != null) return 0;
+    if (std.mem.findScalar(u8, e, '(')) |open| if (e[e.len - 1] == ')' and typing.matching(e, open) == e.len - 1) {
+        const name = std.mem.trim(u8, e[0..open], " \t");
+        if (typing.isName(name) and inList(elemental, name)) {
+            const hidden = if (try objects.findInScope(env, scope, try std.ascii.allocLowerString(env.tmp, name), .{ .var_line_number = line_no })) |o| o.kind != .intrinsic else false;
+            // the rank of its arrays, which conform
+            if (!hidden) {
+                var rank: usize = 0;
+                var args = e[open + 1 .. e.len - 1];
+                while (args.len > 0) {
+                    const end = typing.topLevel(args, ',') orelse args.len;
+                    var arg = args[0..end];
+                    if (typing.keywordOf(arg) != null) arg = arg[std.mem.findScalar(u8, arg, '=').? + 1 ..];
+                    rank = @max(rank, (try rankIn(env, scope, std.mem.trim(u8, arg, " \t"), line_no, depth + 1)) orelse return null);
+                    args = if (end < args.len) args[end + 1 ..] else "";
+                }
+                return rank;
+            }
+        }
+    };
+    const typed = (try argcheck.expressionType(env.tmp, env, scope.file_ast, scope, e, line_no)) orelse return null;
+    if (!typed.array) return 0;
+    return if (typed.rank > 0) typed.rank else null;
+}
+
+/// The rank of what an ASSOCIATE name bound to `text` stands for when it
+/// differs from that of `linked`, the variable it is linked to (`b(:, 1)`
+/// of `b(10, 3)`), else -1; of an expression (`linked` null), its rank,
+/// or -1 when it cannot be told
+pub fn associateRank(env: Env, scope: *Obj, text: []const u8, line_no: usize, linked: ?*const Obj) Allocator.Error!i32 {
+    const subscripted = std.mem.findScalar(u8, text, '(') != null;
+    if (try rankOf(env, scope, text, line_no)) |r| {
+        if (linked) |o| if (!subscripted and r == (argcheck.rankOf(o.keyword_info.dimension) orelse 0)) return -1;
+        return @intCast(r);
+    }
+    if (linked == null or !subscripted) return -1;
+    // the sections among the first subscripts
+    const subs = helpers.getParenSubstring(text) orelse return -1;
+    var rank: i32 = 0;
+    for (try helpers.splitArgs(env.tmp, subs)) |sub| {
+        if (std.mem.findScalar(u8, sub, ':') != null) rank += 1;
+    }
+    return rank;
 }
 
 test "designators" {
