@@ -342,7 +342,7 @@ With gdb and the engine, the module variables that the frame's line sees are a s
 
 A program of coarrays linked with gfortran's `-fcoarray=lib -lcaf_shmem` (GCC 16) runs each image as a process of its own, which neither gdb nor lldb-dap follows (gdb on Windows debugs no child process): its breakpoints, runtime errors and ERROR STOP in the images do not stop, and `zfls dap` says so in the Debug Console at the launch. Build it with `-lcaf_single` to debug one image in the program's own process.
 
-On Windows, MSYS2's gdb reads no symbols of `libgfortran-5.dll`, so it stops only at the runtime's functions that the program calls itself (a bound exceeded, ERROR STOP), not at the errors the runtime raises inside the DLL (an I/O error, `RANDOM_SEED`, `MATMUL`'s shapes). A program linked with `-static-libgfortran -static-libquadmath` has them all; Debug Fortran File builds gfortran's programs so on Windows. `--text JSON` translates the words it shows (the VS Code extension passes them in VS Code's language).
+On Windows, MSYS2's gdb reads no symbols of `libgfortran-5.dll`: a breakpoint on one of its functions by name lands in the program's import thunk only, and so misses the errors the runtime raises inside the DLL (an I/O error, `RANDOM_SEED`, `MATMUL`'s shapes). For a program linked with the DLL, zfls dap reads the DLL's export table when gdb loads it (gdb's Python) and sets the filter's breakpoints at those functions' addresses in the DLL instead, so they stop there too. Debug Fortran File builds gfortran's programs with `-static-libgfortran -static-libquadmath` on Windows all the same. `--text JSON` translates the words it shows (the VS Code extension passes them in VS Code's language).
 
 With nvim-dap, for instance:
 

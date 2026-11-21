@@ -2,7 +2,8 @@
 //! beyond tests/dap/grid.f90's (tests/dap/runtime.f90, by its argument):
 //! an I/O error without `iostat=` stops and one with it does not (#530),
 //! an error raised inside libgfortran stops (`RANDOM_SEED`; on Windows the
-//! program links libgfortran statically, as Debug Fortran File does, #531),
+//! program links libgfortran statically, as Debug Fortran File does, #531,
+//! and with its DLL, #615),
 //! ERROR STOP with a text and with `quiet=` stops, as with `-fcoarray=lib`
 //! (#532, when libcaf_single links), with gdb a CHARACTER of kind 4
 //! (#533), and a program linked with libcaf_shmem, whose images the
@@ -54,6 +55,18 @@ pub fn run(io: Io, gpa: Allocator, argv: []const []const u8, fc: []const u8, dir
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = text });
     const exe = (try build(io, a, fc, dir, src, "runtime", &.{})) orelse return error.BuildFailed;
     for (cases) |c| try runCase(io, gpa, argv, exe, dir, c, if (c.marker) |m| lineOf(text, m) else 0);
+    // on Windows also linked with libgfortran-5.dll, whose functions gdb
+    // has no symbols of: the errors raised inside it stop at zfls's
+    // breakpoints on its exports (#615), and an I/O error with iostat= not
+    if (sysinfo.target.os.tag == .windows) {
+        const with_dll = (try build(io, a, fc, dir, src, "runtime_dll", &.{"-shared-libgfortran"})) orelse return error.BuildFailed;
+        for (cases) |c| {
+            if (!std.mem.eql(u8, c.arg, "seed") and !std.mem.eql(u8, c.arg, "open") and !std.mem.eql(u8, c.arg, "iostat")) continue;
+            var dc = c;
+            dc.label = try a.print("{s} (DLL)", .{c.arg});
+            try runCase(io, gpa, argv, with_dll, dir, dc, if (c.marker) |m| lineOf(text, m) else 0);
+        }
+    }
     if (gdb) try wide(io, gpa, argv, exe, dir, src, lineOf(text, "stop here: wide"));
     // images as processes of their own (-lcaf_shmem): said at the launch
     try imagesApart(io, gpa, argv, fc, dir);
@@ -77,11 +90,16 @@ fn build(io: Io, a: Allocator, fc: []const u8, dir: []const u8, src: []const u8,
     const exe = try std.Io.Dir.path.join(a, &.{ dir, if (windows) try a.print("{s}.exe", .{name}) else name });
     var compile: std.ArrayList([]const u8) = .empty;
     try compile.appendSlice(a, &.{ fc, "-g", "-O0", "-c", src, "-o", obj });
-    for (flags) |f| if (!std.mem.startsWith(u8, f, "-l")) try compile.append(a, f);
+    // `-shared-libgfortran` (this driver's, not gfortran's): the runtime's
+    // DLL (#615)
+    for (flags) |f| if (!std.mem.startsWith(u8, f, "-l") and !std.mem.eql(u8, f, "-shared-libgfortran")) try compile.append(a, f);
     var link: std.ArrayList([]const u8) = .empty;
     try link.appendSlice(a, &.{ fc, "-g", obj, "-o", exe });
-    try link.appendSlice(a, flags);
-    if (windows) try link.appendSlice(a, &.{ "-static-libgfortran", "-static-libquadmath" });
+    for (flags) |f| if (!std.mem.eql(u8, f, "-shared-libgfortran")) try link.append(a, f);
+    const dll = for (flags) |f| {
+        if (std.mem.eql(u8, f, "-shared-libgfortran")) break true;
+    } else false;
+    if (windows and !dll) try link.appendSlice(a, &.{ "-static-libgfortran", "-static-libquadmath" });
     for ([_][]const []const u8{ compile.items, link.items }) |cmd| {
         const r = try std.process.run(a, io, .{ .argv = cmd, .cwd = .{ .path = dir } });
         if (!r.term.success()) {
