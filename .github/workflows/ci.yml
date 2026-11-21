@@ -61,7 +61,6 @@ env:
   FORTLS_REPO: fortran-lang/fortls
   FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
   PYTHON_VERSION: "3.12"
-  NODE_VERSION: "22"
 
 defaults:
   run:
@@ -368,7 +367,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
 
       # The VS Code extension, once per VS Code platform with the matching
       # zfls from dist/ in it, and once without one
@@ -833,7 +832,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
 
       # packaging/install.sh on macOS arm64 (the install-script job's two
       # installs, here so that a run needs one macOS arm64 runner): it

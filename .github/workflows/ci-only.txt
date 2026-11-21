@@ -14,6 +14,8 @@ tools/*
 packaging/*
 # line endings at checkout, which the tests can see
 .gitattributes
+# the Node.js of CI's extension builds and of the publishing workflows
+.node-version
 # CI's workflows, lists and scripts, and the release notes' sections. A
 # change to how ci.yml builds the binaries (optimize mode, minimum macOS)
 # is released with the next change to the binaries themselves.
