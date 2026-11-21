@@ -74,10 +74,12 @@ pub fn add(self: *Server) !void {
 
 /// The definitions to preprocess `f` with: `pp_defs`, with the symbols of
 /// `f`'s own compiler and options for those of `pp_defs`'s compiler when
-/// they differ (in `a`)
-pub fn defsFor(self: *Server, a: Allocator, f: *const FortranFile) !*const pp.Defs {
+/// they differ (in `a`). Sets how its preprocessor reads `#if` (#658).
+pub fn defsFor(self: *Server, a: Allocator, f: *FortranFile) !*const pp.Defs {
     const fixed = f.declared_fixed;
-    if (args_mod.compilerOf(self, fixed) == null) return &self.pp_defs;
+    const compiler = args_mod.compilerOf(self, fixed);
+    f.pp_dialect = if (compiler) |id| dialectOf(id) else .any;
+    if (compiler == null) return &self.pp_defs;
     const cmd = try args_mod.commandOf(self, a, f, args_mod.userArgs(self, fixed));
     const p = (try probeOf(self, a, fixed, cmd)) orelse return &self.pp_defs;
     if (std.mem.eql(u8, p.key, self.default_macros.key)) return &self.pp_defs;
@@ -92,6 +94,15 @@ pub fn defsFor(self: *Server, a: Allocator, f: *const FortranFile) !*const pp.De
     }
     for (own) |m| if (!userDefines(self, m.name)) try out.put(a, m.name, .{ .value = m.value });
     return out;
+}
+
+/// How compiler `id`'s preprocessor reads `#if`
+fn dialectOf(id: compilers.Id) pp.Dialect {
+    return switch (id) {
+        .ifx, .ifort => .intel,
+        .gfortran => .gnu,
+        else => .any,
+    };
 }
 
 /// Whether `pp_defs` (the setting) defines `name`

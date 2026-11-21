@@ -194,6 +194,8 @@ pub const FortranFile = struct {
     /// the kinds of the types without one, of its options (#512)
     default_kinds: default_kinds.Kinds = .{},
     preproc: bool = false,
+    /// How its compiler's preprocessor reads `#if` (preprocessor/dialect.zig)
+    pp_dialect: pp.Dialect = .any,
     ast: ?*Ast = null,
     hash: ?u64 = null,
     /// Read only because a file of the workspace includes it (INCLUDE,
@@ -491,7 +493,7 @@ pub const FortranFile = struct {
         self.pp_skips = &.{};
         self.pp_defs = .empty;
         const a = self.pp_arena.allocator();
-        const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, trace);
+        const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, self.pp_dialect, trace);
         self.pp_lines = out.lines;
         self.pp_skips = out.skips;
         self.pp_defs = out.defs;
@@ -601,7 +603,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code), @intFromBool(opts.plain_comments), @intFromBool(self.implicit_none) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code), @intFromBool(opts.plain_comments), @intFromBool(self.implicit_none), @backingInt(self.pp_dialect) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
@@ -627,6 +629,10 @@ pub const FortranFile = struct {
                 h.update(mi.name);
                 h.update("\x00");
             }
+            for (out.rejected) |r| {
+                h.update(std.mem.asBytes(&r.line));
+                h.update(r.message);
+            }
         }
         return h.final();
     }
@@ -648,6 +654,8 @@ pub const FortranFile = struct {
             for (out.includes) |inc| try p.file_ast.addInclude(inc.path, inc.line);
             // one whose file is not found, like an INCLUDE that zfls cannot read
             for (out.missing) |mi| try p.file_ast.addMissingInclude(mi.name, mi.line, mi.start, mi.end);
+            // a condition that the compiler's preprocessor rejects, as it does
+            for (out.rejected) |r| try p.file_ast.addError(.preprocessor_condition, r.message, C.Severity.err, r.line, r.start, r.end);
         }
         try p.run();
         if (self.implicit_none) implicit.noneByDefault(p.file_ast);

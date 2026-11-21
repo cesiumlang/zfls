@@ -266,7 +266,7 @@ fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     const cfg = try readConfig(a, io, o, root, s);
     const sep2 = sep75;
     o.print("\n{s}\nPreprocessor Pass:\n{s}\n", .{ sep2, sep2 });
-    const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, traceTo(o));
+    const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, .any, traceTo(o));
     o.print("\n{s}\nPreprocessor Skipped Lines:\n{s}\n", .{ sep2, sep2 });
     for (res.skips) |sk| o.print("  [{d}, {d}]\n", .{ sk.start, sk.end });
     o.print("\n{s}\nPreprocessor Macros:\n{s}\n", .{ sep2, sep2 });

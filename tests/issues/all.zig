@@ -49,6 +49,7 @@ test {
     _ = @import("intel_line_size.zig");
     _ = @import("plain_comments.zig");
     _ = @import("predefined_macros.zig");
+    _ = @import("pp_conditions.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
     _ = @import("macros.zig");

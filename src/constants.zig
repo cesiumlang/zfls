@@ -112,6 +112,7 @@ pub const DiagCode = enum {
     argument_kind,
     intent_in_assigned,
     include_not_found,
+    preprocessor_condition,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

@@ -222,7 +222,8 @@
           "argument-mismatch",
           "argument-kind",
           "intent-in-assigned",
-          "include-not-found"
+          "include-not-found",
+          "preprocessor-condition"
         ]
       },
       "additionalProperties": {
