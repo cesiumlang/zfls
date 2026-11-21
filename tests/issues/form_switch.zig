@@ -1,5 +1,6 @@
-//! LLVM Flang's `!dir$ fixed` and `!dir$ free`, which switch the source
-//! form of the lines after them (#387).
+//! LLVM Flang's `!dir$ fixed` and `!dir$ free`, and ifx's `!DEC$ NOFREEFORM`
+//! and `!DEC$ FREEFORM`, which switch the source form of the lines after
+//! them (#387, #506).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -79,4 +80,45 @@ test "the fixed-form part of a free-form file, the free-form part of a fixed-for
         found = true;
     };
     try std.testing.expect(found);
+}
+
+test "ifx's !DEC$ NOFREEFORM and !DEC$ FREEFORM, CDEC$ in fixed form (#506)" {
+    // ifx: exit 0 for both
+    const w = try h.Workspace.init(&.{
+        .{ .name = "formsw2.f90", .text =
+        \\program sw
+        \\  implicit none
+        \\  integer :: i, j
+        \\  i = 1
+        \\!DEC$ NOFREEFORM
+        \\C     a fixed comment
+        \\      J = I +
+        \\     &    2
+        \\!DEC$ FREEFORM
+        \\  print *, i, j
+        \\end program
+        \\
+        },
+        .{ .name = "formsw.f", .text =
+        \\      PROGRAM FF
+        \\      IMPLICIT NONE
+        \\      INTEGER I, J
+        \\      I = 1
+        \\CDEC$ FREEFORM
+        \\  j = i + &
+        \\      3
+        \\  ! free comment
+        \\!DIR$ NOFREEFORM
+        \\C     fixed comment again
+        \\      PRINT *, I, J, UNDECL
+        \\      END
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("formsw2.f90");
+    const diags = try w.diagnostics("formsw.f");
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(i64, 10), diags[0].line);
+    try std.testing.expectEqualStrings("Name \"UNDECL\" is not declared (IMPLICIT NONE)", diags[0].message);
 }
