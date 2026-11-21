@@ -282,7 +282,7 @@ Hovering over a component (`p%x`, `a(i)%x`) while debugging with gdb shows the c
 
 ### zfls's debugger
 
-zfls's debugger is `zfls dap`, the debug adapter of the zfls executable (the extension's own, or `zfls.path`), which other editors use too. It runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), or, for the programs of `ifx` and `ifort` on Windows (and LLVM Flang's with `"dbgeng": true`), Windows's own Debugger Engine (`dbgeng.dll`, which every Windows 10 and later has), and shows the program as Fortran (on macOS it runs lldb-dap instead, see below):
+zfls's debugger is `zfls dap`, the debug adapter of the zfls executable (the extension's own, or `zfls.path`), which other editors use too. It runs gdb (`zfls.run.gdbPath`) in its Debug Adapter Protocol mode (`gdb -i=dap`: gdb 14 or later, built with Python), or, for the programs whose debug information is Microsoft's only (those of `ifx` and `ifort` on Windows, LLVM Flang's built with `-g`: zfls dap reads it in the program, and `"dbgeng": true` asks for it), Windows's own Debugger Engine (`dbgeng.dll`, which every Windows 10 and later has), and shows the program as Fortran (on macOS it runs lldb-dap instead, see below):
 
 - arrays by their subscripts and bounds (`(2,-1)`, columns as `(:,-1)`), a large one in sections (`(1:100)`, ...), with a preview of their first elements (`[1.0, 2.0, …]`) or their shape (`[2×3]`); an unallocated array, or a pointer not associated, says so;
 - derived types with a preview of their components (`point(x=9.0, y=-2.0, id=7)`), pointers as their targets, and a polymorphic object (`class(point)`) with the components of its dynamic type;

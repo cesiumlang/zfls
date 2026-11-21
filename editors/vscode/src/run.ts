@@ -280,9 +280,10 @@ export function workspaceRelative(file: string, folder: string | undefined): str
 // The `fortran` debug type
 
 /** The debugger's options of `zfls dap`, for a configuration: `--dbgeng`,
- * `--lldb [PATH]` or `--gdb PATH`; none on macOS without `gdb` (lldb-dap,
- * zfls dap's default there) */
-export function adapterArgs(config: Record<string, unknown>, platform: NodeJS.Platform): string[] {
+ * `--lldb [PATH]` or `--gdb PATH`; none when it names no debugger: zfls dap
+ * chooses by the program's debug information (Windows's Debugger Engine
+ * for a PDB), else lldb-dap on macOS and gdb elsewhere */
+export function adapterArgs(config: Record<string, unknown>): string[] {
   if (config.dbgeng === true) {
     return ["--dbgeng"];
   }
@@ -292,7 +293,7 @@ export function adapterArgs(config: Record<string, unknown>, platform: NodeJS.Pl
   if (typeof config.gdb === "string" && config.gdb) {
     return ["--gdb", config.gdb];
   }
-  return platform === "darwin" && config.lldb !== false ? [] : ["--gdb", "gdb"];
+  return config.lldb === false ? ["--gdb", "gdb"] : [];
 }
 
 /** What a `fortran` launch configuration takes, beyond `name` */

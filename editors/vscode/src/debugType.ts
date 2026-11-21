@@ -32,16 +32,17 @@ export function registerDebugType(
 ): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, {
-      // zfls dap: Windows's Debugger Engine for MSVC-ABI programs, else
-      // lldb-dap or gdb (by default lldb-dap on macOS, gdb elsewhere); the
-      // words it shows, in VS Code's language
+      // zfls dap: the configuration's debugger, else its own choice by the
+      // program's debug information (Windows's Debugger Engine for a PDB)
+      // and the platform (lldb-dap on macOS, gdb elsewhere); the words it
+      // shows, in VS Code's language
       createDebugAdapterDescriptor: (session) => {
         const exe = zfls();
         if (!exe) {
           throw new Error(vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."));
         }
         const config = session.configuration;
-        const debuggerArgs = adapterArgs(config, process.platform);
+        const debuggerArgs = adapterArgs(config);
         log.info(`[debug] ${exe} dap ${debuggerArgs.join(" ")}`);
         return new vscode.DebugAdapterExecutable(exe, ["dap", ...debuggerArgs, "--text", JSON.stringify(adapterText())]);
       },

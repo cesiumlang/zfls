@@ -249,10 +249,15 @@ pub fn runStops(c: *Client, exe: []const u8, tmp: []const u8, plain: bool, error
 
 /// tests/dap/trap.c: the program's own break instruction (the Intel
 /// runtime's at a runtime error) stops as an exception, not as a step, and
-/// the program goes on from it (#493)
+/// the program goes on from it (#493). Launched without `dbgeng`: its PDB
+/// chooses Windows's Debugger Engine (#578).
 fn runTrap(c: *Client, exe: []const u8, tmp: []const u8) !void {
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
-    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .dbgeng = true });
+    _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole" });
+    var said_buf: [4096]u8 = undefined;
+    var said_alloc: std.heap.FixedBufferAllocator = .init(&said_buf);
+    const said = try c.outputText(said_alloc.allocator());
+    try check(std.mem.find(u8, said, "has Microsoft's debug information (a PDB): debugging with Windows's Debugger Engine") != null, "the engine chosen by the program's PDB: {s}", .{said});
     _ = try c.event("initialized");
     _ = try c.request("configurationDone", .{});
     const stopped = get(try c.event("stopped"), "body").?;

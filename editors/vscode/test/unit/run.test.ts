@@ -182,14 +182,14 @@ test("a fortran configuration becomes the chosen debugger's", () => {
   assert.deepEqual(fortranLaunch(z, { ...r, type: "zfls" }), z);
 });
 
-test("zfls dap's debugger: lldb-dap by default on macOS, else gdb", () => {
-  assert.deepEqual(adapterArgs({}, "linux"), ["--gdb", "gdb"]);
-  assert.deepEqual(adapterArgs({}, "darwin"), []);
-  assert.deepEqual(adapterArgs({ gdb: "/opt/gdb" }, "darwin"), ["--gdb", "/opt/gdb"]);
-  assert.deepEqual(adapterArgs({ lldb: false }, "darwin"), ["--gdb", "gdb"]);
-  assert.deepEqual(adapterArgs({ lldb: true }, "linux"), ["--lldb"]);
-  assert.deepEqual(adapterArgs({ lldb: "/opt/llvm/bin/lldb-dap", gdb: "gdb" }, "linux"), ["--lldb", "/opt/llvm/bin/lldb-dap"]);
-  assert.deepEqual(adapterArgs({ dbgeng: true, lldb: true }, "win32"), ["--dbgeng"]);
+test("zfls dap's debugger: the configuration's, else zfls dap's choice", () => {
+  // none named: zfls dap chooses by the program, else the platform's
+  assert.deepEqual(adapterArgs({}), []);
+  assert.deepEqual(adapterArgs({ gdb: "/opt/gdb" }), ["--gdb", "/opt/gdb"]);
+  assert.deepEqual(adapterArgs({ lldb: false }), ["--gdb", "gdb"]);
+  assert.deepEqual(adapterArgs({ lldb: true }), ["--lldb"]);
+  assert.deepEqual(adapterArgs({ lldb: "/opt/llvm/bin/lldb-dap", gdb: "gdb" }), ["--lldb", "/opt/llvm/bin/lldb-dap"]);
+  assert.deepEqual(adapterArgs({ dbgeng: true, lldb: true }), ["--dbgeng"]);
   // the launch configuration says lldb, not gdb
   const z = launchConfiguration({ ...spec, type: "zfls", gdbPath: "/opt/gdb", lldb: true });
   assert.equal(z.lldb, true);
