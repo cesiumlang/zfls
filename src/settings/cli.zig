@@ -13,6 +13,7 @@ const Settings = settings.Settings;
 const StrList = settings.StrList;
 const applyPpDefs = settings.applyPpDefs;
 const applyDiagnosticSeverity = settings.applyDiagnosticSeverity;
+const applyFileAssociations = settings.applyFileAssociations;
 const arg_lists = settings.arg_lists;
 const isArgList = settings.isArgList;
 const argList = settings.argList;
@@ -62,6 +63,7 @@ pub const opts = [_]Opt{
     .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
     .{ .long = "disable_openmp_conditional", .kind = .flag, .help = "Read OpenMP conditional compilation lines (!$ followed by a blank, in fixed form also c$ and *$ in column 1) as comments, as a build without OpenMP does; by default they are code", .group = "Sources file parsing options" },
     .{ .long = "d_lines", .kind = .string, .metavar = "READING", .help = "How a fixed-form line with D or d in column 1 (a debug line) is read: comment, or code (the D is a blank), as compilers do by an option (default: comment)", .group = "Sources file parsing options" },
+    .{ .long = "file_associations", .kind = .json, .metavar = "JSON", .help = "The editor's languages of files by glob pattern, as VS Code's files.associations, e.g. {\"*.fpp\": \"FortranFixedForm\"}: a .fpp file whose language is FortranFreeForm or FortranFixedForm is read in that form, not as its text suggests (a pattern with / matches the absolute path, one without the file name; the longest matching pattern wins)", .group = "Sources file parsing options" },
 
     .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
     .{ .long = "autocomplete_no_auto_use", .kind = .flag, .help = "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)", .group = "Autocomplete options" },
@@ -277,6 +279,7 @@ pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !C
                     };
                     if (std.mem.eql(u8, o.long, "pp_defs")) try applyPpDefs(a, &s, v);
                     if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
+                    if (std.mem.eql(u8, o.long, "file_associations")) try applyFileAssociations(a, &s, v);
                     continue;
                 }
                 if (isArgList(o.long)) {

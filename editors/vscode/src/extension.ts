@@ -378,16 +378,17 @@ async function stopClient(key: string): Promise<void> {
   await (await client)?.stop();
 }
 
-/** After a change of the zfls settings: each running server whose folder it
- * concerns is sent its new settings (workspace/didChangeConfiguration), which
- * it applies at once, or, when it cannot take them so, every server is
- * restarted */
+/** After a change of the zfls settings (or of `files.associations`): each
+ * running server whose folder it concerns is sent its new settings
+ * (workspace/didChangeConfiguration), which it applies at once, or, when it
+ * cannot take them so, every server is restarted */
 async function updateServers(e: vscode.ConfigurationChangeEvent): Promise<void> {
   const sends: { client: LanguageClient; settings: ServerSettings }[] = [];
   for (const [key, pending] of clients) {
     const client = await pending;
     const state = serverState.get(key);
-    if (!client || !state || !e.affectsConfiguration("zfls", state.folder?.uri)) {
+    const concerns = e.affectsConfiguration("zfls", state?.folder?.uri) || e.affectsConfiguration("files.associations");
+    if (!client || !state || !concerns) {
       continue;
     }
     const settings = serverSettings(state.folder);

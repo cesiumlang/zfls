@@ -190,6 +190,9 @@ fn specialSchema(a: Allocator, key: []const u8) !?Value {
         }
         return v;
     }
+    if (std.mem.eql(u8, key, "file_associations")) return try parseLiteral(a,
+        \\{"type": "object", "additionalProperties": {"type": "string"}}
+    );
     if (std.mem.eql(u8, key, "compiler_diagnostics")) return try parseLiteral(a,
         \\{"type": "string",
         \\ "enum": ["gfortran", "ifx", "ifort", "flang", "nvfortran", "nagfor", "lfortran", "none", null]}

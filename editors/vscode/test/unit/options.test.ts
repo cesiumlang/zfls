@@ -48,3 +48,12 @@ test("empty and blank items of zfls.arguments are left out", () => {
   assert.equal(args[args.length - 1], "--nthreads=2");
   assert.ok(!args.some((a) => a.trim() === ""));
 });
+
+test("files.associations reaches zfls on the command line and over LSP (#686)", () => {
+  assert.deepEqual(serverSettings(folder).file_associations, {});
+  assert.ok(!serverArguments(folder).includes("--file_associations"));
+  settings["files.associations"] = { "*.fpp": "FortranFixedForm" };
+  assert.deepEqual(serverSettings(folder).file_associations, { "*.fpp": "FortranFixedForm" });
+  const args = serverArguments(folder);
+  assert.equal(args[args.indexOf("--file_associations") + 1], '{"*.fpp":"FortranFixedForm"}');
+});

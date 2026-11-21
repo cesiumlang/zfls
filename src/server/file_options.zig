@@ -11,6 +11,7 @@ const project = @import("../project.zig");
 const command_options = @import("../command_options.zig");
 const default_kinds = @import("../default_kinds.zig");
 const compiler_names = @import("../compiler_names.zig");
+const source_form = @import("source_form.zig");
 
 const FortranFile = parser.FortranFile;
 const Server = @import("../server.zig").Server;
@@ -28,6 +29,8 @@ fn fixed72(exe: []const u8) bool {
 pub fn apply(self: *Server, f: *FortranFile) error{OutOfMemory}!void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
+    // the editor's file association, over the command's form (#686)
+    f.associated_form = try source_form.association(self, arena.allocator(), f.path);
     const cmd = try project.commandFor(arena.allocator(), &self.compile_commands, f.path);
     const args: []const []const u8 = if (cmd) |c| c.args else if (self.s.compiler_args) |l| l.slice() else return;
     const o = command_options.parse(args);
