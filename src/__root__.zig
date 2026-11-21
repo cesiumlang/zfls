@@ -28,6 +28,7 @@ pub const server_groups = @import("server/groups.zig");
 pub const parser_tab_format = @import("parser/tab_format.zig");
 pub const preprocessor = @import("preprocessor.zig");
 pub const preprocessor_intel = @import("preprocessor/intel.zig");
+pub const preprocessor_predefined = @import("preprocessor/predefined.zig");
 pub const json = @import("json.zig");
 pub const json5 = @import("json5.zig");
 pub const intrinsics = @import("intrinsics.zig");
