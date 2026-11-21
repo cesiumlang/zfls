@@ -102,6 +102,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const program = json.str(json.get(args, "program"));
     const cwd = json.str(json.get(args, "cwd"));
     s.g.lfortran = lfortran.isProgram(s.io, a, program, cwd);
+    s.g.ifx = if (gdb_entry.programPath(a, program, cwd)) |p| gdb_entry.isIfx(s.io, p) else false;
     s.g.dll_breakpoints.clearRetainingCapacity();
     if (std.mem.eql(u8, command, "launch")) try gdb_dll.atLaunch(s, a, program, cwd);
     if (s.g.source_root) |r| s.gpa.free(r);

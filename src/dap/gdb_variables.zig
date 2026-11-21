@@ -15,6 +15,7 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const fortran = @import("fortran.zig");
 const lfortran = @import("lfortran.zig");
+const ifx_class = @import("ifx_class.zig");
 const ArrayContext = fortran.ArrayContext;
 const Value = json.Value;
 
@@ -404,6 +405,10 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         if (!s.g.lldb and v.ref != 0) if (evaluate_name) |e| if (fortran.derivedTypeName(target)) |d| {
             if (try flangClass(s, a, v, out, e, d, frame)) |shown| return shown;
         };
+        // ifx's polymorphic allocatable array
+        if (s.g.ifx and !s.g.lldb and sub == null) if (evaluate_name) |e| if (isVariableName(e)) if (ifx_class.declaredName(target)) |d| {
+            if (try ifxClass(s, a, v, out, e, d, frame)) |shown| return shown;
+        };
         if (v.ref != 0) {
             const kids = try gdbChildren(s, a, v.ref);
             if (kids.len == 1 and std.mem.eql(u8, kids[0].name, "value")) return present(s, a, kids[0], name, evaluate_name, frame, sub, declared);
@@ -448,6 +453,11 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         return out;
     }
     if (fortran.derivedTypeName(v.type)) |type_name| if (v.ref != 0) {
+        // ifx's polymorphic object or array, which gdb shows as one of
+        // the declared type
+        if (s.g.ifx and !s.g.lldb and sub == null) if (evaluate_name) |e| if (isVariableName(e)) {
+            if (try ifxClass(s, a, v, out, e, type_name, frame)) |shown| return shown;
+        };
         const shown = try hiddenFilter(a, try gdbChildren(s, a, v.ref), s.g.lfortran);
         const comps = try a.alloc(fortran.Component, shown.len);
         for (shown, comps) |k, *c| c.* = .{ .name = k.name, .value = try short(a, k) };
@@ -567,6 +577,26 @@ fn flangClassArray(s: *Session, a: Allocator, out: Variable, expr: []const u8, d
     const t = out.type orelse "";
     const bounds = if (std.mem.findScalarLast(u8, t, '(')) |i| t[i..] else "";
     return presentAs(s, a, out, variable, frame, null, try a.print("class({s}) {s}", .{ declared_name, bounds }));
+}
+
+/// Intel ifx's polymorphic object or array `v` (`expr`), which its DWARF
+/// gives as one of its declared type (`declared_name`): the dynamic type's
+/// components, or the array (ifx_class.zig); else null
+fn ifxClass(s: *Session, a: Allocator, v: Variable, out: Variable, expr: []const u8, declared_name: []const u8, frame: ?i64) !?Variable {
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try ifx_class.command(a, expr, variable, declared_name), frame, "repl"));
+    if (!gdb.isSuccess(set)) return null;
+    const found = ifx_class.result(json.str(json.path(set, &.{ "body", "result" })) orelse "") orelse return null;
+    if (found.bounds) |b| return presentAs(s, a, out, variable, frame, null, try a.print("class({s}) {s}", .{ declared_name, b }));
+    var declared: ?Declared = null;
+    if (fortran.derivedTypeName(v.type) != null) {
+        const comps = try gdbChildren(s, a, v.ref);
+        const names = try a.alloc([]const u8, comps.len);
+        for (comps, names) |c, *n| n.* = try std.ascii.allocLowerString(a, c.name);
+        declared = .{ .expr = expr, .names = names };
+    }
+    return presentAs(s, a, out, variable, frame, declared, try a.print("class({s})", .{declared_name}));
 }
 
 /// Whether `e` names a variable (of a module, `m::v`), which `info
