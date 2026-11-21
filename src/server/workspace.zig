@@ -44,6 +44,7 @@ const lenses = @import("lenses.zig");
 const linking = @import("linking.zig");
 const modfiles = @import("modfiles.zig");
 const summary = @import("summary.zig");
+const source_form = @import("source_form.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -553,9 +554,12 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     if (did_close) {
         if (self.open_docs.fetchRemove(filepath)) |kv| self.gpa.free(kv.key);
         pending.cancel(self, uri);
+        source_form.closed(self, filepath);
     }
     // the form the editor's language names, while the document is open
-    const form: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    // (for a `.fpp`, zfls's detection, unless the user chose, #632)
+    const language: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
+    const form = source_form.opened(self, filepath, language);
     if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
     if (did_close and !paths.isFile(self.io, filepath)) {
         // a document that was never saved, or whose file is gone: it leaves
@@ -590,6 +594,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     };
     // an opened summary is parsed in full again, as it was
     if (did_open) if (self.workspace.get(filepath)) |f| if (summary.dormant(f)) try summary.wake(self, a, &.{f});
+    if (did_open) try source_form.tell(self, a, uri, filepath, language);
     // the files parsed in full for requests rest again, but for a closed
     // one, whose diagnostics are of its full AST
     const slept = !did_close and try summary.sleepAll(self, a);

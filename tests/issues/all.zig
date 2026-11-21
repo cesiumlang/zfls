@@ -60,6 +60,7 @@ test {
     _ = @import("settings.zig");
     _ = @import("short_paths.zig");
     _ = @import("signature.zig");
+    _ = @import("source_form.zig");
     _ = @import("summaries.zig");
     _ = @import("tab_format.zig");
     _ = @import("user_config.zig");
@@ -76,6 +77,7 @@ test {
     _ = @import("compiler_flang.zig");
     _ = @import("compiler_intel.zig");
     _ = @import("compiler_gfortran.zig");
+    _ = @import("compiler_tabs.zig");
     _ = @import("compiler_includes.zig");
     _ = @import("compiler_include_globs.zig");
     _ = @import("flang_modules.zig");

@@ -10,6 +10,7 @@ const str = @import("../str.zig");
 const paths = @import("../paths.zig");
 const compilers = @import("../compilers.zig");
 const compile = @import("compile.zig");
+const tab_columns = @import("tab_columns.zig");
 const Job = compile.Job;
 const comparable = compile.comparable;
 const splitLines = compile.splitLines;
@@ -105,6 +106,14 @@ fn includes(line: []const u8, name: []const u8) bool {
     return std.mem.eql(u8, arg[1..end], name);
 }
 
+/// A compiler's column on line `line` (1-based) of `lines` as the line's
+/// byte, where the line has TABs (tab_columns.zig)
+fn byteColumn(id: compilers.Id, lines: []const []const u8, line: usize, column: ?usize) ?usize {
+    const c = column orelse return null;
+    if (line == 0 or line > lines.len) return c;
+    return tab_columns.byteColumn(id, lines[line - 1], c);
+}
+
 /// The compiler's messages as diagnostics of the file, which they may name
 /// as any of `aliases` (the file, its copy, fypp's output)
 pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []const compilers.Message, aliases: []const []const u8) ![]const lsp.Diagnostic {
@@ -126,7 +135,7 @@ pub fn toDiagnostics(a: Allocator, job: *const Job, text: []const u8, msgs: []co
         // includes it or else at the top, with its location
         const message = if (ours) m.message else try a.print("{s}:{d}: {s}", .{ m.file.?, m.line, m.message });
         try out.append(a, .{
-            .range = if (moved) |l| rangeAt(lines, l, null, null, null) else if (ours) rangeAt(lines, m.line, m.column, m.end_line, m.end_column) else if (site) |s| rangeAt(lines, s.line, null, null, null) else rangeAt(lines, 0, null, null, null),
+            .range = if (moved) |l| rangeAt(lines, l, null, null, null) else if (ours) rangeAt(lines, m.line, byteColumn(job.id, lines, m.line, m.column), m.end_line, m.end_column) else if (site) |s| rangeAt(lines, s.line, null, null, null) else rangeAt(lines, 0, null, null, null),
             .message = message,
             .severity = m.severity.lsp(),
             .code = m.code,
