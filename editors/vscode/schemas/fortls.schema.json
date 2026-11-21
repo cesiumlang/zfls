@@ -310,7 +310,7 @@
       ]
     },
     "compiler_include_dirs": {
-      "description": "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)",
+      "description": "Further include directories for the compiler, relative to the root; glob patterns match directories (zfls's include_dirs are passed too)",
       "type": "array",
       "items": {
         "type": "string"
