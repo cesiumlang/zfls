@@ -253,6 +253,16 @@ pub const Settings = struct {
     pub fn fixedColumns(self: *const Settings) ?usize {
         return if (self.fixed_line_length > 0) @intCast(self.fixed_line_length) else null;
     }
+
+    /// Whether the compiler of fixed-form files (`compiler_diagnostics_fixed`,
+    /// else `compiler_diagnostics`) counts a TAB-format line's TAB as the
+    /// columns up to 6 for `fixed_line_length`, as gfortran and LLVM Flang
+    /// do; ifx and ifort count it as one, as zfls does without a compiler
+    pub fn fixedTabWide(self: *const Settings) bool {
+        const name = self.compiler_diagnostics_fixed orelse self.compiler_diagnostics orelse return false;
+        const n = std.mem.trim(u8, name, " ");
+        return std.ascii.eqlIgnoreCase(n, "gfortran") or std.ascii.eqlIgnoreCase(n, "flang");
+    }
 };
 
 /// Store a JSON `pp_defs` value (object, or list of names) into settings

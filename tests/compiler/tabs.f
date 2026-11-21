@@ -1,0 +1,7 @@
+      PROGRAM TABS
+      IMPLICIT NONE
+      INTEGER I
+	I = 1 +
+	1 JUNDEF
+	PRINT *, I
+	END

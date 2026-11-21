@@ -15,6 +15,8 @@ const objects = @import("objects.zig");
 const settings_mod = @import("settings.zig");
 const server_mod = @import("server.zig");
 const Logger = @import("logger.zig");
+const compilers = @import("compilers.zig");
+const predefined = @import("compilers/predefined.zig");
 const Settings = settings_mod.Settings;
 const Value = json.Value;
 
@@ -150,6 +152,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
         info.pp_suffixes = l.slice();
     };
     for (merged.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
+    try addPredefined(a, io, o, &merged, root, &info.pp_defs);
     var dirs: std.ArrayList([]const u8) = .empty;
     for (merged.include_dirs.slice()) |inc| {
         for (try glob.resolveGlobs(io, a, inc, root)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
@@ -158,6 +161,23 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
     info.d_lines_code = merged.dLinesCode();
     info.fixed_columns = merged.fixedColumns();
     return info;
+}
+
+/// The symbols `compiler_diagnostics`'s compiler predefines, as the server
+/// adds them (server/compiler_macros.zig), to `defs`, those there kept
+fn addPredefined(a: Allocator, io: Io, o: *Out, s: *const Settings, root: ?[]const u8, defs: *pp.Defs) !void {
+    const name = s.compiler_diagnostics orelse return;
+    const id = compilers.Id.fromName(std.mem.trim(u8, name, " ")) orelse return;
+    if (!predefined.asks(id)) return;
+    const configured = s.compiler_path orelse "";
+    const exe = if (configured.len == 0) compilers.executables(id)[0] else if (root != null and !std.Io.Dir.path.isAbsolute(configured)) try paths.join(a, &.{ root.?, configured }) else configured;
+    const base = paths.cacheDir() orelse root orelse ".";
+    const found = predefined.ask(a, a, id, exe, .{ .io = io, .env = null, .work_dir = try paths.join(a, &.{ base, "work", "debug" }), .cwd = root, .openmp = !s.disable_openmp_conditional }) orelse {
+        o.print("  Predefined symbols: {s} did not run\n", .{exe});
+        return;
+    };
+    for (found) |d| if (!defs.contains(d.name)) try defs.put(a, d.name, .{ .value = d.value });
+    o.print("  Predefined symbols of {s}: {d}\n", .{ exe, found.len });
 }
 
 /// The settings of the configuration file `path` over `s`

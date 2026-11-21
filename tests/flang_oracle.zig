@@ -211,18 +211,19 @@ const Oracle = struct {
         }
         std.mem.sort([]const u8, mods.items, {}, util.lessThan);
         const ext = if (std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(src), ".cuf")) ".cuf" else ".f90";
-        for (mods.items) |m| try self.checkModFile(try a.print("{s} > {s}", .{ key, m }), dir, m, ext);
+        for (mods.items) |m| try self.checkModFile(try a.print("{s} > {s}", .{ key, m }), dir, m, ext, flang_args);
     }
 
     /// The module file `name` of `dir`: zfls reading it, and Flang reading
-    /// it for a USE of the module, in a file of suffix `ext`
-    fn checkModFile(self: *Oracle, key: []const u8, dir: []const u8, name: []const u8, ext: []const u8) !void {
+    /// it for a USE of the module, in a file of suffix `ext`, with the
+    /// fixture's arguments `flang_args` (`-funsigned`)
+    fn checkModFile(self: *Oracle, key: []const u8, dir: []const u8, name: []const u8, ext: []const u8, flang_args: []const []const u8) !void {
         const a = self.a;
         const module = name[0 .. name.len - ".mod".len];
         const use_dir = try self.newDir();
         const use_src = try std.Io.Dir.path.join(a, &.{ use_dir, try a.print("zfls_oracle_use{s}", .{ext}) });
         try Io.Dir.cwd().writeFile(self.io, .{ .sub_path = use_src, .data = try a.print("program zfls_oracle_use\n  use {s}\nend program\n", .{module}) });
-        const global = try self.flangDump(key, use_src, false, use_dir, dir, &.{}) orelse return;
+        const global = try self.flangDump(key, use_src, false, use_dir, dir, flang_args) orelse return;
         const ref = try self.flangEntities(key, global, module) orelse return;
         const got = try self.zflsTree(key, try std.Io.Dir.path.join(a, &.{ dir, name }), &.{}) orelse return;
         try self.compare(key, ref, got.entities);
@@ -312,7 +313,7 @@ pub fn main(init: std.process.Init) !u8 {
         var it = d.iterate();
         while (try it.next(io)) |e| if (e.kind == .file and std.mem.endsWith(u8, e.name, ".mod")) try mods.append(a, try a.dupe(u8, e.name));
         std.mem.sort([]const u8, mods.items, {}, util.lessThan);
-        for (mods.items) |m| try o.checkModFile(try a.print("intrinsic > {s}", .{m}), dir, m, ".cuf");
+        for (mods.items) |m| try o.checkModFile(try a.print("intrinsic > {s}", .{m}), dir, m, ".cuf", &.{});
         // a rule that names no difference any more
         for (known.rules, o.used) |r, n| if (n == 0) o.fail(r.file, "known difference not seen any more: {s} {s}", .{ @tagName(r.diff), r.entity });
     }

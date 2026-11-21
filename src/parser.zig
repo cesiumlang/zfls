@@ -29,7 +29,9 @@ const changes = @import("parser/changes.zig");
 const openmp = @import("parser/openmp.zig");
 const form_switch = @import("parser/form_switch.zig");
 const fixed_columns = @import("parser/fixed_columns.zig");
+const implicit = @import("implicit.zig");
 const line_size = @import("parser/line_size.zig");
+const default_kinds = @import("default_kinds.zig");
 const tab_format = @import("parser/tab_format.zig");
 const pp_intel = @import("preprocessor/intel.zig");
 
@@ -220,6 +222,12 @@ pub const FortranFile = struct {
     /// language: `formOfLanguage`), which comes before the form that its
     /// name and text suggest
     forced_form: ?SourceForm = null,
+    /// The form of the file's command (`-ffixed-form`), after the editor's
+    command_form: ?SourceForm = null,
+    /// `-fimplicit-none`: IMPLICIT NONE where no IMPLICIT statement is
+    implicit_none: bool = false,
+    /// the kinds of the types without one, of its options (#512)
+    default_kinds: default_kinds.Kinds = .{},
     preproc: bool = false,
     ast: ?*Ast = null,
     hash: ?u64 = null,
@@ -245,6 +253,9 @@ pub const FortranFile = struct {
     /// `fixed_line_length`: the columns of a fixed-form code line past it
     /// are blanks in `lines` (parser/fixed_columns.zig); null: no limit
     fixed_columns: ?usize = null,
+    /// A TAB-format line's TAB stands for the columns up to 6 against
+    /// `fixed_columns` (gfortran's and LLVM Flang's count), not for one
+    fixed_tab_wide: bool = false,
     /// ifx's `!DEC$ FIXEDFORMLINESIZE:n` lines (parser/line_size.zig), owned
     /// by `gpa`
     line_sizes: []line_size.Directive = &.{},
@@ -322,7 +333,7 @@ pub const FortranFile = struct {
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
     fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
-        if (self.forced_form) |form| return form == .fixed;
+        if (self.forced_form orelse self.command_form) |form| return form == .fixed;
         if (suffixes.formOf(self.path) == .free) return false;
         return helpers.detectFixedFormat(lines);
     }
@@ -425,10 +436,12 @@ pub const FortranFile = struct {
     }
 
     fn rewriteLine(self: *const FortranFile, line: []u8, i: usize) void {
+        // the limit before the TAB becomes a blank
+        const limit = if (self.fixed) if (self.fixedLimitAt(i, self.fixed_columns)) |n| fixed_columns.tabLimit(line, n, self.fixed_tab_wide) else null else null;
         tab_format.blankLine(self.fixed, line);
         if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
         if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
-        if (self.fixed) if (self.fixedLimitAt(i, self.fixed_columns)) |n| fixed_columns.blank(line, n);
+        if (limit) |n| fixed_columns.blank(line, n);
         if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
     }
 
@@ -790,7 +803,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code), @intFromBool(opts.plain_comments) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code), @intFromBool(opts.plain_comments), @intFromBool(self.implicit_none) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
@@ -839,6 +852,7 @@ pub const FortranFile = struct {
             for (out.missing) |mi| try p.file_ast.addMissingInclude(mi.name, mi.line, mi.start, mi.end);
         }
         try p.run();
+        if (self.implicit_none) implicit.noneByDefault(p.file_ast);
         return p.file_ast;
     }
 };

@@ -4,10 +4,11 @@
 //! list.
 
 const std = @import("std");
+const sysinfo = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Obj = @import("../objects.zig").Obj;
 
-pub const Category = enum { unknown, integer, real, complex, logical, character, derived };
+pub const Category = enum { unknown, integer, real, complex, logical, character, derived, unsigned };
 
 /// The type of an argument
 pub const Typed = struct {
@@ -139,6 +140,7 @@ pub fn varCategory(v: *const Obj) Category {
 pub fn category(desc_in: []const u8) Category {
     const desc = std.mem.trim(u8, desc_in, " ");
     if (std.ascii.startsWithIgnoreCase(desc, "integer")) return .integer;
+    if (std.ascii.startsWithIgnoreCase(desc, "unsigned")) return .unsigned;
     if (std.ascii.startsWithIgnoreCase(desc, "real") or std.ascii.startsWithIgnoreCase(desc, "double precision")) return .real;
     if (std.ascii.startsWithIgnoreCase(desc, "complex") or std.ascii.startsWithIgnoreCase(desc, "double complex")) return .complex;
     if (std.ascii.startsWithIgnoreCase(desc, "logical")) return .logical;
@@ -173,6 +175,11 @@ pub fn literalCategory(arg: []const u8) ?Category {
     // a kind suffix
     if (std.mem.findScalar(u8, t, '_')) |u| t = t[0..u];
     if (t.len == 0 or !(std.ascii.isDigit(t[0]) or t[0] == '.')) return null;
+    // an unsigned one, `42u` (gfortran's `-funsigned`)
+    if (t.len > 1 and (t[t.len - 1] == 'u' or t[t.len - 1] == 'U')) {
+        for (t[0 .. t.len - 1]) |ch| if (!std.ascii.isDigit(ch)) return null;
+        return if (arg[0] == '-') null else .unsigned;
+    }
     var real = false;
     for (t, 0..) |ch, i| {
         if (std.ascii.isDigit(ch)) continue;
@@ -210,11 +217,18 @@ pub fn selectedIntKind(r: i64) ?i64 {
     return null;
 }
 
-/// gfortran's SELECTED_REAL_KIND on x86-64: the smallest kind with the
-/// precision and range (REAL(10) is x87 extended precision)
-pub fn selectedRealKind(p: ?i64, r: ?i64) ?i64 {
+/// Whether the compiler has REAL(10), x87 extended precision: gfortran's
+/// and LLVM Flang's on x86 have it, not on aarch64 (#548), and Intel's
+/// compilers not at all
+pub const native_real10 = sysinfo.target.cpu.arch.isX86();
+
+/// SELECTED_REAL_KIND of gfortran and LLVM Flang: the smallest kind with
+/// the precision and range, REAL(10) only where the compiler has it
+/// (`real10`)
+pub fn selectedRealKind(p: ?i64, r: ?i64, real10: bool) ?i64 {
     if (p == null and r == null) return null;
     for ([_][3]i64{ .{ 6, 37, 4 }, .{ 15, 307, 8 }, .{ 18, 4931, 10 }, .{ 33, 4931, 16 } }) |k| {
+        if (k[2] == 10 and !real10) continue;
         if ((p orelse 0) <= k[0] and (r orelse 0) <= k[1]) return k[2];
     }
     return null;
@@ -223,6 +237,7 @@ pub fn selectedRealKind(p: ?i64, r: ?i64) ?i64 {
 pub fn typeName(cat: Category) []const u8 {
     return switch (cat) {
         .integer => "INTEGER",
+        .unsigned => "UNSIGNED",
         .real => "REAL",
         .complex => "COMPLEX",
         .logical => "LOGICAL",
@@ -231,10 +246,14 @@ pub fn typeName(cat: Category) []const u8 {
 }
 
 test "selected kinds" {
-    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(15, 307));
-    try std.testing.expectEqual(@as(?i64, 4), selectedRealKind(6, null));
-    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(null, 100));
-    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(30, null));
+    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(15, 307, true));
+    try std.testing.expectEqual(@as(?i64, 4), selectedRealKind(6, null, true));
+    try std.testing.expectEqual(@as(?i64, 8), selectedRealKind(null, 100, true));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(30, null, true));
+    // x87's REAL(10), and without it (aarch64, ifx)
+    try std.testing.expectEqual(@as(?i64, 10), selectedRealKind(18, null, true));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(18, null, false));
+    try std.testing.expectEqual(@as(?i64, 16), selectedRealKind(null, 400, false));
     try std.testing.expectEqual(@as(?i64, 8), selectedIntKind(18));
     try std.testing.expectEqual(@as(?i64, 4), selectedIntKind(9));
 }
