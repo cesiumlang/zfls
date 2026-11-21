@@ -159,6 +159,8 @@ pub const Checker = struct {
     /// the `!dir$ ignore_tkr` and `NO_ARG_CHECK` directives of each
     /// procedure called, read once
     tkr: std.AutoHashMapUnmanaged(*const Obj, []const ignore_tkr.Entry) = .empty,
+    /// the compiler has REAL(10) (`typing.native_real10`)
+    real10: bool = typing.native_real10,
 
     fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
@@ -669,7 +671,7 @@ pub const Checker = struct {
             if (which == 'p') p = n else if (which == 'r') r = n else return null;
         }
         if (!real) return selectedIntKind(p orelse return null);
-        return selectedRealKind(p, r);
+        return selectedRealKind(p, r, c.real10);
     }
 
     /// `x = ...` (also `x(i) = `, `x%c = `) for an INTENT(IN) dummy argument
@@ -753,10 +755,10 @@ pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, e
     return c.exprType(expr, scope, line_no, 0);
 }
 
-/// `files`: the workspace's
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile) ![]const Problem {
+/// `files`: the workspace's; `real10`: the compiler has REAL(10)
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool) ![]const Problem {
     const n = file.nLines();
-    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n) };
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10 };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);
