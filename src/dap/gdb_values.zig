@@ -1,6 +1,7 @@
 //! Values of the gdb backend of `zfls dap` that gdb does not show as
 //! Fortran, read otherwise: a CHARACTER of kind 4, whose type gdb gives as
-//! an array (`character(kind=4) (5)`) and whose text it cuts short at a
+//! an array (`character(kind=4) (5)`, its length first also for an array
+//! of them: `character(kind=4) (3,3,2)`) and whose text it cuts short at a
 //! character beyond ASCII, read from memory; a module's deferred-length
 //! CHARACTER, whose length gfortran keeps apart; a module's COMMON
 //! variable, which gfortran's DWARF leaves out.
@@ -27,20 +28,81 @@ const max_len = 4096;
 pub fn wideCharacter(s: *Session, a: Allocator, t: fortran.ArrayType, expr: ?[]const u8, frame: ?i64) !?[]const u8 {
     if (characterKind(t.element) != 4 or t.dims.len != 1) return null;
     const len = fortran.extent(t.dims[0]) orelse return null;
-    const e = expr orelse return null;
     if (len > max_len) return null;
-    const r = try gdb.request(s, a, "evaluate", try gdb_variables.evalArgs(a, try a.print("&{s}", .{e}), frame, "watch"));
+    const bytes = try readMemory(s, a, expr orelse return null, len * 4, frame) orelse return null;
+    return try wideText(a, bytes);
+}
+
+/// The most elements of an array of CHARACTER of kind 4 read at once
+const max_elements = 4096;
+
+/// An array of CHARACTER of kind 4 (gdb's type `t`: the length, then the
+/// array's dimensions), read from the memory of `expr` at once: its
+/// elements in order (`(1,1)`, `(2,1)`, ...), each `4_'...'` with gdb's
+/// expression of it (`w(:,2,1)`); null for another type, or when it cannot
+/// be read
+pub fn wideArray(s: *Session, a: Allocator, t: fortran.ArrayType, expr: ?[]const u8, frame: ?i64) !?[]Variable {
+    if (characterKind(t.element) != 4 or t.dims.len < 2) return null;
+    const len = fortran.extent(t.dims[0]) orelse return null;
+    const dims = t.dims[1..];
+    var count: u64 = 1;
+    for (dims) |d| count *= fortran.extent(d) orelse return null;
+    if (len > max_len or count > max_elements or len * count > max_len * 16) return null;
+    const e = expr orelse return null;
+    const bytes = try readMemory(s, a, e, len * count * 4, frame) orelse return null;
+    const out = try a.alloc(Variable, @intCast(count));
+    const index = try a.alloc(i64, dims.len);
+    for (index, dims) |*x, d| x.* = d.lo.?;
+    const element_type = try a.print("character(kind=4,len={d})", .{len});
+    for (out, 0..) |*o, k| {
+        var subs: std.ArrayList(u8) = .empty;
+        for (index, 0..) |x, j| try subs.print(a, "{s}{d}", .{ if (j == 0) "" else ",", x });
+        const at: usize = @intCast(k * len * 4);
+        o.* = .{
+            .name = try a.print("({s})", .{subs.items}),
+            .value = try wideText(a, bytes[at..][0..@intCast(len * 4)]),
+            .type = element_type,
+            .evaluate_name = try a.print("{s}(:,{s})", .{ e, subs.items }),
+        };
+        // the next subscripts, the first fastest
+        for (index, dims) |*x, d| {
+            if (x.* < d.hi.?) {
+                x.* += 1;
+                break;
+            }
+            x.* = d.lo.?;
+        }
+    }
+    return out;
+}
+
+/// The Fortran type of an array of CHARACTER of kind 4 from gdb's (`t`):
+/// `character(kind=4,len=3) (3,0:1)`
+pub fn wideArrayType(a: Allocator, t: fortran.ArrayType) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.print(a, "character(kind=4,len={d}) (", .{fortran.extent(t.dims[0]) orelse 0});
+    for (t.dims[1..], 0..) |d, i| {
+        if (i > 0) try out.append(a, ',');
+        if (d.lo == 1) try out.print(a, "{d}", .{d.hi.?}) else try out.print(a, "{d}:{d}", .{ d.lo.?, d.hi.? });
+    }
+    try out.append(a, ')');
+    return out.items;
+}
+
+/// `count` bytes at the address of `expr`, or null when they cannot be read
+fn readMemory(s: *Session, a: Allocator, expr: []const u8, count: u64, frame: ?i64) !?[]u8 {
+    const r = try gdb.request(s, a, "evaluate", try gdb_variables.evalArgs(a, try a.print("&{s}", .{expr}), frame, "watch"));
     if (!gdb.isSuccess(r)) return null;
     const result = json.str(json.path(r, &.{ "body", "result" })) orelse return null;
     const address = fortran.addressOf(result[std.mem.find(u8, result, "0x") orelse return null ..]) orelse return null;
-    const m = try gdb.request(s, a, "readMemory", .{ .memoryReference = address, .count = len * 4 });
+    const m = try gdb.request(s, a, "readMemory", .{ .memoryReference = address, .count = count });
     if (!gdb.isSuccess(m)) return null;
     const data = json.str(json.path(m, &.{ "body", "data" })) orelse return null;
     const decoder = std.base64.standard.Decoder;
     const bytes = try a.alloc(u8, decoder.calcSizeForSlice(data) catch return null);
     decoder.decode(bytes, data) catch return null;
-    if (bytes.len != len * 4) return null;
-    return try wideText(a, bytes);
+    if (bytes.len != count) return null;
+    return bytes;
 }
 
 /// A module's deferred-length CHARACTER of gfortran's, gdb's variable
@@ -171,4 +233,12 @@ test "the length of a module's deferred-length CHARACTER, as gdb's Python prints
     try std.testing.expectEqual(@as(?u64, 11), lengthResult("zfls-len 11\n"));
     try std.testing.expectEqual(@as(?u64, 0), lengthResult("zfls-len 0\r\n"));
     try std.testing.expect(lengthResult("Traceback (most recent call last):\nAttributeError: 'NoneType' object has no attribute 'value'\n") == null);
+}
+
+test "the Fortran type of an array of CHARACTER of kind 4" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const t = (try fortran.arrayType(a, "character(kind=4) (3,3,0:1)")).?;
+    try std.testing.expectEqualStrings("character(kind=4,len=3) (3,0:1)", try wideArrayType(a, t));
 }
