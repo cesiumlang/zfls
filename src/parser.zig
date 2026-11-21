@@ -31,6 +31,7 @@ const form_switch = @import("parser/form_switch.zig");
 const fixed_columns = @import("parser/fixed_columns.zig");
 const implicit = @import("implicit.zig");
 const line_size = @import("parser/line_size.zig");
+const default_kinds = @import("default_kinds.zig");
 const tab_format = @import("parser/tab_format.zig");
 const pp_intel = @import("preprocessor/intel.zig");
 
@@ -225,6 +226,8 @@ pub const FortranFile = struct {
     command_form: ?SourceForm = null,
     /// `-fimplicit-none`: IMPLICIT NONE where no IMPLICIT statement is
     implicit_none: bool = false,
+    /// the kinds of the types without one, of its options (#512)
+    default_kinds: default_kinds.Kinds = .{},
     preproc: bool = false,
     ast: ?*Ast = null,
     hash: ?u64 = null,

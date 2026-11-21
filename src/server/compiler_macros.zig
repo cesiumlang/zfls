@@ -14,6 +14,8 @@ const compiler_version = @import("compiler_version.zig");
 const args_mod = @import("compile_args.zig");
 const compile = @import("compile.zig");
 
+const typing = @import("../argcheck/typing.zig");
+
 const Server = @import("../server.zig").Server;
 const Macro = predefined.Macro;
 
@@ -42,6 +44,19 @@ pub fn add(self: *Server) !void {
         self.log.info("compiler_diagnostics: {d} predefined symbols of {s}", .{ defs.len, exe });
         return;
     }
+}
+
+/// Whether the compiler check's compiler has REAL(10): not Intel's, and
+/// gfortran's when it predefines `__GFC_REAL_10__` (not on aarch64, #548);
+/// else as gfortran and Flang have it on zfls's own platform
+pub fn hasReal10(self: *const Server) bool {
+    const fixed = args_mod.compilerOf(self, false) == null;
+    const id = args_mod.compilerOf(self, fixed) orelse return typing.native_real10;
+    return switch (id) {
+        .ifx, .ifort => false,
+        .gfortran => if (self.pp_defs.contains("__GFORTRAN__")) self.pp_defs.contains("__GFC_REAL_10__") else typing.native_real10,
+        else => typing.native_real10,
+    };
 }
 
 /// The symbols `exe` (of compiler `id`) predefines, null when it does not

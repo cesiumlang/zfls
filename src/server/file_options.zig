@@ -9,6 +9,7 @@ const std = @import("std");
 const parser = @import("../parser.zig");
 const project = @import("../project.zig");
 const command_options = @import("../command_options.zig");
+const default_kinds = @import("../default_kinds.zig");
 const compiler_names = @import("../compiler_names.zig");
 
 const FortranFile = parser.FortranFile;
@@ -42,4 +43,5 @@ pub fn apply(self: *Server, f: *FortranFile) error{OutOfMemory}!void {
     };
     if (o.d_lines_code) |code| f.d_lines_code = code;
     f.implicit_none = o.implicit_none;
+    f.default_kinds = default_kinds.parse(args);
 }
