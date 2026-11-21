@@ -44,6 +44,7 @@ const lenses = @import("lenses.zig");
 const linking = @import("linking.zig");
 const modfiles = @import("modfiles.zig");
 const summary = @import("summary.zig");
+const file_options = @import("file_options.zig");
 const source_form = @import("source_form.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
@@ -348,6 +349,7 @@ pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileErro
     f.d_lines_code = self.s.dLinesCode();
     f.fixed_columns = self.s.fixedColumns();
     errdefer f.destroy();
+    file_options.apply(self, f) catch return error.OutOfMemory;
     // from the index cache during initialization
     _ = try f.setTextOwned(try cache.read(self, filepath));
     const opts = parseOptions(self);
@@ -636,6 +638,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?pa
         nf.openmp_conditional = !self.s.disable_openmp_conditional;
         nf.d_lines_code = self.s.dLinesCode();
         nf.fixed_columns = self.s.fixedColumns();
+        file_options.apply(self, nf) catch return error.OutOfMemory;
         try self.workspace.put(self.gpa, nf.path, nf);
         break :blk nf;
     };
@@ -797,6 +800,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
             nf.openmp_conditional = !self.s.disable_openmp_conditional;
             nf.d_lines_code = self.s.dLinesCode();
             nf.fixed_columns = self.s.fixedColumns();
+            try file_options.apply(self, nf);
             created = nf;
             if (!paths.isFile(self.io, filepath)) {
                 if (!allow_empty) return error.FileNotFound;
