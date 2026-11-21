@@ -5,10 +5,10 @@
 //! test of its own expansion, which this replaces.
 
 const std = @import("std");
-const builtin = @import("builtin");
+const sysinfo = @import("builtin");
 const h = @import("harness.zig");
 
-const is_windows = builtin.target.os.tag == .windows;
+const is_windows = sysinfo.target.os.tag == .windows;
 const io = std.testing.io;
 
 /// A stand-in gfortran whose message is its command line
