@@ -44,6 +44,7 @@ pub const InnerScopes = objects_ast.InnerScopes;
 pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
+pub const importHides = objects_resolve.importHides;
 pub const findThroughUse = objects_resolve.findThroughUse;
 pub const findAllThroughUse = objects_resolve.findAllThroughUse;
 pub const renamingModule = objects_resolve.renamingModule;
