@@ -24,7 +24,7 @@ import { registerModuleVariables } from "./moduleVariablesView";
 import { registerConvertCommands } from "./convertForm";
 import { lensCommandsFeature, ProtocolPosition, referenceArgs } from "./codeLenses";
 
-import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
+import { affectsServer, restartsServer, serverArguments, serverSettings, startSettings } from "./options";
 import { appliesLive, ServerSettings } from "./settingsSync";
 import { languageToSet, SourceFormNote } from "./sourceForm";
 import { checkSuperseded } from "./superseded";
@@ -42,8 +42,7 @@ const clients = new Map<string, Promise<LanguageClient | undefined>>();
 /** The file watchers of each client, disposed when it stops */
 const watchers = new Map<string, vscode.Disposable[]>();
 /** The workspace folder of each running client (none for a directory's) and
- * the settings its server has: those of its command line, or those sent
- * since */
+ * the settings its server has: those sent at start, or since */
 const serverState = new Map<string, { folder: vscode.WorkspaceFolder | undefined; settings: ServerSettings }>();
 let output: vscode.LogOutputChannel | undefined;
 let context: vscode.ExtensionContext;
@@ -665,6 +664,9 @@ async function startClient(
       ...(untitled ? SERVED_LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
     ],
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
+    // as sent later, so that they take over from the user's configuration
+    // file from the start (#782)
+    initializationOptions: { zfls: startSettings(folder) },
     synchronize: { fileEvents: sourceWatcher },
     outputChannel: output,
     middleware: {
