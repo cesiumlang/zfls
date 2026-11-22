@@ -189,8 +189,8 @@ test "argument checks: the type and rank of variables and literals" {
     const want = [_][]const u8{
         "Argument n of take: integer expected, real given",
         "Argument x of take: real expected, integer given",
-        // not for a scalar variable: it may be an array element passed to an
-        // explicit-shape or assumed-size array (sequence association)
+        // an assumed-shape array takes no scalar (#719)
+        "Argument v of take: an array expected, a scalar given",
         "Argument s of take: character expected, integer given",
         "Argument v of take: an array expected, a scalar given",
         "Argument p of take: derived expected, character given",
@@ -379,6 +379,7 @@ test "argument checks: types and ranks of expressions" {
     const want = [_][]const u8{
         "Argument x of sr: real expected, integer given",
         "Argument x of sr: real expected, logical given",
+        "Argument v of sa: an array expected, a scalar given",
         "Argument v of sa: an array expected, a scalar given",
         "Argument x of sr: a scalar expected, an array given",
         "Argument x of sr: a scalar expected, an array given",
