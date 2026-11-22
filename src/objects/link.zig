@@ -20,6 +20,7 @@ const Env = objects.Env;
 const findInScope = objects.findInScope;
 const climbTypeTree = objects.climbTypeTree;
 const selector = @import("selector.zig");
+const argcheck = @import("../argcheck.zig");
 
 pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Error!void {
     switch (self.kind) {
@@ -93,7 +94,7 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
                 }
                 if (construct) |c| if (v.link_obj != null) {
                     v.slice_rank = try selector.associateRank(env, c, ln, self.sline, v.link_obj);
-                    if (self.isRankName()) caseRank(v, p.selectDataConst().case_rank);
+                    if (self.isRankName()) try caseRank(env, p, v, p.selectDataConst().case_rank);
                 };
             } else if (self.isGuardName()) {
                 // a TYPE IS or CLASS IS name: the selector's rank and
@@ -191,16 +192,18 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
 }
 
 /// The rank a case of SELECT RANK gives its associate name `v`: `0`, `2`,
-/// assumed size for `*`; that of the selector (assumed rank) for RANK
-/// DEFAULT or a rank not written as a literal (#706)
-fn caseRank(v: *objects.Variable, case_rank: ?[]const u8) void {
+/// assumed size for `*`, that of a constant expression in `block` (`rank
+/// (zero)`, #717); that of the selector (assumed rank) for RANK DEFAULT or
+/// a rank that cannot be told (#706)
+fn caseRank(env: Env, block: *Obj, v: *objects.Variable, case_rank: ?[]const u8) Allocator.Error!void {
     const r = case_rank orelse return;
     if (std.mem.eql(u8, r, "*")) {
         v.slice_rank = 1;
         v.assumed_size = true;
-    } else if (std.fmt.parseInt(u8, r, 10)) |n| {
-        v.slice_rank = n;
-    } else |_| {}
+        return;
+    }
+    const n = (try argcheck.constantValue(env.tmp, env, block.file_ast, block, r, block.sline)) orelse return;
+    if (n >= 0 and n <= 15) v.slice_rank = @intCast(n);
 }
 
 /// The variable or component that selector `text` names in `scope`, its
