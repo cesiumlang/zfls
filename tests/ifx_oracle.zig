@@ -11,7 +11,8 @@
 //! ranks, ALLOCATABLE, POINTER, TARGET and INTENT. ifx names a host's or a
 //! module's entity in the unit that uses it, at its first use, so names are
 //! compared over the whole file, not by scope; but the associate names of
-//! the blocks of SELECT TYPE and RANK each with its own block's entry. The
+//! the blocks of SELECT TYPE and RANK and of ASSOCIATE constructs each with
+//! its own block's or construct's entry. The
 //! differences known, each with its reason, are in ifx_oracle/known.zig;
 //! any other fails the run.
 //!
@@ -113,15 +114,16 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     }
     var cit = components.keyIterator();
     while (cit.next()) |c| if (!ifx_comps.contains(c.*)) try out.append(a, try a.print("missing in ifx: component {s}", .{c.*}));
-    // the associate names of blocks of SELECT TYPE and RANK: ifx lists
-    // each block's, declared on its SELECT's line, in the order of the
-    // blocks (#715)
+    // the associate names of blocks of SELECT TYPE and RANK and of
+    // ASSOCIATE constructs: ifx lists each block's, declared on its
+    // SELECT's line, in the order of the blocks (#715), and each
+    // construct's, declared on its ASSOCIATE's line (#754)
     var claimed: std.StringHashMapUnmanaged(void) = .empty;
     for (objs, 0..) |o, i| {
-        const line = o.select_line orelse continue;
+        const line = o.construct_line orelse continue;
         try claimed.put(a, try a.print("{s}@{d}", .{ o.name(), line }), {});
         var n: usize = 0;
-        for (objs[0..i]) |p| if (p.select_line == line and std.mem.eql(u8, p.name(), o.name())) {
+        for (objs[0..i]) |p| if (p.construct_line == line and std.mem.eql(u8, p.name(), o.name())) {
             n += 1;
         };
         for (l.symbols) |e| {
@@ -132,7 +134,7 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     }
     // the other variables, with their types and attributes
     for (objs) |o| {
-        if (o.kind != 6 or o.group or o.in_interface or o.select_line != null) continue;
+        if (o.kind != 6 or o.group or o.in_interface or o.construct_line != null) continue;
         if (o.parent_kind == 4) {
             try checkVariable(a, &out, o, l.components, try a.print("{s}.{s}", .{ o.parentName(), o.name() }), &claimed);
             continue;
@@ -187,8 +189,8 @@ test "each block's associate name with its own block's entry (#715)" {
     );
     var objs = [_]zfls_side.Object{
         .{ .kind = 6, .fqsn = "m::s::a", .group = false, .parent_kind = 2, .declaration = "REAL, DIMENSION(..), INTENT(IN) :: a" },
-        .{ .kind = 6, .fqsn = "m::s::#select1::#select2::r", .group = false, .parent_kind = 10, .declaration = "REAL :: r", .select_line = 11 },
-        .{ .kind = 6, .fqsn = "m::s::#select1::#select3::r", .group = false, .parent_kind = 10, .declaration = "REAL, DIMENSION(:,:) :: r", .select_line = 11 },
+        .{ .kind = 6, .fqsn = "m::s::#select1::#select2::r", .group = false, .parent_kind = 10, .declaration = "REAL :: r", .construct_line = 11 },
+        .{ .kind = 6, .fqsn = "m::s::#select1::#select3::r", .group = false, .parent_kind = 10, .declaration = "REAL, DIMENSION(:,:) :: r", .construct_line = 11 },
     };
     try std.testing.expectEqual(0, (try compare(a, l, &objs)).items.len);
     // RANK (0)'s name with another block's rank (before #711)
@@ -196,6 +198,35 @@ test "each block's associate name with its own block's entry (#715)" {
     const d = try compare(a, l, &objs);
     try std.testing.expectEqual(1, d.items.len);
     try std.testing.expectEqualStrings("differs: m::s::#select1::#select2::r: rank 2, ifx null", d.items[0]);
+}
+
+test "each ASSOCIATE construct's name with its own construct's entry (#754)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ifx 2026.2.0, fortls's test/test_source/hover/associate_block.f90
+    // (an excerpt): `associate (x => a, ...)` on line 4, `associate (x =>
+    // 1)` on line 7
+    const l = try listing.parse(a,
+        \\SYMBOL CROSS REFERENCE
+        \\ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References
+        \\ A                          Local  3        R(4)            4     1     5                         4
+        \\ X                          Local  4        R(4)            4     1     5                         5
+        \\ X                          Local  7        I(4)            4           scalar                    8
+        \\
+    );
+    var objs = [_]zfls_side.Object{
+        .{ .kind = 6, .fqsn = "p::a", .group = false, .parent_kind = 1, .declaration = "REAL, DIMENSION(5) :: A" },
+        .{ .kind = 6, .fqsn = "p::#assoc1::x", .group = false, .parent_kind = 14, .declaration = "REAL, DIMENSION(5) :: X", .construct_line = 4 },
+        .{ .kind = 6, .fqsn = "p::#assoc2::x", .group = false, .parent_kind = 14, .declaration = "INTEGER :: X", .construct_line = 7 },
+    };
+    try std.testing.expectEqual(0, (try compare(a, l, &objs)).items.len);
+    // the first `x` with the second's type: before #754, it matched the
+    // second's entry
+    objs[1].declaration = "INTEGER :: X";
+    const d = try compare(a, l, &objs);
+    try std.testing.expectEqual(1, d.items.len);
+    try std.testing.expectEqualStrings("differs: p::#assoc1::x: type INTEGER, ifx R(4)", d.items[0]);
 }
 
 fn hasInterfaceVar(objs: []const zfls_side.Object, name: []const u8) bool {
