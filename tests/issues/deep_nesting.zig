@@ -84,3 +84,25 @@ test "files of 3000 nested constructs are indexed on several threads (#780)" {
         try h.expect(syms.len == 1, "x3: {any}", .{syms});
     }
 }
+
+test "a file of 3000 nested loops beside a small one, indexed again and again (#802)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const deep = try std.mem.concat(a, u8, &.{
+        "program p\n  integer :: i\n",
+        try repeated(a, 3000, "do i = 1, {d}\n", ""),
+        try repeated(a, 3000, "end do ! {d}\n", "end program p\n"),
+    });
+    const files = [_]h.File{
+        .{ .name = "a.f90", .text = "module a\n  integer :: x\nend module a\n" },
+        .{ .name = "deep_do.f90", .text = deep },
+    };
+    // the crash of the audit's folder came and went with the threads' timing
+    for (0..8) |_| {
+        const w = try h.Workspace.init(&files, .{ .settings = .{ .nthreads = 2 } });
+        defer w.deinit();
+        const syms = try w.workspaceSymbols("x");
+        try h.expect(syms.len == 1, "x: {any}", .{syms});
+    }
+}
