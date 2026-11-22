@@ -353,3 +353,78 @@ test "F2018 EVENT POST, EVENT WAIT, FORM TEAM, CHANGE TEAM and FAIL IMAGE are st
     defer w.deinit();
     try w.expectNoDiagnostics("c.f90");
 }
+
+test "IMPORT in BLOCK constructs, contained procedures and submodules (F2018), not in program units (#724)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "ok.f90", .text =
+        \\module m_imp
+        \\  implicit none
+        \\  integer, parameter :: wp = kind(1.0d0)
+        \\  interface
+        \\    module subroutine sep()
+        \\    end subroutine
+        \\    subroutine ext(x)
+        \\      import :: wp
+        \\      real(wp) :: x
+        \\    end subroutine
+        \\  end interface
+        \\contains
+        \\  subroutine outer()
+        \\    real(wp) :: x
+        \\    block
+        \\      import, only: wp
+        \\      real(wp) :: y
+        \\      y = 1.0_wp
+        \\    end block
+        \\    block
+        \\      import, all
+        \\    end block
+        \\    x = 2.0_wp
+        \\  contains
+        \\    subroutine inner()
+        \\      import, none
+        \\      print *, 'inner'
+        \\    end subroutine
+        \\  end subroutine
+        \\  subroutine modproc()
+        \\    import, only: wp
+        \\    print *, wp
+        \\  end subroutine
+        \\end module
+        \\submodule (m_imp) s_imp
+        \\contains
+        \\  module procedure sep
+        \\    import, none
+        \\  end procedure
+        \\end submodule
+        \\
+        },
+        .{ .name = "bad.f90", .text =
+        \\module q
+        \\  import
+        \\end module
+        \\subroutine e()
+        \\  import
+        \\end subroutine
+        \\program p
+        \\  import
+        \\end program
+        \\block data bd
+        \\  import
+        \\  common /c/ x
+        \\end block data
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    // (gfortran 16.1 rejects the IMPORT of the separate module procedure
+    // by F2008's C1210, which F2018 dropped; Flang and ifx accept it)
+    try w.expectNoDiagnostics("ok.f90");
+    // as gfortran, Flang and ifx report them
+    try w.expectDiagnostics("bad.f90", &.{
+        "2: IMPORT statement in a module",
+        "5: IMPORT statement in an external subprogram",
+        "8: IMPORT statement in a main program",
+        "11: IMPORT statement in a BLOCK DATA unit",
+    });
+}
