@@ -83,6 +83,9 @@ def zfls_only_item(item) -> bool:
     # (not a variable of the same name: `int1`, Intel's INT1)
     if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and item.get("kind") != 6:
         return True
+    # the F2023 names of ISO_C_BINDING (#730)
+    if str(item.get("label", "")).lower() in ("c_f_strpointer", "f_c_string"):
+        return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in item:
         return True
@@ -124,6 +127,9 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
+        # zfls has the LOWER argument of C_F_POINTER (F2018, #730)
+        v = v.replace("${3:shape}, ${4:lower})", "${3:shape})")
+        v = v.replace("c_f_pointer(cptr, fptr, shape, lower)", "c_f_pointer(cptr, fptr, shape)")
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
