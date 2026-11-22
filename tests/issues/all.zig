@@ -70,6 +70,7 @@ test {
     _ = @import("real_tools.zig");
     _ = @import("gfortran_modules.zig");
     _ = @import("language.zig");
+    _ = @import("import_hides.zig");
     _ = @import("lenses.zig");
     _ = @import("macros.zig");
     _ = @import("navigation.zig");

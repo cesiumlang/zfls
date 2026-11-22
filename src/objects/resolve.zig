@@ -185,6 +185,26 @@ pub fn checkImportScope(scope: *const Obj, name_lower: []const u8) ?ImportType {
     return null;
 }
 
+/// Whether an IMPORT statement of `scope` (a BLOCK or a contained
+/// procedure; interface bodies are `checkImportScope`'s) leaves the host's
+/// name `name_lower` out: IMPORT, NONE, or IMPORT, ONLY without it (#804)
+pub fn importHides(scope: *const Obj, name_lower: []const u8) bool {
+    if (scope.data != .scope) return false;
+    if (scope.parent) |p| if (p.kind == .interface) return false;
+    var restricted = false;
+    for (scope.scopeDataConst().use.items) |u| {
+        if (!u.is_import) continue;
+        switch (u.import_type) {
+            .none => return true,
+            .only => if (u.only_list.contains(name_lower)) return false else {
+                restricted = true;
+            },
+            .all, .default => return false,
+        }
+    }
+    return restricted;
+}
+
 /// Whether module `mod` gives its users `name` (lowercase), a name it has by
 /// USE: not when a PRIVATE statement names it, nor, when PRIVATE is its
 /// default, unless a PUBLIC statement does (#235)
@@ -339,6 +359,7 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
         }
     }
     if (try findThroughUse(env, scope, name_lower, false)) |v| return v;
+    if (!opts.interface and importHides(scope, name_lower)) return null;
     // Only search local and imported names for interfaces
     var import_type: ImportType = .default;
     if (opts.interface) {
@@ -349,6 +370,7 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     }
     for (try scope.getAncestors(a)) |anc| {
         if (try findInScope(env, anc, var_name, .{})) |v| return v;
+        if (importHides(anc, name_lower)) break;
     }
     // A file included into a scope sees that scope
     if (scope.parent == null) if (scope.file_ast.included_in) |host| {
