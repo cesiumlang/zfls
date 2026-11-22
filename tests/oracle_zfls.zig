@@ -20,9 +20,9 @@ pub const Object = struct {
     in_interface: bool = false,
     /// the first line of its hover, for a variable
     declaration: ?[]const u8 = null,
-    /// of the associate name of a block of SELECT TYPE or RANK: the line
-    /// of its SELECT
-    select_line: ?usize = null,
+    /// of an associate name: the line of the SELECT (of a block of SELECT
+    /// TYPE or RANK) or ASSOCIATE that declares it
+    construct_line: ?usize = null,
 
     pub fn name(o: Object) []const u8 {
         const i = std.mem.findLast(u8, o.fqsn, "::") orelse return o.fqsn;
@@ -78,8 +78,10 @@ pub fn objects(a: Allocator, out: []const u8) !?[]Object {
         if (!again) try list.append(a, o);
     }
     const blocks = try selectBlocks(a, out);
-    for (list.items) |*o| if (o.kind == 6) if (o.parent()) |p| if (blocks.get(p)) |b| {
-        o.select_line = b.select_line;
+    const assocs = try associates(a, out);
+    for (list.items) |*o| if (o.kind == 6) if (o.parent()) |p| {
+        if (blocks.get(p)) |b| o.construct_line = b.select_line;
+        if (assocs.get(p)) |l| o.construct_line = l;
     };
     // the declarations, by fqsn
     if (std.mem.find(u8, out, "\nDeclarations")) |d| {
@@ -104,9 +106,7 @@ pub const SelectBlock = struct { select_line: usize, line: usize };
 /// in lower case
 pub fn selectBlocks(a: Allocator, out: []const u8) !std.StringHashMapUnmanaged(SelectBlock) {
     var res: std.StringHashMapUnmanaged(SelectBlock) = .empty;
-    const start = std.mem.find(u8, out, "\nSelect Blocks") orelse return res;
-    const end = std.mem.findPos(u8, out, start, "\nDeclarations") orelse out.len;
-    var lines = std.mem.splitScalar(u8, out[start..end], '\n');
+    var lines = std.mem.splitScalar(u8, section(out, "Select Blocks"), '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trimEnd(u8, raw, "\r");
         const sep = std.mem.findLast(u8, line, ": ") orelse continue;
@@ -116,6 +116,41 @@ pub fn selectBlocks(a: Allocator, out: []const u8) !std.StringHashMapUnmanaged(S
         try res.put(a, try std.ascii.allocLowerString(a, line[0..sep]), .{ .select_line = s, .line = l });
     }
     return res;
+}
+
+/// The ASSOCIATE constructs of `--debug_parser` output: their lines
+/// (1-based), by fqsn in lower case
+pub fn associates(a: Allocator, out: []const u8) !std.StringHashMapUnmanaged(usize) {
+    var res: std.StringHashMapUnmanaged(usize) = .empty;
+    var lines = std.mem.splitScalar(u8, section(out, "Associate Constructs"), '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        const sep = std.mem.findLast(u8, line, ": ") orelse continue;
+        const l = std.fmt.parseInt(usize, line[sep + 2 ..], 10) catch continue;
+        try res.put(a, try std.ascii.allocLowerString(a, line[0..sep]), l);
+    }
+    return res;
+}
+
+/// The lines of section `title` of `--debug_parser` output: from its
+/// title's line to the next rule, or the end
+fn section(out: []const u8, title: []const u8) []const u8 {
+    var at: usize = 0;
+    const start = while (std.mem.findPos(u8, out, at, title)) |i| : (at = i + 1) {
+        // the title alone on its line
+        const after = std.mem.trimStart(u8, out[i + title.len ..], "\r");
+        if ((i == 0 or out[i - 1] == '\n') and (after.len == 0 or after[0] == '\n')) break i + title.len;
+    } else return "";
+    // past the rule under the title
+    var lines = std.mem.splitScalar(u8, out[start..], '\n');
+    var end = start;
+    var rules: usize = 0;
+    while (lines.next()) |line| : (end += line.len + 1) {
+        if (!std.mem.startsWith(u8, line, "==========")) continue;
+        rules += 1;
+        if (rules == 2) break;
+    }
+    return out[start..@min(end, out.len)];
 }
 
 /// The type spec of a hover line (`REAL(8), PARAMETER :: pi = 3.1`:
