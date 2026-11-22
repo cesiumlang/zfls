@@ -20,6 +20,7 @@ const glob = @import("../glob.zig");
 const project = @import("../project.zig");
 const semantic = @import("../semantic.zig");
 const namelist = @import("../namelist.zig");
+const version = @import("../version.zig");
 
 const Ast = objects.Ast;
 const FortranFile = parser.FortranFile;
@@ -81,7 +82,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
 
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);
-    self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
+    self.log.info("zfls - Fortran Language Server {s} Initialized", .{version.reported});
     try logOptions(self, a);
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
@@ -98,7 +99,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .documentFormattingProvider = if (on.formatting) true else null,
         .documentRangeFormattingProvider = if (on.formatting) true else null,
         .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
-    }, .serverInfo = .{ .name = "zfls", .version = @import("../version.zig").reported } });
+    }, .serverInfo = .{ .name = "zfls", .version = version.reported } });
 }
 
 /// The names of the configuration file, the first found being read
