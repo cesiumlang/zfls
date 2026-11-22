@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const json = @import("../json.zig");
 const dbgeng = @import("dbgeng.zig");
 const runtime_errors = @import("runtime_errors.zig");
+const engine_conditions = @import("engine_conditions.zig");
 const Value = json.Value;
 
 const session = @import("session.zig");
@@ -25,18 +26,21 @@ pub fn set(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         for (gop.value_ptr.items) |id| {
             s.engine.removeBreakpoint(id);
             _ = s.unverified.remove(id);
+            engine_conditions.forget(s, id);
         }
         gop.value_ptr.clearRetainingCapacity();
     } else gop.value_ptr.* = .empty;
     var out: std.ArrayList(Value) = .empty;
     for (json.items(json.get(args, "breakpoints"))) |b| {
         const line: u32 = @intCast(json.int(json.get(b, "line")) orelse continue);
-        const bp = s.engine.addBreakpoint(a, file, line, json.str(json.get(b, "condition"))) catch {
+        const bp = s.engine.addBreakpoint(a, file, line) catch {
             try out.append(a, try json.from(a, .{ .verified = false, .line = line }));
             continue;
         };
         try gop.value_ptr.append(s.gpa, bp.id);
-        if (bp.offset != null) {
+        if (try engine_conditions.keep(s, a, bp.id, b)) |why| {
+            try out.append(a, try json.from(a, .{ .id = bp.id, .verified = false, .line = line, .message = why }));
+        } else if (bp.offset != null) {
             try out.append(a, try json.from(a, .{ .id = bp.id, .verified = true, .line = line }));
         } else {
             try s.unverified.put(s.gpa, bp.id, line);
