@@ -253,7 +253,7 @@ fn endPhrase(a: Allocator, self: *const Server, file: *const FortranFile, scope:
         .do_ => "DO",
         .if_ => "IF",
         .where => "WHERE",
-        .associate => "ASSOCIATE",
+        .associate => if (scope.assocDataConst().change_team) "TEAM" else "ASSOCIATE",
         // a block of a SELECT ends with it
         .select => "SELECT",
         .block => if (std.ascii.findIgnoreCase(file.getLine(scope.sline -| 1, false) orelse "", "critical") != null) "CRITICAL" else "BLOCK",

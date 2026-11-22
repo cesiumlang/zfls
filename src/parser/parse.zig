@@ -286,7 +286,7 @@ pub const Parser = struct {
                 continue;
             };
             switch (obj_read) {
-                .do_, .where, .assoc, .if_, .select, .block => try p.stmt_fns.markExec(sa, ast),
+                .do_, .where, .assoc, .team, .if_, .select, .block => try p.stmt_fns.markExec(sa, ast),
                 else => {},
             }
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
@@ -465,11 +465,13 @@ pub const Parser = struct {
                 }
                 p.dbg("{s} !!! WHERE - Ln:{d}", .{ line, line_no });
             },
-            .assoc => |bound| {
+            .assoc, .team => |bound| {
                 counters.block += 1;
                 const name = try a.print("#ASSOC{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .associate, line_no, name, &.{});
-                try ast.addScope(o, &R().END_ASSOCIATE, true, true);
+                const team = obj_read == .team;
+                o.assocData().change_team = team;
+                try ast.addScope(o, if (team) &R().END_TEAM else &R().END_ASSOCIATE, true, true);
                 for (bound) |bv| {
                     const parts = try str.split(a, bv, "=>");
                     if (parts.len != 2) continue;
@@ -479,7 +481,7 @@ pub const Parser = struct {
                     try o.assocData().links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
-                p.dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! {s} - Ln:{d}", .{ line, if (team) "CHANGE TEAM" else "ASSOCIATE", line_no });
             },
             .if_ => {
                 counters.if_ += 1;

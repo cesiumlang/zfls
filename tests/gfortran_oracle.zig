@@ -22,7 +22,9 @@
 //! gfortran rejects are skipped (and fail the run for the fixtures, which
 //! are all valid Fortran). A fixture can give gfortran or zfls arguments on
 //! an `oracle-gfortran-args:` / `oracle-zfls-args:` line among its first
-//! ten (`! oracle-gfortran-args: -fdec-static`).
+//! ten (`! oracle-gfortran-args: -fdec-static`), and the oldest gfortran
+//! that reads it on an `oracle-gfortran-min:` line (`16`): older ones skip
+//! it.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -408,6 +410,19 @@ fn isFortran(name: []const u8) bool {
     return false;
 }
 
+/// The major version of the first line of `gfortran --version`, `GNU
+/// Fortran (...) 16.1.0`
+fn majorVersion(line: []const u8) ?u32 {
+    const last = line[(std.mem.findScalarLast(u8, line, ' ') orelse return null) + 1 ..];
+    return std.fmt.parseInt(u32, last[0 .. std.mem.findScalar(u8, last, '.') orelse last.len], 10) catch null;
+}
+
+test majorVersion {
+    try std.testing.expectEqual(@as(?u32, 13), majorVersion("GNU Fortran (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"));
+    try std.testing.expectEqual(@as(?u32, 16), majorVersion("GNU Fortran (Rev5, Built by MSYS2 project) 16.1.0"));
+    try std.testing.expectEqual(@as(?u32, null), majorVersion("?"));
+}
+
 pub fn main(init: std.process.Init) !u8 {
     const io = init.io;
     const a = init.arena.allocator();
@@ -438,7 +453,9 @@ pub fn main(init: std.process.Init) !u8 {
     var gf_env = try util.envWithDirOf(io, a, env, gfortran);
     const version = try util.run(io, a, &.{ gfortran, "--version" }, null, &gf_env);
     var first = std.mem.splitScalar(u8, version.stdout, '\n');
-    std.debug.print("gfortran: {s} ({s})\n", .{ gfortran, std.mem.trim(u8, first.next() orelse "?", " \r") });
+    const first_line = std.mem.trim(u8, first.next() orelse "?", " \r");
+    std.debug.print("gfortran: {s} ({s})\n", .{ gfortran, first_line });
+    const major = majorVersion(first_line);
     // every fixture is valid Fortran; other corpora may contain files that
     // are not
     const fixtures = paths.items.len == 0;
@@ -457,6 +474,13 @@ pub fn main(init: std.process.Init) !u8 {
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, "-cpp");
         if (std.mem.eql(u8, ext_lower, ".f") or std.mem.eql(u8, ext_lower, ".for")) try cmd.append(a, "-ffixed-form");
         const text = try Io.Dir.cwd().readFileAlloc(io, src, a, .limited(1 << 24));
+        // F2018 that only gfortran 16 reads (CRITICAL with STAT=, #722)
+        const min = try util.headerArgs(a, text, "oracle-gfortran-min:");
+        const want: ?u32 = if (min.len > 0) std.fmt.parseInt(u32, min[0], 10) catch null else null;
+        if (want) |m| if (major) |have| if (have < m) {
+            std.debug.print("SKIP {s} (gfortran {d} is older than its {d})\n", .{ src, have, m });
+            continue;
+        };
         const own_args = try util.headerArgs(a, text, "oracle-gfortran-args:");
         try cmd.appendSlice(a, own_args);
         try cmd.append(a, abs);
