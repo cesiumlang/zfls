@@ -12,6 +12,8 @@ pub const Var = struct {
     /// `(REAL 8)`, `(CHARACTER 5 1)`, `(DERIVED point)`, `(CLASS ...)`
     type: []const u8 = "",
     rank: usize = 0,
+    /// `Array spec:(-1 ... AS_ASSUMED_RANK)`, `x(..)`
+    assumed_rank: bool = false,
     allocatable: bool = false,
     pointer: bool = false,
     target: bool = false,
@@ -28,7 +30,9 @@ pub fn varOf(block: []const []const u8) Var {
             v.type = t["type spec : ".len..];
         } else if (std.mem.startsWith(u8, t, "Array spec:(")) {
             var words = std.mem.tokenizeScalar(u8, t["Array spec:(".len..], ' ');
-            v.rank = std.fmt.parseInt(usize, words.next() orelse "0", 10) catch 0;
+            const r = words.next() orelse "0";
+            v.assumed_rank = std.mem.eql(u8, r, "-1");
+            v.rank = std.fmt.parseInt(usize, r, 10) catch 0;
         } else if (std.mem.startsWith(u8, t, "attributes: (")) {
             var words = std.mem.tokenizeAny(u8, t["attributes: (".len..], " \t)");
             while (words.next()) |w| {
@@ -59,8 +63,10 @@ pub fn mismatch(a: Allocator, v: Var, decl: []const u8) !?[]const u8 {
     // a CLASS variable's rank, ALLOCATABLE and POINTER are its class
     // container's `_data` component's in the dump
     if (std.mem.startsWith(u8, v.type, "(CLASS")) return null;
+    const assumed = std.mem.find(u8, attrs, "DIMENSION(..)") != null;
+    if (assumed != v.assumed_rank) return try a.print("assumed rank {}, gfortran {}", .{ assumed, v.assumed_rank });
     const r = oz.rank(attrs);
-    if (r != v.rank) return try a.print("rank {d}, gfortran {d}", .{ r, v.rank });
+    if (!assumed and r != v.rank) return try a.print("rank {d}, gfortran {d}", .{ r, v.rank });
     for ([_]struct { []const u8, bool }{ .{ "ALLOCATABLE", v.allocatable }, .{ "POINTER", v.pointer }, .{ "TARGET", v.target } }) |p| {
         const z = std.mem.find(u8, attrs, p[0]) != null;
         if (z != p[1]) return try a.print("{s} {}, gfortran {}", .{ p[0], z, p[1] });
@@ -126,6 +132,9 @@ test "a variable of gfortran's dump, against zfls's declaration" {
     try std.testing.expectEqualStrings("IN", d.intent.?);
     try std.testing.expect(try mismatch(a, d, "TYPE(tt), INTENT(IN) :: src") == null);
     try std.testing.expect(try mismatch(a, d, "TYPE(tt), INTENT(OUT) :: src") != null);
+    const ar = varOf(&.{ "      type spec : (REAL 4)", "      attributes: (VARIABLE  DIMENSION DUMMY(IN))", "      Array spec:(-1 [0] AS_ASSUMED_RANK )" });
+    try std.testing.expect(try mismatch(a, ar, "REAL, DIMENSION(..), INTENT(IN) :: x") == null);
+    try std.testing.expect(try mismatch(a, ar, "REAL, DIMENSION(:), INTENT(IN) :: x") != null);
 }
 
 test "the fields of a DEC structure, through its unions and maps" {

@@ -239,6 +239,8 @@ pub const Select = struct {
     binding_name: ?[]const u8 = null,
     bound_var: ?[]const u8 = null,
     binding_type: ?[]const u8 = null,
+    /// Of a case of SELECT RANK: its rank, `2` or `*` (none for RANK DEFAULT)
+    case_rank: ?[]const u8 = null,
 };
 
 /// A variable, or a method (type-bound procedure or procedure pointer)
@@ -253,6 +255,8 @@ pub const Variable = struct {
     /// the rank of the variable it is linked to (`b(:, 1)`), or of the
     /// expression it is bound to; else -1
     slice_rank: i32 = -1,
+    /// Of the associate name of a RANK (*) block: assumed size, of rank 1
+    assumed_size: bool = false,
     link_name: ?[]const u8 = null,
     /// What the variable stands for: the procedure of a procedure pointer or
     /// type-bound procedure, the selector of an ASSOCIATE name
@@ -699,6 +703,13 @@ pub const Obj = struct {
         const p = self.parent orelse return false;
         // made by the guard's statement, not declared in its block
         return p.kind == .select and p.selectDataConst().select_type == 3 and self.sline == p.sline;
+    }
+
+    /// Whether variable `self` is the associate name of a case of SELECT
+    /// RANK, which has the case's rank (#706)
+    pub fn isRankName(self: *const Obj) bool {
+        const p = self.parent orelse return false;
+        return self.kind == .variable and p.kind == .select and p.selectDataConst().select_type == 5 and self.sline == p.sline;
     }
 
     pub fn isTypeBinding(self: *const Obj) bool {

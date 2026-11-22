@@ -4,7 +4,10 @@
 //! compare; in each TYPE IS and CLASS IS block the name is a temporary of
 //! the guard's type and the selector's rank: `__tmp_type_child_t_it`,
 //! `__tmp_class_child_t_it`, `__tmp_REAL_8_x`, `__tmp_CHARACTER_0_1_x`
-//! (gfortran 16; before, without the name: `__tmp_type_child_t`).
+//! (gfortran 16; before, without the name: `__tmp_type_child_t`). In each
+//! RANK block of SELECT RANK it is a temporary of the block's rank and the
+//! selector's type and attributes, without the name: `__tmp_REAL_4_rank_2`,
+//! `__tmp_REAL_4_rank_m1` (RANK (*)), #706.
 //! Each of zfls's declarations of a name must agree with gfortran's symbol
 //! of it or with one of its temporaries.
 
@@ -52,12 +55,24 @@ pub const Unnamed = struct {
         for (block) |b| {
             const deeper = std.mem.findNone(u8, b, " \t\r") orelse continue;
             if (deeper <= indent) {
+                // `SELECT RANK s:p(FULL)`: of `select rank (p)`, unnamed
+                if (selectRankName(b[deeper..])) |n| for (u.temps.items) |k| {
+                    all.items[k].assoc = n;
+                };
                 u.temps.clearRetainingCapacity();
                 break;
             }
         }
     }
 };
+
+/// The selector of `SELECT RANK block@1:r(FULL)`, `r`, or null
+fn selectRankName(line: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, line, "SELECT RANK ")) return null;
+    const open = std.mem.findScalar(u8, line, '(') orelse return null;
+    const colon = std.mem.findScalarLast(u8, line[0..open], ':') orelse return null;
+    return line[colon + 1 .. open];
+}
 
 /// How zfls's declaration `decl` differs from temporary `v`: in type or
 /// rank. gfortran makes its temporaries POINTER and TARGET whatever the
@@ -142,4 +157,17 @@ test check {
     try decls.getPtr("m::s::it").?.append(a, "TYPE(base_t) :: it");
     try check(a, &diffs, &vars, &temps, &decls);
     try std.testing.expectEqual(1, diffs.items.len);
+}
+
+test "the temporaries of an unnamed SELECT RANK take its selector's name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var all: std.ArrayList(Temp) = .empty;
+    var u: Unnamed = .{};
+    // gfortran 16.1, `select rank (p)`
+    try u.symbol(a, &all, 6, &.{ "        type spec : (REAL 4)", "        Array spec:(1 [0] AS_DEFERRED () () )" }, .{ .ns = "m::s", .name = "__tmp_REAL_4_rank_1", .v = .{ .rank = 1 } }, null);
+    try u.symbol(a, &all, 6, &.{ "        type spec : (UNKNOWN 0)", "        attributes: (LABEL )", "      ", "      SELECT RANK s:p(FULL)" }, null, null);
+    try std.testing.expectEqualStrings("p", all.items[0].assoc);
+    try std.testing.expectEqualStrings("r", selectRankName("SELECT RANK block@1:r(FULL)").?);
 }
