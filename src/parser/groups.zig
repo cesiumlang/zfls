@@ -124,7 +124,8 @@ pub fn read(ast: *Ast, sa: Allocator, attrs: *std.ArrayList(attributes.Attr), co
         var names: std.ArrayList([]const u8) = .empty;
         for (g.items) |it| {
             try names.append(sa, if (it.bounds) |b| try sa.print("{s}({s})", .{ it.name, b }) else it.name);
-            if (it.bounds) |b| try attrs.append(sa, .{ .scope = scope, .line = line_no, .name = it.name, .kw = .dimension, .text = b });
+            // (copied: the line is read into a buffer the next one reuses)
+            if (it.bounds) |b| try attributes.add(sa, attrs, .{ .scope = scope, .line = line_no, .name = it.name, .kw = .dimension, .text = b });
         }
         const listed = try std.mem.join(sa, ", ", names.items);
         if (existing(scope, kw.kind, name)) |o| {

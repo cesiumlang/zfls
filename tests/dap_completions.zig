@@ -28,6 +28,8 @@ pub const Program = struct {
     work_line: i64,
     /// Windows's Debugger Engine, not gdb
     engine: bool,
+    /// gdb completes its commands (gdb 16 and later)
+    gdb_completes: bool = false,
 };
 
 pub fn run(io: Io, gpa: Allocator, p: Program) !void {
@@ -70,8 +72,8 @@ pub fn run(io: Io, gpa: Allocator, p: Program) !void {
         const t = items(r, "targets")[0];
         try check(int(t, "length") == x[2] and int(t, "start") == @as(i64, @intCast(text.len + 1)) - x[2], "{s}: replaces {d} characters from column {d} ({?d}, {?d})", .{ text, x[2], @as(i64, @intCast(text.len + 1)) - x[2], int(t, "length"), int(t, "start") });
     }
-    if (!p.engine) {
-        // gdb's own: its commands
+    // gdb's own: its commands (gdb 16 and later)
+    if (!p.engine and p.gdb_completes) {
         const r = try c.request("completions", .{ .text = "inf", .column = 4, .frameId = frame });
         const got = try labels(a, items(r, "targets"));
         try check(std.mem.find(u8, got, "info") != null, "inf: gdb's commands ({s})", .{got});

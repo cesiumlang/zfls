@@ -70,6 +70,8 @@ const Setup = struct {
     work_line: i64,
     main_line: i64,
     call_line: i64,
+    /// gdb's major version
+    gdb_version: u32,
 };
 
 pub fn main(init: std.process.Init) !u8 {
@@ -154,6 +156,7 @@ pub fn main(init: std.process.Init) !u8 {
         .work_line = lineOf(text, if (compiler.? == .lfortran) "LFortran stops here" else "stop here: work"),
         .main_line = lineOf(text, "stop here: main"),
         .call_line = lineOf(text, "call work("),
+        .gdb_version = v[0],
     };
     build(io, a, setup, src, program, &.{"-fcheck=bounds"}) catch return 1;
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
@@ -661,7 +664,7 @@ fn associated(io: Io, gpa: Allocator, setup: Setup) !void {
 /// The Debug Console's completions (tests/dap_completions.zig)
 fn completing(io: Io, gpa: Allocator, setup: Setup) !void {
     if (setup.compiler == .lfortran or setup.compiler == .ifx) return std.debug.print("skipped: gfortran's and Flang's\n", .{});
-    try dap_completions.run(io, gpa, .{ .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb }, .program = setup.program, .src = setup.src, .dir = setup.dir, .work_line = setup.work_line, .engine = false });
+    try dap_completions.run(io, gpa, .{ .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb }, .program = setup.program, .src = setup.src, .dir = setup.dir, .work_line = setup.work_line, .engine = false, .gdb_completes = setup.gdb_version >= 16 });
 }
 
 /// A gdb that answers nothing (tests/dap_gdb_silent.zig)
