@@ -387,6 +387,9 @@ def main() -> int:
                     if "diagnostics" in params:
                         params["diagnostics"] = [d for d in params["diagnostics"] if d.get("code") not in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned")]
                     for d in params.get("diagnostics", []):
+                        # zfls names the unit an IMPORT may not be in (#724)
+                        if d.get("code") == "import-outside-interface":
+                            d["message"] = "IMPORT statement outside of interface"
                         d.pop("code", None)
                         d.pop("source", None)
                 parsed.append(params)

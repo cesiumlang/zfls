@@ -105,6 +105,9 @@ def normalize(v):
     if isinstance(v, dict):
         # zfls gives each diagnostic a code and source (fortls has neither)
         diagnostic = {"range", "message", "severity"} <= v.keys()
+        # and names the unit an IMPORT may not be in (#724)
+        if diagnostic and v.get("code") == "import-outside-interface":
+            v = {**v, "message": "IMPORT statement outside of interface"}
         return {
             k: normalize(x) for k, x in v.items()
             if k != "traceback" and not (diagnostic and k in ("code", "source"))
