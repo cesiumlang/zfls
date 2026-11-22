@@ -7,6 +7,7 @@ test {
     _ = @import("sequence_association.zig");
     _ = @import("associate.zig");
     _ = @import("coarrays.zig");
+    _ = @import("deep_nesting.zig");
     _ = @import("declarations_f2023.zig");
     _ = @import("statements_f2023.zig");
     _ = @import("select_blocks.zig");
