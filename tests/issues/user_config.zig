@@ -105,6 +105,28 @@ test "the project's configuration file and the editor take over from the user's 
     }
 }
 
+test "the VS Code extension's settings take over from the user's file at start and after a change (#782)" {
+    const u = try UserConfig.init("{\"lowercase_hover\": false}");
+    defer u.deinit();
+    // as the extension starts zfls: its settings on the command line and
+    // as initializationOptions
+    const settings = "{\"zfls\": {\"lowercase_hover\": true}}";
+    const w = try h.Workspace.init(&program, .{ .settings = .{ .lowercase_hover = true }, .init_options = settings });
+    defer w.deinit();
+    try std.testing.expect(try isLowercase(w));
+    try w.changeConfiguration(settings);
+    try std.testing.expect(try isLowercase(w));
+}
+
+test "a $schema key in the configuration file is ignored (#794)" {
+    const u = try UserConfig.init("{\"$schema\": \"https://example.org/fortls.schema.json\", \"lowercase_hover\": true}");
+    defer u.deinit();
+    const w = try h.Workspace.init(&program, .{});
+    defer w.deinit();
+    try std.testing.expect(try isLowercase(w));
+    try std.testing.expectEqual(@as(usize, 0), (try w.sentWith("window/showMessage")).len);
+}
+
 test "no user's configuration file: no message, the defaults (#271)" {
     const u = try UserConfig.init(null);
     defer u.deinit();

@@ -30,6 +30,7 @@ const lldb = @import("lldb.zig");
 const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
 const gdb_pending = @import("gdb_pending.zig");
+const gdb_io = @import("gdb_io.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const gdb_values = @import("gdb_values.zig");
@@ -422,8 +423,12 @@ pub fn syncFunctions(s: *Session, a: Allocator) !Value {
         if (!(s.g.gfortran_dll and gdb_dll.isDllFunction(b.name))) try kept.append(a, b);
     };
     const ours: []const runtime_errors.GdbBreakpoint = kept.items;
+    for (ours) |b| if (b.gdb_condition != null) {
+        try gdb_io.define(s, a);
+        break;
+    };
     // Flang's STOP functions: only at ERROR STOP
-    for (ours) |b| try list.append(if (b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
+    for (ours) |b| try list.append(if (b.gdb_condition orelse b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
     if (s.g.entry_function) |f| try list.append(try json.from(a, .{ .name = f }));
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     s.g.error_breakpoints.clearRetainingCapacity();

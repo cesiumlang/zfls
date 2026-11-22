@@ -51,15 +51,11 @@ pub fn byProcessId(io: Io, gpa: Allocator, p: Program) !void {
 
 /// Attaching to gdbserver's program (`target`), which it starts stopped
 pub fn byTarget(io: Io, gpa: Allocator, p: Program, gdbserver: []const u8) !void {
-    // Ubuntu 24.04's gdb 15 on AArch64 runs gdbserver's program past the
-    // breakpoint (CI run 45017196917): to be looked into
-    if (sysinfo.target.os.tag == .linux and sysinfo.target.cpu.arch == .aarch64) return std.debug.print("attach to gdbserver: skipped on Linux AArch64 (its breakpoint does not stop)\n", .{});
-    var buf: [256]u8 = undefined;
-    var fba: std.heap.FixedBufferAllocator = .init(&buf);
-    _ = std.process.run(fba.allocator(), io, .{ .argv = &.{ gdbserver, "--version" } }) catch |e| switch (e) {
-        error.OutOfMemory, error.StreamTooLong => {},
-        else => return std.debug.print("attach to gdbserver: skipped: no {s}\n", .{gdbserver}),
-    };
+    const version = std.process.run(gpa, io, .{ .argv = &.{ gdbserver, "--version" } }) catch
+        return std.debug.print("attach to gdbserver: skipped: no {s}\n", .{gdbserver});
+    defer gpa.free(version.stdout);
+    defer gpa.free(version.stderr);
+    if (endsAtResume(io, version.stdout)) return std.debug.print("attach to gdbserver: skipped: gdbserver before 16.3 fails at the first resume on AArch64 with SVE\n", .{});
     // a port of the system's choice, which gdbserver tells
     var server = try std.process.spawn(io, .{ .argv = &.{ gdbserver, "--once", "localhost:0", p.program }, .cwd = .{ .path = p.dir }, .stdin = .pipe, .stdout = .pipe, .stderr = .pipe, .create_no_window = true });
     var waited = false;
@@ -74,6 +70,29 @@ pub fn byTarget(io: Io, gpa: Allocator, p: Program, gdbserver: []const u8) !void
     c.end(true);
     _ = try server.wait(io);
     waited = true;
+}
+
+/// gdbserver 15.1 to 16.2 on Linux AArch64 with SVE fails an assertion
+/// (`raw_compare: Assertion 'offset < regbuf.size ()' failed`) at the
+/// program's first resume, which then runs to its end, also under gdb's
+/// own commands (CI run 45030774745, Ubuntu 24.04's 15.1; fixed in gdb
+/// 16.3, its commit 5c89e55): by `said` of `--version`
+fn endsAtResume(io: Io, said: []const u8) bool {
+    if (sysinfo.target.os.tag != .linux or sysinfo.target.cpu.arch != .aarch64) return false;
+    const first = std.mem.trimEnd(u8, std.mem.sliceTo(said, '\n'), " \r");
+    var it = std.mem.splitScalar(u8, first[(std.mem.findScalarLast(u8, first, ' ') orelse return false) + 1 ..], '.');
+    const major = leading(it.next() orelse "") orelse return false;
+    const minor = leading(it.next() orelse "") orelse 0;
+    if (major > 16 or (major == 16 and minor >= 3)) return false;
+    var buf: [8192]u8 = undefined;
+    const info = Io.Dir.cwd().readFile(io, "/proc/cpuinfo", &buf) catch return true;
+    return std.mem.find(u8, info, " sve") != null;
+}
+
+/// The number that `text` begins with
+fn leading(text: []const u8) ?u32 {
+    const end = std.mem.findNone(u8, text, "0123456789") orelse text.len;
+    return std.fmt.parseInt(u32, text[0..end], 10) catch null;
 }
 
 /// The session: attached, the program given its input, stopped at its

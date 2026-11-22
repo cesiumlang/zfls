@@ -13,7 +13,15 @@ const kit = @import("kit.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-const usage = "usage: zfls build-command FILE [--compiler C] [--compiler-path P] [--output-dir D] [-- ARGS...]\n";
+const usage = "usage: zfls build-command FILE [--compiler C] [--compiler-path P] [--output-dir D] [--kit DIR] [-- ARGS...]\n";
+
+/// The options that take a value, as `run` reads them
+const options = struct {
+    const compiler = "--compiler";
+    const compiler_path = "--compiler-path";
+    const output_dir = "--output-dir";
+    const kit = "--kit";
+};
 
 /// Runs it: its exit code
 pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args: []const []const u8) !u8 {
@@ -30,16 +38,16 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         if (std.mem.eql(u8, arg, "--")) {
             r.args = args[i + 1 ..];
             break;
-        } else if (std.mem.eql(u8, arg, "--compiler") and value) {
+        } else if (std.mem.eql(u8, arg, options.compiler) and value) {
             i += 1;
             r.compiler = args[i];
-        } else if (std.mem.eql(u8, arg, "--compiler-path") and value) {
+        } else if (std.mem.eql(u8, arg, options.compiler_path) and value) {
             i += 1;
             r.compiler_path = args[i];
-        } else if (std.mem.eql(u8, arg, "--output-dir") and value) {
+        } else if (std.mem.eql(u8, arg, options.output_dir) and value) {
             i += 1;
             r.output_dir = try paths.abspath(a, args[i]);
-        } else if (std.mem.eql(u8, arg, "--kit") and value) {
+        } else if (std.mem.eql(u8, arg, options.kit) and value) {
             i += 1;
             kit_dir = try paths.abspath(a, args[i]);
         } else if (file == null and !std.mem.startsWith(u8, arg, "-")) {
@@ -67,4 +75,10 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
     const text = try json.pretty(a, try json.from(a, answer));
     try stdio.stdout().writeStreamingAll(io, try a.print("{s}\n", .{text}));
     return 0;
+}
+
+test "the usage line names every option the parser reads" {
+    inline for (@typeInfo(options).@"struct".decl_names) |name| {
+        try std.testing.expect(std.mem.find(u8, usage, @field(options, name)) != null);
+    }
 }

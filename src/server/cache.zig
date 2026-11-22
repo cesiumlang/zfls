@@ -226,12 +226,12 @@ pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: par
         // a file that cannot be summarized is kept in full
         bytes = s.bytes orelse serial.save(self.gpa, ast) catch |err| switch (err) {
             error.OutOfMemory => return ast,
-            error.Foreign => return ast,
+            error.Foreign, error.TooDeep => return ast,
         };
     } else bytes = serial.save(self.gpa, ast) catch |err| switch (err) {
         error.OutOfMemory => return ast,
         // not kept: parsed every time
-        error.Foreign => return ast,
+        error.Foreign, error.TooDeep => return ast,
     };
     snap.mutex.lockUncancelable(self.io);
     defer snap.mutex.unlock(self.io);

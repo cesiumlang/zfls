@@ -7,7 +7,7 @@ import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import type * as vscode from "vscode";
-import { argOption, serverArguments, serverSettings } from "../../src/options";
+import { argOption, restartsServer, serverArguments, serverSettings, startSettings } from "../../src/options";
 import { settings } from "./vscode";
 
 const root = path.join("/", "my proj");
@@ -56,4 +56,67 @@ test("files.associations reaches zfls on the command line and over LSP (#686)", 
   assert.deepEqual(serverSettings(folder).file_associations, { "*.fpp": "FortranFixedForm" });
   const args = serverArguments(folder);
   assert.equal(args[args.indexOf("--file_associations") + 1], '{"*.fpp":"FortranFixedForm"}');
+});
+
+test("a fractional lintOnTypeDelay is sent as whole milliseconds (#783)", () => {
+  settings["zfls.linter.lintOnType"] = true;
+  settings["zfls.linter.lintOnTypeDelay"] = 250.6;
+  assert.equal(serverSettings(folder).compiler_change_delay, 251);
+  const args = serverArguments(folder);
+  assert.equal(args[args.indexOf("--compiler_change_delay") + 1], "251");
+});
+
+test("the settings are sent at start too, with incremental_sync (#782)", () => {
+  settings["zfls.lowercaseHover"] = true;
+  settings["zfls.incrementalSync"] = true;
+  const start = startSettings(folder);
+  assert.equal(start.lowercase_hover, true);
+  assert.equal(start.incremental_sync, true);
+  const restartOnly = { incremental_sync: undefined, debug_log: undefined };
+  assert.deepEqual({ ...start, ...restartOnly }, { ...serverSettings(folder), ...restartOnly });
+  assert.ok(!("incremental_sync" in serverSettings(folder)));
+  assert.ok(!("config" in start));
+});
+
+test("settings that zfls.arguments sets are not sent (#782)", () => {
+  settings["zfls.lowercaseHover"] = false;
+  settings["zfls.arguments"] = ["--lowercase_hover", "-n2", "--max_line=100", "--incremental_sync"];
+  for (const s of [serverSettings(folder), startSettings(folder)]) {
+    assert.ok(!("lowercase_hover" in s));
+    assert.ok(!("nthreads" in s));
+    // a prefix: every setting it begins
+    assert.ok(!("max_line_length" in s));
+    assert.ok("max_comment_line_length" in s);
+    assert.ok(!("incremental_sync" in s));
+  }
+  // a whole name is that one only
+  settings["zfls.arguments"] = ["--codee"];
+  assert.ok(!("codee" in serverSettings(folder)));
+  assert.ok("codee_path" in serverSettings(folder));
+});
+
+test("blank zfls.arguments items do not restart the server on every change (#787)", () => {
+  const e = { affectsConfiguration: (key: string) => key === "zfls.lowercaseHover" } as vscode.ConfigurationChangeEvent;
+  settings["zfls.arguments"] = ["", "  "];
+  assert.equal(restartsServer(e, undefined), false);
+  settings["zfls.arguments"] = ["", "--nthreads=2"];
+  assert.equal(restartsServer(e, undefined), true);
+});
+
+test("the debug log, cache, compile commands and C binding settings are options (#793)", () => {
+  settings["zfls.debugLog"] = true;
+  settings["zfls.disableIndexCache"] = true;
+  settings["zfls.disableCompileCommands"] = true;
+  settings["zfls.disableBindCSearch"] = true;
+  settings["zfls.bindCClangd"] = "${workspaceFolder}/tools/clangd";
+  const args = serverArguments(folder);
+  for (const flag of ["--debug_log", "--disable_index_cache", "--disable_compile_commands", "--disable_bind_c_search"]) {
+    assert.ok(args.includes(flag), flag);
+  }
+  assert.equal(args[args.indexOf("--bind_c_clangd") + 1], `${root}/tools/clangd`);
+  const live = serverSettings(folder);
+  assert.equal(live.disable_index_cache, true);
+  assert.equal(live.bind_c_clangd, `${root}/tools/clangd`);
+  // debug_log is read at start only
+  assert.ok(!("debug_log" in live));
 });

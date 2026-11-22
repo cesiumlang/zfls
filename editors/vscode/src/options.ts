@@ -4,19 +4,20 @@
 
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { FORMATTERS, type ServerSettings } from "./settingsSync";
+import { FORMATTERS, type ServerSettings, withoutArguments } from "./settingsSync";
 import { fileAssociations } from "./sourceForm";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
 
 /** A setting and the zfls option it becomes. `restart`: a running server
  * cannot change it (it is read at start-up only). `fallback`: zfls's own
- * default, for a value the command line leaves out. */
-type Option =
+ * default, for a value the command line leaves out. `rewatch`: it changes
+ * which files the file watcher follows, so a change restarts the server. */
+export type Option =
   | { setting: string; flag: string; kind: "flag"; restart?: true }
   | { setting: string; flag: string; kind: "int"; fallback: number }
   | { setting: string; flag: string; kind: "string"; path?: boolean; restart?: true }
-  | { setting: string; flag: string; kind: "list"; path?: boolean }
+  | { setting: string; flag: string; kind: "list"; path?: boolean; rewatch?: true }
   | { setting: string; flag: string; kind: "json" };
 
 /** The typed settings, in the order their options are passed */
@@ -39,6 +40,11 @@ export const OPTIONS: readonly Option[] = [
   { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
   { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
+  { setting: "debugLog", flag: "--debug_log", kind: "flag", restart: true },
+  { setting: "disableIndexCache", flag: "--disable_index_cache", kind: "flag" },
+  { setting: "disableCompileCommands", flag: "--disable_compile_commands", kind: "flag" },
+  { setting: "disableBindCSearch", flag: "--disable_bind_c_search", kind: "flag" },
+  { setting: "bindCClangd", flag: "--bind_c_clangd", kind: "string", path: true },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
   { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
@@ -54,9 +60,9 @@ export const OPTIONS: readonly Option[] = [
   { setting: "disableOpenmpConditional", flag: "--disable_openmp_conditional", kind: "flag" },
   { setting: "fixedFormDLines", flag: "--d_lines", kind: "string" },
   { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
-  { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
+  { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list", rewatch: true },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
-  { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list" },
+  { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list", rewatch: true },
   { setting: "ppDefs", flag: "--pp_defs", kind: "json" },
   { setting: "disableIntelDirectives", flag: "--disable_intel_directives", kind: "flag" },
   { setting: "diagnosticSeverity", flag: "--diagnostic_severity", kind: "json" },
@@ -119,9 +125,14 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
-  // the settings editor's "Add Item" leaves empty items easily
-  args.push(...config.get<string[]>("arguments", []).filter((a) => typeof a === "string" && a.trim() !== ""));
+  args.push(...extraArguments(config));
   return args;
+}
+
+/** `zfls.arguments`; the settings editor's "Add Item" leaves empty items
+ * easily */
+function extraArguments(config: vscode.WorkspaceConfiguration): string[] {
+  return config.get<unknown[]>("arguments", []).filter((a): a is string => typeof a === "string" && a.trim() !== "");
 }
 
 /** Directories of a setting, with variables resolved, relative to the
@@ -133,6 +144,12 @@ function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefi
     return base && !path.isAbsolute(dir) ? path.join(base, dir) : dir;
   });
   return [...new Set(dirs)];
+}
+
+/** lintOnTypeDelay as whole milliseconds, never negative. */
+function delayMs(config: vscode.WorkspaceConfiguration, fallback: number): number {
+  const value = Math.round(config.get<number>("lintOnTypeDelay", fallback));
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
 
 /** The zfls options of the compiler that checks files (zfls's compiler
@@ -177,7 +194,7 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
     args.push("--compiler_no_save");
   }
   if (config.get<boolean>("lintOnType", false)) {
-    args.push("--compiler_on_change", "--compiler_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 1000))));
+    args.push("--compiler_on_change", "--compiler_change_delay", String(delayMs(config, 1000)));
   }
   if (!config.get<boolean>("resolveModules", true)) {
     args.push("--compiler_no_dependencies");
@@ -224,7 +241,7 @@ function fortitudeArguments(folder: vscode.WorkspaceFolder | undefined): string[
     args.push(argOption("--fortitude_args", extra.map((a) => resolvePath(a, folder))));
   }
   if (config.get<boolean>("lintOnType", false)) {
-    args.push("--fortitude_on_change", "--fortitude_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 500))));
+    args.push("--fortitude_on_change", "--fortitude_change_delay", String(delayMs(config, 500)));
   }
   return args;
 }
@@ -294,12 +311,13 @@ function formatterPath(folder: vscode.WorkspaceFolder | undefined, codee: boolea
   return vscode.workspace.getConfiguration("zfls.codee", folder?.uri).get<string>("path", "").trim();
 }
 
-/** The settings of `serverArguments` (but `zfls.arguments` and those a
- * running server cannot change) under zfls's configuration-file names, each
- * with its value: what the command line would set, else zfls's default.
- * Sent to a running server, they take over from its command line.
- * `source_dirs` is left out when empty: zfls's default (the root) has no
- * value to send. */
+/** The settings of `serverArguments` (but `zfls.arguments`, those its
+ * options set, and those a running server cannot change) under zfls's
+ * configuration-file names, each with its value: what the command line
+ * would set, else zfls's default. Sent at start (`initializationOptions`)
+ * and to a running server, they take over from its command line and the
+ * user's configuration file. `source_dirs` is left out when empty: zfls's
+ * default (the root) has no value to send. */
 export function serverSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
   const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
   const out: ServerSettings = {};
@@ -334,7 +352,7 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
         break;
     }
   }
-  return {
+  const all = {
     ...out,
     file_associations: editorAssociations(),
     ...linterSettings(folder),
@@ -342,6 +360,15 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
     ...fortitudeSettings(folder),
     ...codeeSettings(folder),
   };
+  return withoutArguments(all, extraArguments(config));
+}
+
+/** The settings sent at start (`initializationOptions`): `serverSettings`,
+ * and those a server reads only then (`incremental_sync`) */
+export function startSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
+  const flags = OPTIONS.filter((o) => "restart" in o && o.kind === "flag").map((o) => [o.flag.slice(2), config.get(o.setting) === true]);
+  return withoutArguments({ ...serverSettings(folder), ...Object.fromEntries(flags) }, extraArguments(config));
 }
 
 /** `files.associations` for zfls (`fileAssociations`): as VS Code's
@@ -382,7 +409,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
     compiler_mod_dir: on && modDir ? resolvePath(modDir, folder) : null,
     compiler_no_save: on && !config.get<boolean>("lintOnSave", true),
     compiler_on_change: on && config.get<boolean>("lintOnType", false),
-    compiler_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 1000)),
+    compiler_change_delay: delayMs(config, 1000),
     compiler_no_dependencies: on && !config.get<boolean>("resolveModules", true),
     compiler_no_compile_commands: on && config.get<boolean>("noCompileCommands", false),
     compiler_fypp: fypp ? programPath(config.get<string>("fypp.path", "fypp").trim() || "fypp", folder) : null,
@@ -415,7 +442,7 @@ function fortitudeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSe
     fortitude_path: on && exe ? programPath(exe, folder) : null,
     fortitude_args: on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : [],
     fortitude_on_change: on && config.get<boolean>("lintOnType", false),
-    fortitude_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 500)),
+    fortitude_change_delay: delayMs(config, 500),
   };
 }
 
@@ -462,8 +489,8 @@ export function restartsServer(e: vscode.ConfigurationChangeEvent, scope: vscode
   return (
     e.affectsConfiguration("zfls.path", scope) ||
     e.affectsConfiguration("zfls.arguments", scope) ||
-    OPTIONS.some((o) => "restart" in o && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
-    vscode.workspace.getConfiguration("zfls", scope).get<string[]>("arguments", []).length > 0
+    OPTIONS.some((o) => ("restart" in o || "rewatch" in o) && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
+    extraArguments(vscode.workspace.getConfiguration("zfls", scope)).length > 0
   );
 }
 
