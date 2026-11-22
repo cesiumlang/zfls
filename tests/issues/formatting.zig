@@ -1,5 +1,6 @@
 //! More formatters (#278): `codee` (`codee format`), `forformat`, and a
-//! `custom` command, with stand-in scripts for the tools.
+//! `custom` command, with stand-in scripts for the tools; `formatter_fixed`
+//! and `formatter_fixed_args` for fixed-form files (#741).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -149,4 +150,24 @@ test "an unknown formatter is named with all those zfls knows (#278)" {
     var found = false;
     for (try w.sentWith("window/showMessage")) |m| found = found or std.mem.find(u8, m, "findent, fprettify, codee, forformat or custom") != null;
     try std.testing.expect(found);
+}
+
+test "formatter_fixed formats fixed-form files with formatter_fixed_args, free form keeps formatter's (#741)" {
+    const fixed_src = h.File{ .name = "b.f", .text = "      program p\n      x = 1\n      end program p\n" };
+    const opts = "\"formatter_path\": \"" ++ echo.name ++ "\", \"formatter_args\": [\"--free-args\"], \"formatter_fixed_args\": [\"--fixed-args\"]";
+    // fprettify formats no fixed form: without formatter_fixed, nothing
+    inline for (.{ "", ", \"formatter_fixed\": \"custom\"" }, .{ false, true }) |fixed_option, formatted| {
+        const w = try h.Workspace.init(&.{ source, fixed_src, echo }, .{ .init_options = "{\"formatter\": \"fprettify\", " ++ opts ++ fixed_option ++ "}" });
+        defer w.deinit();
+        if (!is_windows) try w.tmp.dir.setFilePermissions(std.testing.io, echo.name, .executable_file, .{});
+        try w.open("b.f", "fortran");
+        const v = try w.zflsRequest("textDocument/formatting", .{
+            .textDocument = .{ .uri = try w.uri("b.f") },
+            .options = .{ .tabSize = 4, .insertSpaces = true },
+        });
+        var text: std.ArrayList(u8) = .empty;
+        for (h.json.items(v)) |e| try text.appendSlice(w.a(), h.json.str(h.json.get(e, "newText")) orelse "");
+        try std.testing.expectEqual(formatted, std.mem.find(u8, text.items, "--fixed-args") != null);
+        try std.testing.expect(std.mem.find(u8, text.items, "--free-args") == null);
+    }
 }

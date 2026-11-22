@@ -2,11 +2,12 @@
 //! takes it: of the associate name of a TYPE IS, CLASS IS or RANK block,
 //! or of an array section, the one its rank or its selector gives it;
 //! of another associate name, that of what it is linked to (#701, #706,
-//! #707, #714).
+//! #707, #714); and what a dummy argument's DIMENSION takes (#719).
 
 const std = @import("std");
 const objects = @import("../objects.zig");
 const C = @import("../constants.zig");
+const typing = @import("../argcheck/typing.zig");
 const Obj = objects.Obj;
 const KW = C.KW;
 
@@ -54,11 +55,69 @@ pub fn isArray(v: *const Obj) bool {
     return of(v) != null or (o.hasKeyword(KW.dimension) and o.varDataConst().slice_rank < 0);
 }
 
+/// Whether variable `v` is the associate name of an ASSOCIATE, SELECT
+/// TYPE or SELECT RANK construct
+pub fn isAssociateName(v: *const Obj) bool {
+    if (v.kind != .variable) return false;
+    const p = v.parent orelse return false;
+    return p.kind == .associate or p.getType(false) == C.TypeId.select;
+}
+
 /// Whether the rank of variable `v` can be told: not that of the name of
-/// a RANK block whose rank is no constant (`rank (n)`)
+/// a RANK block whose rank is no constant (`rank (n)`), nor of an
+/// associate name bound to an expression of a rank not known (`y =>
+/// f(x)`, #719)
 pub fn known(v: *const Obj) bool {
-    if (!v.isRankName() or v.varDataConst().slice_rank >= 0) return true;
-    return (v.parent orelse return true).selectDataConst().case_rank == null;
+    if (!isAssociateName(v) or v.varDataConst().slice_rank >= 0) return true;
+    if (v.isRankName() and (v.parent orelse return true).selectDataConst().case_rank != null) return false;
+    return rankSource(v) != v;
+}
+
+/// What a dummy argument's DIMENSION takes (#719)
+pub const Shape = enum {
+    /// assumed or deferred shape (`:`, `0:`): arrays of its rank alone
+    assumed,
+    /// explicit shape or assumed size (`3`, `1:n`, `2,*`): an element
+    /// sequence, an array of any rank or an element
+    sequence,
+    /// assumed rank (`..`): anything
+    any,
+    unknown,
+};
+
+/// What DIMENSION `dims` takes as an actual argument
+pub fn shapeOf(dims: ?[]const u8) Shape {
+    const d = std.mem.trim(u8, dims orelse return .unknown, " ");
+    if (d.len == 0) return .unknown;
+    if (std.mem.eql(u8, d, "..")) return .any;
+    var deferred: usize = 0;
+    var n: usize = 0;
+    var rest = d;
+    while (true) {
+        const end = typing.topLevel(rest, ',') orelse rest.len;
+        const dim = std.mem.trim(u8, rest[0..end], " ");
+        if (dim.len == 0) return .unknown;
+        n += 1;
+        if (typing.topLevel(dim, ':')) |colon| {
+            if (std.mem.trim(u8, dim[colon + 1 ..], " ").len == 0) deferred += 1;
+        }
+        if (end == rest.len) break;
+        rest = rest[end + 1 ..];
+    }
+    if (deferred == n) return .assumed;
+    return if (deferred == 0) .sequence else .unknown;
+}
+
+test shapeOf {
+    try std.testing.expectEqual(Shape.assumed, shapeOf(":"));
+    try std.testing.expectEqual(Shape.assumed, shapeOf("0:, :"));
+    try std.testing.expectEqual(Shape.sequence, shapeOf("3"));
+    try std.testing.expectEqual(Shape.sequence, shapeOf("1:n, size(x(1:2))"));
+    try std.testing.expectEqual(Shape.sequence, shapeOf("2, *"));
+    try std.testing.expectEqual(Shape.sequence, shapeOf("0:*"));
+    try std.testing.expectEqual(Shape.any, shapeOf(".."));
+    try std.testing.expectEqual(Shape.unknown, shapeOf(null));
+    try std.testing.expectEqual(Shape.unknown, shapeOf(":, 3"));
 }
 
 test ofRank {

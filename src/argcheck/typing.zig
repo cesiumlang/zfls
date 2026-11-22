@@ -19,6 +19,12 @@ pub const Typed = struct {
     literal: bool = false,
     /// a variable or a part of one (an element may start an array)
     designator: bool = false,
+    /// of a designator, its last part has subscripts or a substring
+    /// (`x(1)`, `t%a(2)`, not `t(1)%c`), as an element has (#719)
+    subscripted: bool = false,
+    /// whether its rank (and whether it is an array) can be told: not of an
+    /// associate name bound to a function's result (#719)
+    rank_known: bool = true,
     /// the variable or component it ends in
     obj: ?*Obj = null,
 };
