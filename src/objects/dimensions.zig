@@ -56,7 +56,7 @@ pub fn isArray(v: *const Obj) bool {
 }
 
 /// Whether the rank of variable `v` can be told: not that of the name of
-/// a RANK block whose rank is no literal (`rank (n)`)
+/// a RANK block whose rank is no constant (`rank (n)`)
 pub fn known(v: *const Obj) bool {
     if (!v.isRankName() or v.varDataConst().slice_rank >= 0) return true;
     return (v.parent orelse return true).selectDataConst().case_rank == null;

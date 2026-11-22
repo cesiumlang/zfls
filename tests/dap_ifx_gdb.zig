@@ -52,15 +52,6 @@ fn inSource(frame: Value, name: []const u8) bool {
     return std.mem.endsWith(u8, str(get(frame, "source") orelse Value.null, "path") orelse "", name);
 }
 
-fn end(c: *Client) void {
-    if (c.send("disconnect", .{ .terminateDebuggee = true })) |seq| {
-        _ = c.response(seq, "disconnect") catch {};
-    } else |_| {}
-    c.child.stdin.?.close(c.io);
-    c.child.stdin = null;
-    _ = c.child.wait(c.io) catch {};
-}
-
 fn show(name: []const u8, vars: []Value) void {
     std.debug.print("   {s}:", .{name});
     for (vars) |x| std.debug.print(" {s}={s}", .{ str(x, "name") orelse "?", str(x, "value") orelse "?" });
@@ -93,7 +84,7 @@ fn checkVariable(vars: []Value, name: []const u8, value: []const u8, evaluate_na
 pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
     const c = try Client.start(io, gpa, s.argv);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .clientID = "test", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const launched = try c.send("launch", .{ .program = s.program, .args = [_][]const u8{}, .cwd = s.dir, .sourceRoot = s.dir });
     _ = try c.event("initialized");

@@ -6,10 +6,13 @@
 //! Each file is given to Flang's frontend (`flang -fc1 -fdebug-dump-symbols`),
 //! whose scope tree (flang_oracle/dump.zig) gives the entities the file
 //! declares (flang_oracle/entities.zig). They are compared with the object
-//! tree zfls prints with `--debug_parser`. Then the module files Flang
-//! wrote of the file, and Flang's intrinsic modules, are compared the same
-//! way: zfls reading the `.mod` file, Flang reading it for a USE of the
-//! module. The differences known, each with its reason, are in
+//! tree zfls prints with `--debug_parser`, and each variable's type and
+//! kind, rank, ALLOCATABLE, POINTER, TARGET and INTENT with what zfls's
+//! hover declares (flang_oracle/types.zig): the associate names of a
+//! construct's blocks each with its own block's. Then the module files
+//! Flang wrote of the file, and Flang's intrinsic modules, are compared the
+//! same way: zfls reading the `.mod` file, Flang reading it for a USE of
+//! the module. The differences known, each with its reason, are in
 //! flang_oracle/known.zig; any other fails the run.
 //!
 //!     flang_oracle [--flang EXE] [--zfls EXE] [-v] [PATH ...]
@@ -28,6 +31,7 @@ const util = @import("oracle_util.zig");
 const dump = @import("flang_oracle/dump.zig");
 const entities = @import("flang_oracle/entities.zig");
 const known = @import("flang_oracle/known.zig");
+const types = @import("flang_oracle/types.zig");
 
 const Entities = entities.Entities;
 
@@ -95,19 +99,21 @@ const Oracle = struct {
         };
     }
 
-    const Tree = struct { entities: Entities, fixed: bool };
+    const Tree = struct { entities: Entities, decls: []const entities.Declared, fixed: bool };
 
-    /// zfls's entities of `path`, and the form it read it in
+    /// zfls's entities of `path` and their declarations, and the form it
+    /// read it in
     fn zflsTree(self: *Oracle, key: []const u8, path: []const u8, extra: []const []const u8) !?Tree {
         var cmd: std.ArrayList([]const u8) = .empty;
         try cmd.appendSlice(self.a, &.{ self.zfls, "--debug_parser", "--debug_filepath", path });
         try cmd.appendSlice(self.a, extra);
         const z = try util.run(self.io, self.a, cmd.items, null, null);
-        const got = try entities.fromZfls(self.a, z.stdout) orelse {
+        var decls: std.ArrayList(entities.Declared) = .empty;
+        const got = try entities.fromZfls(self.a, z.stdout, &decls) orelse {
             self.fail(key, "zfls printed no object tree ({s})", .{z.code});
             return null;
         };
-        return .{ .entities = got, .fixed = std.mem.find(u8, z.stdout, "Detected format: fixed") != null };
+        return .{ .entities = got, .decls = decls.items, .fixed = std.mem.find(u8, z.stdout, "Detected format: fixed") != null };
     }
 
     fn fail(self: *Oracle, key: []const u8, comptime fmt: []const u8, args: anytype) void {
@@ -115,11 +121,15 @@ const Oracle = struct {
         std.debug.print("FAIL {s}: " ++ fmt ++ "\n", .{key} ++ args);
     }
 
+    const Ref = struct { entities: Entities, vars: []const types.Item };
+
     /// Flang's entities of a dump (of module `module`'s scope, when not
-    /// null), or null when one is of a kind not known (said)
-    fn flangEntities(self: *Oracle, key: []const u8, global: *const dump.Scope, module: ?[]const u8) !?Entities {
+    /// null) and its variables, or null when one is of a kind not known
+    /// (said)
+    fn flangEntities(self: *Oracle, key: []const u8, global: *const dump.Scope, module: ?[]const u8) !?Ref {
         var unknown: ?entities.Unknown = null;
-        const got = readFlang(self.a, global, module, &unknown) catch |e| switch (e) {
+        var vars: std.ArrayList(types.Item) = .empty;
+        const got = readFlang(self.a, global, module, &unknown, &vars) catch |e| switch (e) {
             error.UnknownDetails => {
                 if (unknown) |u|
                     self.fail(key, "a symbol of Flang's dump of a kind not known, line {d}: {s}", .{ u.line, u.details })
@@ -129,15 +139,17 @@ const Oracle = struct {
             },
             else => |x| return x,
         };
-        return got orelse {
+        return .{ .entities = got orelse {
             self.fail(key, "Flang's dump has no module {s}", .{module.?});
             return null;
-        };
+        }, .vars = vars.items };
     }
 
-    /// Compares one file's entities and says how they differ
-    fn compare(self: *Oracle, key: []const u8, ref: Entities, got: Entities) !void {
+    /// Compares one file's entities and variables and says how they differ
+    fn compare(self: *Oracle, key: []const u8, flang: Ref, zfls: Tree) !void {
         const a = self.a;
+        const ref = flang.entities;
+        const got = zfls.entities;
         self.checked += 1;
         const Line = struct { diff: known.Diff, name: []const u8, kind: entities.Kind, text: []const u8 };
         var lines: std.ArrayList(Line) = .empty;
@@ -147,6 +159,29 @@ const Oracle = struct {
             } else try lines.append(a, .{ .diff = .missing, .name = name, .kind = kind, .text = @tagName(kind) });
         }
         for (got.keys(), got.values()) |name, zk| if (!ref.contains(name)) try lines.append(a, .{ .diff = .extra, .name = name, .kind = zk, .text = @tagName(zk) });
+        // each variable's type and attributes, with Flang's of its path:
+        // the n-th of a path (the associate names of a construct's blocks)
+        // with the n-th (#715)
+        var by_path: std.array_hash_map.String(struct { flang: std.ArrayList(types.Var) = .empty, zfls: std.ArrayList([]const u8) = .empty }) = .empty;
+        for (flang.vars) |v| {
+            const gop = try by_path.getOrPut(a, v.path);
+            if (!gop.found_existing) gop.value_ptr.* = .{};
+            try gop.value_ptr.flang.append(a, v.v);
+        }
+        for (zfls.decls) |d| if (by_path.getPtr(d.path)) |e| try e.zfls.append(a, d.decl);
+        var compared: usize = 0;
+        for (by_path.keys(), by_path.values()) |path, e| {
+            if (e.zfls.items.len == 0) continue;
+            if (e.zfls.items.len != e.flang.items.len) {
+                try lines.append(a, .{ .diff = .differs, .name = path, .kind = .variable, .text = try a.print("{d} declared, Flang {d}", .{ e.zfls.items.len, e.flang.items.len }) });
+                continue;
+            }
+            compared += e.zfls.items.len;
+            for (e.flang.items, e.zfls.items, 1..) |v, decl, n| if (try types.mismatch(a, v, decl)) |why| {
+                const which = if (e.zfls.items.len > 1) try a.print("{d} of {d}: ", .{ n, e.zfls.items.len }) else "";
+                try lines.append(a, .{ .diff = .differs, .name = path, .kind = .variable, .text = try a.print("{s}{s}: {s}", .{ which, decl, why }) });
+            };
+        }
         std.mem.sort(Line, lines.items, {}, struct {
             fn lt(_: void, x: Line, y: Line) bool {
                 return std.mem.order(u8, x.name, y.name) == .lt;
@@ -154,21 +189,21 @@ const Oracle = struct {
         }.lt);
         var unexpected: usize = 0;
         var known_n: usize = 0;
-        for (lines.items) |l| if (known.find(key, l.name, l.diff, l.kind)) |i| {
+        for (lines.items) |l| if (known.find(key, l.name, l.diff, l.kind, l.text)) |i| {
             self.used[i] += 1;
             known_n += 1;
         } else {
             unexpected += 1;
         };
-        const what = [_][]const u8{ "missing in zfls", "only in zfls   ", "kind differs   " };
+        const what = [_][]const u8{ "missing in zfls", "only in zfls   ", "kind differs   ", "differs        " };
         if (unexpected == 0) {
-            std.debug.print("OK   {s}: {d} entities, {d} known differences\n", .{ key, ref.count(), known_n });
+            std.debug.print("OK   {s}: {d} entities, {d} variables, {d} known differences\n", .{ key, ref.count(), compared, known_n });
         } else {
             self.failed += 1;
             std.debug.print("FAIL {s}: {d} entities, {d} differences not known\n", .{ key, ref.count(), unexpected });
         }
         for (lines.items) |l| {
-            const rule = known.find(key, l.name, l.diff, l.kind);
+            const rule = known.find(key, l.name, l.diff, l.kind, l.text);
             if (rule) |i| {
                 if (self.verbose) std.debug.print("   known: {s} {s} ({s}): {s}\n", .{ what[@backingInt(l.diff)], l.name, l.text, known.rules[i].why });
             } else std.debug.print("   {s} {s} ({s})\n", .{ what[@backingInt(l.diff)], l.name, l.text });
@@ -194,7 +229,7 @@ const Oracle = struct {
         };
         const global = try self.flangDump(key, abs, fixed, dir, std.Io.Dir.path.dirname(abs), flang_args) orelse return;
         const ref = try self.flangEntities(key, global, null) orelse return;
-        try self.compare(key, ref, got.entities);
+        try self.compare(key, ref, got);
         // the module files, in the order of their names
         var mods: std.ArrayList([]const u8) = .empty;
         var d = try Io.Dir.cwd().openDir(self.io, dir, .{ .iterate = true });
@@ -226,13 +261,13 @@ const Oracle = struct {
         const global = try self.flangDump(key, use_src, false, use_dir, dir, flang_args) orelse return;
         const ref = try self.flangEntities(key, global, module) orelse return;
         const got = try self.zflsTree(key, try std.Io.Dir.path.join(a, &.{ dir, name }), &.{}) orelse return;
-        try self.compare(key, ref, got.entities);
+        try self.compare(key, ref, got);
     }
 };
 
-fn readFlang(a: Allocator, global: *const dump.Scope, module: ?[]const u8, unknown: *?entities.Unknown) entities.Error!?Entities {
-    if (module) |m| return entities.fromFlangModule(a, global, m, unknown);
-    return try entities.fromFlang(a, global, unknown);
+fn readFlang(a: Allocator, global: *const dump.Scope, module: ?[]const u8, unknown: *?entities.Unknown, vars: *std.ArrayList(types.Item)) entities.Error!?Entities {
+    if (module) |m| return entities.fromFlangModule(a, global, m, unknown, vars);
+    return try entities.fromFlang(a, global, unknown, vars);
 }
 
 /// `path` with forward slashes, as the known differences name files
@@ -326,4 +361,5 @@ test {
     _ = dump;
     _ = entities;
     _ = known;
+    _ = types;
 }

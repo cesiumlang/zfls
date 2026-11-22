@@ -7,7 +7,9 @@
 //! type-bound procedures, variables and parameters) are compared with the
 //! object tree zfls prints with `--debug_parser`, and each variable's type
 //! and kind, rank, ALLOCATABLE, POINTER, TARGET and INTENT with what zfls's
-//! hover declares (gfortran_oracle/types.zig, #551). gfortran serves as an
+//! hover declares (gfortran_oracle/types.zig, #551); the associate names
+//! of the blocks of SELECT TYPE and RANK each with its own block's
+//! temporary (gfortran_oracle/guards.zig). gfortran serves as an
 //! independent oracle for the Fortran semantics zfls approximates with
 //! line-based parsing. The differences known, each with its reason, are in
 //! gfortran_oracle/known.zig.
@@ -31,6 +33,7 @@ const util = @import("oracle_util.zig");
 const types = @import("gfortran_oracle/types.zig");
 const known = @import("gfortran_oracle/known.zig");
 const guards = @import("gfortran_oracle/guards.zig");
+const oz = @import("oracle_zfls.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 
@@ -139,8 +142,8 @@ const Gfortran = struct {
     dummies: Names = .empty,
     /// what the dump says of each variable
     vars: std.StringHashMapUnmanaged(types.Var) = .empty,
-    /// the temporaries of SELECT TYPE's type guards
-    temps: std.ArrayList(guards.Temp) = .empty,
+    /// the temporaries of the blocks of SELECT TYPE and RANK
+    temps: guards.Temps = .{},
 };
 
 /// The entities in gfortran's dump of `text` (`-fdump-fortran-original`)
@@ -158,8 +161,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
     var records: std.StringHashMapUnmanaged([]const types.Component) = .empty;
     const Pending = struct { fq: []const u8, name: []const u8 };
     var structures: std.ArrayList(Pending) = .empty;
-    // the temporaries of a namespace's listing not yet given a name
-    var unnamed: guards.Unnamed = .{};
+    var listings: guards.Reader = .{};
     var i: usize = 0;
     while (i < lines.items.len) {
         const line = lines.items[i];
@@ -238,7 +240,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
         // SELECT-TYPE-TEMPORARY), a temporary SELECT-TYPE-TEMPORARY too
         const temp = guards.isTemp(name) and tokens.contains("SELECT-TYPE-TEMPORARY");
         const assoc = !temp and (tokens.contains("ASSOCIATE-VAR") or tokens.contains("SELECT-TYPE-TEMPORARY"));
-        try unnamed.symbol(a, &out.temps, indentOf(line), block, if (temp) .{ .ns = ns, .name = name, .v = types.varOf(block) } else null, if (assoc) name else null);
+        try listings.symbol(a, &out.temps, ns, indentOf(line), name, block, temp, assoc);
         if (temp) continue;
         const skip = from_host or
             std.mem.startsWith(u8, name, "_") or
@@ -300,10 +302,11 @@ const Zfls = struct {
     entities: Entities = .empty,
     /// MODULE PROCEDURE bodies
     bodies: Names = .empty,
-    /// the first line of each variable's hover (its Declarations)
+    /// the first line of each variable's hover (its Declarations), but of
+    /// the associate names of blocks of SELECT TYPE and RANK
     decls: std.StringHashMapUnmanaged([]const u8) = .empty,
-    /// all of them, of the names that constructs flatten into one
-    all_decls: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
+    /// those, in the order of the source
+    blocks: std.ArrayList(guards.Block) = .empty,
 };
 
 /// The entities of zfls's object tree (`--debug_parser` output), null when
@@ -332,6 +335,8 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
             try declared.put(a, line[0..sep], line[sep + 2 ..]);
         }
     }
+    const select_blocks = try oz.selectBlocks(a, out);
+    var block_seen: Names = .empty;
     // block, select, do, where, if, associate and enum scopes
     var constructs: Names = .empty;
     for (rows.items) |r| if (r.kind >= 9 and r.kind <= 15) try constructs.put(a, r.fqsn, {});
@@ -355,13 +360,13 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
         if (r.kind == -1) try res.bodies.put(a, kept.items, {});
         try res.entities.put(a, kept.items, zflsKind(r.kind));
         if (declared.get(r.fqsn)) |d| {
-            try res.decls.put(a, kept.items, d);
-            const gop = try res.all_decls.getOrPut(a, kept.items);
-            if (!gop.found_existing) gop.value_ptr.* = .empty;
-            // the tree lists an object under each scope it is in
-            for (gop.value_ptr.items) |o| {
-                if (std.mem.eql(u8, o, d)) break;
-            } else try gop.value_ptr.append(a, d);
+            const parent = r.fqsn[0 .. std.mem.findLast(u8, r.fqsn, "::") orelse 0];
+            if (select_blocks.get(try lower(a, parent))) |b| {
+                // the tree lists an object under each scope it is in
+                if ((try block_seen.getOrPut(a, r.fqsn)).found_existing) continue;
+                const select = parent[0 .. std.mem.findLast(u8, parent, "::") orelse 0];
+                try res.blocks.append(a, .{ .key = kept.items, .select = select, .select_line = b.select_line, .line = b.line, .decl = d });
+            } else try res.decls.put(a, kept.items, d);
         }
     }
     // scopes found by gfortran as namespaces, not entities
@@ -372,6 +377,13 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
         } else i += 1;
     }
     return res;
+}
+
+fn sourceLines(a: Allocator, text: []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| try out.append(a, std.mem.trimEnd(u8, l, "\r"));
+    return out.items;
 }
 
 /// zfls lists a function's implicit result variable as a child
@@ -496,12 +508,11 @@ pub fn main(init: std.process.Init) !u8 {
         }
         for (got.entities.keys(), got.entities.values()) |name, zk| if (!ref.entities.contains(name))
             try diffs.append(a, try a.print("only in zfls: {s} ({s})", .{ name, @tagName(zk) }));
-        // the associate names of type guards, with gfortran's temporaries
-        const guarded = try guards.names(a, ref.temps.items, &got.all_decls);
-        try guards.check(a, &diffs, &ref.vars, ref.temps.items, &got.all_decls);
+        // the associate names of blocks of SELECT TYPE and RANK, each with
+        // its block's temporary
+        try guards.check(a, &diffs, &ref.vars, &ref.temps, got.blocks.items, try sourceLines(a, text));
         var vit = ref.vars.iterator();
         while (vit.next()) |e| {
-            if (guarded.contains(e.key_ptr.*)) continue;
             const decl = got.decls.get(e.key_ptr.*) orelse continue;
             if (try types.mismatch(a, e.value_ptr.*, decl)) |why| try diffs.append(a, try a.print("differs: {s}: {s}", .{ e.key_ptr.*, why }));
         }
@@ -559,10 +570,11 @@ test "the temporaries of type guards take the associate name listed after them" 
         \\        attributes: (PROCEDURE INTRINSIC-PROC)
         \\      SELECT CASE y
     );
-    try std.testing.expectEqual(2, g.temps.items.len);
-    try std.testing.expectEqualStrings("it", g.temps.items[0].assoc);
-    try std.testing.expectEqual(1, g.temps.items[0].v.rank);
-    try std.testing.expectEqualStrings("", g.temps.items[1].assoc);
+    try std.testing.expectEqual(2, g.temps.temps.items.len);
+    try std.testing.expectEqual(2, g.temps.groups.items.len);
+    try std.testing.expectEqualStrings("it", g.temps.groups.items[0].assoc);
+    try std.testing.expectEqual(1, g.temps.temps.items[0].v.rank);
+    try std.testing.expectEqualStrings("", g.temps.groups.items[1].assoc);
 }
 
 test "dump parsing" {

@@ -33,6 +33,7 @@ const gdb_pending = @import("gdb_pending.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const gdb_values = @import("gdb_values.zig");
+const capabilities = @import("capabilities.zig");
 const Variable = vars.Variable;
 
 /// gdb's exception breakpoint filters of Ada, of no use to Fortran
@@ -67,6 +68,8 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         if (!s.g.lldb) try o.put(a, "supportsSetVariable", .{ .bool = true });
         try o.put(a, "exceptionBreakpointFilters", .{ .array = filters });
         r.object.getPtr("body").?.* = .{ .object = o };
+        // for the engine's, should a launch choose it
+        try capabilities.given(s, a, .{ .object = o });
     };
     gdb.respondWith(s, a, req, r);
 }
@@ -110,12 +113,18 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     s.g.source_root = if (root) |r| try s.gpa.dupe(u8, r) else null;
     var o: json.ObjectMap = .empty;
     const hold = std.mem.eql(u8, command, "launch") and s.g.runs_at_launch;
+    // the program's symbols now, before the client's breakpoints: gdb 16
+    // and later load them at `configurationDone`, and a breakpoint pending
+    // until then takes a condition of Fortran's (`k .ne. 0`) for invalid
+    if (!hold and !s.g.lldb) if (gdb_entry.programPath(a, program, cwd)) |p| {
+        _ = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("file {s}", .{try cliPath(a, p)}), .context = "repl" });
+    };
     if (std.mem.eql(u8, command, "launch")) {
         if (hold) {
             // as gdb 16 does: the directory and the program now, so that
             // the breakpoints find it, and the run at `configurationDone`
             for ([_]struct { []const u8, ?[]const u8 }{ .{ "cd", cwd }, .{ "file", program } }) |c| {
-                const r = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("{s} {s}", .{ c[0], c[1] orelse continue }), .context = "repl" });
+                const r = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("{s} {s}", .{ c[0], try cliPath(a, c[1] orelse continue) }), .context = "repl" });
                 if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
             }
         } else {
@@ -150,6 +159,15 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         return;
     }
     try gdb.forward(s, a, req, .{ .object = o });
+}
+
+/// A path for gdb's command line, whose arguments take `\` for an
+/// escape: Windows's with `/`
+fn cliPath(a: Allocator, p: []const u8) ![]const u8 {
+    if (builtin.target.os.tag != .windows) return p;
+    const out = try a.dupe(u8, p);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
 }
 
 /// A JSON value as text: a string's own
@@ -309,7 +327,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         },
         .variables => {
             const ref = json.int(json.get(args, "variablesReference")) orelse 0;
-            const node = vars.get(s, ref) orelse return s.respond(a, req, .{ .variables = &[_]u8{} });
+            const node = vars.get(s, ref) orelse return s.respond(a, req, .{ .variables = &[_]Value{} });
             const shown = vars.children(s, a, ref, node) catch |e| return s.fail(a, req, if (e == error.GdbFailed) s.g.failure else @errorName(e));
             s.respond(a, req, .{ .variables = shown });
         },
@@ -666,6 +684,11 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
             body.object.put(a, "description", .{ .string = if (runtime_errors.isErrorStop(f)) s.text.error_stop else s.text.runtime_error }) catch {};
             body.object.put(a, "text", .{ .string = f }) catch {};
         };
+    } else if (std.mem.eql(u8, name, "output")) {
+        // gdb's logpoints' messages end without a line's end: one line each
+        const out = json.str(json.get(body, "output")) orelse "";
+        if (!s.g.lldb and body == .object and std.mem.eql(u8, json.str(json.get(body, "category")) orelse "", "console") and out.len > 0 and out[out.len - 1] != '\n')
+            body.object.put(a, "output", .{ .string = a.print("{s}\n", .{out}) catch out }) catch {};
     } else if (std.mem.eql(u8, name, "continued")) {
         vars.clear(s);
     } else if (std.mem.eql(u8, name, "breakpoint")) {
