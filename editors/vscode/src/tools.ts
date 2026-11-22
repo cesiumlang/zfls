@@ -11,6 +11,22 @@ import * as path from "node:path";
 /** Every Fortran extension of package.json, both cases */
 export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f05,F05,f08,F08,f18,F18,f23,F23,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR,ftn,FTN}";
 
+/** FORTRAN_FILES plus the extra suffixes (zfls.includeSuffixes and
+ * ppSuffixes, with or without the dot), in both cases */
+export function fortranFiles(extra: readonly string[]): string {
+  const names = new Set<string>();
+  for (const suffix of extra) {
+    const name = suffix.trim().replace(/^\*?\./, "").replace(/[^A-Za-z0-9_+-]/g, "");
+    if (name) {
+      names.add(name).add(name.toLowerCase()).add(name.toUpperCase());
+    }
+  }
+  if (names.size === 0) {
+    return FORTRAN_FILES;
+  }
+  return FORTRAN_FILES.replace(/\}$/, `,${[...names].join(",")}}`);
+}
+
 /** What `${...}` variables in a setting stand for. */
 export interface VariableContext {
   /** The workspace folder of the file, or the first one */

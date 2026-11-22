@@ -11,12 +11,13 @@ import { folderVariables } from "./variables";
 
 /** A setting and the zfls option it becomes. `restart`: a running server
  * cannot change it (it is read at start-up only). `fallback`: zfls's own
- * default, for a value the command line leaves out. */
+ * default, for a value the command line leaves out. `rewatch`: it changes
+ * which files the file watcher follows, so a change restarts the server. */
 type Option =
   | { setting: string; flag: string; kind: "flag"; restart?: true }
   | { setting: string; flag: string; kind: "int"; fallback: number }
   | { setting: string; flag: string; kind: "string"; path?: boolean; restart?: true }
-  | { setting: string; flag: string; kind: "list"; path?: boolean }
+  | { setting: string; flag: string; kind: "list"; path?: boolean; rewatch?: true }
   | { setting: string; flag: string; kind: "json" };
 
 /** The typed settings, in the order their options are passed */
@@ -54,9 +55,9 @@ export const OPTIONS: readonly Option[] = [
   { setting: "disableOpenmpConditional", flag: "--disable_openmp_conditional", kind: "flag" },
   { setting: "fixedFormDLines", flag: "--d_lines", kind: "string" },
   { setting: "compileCommands", flag: "--compile_commands", kind: "string", path: true },
-  { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list" },
+  { setting: "includeSuffixes", flag: "--incl_suffixes", kind: "list", rewatch: true },
   { setting: "excludeSuffixes", flag: "--excl_suffixes", kind: "list" },
-  { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list" },
+  { setting: "ppSuffixes", flag: "--pp_suffixes", kind: "list", rewatch: true },
   { setting: "ppDefs", flag: "--pp_defs", kind: "json" },
   { setting: "disableIntelDirectives", flag: "--disable_intel_directives", kind: "flag" },
   { setting: "diagnosticSeverity", flag: "--diagnostic_severity", kind: "json" },
@@ -462,7 +463,7 @@ export function restartsServer(e: vscode.ConfigurationChangeEvent, scope: vscode
   return (
     e.affectsConfiguration("zfls.path", scope) ||
     e.affectsConfiguration("zfls.arguments", scope) ||
-    OPTIONS.some((o) => "restart" in o && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
+    OPTIONS.some((o) => ("restart" in o || "rewatch" in o) && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
     vscode.workspace.getConfiguration("zfls", scope).get<string[]>("arguments", []).length > 0
   );
 }
