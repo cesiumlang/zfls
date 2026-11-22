@@ -28,7 +28,7 @@ import { affectsServer, restartsServer, serverArguments, serverSettings, startSe
 import { appliesLive, ServerSettings } from "./settingsSync";
 import { languageToSet, SourceFormNote } from "./sourceForm";
 import { checkSuperseded } from "./superseded";
-import { FORTRAN_FILES, serverExecutable } from "./tools";
+import { FORTRAN_FILES, fortranFiles, serverExecutable } from "./tools";
 import { folderVariables } from "./variables";
 
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
@@ -654,8 +654,13 @@ async function startClient(
   const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
   // the server follows Fortran files changed outside the editor; it asks
   // for the files it reads its settings from itself, and reads them again
+  const suffixes = vscode.workspace.getConfiguration("zfls", folder?.uri);
+  const files = fortranFiles([
+    ...suffixes.get<string[]>("includeSuffixes", []),
+    ...suffixes.get<string[]>("ppSuffixes", []),
+  ]);
   const sourceWatcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(root, folder ? `**/${FORTRAN_FILES}` : FORTRAN_FILES),
+    new vscode.RelativePattern(root, folder ? `**/${files}` : files),
   );
   watchers.set(root.toString(), [sourceWatcher]);
   const clientOptions: LanguageClientOptions = {
