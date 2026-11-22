@@ -26,6 +26,7 @@ const workspace = @import("workspace.zig");
 const signature = @import("signature.zig");
 const completion_resolve = @import("completion_resolve.zig");
 const snippets = @import("snippets.zig");
+const directive_completion = @import("directive_completion.zig");
 
 /// The inner scopes and the base type are always left out; `def` is
 /// whether the types of named objects are
@@ -329,6 +330,8 @@ pub fn serveAutocomplete(self: *Server, a: Allocator, params: lsp.PositionParams
     const ac_line = params.position.line;
     const ac_char = Server.toByteCol(file, ac_line, params.position.character);
     if (try constructNameCompletion(self, a, file, ast, ac_line, ac_char)) |items| return json.from(a, items);
+    // the names of a directive and its clauses (#742)
+    if (try directive_completion.items(a, file, ac_line, ac_char)) |items| return if (items.len > 0) json.from(a, items) else .null;
     const cl = try file.getCodeLine(a, ac_line, false, true, false, true);
     const line_prefix = (try helpers.getLinePrefix(a, cl.pre, cl.curr, ac_char, true)) orelse return .null;
     const var_stack = try helpers.getVarStack(a, line_prefix);

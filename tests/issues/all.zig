@@ -9,6 +9,7 @@ test {
     _ = @import("coarrays.zig");
     _ = @import("declarations_f2023.zig");
     _ = @import("statements_f2023.zig");
+    _ = @import("directives.zig");
     _ = @import("select_blocks.zig");
     _ = @import("command_options.zig");
     _ = @import("compile_commands.zig");

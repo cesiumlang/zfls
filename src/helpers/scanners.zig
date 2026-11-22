@@ -109,9 +109,10 @@ pub fn docMark(fixed: bool, line: []const u8) ?usize {
     return if (atAny(line, i, "<>!")) i else null;
 }
 
-/// An OpenMP directive: `!$OMP` (FREE_OPENMP), or in fixed form `!$OMP`,
-/// `C$OMP` or `*$OMP` in column 1 (FIXED_OPENMP)
-pub fn isOpenMp(fixed: bool, line: []const u8) bool {
+/// An OpenMP or OpenACC directive: `!$OMP` (FREE_OPENMP) or `!$ACC`, or in
+/// fixed form `!$OMP`, `C$OMP` or `*$OMP` (FIXED_OPENMP), or the same of
+/// `ACC`, in column 1 (#725)
+pub fn isDirective(fixed: bool, line: []const u8) bool {
     var i: usize = 0;
     if (fixed) {
         if (!atAny(line, 0, "!cC*")) return false;
@@ -121,7 +122,9 @@ pub fn isOpenMp(fixed: bool, line: []const u8) bool {
         if (!at(line, i, '!')) return false;
         i += 1;
     }
-    return at(line, i, '$') and line.len >= i + 4 and std.ascii.eqlIgnoreCase(line[i + 1 .. i + 4], "omp");
+    if (!at(line, i, '$') or line.len < i + 4) return false;
+    const word = line[i + 1 .. i + 4];
+    return std.ascii.eqlIgnoreCase(word, "omp") or std.ascii.eqlIgnoreCase(word, "acc");
 }
 
 /// A fixed-form continuation line: five spaces and a character that is not
@@ -275,10 +278,11 @@ pub fn stripLineLabel(a: Allocator, line: []const u8) !LabelResult {
 /// Random lines made of the pieces the line scanners look at
 fn randomLine(rng: std.Random, buf: []u8) []const u8 {
     const pieces = [_][]const u8{
-        " ",    "  ",      "     ", "      ",    "!",                "&",   "#",   ":",        "c",  "C", "d",
-        "D",    "*",       "$",     "omp",       "OMP",              "Omp", "om",  "<",        ">",  "1", "23",
-        "'",    "\"",      "\t",    "\x0b",      "a",                "Z",   "x_1", "\xc3\xa9", "$x", "5", "_",
-        "real", "INTEGER", "type",  "Character", "double precision", "(",   ")",   ",",        "=",  "0",
+        " ",   "  ",  "     ", "      ",  "!",    "&",         "#",                ":", "c",   "C",        "d",
+        "D",   "*",   "$",     "omp",     "OMP",  "Omp",       "om",               "<", ">",   "1",        "23",
+        "acc", "ACC", "'",     "\"",      "\t",   "\x0b",      "a",                "Z", "x_1", "\xc3\xa9", "$x",
+        "5",   "_",   "real",  "INTEGER", "type", "Character", "double precision", "(", ")",   ",",        "=",
+        "0",
     };
     var len: usize = 0;
     const n = rng.uintAtMost(usize, 9);
@@ -303,9 +307,9 @@ test "the line scanners agree with the patterns they replace" {
     defer fixed_doc.deinit();
     var free_doc = try Regex.compile(ta, "[ ]*!([<>!])", .{});
     defer free_doc.deinit();
-    var fixed_openmp = try Regex.compile(ta, "[!c\\*]\\$OMP", regex.I);
+    var fixed_openmp = try Regex.compile(ta, "[!c\\*]\\$(?:OMP|ACC)", regex.I);
     defer fixed_openmp.deinit();
-    var free_openmp = try Regex.compile(ta, "[ ]*!\\$OMP", regex.I);
+    var free_openmp = try Regex.compile(ta, "[ ]*!\\$(?:OMP|ACC)", regex.I);
     defer free_openmp.deinit();
     var fixed_cont = try Regex.compile(ta, "( {5}[\\S])", .{});
     defer fixed_cont.deinit();
@@ -334,8 +338,8 @@ test "the line scanners agree with the patterns they replace" {
         try testing.expectEqual(fd, docMark(true, line));
         const frd: ?usize = if (free_doc.match(line)) |m| m.start(1) else null;
         try testing.expectEqual(frd, docMark(false, line));
-        try testing.expectEqual(fixed_openmp.match(line) != null, isOpenMp(true, line));
-        try testing.expectEqual(free_openmp.match(line) != null, isOpenMp(false, line));
+        try testing.expectEqual(fixed_openmp.match(line) != null, isDirective(true, line));
+        try testing.expectEqual(free_openmp.match(line) != null, isDirective(false, line));
         try testing.expectEqual(fixed_cont.match(line) != null, isFixedCont(line));
         const fc: ?usize = if (free_cont.match(line)) |m| m.end(0) else null;
         try testing.expectEqual(fc, freeContEnd(line));
