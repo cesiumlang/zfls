@@ -1,3 +1,5 @@
+! oracle-gfortran-min: 14
+! (gfortran 13.3's dump of a PDT template differs: the file is skipped there)
 ! Variables of parameterized derived types: their instances are scopes of
 ! their own in the compilers' dumps (gfortran's `PDTmatrix_8`, Flang's
 ! `instantiation of`, ifx's `matrix#8&3`) that zfls has no scopes for
