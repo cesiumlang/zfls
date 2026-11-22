@@ -68,6 +68,8 @@ pub fn isAssociateName(v: *const Obj) bool {
 /// associate name bound to an expression of a rank not known (`y =>
 /// f(x)`, #719)
 pub fn known(v: *const Obj) bool {
+    // a RANK clause not evaluated (#729)
+    if (v.varDataConst().rank_clause != null and std.mem.eql(u8, v.keyword_info.dimension orelse "", "..")) return false;
     if (!isAssociateName(v) or v.varDataConst().slice_rank >= 0) return true;
     if (v.isRankName() and (v.parent orelse return true).selectDataConst().case_rank != null) return false;
     return rankSource(v) != v;

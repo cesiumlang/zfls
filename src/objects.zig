@@ -143,6 +143,7 @@ pub const Procedure = data.Procedure;
 pub const TypeDef = data.TypeDef;
 pub const Interface = data.Interface;
 pub const Associate = data.Associate;
+pub const TypeOf = data.TypeOf;
 pub const Select = data.Select;
 pub const Variable = data.Variable;
 pub const Group = data.Group;
@@ -666,7 +667,8 @@ pub const Obj = struct {
 
     pub fn requireLink(self: *const Obj) bool {
         return switch (self.kind) {
-            .variable => self.varDataConst().link_name != null or self.isGuardName(),
+            // (and TYPEOF, a RANK clause not literal: #728, #729)
+            .variable => self.varDataConst().link_name != null or self.isGuardName() or self.varDataConst().type_of != null or self.varDataConst().rank_clause != null,
             .method => self.varDataConst().link_name != null,
             .interface, .subroutine, .function, .submodule, .associate => true,
             else => false,

@@ -32,6 +32,9 @@ pub const Kw = enum(u8) {
     // DEC's, of ifx and gfortran (`-fdec-static`)
     automatic,
     static,
+    // Fortran 2018's and 2023's procedure prefixes (#727)
+    non_recursive,
+    simple,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {
