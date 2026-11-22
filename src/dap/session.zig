@@ -75,7 +75,6 @@ const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
 const choice = @import("choice.zig");
 const capabilities = @import("capabilities.zig");
-const engine_conditions = @import("engine_conditions.zig");
 const engine_completions = @import("engine_completions.zig");
 const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
@@ -95,6 +94,7 @@ pub const Text = struct {
     gdb_exited: []const u8 = "gdb exited",
     lldb_exited: []const u8 = "lldb-dap exited",
     ended_by_signal: []const u8 = "The program was ended by a signal",
+    engine_no_conditions: []const u8 = "Windows's Debugger Engine takes no conditions, hit conditions or log messages yet",
 
     /// `--text`'s JSON object: its strings over the English ones
     fn parse(a: Allocator, text: []const u8) !Text {
@@ -189,9 +189,6 @@ pub const Session = struct {
     /// The breakpoints whose lines had no code yet (a module not loaded):
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
-    /// The breakpoints' conditions, hits ignored and log messages, by id
-    /// (engine_conditions.zig)
-    conditions: std.AutoHashMapUnmanaged(u32, engine_conditions.Condition) = .empty,
     last_error: []const u8 = "",
     /// The last stop was the filter's at a runtime error: the Intel
     /// runtime's break instruction that follows it is no stop of its own
@@ -372,9 +369,6 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         s.breakpoints.deinit(gpa);
         s.error_breakpoints.deinit(gpa);
         s.unverified.deinit(gpa);
-        var cit = s.conditions.valueIterator();
-        while (cit.next()) |c| c.deinit(gpa);
-        s.conditions.deinit(gpa);
         s.nodes.deinit(gpa);
         s.queue.mutex.lockUncancelable(io);
         for (s.queue.items.items) |b| gpa.free(b);
@@ -739,14 +733,11 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
                 .allThreadsStopped = true,
                 .description = if (f.error_stop) s.text.error_stop else s.text.runtime_error,
             });
-        } else if (isUserBreakpoint(s, b.id)) {
-            // a condition false, a hit ignored, a log message: on
-            if (!engine_conditions.stops(s, a, b.id, b.thread)) return go(s, .go, null) catch {};
-            s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} });
-        } else {
+        } else if (isUserBreakpoint(s, b.id))
+            s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} })
+        else
             // the engine's own (step out, stop at entry)
-            s.event(a, "stopped", .{ .reason = "step", .threadId = b.thread, .allThreadsStopped = true });
-        },
+            s.event(a, "stopped", .{ .reason = "step", .threadId = b.thread, .allThreadsStopped = true }),
         .step => |t| if (!stepAgain(s, a, t)) {
             s.step_from = null;
             s.event(a, "stopped", .{ .reason = "step", .threadId = t, .allThreadsStopped = true });
