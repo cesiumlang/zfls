@@ -732,6 +732,22 @@ pub const Server = struct {
         };
     }
 
+    /// `rangeOf` with a cursor for the columns
+    fn rangeAt(file: *const FortranFile, cursor: *str.Utf16Cursor, sln: usize, sch: usize, eln_in: ?usize, ech_in: ?usize) lsp.Range {
+        const eln = if (eln_in) |e| (if (e != 0) e else sln) else sln;
+        const ech = if (ech_in) |e| (if (e != 0 or eln != sln) e else sch) else sch;
+        return .{
+            .start = .{ .line = sln, .character = colAt(file, cursor, sln, sch) },
+            .end = .{ .line = eln, .character = colAt(file, cursor, eln, ech) },
+        };
+    }
+
+    fn colAt(file: *const FortranFile, cursor: *str.Utf16Cursor, line: usize, col: usize) usize {
+        if (col == 0) return 0;
+        const text = file.getLine(line, false) orelse return col;
+        return cursor.at(text, col);
+    }
+
     /// Where whole lines inserted before 0-based line `line` go, and what
     /// their text starts with: past the last line, at its end after a line
     /// break, since a line after the last is not in the document
@@ -754,6 +770,14 @@ pub const Server = struct {
     }
 
     pub fn diagnosticOf(self: *Server, a: Allocator, file: *const FortranFile, d: objects.BuiltDiag) !lsp.Diagnostic {
+        var cursor: str.Utf16Cursor = .{};
+        return self.diagnosticOfAt(a, file, d, &cursor);
+    }
+
+    /// `diagnosticOf` with a cursor for the columns, for the diagnostics of
+    /// a file in turn: the columns of a line of thousands of names are
+    /// counted once (#795)
+    pub fn diagnosticOfAt(self: *Server, a: Allocator, file: *const FortranFile, d: objects.BuiltDiag, cursor: *str.Utf16Cursor) !lsp.Diagnostic {
         const range: lsp.Range = if (d.cols_are_codepoints) blk: {
             const eln = if (d.eln) |e| (if (e != 0) e else d.sln) else d.sln;
             const ech = if (d.ech) |e| (if (e != 0) e else d.sch) else d.sch;
@@ -761,7 +785,7 @@ pub const Server = struct {
                 .start = .{ .line = d.sln, .character = d.sch },
                 .end = .{ .line = eln, .character = ech },
             };
-        } else rangeOf(file, d.sln, d.sch, d.eln, d.ech);
+        } else rangeAt(file, cursor, d.sln, d.sch, d.eln, d.ech);
         var related: ?[]const lsp.DiagnosticRelatedInformation = null;
         if (d.related) |rel| {
             const uri = try paths.pathToUri(a, rel.path orelse "None");

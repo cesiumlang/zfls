@@ -72,6 +72,8 @@ const Tokenizer = struct {
     ast: *Ast,
     /// What a name means in a scope: `{scope address}:{lowercase name}`
     cache: std.StringHashMapUnmanaged(?*Obj) = .empty,
+    /// the columns of the line being read, counted on from the last
+    cursor: str.Utf16Cursor = .{},
     tokens: std.ArrayList(Token) = .empty,
     /// the last code line ended with `&` (free form)
     continued: bool = false,
@@ -159,11 +161,11 @@ const Tokenizer = struct {
     }
 
     fn add(t: *Tokenizer, line: usize, text: []const u8, start: usize, end: usize, kind: Kind) !void {
-        const s = str.byteToUtf16(text, start);
+        const s = t.cursor.at(text, start);
         try t.tokens.append(t.a, .{
             .line = line,
             .start = s,
-            .len = str.byteToUtf16(text, end) - s,
+            .len = t.cursor.at(text, end) - s,
             .type = kind.type,
             .mods = kind.mods,
         });

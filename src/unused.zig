@@ -29,6 +29,7 @@ pub const Unused = struct {
 pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
     var out: std.ArrayList(Unused) = .empty;
     if (file.nLines() == 0) return out.items;
+    var words: Words = .empty;
     for (ast.scope_list.items) |scope| {
         switch (scope.kind) {
             .subroutine, .function, .program => {},
@@ -46,7 +47,7 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
             if (isArgOrResult(scope, c)) continue;
             const lower = try std.ascii.allocLowerString(a, c.name);
             if ((counts.get(lower) orelse 0) > 1) continue;
-            const at = findName(file, c.sline - 1, c.name) orelse continue;
+            const at = (try findName(a, file, &words, c.sline - 1, c.name)) orelse continue;
             try out.append(a, .{
                 .line = at.line,
                 .start = at.start,
@@ -62,7 +63,7 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
             for (u.only_list.items.items) |name| {
                 if (!isName(name)) continue;
                 if ((counts.get(name) orelse 0) > 1) continue;
-                const at = findName(file, u.line_number - 1, name) orelse continue;
+                const at = (try findName(a, file, &words, u.line_number - 1, name)) orelse continue;
                 try out.append(a, .{
                     .line = at.line,
                     .start = at.start,
@@ -116,19 +117,31 @@ fn wordCounts(a: Allocator, file: *const FortranFile, first: usize, last: usize)
     return counts;
 }
 
+const Place = struct { line: usize, start: usize, end: usize, text: []const u8 };
+
+/// The first place of each word (lowercase) of the statement that starts on
+/// a line, found once per statement, so that a statement of thousands of
+/// names is read once (#795)
+const Words = std.AutoHashMapUnmanaged(usize, std.StringHashMapUnmanaged(Place));
+
 /// Where `name` is written on the statement that starts on 0-based line
 /// `line`
-fn findName(file: *const FortranFile, line: usize, name: []const u8) ?struct { line: usize, start: usize, end: usize, text: []const u8 } {
-    const st = selection.statementLines(file, line);
-    var ln = st.first;
-    while (ln <= st.last) : (ln += 1) {
-        const text = file.getLine(ln, false) orelse continue;
-        var it = helpers.words(text);
-        while (it.next()) |w| {
-            if (std.ascii.eqlIgnoreCase(w.str, name)) return .{ .line = ln, .start = w.start, .end = w.end, .text = w.str };
+fn findName(a: Allocator, file: *const FortranFile, words: *Words, line: usize, name: []const u8) Allocator.Error!?Place {
+    const gop = try words.getOrPut(a, line);
+    if (!gop.found_existing) {
+        gop.value_ptr.* = .empty;
+        const st = selection.statementLines(file, line);
+        var ln = st.first;
+        while (ln <= st.last) : (ln += 1) {
+            const text = file.getLine(ln, false) orelse continue;
+            var it = helpers.words(text);
+            while (it.next()) |w| {
+                const seen = try gop.value_ptr.getOrPut(a, try std.ascii.allocLowerString(a, w.str));
+                if (!seen.found_existing) seen.value_ptr.* = .{ .line = ln, .start = w.start, .end = w.end, .text = w.str };
+            }
         }
     }
-    return null;
+    return gop.value_ptr.get(try std.ascii.allocLowerString(a, name));
 }
 
 /// Text to delete: 0-based lines and byte columns, the end exclusive
