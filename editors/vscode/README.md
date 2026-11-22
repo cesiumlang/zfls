@@ -64,13 +64,13 @@ It replaces the Modern Fortran extension rather than working alongside it: disab
 | `zfls.configFile` | empty | Configuration file instead of `.fortlsrc` / `.fortls.json` / `.fortls` |
 | `zfls.sourceDirs` | the workspace folder | Folders with source files (globs allowed) |
 | `zfls.includeDirs` | none | Folders searched for `#include` and `INCLUDE` files |
-| `zfls.compileCommands` | `compile_commands.json` in the folder or `build/` | Compilation database adding include folders and definitions |
+| `zfls.compileCommands` | `compile_commands.json` in the folder, `build/` or `builddir/` | Compilation database adding include folders and definitions |
 | `zfls.excludePaths` | none | Folders not to index |
 | `zfls.commentMarkers` | none | Further markers that start a comment as `!` does, such as `;*`; zfls reads them as comments, and they are highlighted as comments after a window reload |
 | `zfls.disableOpenmpConditional` | `false` | Read OpenMP conditional compilation lines (`!$ x = 1`) as comments, as a build without OpenMP does; by default they are code |
 | `zfls.includeSuffixes` | none | More file extensions to index, e.g. `.inc` |
 | `zfls.excludeSuffixes` | none | File extensions not to index |
-| `zfls.ppSuffixes` | upper-case extensions | File extensions to preprocess |
+| `zfls.ppSuffixes` | upper-case extensions and `.fpp` | File extensions to preprocess (a list replaces the default) |
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
 | `zfls.disableIntelDirectives` | `false` | Read Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`) as comments, every branch included |
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
@@ -85,7 +85,7 @@ It replaces the Modern Fortran extension rather than working alongside it: disab
 | `zfls.formatting.customArgs` | `[]` | The arguments of the custom formatter (`${file}`, `${form}`) |
 | `zfls.run.*` | | Compiler, arguments and debugger for running and debugging a file (see [Running and debugging](#running-and-debugging)) |
 
-Each setting becomes the fortls option of the same meaning (the settings' descriptions name them). Path settings expand `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~`, and every setting can differ per workspace folder. A running language server takes a changed setting at once (sent with `workspace/didChangeConfiguration`): one that decides what is indexed (`zfls.sourceDirs`, `zfls.includeDirs`, `zfls.ppDefs`, ...) has it index the workspace again. The server restarts instead when `zfls.path`, `zfls.arguments`, `zfls.incrementalSync` or `zfls.configFile` changes, when `zfls.arguments` holds any options (they may set what a setting does), when a setting goes back to empty where zfls's default cannot be sent (`zfls.sourceDirs`), and when signature help, code actions or formatting are turned off.
+Each setting becomes the fortls option of the same meaning (the settings' descriptions name them). Path settings expand `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~`, and every setting can differ per workspace folder, except the window-scoped `zfls.trace.server`, `zfls.disableModernFortranCheck`, `zfls.fpm.testExplorer` and `zfls.pfunit.testExplorer`. A running language server takes a changed setting at once (sent with `workspace/didChangeConfiguration`): one that decides what is indexed (`zfls.sourceDirs`, `zfls.includeDirs`, `zfls.ppDefs`, ...) has it index the workspace again. The server restarts instead when `zfls.path`, `zfls.arguments`, `zfls.incrementalSync`, `zfls.configFile`, `zfls.includeSuffixes` or `zfls.ppSuffixes` changes, when `zfls.workspaceDiagnostics` is turned on, when `zfls.arguments` holds any options (they may set what a setting does), when a setting goes back to empty where zfls's default cannot be sent (`zfls.sourceDirs`), and when signature help, code actions or formatting are turned off.
 
 As with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file in the workspace root configures source directories, preprocessor definitions and other options. zfls also reads a user configuration file of the same format, `%APPDATA%\zfls\config.json` on Windows, else `~/.config/zfls/config.json` (`$XDG_CONFIG_HOME/zfls/config.json`), for other editors; this extension's settings take over from it (but for the options of `zfls.arguments`, which are command-line options), and the project's file from both. VS Code opens these files as JSON with comments and checks them against a schema of the options zfls reads from them, with their descriptions and defaults in completion and hover. The schema is generated from zfls's option table (`zig build generated`).
 
@@ -359,6 +359,7 @@ The fixed-form snippets indent with spaces and keep every line at the column whe
 - **zfls: Restart Language Server**
 - **zfls: Show Output**
 - **zfls: Show Module Compile Order**
+- **zfls: Set Up ifx (Intel Fortran) without Visual Studio**: see above
 - **zfls: Toggle Fixed-Form Line Comment** (`Ctrl+/` in fixed form): with `zfls.fixedFormCommentCharacter` set to `C`, `c` or `*`, comments the lines with that character in column 1, or uncomments them (Modern Fortran #535)
 - **zfls: Run Fortran File**, **zfls: Debug Fortran File** (also buttons in the editor title)
 - **zfls: Add Build Task and Debug Configuration for Fortran File**
