@@ -33,6 +33,7 @@ const gdb_pending = @import("gdb_pending.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const gdb_values = @import("gdb_values.zig");
+const capabilities = @import("capabilities.zig");
 const Variable = vars.Variable;
 
 /// gdb's exception breakpoint filters of Ada, of no use to Fortran
@@ -67,6 +68,8 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         if (!s.g.lldb) try o.put(a, "supportsSetVariable", .{ .bool = true });
         try o.put(a, "exceptionBreakpointFilters", .{ .array = filters });
         r.object.getPtr("body").?.* = .{ .object = o };
+        // for the engine's, should a launch choose it
+        try capabilities.given(s, a, .{ .object = o });
     };
     gdb.respondWith(s, a, req, r);
 }
