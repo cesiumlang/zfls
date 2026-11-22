@@ -1,6 +1,7 @@
 //! The blocks of SELECT TYPE and SELECT RANK: each guard's block is a
 //! sibling of the one before (#708); the associate name of a RANK block
-//! has its rank (#706); argument checking takes a guard name's (#707).
+//! has its rank (#706); argument checking takes a guard name's (#707), a
+//! RANK name's and a CLASS DEFAULT name's (#714).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -129,16 +130,122 @@ test "argument checking takes a TYPE IS name's rank and type (#707)" {
     // gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 report lines 14 and 18
     // alone: "Rank mismatch in argument 'x' at (1) (scalar and rank-1)",
     // "Type mismatch in argument 'x' at (1); passed INTEGER(4) to REAL(4)"
-    var got: std.ArrayList([]const u8) = .empty;
-    defer got.deinit(gpa);
-    for (try w.diagnostics("t.f90")) |d| try got.append(gpa, try w.a().print("{d}: {s}", .{ d.line + 1, d.message }));
-    const want = [_][]const u8{
+    try w.expectDiagnostics("t.f90", &.{
         "14: Argument x of takes_s: a scalar expected, an array given",
         "18: Argument x of takes_s: real expected, integer given",
-    };
-    if (got.items.len != want.len) {
-        std.debug.print("got: {any}\n", .{got.items});
-        return error.TestExpectedEqual;
-    }
-    for (want, got.items) |x, y| try std.testing.expectEqualStrings(x, y);
+    });
+}
+
+test "argument checking takes a SELECT RANK name's rank and the selector's type (#714)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  integer, parameter :: zero = 0
+        \\contains
+        \\  subroutine takes_s(x)
+        \\    real, intent(in) :: x
+        \\  end subroutine
+        \\  subroutine takes_v(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine
+        \\  subroutine takes_i(k)
+        \\    integer, intent(in) :: k
+        \\  end subroutine
+        \\  subroutine t(a, z)
+        \\    real, intent(in) :: a(..), z(..)
+        \\    select rank (r => a)
+        \\    rank (0)
+        \\      call takes_s(r)
+        \\    rank (1)
+        \\      call takes_s(r)
+        \\      call takes_v(r)
+        \\      call takes_s(r(1))
+        \\      call takes_i(r(1))
+        \\    rank (*)
+        \\      call takes_s(r)
+        \\    rank default
+        \\      call takes_s(r)
+        \\    end select
+        \\    select rank (w => z)
+        \\    rank (zero)
+        \\      call takes_s(w)
+        \\    end select
+        \\    select rank (z)
+        \\    rank (1)
+        \\      call takes_s(z)
+        \\      call takes_v(z)
+        \\    rank (0)
+        \\      call takes_s(z)
+        \\    end select
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 report lines 20, 23, 25,
+    // 27 and 35 alone: "Rank mismatch in argument 'x' at (1) (scalar and
+    // rank-1)", "Type mismatch in argument 'k' at (1); passed REAL(4) to
+    // INTEGER(4)", "The assumed-rank array at (1) requires that the dummy
+    // argument 'x' has assumed-rank"; `rank (zero)` is a scalar's
+    try w.expectDiagnostics("t.f90", &.{
+        "20: Argument x of takes_s: a scalar expected, an array given",
+        "23: Argument k of takes_i: integer expected, real given",
+        "25: Argument x of takes_s: a scalar expected, an array given",
+        "27: Argument x of takes_s: a scalar expected, an array given",
+        "35: Argument x of takes_s: a scalar expected, an array given",
+    });
+}
+
+test "argument checking takes a CLASS DEFAULT name's rank and the selector's type (#714)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  type :: pt
+        \\    real :: x
+        \\  end type
+        \\contains
+        \\  subroutine takes_s(x)
+        \\    class(*), intent(in) :: x
+        \\  end subroutine
+        \\  subroutine takes_v(v)
+        \\    class(*), intent(in) :: v(:)
+        \\  end subroutine
+        \\  subroutine takes_r(r)
+        \\    real, intent(in) :: r
+        \\  end subroutine
+        \\  subroutine t(items, p)
+        \\    class(*), intent(in) :: items(:)
+        \\    class(pt), intent(in) :: p
+        \\    select type (it => items)
+        \\    class default
+        \\      call takes_s(it)
+        \\      call takes_v(it)
+        \\      call takes_s(it(1))
+        \\    end select
+        \\    select type (el => items(2))
+        \\    class default
+        \\      call takes_s(el)
+        \\    end select
+        \\    select type (items)
+        \\    class default
+        \\      call takes_s(items)
+        \\      call takes_v(items)
+        \\    end select
+        \\    select type (q => p)
+        \\    class default
+        \\      call takes_r(q)
+        \\    end select
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 report lines 21, 31 and
+    // 36 alone: "Rank mismatch in argument 'x' at (1) (scalar and rank-1)",
+    // "Type mismatch in argument 'r' at (1); passed CLASS(pt) to REAL(4)"
+    try w.expectDiagnostics("t.f90", &.{
+        "21: Argument x of takes_s: a scalar expected, an array given",
+        "31: Argument x of takes_s: a scalar expected, an array given",
+        "36: Argument r of takes_r: real expected, derived given",
+    });
 }

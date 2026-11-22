@@ -566,7 +566,13 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .setBreakpoints => try breakpoints.set(s, a, req, args),
         .setExceptionBreakpoints => try breakpoints.setExceptions(s, a, req, args),
-        .setFunctionBreakpoints => s.respond(a, req, .{ .breakpoints = &[_]u8{} }),
+        .setFunctionBreakpoints => {
+            // none set: one unverified breakpoint for each asked
+            const asked = json.items(json.get(args, "breakpoints"));
+            const none = try a.alloc(struct { verified: bool, message: []const u8 }, asked.len);
+            @memset(none, .{ .verified = false, .message = "Windows's Debugger Engine sets no function breakpoints" });
+            s.respond(a, req, .{ .breakpoints = none });
+        },
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
             .description = if (runtime_errors.isErrorStop(s.last_error)) s.text.error_stop else s.text.runtime_error,
@@ -619,7 +625,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .variables => {
             const ref = json.int(json.get(args, "variablesReference")) orelse 0;
-            if (ref <= 0 or ref > s.nodes.items.len) return s.respond(a, req, .{ .variables = &[_]u8{} });
+            if (ref <= 0 or ref > s.nodes.items.len) return s.respond(a, req, .{ .variables = &[_]Value{} });
             const node = s.nodes.items[@intCast(ref - 1)];
             s.respond(a, req, .{ .variables = try children(s, a, node) });
         },

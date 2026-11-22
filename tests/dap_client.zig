@@ -211,6 +211,12 @@ pub fn items(v: Value, key: []const u8) []Value {
     return if (x == .array) x.array.items else &.{};
 }
 
+/// Whether `v`'s `key` is an array of `len` elements
+pub fn isArray(v: Value, key: []const u8, len: usize) bool {
+    const x = get(v, key) orelse return false;
+    return x == .array and x.array.items.len == len;
+}
+
 pub fn contains(s: ?[]const u8, part: []const u8) bool {
     return std.mem.find(u8, s orelse return false, part) != null;
 }

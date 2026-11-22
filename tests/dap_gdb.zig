@@ -343,6 +343,8 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(int(stack[0], "line") == setup.work_line, "stopped in work ({?d})", .{int(stack[0], "line")});
     var scopes = items(try c.request("scopes", .{ .frameId = int(stack[0], "id").? }), "scopes");
     _ = try named(scopes, "Module variables");
+    const unknown = try c.request("variables", .{ .variablesReference = 999999 });
+    try check(dap.isArray(unknown, "variables", 0), "an unknown reference: no variables ({f})", .{std.json.fmt(unknown, .{})});
 
     const args = try variables(c, try named(scopes, "Arguments"));
     for (args) |x| try check(!eql(str(x, "name"), "_s"), "no hidden length ({s})", .{str(x, "name").?});
