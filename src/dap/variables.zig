@@ -51,7 +51,9 @@ pub fn show(s: *Session, a: Allocator, name: []const u8, v: Val) !Value {
     } else {
         text = try scalarText(s, a, v);
     }
-    return json.from(a, .{ .name = name, .value = text, .type = type_name, .variablesReference = ref, .evaluateName = v.expr });
+    // its address, for `readMemory`
+    const memory_reference: ?[]const u8 = if (v.empty) null else try a.print("0x{x}", .{v.address});
+    return json.from(a, .{ .name = name, .value = text, .type = type_name, .variablesReference = ref, .evaluateName = v.expr, .memoryReference = memory_reference });
 }
 
 fn hasKeyword(o: *const Obj, k: C.Kw) bool {
