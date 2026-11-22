@@ -1483,16 +1483,6 @@
             }
           }
         },
-        "initialConfigurations": [
-          {
-            "type": "fortran",
-            "request": "launch",
-            "name": "Debug Fortran program",
-            "program": "${workspaceFolder}/a.out",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-          }
-        ],
         "configurationSnippets": [
           {
             "label": "%debugger.fortran.snippet.0.label%",
