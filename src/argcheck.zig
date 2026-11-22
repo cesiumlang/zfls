@@ -54,9 +54,13 @@ pub const Match = union(enum) {
     scalar_expected,
     /// a scalar for an array
     array_expected,
-    /// arrays of different ranks (for a generic reference)
-    rank,
+    /// arrays of different ranks
+    rank: struct { want: usize, have: usize },
 };
+
+/// What a call's interface lets `Checker.compare` tell: an implicit one,
+/// an explicit one (#719), a generic reference's specific
+pub const Mode = enum { implicit, explicit, generic };
 
 /// The rank of a DIMENSION (`:,:` 2, `*` 1), or null when it cannot be
 /// told
@@ -281,6 +285,9 @@ pub const Checker = struct {
             try dummies.append(c.a, .{ .name = name, .optional = if (arg) |o| o.isOptional() else false, .obj = arg });
         }
         const elemental = proc.hasKeyword(KW.elemental);
+        // a module procedure, an internal one, an interface body: not an
+        // external procedure, whose interface is implicit
+        const mode: Mode = if (proc.parent != null) .explicit else .implicit;
         // the arguments
         var given = try c.a.alloc(bool, dummies.items.len);
         @memset(given, false);
@@ -309,7 +316,7 @@ pub const Checker = struct {
                 if (given[idx]) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s} is given twice", .{ dummies.items[idx].name, proc.name });
                 given[idx] = true;
                 const eq = std.mem.findScalar(u8, arg, '=').?;
-                if (dummies.items[idx].obj) |d| try c.argType(j, s, w, proc, d, std.mem.trim(u8, arg[eq + 1 ..], " "), elemental, scope, line_no);
+                if (dummies.items[idx].obj) |d| try c.argType(j, s, w, proc, d, std.mem.trim(u8, arg[eq + 1 ..], " "), elemental, mode, scope, line_no);
             } else {
                 // a positional argument after a keyword one is invalid: the
                 // compiler says so; nothing to add
@@ -320,7 +327,7 @@ pub const Checker = struct {
                     return;
                 }
                 given[positional] = true;
-                if (dummies.items[positional].obj) |d| try c.argType(j, s, w, proc, d, arg, elemental, scope, line_no);
+                if (dummies.items[positional].obj) |d| try c.argType(j, s, w, proc, d, arg, elemental, mode, scope, line_no);
                 positional += 1;
             }
         };
@@ -333,11 +340,12 @@ pub const Checker = struct {
     /// The type and rank of an argument, against its dummy argument: the
     /// kind of type (integer, real, complex, logical, character, derived),
     /// its kind, and an array for a scalar or a scalar expression for an
-    /// array (not for an elemental procedure)
-    fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, scope: ?*Obj, line_no: usize) !void {
+    /// array (not for an elemental procedure), and with an explicit
+    /// interface a rank that differs from an assumed-shape array's
+    fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, mode: Mode, scope: ?*Obj, line_no: usize) !void {
         // those that `!dir$ ignore_tkr` or `NO_ARG_CHECK` leaves out
         const ignored = try c.ignoredChecks(proc, dummy.name);
-        switch (try c.compare(dummy, actual, elemental, false, scope, line_no)) {
+        switch (try c.compare(dummy, actual, elemental, mode, scope, line_no)) {
             .type => |t| if (!ignored.type) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(t.want), @tagName(t.have) }),
             .kind => |k| if (!ignored.kind) {
                 const t = typeName(k.cat);
@@ -345,7 +353,8 @@ pub const Checker = struct {
             },
             .scalar_expected => if (!ignored.rank) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: a scalar expected, an array given", .{ dummy.name, proc.name }),
             .array_expected => if (!ignored.rank) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an array expected, a scalar given", .{ dummy.name, proc.name }),
-            .fits, .unknown, .derived, .rank => {},
+            .rank => |r| if (!ignored.rank) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: rank {d} expected, rank {d} given", .{ dummy.name, proc.name, r.want, r.have }),
+            .fits, .unknown, .derived => {},
         }
     }
 
@@ -359,11 +368,13 @@ pub const Checker = struct {
 
     /// How actual argument `actual` fits dummy argument `dummy`. For the
     /// diagnostics, an element (`x(1)`) or a character scalar fits an array
-    /// (sequence association). `generic` asks what a generic reference
-    /// asks instead: the same rank (an elemental procedure's scalar takes
-    /// any), and the same derived type (or one that extends it, for a
-    /// CLASS); it tells the ranks of arrays apart.
-    pub fn compare(c: *Checker, dummy: *Obj, actual: []const u8, elemental: bool, generic: bool, scope: ?*Obj, line_no: usize) !Match {
+    /// (sequence association), and with an explicit interface only an
+    /// assumed-shape array's rank is checked (#719). A `generic` reference
+    /// asks instead for the same rank (an elemental procedure's scalar
+    /// takes any), and the same derived type (or one that extends it, for
+    /// a CLASS).
+    pub fn compare(c: *Checker, dummy: *Obj, actual: []const u8, elemental: bool, mode: Mode, scope: ?*Obj, line_no: usize) !Match {
+        const generic = mode == .generic;
         if (dummy.kind != .variable or actual.len == 0) return .unknown;
         const want = varCategory(dummy);
         const typed = (try c.exprType(actual, scope, line_no, 0)) orelse return .unknown;
@@ -400,19 +411,25 @@ pub const Checker = struct {
         if (elemental) return .unknown;
         // assumed rank takes any
         if (dims) |d| if (std.mem.eql(u8, std.mem.trim(u8, d, " "), "..")) return if (known) .fits else .unknown;
+        // an assumed-shape array takes an array of its rank alone (#719)
+        const assumed_shape = mode == .explicit and dimensions.shapeOf(dims) == .assumed;
         if (typed.array and !dummy_array) return .scalar_expected;
         if (!typed.array and dummy_array) {
-            // an element (`x(1)`) may start an array (sequence association);
-            // another scalar may not
-            if (generic or (!typed.designator and have != .character)) return .array_expected;
+            if (generic or assumed_shape) return .array_expected;
+            // an element (`x(1)`) or a character may start an element
+            // sequence, as anything may for TYPE(*); with an implicit
+            // interface also a scalar variable
+            if (have == .character or want == .unknown or have == .unknown) return .unknown;
+            if (!typed.designator) return .array_expected;
+            if (mode == .explicit and dimensions.shapeOf(dims) == .sequence and !typed.subscripted) return .array_expected;
             return .unknown;
         }
         if (typed.array and dummy_array) {
-            if (!generic) return .unknown;
+            if (!generic and !assumed_shape) return .unknown;
             const want_rank = rankOf(dims) orelse return .unknown;
             // a section's or an expression's (#718)
             const have_rank = if (typed.rank > 0) typed.rank else return .unknown;
-            if (want_rank != have_rank) return .rank;
+            if (want_rank != have_rank) return .{ .rank = .{ .want = want_rank, .have = have_rank } };
         }
         return if (known) .fits else .unknown;
     }
@@ -542,6 +559,7 @@ pub const Checker = struct {
         var v: ?*Obj = null;
         var v_type: *Obj = undefined;
         var array = false;
+        var subscripted_last = false;
         // the rank of the part that has one
         var rank: usize = 0;
         var i: usize = 0;
@@ -582,6 +600,7 @@ pub const Checker = struct {
             }
             v = obj;
             v_type = typ;
+            subscripted_last = groups > 0;
             if (i < e.len and e[i] == '%') {
                 i += 1;
                 while (i < e.len and e[i] == ' ') i += 1;
@@ -591,7 +610,7 @@ pub const Checker = struct {
         }
         if (i != e.len) return null;
         const obj = v.?;
-        return .{ .cat = varCategory(v_type), .array = array, .rank = rank, .designator = true, .obj = obj };
+        return .{ .cat = varCategory(v_type), .array = array, .rank = rank, .designator = true, .subscripted = subscripted_last, .obj = obj };
     }
 
     /// A component of a variable of derived type, in its type or a type

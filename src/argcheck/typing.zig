@@ -19,6 +19,9 @@ pub const Typed = struct {
     literal: bool = false,
     /// a variable or a part of one (an element may start an array)
     designator: bool = false,
+    /// of a designator, its last part has subscripts or a substring
+    /// (`x(1)`, `t%a(2)`, not `t(1)%c`), as an element has (#719)
+    subscripted: bool = false,
     /// the variable or component it ends in
     obj: ?*Obj = null,
 };
