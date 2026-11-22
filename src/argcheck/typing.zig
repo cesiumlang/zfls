@@ -56,6 +56,40 @@ pub fn topLevel(s: []const u8, ch: u8) ?usize {
     return null;
 }
 
+/// The first value of conditional expression `e` (F2023), `(c ? a : b)`:
+/// `a`, whose type, kind and rank the expression has; null for another
+/// expression (#733)
+pub fn conditionalValue(e_in: []const u8) ?[]const u8 {
+    const e = std.mem.trim(u8, e_in, " \t");
+    if (e.len < 2 or e[0] != '(' or matching(e, 0) != e.len - 1) return null;
+    const inner = e[1 .. e.len - 1];
+    const q = outsideLiterals(inner, '?') orelse return null;
+    const rest = inner[q + 1 ..];
+    const colon = outsideLiterals(rest, ':') orelse return null;
+    const value = std.mem.trim(u8, rest[0..colon], " \t");
+    return if (value.len > 0) value else null;
+}
+
+/// The first `ch` of `s` outside parentheses, brackets and character
+/// literals
+fn outsideLiterals(s: []const u8, ch: u8) ?usize {
+    var depth: usize = 0;
+    var quote: u8 = 0;
+    for (s, 0..) |x, i| {
+        if (quote != 0) {
+            if (x == quote) quote = 0;
+            continue;
+        }
+        switch (x) {
+            '\'', '"' => quote = x,
+            '(', '[' => depth += 1,
+            ')', ']' => depth -|= 1,
+            else => if (x == ch and depth == 0) return i,
+        }
+    }
+    return null;
+}
+
 /// The end of the operand that starts at `i` of `e`: a literal, a string,
 /// a name with its subscripts and components, or a parenthesized
 /// expression or array constructor

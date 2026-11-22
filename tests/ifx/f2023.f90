@@ -1,5 +1,7 @@
 ! Fortran 2018 and 2023 declarations that ifx reads: NON_RECURSIVE (#727),
-! TYPEOF and CLASSOF (#728), the RANK clause (#729); not SIMPLE
+! TYPEOF and CLASSOF (#728), the RANK clause (#729), NOTIFY (#732),
+! conditional expressions (#733); not SIMPLE
+! oracle-ifx-args: /Qcoarray:single
 module f2023
   implicit none
   integer, parameter :: two = 2
@@ -28,5 +30,23 @@ contains
     r = p
     m = 1
     print *, y, r%x, m, e, size(a), associated(pp), size(b)
+  end subroutine
+
+  ! NOTIFY WAIT and NOTIFY= (#732), conditional expressions (#733)
+  subroutine notified(flag, x, z)
+    use iso_fortran_env, only: notify_type
+    logical, intent(in) :: flag
+    real, intent(in) :: x
+    real(8), intent(in) :: z(3)
+    type(notify_type), save :: nt[*]
+    real, save :: b(10)[*]
+    if (this_image() == 1) then
+      b(1)[2, notify=nt] = (flag ? x : 2*x)
+    else
+      notify wait (nt, until_count=1)
+    end if
+    associate (c => (flag ? x : 1.0), w => (flag ? z : 2*z))
+      print *, c, w
+    end associate
   end subroutine
 end module

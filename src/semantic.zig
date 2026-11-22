@@ -307,6 +307,7 @@ const Tokenizer = struct {
                 }
                 if (isStatementKeyword(w.str) and !isAssignment(code, w.end)) {
                     keyword = w.str;
+                    st.stop = std.ascii.eqlIgnoreCase(w.str, "stop") or std.ascii.eqlIgnoreCase(w.str, "errorstop");
                     st.in_end = isEndKeyword(w.str);
                     t.spec_stmt = isSpecKeyword(w.str);
                     st.cond = isConditionKeyword(w.str);
@@ -318,6 +319,7 @@ const Tokenizer = struct {
                     // `else if (x) then`
                     if (std.ascii.eqlIgnoreCase(w.str, "if")) st.cond = true;
                     if (std.ascii.eqlIgnoreCase(w.str, "file")) st.define_file = true;
+                    if (std.ascii.eqlIgnoreCase(w.str, "stop")) st.stop = true;
                     continue;
                 }
             }
@@ -346,6 +348,8 @@ const Tokenizer = struct {
             // that continues the call)
             const in_list = before == '(' or before == ',' or before == '&' or before == 0;
             if (st.depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and in_list) continue;
+            // `stop 1, quiet=q` (F2018)
+            if (st.stop and st.depth == 0 and before == ',' and after == '=' and std.ascii.eqlIgnoreCase(w.str, "quiet")) continue;
             // a BOZ literal, `z'7F'`, `b"101"`
             if (w.str.len == 1 and std.mem.findScalar(u8, "bBoOzZ", w.str[0]) != null and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"')) continue;
             if (t.file.pp_defs.contains(w.str)) {
@@ -433,10 +437,14 @@ const Stmt = struct {
     /// DEC's DEFINE FILE, whose form is a letter (`define file 3 (100, 10,
     /// u, iv)`)
     define_file: bool = false,
+    /// STOP or ERROR STOP, whose QUIET= is no name (#732)
+    stop: bool = false,
 
     fn punctuation(s: *Stmt, chars: []const u8) void {
         for (chars) |c| switch (c) {
-            '(' => s.depth += 1,
+            // (an image selector's too: `x[1, notify=nt]`, #732)
+            '(', '[' => s.depth += 1,
+            ']' => s.depth -|= 1,
             ')' => {
                 s.depth -|= 1;
                 if (s.depth == 0 and s.cond) {
@@ -450,6 +458,7 @@ const Stmt = struct {
                 s.in_end = false;
                 s.prev = null;
                 s.define_file = false;
+                s.stop = false;
             },
             else => {},
         };
@@ -536,6 +545,8 @@ const statement_keywords = [_][]const u8{
     // TYPEOF and CLASSOF (#728)
            "non_recursive",
     "simple",          "typeof",        "classof",
+    // Fortran 2023's NOTIFY WAIT (#732)
+        "notify",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -673,7 +684,7 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
         .{ "module", "procedure" }, .{ "module", "function" }, .{ "module", "subroutine" },
         .{ "event", "post" },       .{ "event", "wait" },      .{ "form", "team" },
         .{ "change", "team" },      .{ "fail", "image" },      .{ "sync", "team" },
-        .{ "define", "file" },
+        .{ "define", "file" },      .{ "notify", "wait" },
     };
     for (pairs) |p| if (std.ascii.eqlIgnoreCase(first, p[0]) and std.ascii.eqlIgnoreCase(word, p[1])) return true;
     if (std.ascii.eqlIgnoreCase(first, "end")) return isStatementKeyword(word) or std.ascii.eqlIgnoreCase(word, "team");
