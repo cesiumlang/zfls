@@ -5,11 +5,12 @@
 //! The settings come from, each over the previous: the command line, the
 //! user's configuration file (`%APPDATA%\zfls\config.json`,
 //! `~/.config/zfls/config.json`; #271), the editor, the config file
-//! (`.fortlsrc`). The config file is the project's and already takes over
-//! from the command line, which is how the VS Code extension passes its
-//! settings; the editor's settings over LSP are the same user settings, by
-//! another way. The user's file gives defaults for editors that have no
-//! settings for a language server.
+//! (`.fortlsrc`). The config file is the project's and takes over from
+//! the others. The VS Code extension passes its settings on the command
+//! line and sends them again as the editor's (`initializationOptions` at
+//! start, `didChangeConfiguration` later), so that they take over from the
+//! user's file (#782). The user's file gives defaults for editors that have
+//! no settings for a language server.
 //!
 //! A change applies at once. One of the settings that decide what is
 //! indexed (source directories, include directories, definitions, ...)
