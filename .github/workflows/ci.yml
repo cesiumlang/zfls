@@ -61,6 +61,13 @@ env:
   FORTLS_REPO: fortran-lang/fortls
   FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
   PYTHON_VERSION: "3.12"
+  # The external tools the unit tests run for real on Linux x64 (PyPI's,
+  # and Ubuntu's clangd)
+  FORTITUDE_VERSION: 0.10.1
+  FYPP_VERSION: "3.3"
+  FINDENT_VERSION: 4.3.6
+  FPRETTIFY_VERSION: 0.3.7
+  CLANGD_VERSION: "18"
 
 defaults:
   run:
@@ -588,6 +595,26 @@ jobs:
           done
           "$RUNNER_TEMP/ifx/bin/ifx" --version
           echo "IFX=$RUNNER_TEMP/ifx/bin/ifx" >> "$GITHUB_ENV"
+
+      # fortitude, fypp, findent, fprettify and clangd, which zfls runs, for
+      # the unit tests that run them for real (tests/issues/real_tools.zig,
+      # bind_c_clangd.zig; skipped where a tool is missing): on the PATH
+      - name: fortitude, fypp, findent, fprettify and clangd (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          for wait in 15 30 60 0; do
+            python -m pip install -q "fortitude-lint==$FORTITUDE_VERSION" "fypp==$FYPP_VERSION" "findent==$FINDENT_VERSION" "fprettify==$FPRETTIFY_VERSION" &&
+              sudo apt-get update -q && sudo apt-get install -y -q "clangd-$CLANGD_VERSION" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing the tools failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          mkdir -p "$RUNNER_TEMP/tools-bin"
+          ln -sf "/usr/bin/clangd-$CLANGD_VERSION" "$RUNNER_TEMP/tools-bin/clangd"
+          echo "$RUNNER_TEMP/tools-bin" >> "$GITHUB_PATH"
+          # the tests of the tools fail, not skip, when one is missing
+          echo "ZFLS_TEST_TOOLS=1" >> "$GITHUB_ENV"
+          fortitude --version && fypp --version && findent -v && fprettify --version && "$RUNNER_TEMP/tools-bin/clangd" --version
 
       - name: Unit tests
         run: zig build test --summary failures
