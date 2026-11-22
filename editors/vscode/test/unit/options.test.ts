@@ -57,3 +57,11 @@ test("files.associations reaches zfls on the command line and over LSP (#686)", 
   const args = serverArguments(folder);
   assert.equal(args[args.indexOf("--file_associations") + 1], '{"*.fpp":"FortranFixedForm"}');
 });
+
+test("a fractional lintOnTypeDelay is sent as whole milliseconds (#783)", () => {
+  settings["zfls.linter.lintOnType"] = true;
+  settings["zfls.linter.lintOnTypeDelay"] = 250.6;
+  assert.equal(serverSettings(folder).compiler_change_delay, 251);
+  const args = serverArguments(folder);
+  assert.equal(args[args.indexOf("--compiler_change_delay") + 1], "251");
+});
