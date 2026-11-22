@@ -928,7 +928,7 @@
           "markdownDescription": "%config.zfls.linter.lintOnType.markdownDescription%"
         },
         "zfls.linter.lintOnTypeDelay": {
-          "type": "number",
+          "type": "integer",
           "default": 1000,
           "minimum": 0,
           "scope": "resource",

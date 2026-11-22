@@ -234,6 +234,7 @@ function adapterText(): Record<string, string> {
     gdbExited: vscode.l10n.t("gdb exited"),
     lldbExited: vscode.l10n.t("lldb-dap exited"),
     endedBySignal: vscode.l10n.t("The program was ended by a signal"),
+    engineNoConditions: vscode.l10n.t("Windows's Debugger Engine takes no conditions, hit conditions or log messages yet"),
   };
 }
 
