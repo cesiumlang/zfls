@@ -84,10 +84,16 @@ fn isPtrTo(comptime T: type, comptime Child: type) bool {
     };
 }
 
-pub const SaveError = error{ OutOfMemory, Foreign };
+pub const SaveError = error{ OutOfMemory, Foreign, TooDeep };
+
+/// How deep objects met for the first time may nest (scopes in scopes):
+/// saving and loading recurse at each, and a thread's stack is bounded
+/// (#780)
+pub const max_nesting = 400;
 
 /// `ast`, just parsed, as bytes owned by `gpa`; `error.Foreign` when an
-/// object refers to another file's
+/// object refers to another file's, `error.TooDeep` when its objects nest
+/// deeper than `max_nesting`
 pub fn save(gpa: Allocator, ast: *const Ast) SaveError![]u8 {
     var s: Saver = .{ .gpa = gpa, .ast = ast };
     defer s.ids.deinit(gpa);
@@ -110,6 +116,8 @@ const Saver = struct {
     ast: *const Ast,
     out: std.ArrayList(u8) = .empty,
     ids: std.AutoHashMapUnmanaged(*const Obj, u32) = .empty,
+    /// how many objects are being written, each inside the one before
+    depth: usize = 0,
 
     fn byte(s: *Saver, b: u8) !void {
         try s.out.append(s.gpa, b);
@@ -127,6 +135,9 @@ const Saver = struct {
         const obj = o orelse return s.uint(0);
         if (s.ids.get(obj)) |id| return s.uint(@as(u64, id) + 2);
         if (obj.file_ast != s.ast) return error.Foreign;
+        if (s.depth == max_nesting) return error.TooDeep;
+        s.depth += 1;
+        defer s.depth -= 1;
         try s.ids.put(s.gpa, obj, s.ids.count());
         try s.uint(1);
         try s.value(Obj, obj.*);
@@ -217,6 +228,8 @@ const Loader = struct {
     data: []const u8,
     at: usize = 0,
     objs: std.ArrayList(*Obj) = .empty,
+    /// as `Saver.depth`
+    depth: usize = 0,
 
     fn byte(l: *Loader) !u8 {
         if (l.at >= l.data.len) return error.Format;
@@ -247,6 +260,10 @@ const Loader = struct {
         switch (id) {
             0 => return null,
             1 => {
+                // (deeper than any save writes)
+                if (l.depth == max_nesting) return error.Format;
+                l.depth += 1;
+                defer l.depth -= 1;
                 const o = try l.a.create(Obj);
                 // numbered before its fields, which may refer to it
                 try l.objs.append(l.gpa, o);
