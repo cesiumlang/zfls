@@ -56,6 +56,9 @@ test {
     _ = @import("compiler_sources.zig");
     _ = @import("compiler_settings.zig");
     _ = @import("compiler_requests.zig");
+    _ = @import("compiler_options.zig");
+    _ = @import("linters.zig");
+    _ = @import("bind_c_settings.zig");
     _ = @import("gfortran_modules.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
