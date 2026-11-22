@@ -767,6 +767,17 @@ pub const Workspace = struct {
         if (ds.items.len > 0) return unmet("{s}: expected no diagnostics, got {d}: line {d}: {s}", .{ name, ds.items.len, ds.items[0].line + 1, ds.items[0].message });
     }
 
+    /// The diagnostics of `name` are `want`, each `line: message` (1-based),
+    /// besides the faded hints about unused names
+    pub fn expectDiagnostics(w: *Workspace, name: []const u8, want: []const []const u8) !void {
+        var got: std.ArrayList([]const u8) = .empty;
+        for (try w.diagnostics(name)) |d| if (!std.mem.eql(u8, d.code, "unused-name")) try got.append(w.a(), try w.a().print("{d}: {s}", .{ d.line + 1, d.message }));
+        const same = got.items.len == want.len and for (want, got.items) |x, y| {
+            if (!std.mem.eql(u8, x, y)) break false;
+        } else true;
+        if (!same) return unmet("{s}: expected the diagnostics {any}, got {any}", .{ name, want, got.items });
+    }
+
     /// No diagnostic in `name` whose message contains `fragment`
     pub fn expectNoDiagnosticLike(w: *Workspace, name: []const u8, fragment: []const u8) !void {
         for (try w.diagnostics(name)) |d| {

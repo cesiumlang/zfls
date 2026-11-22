@@ -77,6 +77,18 @@ fn wholeArrayRank(actual: []const u8, typed: Typed) ?usize {
     return rankOf(dimensions.of(v));
 }
 
+/// What variable `v` takes its type from: what an associate name is
+/// linked to, else `v`; null when that is no variable
+fn typeSource(v: *Obj) ?*Obj {
+    var o = v;
+    // (a chain of links is free of loops)
+    for (0..64) |_| {
+        o = o.linkObj() orelse return o;
+        if (o.kind != .variable) return null;
+    }
+    return null;
+}
+
 pub const Problem = struct { line: usize, start: usize, end: usize, message: []const u8, kind: Kind };
 
 /// A statement with its continuation lines joined, and where each of its
@@ -381,7 +393,7 @@ pub const Checker = struct {
         }
         // a CHARACTER of another kind
         if (generic and known and want == .character) {
-            for ([_]?*Obj{ dummy, typed.obj }) |o| if (o) |v| if (v.varDataConst().vkind) |k| if (std.ascii.findIgnoreCase(k, "kind") != null) {
+            for ([_]?*Obj{ dummy, typed.obj }) |o| if (o) |v_in| if (typeSource(v_in)) |v| if (v.varDataConst().vkind) |k| if (std.ascii.findIgnoreCase(k, "kind") != null) {
                 known = false;
             };
         }
@@ -535,6 +547,7 @@ pub const Checker = struct {
     /// substring); null when it is no variable (a function, an intrinsic)
     fn designator(c: *Checker, e: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
         var v: ?*Obj = null;
+        var v_type: *Obj = undefined;
         var array = false;
         // the rank of the part that has one
         var rank: usize = 0;
@@ -548,10 +561,13 @@ pub const Checker = struct {
                 (try c.component(parent, name)) orelse return null
             else
                 (try c.lookup(scope, name, line_no)) orelse return null;
-            if (obj.kind != .variable or obj.linkObj() != null) return null;
-            // a TYPE IS or CLASS IS name: its selector's or section's (#707)
+            if (obj.kind != .variable) return null;
+            // an associate name: the type of what it is linked to, the rank
+            // its selector or section gives it (#707, #714)
+            const typ = typeSource(obj) orelse return null;
+            if (!dimensions.known(obj)) return null;
             const obj_dims = dimensions.of(obj);
-            const is_array = obj_dims != null or (obj.hasKeyword(KW.dimension) and obj.varDataConst().slice_rank < 0);
+            const is_array = dimensions.isArray(obj);
             while (i < e.len and e[i] == ' ') i += 1;
             var subscripted = false;
             // subscripts, then a substring
@@ -563,7 +579,7 @@ pub const Checker = struct {
                     const sec = (try c.sectionRank(e[i + 1 .. close], scope, line_no, depth)) orelse return null;
                     if (sec > 0) array = true;
                     rank = @max(rank, sec);
-                } else if (varCategory(obj) != .character) return null;
+                } else if (varCategory(typ) != .character) return null;
                 i = close + 1;
                 while (i < e.len and e[i] == ' ') i += 1;
             }
@@ -572,6 +588,7 @@ pub const Checker = struct {
                 rank = @max(rank, rankOf(obj_dims) orelse 0);
             }
             v = obj;
+            v_type = typ;
             if (i < e.len and e[i] == '%') {
                 i += 1;
                 while (i < e.len and e[i] == ' ') i += 1;
@@ -581,7 +598,7 @@ pub const Checker = struct {
         }
         if (i != e.len) return null;
         const obj = v.?;
-        return .{ .cat = varCategory(obj), .array = array, .rank = rank, .designator = true, .obj = obj };
+        return .{ .cat = varCategory(v_type), .array = array, .rank = rank, .designator = true, .obj = obj };
     }
 
     /// A component of a variable of derived type, in its type or a type
@@ -620,8 +637,9 @@ pub const Checker = struct {
 
     /// The kind of a variable's type, as gfortran numbers kinds (4 for a
     /// default REAL, 8 for DOUBLE PRECISION), or null when it cannot be told
-    fn kindOfVar(c: *Checker, v: *Obj) !?i64 {
-        if (v.kind != .variable) return null;
+    fn kindOfVar(c: *Checker, v_in: *Obj) !?i64 {
+        if (v_in.kind != .variable) return null;
+        const v = typeSource(v_in) orelse return null;
         const desc = std.mem.trim(u8, v.descOf(), " ");
         const k = c.kindsOf(v);
         if (std.ascii.startsWithIgnoreCase(desc, "double")) return k.double;

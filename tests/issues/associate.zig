@@ -1,6 +1,7 @@
 //! ASSOCIATE constructs (#230): named ones, an associate name spelled like
 //! the variable of its selector, and the types of names bound to literals
-//! and expressions.
+//! and expressions; argument checking takes an associate name's rank and
+//! type (#714).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -149,6 +150,80 @@ test "an associate name has the rank of its selector and the attributes it gives
         .{ "ap", "REAL, TARGET, DIMENSION(:) :: ap" },
     };
     for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", "print *,", 0, @intCast(std.mem.find(u8, "print *, sec, vec, el, ex, sub, ab, ad, ap", c[0]).?)), c[1]);
+}
+
+test "argument checking takes an associate name's rank and its selector's type (#714)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  type :: box
+        \\    real :: arr(4)
+        \\  end type
+        \\contains
+        \\  subroutine takes_s(x)
+        \\    real, intent(in) :: x
+        \\  end subroutine
+        \\  subroutine takes_v(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine
+        \\  subroutine takes_c(c)
+        \\    character(len=*), intent(in) :: c
+        \\  end subroutine
+        \\  subroutine t(a2, x, n, d, bx, idx, str, names)
+        \\    real, intent(in) :: a2(10, 3), x
+        \\    integer, intent(in) :: n, idx(2)
+        \\    double precision, intent(in) :: d
+        \\    type(box), intent(in) :: bx
+        \\    character(len=8), intent(in) :: str, names(3)
+        \\    associate (b => a2(:, 1), c => a2, s => x, i => n, dd => d, q => bx%arr, vv => a2(idx, 2), el => a2(1, 1))
+        \\      call takes_s(b)
+        \\      call takes_v(b)
+        \\      call takes_s(b(1))
+        \\      call takes_s(c)
+        \\      call takes_s(c(1, 1))
+        \\      call takes_s(s)
+        \\      call takes_s(i)
+        \\      call takes_s(dd)
+        \\      call takes_s(q)
+        \\      call takes_v(q)
+        \\      call takes_s(vv)
+        \\      call takes_v(vv)
+        \\      call takes_s(el)
+        \\      associate (e => b, f => c(2, :), g => el)
+        \\        call takes_s(e)
+        \\        call takes_v(e)
+        \\        call takes_s(f)
+        \\        call takes_v(f)
+        \\        call takes_s(g)
+        \\      end associate
+        \\    end associate
+        \\    associate (sub => str(2:4), nm => names, nm1 => names(2))
+        \\      call takes_c(sub)
+        \\      call takes_c(sub(1:1))
+        \\      call takes_c(nm)
+        \\      call takes_c(nm(1))
+        \\      call takes_c(nm1)
+        \\      call takes_c(nm1(1:2))
+        \\    end associate
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 report these lines alone:
+    // "Rank mismatch in argument 'x' at (1) (scalar and rank-1)", "Type
+    // mismatch in argument 'x' at (1); passed INTEGER(4) to REAL(4)", ...
+    try w.expectDiagnostics("t.f90", &.{
+        "23: Argument x of takes_s: a scalar expected, an array given",
+        "26: Argument x of takes_s: a scalar expected, an array given",
+        "29: Argument x of takes_s: real expected, integer given",
+        "30: Argument x of takes_s: REAL(4) expected, REAL(8) given",
+        "31: Argument x of takes_s: a scalar expected, an array given",
+        "33: Argument x of takes_s: a scalar expected, an array given",
+        "37: Argument x of takes_s: a scalar expected, an array given",
+        "39: Argument x of takes_s: a scalar expected, an array given",
+        "47: Argument c of takes_c: a scalar expected, an array given",
+    });
 }
 
 test "SELECT TYPE: TYPE IS and CLASS IS names have the selector's rank and the guard's type (#701)" {
