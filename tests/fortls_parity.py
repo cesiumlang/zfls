@@ -336,6 +336,26 @@ def run_function(mod, fn):
 
 
 def main() -> int:
+    # an empty temp folder of our own, so that fortls's tests that index
+    # the system temp directory do not depend on the machine's contents (#822)
+    root = tempfile.mkdtemp(prefix="zfls_parity_")
+    saved = {k: os.environ.get(k) for k in ("TEMP", "TMP", "TMPDIR")}
+    for k in saved:
+        os.environ[k] = root
+    tempfile.tempdir = root
+    try:
+        return run()
+    finally:
+        tempfile.tempdir = None
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     exe = "zfls.exe" if os.name == "nt" else "zfls"
     ap.add_argument(
