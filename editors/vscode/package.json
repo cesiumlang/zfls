@@ -472,7 +472,7 @@
             "code"
           ],
           "default": "comment",
-          "scope": "window",
+          "scope": "resource",
           "markdownDescription": "%config.zfls.fixedFormDLines.markdownDescription%"
         },
         "zfls.configFile": {
@@ -520,7 +520,7 @@
             "type": "string"
           },
           "default": [],
-          "scope": "window",
+          "scope": "resource",
           "markdownDescription": "%config.zfls.commentMarkers.markdownDescription%"
         },
         "zfls.disableOpenmpConditional": {
@@ -928,7 +928,7 @@
           "markdownDescription": "%config.zfls.linter.lintOnType.markdownDescription%"
         },
         "zfls.linter.lintOnTypeDelay": {
-          "type": "number",
+          "type": "integer",
           "default": 1000,
           "minimum": 0,
           "scope": "resource",
@@ -1433,6 +1433,10 @@
                 "default": false,
                 "description": "%debugger.fortran.launch.cppExceptionFilters.description%"
               },
+              "sourceRoot": {
+                "type": "string",
+                "description": "%debugger.fortran.launch.sourceRoot.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
@@ -1472,6 +1476,20 @@
                 ],
                 "description": "%debugger.fortran.attach.lldb.description%"
               },
+              "cppExceptionFilters": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.cppExceptionFilters.description%"
+              },
+              "sourceRoot": {
+                "type": "string",
+                "description": "%debugger.fortran.attach.sourceRoot.description%"
+              },
+              "waitFor": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.waitFor.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
@@ -1483,16 +1501,6 @@
             }
           }
         },
-        "initialConfigurations": [
-          {
-            "type": "fortran",
-            "request": "launch",
-            "name": "Debug Fortran program",
-            "program": "${workspaceFolder}/a.out",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-          }
-        ],
         "configurationSnippets": [
           {
             "label": "%debugger.fortran.snippet.0.label%",

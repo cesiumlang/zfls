@@ -83,6 +83,9 @@ def zfls_only_item(item) -> bool:
     # (not a variable of the same name: `int1`, Intel's INT1)
     if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and item.get("kind") != 6:
         return True
+    # the F2023 names of ISO_C_BINDING (#730)
+    if str(item.get("label", "")).lower() in ("c_f_strpointer", "f_c_string"):
+        return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in item:
         return True
@@ -124,6 +127,9 @@ def normalize(v):
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
+        # zfls has the LOWER argument of C_F_POINTER (F2018, #730)
+        v = v.replace("${3:shape}, ${4:lower})", "${3:shape})")
+        v = v.replace("c_f_pointer(cptr, fptr, shape, lower)", "c_f_pointer(cptr, fptr, shape)")
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -350,6 +356,33 @@ def ignore_associate_attributes(v, names: set):
             return NOT_INHERITED.sub("", m.group(1)) + m.group(2) + m.group(3) if m.group(3).lower() in names else m.group(0)
 
         return re.sub(r"^([^\n]*?)( :: )(\w+)$", repl, v, flags=re.M)
+    return v
+
+
+def ignore_associate_functions(v, names: set):
+    """fortls shows an associate name bound to a function's result as that
+    function (`LOGICAL FUNCTION :: hi`, completed as `hi()`); zfls as the
+    variable it is, of the result's type (#721)."""
+    if isinstance(v, dict):
+        label = str(v.get("label", "")).lower()
+        out = {k: ignore_associate_functions(x, names) for k, x in v.items()}
+        text = str(out.get("insertText", ""))
+        if label in names and text.lower().startswith(label + "("):
+            del out["insertText"]
+            out.pop("insertTextFormat", None)
+            if out.get("kind") == 3:
+                out["kind"] = 6
+            detail = str(out.get("detail", ""))
+            if detail.lower().endswith(" function " + label + "()"):
+                out["detail"] = detail[: -len(" function " + label + "()")]
+        return out
+    if isinstance(v, list):
+        return [ignore_associate_functions(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return m.group(1) + m.group(2) if m.group(2)[4:].lower() in names else m.group(0)
+
+        return re.sub(r"^([^\n]*?) FUNCTION( :: \w+)$", repl, v, flags=re.M)
     return v
 
 

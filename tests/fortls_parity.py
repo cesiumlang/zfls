@@ -155,10 +155,36 @@ def include_file_definition_replacement(mod):
     return test
 
 
+def associate_function_replacement(mod):
+    """`test_server_hover::test_associate_block_func_result` expects an
+    associate name bound to a function call to be shown as the function
+    (`LOGICAL FUNCTION :: hi`); zfls shows the variable it is, of the
+    result's type (#721)."""
+
+    def test():
+        test_dir = mod.test_dir
+        string = mod.write_rpc_request(
+            1, "initialize", {"rootPath": str(test_dir / "hover")}
+        )
+        file_path = test_dir / "hover" / "associate_block_2.f90"
+        string += mod.hover_req(file_path, 2, 14)
+        string += mod.hover_req(file_path, 3, 9)
+        errorcode, results = mod.run_request(string, fortls_args=["--sort_keywords", "-n", "1"])
+        assert errorcode == 0
+        ref_results = [
+            "```fortran90\nLOGICAL :: hi\n```",
+            "```fortran90\nLOGICAL :: hi\n```",
+        ]
+        mod.validate_hover(results, ref_results)
+
+    return test
+
+
 # Tests whose expectations zfls deliberately does not match verbatim, with a
 # replacement test implementing the zfls expectation.
 KNOWN_DEVIATIONS = {
     "test_server_hover::test_intrinsics": intrinsic_hover_replacement,
+    "test_server_hover::test_associate_block_func_result": associate_function_replacement,
     "test_server::test_workspace_symbols": substring_symbols_replacement,
     "test_server::test_init": sync_options_replacement,
     "test_server_definitions::test_def_include_file": include_file_definition_replacement,

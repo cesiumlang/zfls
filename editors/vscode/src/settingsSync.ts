@@ -18,12 +18,33 @@ function providers(s: ServerSettings): boolean[] {
   ];
 }
 
+/** `s` without the settings that the options in `args` (`zfls.arguments`)
+ * set: on the command line they come after the typed settings, and the
+ * settings sent over LSP would take over from them. An option is named as
+ * zfls reads it: in full, or by a prefix (all settings it begins, so as
+ * not to leave in the one zfls would take); `-n` is `--nthreads`. */
+export function withoutArguments(s: ServerSettings, args: readonly string[]): ServerSettings {
+  const names = args.flatMap((arg) => {
+    if (arg.startsWith("--")) {
+      return [arg.slice(2).split("=")[0]];
+    }
+    return /^-n/.test(arg) ? ["nthreads"] : [];
+  });
+  const named = (key: string) => names.some((n) => n === key || (n !== "" && key.startsWith(n) && !(n in s)));
+  return Object.fromEntries(Object.entries(s).filter(([key]) => !named(key)));
+}
+
 /** Whether a running server that has the settings `prev` can take `next`
  * without a restart: not when `next` leaves out a setting that `prev` has
  * (the server would keep its command line's value, which was `prev`'s), nor
- * when a feature is turned off (the editor would keep offering it) */
+ * when a feature is turned off (the editor would keep offering it), nor
+ * when workspace diagnostics are turned on (the server needs them at start) */
 export function appliesLive(prev: ServerSettings, next: ServerSettings): boolean {
   if (Object.keys(prev).some((k) => !(k in next))) {
+    return false;
+  }
+  // the client pulls the workspace's diagnostics only if told so at start
+  if (next.workspace_diagnostics === true && prev.workspace_diagnostics !== true) {
     return false;
   }
   const before = providers(prev);
