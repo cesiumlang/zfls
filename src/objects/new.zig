@@ -132,6 +132,8 @@ pub fn newSelect(file_ast: *Ast, line_number: usize, name: []const u8, info: par
         }
     } else if (sel.select_type == 3) {
         sel.binding_type = try str.dupeOpt(a, info.binding);
+    } else if (sel.select_type == 5) {
+        sel.case_rank = try str.dupeOpt(a, info.rank);
     }
     return o;
 }

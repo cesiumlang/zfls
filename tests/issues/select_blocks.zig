@@ -1,5 +1,6 @@
 //! The blocks of SELECT TYPE and SELECT RANK: each guard's block is a
-//! sibling of the one before (#708).
+//! sibling of the one before (#708); the associate name of a RANK block
+//! has its rank (#706).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -53,4 +54,43 @@ test "a SELECT CASE in a guard's block leaves the guard open (#708)" {
     try w.expectHoverContains("t.f90", w.pos("t.f90", "it(2)", 0, 0), "INTEGER, DIMENSION(:) :: it");
     try w.expectHoverContains("t.f90", w.pos("t.f90", "it(3)", 0, 0), "REAL, DIMENSION(:) :: it");
     try w.expectHoverContains("t.f90", w.pos("t.f90", "size(it)", 0, 5), "CLASS(*), DIMENSION(:) :: it");
+}
+
+test "SELECT RANK: each block's name has the block's rank and the selector's attributes (#706)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\subroutine s(a, p, al)
+        \\  real, intent(in) :: a(..)
+        \\  real, pointer :: p(..)
+        \\  real, allocatable :: al(..)
+        \\  select rank (r => a)
+        \\  rank (0)
+        \\    print *, r
+        \\  rank (2)
+        \\    print *, r(1, 1)
+        \\  rank (*)
+        \\    print *, r(1)
+        \\  rank default
+        \\    print *, rank(r)
+        \\  end select
+        \\  select rank (p)
+        \\  rank (1)
+        \\    print *, p(1)
+        \\  end select
+        \\  select rank (q => al)
+        \\  rank (3) ! a comment (x)
+        \\    print *, q(1, 1, 1)
+        \\  end select
+        \\end subroutine
+        \\
+    }}, .{});
+    defer w.deinit();
+    const want = [_]struct { []const u8, []const u8 }{
+        .{ "r\n", "REAL :: r" },
+        .{ "r(1, 1)", "REAL, DIMENSION(:,:) :: r" },
+        .{ "r(1)", "REAL, DIMENSION(*) :: r" },
+        .{ "r)", "REAL, DIMENSION(..) :: r" },
+        .{ "p(1)", "REAL, POINTER, DIMENSION(:) :: p" },
+        .{ "q(1, 1, 1)", "REAL, ALLOCATABLE, DIMENSION(:,:,:) :: q" },
+    };
+    for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", c[0], 0, 0), c[1]);
 }

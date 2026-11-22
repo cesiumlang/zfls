@@ -830,12 +830,10 @@ pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, va
     if (binding_name != null and case_type != 4 and case_type != 5) bound_var = null;
     if (binding_name) |bn| {
         return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .kind = kind, .link_obj = bound_var });
-    } else if (case_type == 5) {
-        // `select rank (a)`: a is the selector itself
-        return null;
     } else if (bound_var) |bv| {
-        // the selector names itself: in CLASS DEFAULT it is the selector
-        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{ .kind = kind, .link_obj = if (case_type == 4) bv else null });
+        // the selector names itself: in CLASS DEFAULT and a case of SELECT
+        // RANK (`select rank (a)`, #706) it is the selector
+        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{ .kind = kind, .link_obj = if (case_type == 4 or case_type == 5) bv else null });
     }
     return null;
 }

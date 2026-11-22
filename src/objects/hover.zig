@@ -268,13 +268,16 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
     // standard gives it (TARGET for a POINTER), not ALLOCATABLE, INTENT, ...;
     // and the rank of what it is bound to: a section of an array, not the
     // array it is cut from (upstream #108), or an expression (#691)
+    // (of SELECT RANK, also ALLOCATABLE and POINTER, #706)
     const slice_rank = self.varDataConst().slice_rank;
+    const rank_name = self.isRankName();
     var ids: std.ArrayList(C.Kw) = .empty;
     for (from.keywords.items) |id| {
         const kept: ?C.Kw = switch (id) {
             .dimension => if (slice_rank < 0) id else null,
             .codimension, .target, .asynchronous, .@"volatile", .contiguous => id,
-            .pointer => .target,
+            .pointer => if (rank_name) id else .target,
+            .allocatable => if (rank_name) id else null,
             else => null,
         };
         if (kept) |k| if (std.mem.findScalar(C.Kw, ids.items, k) == null) try ids.append(a, k);
@@ -288,7 +291,7 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
             if (i > 0) try dims.append(a, ',');
             try dims.append(a, ':');
         }
-        info.dimension = dims.items;
+        info.dimension = if (self.varDataConst().assumed_size) "*" else dims.items;
     }
     return helpers.getKeywords(a, ids.items, info);
 }

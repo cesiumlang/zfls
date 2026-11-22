@@ -80,6 +80,7 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             v.link_obj = null;
             v.type_obj = null;
             v.selector_obj = null;
+            v.assumed_size = false;
             const p = self.parent orelse return;
             // the associate name of a block of SELECT TYPE or RANK: its
             // selector, with its rank (`it => items(i)`), found outside
@@ -92,6 +93,7 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
                 }
                 if (construct) |c| if (v.link_obj != null) {
                     v.slice_rank = try selector.associateRank(env, c, ln, self.sline, v.link_obj);
+                    if (self.isRankName()) caseRank(v, p.selectDataConst().case_rank);
                 };
             } else if (self.isGuardName()) {
                 // a TYPE IS or CLASS IS name: the selector's rank and
@@ -186,6 +188,19 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         },
         else => {},
     }
+}
+
+/// The rank a case of SELECT RANK gives its associate name `v`: `0`, `2`,
+/// assumed size for `*`; that of the selector (assumed rank) for RANK
+/// DEFAULT or a rank not written as a literal (#706)
+fn caseRank(v: *objects.Variable, case_rank: ?[]const u8) void {
+    const r = case_rank orelse return;
+    if (std.mem.eql(u8, r, "*")) {
+        v.slice_rank = 1;
+        v.assumed_size = true;
+    } else if (std.fmt.parseInt(u8, r, 10)) |n| {
+        v.slice_rank = n;
+    } else |_| {}
 }
 
 /// The variable or component that selector `text` names in `scope`, its

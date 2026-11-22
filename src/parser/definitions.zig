@@ -46,8 +46,9 @@ pub const FunSig = struct {
     result: ResultSig = .{},
 };
 
-/// `kind`: of a type guard of an intrinsic type, `type is (real(8))`
-pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8, kind: ?[]const u8 = null };
+/// `kind`: of a type guard of an intrinsic type, `type is (real(8))`;
+/// `rank`: of a case of SELECT RANK, `2` or `*` (none for RANK DEFAULT)
+pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8, kind: ?[]const u8 = null, rank: ?[]const u8 = null };
 
 pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
 
@@ -375,8 +376,13 @@ pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
         return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = try a.print("{s}({s})", .{ desc, m.group(2) orelse "None" }) } };
     }
     if (R().SELECT_DEFAULT.match(line) != null) return .{ .select = .{ .type = 4, .binding = null, .desc = null } };
-    // a case of SELECT RANK: its associate name is the selector
-    if (R().SELECT_RANK.match(line) != null) return .{ .select = .{ .type = 5, .binding = null, .desc = null } };
+    // a case of SELECT RANK: its associate name is the selector, of the
+    // case's rank (#706)
+    if (R().SELECT_RANK.match(line) != null) {
+        const rest = std.mem.trimStart(u8, std.mem.trimStart(u8, line, " ")["rank".len..], " ");
+        const rank = if (rest[0] == '(') str.strip(rest[1..std.mem.findScalar(u8, rest, ')').?]) else null;
+        return .{ .select = .{ .type = 5, .binding = null, .desc = null, .rank = rank } };
+    }
     return null;
 }
 
