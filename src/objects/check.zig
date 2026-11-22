@@ -19,6 +19,7 @@ const Variable = objects.Variable;
 const optEql = objects.optEql;
 const Diagnostic = objects.Diagnostic;
 const findInScope = objects.findInScope;
+const importHides = objects.importHides;
 const findInWorkspace = objects.findInWorkspace;
 
 pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
@@ -197,7 +198,9 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         // nor in a statement function, whose dummy arguments are typed as
         // the variables of their names in the scope around it
         const in_stmt_function = self.kind == .function and self.procDataConst().stmt_function;
-        if (self.parent != null and !is_interface and !in_stmt_function and !nestedDeeper(self, max_masking_depth) and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
+        // nor does a variable where IMPORT leaves the host's out (#804)
+        const imported = !importHides(self, try std.ascii.allocLowerString(a, child.name));
+        if (self.parent != null and !is_interface and !in_stmt_function and imported and !nestedDeeper(self, max_masking_depth) and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
             if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                 // the result variable of an ENTRY of this function

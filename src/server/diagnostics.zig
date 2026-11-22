@@ -39,6 +39,7 @@ const compiler_macros = @import("compiler_macros.zig");
 const linters = @import("linters.zig");
 const convert = @import("convert.zig");
 const summary = @import("summary.zig");
+const import_hidden = @import("import_hidden.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     var out: std.ArrayList(lsp.CodeAction) = .empty;
@@ -101,6 +102,10 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
     for (names) |u| {
         const scope = u.scope orelse continue;
         if (hasUnreadInclude(scope, unread.items)) continue;
+        if (try import_hidden.diagnostic(self.env(a), a, scope, u)) |d| {
+            try out.append(a, d);
+            continue;
+        }
         if (implicit.typeOf(scope, u.name) != null) continue;
         if (renamed.contains(try std.ascii.allocLowerString(a, u.name))) continue;
         const gop = try known.getOrPut(a, scope);
@@ -661,6 +666,7 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
     const uri = try paths.pathToUri(a, file.path);
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     for (try undeclaredNames(self, a, file, ast)) |d| {
+        if (d.code != .undeclared_name) continue;
         if (d.sln < sline or d.sln > eline) continue;
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
