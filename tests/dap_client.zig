@@ -110,7 +110,9 @@ pub const Client = struct {
         }
         c.cond.waitTimeout(c.io, &c.mutex, .{ .deadline = .{ .raw = deadline, .clock = .awake } }) catch |e| switch (e) {
             error.Timeout => {
-                std.debug.print("timed out waiting for {s}\n", .{what});
+                std.debug.print("timed out waiting for {s}; the last events:", .{what});
+                for (c.events.items[c.events.items.len -| 8..]) |ev| std.debug.print(" {s}", .{str(ev, "event") orelse "?"});
+                std.debug.print("\n", .{});
                 return error.Timeout;
             },
             else => return e,

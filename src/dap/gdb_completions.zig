@@ -2,7 +2,7 @@
 //! components of the designator before it (`origin%`, `p t%po`), by zfls's
 //! own variables of its value; a name in an expression (`p ori`), the
 //! frame's variables and the module variables its line sees; else gdb's
-//! own (its commands).
+//! own (its commands; none before gdb 16).
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -28,6 +28,7 @@ pub fn complete(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
             &.{};
         if (try completions.targets(a, names, d, at)) |t| return s.respond(a, req, .{ .targets = t });
     }
+    if (!s.g.gdb_completes) return s.respond(a, req, .{ .targets = &[_]Value{} });
     try gdb.forward(s, a, req, args);
 }
 
