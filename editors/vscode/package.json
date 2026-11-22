@@ -147,7 +147,8 @@
         "fileMatch": [
           ".fortlsrc",
           ".fortls.json",
-          ".fortls"
+          ".fortls",
+          "**/zfls/config.json"
         ],
         "url": "./schemas/fortls.schema.json"
       }
@@ -343,6 +344,36 @@
           "default": false,
           "scope": "resource",
           "markdownDescription": "%config.zfls.codeLensNoRun.markdownDescription%"
+        },
+        "zfls.debugLog": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.debugLog.markdownDescription%"
+        },
+        "zfls.disableIndexCache": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableIndexCache.markdownDescription%"
+        },
+        "zfls.disableCompileCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableCompileCommands.markdownDescription%"
+        },
+        "zfls.disableBindCSearch": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableBindCSearch.markdownDescription%"
+        },
+        "zfls.bindCClangd": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.bindCClangd.markdownDescription%"
         },
         "zfls.disableDiagnostics": {
           "type": "boolean",
