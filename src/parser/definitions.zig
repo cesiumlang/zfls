@@ -28,6 +28,7 @@ pub const readDoDef = def_constructs.readDoDef;
 pub const readWhereDef = def_constructs.readWhereDef;
 pub const readIfDef = def_constructs.readIfDef;
 pub const readAssociateDef = def_constructs.readAssociateDef;
+pub const readChangeTeamDef = def_constructs.readChangeTeamDef;
 pub const readSelectDef = def_constructs.readSelectDef;
 pub const afterCudaAttributes = cuda_prefix.afterCudaAttributes;
 pub const withoutCudaAttributes = cuda_prefix.withoutCudaAttributes;
@@ -101,6 +102,8 @@ pub const DefResult = union(enum) {
     where: bool,
     if_,
     assoc: []const []const u8,
+    /// CHANGE TEAM: its coarray associations, `x => y` (`x[*] => y`)
+    team: []const []const u8,
     select: SelectInfo,
     typ: ClassInfo,
     enum_,
@@ -557,6 +560,7 @@ pub const def_tests = [_]DefTestEntry{
     .{ .read = readDoDef, .starts = &.{"do"} },
     .{ .read = readIfDef, .starts = &.{"if"} },
     .{ .read = readAssociateDef, .starts = &.{"associate"} },
+    .{ .read = readChangeTeamDef, .starts = &.{"change"} },
     .{ .read = readSelectDef, .starts = &.{ "select", "type", "class", "rank" } },
     .{ .read = readTypeDef, .starts = &.{"type"} },
     .{ .read = readEnumeratorDef, .starts = &.{"enumerator"} },

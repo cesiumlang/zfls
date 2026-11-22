@@ -35,8 +35,12 @@ const defs = [_]Def{
     .{ "END_PRO", "(MODULE)?[ ]*PROCEDURE", true },
     // the keyword is the whole statement: not the start of a longer name, nor
     // the name of a construct (#532, #292)
-    .{ "BLOCK", "[ ]*([a-z_]\\w*[ ]*:[ ]*)?(?:BLOCK|CRITICAL)[ ]*(?:!.*)?$", true },
+    // (CRITICAL with a sync-stat list too, `critical (stat=st)`: #722)
+    .{ "BLOCK", "[ ]*([a-z_]\\w*[ ]*:[ ]*)?(?:BLOCK|CRITICAL(?:[ ]*\\([ ]*(?:STAT|ERRMSG)[ ]*=.*\\))?)[ ]*(?:!.*)?$", true },
     .{ "END_BLOCK", "BLOCK|CRITICAL", true },
+    // CHANGE TEAM, a construct ended by END TEAM (#720)
+    .{ "CHANGE_TEAM", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?CHANGE[ ]*TEAM[ ]*\\(", true },
+    .{ "END_TEAM", "TEAM", true },
     // BLOCK DATA is a program unit of its own (#264, #470)
     .{ "BLOCK_DATA", "[ ]*BLOCK[ ]*DATA(?:[ ]+([a-z_]\\w*))?[ ]*(?:!.*)?$", true },
     .{ "END_BLOCK_DATA", "BLOCK[ ]*DATA", true },
@@ -63,7 +67,7 @@ const defs = [_]Def{
     .{ "END_INT", "INTERFACE", true },
     .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK[ ]*DATA|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
         "|TYPE|STRUCTURE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
-        "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?![^\\w$])|$)", true },
+        "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL|TEAM)?([ ]+(?![^\\w$])|$|(?<=TEAM)[ ]*\\()", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
     .{ "EXTENDS", "EXTENDS[ ]*\\((\\w*)\\)", true },
     .{ "GENERIC_PRO", "[ ]*(GENERIC)[, ]*(PRIVATE|PUBLIC)?[ ]*::[ ]*[a-z]", true },
