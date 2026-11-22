@@ -1,8 +1,8 @@
 //! The external tools zfls runs, for the tests: stand-ins, scripts that
 //! append their arguments to a log beside them and print a fixed text,
-//! and what the tests read of the log. Their names are not the tools', so
-//! that no search for a tool by its name (Windows looks in the current
-//! directory first) finds them.
+//! and what the tests read of the log; and the real tools, on the PATH.
+//! The stand-ins are not named as the tools, so that no search for a tool
+//! by its name (Windows looks in the current directory first) finds them.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -63,4 +63,20 @@ pub fn expectIn(text: []const u8, needle: []const u8) !void {
     if (std.mem.find(u8, text, needle) != null) return;
     std.debug.print("\nno '{s}' in: {s}\n", .{ needle, text });
     return error.TestExpectedText;
+}
+
+/// Skips the test when tool `name` is not on the PATH (fails it when
+/// `ZFLS_TEST_TOOLS` is set)
+pub fn need(name: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try std.testing.environ.createMap(a);
+    if (try h.zfls.executables.onPath(a, io, &env, name) != null) return;
+    // CI installs them all: there a missing one fails the test
+    if (env.get("ZFLS_TEST_TOOLS") != null) {
+        std.debug.print("\n{s} is not on the PATH, and ZFLS_TEST_TOOLS is set\n", .{name});
+        return error.ToolMissing;
+    }
+    return error.SkipZigTest;
 }
