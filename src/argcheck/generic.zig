@@ -69,7 +69,7 @@ fn callFit(c: *argcheck.Checker, d: Dummies, args: []const []const u8, scope: ?*
             fit = .unknown;
             continue;
         }
-        switch (try c.compare(dummy, actual, elemental, true, scope, line_no)) {
+        switch (try c.compare(dummy, actual, elemental, .generic, scope, line_no)) {
             .fits => {},
             .unknown => fit = .unknown,
             else => return .no,
