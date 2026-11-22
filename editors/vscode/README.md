@@ -73,6 +73,11 @@ It replaces the Modern Fortran extension rather than working alongside it: disab
 | `zfls.ppSuffixes` | upper-case extensions and `.fpp` | File extensions to preprocess (a list replaces the default) |
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
 | `zfls.disableIntelDirectives` | `false` | Read Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`) as comments, every branch included |
+| `zfls.debugLog` | `false` | Write zfls's debug log in the project's root folder (a change restarts zfls) |
+| `zfls.disableIndexCache` | `false` | Do not keep the workspace's files in zfls's [index cache](https://github.com/cesiumlang/zfls#index-cache) |
+| `zfls.disableCompileCommands` | `false` | Do not read a `compile_commands.json` |
+| `zfls.disableBindCSearch` | `false` | Go to definition of a `BIND(C)` procedure does not search the workspace's C files |
+| `zfls.bindCClangd` | empty | A clangd (its path, or `clangd`) that zfls asks for the C declarations of `BIND(C)` procedures |
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
