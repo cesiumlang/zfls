@@ -266,6 +266,11 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
     while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
+    // the lines of each block of SELECT TYPE and RANK and of its SELECT,
+    // for the oracles to tell the blocks' associate names apart (#715)
+    o.print("\n{s}\nSelect Blocks\n{s}\n\n", .{ sep80, sep80 });
+    var blocks_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
+    for (try ast.getScopes(a, null)) |obj| try printSelectBlocks(a, o, obj, &blocks_seen);
     // what hover shows of each variable, for the oracles' types and kinds,
     // with the file's links resolved as a workspace of it alone would
     var tree: objects.ObjTree = .empty;
@@ -274,6 +279,16 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     var seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
     for (try ast.getScopes(a, null)) |obj| try printDeclarations(a, o, obj, &seen);
     separator(o);
+}
+
+/// `fqsn: SELECT_LINE LINE` of each TYPE IS, CLASS IS, CLASS DEFAULT and
+/// RANK block under `obj` (each once)
+fn printSelectBlocks(a: Allocator, o: *Out, obj: *objects.Obj, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void)) !void {
+    for (try obj.getChildren(a, false)) |child| {
+        if ((try seen.getOrPut(a, child)).found_existing) continue;
+        if (child.isTypeRegion()) o.print("{s}: {d} {d}\n", .{ child.fqsn, if (child.parent) |p| p.sline else 0, child.sline });
+        try printSelectBlocks(a, o, child, seen);
+    }
 }
 
 /// `fqsn: declaration` of each variable under `obj` (each once), the

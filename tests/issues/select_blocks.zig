@@ -89,7 +89,8 @@ test "SELECT RANK: each block's name has the block's rank and the selector's att
         .{ "r(1, 1)", "REAL, DIMENSION(:,:) :: r" },
         .{ "r(1)", "REAL, DIMENSION(*) :: r" },
         .{ "r)", "REAL, DIMENSION(..) :: r" },
-        .{ "p(1)", "REAL, POINTER, DIMENSION(:) :: p" },
+        // TARGET too, as gfortran and ifx have it (#715)
+        .{ "p(1)", "REAL, POINTER, TARGET, DIMENSION(:) :: p" },
         .{ "q(1, 1, 1)", "REAL, ALLOCATABLE, DIMENSION(:,:,:) :: q" },
     };
     for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", c[0], 0, 0), c[1]);

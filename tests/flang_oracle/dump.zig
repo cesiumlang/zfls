@@ -157,7 +157,8 @@ fn symbolLine(a: Allocator, body: []const u8, n: usize) Allocator.Error!?Symbol 
         .attrs = attrs.items,
         .flags = flags.items,
         .details = after[0..d],
-        .rest = std.mem.trim(u8, after[d..], " :"),
+        // not the `:` of a deferred shape at its end (`shape: :`)
+        .rest = std.mem.trimEnd(u8, std.mem.trimStart(u8, after[d..], " :"), " "),
         .line = n,
     };
 }
