@@ -1,6 +1,6 @@
 //! The blocks of SELECT TYPE and SELECT RANK: each guard's block is a
 //! sibling of the one before (#708); the associate name of a RANK block
-//! has its rank (#706).
+//! has its rank (#706); argument checking takes a guard name's (#707).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -93,4 +93,51 @@ test "SELECT RANK: each block's name has the block's rank and the selector's att
         .{ "q(1, 1, 1)", "REAL, ALLOCATABLE, DIMENSION(:,:,:) :: q" },
     };
     for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", c[0], 0, 0), c[1]);
+}
+
+test "argument checking takes a TYPE IS name's rank and type (#707)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\contains
+        \\  subroutine takes_s(x)
+        \\    real, intent(in) :: x
+        \\  end subroutine
+        \\  subroutine takes_v(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine
+        \\  subroutine t(items)
+        \\    class(*), intent(in) :: items(:)
+        \\    select type (it => items)
+        \\    type is (real)
+        \\      call takes_s(it)
+        \\      call takes_v(it)
+        \\      call takes_s(it(1))
+        \\    type is (integer)
+        \\      call takes_s(it(1))
+        \\    end select
+        \\    select type (el => items(2))
+        \\    type is (real)
+        \\      call takes_s(el)
+        \\    end select
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 report lines 14 and 18
+    // alone: "Rank mismatch in argument 'x' at (1) (scalar and rank-1)",
+    // "Type mismatch in argument 'x' at (1); passed INTEGER(4) to REAL(4)"
+    var got: std.ArrayList([]const u8) = .empty;
+    defer got.deinit(gpa);
+    for (try w.diagnostics("t.f90")) |d| try got.append(gpa, try w.a().print("{d}: {s}", .{ d.line + 1, d.message }));
+    const want = [_][]const u8{
+        "14: Argument x of takes_s: a scalar expected, an array given",
+        "18: Argument x of takes_s: real expected, integer given",
+    };
+    if (got.items.len != want.len) {
+        std.debug.print("got: {any}\n", .{got.items});
+        return error.TestExpectedEqual;
+    }
+    for (want, got.items) |x, y| try std.testing.expectEqualStrings(x, y);
 }

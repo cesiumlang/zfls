@@ -10,6 +10,7 @@ const KW = C.KW;
 
 const objects = @import("../objects.zig");
 const unit_kinds = @import("../argcheck/unit_kinds.zig");
+const dimensions = @import("dimensions.zig");
 const Obj = objects.Obj;
 
 pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize) Allocator.Error!Obj.Snippet {
@@ -286,12 +287,7 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
     if (slice_rank >= 0) info.dimension = null;
     if (slice_rank > 0) {
         try ids.append(a, KW.dimension);
-        var dims: std.ArrayList(u8) = .empty;
-        for (0..@as(usize, @intCast(slice_rank))) |i| {
-            if (i > 0) try dims.append(a, ',');
-            try dims.append(a, ':');
-        }
-        info.dimension = if (self.varDataConst().assumed_size) "*" else dims.items;
+        info.dimension = dimensions.of(self);
     }
     return helpers.getKeywords(a, ids.items, info);
 }
