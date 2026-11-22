@@ -2,14 +2,17 @@
 //! `zfls dap` (tests/dap_windows.zig, tests/dap_gdb.zig): the adapter's
 //! process, whose messages a thread reads, keeping the responses by the
 //! request they answer, and the events and the adapter's own requests
-//! (`runInTerminal`) in order. And how the tests build programs on Windows
-//! without Visual Studio, with zfls's ifx kit (`kitDir`, `flangKitEnv`).
+//! (`runInTerminal`) in order, each message checked against the protocol's
+//! shapes (dap_schema.zig): a test fails at its next wait after one that is
+//! not. And how the tests build programs on Windows without Visual Studio,
+//! with zfls's ifx kit (`kitDir`, `flangKitEnv`).
 
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const zfls = @import("zfls");
+const schema = @import("dap_schema.zig");
 
 pub const Client = struct {
     io: Io,
@@ -31,6 +34,10 @@ pub const Client = struct {
     timeout: Io.Duration = .fromSeconds(60),
     /// What the program wrote (`output` events)
     output: std.ArrayList(u8) = .empty,
+    /// The requests sent, by seq (under `mutex`), for their responses' checks
+    sent: std.AutoHashMapUnmanaged(i64, Value) = .empty,
+    /// What was wrong with the adapter's messages, not yet told (under `mutex`)
+    violations: std.ArrayList([]const u8) = .empty,
 
     pub fn start(io: Io, gpa: Allocator, argv: []const []const u8) !*Client {
         return startEnv(io, gpa, argv, null);
@@ -55,6 +62,8 @@ pub const Client = struct {
         c.events.deinit(c.gpa);
         c.requests.deinit(c.gpa);
         c.output.deinit(c.gpa);
+        c.sent.deinit(c.gpa);
+        c.violations.deinit(c.gpa);
         c.arena.deinit();
         c.gpa.destroy(c);
     }
@@ -78,6 +87,8 @@ pub const Client = struct {
 
     fn keep(c: *Client, body: []const u8) !void {
         const msg = try std.json.parseFromSliceLeaky(Value, c.arena.allocator(), body, .{});
+        const answered = if (int(msg, "request_seq")) |seq| c.sent.get(seq) else null;
+        if (try schema.violation(c.arena.allocator(), msg, answered)) |w| try c.violations.append(c.gpa, try c.arena.allocator().print("{s} (in {s})", .{ w, body[0..@min(body.len, 300)] }));
         const kind = str(msg, "type") orelse return;
         if (std.mem.eql(u8, kind, "response")) {
             const seq = get(msg, "request_seq") orelse return;
@@ -92,6 +103,7 @@ pub const Client = struct {
 
     /// Waits on `cond` until `deadline` (under `mutex`)
     fn wait(c: *Client, deadline: Io.Timestamp, what: []const u8) !void {
+        try c.conforms();
         if (c.closed) {
             std.debug.print("zfls dap ended while waiting for {s}\n", .{what});
             return error.AdapterEnded;
@@ -105,8 +117,17 @@ pub const Client = struct {
         };
     }
 
+    /// Fails when a message received was not of the protocol's shapes
+    /// (under `mutex`)
+    fn conforms(c: *Client) !void {
+        if (c.violations.items.len == 0) return;
+        for (c.violations.items) |w| std.debug.print("FAIL: the protocol: {s}\n", .{w});
+        c.violations.clearRetainingCapacity();
+        return error.ProtocolViolation;
+    }
+
     fn write(c: *Client, msg: anytype) !void {
-        const body = try std.json.Stringify.valueAlloc(c.gpa, msg, .{});
+        const body = try std.json.Stringify.valueAlloc(c.gpa, msg, .{ .emit_null_optional_fields = false });
         defer c.gpa.free(body);
         const framed = try c.gpa.print("Content-Length: {d}\r\n\r\n{s}", .{ body.len, body });
         defer c.gpa.free(framed);
@@ -117,7 +138,14 @@ pub const Client = struct {
     pub fn send(c: *Client, command: []const u8, args: anytype) !i64 {
         const seq = c.seq;
         c.seq += 1;
-        try c.write(.{ .seq = seq, .type = "request", .command = command, .arguments = args });
+        const msg = .{ .seq = seq, .type = "request", .command = command, .arguments = args };
+        {
+            c.mutex.lockUncancelable(c.io);
+            defer c.mutex.unlock(c.io);
+            const text = try std.json.Stringify.valueAlloc(c.arena.allocator(), msg, .{ .emit_null_optional_fields = false });
+            try c.sent.put(c.gpa, seq, try std.json.parseFromSliceLeaky(Value, c.arena.allocator(), text, .{}));
+        }
+        try c.write(msg);
         return seq;
     }
 
@@ -127,7 +155,10 @@ pub const Client = struct {
         c.mutex.lockUncancelable(c.io);
         defer c.mutex.unlock(c.io);
         while (true) {
-            if (c.responses.fetchRemove(seq)) |kv| return kv.value;
+            if (c.responses.fetchRemove(seq)) |kv| {
+                try c.conforms();
+                return kv.value;
+            }
             try c.wait(deadline, what);
         }
     }
@@ -178,7 +209,10 @@ pub const Client = struct {
             while (c.seen < c.events.items.len) {
                 const e = c.events.items[c.seen];
                 c.seen += 1;
-                for (names) |name| if (std.mem.eql(u8, str(e, "event") orelse "", name)) return e;
+                for (names) |name| if (std.mem.eql(u8, str(e, "event") orelse "", name)) {
+                    try c.conforms();
+                    return e;
+                };
             }
             try c.wait(deadline, names[0]);
         }
@@ -292,4 +326,8 @@ pub fn visualStudioRead(output: []const u8) ?[]const u8 {
 test "lld-link's reading of Visual Studio's files" {
     try std.testing.expect(visualStudioRead("lld-link: Reading C:\\kit\\msvcrt.lib\r\nlld-link: Reading p.o\r\n") == null);
     try std.testing.expectEqualStrings("lld-link: Reading C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\ucrt.lib", visualStudioRead("lld-link: Reading C:\\kit\\a.lib\nlld-link: Reading C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\ucrt.lib\r\n").?);
+}
+
+test {
+    _ = schema;
 }

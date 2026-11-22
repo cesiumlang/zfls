@@ -10,7 +10,8 @@
 //! a line, setting values, expressions, a Fortran runtime error, stopping
 //! at the start with gdb commands, the program's exit, a stop at ERROR STOP
 //! and none at STOP (tests/dap/stops.f90), a program that a
-//! signal ends (its exit code and the signal named), gdb's own end told, a
+//! signal ends (its exit code and the signal named), gdb's own end told,
+//! breakpoints of conditions, hit conditions and log messages, a
 //! variable that gdb fails to show beside the others (Flang), and (on
 //! Linux, with script(1)) the program in a terminal (`zig build
 //! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
@@ -34,6 +35,7 @@ const dap = @import("dap_client.zig");
 const dap_lfortran = @import("dap_lfortran.zig");
 const dap_ifx_gdb = @import("dap_ifx_gdb.zig");
 const dap_gfortran = @import("dap_gfortran.zig");
+const dap_gdb_conditions = @import("dap_gdb_conditions.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -152,7 +154,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "conditions, hit conditions, logpoints", conditions }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -514,6 +516,22 @@ fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = try Io.Dir.cwd().readFileAlloc(io, "tests/dap/stops.f90", a, .limited(1 << 16)) });
     try build(io, a, setup, src, exe, &.{});
     try dap_lfortran.errorStop(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, exe, setup.dir);
+}
+
+/// Breakpoints of a condition, a hit condition, a log message
+/// (tests/dap_gdb_conditions.zig)
+fn conditions(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran or setup.compiler == .ifx) return std.debug.print("skipped: gfortran's and Flang's\n", .{});
+    const text = try Io.Dir.cwd().readFileAlloc(io, source, gpa, .limited(1 << 20));
+    defer gpa.free(text);
+    try dap_gdb_conditions.run(io, gpa, .{
+        .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb },
+        .program = setup.program,
+        .src = setup.src,
+        .dir = setup.dir,
+        .loop_line = lineOf(text, "m(:, k) = [10*k, 20*k]"),
+        .main_line = setup.main_line,
+    });
 }
 
 /// gfortran's runtime errors and stops beyond grid.f90's

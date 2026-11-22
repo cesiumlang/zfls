@@ -18,11 +18,14 @@ pub const Diff = enum {
     extra,
     /// both, of other kinds
     kind,
+    /// a variable of other types or attributes
+    differs,
 };
 
 /// `kind`, when set, is the entity's kind: Flang's for `missing` and
-/// `kind`, zfls's for `extra`
-pub const Rule = struct { file: []const u8, entity: []const u8, diff: Diff, kind: ?Kind = null, why: []const u8 };
+/// `kind`, zfls's for `extra`; `detail`, when set, what the oracle says of
+/// the difference (`*` for any characters)
+pub const Rule = struct { file: []const u8, entity: []const u8, diff: Diff, kind: ?Kind = null, detail: ?[]const u8 = null, why: []const u8 };
 
 pub const rules = [_]Rule{
     // what zfls has no entity for
@@ -71,6 +74,13 @@ pub const rules = [_]Rule{
         .why = "Flang ignores Intel's !DIR$ IF (with a warning) and compiles every branch; zfls evaluates it as ifx does",
     },
     .{
+        .file = "tests/fortran/select_rank.f90",
+        .entity = "select_ranks::ranks::p",
+        .diff = .differs,
+        .detail = "*: TARGET true, Flang false",
+        .why = "Flang gives the name of a RANK block of a POINTER selector POINTER but not TARGET, which gfortran and ifx give it too (and all three give an ASSOCIATE or SELECT TYPE name of a POINTER)",
+    },
+    .{
         .file = "tests/flang/preprocessor.F90",
         .entity = "preprocessor::in_flang",
         .diff = .missing,
@@ -96,11 +106,13 @@ pub fn glob(pattern: []const u8, text: []const u8) bool {
     return false;
 }
 
-/// The first rule for a difference, or null; `kind`: as `Rule.kind`
-pub fn find(file: []const u8, entity: []const u8, diff: Diff, kind: Kind) ?usize {
+/// The first rule for a difference, or null; `kind`, `detail`: as
+/// `Rule.kind` and `Rule.detail`
+pub fn find(file: []const u8, entity: []const u8, diff: Diff, kind: Kind, detail: []const u8) ?usize {
     for (rules, 0..) |r, i| {
         if (r.diff != diff or !glob(r.file, file) or !glob(r.entity, entity)) continue;
         if (r.kind) |k| if (k != kind) continue;
+        if (r.detail) |d| if (!glob(d, detail)) continue;
         return i;
     }
     return null;
