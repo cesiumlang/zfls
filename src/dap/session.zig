@@ -209,6 +209,10 @@ pub const Session = struct {
     pub fn sendSeq(s: *Session, a: Allocator, msg: anytype) i64 {
         var v = json.from(a, msg) catch return 0;
         if (v == .object) v.object.put(a, "seq", .{ .integer = 0 }) catch return 0;
+        // a response's message is a string, or none (#737)
+        if (v == .object) if (v.object.get("message")) |m| if (m == .null) {
+            _ = v.object.orderedRemove("message");
+        };
         s.out_mutex.lockUncancelable(s.io);
         defer s.out_mutex.unlock(s.io);
         const seq = s.seq;
