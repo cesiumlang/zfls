@@ -196,16 +196,6 @@ fn start(io: Io, gpa: Allocator, setup: Setup) !*Client {
     return Client.start(io, gpa, &.{ setup.zfls, "dap", "--lldb", setup.lldb });
 }
 
-/// Ends the session and the adapter
-fn end(c: *Client) void {
-    if (c.send("disconnect", .{ .terminateDebuggee = true })) |seq| {
-        _ = c.response(seq, "disconnect") catch {};
-    } else |_| {}
-    c.child.stdin.?.close(c.io);
-    c.child.stdin = null;
-    _ = c.child.wait(c.io) catch {};
-}
-
 fn eql(x: ?[]const u8, y: []const u8) bool {
     return std.mem.eql(u8, x orelse return false, y);
 }
@@ -234,7 +224,7 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     const a = arena.allocator();
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
 
     const caps = try c.request("initialize", .{ .adapterID = "fortran", .clientID = "test", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const filters = items(caps, "exceptionBreakpointFilters");
@@ -311,7 +301,7 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
 fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
     const c = try Client.start(io, gpa, &.{ setup.zfls, "dap", "--lldb" });
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path" });
     const launched = try c.send("launch", .{ .program = setup.program, .cwd = setup.dir, .stopAtEntry = true, .lldb = setup.lldb });
     _ = try c.event("initialized");
@@ -367,7 +357,7 @@ fn attach(io: Io, gpa: Allocator, setup: Setup) !void {
     const c = try start(io, gpa, setup);
     defer c.deinit();
     var ended = false;
-    defer if (!ended) end(c);
+    defer if (!ended) c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path" });
     const attached = try c.send("attach", .{ .processId = child.id.?, .program = exe });
     _ = try c.event("initialized");
@@ -384,7 +374,7 @@ fn attach(io: Io, gpa: Allocator, setup: Setup) !void {
     } else Value.null;
     try check(eql(str(stopped, "reason"), "pause"), "paused ({s})", .{str(stopped, "reason") orelse "?"});
     try check(ours != .null, "in the program, the runtime's frames de-emphasized: {s}", .{str(stack[0], "presentationHint") orelse "-"});
-    end(c);
+    c.end(true);
     ended = true;
     const term = try child.wait(io);
     try check(term != .exited or term.exited != 0, "the program ended with the session", .{});
@@ -402,7 +392,7 @@ fn terminal(io: Io, gpa: Allocator, setup: Setup) !void {
 
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .supportsRunInTerminalRequest = true });
     const launched = try c.send("launch", .{ .program = reader_exe, .cwd = setup.dir, .console = "integratedTerminal" });
     const asked = try c.adapterRequest();

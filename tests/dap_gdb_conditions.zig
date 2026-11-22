@@ -45,7 +45,7 @@ pub fn run(io: Io, gpa: Allocator, p: Program) !void {
 fn stopsAt(io: Io, gpa: Allocator, p: Program, bp: Breakpoint, values: []const []const u8) !void {
     const c = try Client.start(io, gpa, p.argv);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     const thread = try launch(c, p, &.{ bp, .{ .line = p.main_line } });
     for (values, 0..) |want, i| {
         if (i > 0) _ = try c.event("stopped");
@@ -64,7 +64,7 @@ fn logs(io: Io, gpa: Allocator, p: Program) !void {
     defer arena.deinit();
     const c = try Client.start(io, gpa, p.argv);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     const thread = try launch(c, p, &.{ .{ .line = p.loop_line, .logMessage = "k is {k}" }, .{ .line = p.main_line } });
     const frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(int(frames[0], "line") == p.main_line, "a logpoint: no stop in the loop (line {?d})", .{int(frames[0], "line")});
@@ -91,13 +91,4 @@ fn kAt(c: *Client, thread: i64, line: i64) ![]const u8 {
     try check(int(frames[0], "line") == line, "stopped at line {d} ({?d})", .{ line, int(frames[0], "line") });
     const k = try c.request("evaluate", .{ .expression = "k", .frameId = int(frames[0], "id").?, .context = "watch" });
     return str(k, "result") orelse "?";
-}
-
-fn end(c: *Client) void {
-    if (c.send("disconnect", .{ .terminateDebuggee = true })) |seq| {
-        _ = c.response(seq, "disconnect") catch {};
-    } else |_| {}
-    c.child.stdin.?.close(c.io);
-    c.child.stdin = null;
-    _ = c.child.wait(c.io) catch {};
 }
