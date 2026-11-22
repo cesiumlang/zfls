@@ -315,6 +315,73 @@ test "ISO_FORTRAN_ENV and IEEE_ARITHMETIC names that gfortran has (#536)" {
     try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_away", 0, 0), "TYPE(ieee_round_type)");
 }
 
+test "IEEE_ARITHMETIC, IEEE_EXCEPTIONS and ISO_C_BINDING names of Fortran 2018 and 2023 (#730)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "i.f90", .text =
+        \\program ieee
+        \\  use ieee_arithmetic
+        \\  use ieee_exceptions, only: ieee_modes_type, ieee_get_modes, ieee_set_modes
+        \\  implicit none
+        \\  real :: x = 1.0, y = 2.0
+        \\  real(8) :: d = 1d0
+        \\  integer :: i
+        \\  logical :: l
+        \\  type(ieee_modes_type) :: modes
+        \\  type(ieee_class_type) :: c
+        \\  call ieee_get_modes(modes)
+        \\  call ieee_set_modes(modes)
+        \\  x = ieee_fma(x, y, x)
+        \\  d = ieee_fma(d, d, d)
+        \\  x = ieee_next_up(x) + ieee_next_down(y)
+        \\  x = ieee_max_num(x, y) + ieee_min_num(x, y) + ieee_max_num_mag(x, y) + ieee_min_num_mag(x, y)
+        \\  x = ieee_real(i) + ieee_real(d, kind(x))
+        \\  i = ieee_int(x, ieee_nearest) + ieee_int(d, ieee_up, kind(i))
+        \\  l = ieee_quiet_eq(x, y) .or. ieee_quiet_ne(x, y) .or. ieee_quiet_lt(x, y) .or. ieee_quiet_le(x, y)
+        \\  l = ieee_quiet_gt(x, y) .or. ieee_quiet_ge(x, y) .or. ieee_signbit(x)
+        \\  l = ieee_signaling_eq(x, y) .or. ieee_signaling_ne(x, y) .or. ieee_signaling_lt(x, y)
+        \\  l = ieee_signaling_le(x, y) .or. ieee_signaling_gt(x, y) .or. ieee_signaling_ge(x, y)
+        \\  l = ieee_support_subnormal(x)
+        \\  c = ieee_positive_subnormal
+        \\  c = ieee_negative_subnormal
+        \\  call ieee_get_underflow_mode(l)
+        \\  call ieee_set_underflow_mode(l)
+        \\  l = ieee_support_underflow_control(x)
+        \\  print *, x, d, i, l
+        \\end program
+        \\
+        },
+        .{ .name = "f23.f90", .text =
+        \\program ieee23
+        \\  use ieee_arithmetic
+        \\  use iso_c_binding
+        \\  implicit none
+        \\  real :: x = 1.0, y = 2.0
+        \\  character(len=:, kind=c_char), allocatable :: s
+        \\  character(len=:), pointer :: fs
+        \\  type(c_ptr) :: p = c_null_ptr
+        \\  x = ieee_max(x, y) + ieee_min(x, y) + ieee_max_mag(x, y) + ieee_min_mag(x, y)
+        \\  s = f_c_string('abc')
+        \\  s = f_c_string('abc', .true.)
+        \\  call c_f_strpointer(p, fs, 3)
+        \\  print *, x, s
+        \\end program
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    // as Flang and ifx accept them (gfortran 16 has no IEEE_NEXT_UP, ...)
+    try w.expectNoDiagnostics("i.f90");
+    try w.expectNoDiagnostics("f23.f90");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_fma(x", 0, 0), "REAL FUNCTION ieee_fma(a, b, c)");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_int(x", 0, 0), "INTEGER FUNCTION ieee_int(a, round, kind)");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_quiet_eq", 0, 0), "LOGICAL FUNCTION ieee_quiet_eq(a, b)");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_positive_subnormal", 0, 0), "TYPE(ieee_class_type)");
+    try w.expectHoverContains("i.f90", w.pos("i.f90", "ieee_get_modes(modes)", 0, 0), "SUBROUTINE ieee_get_modes(MODES)");
+    try w.expectHoverContains("f23.f90", w.pos("f23.f90", "ieee_max_mag", 0, 0), "REAL FUNCTION ieee_max_mag(x, y)");
+    try w.expectHoverContains("f23.f90", w.pos("f23.f90", "f_c_string('abc')", 0, 0), "f_c_string(string, asis)");
+    try w.expectHoverContains("f23.f90", w.pos("f23.f90", "c_f_strpointer", 0, 0), "SUBROUTINE c_f_strpointer(cstrarray, fstrptr, nchars)");
+}
+
 test "USE openacc gives OpenACC's kinds and constants (acc_device_host) (#535)" {
     const w = try h.Workspace.init(&.{.{ .name = "a.f90", .text =
         \\program acc
