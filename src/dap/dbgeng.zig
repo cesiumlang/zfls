@@ -238,8 +238,7 @@ pub const Engine = struct {
     }
 
     /// A breakpoint at `file`:`line` (deferred until its module loads)
-    pub fn addBreakpoint(self: *Engine, a: Allocator, file: []const u8, line: u32, condition: ?[]const u8) !Breakpoint {
-        _ = condition;
+    pub fn addBreakpoint(self: *Engine, a: Allocator, file: []const u8, line: u32) !Breakpoint {
         var bp: ?*dbg.IDebugBreakpoint2 = null;
         try ok(self.control.AddBreakpoint2(DEBUG_BREAKPOINT_CODE, DEBUG_ANY_ID, &bp));
         const b = bp.?;
