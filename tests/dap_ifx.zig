@@ -25,6 +25,7 @@ const w = @import("dap_windows.zig");
 const dap_completions = @import("dap_completions.zig");
 const dap_engine_conditions = @import("dap_engine_conditions.zig");
 const dap_engine_set = @import("dap_engine_set.zig");
+const dap_engine_functions = @import("dap_engine_functions.zig");
 const named = w.named;
 const valueOf = w.valueOf;
 const scopeVariables = w.scopeVariables;
@@ -65,6 +66,10 @@ pub fn run(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Env
     };
     dap_engine_set.run(io, gpa, .{ .argv = &.{ exe_zfls, "dap" }, .env = env, .program = grid.exe, .src = grid.src, .dir = tmp, .work_line = lineOf(grid.text, "stop here: work") }) catch |e| {
         std.debug.print("zfls dap, ifx's program, setting values: {s}\n", .{@errorName(e)});
+        return 1;
+    };
+    dap_engine_functions.run(io, gpa, .{ .argv = &.{ exe_zfls, "dap" }, .env = env, .program = grid.exe, .dir = tmp }) catch |e| {
+        std.debug.print("zfls dap, ifx's program, function breakpoints: {s}\n", .{@errorName(e)});
         return 1;
     };
     const stops = (try build(io, a, ifx, env, kit, tmp, "stops")) orelse return 1;

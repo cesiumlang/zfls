@@ -78,6 +78,7 @@ const capabilities = @import("capabilities.zig");
 const engine_conditions = @import("engine_conditions.zig");
 const engine_completions = @import("engine_completions.zig");
 const engine_set = @import("engine_set.zig");
+const engine_functions = @import("engine_functions.zig");
 const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
@@ -190,6 +191,8 @@ pub const Session = struct {
     /// The breakpoints whose lines had no code yet (a module not loaded):
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    /// The client's function breakpoints: the engine's ids
+    function_breakpoints: std.ArrayList(u32) = .empty,
     /// The breakpoints' conditions, hits ignored and log messages, by id
     /// (engine_conditions.zig)
     conditions: std.AutoHashMapUnmanaged(u32, engine_conditions.Condition) = .empty,
@@ -375,6 +378,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         s.breakpoints.deinit(gpa);
         s.error_breakpoints.deinit(gpa);
         s.unverified.deinit(gpa);
+        s.function_breakpoints.deinit(gpa);
         var cit = s.conditions.valueIterator();
         while (cit.next()) |c| c.deinit(gpa);
         s.conditions.deinit(gpa);
@@ -575,13 +579,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .setBreakpoints => try breakpoints.set(s, a, req, args),
         .setExceptionBreakpoints => try breakpoints.setExceptions(s, a, req, args),
-        .setFunctionBreakpoints => {
-            // none set: one unverified breakpoint for each asked
-            const asked = json.items(json.get(args, "breakpoints"));
-            const none = try a.alloc(struct { verified: bool, message: []const u8 }, asked.len);
-            @memset(none, .{ .verified = false, .message = "Windows's Debugger Engine sets no function breakpoints" });
-            s.respond(a, req, .{ .breakpoints = none });
-        },
+        .setFunctionBreakpoints => try engine_functions.set(s, a, req, args),
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
             .description = if (runtime_errors.isErrorStop(s.last_error)) s.text.error_stop else s.text.runtime_error,
