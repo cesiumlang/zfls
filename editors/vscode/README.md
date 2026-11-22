@@ -290,6 +290,7 @@ zfls's debugger is `zfls dap`, the debug adapter of the zfls executable (the ext
 - each variable with its Fortran expression, for **Add to Watch**, **Copy as Expression** and setting a value: `a(2)`, `p%x`, `grid::cells`;
 - gfortran's hidden lengths of CHARACTER arguments, and LFortran's temporaries, left out;
 - **Fortran runtime errors**, an exception breakpoint of the Breakpoints view, on by default: the program stops where the runtime reports an error (an array bound exceeded under `-fcheck=bounds`, an allocation that failed, an I/O error without `iostat=`, `err=` or `end=`) or at ERROR STOP, at the line of the program, before it ends.
+- gdb's **C++ exceptions** (thrown, re-thrown, caught), for a program that links a C++ runtime (libstdc++, libc++, MSVC's `msvcp140.dll`), which zfls looks for in the program's file at the launch; `"cppExceptionFilters": true` in the configuration shows them for any program.
 
 LFortran's programs (built with `-g`, not on Windows, where LFortran refuses it) have breakpoints, stepping, the stack and the **Fortran runtime errors** stops, with gdb and with lldb-dap; their debug information has integer and real scalars only, so the Variables view shows those, and no arrays, derived types, CHARACTER lengths or module variables.
 

@@ -107,6 +107,7 @@ pub const dap_choice = @import("dap/choice.zig");
 pub const dap_capabilities = @import("dap/capabilities.zig");
 pub const dap_conditions = @import("dap/conditions.zig");
 pub const dap_completions = @import("dap/completions.zig");
+pub const dap_cpp_filters = @import("dap/cpp_filters.zig");
 
 test {
     std.testing.refAllDecls(@This());
