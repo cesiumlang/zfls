@@ -116,6 +116,10 @@ pub const State = struct {
     gdb_completes: bool = false,
     /// The program, until gdb loads it at `configurationDone` (`gpa`'s)
     unloaded: ?[]u8 = null,
+    /// gdb's C++ exception filters (JSON, `gpa`'s), and whether the
+    /// client has them (cpp_filters.zig)
+    cpp_filters: []u8 = "",
+    cpp_shown: bool = false,
     dll_breakpoints: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
     last_error: ?[]const u8 = null,
     /// The client supports `runInTerminal`
@@ -563,6 +567,7 @@ pub fn deinit(s: *Session) void {
     if (s.g.source_root) |r| s.gpa.free(r);
     if (s.g.held_launch) |h| s.gpa.free(h);
     if (s.g.unloaded) |u| s.gpa.free(u);
+    if (s.g.cpp_filters.len > 0) s.gpa.free(s.g.cpp_filters);
     s.g.error_breakpoints.deinit(s.gpa);
     s.g.dll_breakpoints.deinit(s.gpa);
     s.g.frames.deinit(s.gpa);
