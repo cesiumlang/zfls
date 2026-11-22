@@ -1,6 +1,7 @@
 //! A language server process driven over stdio, for the benchmark
-//! (tools/bench_workspace.zig), the stress test (tests/stress_edit.zig) and
-//! the compiler check's test (tests/compiler_check.zig).
+//! (tools/bench_workspace.zig), the stress test (tests/stress_edit.zig),
+//! the compiler check's test (tests/compiler_check.zig) and the test of
+//! `$/cancelRequest` (tests/cancel_request.zig).
 //! A thread reads the server's messages, so that the server never blocks on
 //! a full pipe while the client is sending, and keeps the responses and the
 //! latest diagnostics of each document; another collects its stderr.
@@ -143,6 +144,12 @@ pub const Client = struct {
         c.next_id += 1;
         const id = c.next_id;
         try c.send(method, params, id);
+        return c.response(id);
+    }
+
+    /// Waits for the response message to request `id` (valid until
+    /// `deinit`)
+    pub fn response(c: *Client, id: i64) !Value {
         const deadline = Io.Clock.awake.now(c.io).addDuration(c.timeout);
         c.mutex.lockUncancelable(c.io);
         defer c.mutex.unlock(c.io);
