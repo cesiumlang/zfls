@@ -529,3 +529,5 @@ bufnr
 defun
 direnv
 vadimcn
+AArch64
+SVE

@@ -250,6 +250,14 @@ pub fn ioCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.O
     return comptime std.fmt.comptimePrint("(*(int *){s} & 0x{x}) == 0", .{ reg, f.handled });
 }
 
+/// `ioCondition` for gdb in any language: a call of zfls's function
+/// (gdb_io.zig), which gdb's C and Fortran both parse. In Fortran, C's
+/// `int` is there only in a program with C's debug information (#776)
+pub fn gdbIoCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag, comptime f: IoFlags) ?[]const u8 {
+    const reg = comptime pointerRegister(arch, os, f.argument, false) orelse return null;
+    return comptime std.fmt.comptimePrint("$_zfls_io_unhandled({s}, {d})", .{ reg, f.handled });
+}
+
 /// A breakpoint of gdb or lldb on a function of `gdb_functions`
 pub const GdbBreakpoint = struct {
     name: []const u8,
@@ -258,6 +266,8 @@ pub const GdbBreakpoint = struct {
     /// Fortran, gdb's language of the program), or that its strings are
     /// those of `ERROR STOP` (`stringCondition`, in C)
     condition: ?[]const u8 = null,
+    /// gdb's own of `condition`, when C's is not one in Fortran
+    gdb_condition: ?[]const u8 = null,
 };
 
 /// gdb's and lldb's breakpoints on `gdb_functions` for a target: without
@@ -274,7 +284,7 @@ pub fn gdbBreakpoints(comptime arch: std.Target.Cpu.Arch, comptime os: std.Targe
                 out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = c }};
             } else if (f.io_flags) |io| {
                 const c = ioCondition(arch, os, io) orelse continue;
-                out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = c }};
+                out = out ++ [_]GdbBreakpoint{.{ .name = f.name, .condition = c, .gdb_condition = gdbIoCondition(arch, os, io) }};
             } else out = out ++ [_]GdbBreakpoint{.{ .name = f.name }};
         }
         const final = out[0..out.len].*;
@@ -407,6 +417,11 @@ test "gfortran's I/O errors: only those its statement does not handle (#530)" {
     try std.testing.expectEqualStrings("(*(int *)$rdi & 0x2c) == 0", comptime ioCondition(.x86_64, .macos, io).?);
     try std.testing.expectEqualStrings("(*(int *)$x0 & 0x2c) == 0", comptime ioCondition(.aarch64, .macos, io).?);
     try std.testing.expect(comptime ioCondition(.riscv64, .linux, io) == null);
+    // gdb's, of no C type (#776)
+    try std.testing.expectEqualStrings("$_zfls_io_unhandled($rcx, 44)", comptime gdbIoCondition(.x86_64, .windows, io).?);
+    try std.testing.expectEqualStrings("$_zfls_io_unhandled($x0, 44)", comptime gdbIoCondition(.aarch64, .linux, io).?);
+    for (comptime gdbBreakpoints(.x86_64, .linux)) |b| if (std.mem.eql(u8, b.name, "_gfortran_generate_error"))
+        try std.testing.expectEqualStrings("$_zfls_io_unhandled($rdi, 44)", b.gdb_condition.?);
     // no ' in it: lldb's command quotes the condition so (lldb.zig)
     try std.testing.expect(std.mem.findScalar(u8, comptime ioCondition(.x86_64, .linux, io).?, '\'') == null);
 }

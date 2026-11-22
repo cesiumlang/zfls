@@ -37,6 +37,7 @@ from differential_known import (
     forget_associate_types,
     generic_specific_definition,
     ignore_associate_attributes,
+    ignore_associate_functions,
     ignore_conditional_attributes,
     ignore_param_strings,
     ignore_slice_dimensions,
@@ -399,6 +400,8 @@ def main() -> int:
             if bound_names and kind in ("hover", "completion"):
                 a = ignore_associate_attributes(a, bound_names)
                 b = ignore_associate_attributes(b, bound_names)
+                a = ignore_associate_functions(a, bound_names)
+                b = ignore_associate_functions(b, bound_names)
             if bound and kind in ("hover", "completion"):
                 untyped = untyped_by_fortls(a, bound)
                 if untyped:

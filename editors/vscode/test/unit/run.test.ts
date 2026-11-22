@@ -161,7 +161,11 @@ test("a fortran configuration becomes the chosen debugger's", () => {
   assert.equal(cpp.stopAtEntry, true);
   assert.equal(cpp.miDebuggerPath, "/usr/bin/gdb");
   assert.deepEqual(cpp.environment, [{ name: "OMP_NUM_THREADS", value: "2" }]);
-  assert.deepEqual(cpp.setupCommands, [{ text: "set print pretty on" }]);
+  const pretty = { description: "Enable pretty-printing for gdb", text: "-enable-pretty-printing", ignoreFailures: true };
+  assert.deepEqual(cpp.setupCommands, [pretty, { text: "set print pretty on" }]);
+  // the fortran type's setupCommands are strings, which C/C++ refuses (#797)
+  const strings = fortranLaunch({ ...config, setupCommands: ["set print elements 0"] }, r);
+  assert.deepEqual(strings.setupCommands, [pretty, { text: "set print elements 0" }]);
   assert.equal(cpp.debugger, undefined);
   const lldb = fortranLaunch(config, { ...r, type: "lldb" });
   assert.equal(lldb.stopOnEntry, true);
