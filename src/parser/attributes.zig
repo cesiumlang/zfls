@@ -88,7 +88,8 @@ fn bracketed(s: []const u8, open: u8, close: u8) ?[]const u8 {
     return null;
 }
 
-fn add(a: Allocator, out: *std.ArrayList(Attr), at: Attr) !void {
+/// Appends `at` to `out`, its strings copied into `a`
+pub fn add(a: Allocator, out: *std.ArrayList(Attr), at: Attr) !void {
     var copy = at;
     copy.name = try a.dupe(u8, at.name);
     copy.text = try str.dupeOpt(a, at.text);
