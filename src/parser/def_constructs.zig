@@ -1,6 +1,6 @@
 //! Part of reading definitions (definitions.zig): the statements that open
-//! a construct, BLOCK, DO, WHERE, IF, ASSOCIATE, and SELECT with its type
-//! guards and the cases of SELECT RANK.
+//! a construct, BLOCK, DO, WHERE, IF, ASSOCIATE, CHANGE TEAM, and SELECT
+//! with its type guards and the cases of SELECT RANK.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -61,7 +61,33 @@ pub fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
     if (mc < 0) return .{ .assoc = &.{} };
     // split at the commas outside parentheses and strings, the strings kept
     // (`s => 'abc'` is typed by its literal)
-    const list = str.strip(trailing[0..@intCast(mc)]);
+    return .{ .assoc = try splitList(a, trailing[0..@intCast(mc)]) };
+}
+
+/// CHANGE TEAM (#720): its coarray associations, `x[*] => y` as `x => y`
+pub fn readChangeTeamDef(a: Allocator, line: []const u8) E!?DefResult {
+    const m = R().CHANGE_TEAM.match(line) orelse return null;
+    const trailing = line[m.end(0)..];
+    const mc = helpers.findParenMatch(trailing);
+    if (mc < 0) return .{ .team = &.{} };
+    // not an assignment to an array named `changeteam`
+    const after = str.strip(trailing[@as(usize, @intCast(mc)) + 1 ..]);
+    if (after.len > 0 and after[0] != '!') return null;
+    var out: std.ArrayList([]const u8) = .empty;
+    // the team value first, then the associations and the sync-stat list
+    const items = try splitList(a, trailing[0..@intCast(mc)]);
+    for (items[@min(1, items.len)..]) |item| {
+        const arrow = std.mem.find(u8, item, "=>") orelse continue;
+        const name = str.strip(item[0 .. std.mem.findScalar(u8, item[0..arrow], '[') orelse arrow]);
+        try out.append(a, try a.print("{s} => {s}", .{ name, str.strip(item[arrow + 2 ..]) }));
+    }
+    return .{ .team = out.items };
+}
+
+/// The items of a list split at the commas outside parentheses, brackets
+/// and strings, the strings kept
+fn splitList(a: Allocator, list_in: []const u8) E![]const []const u8 {
+    const list = str.strip(list_in);
     const blanked = try helpers.stripStrings(a, list, true);
     var words: std.ArrayList([]const u8) = .empty;
     var depth: usize = 0;
@@ -78,7 +104,7 @@ pub fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
     };
     const last = str.strip(list[start..]);
     if (last.len > 0) try words.append(a, last);
-    return .{ .assoc = words.items };
+    return words.items;
 }
 
 pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
