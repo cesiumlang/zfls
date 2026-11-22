@@ -140,6 +140,12 @@ function directories(patterns: string[], folder: vscode.WorkspaceFolder | undefi
   return [...new Set(dirs)];
 }
 
+/** lintOnTypeDelay as whole milliseconds, never negative. */
+function delayMs(config: vscode.WorkspaceConfiguration, fallback: number): number {
+  const value = Math.round(config.get<number>("lintOnTypeDelay", fallback));
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
 /** The zfls options of the compiler that checks files (zfls's compiler
  * diagnostics, src/server/compile.zig), from the zfls.linter settings: the
  * compiler, its path, arguments, include and module directories, when it
@@ -182,7 +188,7 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
     args.push("--compiler_no_save");
   }
   if (config.get<boolean>("lintOnType", false)) {
-    args.push("--compiler_on_change", "--compiler_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 1000))));
+    args.push("--compiler_on_change", "--compiler_change_delay", String(delayMs(config, 1000)));
   }
   if (!config.get<boolean>("resolveModules", true)) {
     args.push("--compiler_no_dependencies");
@@ -229,7 +235,7 @@ function fortitudeArguments(folder: vscode.WorkspaceFolder | undefined): string[
     args.push(argOption("--fortitude_args", extra.map((a) => resolvePath(a, folder))));
   }
   if (config.get<boolean>("lintOnType", false)) {
-    args.push("--fortitude_on_change", "--fortitude_change_delay", String(Math.max(0, config.get<number>("lintOnTypeDelay", 500))));
+    args.push("--fortitude_on_change", "--fortitude_change_delay", String(delayMs(config, 500)));
   }
   return args;
 }
@@ -397,7 +403,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
     compiler_mod_dir: on && modDir ? resolvePath(modDir, folder) : null,
     compiler_no_save: on && !config.get<boolean>("lintOnSave", true),
     compiler_on_change: on && config.get<boolean>("lintOnType", false),
-    compiler_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 1000)),
+    compiler_change_delay: delayMs(config, 1000),
     compiler_no_dependencies: on && !config.get<boolean>("resolveModules", true),
     compiler_no_compile_commands: on && config.get<boolean>("noCompileCommands", false),
     compiler_fypp: fypp ? programPath(config.get<string>("fypp.path", "fypp").trim() || "fypp", folder) : null,
@@ -430,7 +436,7 @@ function fortitudeSettings(folder: vscode.WorkspaceFolder | undefined): ServerSe
     fortitude_path: on && exe ? programPath(exe, folder) : null,
     fortitude_args: on ? config.get<string[]>("args", []).filter((a) => a !== "").map((a) => resolvePath(a, folder)) : [],
     fortitude_on_change: on && config.get<boolean>("lintOnType", false),
-    fortitude_change_delay: Math.max(0, config.get<number>("lintOnTypeDelay", 500)),
+    fortitude_change_delay: delayMs(config, 500),
   };
 }
 
