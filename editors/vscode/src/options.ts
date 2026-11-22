@@ -13,7 +13,7 @@ import { folderVariables } from "./variables";
  * cannot change it (it is read at start-up only). `fallback`: zfls's own
  * default, for a value the command line leaves out. `rewatch`: it changes
  * which files the file watcher follows, so a change restarts the server. */
-type Option =
+export type Option =
   | { setting: string; flag: string; kind: "flag"; restart?: true }
   | { setting: string; flag: string; kind: "int"; fallback: number }
   | { setting: string; flag: string; kind: "string"; path?: boolean; restart?: true }
@@ -40,6 +40,11 @@ export const OPTIONS: readonly Option[] = [
   { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
   { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
+  { setting: "debugLog", flag: "--debug_log", kind: "flag", restart: true },
+  { setting: "disableIndexCache", flag: "--disable_index_cache", kind: "flag" },
+  { setting: "disableCompileCommands", flag: "--disable_compile_commands", kind: "flag" },
+  { setting: "disableBindCSearch", flag: "--disable_bind_c_search", kind: "flag" },
+  { setting: "bindCClangd", flag: "--bind_c_clangd", kind: "string", path: true },
   { setting: "workspaceDiagnostics", flag: "--workspace_diagnostics", kind: "flag" },
   { setting: "diagnosticsChangeDelay", flag: "--diagnostics_change_delay", kind: "int", fallback: 300 },
   { setting: "notifyInit", flag: "--notify_init", kind: "flag" },
@@ -485,7 +490,7 @@ export function restartsServer(e: vscode.ConfigurationChangeEvent, scope: vscode
     e.affectsConfiguration("zfls.path", scope) ||
     e.affectsConfiguration("zfls.arguments", scope) ||
     OPTIONS.some((o) => ("restart" in o || "rewatch" in o) && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
-    vscode.workspace.getConfiguration("zfls", scope).get<string[]>("arguments", []).length > 0
+    extraArguments(vscode.workspace.getConfiguration("zfls", scope)).length > 0
   );
 }
 
