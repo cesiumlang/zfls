@@ -18,6 +18,22 @@ function providers(s: ServerSettings): boolean[] {
   ];
 }
 
+/** `s` without the settings that the options in `args` (`zfls.arguments`)
+ * set: on the command line they come after the typed settings, and the
+ * settings sent over LSP would take over from them. An option is named as
+ * zfls reads it: in full, or by a prefix (all settings it begins, so as
+ * not to leave in the one zfls would take); `-n` is `--nthreads`. */
+export function withoutArguments(s: ServerSettings, args: readonly string[]): ServerSettings {
+  const names = args.flatMap((arg) => {
+    if (arg.startsWith("--")) {
+      return [arg.slice(2).split("=")[0]];
+    }
+    return /^-n/.test(arg) ? ["nthreads"] : [];
+  });
+  const named = (key: string) => names.some((n) => n === key || (n !== "" && key.startsWith(n) && !(n in s)));
+  return Object.fromEntries(Object.entries(s).filter(([key]) => !named(key)));
+}
+
 /** Whether a running server that has the settings `prev` can take `next`
  * without a restart: not when `next` leaves out a setting that `prev` has
  * (the server would keep its command line's value, which was `prev`'s), nor

@@ -4,7 +4,7 @@
 
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { FORMATTERS, type ServerSettings } from "./settingsSync";
+import { FORMATTERS, type ServerSettings, withoutArguments } from "./settingsSync";
 import { fileAssociations } from "./sourceForm";
 import { expandVariables } from "./tools";
 import { folderVariables } from "./variables";
@@ -119,9 +119,14 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   args.push(...formattingArguments(folder));
   args.push(...fortitudeArguments(folder));
   args.push(...codeeArguments(folder));
-  // the settings editor's "Add Item" leaves empty items easily
-  args.push(...config.get<string[]>("arguments", []).filter((a) => typeof a === "string" && a.trim() !== ""));
+  args.push(...extraArguments(config));
   return args;
+}
+
+/** `zfls.arguments`; the settings editor's "Add Item" leaves empty items
+ * easily */
+function extraArguments(config: vscode.WorkspaceConfiguration): string[] {
+  return config.get<unknown[]>("arguments", []).filter((a): a is string => typeof a === "string" && a.trim() !== "");
 }
 
 /** Directories of a setting, with variables resolved, relative to the
@@ -300,12 +305,13 @@ function formatterPath(folder: vscode.WorkspaceFolder | undefined, codee: boolea
   return vscode.workspace.getConfiguration("zfls.codee", folder?.uri).get<string>("path", "").trim();
 }
 
-/** The settings of `serverArguments` (but `zfls.arguments` and those a
- * running server cannot change) under zfls's configuration-file names, each
- * with its value: what the command line would set, else zfls's default.
- * Sent to a running server, they take over from its command line.
- * `source_dirs` is left out when empty: zfls's default (the root) has no
- * value to send. */
+/** The settings of `serverArguments` (but `zfls.arguments`, those its
+ * options set, and those a running server cannot change) under zfls's
+ * configuration-file names, each with its value: what the command line
+ * would set, else zfls's default. Sent at start (`initializationOptions`)
+ * and to a running server, they take over from its command line and the
+ * user's configuration file. `source_dirs` is left out when empty: zfls's
+ * default (the root) has no value to send. */
 export function serverSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
   const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
   const out: ServerSettings = {};
@@ -340,7 +346,7 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
         break;
     }
   }
-  return {
+  const all = {
     ...out,
     file_associations: editorAssociations(),
     ...linterSettings(folder),
@@ -348,6 +354,15 @@ export function serverSettings(folder: vscode.WorkspaceFolder | undefined): Serv
     ...fortitudeSettings(folder),
     ...codeeSettings(folder),
   };
+  return withoutArguments(all, extraArguments(config));
+}
+
+/** The settings sent at start (`initializationOptions`): `serverSettings`,
+ * and those a server reads only then (`incremental_sync`) */
+export function startSettings(folder: vscode.WorkspaceFolder | undefined): ServerSettings {
+  const config = vscode.workspace.getConfiguration("zfls", folder?.uri);
+  const flags = OPTIONS.filter((o) => "restart" in o && o.kind === "flag").map((o) => [o.flag.slice(2), config.get(o.setting) === true]);
+  return withoutArguments({ ...serverSettings(folder), ...Object.fromEntries(flags) }, extraArguments(config));
 }
 
 /** `files.associations` for zfls (`fileAssociations`): as VS Code's

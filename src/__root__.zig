@@ -106,7 +106,6 @@ pub const dap_ifx_use = @import("dap/ifx_use.zig");
 pub const dap_lfortran = @import("dap/lfortran.zig");
 pub const dap_choice = @import("dap/choice.zig");
 pub const dap_capabilities = @import("dap/capabilities.zig");
-pub const dap_conditions = @import("dap/conditions.zig");
 pub const dap_completions = @import("dap/completions.zig");
 pub const dap_cpp_filters = @import("dap/cpp_filters.zig");
 pub const dap_data_ids = @import("dap/data_ids.zig");
