@@ -234,11 +234,12 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             const in_parent = try a.print("{s}::{s}", .{ parent, name });
             if (out.entities.contains(in_parent) and !tokens.contains("CONTAINED")) try tokens.put(a, "USED-IN-SUBMODULE", {});
         }
-        if (tokens.contains("SELECT-TYPE-TEMPORARY")) {
-            const temp = guards.isTemp(name);
-            try unnamed.symbol(a, &out.temps, indentOf(line), block, if (temp) .{ .ns = ns, .name = name, .v = types.varOf(block) } else null, name);
-            if (temp) continue;
-        } else try unnamed.symbol(a, &out.temps, indentOf(line), block, null, null);
+        // an associate name is ASSOCIATE-VAR (gfortran 13 and 14: and not
+        // SELECT-TYPE-TEMPORARY), a temporary SELECT-TYPE-TEMPORARY too
+        const temp = guards.isTemp(name) and tokens.contains("SELECT-TYPE-TEMPORARY");
+        const assoc = !temp and (tokens.contains("ASSOCIATE-VAR") or tokens.contains("SELECT-TYPE-TEMPORARY"));
+        try unnamed.symbol(a, &out.temps, indentOf(line), block, if (temp) .{ .ns = ns, .name = name, .v = types.varOf(block) } else null, if (assoc) name else null);
+        if (temp) continue;
         const skip = from_host or
             std.mem.startsWith(u8, name, "_") or
             // gfortran's own procedures (`__copy_character_1`)
@@ -531,7 +532,8 @@ test {
 test "the temporaries of type guards take the associate name listed after them" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    // gfortran before 16: the temporaries' names have no associate name
+    // gfortran 13 and 14: the temporaries' names have no associate name,
+    // nor is the associate name SELECT-TYPE-TEMPORARY
     const g = try gfortranEntities(arena.allocator(),
         \\Namespace: A-Z: (UNKNOWN 0)
         \\procedure name = m
@@ -547,7 +549,7 @@ test "the temporaries of type guards take the associate name listed after them" 
         \\        Array spec:(1 [0] AS_DEFERRED () () )
         \\      symtree: 'it'          || symbol: 'it'
         \\        type spec : (CLASS __class_m_Base_t_1_0p)
-        \\        attributes: (VARIABLE  SELECT-TYPE-TEMPORARY ASSOCIATE-VAR CLASS-OK)
+        \\        attributes: (VARIABLE  ASSOCIATE-VAR)
         \\      SELECT CASE x
         \\    SELECT TYPE
         \\      symtree: '__tmp_REAL_8'|| symbol: '__tmp_REAL_8'
