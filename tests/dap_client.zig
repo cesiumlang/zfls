@@ -218,6 +218,18 @@ pub const Client = struct {
         }
     }
 
+    /// Ends the session (`disconnect`, the program terminated or not) and
+    /// the adapter; again, nothing
+    pub fn end(c: *Client, terminate: bool) void {
+        if (c.child.stdin == null) return;
+        if (c.send("disconnect", .{ .terminateDebuggee = terminate })) |seq| {
+            _ = c.response(seq, "disconnect") catch {};
+        } else |_| {}
+        c.child.stdin.?.close(c.io);
+        c.child.stdin = null;
+        _ = c.child.wait(c.io) catch {};
+    }
+
     /// The output so far (a copy)
     pub fn outputText(c: *Client, a: Allocator) ![]const u8 {
         c.mutex.lockUncancelable(c.io);

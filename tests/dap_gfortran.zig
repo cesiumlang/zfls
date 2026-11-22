@@ -130,7 +130,7 @@ fn imagesApart(io: Io, gpa: Allocator, argv: []const []const u8, fc: []const u8,
         };
         const c = try Client.start(io, gpa, argv);
         defer c.deinit();
-        defer end(c);
+        defer c.end(true);
         _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path" });
         const launched = try c.send("launch", .{ .program = exe, .cwd = dir });
         _ = try c.event("initialized");
@@ -147,7 +147,7 @@ fn runCase(io: Io, gpa: Allocator, argv: []const []const u8, exe: []const u8, di
     const name = case.label orelse case.arg;
     const c = try Client.start(io, gpa, argv);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path" });
     const launched = try c.send("launch", .{ .program = exe, .args = if (case.arg.len > 0) &[_][]const u8{case.arg} else &[_][]const u8{}, .cwd = dir });
     _ = try c.event("initialized");
@@ -174,7 +174,7 @@ fn runCase(io: Io, gpa: Allocator, argv: []const []const u8, exe: []const u8, di
 fn wide(io: Io, gpa: Allocator, argv: []const []const u8, exe: []const u8, dir: []const u8, src: []const u8, line: i64) !void {
     const c = try Client.start(io, gpa, argv);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path" });
     const launched = try c.send("launch", .{ .program = exe, .cwd = dir });
     _ = try c.event("initialized");
@@ -201,14 +201,4 @@ fn eql(s: ?[]const u8, t: []const u8) bool {
 fn lineOf(text: []const u8, marker: []const u8) i64 {
     const at = std.mem.find(u8, text, marker) orelse unreachable;
     return @intCast(std.mem.count(u8, text[0..at], "\n") + 1);
-}
-
-/// Ends the session and the adapter
-fn end(c: *Client) void {
-    if (c.send("disconnect", .{ .terminateDebuggee = true })) |seq| {
-        _ = c.response(seq, "disconnect") catch {};
-    } else |_| {}
-    c.child.stdin.?.close(c.io);
-    c.child.stdin = null;
-    _ = c.child.wait(c.io) catch {};
 }
