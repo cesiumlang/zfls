@@ -69,6 +69,9 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         try o.put(a, "supportsExceptionInfoRequest", .{ .bool = true });
         if (!s.g.lldb) {
             try o.put(a, "supportsSetVariable", .{ .bool = true });
+            // the adapter's own, also where gdb has none (gdb 15)
+            s.g.gdb_completes = if (o.get("supportsCompletionsRequest")) |v| v == .bool and v.bool else false;
+            try o.put(a, "supportsCompletionsRequest", .{ .bool = true });
             // `%`: a component's names (gdb_completions.zig)
             var chars: json.Array = .init(a);
             try chars.appendSlice(json.items(o.get("completionTriggerCharacters")));
@@ -125,13 +128,12 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     s.g.source_root = if (root) |r| try s.gpa.dupe(u8, r) else null;
     var o: json.ObjectMap = .empty;
     const hold = std.mem.eql(u8, command, "launch") and s.g.runs_at_launch;
-    // the program's symbols now, before the client's breakpoints: gdb 16
-    // and later load them at `configurationDone`, and a breakpoint pending
-    // until then takes a condition of Fortran's (`k .ne. 0`) for invalid;
-    // gdb's `launch` or `attach` then without it, not loaded twice
-    var loaded = false;
+    // gdb 16 and later load the program at `configurationDone`: until
+    // then, for a breakpoint's condition (loadForConditions)
+    if (s.g.unloaded) |u| s.gpa.free(u);
+    s.g.unloaded = null;
     if (!hold and !s.g.lldb) if (gdb_entry.programPath(a, program, cwd)) |p| {
-        loaded = gdb.isSuccess(try gdb.request(s, a, "evaluate", .{ .expression = try a.print("file {s}", .{try cliPath(a, p)}), .context = "repl" }));
+        s.g.unloaded = try s.gpa.dupe(u8, p);
     };
     if (std.mem.eql(u8, command, "launch")) {
         if (hold) {
@@ -142,7 +144,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
                 if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
             }
         } else {
-            if (program) |p| if (!loaded) try o.put(a, "program", .{ .string = p });
+            if (program) |p| try o.put(a, "program", .{ .string = p });
             if (cwd) |c| try o.put(a, "cwd", .{ .string = c });
         }
         var list: json.Array = .init(a);
@@ -160,7 +162,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
             .string => |t| if (t.len > 0) try o.put(a, "pid", .{ .integer = std.fmt.parseInt(i64, std.mem.trim(u8, t, " "), 10) catch return s.fail(a, req, "processId is not a number") }),
             else => {},
         };
-        if (program) |p| if (p.len > 0 and !loaded) try o.put(a, "program", .{ .string = p });
+        if (program) |p| if (p.len > 0) try o.put(a, "program", .{ .string = p });
         if (json.get(args, "target")) |t| if (t != .null) try o.put(a, "target", .{ .string = try text(a, t) });
     }
     if (hold) {
@@ -173,6 +175,22 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         return;
     }
     try gdb.forward(s, a, req, .{ .object = o });
+}
+
+/// Breakpoints of conditions before gdb has the program (gdb 16 and later
+/// load it at `configurationDone`): the program now, as a breakpoint
+/// pending until then takes a condition of Fortran's (`k .ne. 0`) for C's,
+/// invalid, and never stops
+fn loadForConditions(s: *Session, a: Allocator, args: ?Value) !void {
+    const p = s.g.unloaded orelse return;
+    const conditional = for (json.items(json.get(args, "breakpoints"))) |b| {
+        const c: []const u8 = json.str(json.get(b, "condition")) orelse "";
+        if (c.len > 0) break true;
+    } else false;
+    if (!conditional) return;
+    s.g.unloaded = null;
+    defer s.gpa.free(p);
+    _ = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("file {s}", .{try cliPath(a, p)}), .context = "repl" });
 }
 
 /// A path for gdb's command line, as gdb's own `launch` gives it: a
@@ -284,6 +302,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, completions, disconnect, terminate };
     if (s.g.lldb) try lldb.afterEntry(s, a) else try gdb_entry.afterEntry(s, a);
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
+        if (std.mem.eql(u8, command, "setBreakpoints")) try loadForConditions(s, a, args);
         for (resuming) |r| if (std.mem.eql(u8, r, command)) vars.clear(s);
         if (std.mem.eql(u8, command, "pause")) s.g.pausing = true;
         return gdb.forward(s, a, req, args);
@@ -296,6 +315,8 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     };
     switch (cmd) {
         .configurationDone => {
+            if (s.g.unloaded) |u| s.gpa.free(u);
+            s.g.unloaded = null;
             if (s.g.lldb) try lldb.beforeRun(s, a) else try gdb_entry.beforeRun(s, a);
             const held = s.g.held_launch orelse return gdb.forward(s, a, req, args);
             s.g.held_launch = null;
