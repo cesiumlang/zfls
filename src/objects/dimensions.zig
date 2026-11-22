@@ -55,11 +55,22 @@ pub fn isArray(v: *const Obj) bool {
     return of(v) != null or (o.hasKeyword(KW.dimension) and o.varDataConst().slice_rank < 0);
 }
 
+/// Whether variable `v` is the associate name of an ASSOCIATE, SELECT
+/// TYPE or SELECT RANK construct
+pub fn isAssociateName(v: *const Obj) bool {
+    if (v.kind != .variable) return false;
+    const p = v.parent orelse return false;
+    return p.kind == .associate or p.getType(false) == C.TypeId.select;
+}
+
 /// Whether the rank of variable `v` can be told: not that of the name of
-/// a RANK block whose rank is no constant (`rank (n)`)
+/// a RANK block whose rank is no constant (`rank (n)`), nor of an
+/// associate name bound to an expression of a rank not known (`y =>
+/// f(x)`, #719)
 pub fn known(v: *const Obj) bool {
-    if (!v.isRankName() or v.varDataConst().slice_rank >= 0) return true;
-    return (v.parent orelse return true).selectDataConst().case_rank == null;
+    if (!isAssociateName(v) or v.varDataConst().slice_rank >= 0) return true;
+    if (v.isRankName() and (v.parent orelse return true).selectDataConst().case_rank != null) return false;
+    return rankSource(v) != v;
 }
 
 /// What a dummy argument's DIMENSION takes (#719)

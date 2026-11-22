@@ -401,3 +401,70 @@ test "assumed type and the other intrinsic types (#719)" {
         "30: Argument b of takes_l: an array expected, a scalar given",
     });
 }
+
+test "an associate name of a rank not known, an array COMMON gives its bounds: silent (#719)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "a.f90", .text =
+        \\module m
+        \\  implicit none
+        \\contains
+        \\  subroutine takes_v(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine
+        \\  subroutine takes_e(e)
+        \\    real, intent(in) :: e(3)
+        \\  end subroutine
+        \\  function f(x) result(r)
+        \\    real, intent(in) :: x(:)
+        \\    real :: r(size(x))
+        \\    r = x
+        \\  end function
+        \\  subroutine t(a, b)
+        \\    real, intent(in) :: a(3), b(3, 3)
+        \\    associate (y => f(a), z => matmul(b, a), q => a + f(a), p => [a, a], n => reshape(b, [9]))
+        \\      call takes_v(y)
+        \\      call takes_v(z)
+        \\      call takes_v(q)
+        \\      call takes_v(p)
+        \\      call takes_v(n)
+        \\      call takes_e(y)
+        \\      call takes_e(z)
+        \\      call takes_e(n)
+        \\    end associate
+        \\  end subroutine
+        \\end module
+        \\
+        },
+        .{ .name = "c.f90", .text =
+        \\module mc
+        \\  implicit none
+        \\contains
+        \\  subroutine takes_v(v)
+        \\    real, intent(in) :: v(:)
+        \\  end subroutine
+        \\  subroutine takes_e(e)
+        \\    real, intent(in) :: e(3)
+        \\  end subroutine
+        \\  subroutine t()
+        \\    real :: w
+        \\    common /blk/ w(4)
+        \\    call takes_v(w)
+        \\    call takes_e(w)
+        \\  end subroutine
+        \\end module mc
+        \\subroutine u()
+        \\  real :: w
+        \\  common /blk/ w(4)
+        \\  print *, w(1)
+        \\end subroutine
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    // the three compilers accept both files
+    try w.expectDiagnostics("a.f90", &.{});
+    try w.expectDiagnostics("c.f90", &.{});
+    // the bounds of the COMMON statement of a module procedure followed by
+    // another program unit (they were read from a reused line buffer)
+    try w.expectHoverContains("c.f90", w.pos("c.f90", "w)", 0, 0), "REAL, DIMENSION(4) :: w");
+}

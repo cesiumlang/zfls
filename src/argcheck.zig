@@ -66,7 +66,8 @@ pub const Mode = enum { implicit, explicit, generic };
 /// told
 pub fn rankOf(dims: ?[]const u8) ?usize {
     const d = std.mem.trim(u8, dims orelse return null, " ");
-    if (d.len == 0) return null;
+    // (assumed rank: any)
+    if (d.len == 0 or std.mem.eql(u8, d, "..")) return null;
     var n: usize = 1;
     var rest = d;
     while (topLevel(rest, ',')) |i| : (rest = rest[i + 1 ..]) n += 1;
@@ -411,6 +412,7 @@ pub const Checker = struct {
         if (elemental) return .unknown;
         // assumed rank takes any
         if (dims) |d| if (std.mem.eql(u8, std.mem.trim(u8, d, " "), "..")) return if (known) .fits else .unknown;
+        if (!typed.rank_known) return .unknown;
         // an assumed-shape array takes an array of its rank alone (#719)
         const assumed_shape = mode == .explicit and dimensions.shapeOf(dims) == .assumed;
         if (typed.array and !dummy_array) return .scalar_expected;
@@ -473,7 +475,7 @@ pub const Checker = struct {
                 return null;
             }
             const t = (try c.exprType(inner, scope, line_no, depth + 1)) orelse return null;
-            return .{ .cat = t.cat, .array = t.array, .rank = t.rank };
+            return .{ .cat = t.cat, .array = t.array, .rank = t.rank, .rank_known = t.rank_known };
         }
         // an array constructor: the type of its first element
         if ((e[0] == '[' and e[e.len - 1] == ']') or (e.len >= 4 and std.mem.startsWith(u8, e, "(/") and std.mem.endsWith(u8, e, "/)"))) {
@@ -488,6 +490,7 @@ pub const Checker = struct {
         var cat: Category = .unknown;
         var array = false;
         var rank: usize = 0;
+        var rank_known = true;
         var relational = false;
         var logical_op = false;
         var concat = false;
@@ -512,6 +515,7 @@ pub const Checker = struct {
                 operands += 1;
                 array = array or t.array;
                 rank = @max(rank, t.rank);
+                rank_known = rank_known and t.rank_known;
                 cat = if (operands == 1) t.cat else promote(cat, t.cat);
                 i = end;
                 want_operand = false;
@@ -546,10 +550,10 @@ pub const Checker = struct {
         }
         if (want_operand or operands < 2) return null;
         if (cat == .unknown) return null;
-        if (relational or logical_op) return .{ .cat = .logical, .array = array, .rank = rank };
-        if (concat) return if (cat == .character) .{ .cat = .character, .array = array, .rank = rank } else null;
+        if (relational or logical_op) return .{ .cat = .logical, .array = array, .rank = rank, .rank_known = rank_known };
+        if (concat) return if (cat == .character) .{ .cat = .character, .array = array, .rank = rank, .rank_known = rank_known } else null;
         if (!numeric(cat)) return null;
-        return .{ .cat = cat, .array = array, .rank = rank };
+        return .{ .cat = cat, .array = array, .rank = rank, .rank_known = rank_known };
     }
 
     /// The type of a variable or a part of one: `x`, `a(i)` (a scalar),
@@ -560,6 +564,7 @@ pub const Checker = struct {
         var v_type: *Obj = undefined;
         var array = false;
         var subscripted_last = false;
+        var rank_known = true;
         // the rank of the part that has one
         var rank: usize = 0;
         var i: usize = 0;
@@ -576,7 +581,7 @@ pub const Checker = struct {
             // an associate name: the type of what it is linked to, the rank
             // its selector or section gives it (#707, #714)
             const typ = typeSource(obj) orelse return null;
-            if (!dimensions.known(obj)) return null;
+            if (!dimensions.known(obj)) rank_known = false;
             const obj_dims = dimensions.of(obj);
             const is_array = dimensions.isArray(obj);
             while (i < e.len and e[i] == ' ') i += 1;
@@ -610,7 +615,7 @@ pub const Checker = struct {
         }
         if (i != e.len) return null;
         const obj = v.?;
-        return .{ .cat = varCategory(v_type), .array = array, .rank = rank, .designator = true, .subscripted = subscripted_last, .obj = obj };
+        return .{ .cat = varCategory(v_type), .array = array, .rank = rank, .designator = true, .subscripted = subscripted_last, .rank_known = rank_known, .obj = obj };
     }
 
     /// A component of a variable of derived type, in its type or a type
@@ -640,6 +645,7 @@ pub const Checker = struct {
                 rank += 1;
             } else if (sub.len > 0) {
                 const t = (try c.exprType(sub, scope, line_no, depth + 1)) orelse return null;
+                if (!t.rank_known) return null;
                 if (t.array) rank += 1;
             }
             start = end + 1;

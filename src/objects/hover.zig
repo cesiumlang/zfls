@@ -259,7 +259,7 @@ pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) 
 
 pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
     const link = self.linkObj();
-    if (!isAssociateName(self)) {
+    if (!dimensions.isAssociateName(self)) {
         const from = link orelse self;
         return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
     }
@@ -293,14 +293,6 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
         info.dimension = dimensions.of(self);
     }
     return helpers.getKeywords(a, ids.items, info);
-}
-
-/// Whether variable `self` is the associate name of an ASSOCIATE, SELECT
-/// TYPE or SELECT RANK construct
-fn isAssociateName(self: *const Obj) bool {
-    if (self.kind != .variable) return false;
-    const p = self.parent orelse return false;
-    return p.kind == .associate or p.getType(false) == C.TypeId.select;
 }
 
 pub fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: ?usize) !void {
