@@ -359,6 +359,33 @@ def ignore_associate_attributes(v, names: set):
     return v
 
 
+def ignore_associate_functions(v, names: set):
+    """fortls shows an associate name bound to a function's result as that
+    function (`LOGICAL FUNCTION :: hi`, completed as `hi()`); zfls as the
+    variable it is, of the result's type (#721)."""
+    if isinstance(v, dict):
+        label = str(v.get("label", "")).lower()
+        out = {k: ignore_associate_functions(x, names) for k, x in v.items()}
+        text = str(out.get("insertText", ""))
+        if label in names and text.lower().startswith(label + "("):
+            del out["insertText"]
+            out.pop("insertTextFormat", None)
+            if out.get("kind") == 3:
+                out["kind"] = 6
+            detail = str(out.get("detail", ""))
+            if detail.lower().endswith(" function " + label + "()"):
+                out["detail"] = detail[: -len(" function " + label + "()")]
+        return out
+    if isinstance(v, list):
+        return [ignore_associate_functions(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return m.group(1) + m.group(2) if m.group(2)[4:].lower() in names else m.group(0)
+
+        return re.sub(r"^([^\n]*?) FUNCTION( :: \w+)$", repl, v, flags=re.M)
+    return v
+
+
 def untyped_by_fortls(v, names: set) -> set:
     """The names of `names` that fortls's answer `v` gives the type UNKNOWN
     (in a hover, or as the detail of a completion item)."""

@@ -1,5 +1,6 @@
 //! Hover on derived types and on variables of them: what the type holds,
-//! its components and type-bound procedures (#268).
+//! its components and type-bound procedures (#268); those of a
+//! parameterized type (#723).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -144,4 +145,56 @@ test "hover on a DEC record component in the middle of a chain (sh.centre.x) (#5
     try w.expectHoverContains("d.f90", w.pos("d.f90", "centre.x", 0, 7), "REAL :: x");
     const def = (try w.definition("d.f90", w.pos("d.f90", "centre.x", 0, 2))) orelse return h.unmet("no definition of centre", .{});
     try h.expect(def.line == 7, "centre defined on line {d}", .{def.line});
+}
+
+test "variables of a parameterized derived type have its components (#723)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m_pdt
+        \\  implicit none
+        \\  type :: box(n)
+        \\    integer, len :: n
+        \\    real :: v(n)
+        \\  end type
+        \\  type :: matrix(k, rows, cols)
+        \\    integer, kind :: k = kind(1.0)
+        \\    integer, len :: rows, cols
+        \\    real(k) :: m(rows, cols)
+        \\  end type
+        \\  type, extends(matrix) :: named_matrix
+        \\    character(len=rows) :: label
+        \\  end type
+        \\contains
+        \\  subroutine fill(q)
+        \\    type(matrix(kind(1.0d0), *, *)), intent(inout) :: q
+        \\    q%m = 0
+        \\  end subroutine
+        \\  subroutine s()
+        \\    type(box(3)) :: b
+        \\    type(box(n=3)) :: c
+        \\    type(matrix(8, :, :)), allocatable :: d
+        \\    type(named_matrix(4, 2, 2)) :: e
+        \\    b%v = 1
+        \\    c%v = 1
+        \\    allocate(matrix(8, 4, 4) :: d)
+        \\    d%m = 0
+        \\    e%label = 'ab'
+        \\    print *, b%n, e%m
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("t.f90");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "b%v", 0, 2), "REAL, DIMENSION(n) :: v");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "c%v", 0, 2), "REAL, DIMENSION(n) :: v");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "q%m", 0, 2), "REAL(k), DIMENSION(rows, cols) :: m");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "d%m", 0, 2), "REAL(k), DIMENSION(rows, cols) :: m");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "e%label", 0, 2), "label");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "e%m", 0, 2), "REAL(k)");
+    const def = (try w.definition("t.f90", w.pos("t.f90", "c%v", 0, 2))) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(i64, 4), def.line);
+    const items = try w.completion("t.f90", w.pos("t.f90", "b%v", 0, 2));
+    var found = false;
+    for (items) |i| found = found or std.mem.eql(u8, i, "v");
+    try h.expect(found, "b%: {any}", .{items});
 }
