@@ -2,8 +2,10 @@
 //! launch's `dbgeng`), on a program of the MSVC ABI with a PDB
 //! (tests/dap/hello.c, built by `zig cc` and linked with zfls's ifx kit,
 //! not Visual Studio): a breakpoint, the stack, the variables, stepping, an
-//! expression, the end (`zig build test-dap`); and tests/dap/trap.c, whose
-//! break instruction is an exception, not a step.
+//! expression, the end (`zig build test-dap`); the engine's capabilities
+//! in place of gdb's (GDB, else the PATH's;
+//! tests/dap_engine_capabilities.zig); and tests/dap/trap.c, whose break
+//! instruction is an exception, not a step.
 //!
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
 //! tests/dap/grid.f90 built with `-g` (linked with zfls's ifx kit: `--kit`,
@@ -34,6 +36,7 @@ const source = "tests/dap/hello.c";
 
 const dap = @import("dap_client.zig");
 const dap_ifx = @import("dap_ifx.zig");
+const dap_engine_capabilities = @import("dap_engine_capabilities.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -103,6 +106,10 @@ pub fn main(init: std.process.Init) !u8 {
             return 1;
         };
     }
+    dap_engine_capabilities.run(io, init.gpa, a, exe_zfls, init.environ_map.get("GDB") orelse "gdb", exe, tmp, src_dir) catch |e| {
+        std.debug.print("zfls dap, the engine's capabilities after gdb's: {s}\n", .{@errorName(e)});
+        return 1;
+    };
     {
         const trap = (try buildC(io, a, init.environ_map, zig, kit_dir, tmp, try cwd.realPathFileAlloc(io, "tests/dap/trap.c", a), "trap")) orelse return 1;
         const c = try Client.start(io, init.gpa, &.{ exe_zfls, "dap" });
