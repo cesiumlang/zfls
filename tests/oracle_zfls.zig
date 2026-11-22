@@ -20,6 +20,9 @@ pub const Object = struct {
     in_interface: bool = false,
     /// the first line of its hover, for a variable
     declaration: ?[]const u8 = null,
+    /// of the associate name of a block of SELECT TYPE or RANK: the line
+    /// of its SELECT
+    select_line: ?usize = null,
 
     pub fn name(o: Object) []const u8 {
         const i = std.mem.findLast(u8, o.fqsn, "::") orelse return o.fqsn;
@@ -74,6 +77,10 @@ pub fn objects(a: Allocator, out: []const u8) !?[]Object {
         } else false;
         if (!again) try list.append(a, o);
     }
+    const blocks = try selectBlocks(a, out);
+    for (list.items) |*o| if (o.kind == 6) if (o.parent()) |p| if (blocks.get(p)) |b| {
+        o.select_line = b.select_line;
+    };
     // the declarations, by fqsn
     if (std.mem.find(u8, out, "\nDeclarations")) |d| {
         var lines = std.mem.splitScalar(u8, out[d..], '\n');
@@ -87,6 +94,28 @@ pub fn objects(a: Allocator, out: []const u8) !?[]Object {
         }
     }
     return list.items;
+}
+
+/// A block of SELECT TYPE or RANK: the lines (1-based) of its SELECT and
+/// of its guard
+pub const SelectBlock = struct { select_line: usize, line: usize };
+
+/// The blocks of SELECT TYPE and RANK of `--debug_parser` output, by fqsn
+/// in lower case
+pub fn selectBlocks(a: Allocator, out: []const u8) !std.StringHashMapUnmanaged(SelectBlock) {
+    var res: std.StringHashMapUnmanaged(SelectBlock) = .empty;
+    const start = std.mem.find(u8, out, "\nSelect Blocks") orelse return res;
+    const end = std.mem.findPos(u8, out, start, "\nDeclarations") orelse out.len;
+    var lines = std.mem.splitScalar(u8, out[start..end], '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        const sep = std.mem.findLast(u8, line, ": ") orelse continue;
+        var nums = std.mem.tokenizeScalar(u8, line[sep + 2 ..], ' ');
+        const s = std.fmt.parseInt(usize, nums.next() orelse continue, 10) catch continue;
+        const l = std.fmt.parseInt(usize, nums.next() orelse continue, 10) catch continue;
+        try res.put(a, try std.ascii.allocLowerString(a, line[0..sep]), .{ .select_line = s, .line = l });
+    }
+    return res;
 }
 
 /// The type spec of a hover line (`REAL(8), PARAMETER :: pi = 3.1`:
@@ -160,6 +189,23 @@ pub fn typeOf(a: Allocator, spec_in: []const u8) !?Type {
         return .{ .intrinsic = .{ .name = name, .kind = kind } };
     }
     return null;
+}
+
+test selectBlocks {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const b = try selectBlocks(arena.allocator(),
+        \\Exportable Objects
+        \\1: m
+        \\
+        \\Select Blocks
+        \\M::s::#select1::#select2: 11 12
+        \\
+        \\Declarations
+        \\m::s::#select1::#select2::r: REAL :: r
+    );
+    try std.testing.expectEqual(1, b.count());
+    try std.testing.expectEqual(@as(usize, 12), b.get("m::s::#select1::#select2").?.line);
 }
 
 test "the type of a declaration" {

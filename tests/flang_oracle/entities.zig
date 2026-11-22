@@ -11,6 +11,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const dump = @import("dump.zig");
+const types = @import("types.zig");
 
 pub const Kind = enum {
     /// a module, a submodule or a main program
@@ -63,6 +64,8 @@ const Walk = struct {
     a: Allocator,
     out: *Entities,
     unknown: *?Unknown,
+    /// the variables, in the order of the dump
+    vars: ?*std.ArrayList(types.Item) = null,
     /// Flang's own kinds of construct scopes are not listed: any scope of
     /// a kind other than these is a construct
     fn isConstruct(kind: []const u8) bool {
@@ -81,7 +84,10 @@ const Walk = struct {
         for (s.symbols.items) |sym| {
             const kind = try self.classify(s, sym) orelse continue;
             const name = if (sym.name.len == 0 and std.mem.eql(u8, sym.details, "MainProgram")) unnamed_program else sym.name;
-            try self.out.put(self.a, try self.join(path, name), kind);
+            const p = try self.join(path, name);
+            try self.out.put(self.a, p, kind);
+            if (self.vars) |vars| if (std.mem.eql(u8, sym.details, "ObjectEntity") or std.mem.eql(u8, sym.details, "AssocEntity"))
+                try vars.append(self.a, .{ .path = p, .v = try types.varOf(self.a, sym) });
         }
         for (s.children.items) |c| {
             if (std.mem.eql(u8, c.kind, "IntrinsicModules")) continue;
@@ -157,19 +163,20 @@ fn plainName(name: []const u8) []const u8 {
 
 /// The entities that a file declares, from Flang's dump of it: those of
 /// its global scope, but not of the modules that Flang read from module
-/// files nor of its intrinsic modules
-pub fn fromFlang(a: Allocator, global: *const dump.Scope, unknown: *?Unknown) Error!Entities {
+/// files nor of its intrinsic modules; and its variables, in `vars`
+pub fn fromFlang(a: Allocator, global: *const dump.Scope, unknown: *?Unknown, vars: ?*std.ArrayList(types.Item)) Error!Entities {
     var out: Entities = .empty;
-    try (Walk{ .a = a, .out = &out, .unknown = unknown }).scope(global, "");
+    try (Walk{ .a = a, .out = &out, .unknown = unknown, .vars = vars }).scope(global, "");
     return out;
 }
 
 /// The entities of module `name` as Flang read it from its module file:
-/// its scope at the top or among the intrinsic modules
-pub fn fromFlangModule(a: Allocator, global: *const dump.Scope, name: []const u8, unknown: *?Unknown) Error!?Entities {
+/// its scope at the top or among the intrinsic modules; and its variables,
+/// in `vars`
+pub fn fromFlangModule(a: Allocator, global: *const dump.Scope, name: []const u8, unknown: *?Unknown, vars: ?*std.ArrayList(types.Item)) Error!?Entities {
     const m = findModule(global, name) orelse return null;
     var out: Entities = .empty;
-    const w: Walk = .{ .a = a, .out = &out, .unknown = unknown };
+    const w: Walk = .{ .a = a, .out = &out, .unknown = unknown, .vars = vars };
     const path = try std.ascii.allocLowerString(a, name);
     try out.put(a, path, .unit);
     try w.scope(m, path);
@@ -200,9 +207,13 @@ fn zflsKind(code: i64, top: bool) ?Kind {
     };
 }
 
+/// A variable's declaration in zfls (the first line of its hover), by its
+/// path
+pub const Declared = struct { path: []const u8, decl: []const u8 };
+
 /// The entities of zfls's object tree (`--debug_parser` output), null when
-/// it printed none
-pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
+/// it printed none; and the declarations of its variables, in `decls`
+pub fn fromZfls(a: Allocator, out: []const u8, decls: ?*std.ArrayList(Declared)) Allocator.Error!?Entities {
     const start = std.mem.find(u8, out, "Object Tree") orelse return null;
     var tree = out[start + "Object Tree".len ..];
     if (std.mem.find(u8, tree, "Exportable Objects")) |end| tree = tree[0..end];
@@ -211,8 +222,7 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
     var rows: std.ArrayList(Row) = .empty;
     // the paths that are interfaces, and those that are something else:
     // a generic and its specific of the same name are both (#469)
-    var interfaces: std.StringHashMapUnmanaged(void) = .empty;
-    var others: std.StringHashMapUnmanaged(i64) = .empty;
+    var paths: Paths = .{};
     var it = std.mem.splitScalar(u8, tree, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
@@ -234,7 +244,7 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
         }
         if (fqsn.len == 0) continue;
         try rows.append(a, .{ .kind = kind, .fqsn = fqsn, .group = group });
-        if (kind == 5) try interfaces.put(a, fqsn, {}) else try others.put(a, fqsn, kind);
+        if (kind == 5) try paths.interfaces.put(a, fqsn, {}) else try paths.others.put(a, fqsn, kind);
     }
     var res: Entities = .empty;
     for (rows.items) |r| {
@@ -244,17 +254,40 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
         if (!top and r.kind >= 9 and r.kind <= 15) continue;
         if (r.kind == 5 and std.mem.startsWith(u8, lastPart(r.fqsn), "#")) continue;
         const kind = r.group orelse zflsKind(r.kind, top) orelse continue;
-        // the path without the constructs and interface blocks it is in
+        // one name of two entities, which is one symbol of Flang's: a
+        // generic and a specific of its name are the generic, a type and a
+        // generic of its name (its structure constructor) the type
+        const gop = try res.getOrPut(a, try paths.flatten(a, r.fqsn));
+        if (!gop.found_existing or rank(kind) > rank(gop.value_ptr.*)) gop.value_ptr.* = kind;
+    }
+    const list = decls orelse return res;
+    const d = std.mem.find(u8, out, "\nDeclarations") orelse return res;
+    var lines = std.mem.splitScalar(u8, out[d..], '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        const sep = std.mem.find(u8, line, ": ") orelse continue;
+        try list.append(a, .{ .path = try paths.flatten(a, try std.ascii.allocLowerString(a, line[0..sep])), .decl = line[sep + 2 ..] });
+    }
+    return res;
+}
+
+/// The kinds of zfls's paths, which make them Flang's
+const Paths = struct {
+    interfaces: std.StringHashMapUnmanaged(void) = .empty,
+    others: std.StringHashMapUnmanaged(i64) = .empty,
+
+    /// `fqsn` without the constructs and interface blocks it is in
+    fn flatten(self: *const Paths, a: Allocator, fqsn: []const u8) ![]const u8 {
         var kept: std.ArrayList(u8) = .empty;
-        var parts = std.mem.splitSequence(u8, r.fqsn, "::");
+        var parts = std.mem.splitSequence(u8, fqsn, "::");
         var prefix_end: usize = 0;
         var first = true;
         while (parts.next()) |p| {
             prefix_end += p.len;
-            const prefix = r.fqsn[0..prefix_end];
-            const pk = others.get(prefix) orelse 0;
-            const last = prefix_end == r.fqsn.len;
-            const drop = !last and !first and ((pk >= 9 and pk <= 15) or (pk == 0 and interfaces.contains(prefix)));
+            const prefix = fqsn[0..prefix_end];
+            const pk = self.others.get(prefix) orelse 0;
+            const last = prefix_end == fqsn.len;
+            const drop = !last and !first and ((pk >= 9 and pk <= 15) or (pk == 0 and self.interfaces.contains(prefix)));
             if (!drop) {
                 if (kept.items.len > 0) try kept.appendSlice(a, "::");
                 try kept.appendSlice(a, p);
@@ -262,14 +295,9 @@ pub fn fromZfls(a: Allocator, out: []const u8) Allocator.Error!?Entities {
             first = false;
             prefix_end += 2;
         }
-        // one name of two entities, which is one symbol of Flang's: a
-        // generic and a specific of its name are the generic, a type and a
-        // generic of its name (its structure constructor) the type
-        const gop = try res.getOrPut(a, kept.items);
-        if (!gop.found_existing or rank(kind) > rank(gop.value_ptr.*)) gop.value_ptr.* = kind;
+        return kept.items;
     }
-    return res;
-}
+};
 
 /// Of the kinds of zfls's entities of one name, the one Flang's symbol has
 fn rank(k: Kind) u8 {
@@ -322,7 +350,7 @@ test "Flang's entities" {
         \\    s (Subroutine): Use from s in m
     );
     var unknown: ?Unknown = null;
-    const e = try fromFlang(a, r.global, &unknown);
+    const e = try fromFlang(a, r.global, &unknown, null);
     const want = [_]struct { []const u8, Kind }{
         .{ "p", .unit },             .{ "m", .unit },          .{ "m::s", .procedure },
         .{ "m::t", .type },          .{ "m::gen", .generic },  .{ "m::t::fp", .proc_component },
@@ -332,11 +360,11 @@ test "Flang's entities" {
     };
     for (want) |w| try std.testing.expectEqual(w[1], e.get(w[0]) orelse return error.TestUnexpectedResult);
     try std.testing.expectEqual(want.len, e.count());
-    const u = (try fromFlangModule(a, r.global, "used", &unknown)).?;
+    const u = (try fromFlangModule(a, r.global, "used", &unknown, null)).?;
     try std.testing.expectEqual(2, u.count());
     try std.testing.expectEqual(.variable, u.get("used::w").?);
     const bad = try dump.parse(a, "Global scope: size=0\n  Module scope: m size=0\n    x: Novel thing\n");
-    try std.testing.expectError(error.UnknownDetails, fromFlang(a, bad.global, &unknown));
+    try std.testing.expectError(error.UnknownDetails, fromFlang(a, bad.global, &unknown, null));
     try std.testing.expectEqual(3, unknown.?.line);
 }
 
@@ -344,6 +372,7 @@ test "zfls's entities" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    var decls: std.ArrayList(Declared) = .empty;
     const z = (try fromZfls(a,
         \\Object Tree
         \\1: m
@@ -365,7 +394,11 @@ test "zfls's entities" {
         \\  6: bd::q
         \\Exportable Objects
         \\6: ignored::x
-    )).?;
+        \\Declarations
+        \\m::s::#block1::tmp: INTEGER :: tmp
+    , &decls)).?;
+    try std.testing.expectEqual(1, decls.items.len);
+    try std.testing.expectEqualStrings("m::s::tmp", decls.items[0].path);
     const want = [_]struct { []const u8, Kind }{
         .{ "m", .unit },              .{ "m::f", .procedure },        .{ "m::f::x", .variable },
         .{ "m::gen", .generic },      .{ "m::b", .procedure },        .{ "m::s", .procedure },
