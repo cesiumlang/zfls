@@ -98,7 +98,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .documentFormattingProvider = if (on.formatting) true else null,
         .documentRangeFormattingProvider = if (on.formatting) true else null,
         .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
-    } });
+    }, .serverInfo = .{ .name = "zfls", .version = @import("../version.zig").reported } });
 }
 
 /// The names of the configuration file, the first found being read
