@@ -78,7 +78,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
 }
 
 test "the usage line names every option the parser reads" {
-    inline for (@typeInfo(options).@"struct".decls) |d| {
-        try std.testing.expect(std.mem.find(u8, usage, @field(options, d.name)) != null);
+    inline for (@typeInfo(options).@"struct".decl_names) |name| {
+        try std.testing.expect(std.mem.find(u8, usage, @field(options, name)) != null);
     }
 }
