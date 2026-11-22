@@ -145,7 +145,7 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
             } else break;
             tmp_str = try std.mem.concat(a, u8, &.{ tmp_str, test_str[0 .. close + 1] });
             test_str = test_str[close + 1 ..];
-        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension")) {
+        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension") or std.ascii.startsWithIgnoreCase(tmp_str, "rank")) {
             const mc = helpers.findParenMatch(test_str);
             if (mc < 0) break;
             const mcu: usize = @intCast(mc);
@@ -157,6 +157,30 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
         keyword_match = R().KEYWORD_LIST.match(test_str);
     }
     return .{ .keywords = keywords.items, .rest = test_str };
+}
+
+/// The RANK clause (F2023) of a declaration's `keywords`, replaced by the
+/// DIMENSION it gives: `(:,:)` of a literal rank (none for 0), else assumed
+/// rank, `(..)`, until linking evaluates it; its expression then, else null
+/// (#729)
+pub fn rankClause(a: Allocator, keywords: *std.ArrayList([]const u8)) E!?[]const u8 {
+    for (keywords.items, 0..) |kw, i| {
+        if (!std.ascii.startsWithIgnoreCase(kw, "rank")) continue;
+        const expr = str.strip(helpers.getParenSubstring(kw) orelse "");
+        const n = std.fmt.parseInt(u8, expr, 10) catch {
+            keywords.items[i] = "DIMENSION(..)";
+            return expr;
+        };
+        if (n == 0 or n > 15) {
+            _ = keywords.orderedRemove(i);
+        } else {
+            var dims: std.ArrayList(u8) = .empty;
+            for (0..n) |k| try dims.appendSlice(a, if (k == 0) ":" else ",:");
+            keywords.items[i] = try a.print("DIMENSION({s})", .{dims.items});
+        }
+        return null;
+    }
+    return null;
 }
 
 pub const KindResult = struct { kind: ?[]const u8, line: []const u8 };
@@ -175,6 +199,12 @@ pub fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
         rest = line[end..];
     }
     return .{ .kind = kind_str, .line = rest };
+}
+
+/// TYPEOF or CLASSOF (F2023), whose "kind" is the entity whose type a
+/// declaration takes (#728)
+pub fn isTypeOf(var_type: []const u8) bool {
+    return std.mem.eql(u8, var_type, "TYPEOF") or std.mem.eql(u8, var_type, "CLASSOF");
 }
 
 /// Attempt to read variable definition line
@@ -197,7 +227,7 @@ pub fn readVarDef(a: Allocator, line: []const u8, var_type_in: ?[]const u8, fun_
     const kind_str = kr.kind;
     trailing = kr.line;
     const has_kind = kind_str != null and kind_str.?.len > 0;
-    if (!has_kind and (std.mem.eql(u8, var_type, "TYPE") or std.mem.eql(u8, var_type, "CLASS"))) return null;
+    if (!has_kind and (std.mem.eql(u8, var_type, "TYPE") or std.mem.eql(u8, var_type, "CLASS") or isTypeOf(var_type))) return null;
     if (!has_kind) {
         if (trailing.len == 0) return null;
         const c0 = trailing[0];
@@ -245,7 +275,7 @@ pub fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Re
 pub fn splitSubMod(a: Allocator, line: []const u8) E!struct { []const []const u8, []const u8 } {
     // IMPURE contains PURE
     if (!(std.ascii.findIgnoreCase(line, "pure") != null) and !(std.ascii.findIgnoreCase(line, "elemental") != null) and
-        !(std.ascii.findIgnoreCase(line, "recursive") != null)) return .{ &.{}, line };
+        !(std.ascii.findIgnoreCase(line, "recursive") != null) and !(std.ascii.findIgnoreCase(line, "simple") != null)) return .{ &.{}, line };
     return .{ try R().SUB_MOD.findall(a, line), try R().SUB_MOD.sub(a, "", line) };
 }
 
@@ -517,9 +547,10 @@ pub const DefTest = *const fn (Allocator, []const u8) E!?DefResult;
 /// written together, `DOUBLEPRECISION` or `BLOCKDATA`, still qualify)
 pub const DefTestEntry = struct { read: DefTest, starts: []const []const u8 };
 
-/// PURE, IMPURE, ELEMENTAL and RECURSIVE are removed from a line before it is
-/// tested for a procedure (`splitSubMod`), so they can come first
-pub const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive" };
+/// PURE, IMPURE, ELEMENTAL, RECURSIVE, NON_RECURSIVE and SIMPLE are removed
+/// from a line before it is tested for a procedure (`splitSubMod`), so they
+/// can come first
+pub const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive", "non_recursive", "simple" };
 
 /// `ENUMERATOR [::] a = 1, b`: the enumerators of an ENUM, named integer
 /// constants (fortls reads none)

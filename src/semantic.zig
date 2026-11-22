@@ -532,6 +532,10 @@ const statement_keywords = [_][]const u8{
     // Flang's too)
     "automatic",       "static",        "virtual",     "encode",          "decode",
     "accept",          "define",        "find",        "unsigned",
+    // Fortran 2018's NON_RECURSIVE (#727), Fortran 2023's SIMPLE (#727),
+    // TYPEOF and CLASSOF (#728)
+           "non_recursive",
+    "simple",          "typeof",        "classof",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -549,7 +553,8 @@ const spec_keywords = [_][]const u8{
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
     "record",      "union",       "map",          "attributes",      "byte",          "automatic",
-    "static",      "virtual",     "unsigned",
+    "static",      "virtual",     "unsigned",     "non_recursive",   "simple",        "typeof",
+    "classof",
 };
 
 fn isSpecKeyword(word: []const u8) bool {

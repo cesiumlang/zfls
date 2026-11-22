@@ -20,6 +20,7 @@ const Env = objects.Env;
 const findInScope = objects.findInScope;
 const climbTypeTree = objects.climbTypeTree;
 const selector = @import("selector.zig");
+const dimensions = @import("dimensions.zig");
 const argcheck = @import("../argcheck.zig");
 
 pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Error!void {
@@ -83,6 +84,8 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             v.selector_obj = null;
             v.assumed_size = false;
             const p = self.parent orelse return;
+            if (v.type_of) |to| try resolveTypeOf(env, self, p, to);
+            if (v.rank_clause) |r| try resolveRankClause(env, self, p, r);
             // the associate name of a block of SELECT TYPE or RANK: its
             // selector, with its rank (`it => items(i)`), found outside
             // the construct
@@ -189,6 +192,44 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
         },
         else => {},
     }
+}
+
+/// The type of a variable declared `TYPEOF(ref)` or `CLASSOF(ref)` in
+/// `scope` (#728): that of `ref`, a variable or a component; CLASS for
+/// CLASSOF of a derived type. While `ref` is not found it stays `TYPEOF`.
+fn resolveTypeOf(env: Env, self: *Obj, scope: *Obj, to: objects.TypeOf) Allocator.Error!void {
+    const v = self.varData();
+    v.desc = if (to.class) "CLASSOF" else "TYPEOF";
+    v.vkind = to.ref;
+    const inner = std.mem.trim(u8, to.ref, "() ");
+    var src = (try selectorVariable(env, scope, inner)) orelse return;
+    for (0..16) |_| src = if (src.kind == .variable) src.varDataConst().link_obj orelse break else break;
+    if (src == self or src.kind != .variable) return;
+    const d = src.varDataConst();
+    // (another TYPEOF not resolved yet)
+    if (std.mem.eql(u8, d.desc, "TYPEOF") or std.mem.eql(u8, d.desc, "CLASSOF")) return;
+    const derived = std.ascii.eqlIgnoreCase(d.desc, "TYPE") or std.ascii.eqlIgnoreCase(d.desc, "CLASS");
+    // TYPEOF of a polymorphic entity: its declared type
+    v.desc = if (!derived) d.desc else if (to.class) "CLASS" else "TYPE";
+    v.vkind = d.vkind;
+    // the type the entity sees, which need not be visible here
+    if (derived) v.type_obj = try src.getTypeObj(env);
+}
+
+/// The DIMENSION of a variable declared with RANK(`expr`) in `scope` (#729):
+/// that of the constant rank, else assumed rank, which the argument checks
+/// take as a rank not known
+fn resolveRankClause(env: Env, self: *Obj, scope: *Obj, expr: []const u8) Allocator.Error!void {
+    const n = (try argcheck.constantValue(env.tmp, env, self.file_ast, scope, expr, self.sline)) orelse -1;
+    const dims: ?[]const u8 = if (n < 0 or n > 15) ".." else dimensions.ofRank(@intCast(n), false);
+    const info = try self.al().create(helpers.KeywordInfo);
+    info.* = self.keyword_info.*;
+    info.dimension = dims;
+    self.keyword_info = info;
+    const at = std.mem.findScalar(C.Kw, self.keywords.items, KW.dimension);
+    if (dims == null) {
+        if (at) |i| _ = self.keywords.orderedRemove(i);
+    } else if (at == null) try self.keywords.append(self.al(), KW.dimension);
 }
 
 /// The rank a case of SELECT RANK gives its associate name `v`: `0`, `2`,
