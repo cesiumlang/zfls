@@ -4,7 +4,8 @@
 //! not Visual Studio): a breakpoint, the stack, the variables, stepping, an
 //! expression, the end (`zig build test-dap`); the engine's capabilities
 //! in place of gdb's (GDB, else the PATH's;
-//! tests/dap_engine_capabilities.zig); and tests/dap/trap.c, whose break
+//! tests/dap_engine_capabilities.zig); attaching to tests/dap/wait.c's
+//! program (tests/dap_engine_attach.zig); and tests/dap/trap.c, whose break
 //! instruction is an exception, not a step.
 //!
 //! With LLVM Flang (`--flang`, or FLANG in the environment), also
@@ -37,6 +38,7 @@ const source = "tests/dap/hello.c";
 const dap = @import("dap_client.zig");
 const dap_ifx = @import("dap_ifx.zig");
 const dap_engine_capabilities = @import("dap_engine_capabilities.zig");
+const dap_engine_attach = @import("dap_engine_attach.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -110,6 +112,14 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("zfls dap, the engine's capabilities after gdb's: {s}\n", .{@errorName(e)});
         return 1;
     };
+    {
+        const wait_c = try cwd.realPathFileAlloc(io, "tests/dap/wait.c", a);
+        const waiting = (try buildC(io, a, init.environ_map, zig, kit_dir, tmp, wait_c, "wait")) orelse return 1;
+        dap_engine_attach.run(io, init.gpa, exe_zfls, waiting, wait_c, tmp) catch |e| {
+            std.debug.print("zfls dap, the engine's attach: {s}\n", .{@errorName(e)});
+            return 1;
+        };
+    }
     {
         const trap = (try buildC(io, a, init.environ_map, zig, kit_dir, tmp, try cwd.realPathFileAlloc(io, "tests/dap/trap.c", a), "trap")) orelse return 1;
         const c = try Client.start(io, init.gpa, &.{ exe_zfls, "dap" });

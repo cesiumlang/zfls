@@ -101,16 +101,6 @@ fn show(what: []const u8, vars: []Value) void {
     std.debug.print("\n", .{});
 }
 
-/// Ends the session and the adapter
-pub fn end(c: *Client) void {
-    if (c.send("disconnect", .{ .terminateDebuggee = true })) |seq| {
-        _ = c.response(seq, "disconnect") catch {};
-    } else |_| {}
-    c.child.stdin.?.close(c.io);
-    c.child.stdin = null;
-    _ = c.child.wait(c.io) catch {};
-}
-
 /// A session on tests/dap/grid.f90 built by LFortran: line breakpoints,
 /// the stack, the main program's variables (integers, without LFortran's
 /// temporaries), a step, no module variables scope, and the bound exceeded
@@ -118,7 +108,7 @@ pub fn end(c: *Client) void {
 pub fn walkThrough(io: Io, gpa: Allocator, s: Session) !void {
     const c = try Client.start(io, gpa, s.argv);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
 
     const caps = try c.request("initialize", .{ .adapterID = "fortran", .clientID = "test", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const filters = items(caps, "exceptionBreakpointFilters");
@@ -199,7 +189,7 @@ pub fn errorStop(io: Io, gpa: Allocator, argv: []const []const u8, program: []co
     for ([_]bool{ true, false }) |plain| {
         const c = try Client.start(io, gpa, argv);
         defer c.deinit();
-        defer end(c);
+        defer c.end(true);
         _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path" });
         const launched = try c.send("launch", .{ .program = program, .args = if (plain) &[_][]const u8{"plain"} else &[_][]const u8{}, .cwd = dir });
         _ = try c.event("initialized");
