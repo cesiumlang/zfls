@@ -958,6 +958,15 @@
         }
       }
     },
+    "simple-attribute": {
+      "comment": "Introduced in the Fortran 2023 standard.",
+      "match": "(?i)\\s*\\b(simple)\\b",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.simple.fortran"
+        }
+      }
+    },
     "extends-attribute": {
       "begin": "(?i)\\s*\\b(extends)\\s*\\(",
       "beginCaptures": {
@@ -4194,6 +4203,9 @@
               "include": "#elemental-attribute"
             },
             {
+              "include": "#simple-attribute"
+            },
+            {
               "include": "#module-attribute"
             },
             {
@@ -4531,6 +4543,9 @@
           "patterns": [
             {
               "include": "#elemental-attribute"
+            },
+            {
+              "include": "#simple-attribute"
             },
             {
               "include": "#module-attribute"

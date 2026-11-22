@@ -195,6 +195,20 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
     return errors.items;
 }
 
+/// The scoping unit `scope` is where no IMPORT statement may be (F2018
+/// C8100): a main program, a module, an external subprogram or a BLOCK DATA
+/// unit, or null. Interface bodies, contained subprograms, BLOCK
+/// constructs and submodules may have one (#724).
+fn importForbidden(scope: *const Obj) ?[]const u8 {
+    return switch (scope.kind) {
+        .program => "a main program",
+        .module => "a module",
+        .subroutine, .function => if (scope.parent == null) "an external subprogram" else null,
+        .block => if (scope.isBlockData()) "a BLOCK DATA unit" else null,
+        else => null,
+    };
+}
+
 pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
     const a = env.tmp;
     var errors: std.ArrayList(Diagnostic) = .empty;
@@ -205,8 +219,8 @@ pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
         if (u.included) continue;
         last_use_line = @max(last_use_line, u.line_number);
         if (u.is_import) {
-            if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
-                try errors.append(a, Diagnostic.init(.import_outside_interface, u.line_number -| 1, "IMPORT statement outside of interface", 1, null));
+            if (importForbidden(self)) |unit| {
+                try errors.append(a, Diagnostic.init(.import_outside_interface, u.line_number -| 1, try a.print("IMPORT statement in {s}", .{unit}), 1, null));
             }
             continue;
         }
