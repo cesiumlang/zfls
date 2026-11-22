@@ -200,5 +200,9 @@
   "config.zfls.codeLensNoReferences.markdownDescription": "Do not show the number of references above each module, procedure and derived type (`--code_lens_no_references`). VS Code's `#editor.codeLens#` turns off every code lens.",
   "config.zfls.codeLensNoRun.markdownDescription": "Do not show Run and Debug above a program (`--code_lens_no_run`).",
   "config.zfls.fixedFormDLines.markdownDescription": "How a fixed-form line with `D` or `d` in column 1 (a debug line) is read: as a `comment`, or as `code` (the `D` is a blank), as compilers do by an option (gfortran `-fd-lines-as-code`, Intel `-d-lines`). zfls reads the lines so, and the compiler check passes the compiler the option that reads them so, unless its arguments already have one.",
-  "debugger.fortran.launch.cppExceptionFilters.description": "With gdb, the exception filters of C++ (thrown, re-thrown, caught) for any program: by default only for a program that links a C++ runtime (libstdc++, libc++, MSVC's)."
+  "debugger.fortran.launch.cppExceptionFilters.description": "With gdb, the exception filters of C++ (thrown, re-thrown, caught) for any program: by default only for a program that links a C++ runtime (libstdc++, libc++, MSVC's).",
+  "debugger.fortran.launch.sourceRoot.description": "The directory zfls's debugger reads the program's sources from, for the module variables; default `cwd`, else the program's directory.",
+  "debugger.fortran.attach.cppExceptionFilters.description": "With gdb, the exception filters of C++ (thrown, re-thrown, caught) for any program: by default only for a program that links a C++ runtime (libstdc++, libc++, MSVC's).",
+  "debugger.fortran.attach.sourceRoot.description": "The directory zfls's debugger reads the program's sources from, for the module variables; default the workspace folder.",
+  "debugger.fortran.attach.waitFor.description": "With lldb-dap, wait for the program to start, then attach to it."
 }

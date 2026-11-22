@@ -1433,6 +1433,10 @@
                 "default": false,
                 "description": "%debugger.fortran.launch.cppExceptionFilters.description%"
               },
+              "sourceRoot": {
+                "type": "string",
+                "description": "%debugger.fortran.launch.sourceRoot.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
@@ -1471,6 +1475,20 @@
                   "string"
                 ],
                 "description": "%debugger.fortran.attach.lldb.description%"
+              },
+              "cppExceptionFilters": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.cppExceptionFilters.description%"
+              },
+              "sourceRoot": {
+                "type": "string",
+                "description": "%debugger.fortran.attach.sourceRoot.description%"
+              },
+              "waitFor": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.waitFor.description%"
               },
               "setupCommands": {
                 "type": "array",
