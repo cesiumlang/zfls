@@ -257,6 +257,9 @@ pub const Variable = struct {
     /// What the variable stands for: the procedure of a procedure pointer or
     /// type-bound procedure, the selector of an ASSOCIATE name
     link_obj: ?*Obj = null,
+    /// Of a TYPE IS or CLASS IS name: the variable its selector names, whose
+    /// rank and attributes it has; its guard gives its type (#701)
+    selector_obj: ?*Obj = null,
     callable: bool = false,
     drop_arg: ?usize = null,
     pass_name: ?[]const u8 = null,
@@ -689,6 +692,15 @@ pub const Obj = struct {
         return t == 3 or t == 4 or t == 5;
     }
 
+    /// Whether variable `self` is the associate name of a TYPE IS or CLASS IS
+    /// block, which has its guard's type
+    pub fn isGuardName(self: *const Obj) bool {
+        if (self.kind != .variable or self.varDataConst().link_name != null) return false;
+        const p = self.parent orelse return false;
+        // made by the guard's statement, not declared in its block
+        return p.kind == .select and p.selectDataConst().select_type == 3 and self.sline == p.sline;
+    }
+
     pub fn isTypeBinding(self: *const Obj) bool {
         return self.kind == .select and self.selectDataConst().select_type == 2;
     }
@@ -791,7 +803,8 @@ pub const Obj = struct {
 
     pub fn requireLink(self: *const Obj) bool {
         return switch (self.kind) {
-            .variable, .method => self.varDataConst().link_name != null,
+            .variable => self.varDataConst().link_name != null or self.isGuardName(),
+            .method => self.varDataConst().link_name != null,
             .interface, .subroutine, .function, .submodule, .associate => true,
             else => false,
         };

@@ -79,16 +79,31 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             const v = self.varData();
             v.link_obj = null;
             v.type_obj = null;
-            const ln = v.link_name orelse return;
-            if (self.parent) |p| {
-                // the associate name of SELECT TYPE or RANK: its selector,
-                // with its rank (`it => items(i)`)
-                const is_select = p.getType(false) == C.TypeId.select;
-                const found = if (is_select) try selectorVariable(env, p, ln) else try findInScope(env, p, ln, .{});
+            v.selector_obj = null;
+            const p = self.parent orelse return;
+            // the associate name of a block of SELECT TYPE or RANK: its
+            // selector, with its rank (`it => items(i)`), found outside
+            // the construct
+            const construct: ?*Obj = if (p.isTypeRegion()) p.parent else null;
+            if (v.link_name) |ln| {
+                const found = if (construct) |c| try selectorVariable(env, c, ln) else try findInScope(env, p, ln, .{});
                 if (found) |l| {
                     if (!self.linkLoops(l)) v.link_obj = l;
                 }
-                if (is_select and v.link_obj != null) v.slice_rank = try selector.associateRank(env, p, ln, self.sline, v.link_obj);
+                if (construct) |c| if (v.link_obj != null) {
+                    v.slice_rank = try selector.associateRank(env, c, ln, self.sline, v.link_obj);
+                };
+            } else if (self.isGuardName()) {
+                // a TYPE IS or CLASS IS name: the selector's rank and
+                // attributes, the guard's type (#701)
+                // (in code being edited the block may be in no SELECT TYPE)
+                const c = construct orelse return;
+                if (!c.isTypeBinding()) return;
+                const text = c.selectDataConst().bound_var orelse return;
+                if (try selectorVariable(env, c, text)) |o| if (o.kind == .variable) {
+                    v.selector_obj = o;
+                };
+                v.slice_rank = try selector.associateRank(env, c, text, self.sline, v.selector_obj);
             }
         },
         .method => {

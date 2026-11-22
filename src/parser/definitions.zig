@@ -46,7 +46,8 @@ pub const FunSig = struct {
     result: ResultSig = .{},
 };
 
-pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8 };
+/// `kind`: of a type guard of an intrinsic type, `type is (real(8))`
+pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8, kind: ?[]const u8 = null };
 
 pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
 
@@ -345,7 +346,6 @@ pub fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
 }
 
 pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
-    _ = a;
     if (R().SELECT.match(line)) |m| {
         const word = m.group(1).?;
         var st: i32 = -1;
@@ -366,12 +366,27 @@ pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
         const d = m.group(1).?;
         const up = std.ascii.upperString(buf[0..d.len], d);
         const desc: []const u8 = if (std.mem.eql(u8, up, "TYPE")) "TYPE" else "CLASS";
-        return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = desc } };
+        // the guard's type: an intrinsic one, `type is (real(8))` (#701)
+        if (std.mem.eql(u8, desc, "TYPE")) if (try intrinsicGuard(a, m.group(2) orelse "")) |name| {
+            // (none while `real(8` is being written)
+            const kind = if (try parseKind(a, line[m.end(0)..])) |kr| kr.kind else null;
+            return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = name, .kind = kind } };
+        };
+        return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = try a.print("{s}({s})", .{ desc, m.group(2) orelse "None" }) } };
     }
     if (R().SELECT_DEFAULT.match(line) != null) return .{ .select = .{ .type = 4, .binding = null, .desc = null } };
     // a case of SELECT RANK: its associate name is the selector
     if (R().SELECT_RANK.match(line) != null) return .{ .select = .{ .type = 5, .binding = null, .desc = null } };
     return null;
+}
+
+/// The intrinsic type type guard `spec` names, uppercase, or null
+fn intrinsicGuard(a: Allocator, spec: []const u8) E!?[]const u8 {
+    const up = try std.ascii.allocUpperString(a, str.strip(spec));
+    const m = R().VAR.match(up) orelse return null;
+    if (m.end(0) != up.len) return null;
+    for ([_][]const u8{ "PROCEDURE", "EXTERNAL", "CLASS", "TYPE" }) |w| if (std.mem.eql(u8, up, w)) return null;
+    return up;
 }
 
 pub fn readTypeDef(a: Allocator, line: []const u8) E!?DefResult {

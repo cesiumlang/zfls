@@ -262,7 +262,7 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
         const from = link orelse self;
         return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
     }
-    const from = link orelse self;
+    const from = link orelse self.varDataConst().selector_obj orelse self;
     if (from.kind != .variable) return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
     // an associate name has the attributes of its selector that the
     // standard gives it (TARGET for a POINTER), not ALLOCATABLE, INTENT, ...;
