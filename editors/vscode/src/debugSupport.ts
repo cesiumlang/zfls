@@ -117,3 +117,9 @@ export function hoverExpressionStart(line: string, start: number): number {
     at = j + 1;
   }
 }
+
+/** The gdb an attach configuration uses: its own `gdb`, else `fallback`'s
+ * (zfls.run.gdbPath, else the PATH's), which is looked up only then */
+export function attachGdb(own: unknown, fallback: () => string | undefined): string | undefined {
+  return typeof own === "string" && own ? own : fallback();
+}
