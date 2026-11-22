@@ -54,6 +54,7 @@ test {
     _ = @import("pp_conditions.zig");
     _ = @import("compiler_sources.zig");
     _ = @import("compiler_settings.zig");
+    _ = @import("compiler_requests.zig");
     _ = @import("gfortran_modules.zig");
     _ = @import("language.zig");
     _ = @import("lenses.zig");
