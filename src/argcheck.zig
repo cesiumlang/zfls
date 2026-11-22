@@ -143,6 +143,7 @@ const spec_words = [_][]const u8{
     "final",       "contains",    "bind",       "value",       "volatile",  "asynchronous", "contiguous",
     "equivalence", "enum",        "enumerator", "attributes",  "structure", "record",       "include",
     "abstract",    "codimension", "block",      "blockdata",   "select",    "case",         "rank",
+    "simple",      "typeof",      "classof",
 };
 
 /// The statements whose first word has parentheses after it that are no

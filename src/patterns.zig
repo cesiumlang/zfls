@@ -22,7 +22,7 @@ const defs = [_]Def{
     .{ "INCLUDE", "[ ]*INCLUDE[ :]*[\\'\\\"]([^\\'\\\"]*)", true },
     .{ "CONTAINS", "[ ]*(CONTAINS)[ ]*$", true },
     .{ "IMPLICIT", "[ ]*IMPLICIT[ ]+([a-z]*)", true },
-    .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE)\\b(?![,\\)][ ]*)", true },
+    .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE|NON_RECURSIVE|SIMPLE)\\b(?![,\\)][ ]*)", true },
     .{ "SUB", "[ ]*SUBROUTINE[ ]+([\\w$]+)", true },
     .{ "END_SUB", "SUBROUTINE", true },
     .{ "FUN", "[ ]*FUNCTION[ ]+([\\w$]+)", true },
@@ -83,12 +83,12 @@ const defs = [_]Def{
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
-        "|EXTERNAL|CLASS|TYPE|BYTE|UNSIGNED)", true },
+        "|EXTERNAL|TYPEOF|CLASSOF|CLASS|TYPE|BYTE|UNSIGNED)", true },
     // `()`: PROCEDURE() of no interface; `((4))`: a kind in parentheses
     .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:(]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
     // CUDA Fortran's data attributes too, which hover does not show (#715)
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
-        "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
+        "POINTER|TARGET|DIMENSION[ ]*\\(|RANK[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
         "PASS[ ]*\\([ ]*\\w*[ ]*\\)|SAVE|PARAMETER|EXTERNAL|" ++
         "CONTIGUOUS|VOLATILE|ASYNCHRONOUS|PROTECTED|VALUE|AUTOMATIC|STATIC|CODIMENSION[ ]*\\[|" ++
