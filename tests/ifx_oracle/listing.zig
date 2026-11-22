@@ -15,6 +15,9 @@ pub const Entry = struct {
     /// `Local`, `Dummy`, `Param`, `Result`, `Type`, `Func`, `Subr`,
     /// `Module`, `Prog`, `Label`, ...; empty for a component
     object: []const u8,
+    /// the line it is declared on, null for a component; of an associate
+    /// name, its construct's first line
+    declared: ?usize = null,
     /// `R(4)`, `I(8)`, `L(4)`, `C(16)` (bytes), `CHAR`, `RECORD`, a type's
     /// name, `TBProc`; may be empty
     type: []const u8,
@@ -89,17 +92,20 @@ pub fn parse(a: Allocator, text: []const u8) !Listing {
             const name = try std.ascii.allocLowerString(a, line[1..name_end]);
             const first = c.object orelse c.type;
             var object: []const u8 = "";
+            var declared: ?usize = null;
             var rest_from = first;
             if (c.object) |o| {
                 // `Object Declared`: the object, then the line
                 var words = std.mem.tokenizeScalar(u8, field(line, o, c.type), ' ');
                 object = words.next() orelse "";
+                declared = std.fmt.parseInt(usize, words.next() orelse "", 10) catch null;
                 rest_from = c.type;
             }
             const dimen = field(line, c.dimen, c.elements);
             const e: Entry = .{
                 .name = name,
                 .object = object,
+                .declared = declared,
                 .type = field(line, rest_from, c.bytes),
                 .rank = if (dimen.len == 0) null else std.fmt.parseInt(usize, dimen, 10) catch null,
                 .attrs = field(line, c.attrs, c.refs),
@@ -143,6 +149,7 @@ test "an ifx listing's symbols" {
     try std.testing.expectEqual(@as(usize, 3), l.symbols.len);
     try std.testing.expectEqualStrings("buffer", l.symbols[0].name);
     try std.testing.expectEqualStrings("Local", l.symbols[0].object);
+    try std.testing.expectEqual(@as(?usize, 16), l.symbols[0].declared);
     try std.testing.expectEqualStrings("R(4)", l.symbols[0].type);
     try std.testing.expectEqual(@as(?usize, 1), l.symbols[0].rank);
     try std.testing.expectEqualStrings("ARG,IN", l.symbols[1].attrs);

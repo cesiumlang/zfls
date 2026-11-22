@@ -10,8 +10,10 @@
 //! type-bound procedures, and the variables, with their types and kinds,
 //! ranks, ALLOCATABLE, POINTER, TARGET and INTENT. ifx names a host's or a
 //! module's entity in the unit that uses it, at its first use, so names are
-//! compared over the whole file, not by scope. The differences known, each
-//! with its reason, are in ifx_oracle/known.zig; any other fails the run.
+//! compared over the whole file, not by scope; but the associate names of
+//! the blocks of SELECT TYPE and RANK each with its own block's entry. The
+//! differences known, each with its reason, are in ifx_oracle/known.zig;
+//! any other fails the run.
 //!
 //!     ifx_oracle [--ifx EXE] [--zfls EXE] [-v] [PATH ...]
 //!
@@ -111,16 +113,33 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     }
     var cit = components.keyIterator();
     while (cit.next()) |c| if (!ifx_comps.contains(c.*)) try out.append(a, try a.print("missing in ifx: component {s}", .{c.*}));
-    // variables, with their types and attributes
+    // the associate names of blocks of SELECT TYPE and RANK: ifx lists
+    // each block's, declared on its SELECT's line, in the order of the
+    // blocks (#715)
+    var claimed: std.StringHashMapUnmanaged(void) = .empty;
+    for (objs, 0..) |o, i| {
+        const line = o.select_line orelse continue;
+        try claimed.put(a, try a.print("{s}@{d}", .{ o.name(), line }), {});
+        var n: usize = 0;
+        for (objs[0..i]) |p| if (p.select_line == line and std.mem.eql(u8, p.name(), o.name())) {
+            n += 1;
+        };
+        for (l.symbols) |e| {
+            if (e.declared != line or !std.mem.eql(u8, e.name, o.name())) continue;
+            if (n == 0) break try checkEntry(a, &out, o, e);
+            n -= 1;
+        } else try out.append(a, try a.print("missing in ifx: variable {s}", .{o.fqsn}));
+    }
+    // the other variables, with their types and attributes
     for (objs) |o| {
-        if (o.kind != 6 or o.group or o.in_interface) continue;
+        if (o.kind != 6 or o.group or o.in_interface or o.select_line != null) continue;
         if (o.parent_kind == 4) {
-            try checkVariable(a, &out, o, l.components, try a.print("{s}.{s}", .{ o.parentName(), o.name() }));
+            try checkVariable(a, &out, o, l.components, try a.print("{s}.{s}", .{ o.parentName(), o.name() }), &claimed);
             continue;
         }
         // a function's result named as the function
         if (std.mem.eql(u8, o.parentName(), o.name())) continue;
-        try checkVariable(a, &out, o, l.symbols, o.name());
+        try checkVariable(a, &out, o, l.symbols, o.name(), &claimed);
     }
     for (l.symbols) |e| {
         if (!has(&.{ "Local", "Dummy", "Param", "Result" }, e.object)) continue;
@@ -153,18 +172,51 @@ test ifxType {
     try std.testing.expect(try ifxType(a, .{ .derived = .{ .name = "SHAPE", .class = true } }, "RECORD"));
 }
 
+test "each block's associate name with its own block's entry (#715)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ifx 2026.2.0, tests/fortran/select_rank.f90 (an excerpt)
+    const l = try listing.parse(a,
+        \\SYMBOL CROSS REFERENCE
+        \\ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References
+        \\ A                          Dummy  7        R(4)            4     1     1        ARG,IN           11
+        \\ R                          Local  11       R(4)            4           scalar                    13
+        \\ R                          Local  11       R(4)            4     2     1                         15
+        \\
+    );
+    var objs = [_]zfls_side.Object{
+        .{ .kind = 6, .fqsn = "m::s::a", .group = false, .parent_kind = 2, .declaration = "REAL, DIMENSION(..), INTENT(IN) :: a" },
+        .{ .kind = 6, .fqsn = "m::s::#select1::#select2::r", .group = false, .parent_kind = 10, .declaration = "REAL :: r", .select_line = 11 },
+        .{ .kind = 6, .fqsn = "m::s::#select1::#select3::r", .group = false, .parent_kind = 10, .declaration = "REAL, DIMENSION(:,:) :: r", .select_line = 11 },
+    };
+    try std.testing.expectEqual(0, (try compare(a, l, &objs)).items.len);
+    // RANK (0)'s name with another block's rank (before #711)
+    objs[1].declaration = "REAL, DIMENSION(:,:) :: r";
+    const d = try compare(a, l, &objs);
+    try std.testing.expectEqual(1, d.items.len);
+    try std.testing.expectEqualStrings("differs: m::s::#select1::#select2::r: rank 2, ifx null", d.items[0]);
+}
+
 fn hasInterfaceVar(objs: []const zfls_side.Object, name: []const u8) bool {
     for (objs) |o| if (o.kind == 6 and std.mem.eql(u8, o.name(), name)) return true;
     return false;
 }
 
+/// The difference of variable `o` and its own entry `e`, if any
+fn checkEntry(a: Allocator, out: *Diffs, o: zfls_side.Object, e: listing.Entry) !void {
+    if (try mismatch(a, o, e)) |why| try out.append(a, try a.print("differs: {s}: {s}", .{ o.fqsn, why }));
+}
+
 /// The entry of `entries` named `name` that agrees best with variable `o`:
-/// a difference when none has its type, rank and attributes
-fn checkVariable(a: Allocator, out: *Diffs, o: zfls_side.Object, entries: []const listing.Entry, name: []const u8) !void {
+/// a difference when none has its type, rank and attributes. `claimed`:
+/// `name@line` of the entries of blocks' associate names, not compared
+fn checkVariable(a: Allocator, out: *Diffs, o: zfls_side.Object, entries: []const listing.Entry, name: []const u8, claimed: *const std.StringHashMapUnmanaged(void)) !void {
     var found = false;
     var why: []const u8 = "";
     for (entries) |e| {
         if (!std.mem.eql(u8, e.name, name)) continue;
+        if (e.declared) |d| if (claimed.contains(try a.print("{s}@{d}", .{ name, d }))) continue;
         if (e.object.len > 0 and !has(&.{ "Local", "Dummy", "Param", "Result" }, e.object)) continue;
         found = true;
         why = try mismatch(a, o, e) orelse return;
