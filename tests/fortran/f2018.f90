@@ -35,4 +35,22 @@ contains
   subroutine after()
     print *, 'after'
   end subroutine after
+
+  ! IMPORT in a BLOCK construct and in contained procedures (#724)
+  subroutine imports()
+    integer, parameter :: wp = kind(1.0d0)
+    real(wp) :: x = 0.0_wp
+    block
+      import, only: wp
+      real(wp) :: y
+      y = 1.0_wp
+    end block
+    print *, x
+    call inner()
+  contains
+    subroutine inner()
+      import, none
+      print *, 'inner'
+    end subroutine inner
+  end subroutine imports
 end module f2018
