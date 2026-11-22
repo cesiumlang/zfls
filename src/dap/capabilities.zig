@@ -13,6 +13,7 @@ const Value = json.Value;
 const session = @import("session.zig");
 const Session = session.Session;
 const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
+const completions = @import("completions.zig");
 
 const Filter = struct { filter: []const u8, label: []const u8, description: []const u8, default: bool };
 
@@ -23,6 +24,8 @@ pub fn engine(s: *Session) struct {
     supportsEvaluateForHovers: bool = true,
     supportsDelayedStackTraceLoading: bool = false,
     supportsExceptionInfoRequest: bool = true,
+    supportsCompletionsRequest: bool = true,
+    completionTriggerCharacters: []const []const u8 = &completions.trigger_characters,
     exceptionBreakpointFilters: [1]Filter,
 } {
     return .{ .exceptionBreakpointFilters = .{.{

@@ -39,6 +39,7 @@ const dap = @import("dap_client.zig");
 const dap_ifx = @import("dap_ifx.zig");
 const dap_engine_capabilities = @import("dap_engine_capabilities.zig");
 const dap_engine_attach = @import("dap_engine_attach.zig");
+const dap_completions = @import("dap_completions.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -197,6 +198,10 @@ fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.E
             return 1;
         };
     }
+    dap_completions.run(io, gpa, .{ .argv = &.{ exe_zfls, "dap" }, .program = grid.exe, .src = grid.src, .dir = tmp, .work_line = lineOf(grid.text, "stop here: work"), .engine = true }) catch |e| {
+        std.debug.print("zfls dap, LLVM Flang's program, completions: {s}\n", .{@errorName(e)});
+        return 1;
+    };
     // ERROR STOP and STOP: one function of Flang's runtime, told apart by
     // its argument
     const stops = (try buildFlang(io, a, fc, env, tmp, "stops")) orelse return 1;
