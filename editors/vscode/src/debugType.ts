@@ -15,7 +15,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { TargetKind } from "./fpm";
 import { FpmProject, buildTarget, debugBuild, findProjects, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
-import { findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
+import { attachGdb, findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
 import { CompilerInfo, adapterArgs, fortranLaunch, parseProcesses } from "./run";
 import { chooseInstalledDebugger, compilerInfo, gdbFor, lldbWanted } from "./runFile";
 import { expandVariables } from "./tools";
@@ -191,7 +191,7 @@ async function attach(
     log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
     return resolved;
   }
-  const gdb = gdbFor(folder?.uri ?? vscode.Uri.file(process.cwd()), undefined);
+  const gdb = attachGdb(config.gdb, () => gdbFor(folder?.uri ?? vscode.Uri.file(process.cwd()), undefined));
   if (!gdb || !(await gdbHasDap(gdb))) {
     void vscode.window.showErrorMessage(
       vscode.l10n.t("zfls: attaching needs zfls's debugger, which needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath.", gdb ?? "gdb"),
@@ -205,7 +205,7 @@ async function attach(
   const resolved = {
     ...config,
     type: DEBUG_TYPE,
-    gdb: typeof config.gdb === "string" && config.gdb ? config.gdb : gdb,
+    gdb,
     // the sources zfls dap indexes, for the module variables
     ...(typeof config.sourceRoot !== "string" && folder ? { sourceRoot: folder.uri.fsPath } : {}),
     ...(typeof config.program === "string" && config.program ? { program: path.resolve(folder?.uri.fsPath ?? "", config.program) } : {}),
