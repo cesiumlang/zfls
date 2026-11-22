@@ -182,6 +182,8 @@ pub const Parser = struct {
             }
             const lr = try helpers.stripLineLabel(a, line);
             line = lr.line;
+            // a statement of blanks only (continuation lines with no text)
+            if (get_full and std.mem.trim(u8, line, " \t\r").len == 0) continue;
             const line_label = lr.label;
             var line_stripped = try helpers.stripStrings(a, line, true);
             var line_no_comment = line;
