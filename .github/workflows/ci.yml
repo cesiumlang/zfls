@@ -476,12 +476,18 @@ jobs:
       # gfortran is the oracle for symbol extraction; the oracle test is
       # skipped where none is available (Windows on Arm). gdb is the
       # debugger of the test of zfls dap with gdb, run where both are
-      # (Linux, Windows x64)
+      # (Linux, Windows x64), and gdbserver its attach to a target; gdb
+      # attaches by process id to a program it did not start when Yama's
+      # ptrace_scope is 0
       - name: gfortran and gdb (Linux)
         if: runner.os == 'Linux'
         run: |
-          if ! command -v gfortran || ! command -v gdb; then
-            sudo apt-get update && sudo apt-get install -y gfortran gdb
+          if ! command -v gfortran || ! command -v gdb || ! command -v gdbserver; then
+            sudo apt-get update && sudo apt-get install -y gfortran gdb gdbserver
+          fi
+          # (a hosted runner's machine; a self-hosted one's is left alone)
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo sysctl -w kernel.yama.ptrace_scope=0
           fi
 
       # (a self-hosted runner: Nix's, which installs nothing on the machine

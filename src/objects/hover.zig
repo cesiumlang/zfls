@@ -282,6 +282,9 @@ pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
             else => null,
         };
         if (kept) |k| if (std.mem.findScalar(C.Kw, ids.items, k) == null) try ids.append(a, k);
+        // a RANK block's name of a POINTER is a TARGET too, as any
+        // associate name of one is (gfortran, ifx; #715)
+        if (id == .pointer and rank_name and std.mem.findScalar(C.Kw, ids.items, .target) == null) try ids.append(a, .target);
     }
     var info = from.keyword_info.*;
     if (slice_rank >= 0) info.dimension = null;

@@ -804,6 +804,14 @@ pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, e
     return c.exprType(expr, scope, line_no, 0);
 }
 
+/// The value of integer constant expression `expr` in `scope` (1-based
+/// `line_no`) as kinds are told: a number, a named constant, an inquiry of
+/// a kind; null when it cannot be told
+pub fn constantValue(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, expr: []const u8, line_no: usize) !?i64 {
+    var c = checker(a, env, ast);
+    return c.kindValue(expr, scope, line_no, 0);
+}
+
 /// `files`: the workspace's; `real10`: the compiler has REAL(10)
 pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool) ![]const Problem {
     const n = file.nLines();

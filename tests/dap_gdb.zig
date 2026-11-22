@@ -10,7 +10,9 @@
 //! a line, setting values, expressions, a Fortran runtime error, stopping
 //! at the start with gdb commands, the program's exit, a stop at ERROR STOP
 //! and none at STOP (tests/dap/stops.f90), a program that a
-//! signal ends (its exit code and the signal named), gdb's own end told, a
+//! signal ends (its exit code and the signal named), gdb's own end told,
+//! breakpoints of conditions, hit conditions and log messages, attaching
+//! by process id and to gdbserver (GDBSERVER names it), a
 //! variable that gdb fails to show beside the others (Flang), and (on
 //! Linux, with script(1)) the program in a terminal (`zig build
 //! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
@@ -34,6 +36,9 @@ const dap = @import("dap_client.zig");
 const dap_lfortran = @import("dap_lfortran.zig");
 const dap_ifx_gdb = @import("dap_ifx_gdb.zig");
 const dap_gfortran = @import("dap_gfortran.zig");
+const dap_gdb_conditions = @import("dap_gdb_conditions.zig");
+const dap_gdb_silent = @import("dap_gdb_silent.zig");
+const dap_gdb_attach = @import("dap_gdb_attach.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -152,7 +157,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "conditions, hit conditions, logpoints", conditions }, .{ "attaching", attaching }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -256,16 +261,6 @@ fn start(io: Io, gpa: Allocator, setup: Setup) !*Client {
     return Client.start(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb });
 }
 
-/// Ends the session and the adapter
-fn end(c: *Client) void {
-    if (c.send("disconnect", .{ .terminateDebuggee = true })) |seq| {
-        _ = c.response(seq, "disconnect") catch {};
-    } else |_| {}
-    c.child.stdin.?.close(c.io);
-    c.child.stdin = null;
-    _ = c.child.wait(c.io) catch {};
-}
-
 fn named(vars: []Value, name: []const u8) !Value {
     for (vars) |x| if (std.mem.eql(u8, str(x, "name") orelse "", name)) return x;
     std.debug.print("FAIL: no {s} among", .{name});
@@ -313,7 +308,7 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     const a = arena.allocator();
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
 
     const caps = try c.request("initialize", .{ .adapterID = "fortran", .clientID = "test", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const filters = items(caps, "exceptionBreakpointFilters");
@@ -343,6 +338,8 @@ fn walkThrough(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(int(stack[0], "line") == setup.work_line, "stopped in work ({?d})", .{int(stack[0], "line")});
     var scopes = items(try c.request("scopes", .{ .frameId = int(stack[0], "id").? }), "scopes");
     _ = try named(scopes, "Module variables");
+    const unknown = try c.request("variables", .{ .variablesReference = 999999 });
+    try check(dap.isArray(unknown, "variables", 0), "an unknown reference: no variables ({f})", .{std.json.fmt(unknown, .{})});
 
     const args = try variables(c, try named(scopes, "Arguments"));
     for (args) |x| try check(!eql(str(x, "name"), "_s"), "no hidden length ({s})", .{str(x, "name").?});
@@ -460,7 +457,7 @@ fn atEntry(io: Io, gpa: Allocator, setup: Setup) !void {
     defer arena.deinit();
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path" });
     const launched = try c.send("launch", .{
         .program = setup.program,
@@ -514,6 +511,22 @@ fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
     try dap_lfortran.errorStop(io, gpa, &.{ setup.zfls, "dap", "--gdb", setup.gdb }, exe, setup.dir);
 }
 
+/// Breakpoints of a condition, a hit condition, a log message
+/// (tests/dap_gdb_conditions.zig)
+fn conditions(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran or setup.compiler == .ifx) return std.debug.print("skipped: gfortran's and Flang's\n", .{});
+    const text = try Io.Dir.cwd().readFileAlloc(io, source, gpa, .limited(1 << 20));
+    defer gpa.free(text);
+    try dap_gdb_conditions.run(io, gpa, .{
+        .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb },
+        .program = setup.program,
+        .src = setup.src,
+        .dir = setup.dir,
+        .loop_line = lineOf(text, "m(:, k) = [10*k, 20*k]"),
+        .main_line = setup.main_line,
+    });
+}
+
 /// gfortran's runtime errors and stops beyond grid.f90's
 /// (tests/dap_gfortran.zig)
 fn gfortranRuntime(io: Io, gpa: Allocator, setup: Setup) !void {
@@ -535,7 +548,7 @@ fn crash(io: Io, gpa: Allocator, setup: Setup) !void {
 
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path" });
     const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir });
     _ = try c.event("initialized");
@@ -566,7 +579,7 @@ fn crash(io: Io, gpa: Allocator, setup: Setup) !void {
 fn gdbEnds(io: Io, gpa: Allocator, setup: Setup) !void {
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path" });
     const launched = try c.send("launch", .{ .program = setup.program, .cwd = setup.dir, .stopAtEntry = true });
     _ = try c.event("initialized");
@@ -624,7 +637,7 @@ fn associated(io: Io, gpa: Allocator, setup: Setup) !void {
 
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir });
     _ = try c.event("initialized");
@@ -643,38 +656,28 @@ fn associated(io: Io, gpa: Allocator, setup: Setup) !void {
     try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
 }
 
-/// A gdb that takes the Debug Adapter Protocol's requests and answers
-/// none: `initialize` fails after the time given (ZFLS_DAP_ANSWER_TIMEOUT),
-/// rather than leaving the client waiting for ever (#374)
+/// A gdb that answers nothing (tests/dap_gdb_silent.zig)
 fn silentGdb(io: Io, gpa: Allocator, setup: Setup) !void {
+    try dap_gdb_silent.run(io, gpa, setup.zfls, setup.dir, setup.environ);
+}
+
+/// Attaching by process id and to gdbserver's program
+/// (tests/dap_gdb_attach.zig); gdbserver is GDBSERVER, else gdb's
+/// neighbor, else the PATH's
+fn attaching(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran or setup.compiler == .ifx) return std.debug.print("skipped: gfortran's and Flang's\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const windows = builtin.target.os.tag == .windows;
-    const fake = try std.Io.Dir.path.join(a, &.{ setup.dir, if (windows) "silent-gdb.cmd" else "silent-gdb" });
-    // gdb 17.2 with Python, as zfls checks; then it reads and says nothing
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake, .data = if (windows)
-        "@echo off\r\nif \"%1\"==\"--version\" (echo GNU gdb 17.2& exit /b 0)\r\nif \"%1\"==\"-nx\" (echo 42& exit /b 0)\r\nmore > nul\r\n"
-    else
-        "#!/bin/sh\ncase \"$1\" in --version) echo 'GNU gdb 17.2'; exit 0;; -nx) echo 42; exit 0;; esac\ncat > /dev/null\n" });
-    if (!windows) try Io.Dir.cwd().setFilePermissions(io, fake, .executable_file, .{});
-    var env = try setup.environ.clone(a);
-    try env.put("ZFLS_DAP_ANSWER_TIMEOUT", "3");
-    const c = try Client.startEnv(io, gpa, &.{ setup.zfls, "dap", "--gdb", fake }, &env);
-    defer c.deinit();
-    c.timeout = .fromSeconds(30);
-    // an adapter that waits for ever is killed, not waited for
-    silentInitialize(c) catch |e| {
-        if (c.child.id != null) c.child.kill(io);
-        return e;
-    };
-    end(c);
-}
-
-fn silentInitialize(c: *Client) !void {
-    const r = try c.response(try c.send("initialize", .{ .adapterID = "fortran", .pathFormat = "path" }), "initialize");
-    const ok = if (get(r, "success")) |v| v == .bool and v.bool else false;
-    try check(!ok and contains(str(r, "message"), "gdb gave no answer to initialize in 3 s"), "initialize failed: {s}", .{str(r, "message") orelse "(no message)"});
+    const text = try Io.Dir.cwd().readFileAlloc(io, "tests/dap/attach.f90", a, .limited(1 << 16));
+    const src = try std.Io.Dir.path.join(a, &.{ setup.dir, "attach.f90" });
+    const exe = try std.Io.Dir.path.join(a, &.{ setup.dir, if (builtin.target.os.tag == .windows) "attach.exe" else "attach" });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = src, .data = text });
+    try build(io, a, setup, src, exe, &.{});
+    const p: dap_gdb_attach.Program = .{ .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb }, .program = exe, .src = src, .dir = setup.dir, .line = lineOf(text, "stop here") };
+    try dap_gdb_attach.byProcessId(io, gpa, p);
+    const server = if (setup.environ.get("GDBSERVER")) |g| g else if (std.Io.Dir.path.dirname(setup.gdb)) |d| try std.Io.Dir.path.join(a, &.{ d, if (builtin.target.os.tag == .windows) "gdbserver.exe" else "gdbserver" }) else "gdbserver";
+    try dap_gdb_attach.byTarget(io, gpa, p, server);
 }
 
 /// The program's input and output in a terminal, which script(1) gives a
@@ -692,7 +695,7 @@ fn terminal(io: Io, gpa: Allocator, setup: Setup) !void {
 
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .supportsRunInTerminalRequest = true });
     const launched = try c.send("launch", .{ .program = reader_exe, .cwd = setup.dir, .console = "integratedTerminal" });
     const asked = try c.adapterRequest();
@@ -752,7 +755,7 @@ fn wideCharacters(io: Io, gpa: Allocator, setup: Setup) !void {
 
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir });
     _ = try c.event("initialized");
@@ -839,7 +842,7 @@ fn commonBlocks(io: Io, gpa: Allocator, setup: Setup) !void {
 
     const c = try start(io, gpa, setup);
     defer c.deinit();
-    defer end(c);
+    defer c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsVariableType = true });
     const launched = try c.send("launch", .{ .program = exe, .cwd = setup.dir, .sourceRoot = setup.dir });
     _ = try c.event("initialized");
