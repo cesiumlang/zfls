@@ -101,6 +101,7 @@ pub const DiagCode = enum {
     declared_twice,
     masks_parent,
     import_outside_interface,
+    import_excludes_name,
     module_not_found,
     use_after_implicit,
     deferred_not_implemented,

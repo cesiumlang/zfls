@@ -410,6 +410,7 @@
               "declared-twice",
               "masks-parent",
               "import-outside-interface",
+              "import-excludes-name",
               "module-not-found",
               "use-after-implicit",
               "deferred-not-implemented",
