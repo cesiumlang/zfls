@@ -28,6 +28,7 @@ const sysinfo = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const lsp = @import("lsp_client");
+const zfls_mod = @import("zfls");
 const util = @import("oracle_util.zig");
 const listing = @import("ifx_oracle/listing.zig");
 const zfls_side = @import("oracle_zfls.zig");
@@ -279,12 +280,19 @@ fn mismatch(a: Allocator, o: zfls_side.Object, e: listing.Entry) !?[]const u8 {
     return null;
 }
 
+/// The options whose Linux spelling is not the rule's (`-real-size 64`)
+const linux_spellings = [_][2][]const u8{.{ "/Qcoarray:", "-coarray=" }};
+
 /// A fixture's ifx options, written as on Windows (`/real-size:64`): on
 /// Linux `-real-size 64`
 fn ifxArgs(a: Allocator, args: []const []const u8) ![]const []const u8 {
     if (is_windows) return args;
     var out: std.ArrayList([]const u8) = .empty;
-    for (args) |x| {
+    next: for (args) |x| {
+        for (linux_spellings) |sp| if (std.mem.startsWith(u8, x, sp[0])) {
+            try out.append(a, try std.mem.concat(a, u8, &.{ sp[1], x[sp[0].len..] }));
+            continue :next;
+        };
         if (x.len < 2 or x[0] != '/') {
             try out.append(a, x);
             continue;
@@ -299,12 +307,13 @@ fn ifxArgs(a: Allocator, args: []const []const u8) ![]const []const u8 {
 test ifxArgs {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const got = try ifxArgs(arena.allocator(), &.{ "/real-size:64", "/fpp" });
+    const got = try ifxArgs(arena.allocator(), &.{ "/real-size:64", "/fpp", "/Qcoarray:single" });
     if (is_windows) return;
-    try std.testing.expectEqual(@as(usize, 3), got.len);
+    try std.testing.expectEqual(@as(usize, 4), got.len);
     try std.testing.expectEqualStrings("-real-size", got[0]);
     try std.testing.expectEqualStrings("64", got[1]);
     try std.testing.expectEqualStrings("-fpp", got[2]);
+    try std.testing.expectEqualStrings("-coarray=single", got[3]);
 }
 
 fn findIfx(io: Io, a: Allocator, env: *const std.process.Environ.Map) !?[]const u8 {
@@ -342,6 +351,9 @@ pub fn main(init: std.process.Init) !u8 {
     const version = try util.run(io, a, &.{ ifx, "--version" }, null, &ifx_env);
     var first = std.mem.splitScalar(u8, version.stdout, '\n');
     std.debug.print("ifx: {s} ({s})\n", .{ ifx, std.mem.trim(u8, first.next() orelse "?", " \r") });
+    // the intrinsic modules of conda-forge's ifx, which its driver does
+    // not look in
+    const modules = try zfls_mod.compilers_intel.moduleDir(io, a, ifx);
     const fixtures = paths.items.len == 0;
     if (fixtures) try paths.appendSlice(a, &.{ "tests/fortran", "tests/ifx" });
     const files = try util.collect(io, a, paths.items, isFortran);
@@ -363,6 +375,7 @@ pub fn main(init: std.process.Init) !u8 {
         const ext = std.Io.Dir.path.extension(src);
         const ext_lower = try std.ascii.allocLowerString(a, ext);
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, if (is_windows) "/fpp" else "-fpp");
+        if (modules) |m| try cmd.appendSlice(a, if (is_windows) &.{try a.print("/I{s}", .{m})} else &.{ "-I", m });
         try cmd.appendSlice(a, try ifxArgs(a, try util.headerArgs(a, text, "oracle-ifx-args:")));
         try cmd.append(a, abs);
         const r = try util.run(io, a, cmd.items, workdir, &ifx_env);

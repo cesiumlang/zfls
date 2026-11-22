@@ -109,6 +109,8 @@ pub const Interface = struct {
 
 pub const Associate = struct {
     links: std.ArrayList(AssocLink) = .empty,
+    /// a CHANGE TEAM construct, whose associations are its coarrays'
+    change_team: bool = false,
 };
 
 pub const Select = struct {
