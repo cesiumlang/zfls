@@ -147,7 +147,8 @@
         "fileMatch": [
           ".fortlsrc",
           ".fortls.json",
-          ".fortls"
+          ".fortls",
+          "**/zfls/config.json"
         ],
         "url": "./schemas/fortls.schema.json"
       }
