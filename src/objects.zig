@@ -697,7 +697,8 @@ pub const Obj = struct {
     pub fn isGuardName(self: *const Obj) bool {
         if (self.kind != .variable or self.varDataConst().link_name != null) return false;
         const p = self.parent orelse return false;
-        return p.kind == .select and p.selectDataConst().select_type == 3;
+        // made by the guard's statement, not declared in its block
+        return p.kind == .select and p.selectDataConst().select_type == 3 and self.sline == p.sline;
     }
 
     pub fn isTypeBinding(self: *const Obj) bool {

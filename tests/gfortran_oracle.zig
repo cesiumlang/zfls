@@ -158,6 +158,8 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
     var records: std.StringHashMapUnmanaged([]const types.Component) = .empty;
     const Pending = struct { fq: []const u8, name: []const u8 };
     var structures: std.ArrayList(Pending) = .empty;
+    // the temporaries of a namespace's listing not yet given a name
+    var unnamed: guards.Unnamed = .{};
     var i: usize = 0;
     while (i < lines.items.len) {
         const line = lines.items[i];
@@ -232,10 +234,11 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             const in_parent = try a.print("{s}::{s}", .{ parent, name });
             if (out.entities.contains(in_parent) and !tokens.contains("CONTAINED")) try tokens.put(a, "USED-IN-SUBMODULE", {});
         }
-        if (guards.isTemp(name) and tokens.contains("SELECT-TYPE-TEMPORARY")) {
-            try out.temps.append(a, .{ .ns = ns, .name = name, .v = types.varOf(block) });
-            continue;
-        }
+        if (tokens.contains("SELECT-TYPE-TEMPORARY")) {
+            const temp = guards.isTemp(name);
+            try unnamed.symbol(a, &out.temps, indentOf(line), block, if (temp) .{ .ns = ns, .name = name, .v = types.varOf(block) } else null, name);
+            if (temp) continue;
+        } else try unnamed.symbol(a, &out.temps, indentOf(line), block, null, null);
         const skip = from_host or
             std.mem.startsWith(u8, name, "_") or
             // gfortran's own procedures (`__copy_character_1`)
@@ -523,6 +526,41 @@ pub fn main(init: std.process.Init) !u8 {
 
 test {
     _ = guards;
+}
+
+test "the temporaries of type guards take the associate name listed after them" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // gfortran before 16: the temporaries' names have no associate name
+    const g = try gfortranEntities(arena.allocator(),
+        \\Namespace: A-Z: (UNKNOWN 0)
+        \\procedure name = m
+        \\  procedure name = s
+        \\    symtree: 'items'       || symbol: 'items'
+        \\      type spec : (CLASS __class_m_Base_t_1_0t)
+        \\      attributes: (VARIABLE  DUMMY(IN) CLASS-OK)
+        \\    code:
+        \\    SELECT TYPE  it = s:items % _data(FULL)
+        \\      symtree: '__tmp_type_base_t'|| symbol: '__tmp_type_base_t'
+        \\        type spec : (DERIVED base_t)
+        \\        attributes: (VARIABLE  DIMENSION POINTER TARGET SELECT-TYPE-TEMPORARY ASSOCIATE-VAR HOST-ASSOC)
+        \\        Array spec:(1 [0] AS_DEFERRED () () )
+        \\      symtree: 'it'          || symbol: 'it'
+        \\        type spec : (CLASS __class_m_Base_t_1_0p)
+        \\        attributes: (VARIABLE  SELECT-TYPE-TEMPORARY ASSOCIATE-VAR CLASS-OK)
+        \\      SELECT CASE x
+        \\    SELECT TYPE
+        \\      symtree: '__tmp_REAL_8'|| symbol: '__tmp_REAL_8'
+        \\        type spec : (REAL 8)
+        \\        attributes: (VARIABLE  SELECT-TYPE-TEMPORARY ASSOCIATE-VAR HOST-ASSOC)
+        \\      symtree: 'size'        || symbol: 'size'
+        \\        attributes: (PROCEDURE INTRINSIC-PROC)
+        \\      SELECT CASE y
+    );
+    try std.testing.expectEqual(2, g.temps.items.len);
+    try std.testing.expectEqualStrings("it", g.temps.items[0].assoc);
+    try std.testing.expectEqual(1, g.temps.items[0].v.rank);
+    try std.testing.expectEqualStrings("", g.temps.items[1].assoc);
 }
 
 test "dump parsing" {

@@ -3,7 +3,8 @@
 //! the selector's declared type, a CLASS, whose rank the oracle does not
 //! compare; in each TYPE IS and CLASS IS block the name is a temporary of
 //! the guard's type and the selector's rank: `__tmp_type_child_t_it`,
-//! `__tmp_class_child_t_it`, `__tmp_REAL_8_x`, `__tmp_CHARACTER_0_1_x`.
+//! `__tmp_class_child_t_it`, `__tmp_REAL_8_x`, `__tmp_CHARACTER_0_1_x`
+//! (gfortran 16; before, without the name: `__tmp_type_child_t`).
 //! Each of zfls's declarations of a name must agree with gfortran's symbol
 //! of it or with one of its temporaries.
 
@@ -12,12 +13,51 @@ const Allocator = std.mem.Allocator;
 const types = @import("types.zig");
 const oz = @import("../oracle_zfls.zig");
 
-/// A temporary of a type guard: in namespace `ns`, of name `name`
-pub const Temp = struct { ns: []const u8, name: []const u8, v: types.Var };
+/// A temporary of a type guard: in namespace `ns`, of name `name`, of
+/// associate name `assoc` ("" when the dump did not tell)
+pub const Temp = struct { ns: []const u8, name: []const u8, v: types.Var, assoc: []const u8 = "" };
 
 pub fn isTemp(name: []const u8) bool {
     return std.mem.startsWith(u8, name, "__tmp_");
 }
+
+/// Whether `t` is a temporary of name `assoc` in namespace `ns`: by the
+/// associate name listed after it, or by its own name, gfortran 16's
+fn isOf(t: Temp, ns: []const u8, assoc: []const u8) bool {
+    if (!std.mem.eql(u8, t.ns, ns)) return false;
+    if (t.assoc.len > 0) return std.mem.eql(u8, t.assoc, assoc);
+    // a temporary of `it` ends in `_it` (and so might one of `my_it`)
+    return std.mem.endsWith(u8, t.name, assoc) and t.name.len > assoc.len and t.name[t.name.len - assoc.len - 1] == '_';
+}
+
+/// The temporaries of the namespace whose symbols the dump lists, until
+/// the associate name they are of: the listing is in alphabetical order,
+/// the temporaries first, and ends at a line no deeper than its symbols
+pub const Unnamed = struct {
+    indent: usize = 0,
+    temps: std.ArrayList(usize) = .empty,
+
+    /// Symbol `name` at `indent`, with its detail lines `block`: temporary
+    /// `temp`, associate name `assoc`, or another one (both null)
+    pub fn symbol(u: *Unnamed, a: Allocator, all: *std.ArrayList(Temp), indent: usize, block: []const []const u8, temp: ?Temp, assoc: ?[]const u8) !void {
+        if (indent != u.indent) u.temps.clearRetainingCapacity();
+        u.indent = indent;
+        if (temp) |t| {
+            try u.temps.append(a, all.items.len);
+            try all.append(a, t);
+        } else if (assoc) |n| {
+            for (u.temps.items) |k| all.items[k].assoc = n;
+            u.temps.clearRetainingCapacity();
+        }
+        for (block) |b| {
+            const deeper = std.mem.findNone(u8, b, " \t\r") orelse continue;
+            if (deeper <= indent) {
+                u.temps.clearRetainingCapacity();
+                break;
+            }
+        }
+    }
+};
 
 /// How zfls's declaration `decl` differs from temporary `v`: in type or
 /// rank. gfortran makes its temporaries POINTER and TARGET whatever the
@@ -44,10 +84,8 @@ pub fn check(a: Allocator, diffs: *std.ArrayList([]const u8), vars: *const std.S
     while (it.next()) |e| {
         const key = e.key_ptr.*;
         const sep = std.mem.findLast(u8, key, "::") orelse continue;
-        const suffix = try a.print("_{s}", .{key[sep + 2 ..]});
         var mine: std.ArrayList(types.Var) = .empty;
-        // a temporary of `it` ends in `_it` (and so might one of `my_it`)
-        for (temps) |t| if (std.mem.eql(u8, t.ns, key[0..sep]) and std.mem.endsWith(u8, t.name, suffix)) try mine.append(a, t.v);
+        for (temps) |t| if (isOf(t, key[0..sep], key[sep + 2 ..])) try mine.append(a, t.v);
         if (mine.items.len == 0) continue;
         for (e.value_ptr.items) |decl| {
             var why: []const u8 = "";
@@ -74,8 +112,7 @@ pub fn names(a: Allocator, temps: []const Temp, decls: *const std.StringHashMapU
     var it = decls.keyIterator();
     while (it.next()) |k| {
         const sep = std.mem.findLast(u8, k.*, "::") orelse continue;
-        const suffix = try a.print("_{s}", .{k.*[sep + 2 ..]});
-        for (temps) |t| if (std.mem.eql(u8, t.ns, k.*[0..sep]) and std.mem.endsWith(u8, t.name, suffix)) {
+        for (temps) |t| if (isOf(t, k.*[0..sep], k.*[sep + 2 ..])) {
             try out.put(a, k.*, {});
             break;
         };

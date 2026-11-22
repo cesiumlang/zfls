@@ -96,7 +96,9 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             } else if (self.isGuardName()) {
                 // a TYPE IS or CLASS IS name: the selector's rank and
                 // attributes, the guard's type (#701)
+                // (in code being edited the block may be in no SELECT TYPE)
                 const c = construct orelse return;
+                if (!c.isTypeBinding()) return;
                 const text = c.selectDataConst().bound_var orelse return;
                 if (try selectorVariable(env, c, text)) |o| if (o.kind == .variable) {
                     v.selector_obj = o;

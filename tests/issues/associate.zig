@@ -221,3 +221,17 @@ test "SELECT TYPE: TYPE IS and CLASS IS names have the selector's rank and the g
     // an intrinsic guard's name is of that type, not a derived one
     try w.expectNoDiagnostics("t.f90");
 }
+
+test "a type guard outside SELECT TYPE, with a declaration in it, as while editing (#701)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\subroutine s(a)
+        \\  class(*) :: a
+        \\  type is (real)
+        \\    real :: v
+        \\    print *, v
+        \\end subroutine
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "v\n", 1, 0), "REAL :: v");
+}
