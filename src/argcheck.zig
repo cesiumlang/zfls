@@ -18,6 +18,7 @@ const typing = @import("argcheck/typing.zig");
 const default_kinds = @import("default_kinds.zig");
 const unit_kinds = @import("argcheck/unit_kinds.zig");
 const ignore_tkr = @import("argcheck/ignore_tkr.zig");
+const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
 const Typed = typing.Typed;
 const numeric = typing.numeric;
@@ -73,7 +74,7 @@ pub fn rankOf(dims: ?[]const u8) ?usize {
 fn wholeArrayRank(actual: []const u8, typed: Typed) ?usize {
     if (!typed.designator or std.mem.findScalar(u8, actual, '(') != null) return null;
     const v = typed.obj orelse return null;
-    return rankOf(v.keyword_info.dimension);
+    return rankOf(dimensions.of(v));
 }
 
 pub const Problem = struct { line: usize, start: usize, end: usize, message: []const u8, kind: Kind };
@@ -548,7 +549,9 @@ pub const Checker = struct {
             else
                 (try c.lookup(scope, name, line_no)) orelse return null;
             if (obj.kind != .variable or obj.linkObj() != null) return null;
-            const is_array = obj.hasKeyword(KW.dimension) or obj.keyword_info.dimension != null;
+            // a TYPE IS or CLASS IS name: its selector's or section's (#707)
+            const obj_dims = dimensions.of(obj);
+            const is_array = obj_dims != null or (obj.hasKeyword(KW.dimension) and obj.varDataConst().slice_rank < 0);
             while (i < e.len and e[i] == ' ') i += 1;
             var subscripted = false;
             // subscripts, then a substring
@@ -566,7 +569,7 @@ pub const Checker = struct {
             }
             if (is_array and !subscripted) {
                 array = true;
-                rank = @max(rank, rankOf(obj.keyword_info.dimension) orelse 0);
+                rank = @max(rank, rankOf(obj_dims) orelse 0);
             }
             v = obj;
             if (i < e.len and e[i] == '%') {
