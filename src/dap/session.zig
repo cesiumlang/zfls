@@ -74,6 +74,7 @@ const show = variables.show;
 const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
 const choice = @import("choice.zig");
+const capabilities = @import("capabilities.zig");
 const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
@@ -162,6 +163,9 @@ pub const Session = struct {
     client_init: []u8 = "",
     /// Why the default debugger did not start at `initialize` (`gpa`'s)
     gdb_error: ?[]u8 = null,
+    /// The capabilities another debugger gave the client at `initialize`
+    /// (JSON, `gpa`'s), until the engine's replace them (capabilities.zig)
+    given_capabilities: []u8 = "",
     /// The gdb backend's state (gdb.zig)
     g: gdb.State = .{},
     /// Windows's Debugger Engine, once `engine_ready`
@@ -350,6 +354,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         gdb.deinit(&s);
         if (s.client_init.len > 0) gpa.free(s.client_init);
         if (s.gdb_error) |e| gpa.free(e);
+        if (s.given_capabilities.len > 0) gpa.free(s.given_capabilities);
         var it = s.breakpoints.iterator();
         while (it.next()) |kv| {
             gpa.free(kv.key_ptr.*);
@@ -459,6 +464,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
                 s.engine_ready.store(true, .release);
             }
             s.backend = .dbgeng;
+            try capabilities.toEngine(s, a);
             return handleEngine(s, a, req);
         }
         // the configuration's debugger, when another than the one started
@@ -514,19 +520,7 @@ fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         if (!is_windows) return s.fail(a, req, why);
         s.gdb_error = try s.gpa.dupe(u8, why);
     }
-    s.respond(a, req, .{
-        .supportsConfigurationDoneRequest = true,
-        .supportsTerminateRequest = true,
-        .supportsEvaluateForHovers = true,
-        .supportsDelayedStackTraceLoading = false,
-        .supportsExceptionInfoRequest = true,
-        .exceptionBreakpointFilters = &[_]struct { filter: []const u8, label: []const u8, description: []const u8, default: bool }{.{
-            .filter = runtime_errors_filter,
-            .label = s.text.runtime_errors,
-            .description = s.text.runtime_errors_description,
-            .default = true,
-        }},
-    });
+    s.respond(a, req, capabilities.engine(s));
 }
 
 /// The engine's requests
@@ -566,7 +560,13 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .setBreakpoints => try breakpoints.set(s, a, req, args),
         .setExceptionBreakpoints => try breakpoints.setExceptions(s, a, req, args),
-        .setFunctionBreakpoints => s.respond(a, req, .{ .breakpoints = &[_]u8{} }),
+        .setFunctionBreakpoints => {
+            // none set: one unverified breakpoint for each asked
+            const asked = json.items(json.get(args, "breakpoints"));
+            const none = try a.alloc(struct { verified: bool, message: []const u8 }, asked.len);
+            @memset(none, .{ .verified = false, .message = "Windows's Debugger Engine sets no function breakpoints" });
+            s.respond(a, req, .{ .breakpoints = none });
+        },
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
             .description = if (runtime_errors.isErrorStop(s.last_error)) s.text.error_stop else s.text.runtime_error,
@@ -619,7 +619,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .variables => {
             const ref = json.int(json.get(args, "variablesReference")) orelse 0;
-            if (ref <= 0 or ref > s.nodes.items.len) return s.respond(a, req, .{ .variables = &[_]u8{} });
+            if (ref <= 0 or ref > s.nodes.items.len) return s.respond(a, req, .{ .variables = &[_]Value{} });
             const node = s.nodes.items[@intCast(ref - 1)];
             s.respond(a, req, .{ .variables = try children(s, a, node) });
         },
