@@ -34,6 +34,8 @@ const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const gdb_values = @import("gdb_values.zig");
 const capabilities = @import("capabilities.zig");
+const gdb_completions = @import("gdb_completions.zig");
+const completions = @import("completions.zig");
 const Variable = vars.Variable;
 
 /// gdb's exception breakpoint filters of Ada, of no use to Fortran
@@ -65,7 +67,14 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         }
         var o = body.object;
         try o.put(a, "supportsExceptionInfoRequest", .{ .bool = true });
-        if (!s.g.lldb) try o.put(a, "supportsSetVariable", .{ .bool = true });
+        if (!s.g.lldb) {
+            try o.put(a, "supportsSetVariable", .{ .bool = true });
+            // `%`: a component's names (gdb_completions.zig)
+            var chars: json.Array = .init(a);
+            try chars.appendSlice(json.items(o.get("completionTriggerCharacters")));
+            for (completions.trigger_characters) |c| try chars.append(.{ .string = c });
+            try o.put(a, "completionTriggerCharacters", .{ .array = chars });
+        }
         try o.put(a, "exceptionBreakpointFilters", .{ .array = filters });
         r.object.getPtr("body").?.* = .{ .object = o };
         // for the engine's, should a launch choose it
@@ -94,6 +103,9 @@ fn forGdbInitialize(s: *Session, a: Allocator, args: ?Value) !Value {
     // the adapter's `variables` with `start` and `count`, which gdb ignores
     // otherwise: children one at a time (gdb_children.zig)
     try o.put(a, "supportsVariablePaging", .{ .bool = true });
+    // the values' types, by which the adapter shows them as Fortran (a
+    // CLASS object's wrapper), whether the client shows them or not
+    try o.put(a, "supportsVariableType", .{ .bool = true });
     return .{ .object = o };
 }
 
@@ -259,7 +271,7 @@ fn killTerminal(s: *Session) void {
 pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
-    const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, disconnect, terminate };
+    const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, completions, disconnect, terminate };
     if (s.g.lldb) try lldb.afterEntry(s, a) else try gdb_entry.afterEntry(s, a);
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
         for (resuming) |r| if (std.mem.eql(u8, r, command)) vars.clear(s);
@@ -269,7 +281,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     // lldb reads no Fortran: its own variables and expressions
     if (s.g.lldb) switch (cmd) {
         .variables => if (s.g.lfortran) return lldb.variables(s, a, req, args) else return gdb.forward(s, a, req, args),
-        .scopes, .evaluate, .setVariable => return gdb.forward(s, a, req, args),
+        .scopes, .evaluate, .setVariable, .completions => return gdb.forward(s, a, req, args),
         else => {},
     };
     switch (cmd) {
@@ -333,6 +345,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         },
         .evaluate => try evaluate(s, a, req, args),
         .setVariable => try setVariable(s, a, req, args),
+        .completions => try gdb_completions.complete(s, a, req, args),
         .disconnect, .terminate => {
             s.g.stopping = true;
             const r = try gdb.request(s, a, command, args orelse Value.null);
@@ -465,7 +478,7 @@ fn scopes(s: *Session, a: Allocator, frame: ?i64, r: Value) !void {
 
 /// The module variables a line of a file sees, from zfls's index of the
 /// sources (the launch's `sourceRoot`, else its `cwd`)
-fn moduleVariablesAt(s: *Session, a: Allocator, file: []const u8, line: i64) ![]vars.ModuleVariable {
+pub fn moduleVariablesAt(s: *Session, a: Allocator, file: []const u8, line: i64) ![]vars.ModuleVariable {
     indexed(s, a);
     const srv = s.server orelse return &.{};
     const items = srv.dispatchPublic(a, "zfls/moduleVariables", try json.from(a, .{

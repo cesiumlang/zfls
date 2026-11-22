@@ -12,7 +12,8 @@
 //! and none at STOP (tests/dap/stops.f90), a program that a
 //! signal ends (its exit code and the signal named), gdb's own end told,
 //! breakpoints of conditions, hit conditions and log messages, attaching
-//! by process id and to gdbserver (GDBSERVER names it), a
+//! by process id and to gdbserver (GDBSERVER names it), the Debug
+//! Console's completions, a
 //! variable that gdb fails to show beside the others (Flang), and (on
 //! Linux, with script(1)) the program in a terminal (`zig build
 //! test-dap-gdb`). Skipped without the compiler or a gdb of the Debug
@@ -39,6 +40,7 @@ const dap_gfortran = @import("dap_gfortran.zig");
 const dap_gdb_conditions = @import("dap_gdb_conditions.zig");
 const dap_gdb_silent = @import("dap_gdb_silent.zig");
 const dap_gdb_attach = @import("dap_gdb_attach.zig");
+const dap_completions = @import("dap_completions.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -157,7 +159,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "conditions, hit conditions, logpoints", conditions }, .{ "attaching", attaching }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "conditions, hit conditions, logpoints", conditions }, .{ "attaching", attaching }, .{ "completions", completing }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -654,6 +656,12 @@ fn associated(io: Io, gpa: Allocator, setup: Setup) !void {
     _ = try c.request("continue", .{ .threadId = thread });
     const exited = get(try c.event("exited"), "body").?;
     try check(int(exited, "exitCode") == 0, "the program exited with 0 ({?d})", .{int(exited, "exitCode")});
+}
+
+/// The Debug Console's completions (tests/dap_completions.zig)
+fn completing(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran or setup.compiler == .ifx) return std.debug.print("skipped: gfortran's and Flang's\n", .{});
+    try dap_completions.run(io, gpa, .{ .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb }, .program = setup.program, .src = setup.src, .dir = setup.dir, .work_line = setup.work_line, .engine = false });
 }
 
 /// A gdb that answers nothing (tests/dap_gdb_silent.zig)

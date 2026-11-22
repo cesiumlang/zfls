@@ -141,7 +141,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
     const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran, Flang and ifx oracles, stress test, zfls dap with the engine, gdb and lldb-dap, the compiler check)");
-    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false, needs_kit: bool = false };
+    const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false, windows_only: bool = false, needs_kit: bool = false };
     const tools = [_]Tool{
         .{
             .name = "gfortran_oracle",
@@ -217,6 +217,15 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .desc = "Run zfls on standard streams opened for overlapped I/O (Windows only)",
             .needs_fortls = false,
             .in_test = true,
+            .windows_only = true,
+        },
+        .{
+            .name = "cancel_request",
+            .root = "tests/cancel_request.zig",
+            .step = "test-cancel",
+            .desc = "Cancel a running request and one waiting behind it ($/cancelRequest)",
+            .needs_fortls = false,
+            .in_test = true,
         },
         .{
             .name = "bench_workspace",
@@ -259,7 +268,8 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
         if (t.step != null) all.dependOn(&run.step);
         // quick, and needs nothing installed: also part of `zig build test`
-        if (t.in_test and b.graph.host.result.os.tag == .windows and mod.resolved_target.?.result.os.tag == .windows) test_step.dependOn(&run.step);
+        const native = b.graph.host.result.os.tag == target.os.tag and b.graph.host.result.cpu.arch == target.cpu.arch;
+        if (t.in_test and native and (!t.windows_only or target.os.tag == .windows)) test_step.dependOn(&run.step);
     }
 
     const Script = struct { step: []const u8, desc: []const u8, script: []const u8, needs_fortls: bool };
