@@ -141,7 +141,8 @@ pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
     // case's rank (#706)
     if (R().SELECT_RANK.match(line) != null) {
         const rest = std.mem.trimStart(u8, std.mem.trimStart(u8, line, " ")["rank".len..], " ");
-        const rank = if (rest[0] == '(') str.strip(rest[1..std.mem.findScalar(u8, rest, ')').?]) else null;
+        const close = helpers.findParenMatch(rest[1..]);
+        const rank = if (rest[0] == '(' and close >= 0) str.strip(rest[1 .. 1 + @as(usize, @intCast(close))]) else null;
         return .{ .select = .{ .type = 5, .binding = null, .desc = null, .rank = rank } };
     }
     return null;
