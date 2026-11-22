@@ -118,6 +118,15 @@ test "the VS Code extension's settings take over from the user's file at start a
     try std.testing.expect(try isLowercase(w));
 }
 
+test "a $schema key in the configuration file is ignored (#794)" {
+    const u = try UserConfig.init("{\"$schema\": \"https://example.org/fortls.schema.json\", \"lowercase_hover\": true}");
+    defer u.deinit();
+    const w = try h.Workspace.init(&program, .{});
+    defer w.deinit();
+    try std.testing.expect(try isLowercase(w));
+    try std.testing.expectEqual(@as(usize, 0), (try w.sentWith("window/showMessage")).len);
+}
+
 test "no user's configuration file: no message, the defaults (#271)" {
     const u = try UserConfig.init(null);
     defer u.deinit();
