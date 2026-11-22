@@ -248,3 +248,59 @@ test "argument checking takes a CLASS DEFAULT name's rank and the selector's typ
         "36: Argument r of takes_r: real expected, derived given",
     });
 }
+
+test "SELECT RANK: a case's rank given by a named constant (#717)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "consts.f90", .text =
+        \\module consts
+        \\  implicit none
+        \\  integer, parameter :: three = 3
+        \\end module
+        \\
+        },
+        .{ .name = "t.f90", .text =
+        \\module m
+        \\  use consts, only: three
+        \\  implicit none
+        \\  integer, parameter :: zero = 0, two = 2
+        \\contains
+        \\  subroutine takes_s(x)
+        \\    real, intent(in) :: x
+        \\  end subroutine
+        \\  subroutine takes_m(v)
+        \\    real, intent(in) :: v(:,:)
+        \\  end subroutine
+        \\  subroutine t(z)
+        \\    real, intent(in) :: z(..)
+        \\    integer, parameter :: one = 1
+        \\    select rank (w => z)
+        \\    rank (zero)
+        \\      call takes_s(w)
+        \\    rank (one)
+        \\      call takes_s(w)
+        \\    rank (two)
+        \\      call takes_s(w)
+        \\      call takes_m(w)
+        \\    rank (three)
+        \\      print *, w(1, 1, 1)
+        \\    end select
+        \\  end subroutine
+        \\end module
+        \\
+        },
+    }, .{});
+    defer w.deinit();
+    const want = [_]struct { []const u8, []const u8 }{
+        .{ "w)\n    rank (one)", "REAL :: w" },
+        .{ "w)\n    rank (two)", "REAL, DIMENSION(:) :: w" },
+        .{ "w)\n      call takes_m", "REAL, DIMENSION(:,:) :: w" },
+        .{ "w(1, 1, 1)", "REAL, DIMENSION(:,:,:) :: w" },
+    };
+    for (want) |c| try w.expectHoverContains("t.f90", w.pos("t.f90", c[0], 0, 0), c[1]);
+    // gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 report lines 19 and 21
+    // alone: "Rank mismatch in argument 'x' at (1) (scalar and rank-1)"
+    try w.expectDiagnostics("t.f90", &.{
+        "19: Argument x of takes_s: a scalar expected, an array given",
+        "21: Argument x of takes_s: a scalar expected, an array given",
+    });
+}
