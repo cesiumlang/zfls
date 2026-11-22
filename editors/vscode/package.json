@@ -928,7 +928,7 @@
           "markdownDescription": "%config.zfls.linter.lintOnType.markdownDescription%"
         },
         "zfls.linter.lintOnTypeDelay": {
-          "type": "number",
+          "type": "integer",
           "default": 1000,
           "minimum": 0,
           "scope": "resource",
@@ -1483,16 +1483,6 @@
             }
           }
         },
-        "initialConfigurations": [
-          {
-            "type": "fortran",
-            "request": "launch",
-            "name": "Debug Fortran program",
-            "program": "${workspaceFolder}/a.out",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-          }
-        ],
         "configurationSnippets": [
           {
             "label": "%debugger.fortran.snippet.0.label%",
