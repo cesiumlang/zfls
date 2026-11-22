@@ -2,7 +2,8 @@
 //! their arguments (#273): go to definition and implementation, hover,
 //! signature help, inlay hints and call hierarchy take the specific
 //! procedure the call references, and today's choice (the first that takes
-//! as many arguments) when the arguments do not tell.
+//! as many arguments) when the arguments do not tell; an argument's rank
+//! is that of its section or element (#718).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -152,6 +153,78 @@ test "hover, signature help and inlay hints on a call of a generic take the spec
         }
     }
     try std.testing.expectEqual(@as(usize, 2), found);
+}
+
+const sections =
+    \\module ranks
+    \\  implicit none
+    \\  type :: box
+    \\    real :: arr(4)
+    \\  end type
+    \\  interface g
+    \\    module procedure g_s, g_v, g_m
+    \\  end interface
+    \\contains
+    \\  subroutine g_s(x)
+    \\    real, intent(in) :: x
+    \\  end subroutine
+    \\  subroutine g_v(v)
+    \\    real, intent(in) :: v(:)
+    \\  end subroutine
+    \\  subroutine g_m(w)
+    \\    real, intent(in) :: w(:,:)
+    \\  end subroutine
+    \\end module
+    \\program p
+    \\  use ranks
+    \\  implicit none
+    \\  real :: a2(10, 3), a3(2, 3, 4), v(5)
+    \\  integer :: idx(2)
+    \\  type(box) :: bs(3)
+    \\  a2 = 0
+    \\  a3 = 0
+    \\  v = 0
+    \\  idx = [1, 2]
+    \\  call g(a2(:, 2))
+    \\  call g(a2(1, :))
+    \\  call g(a2(1, 2))
+    \\  call g(a2(idx, 2))
+    \\  call g(a2(idx, :))
+    \\  call g(a3(:, :, 1))
+    \\  call g(a3(1, :, 2))
+    \\  call g(a3(1, 1, 1))
+    \\  call g(v(2:3))
+    \\  call g(v(2))
+    \\  call g(a2)
+    \\  call g(a2(:, :))
+    \\  call g(bs%arr(1))
+    \\  call g(bs(2)%arr)
+    \\  call g(a2 * 2.0)
+    \\end program
+    \\
+;
+
+test "a call of a generic takes the rank of a section or element (#718)" {
+    const w = try h.Workspace.init(&.{.{ .name = "m.f90", .text = sections }}, .{});
+    defer w.deinit();
+    // the specifics gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 pick
+    const want = [_]struct { []const u8, i64 }{
+        .{ "g(a2(:, 2))", 13 },    .{ "g(a2(1, :))", 13 },    .{ "g(a2(1, 2))", 10 },
+        .{ "g(a2(idx, 2))", 13 },  .{ "g(a2(idx, :))", 16 },  .{ "g(a3(:, :, 1))", 16 },
+        .{ "g(a3(1, :, 2))", 13 }, .{ "g(a3(1, 1, 1))", 10 }, .{ "g(v(2:3))", 13 },
+        .{ "g(v(2))", 10 },        .{ "g(a2)", 16 },          .{ "g(a2(:, :))", 16 },
+        .{ "g(bs%arr(1))", 13 },   .{ "g(bs(2)%arr)", 13 },   .{ "g(a2 * 2.0)", 16 },
+    };
+    for (want) |c| {
+        const d = (try w.definition("m.f90", w.pos("m.f90", c[0], 0, 0))) orelse return h.unmet("no definition of {s}", .{c[0]});
+        try h.expect(d.line + 1 == c[1], "{s} goes to line {d}, not {d}", .{ c[0], d.line + 1, c[1] });
+    }
+    // hover: the one specific
+    const hv = (try w.hover("m.f90", w.pos("m.f90", "g(a2(:, 2))", 0, 0))) orelse return error.NoHover;
+    try std.testing.expect(std.mem.find(u8, hv, "g_v") != null);
+    try std.testing.expect(std.mem.find(u8, hv, "g_s") == null);
+    try std.testing.expect(std.mem.find(u8, hv, "g_m") == null);
+    try w.expectNoDiagnosticLike("m.f90", "Argument");
 }
 
 const bound =
