@@ -13,7 +13,7 @@ import { folderVariables } from "./variables";
  * cannot change it (it is read at start-up only). `fallback`: zfls's own
  * default, for a value the command line leaves out. `rewatch`: it changes
  * which files the file watcher follows, so a change restarts the server. */
-type Option =
+export type Option =
   | { setting: string; flag: string; kind: "flag"; restart?: true }
   | { setting: string; flag: string; kind: "int"; fallback: number }
   | { setting: string; flag: string; kind: "string"; path?: boolean; restart?: true }
@@ -485,7 +485,7 @@ export function restartsServer(e: vscode.ConfigurationChangeEvent, scope: vscode
     e.affectsConfiguration("zfls.path", scope) ||
     e.affectsConfiguration("zfls.arguments", scope) ||
     OPTIONS.some((o) => ("restart" in o || "rewatch" in o) && e.affectsConfiguration(`zfls.${o.setting}`, scope)) ||
-    vscode.workspace.getConfiguration("zfls", scope).get<string[]>("arguments", []).length > 0
+    extraArguments(vscode.workspace.getConfiguration("zfls", scope)).length > 0
   );
 }
 

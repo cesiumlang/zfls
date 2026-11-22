@@ -30,3 +30,9 @@ test("a setting left out restarts", () => {
   assert.equal(appliesLive({ ...base, source_dirs: ["src"] }, base), false);
   assert.equal(appliesLive(base, { ...base, source_dirs: ["src"] }), true);
 });
+
+test("workspace diagnostics turned on restarts, off is sent (#787)", () => {
+  assert.equal(appliesLive({ ...base, workspace_diagnostics: false }, { ...base, workspace_diagnostics: true }), false);
+  assert.equal(appliesLive({ ...base, workspace_diagnostics: true }, { ...base, workspace_diagnostics: false }), true);
+  assert.equal(appliesLive({ ...base, workspace_diagnostics: true }, { ...base, workspace_diagnostics: true }), true);
+});

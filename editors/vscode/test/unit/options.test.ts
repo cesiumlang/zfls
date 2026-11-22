@@ -7,7 +7,7 @@ import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import type * as vscode from "vscode";
-import { argOption, serverArguments, serverSettings, startSettings } from "../../src/options";
+import { argOption, restartsServer, serverArguments, serverSettings, startSettings } from "../../src/options";
 import { settings } from "./vscode";
 
 const root = path.join("/", "my proj");
@@ -92,4 +92,12 @@ test("settings that zfls.arguments sets are not sent (#782)", () => {
   settings["zfls.arguments"] = ["--codee"];
   assert.ok(!("codee" in serverSettings(folder)));
   assert.ok("codee_path" in serverSettings(folder));
+});
+
+test("blank zfls.arguments items do not restart the server on every change (#787)", () => {
+  const e = { affectsConfiguration: (key: string) => key === "zfls.lowercaseHover" } as vscode.ConfigurationChangeEvent;
+  settings["zfls.arguments"] = ["", "  "];
+  assert.equal(restartsServer(e, undefined), false);
+  settings["zfls.arguments"] = ["", "--nthreads=2"];
+  assert.equal(restartsServer(e, undefined), true);
 });

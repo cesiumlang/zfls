@@ -472,7 +472,7 @@
             "code"
           ],
           "default": "comment",
-          "scope": "window",
+          "scope": "resource",
           "markdownDescription": "%config.zfls.fixedFormDLines.markdownDescription%"
         },
         "zfls.configFile": {
@@ -520,7 +520,7 @@
             "type": "string"
           },
           "default": [],
-          "scope": "window",
+          "scope": "resource",
           "markdownDescription": "%config.zfls.commentMarkers.markdownDescription%"
         },
         "zfls.disableOpenmpConditional": {
