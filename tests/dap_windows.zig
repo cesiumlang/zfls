@@ -467,6 +467,12 @@ fn run(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, src_dir: [
         if (std.mem.eql(u8, str(v, "name") orelse "", "n")) break str(v, "value") orelse "?";
     } else "(none)";
     try check(std.mem.eql(u8, n, "21"), "n = 21 ({s})", .{n});
+    // arrays, not empty strings (#726)
+    const unknown = try c.request("variables", .{ .variablesReference = 999999 });
+    try check(dap.isArray(unknown, "variables", 0), "an unknown reference: no variables ({f})", .{std.json.fmt(unknown, .{})});
+    const functions = try c.request("setFunctionBreakpoints", .{ .breakpoints = .{.{ .name = "twice" }} });
+    const none = items(functions, "breakpoints");
+    try check(dap.isArray(functions, "breakpoints", 1) and get(none[0], "verified").?.bool == false, "a function breakpoint: unverified ({f})", .{std.json.fmt(functions, .{})});
 
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;

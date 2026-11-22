@@ -309,7 +309,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         },
         .variables => {
             const ref = json.int(json.get(args, "variablesReference")) orelse 0;
-            const node = vars.get(s, ref) orelse return s.respond(a, req, .{ .variables = &[_]u8{} });
+            const node = vars.get(s, ref) orelse return s.respond(a, req, .{ .variables = &[_]Value{} });
             const shown = vars.children(s, a, ref, node) catch |e| return s.fail(a, req, if (e == error.GdbFailed) s.g.failure else @errorName(e));
             s.respond(a, req, .{ .variables = shown });
         },
