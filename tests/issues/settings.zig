@@ -1,5 +1,6 @@
 //! Settings from the editor over LSP (#196): `initializationOptions` and
-//! `workspace/didChangeConfiguration`, under the config file's names.
+//! `workspace/didChangeConfiguration`, under the config file's names; and
+//! `comment_markers` set through them (#741).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -238,4 +239,25 @@ test "a client that cannot is asked nothing (#196)" {
     defer w.deinit();
     _ = try w.zflsRequest("initialized", .{});
     try std.testing.expectEqual(@as(usize, 0), (try w.sentWith("client/registerCapability")).len);
+}
+
+test "comment_markers: what follows a marker is a comment (#741)" {
+    const marked = [_]h.File{.{ .name = "m.f90", .text =
+        \\program p
+        \\  implicit none
+        \\  integer :: a
+        \\  a = 1 ;* b = 2
+        \\end program p
+        \\
+    }};
+    // without the marker, `;` ends the statement and `b` is a name
+    inline for (.{ "{}", "{\"comment_markers\": [\";*\"]}" }, .{ 1, 0 }) |opts, want| {
+        const w = try h.Workspace.init(&marked, .{ .init_options = opts });
+        defer w.deinit();
+        var found: usize = 0;
+        for (try w.diagnostics("m.f90")) |d| {
+            if (std.mem.find(u8, d.message, "\"b\" is not declared") != null) found += 1;
+        }
+        try std.testing.expectEqual(@as(usize, want), found);
+    }
 }
