@@ -127,6 +127,33 @@ pub fn byteToUtf16(line: []const u8, off: usize) usize {
     return units + (off -| line.len);
 }
 
+/// `byteToUtf16` for the offsets of one line asked in increasing order
+/// (the tokens, the diagnostics of a line of thousands of names), counted
+/// on from the last: the line is read once, not once per offset (#795). The
+/// text must not change while the cursor is used.
+pub const Utf16Cursor = struct {
+    ptr: ?[*]const u8 = null,
+    len: usize = 0,
+    byte: usize = 0,
+    units: usize = 0,
+
+    pub fn at(c: *Utf16Cursor, text: []const u8, off: usize) usize {
+        if (c.ptr != @as(?[*]const u8, text.ptr) or c.len != text.len or off < c.byte) c.* = .{ .ptr = text.ptr, .len = text.len };
+        const base = @min(c.byte, text.len);
+        c.units += byteToUtf16(text[base..], off - base);
+        c.byte = off;
+        return c.units;
+    }
+};
+
+test "a cursor counts as byteToUtf16 does" {
+    const text = "aéb = c";
+    var c: Utf16Cursor = .{};
+    for ([_]usize{ 0, 1, 3, 3, 4, 8, 20 }) |off| try std.testing.expectEqual(byteToUtf16(text, off), c.at(text, off));
+    // an offset before the last starts again
+    try std.testing.expectEqual(byteToUtf16(text, 1), c.at(text, 1));
+}
+
 test "slicing helpers" {
     try std.testing.expectEqualStrings("bc", slice("abcd", 1, 3));
     try std.testing.expectEqualStrings("abc", slice("abcd", 0, -1));

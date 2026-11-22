@@ -794,6 +794,7 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     const hidden = try suppress.of(a, file);
     const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
+    var cursor: str.Utf16Cursor = .{};
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
         // a file included by another may hold a part of a scope
@@ -802,7 +803,7 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
         var dd = d;
         dd.severity = severityOf(self, d.code) orelse d.severity;
         if (dd.severity == 0) continue;
-        try out.append(a, try self.diagnosticOf(a, file, dd));
+        try out.append(a, try self.diagnosticOfAt(a, file, dd, &cursor));
     }
     return out.items;
 }
