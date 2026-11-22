@@ -39,6 +39,7 @@ const known = @import("gfortran_oracle/known.zig");
 const guards = @import("gfortran_oracle/guards.zig");
 const associates = @import("gfortran_oracle/associates.zig");
 const oz = @import("oracle_zfls.zig");
+const odiag = @import("oracle_diagnostics.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 
@@ -560,6 +561,8 @@ pub fn main(init: std.process.Init) !u8 {
             const decl = got.decls.get(e.key_ptr.*) orelse continue;
             if (try types.mismatch(a, e.value_ptr.*, decl)) |why| try diffs.append(a, try a.print("differs: {s}: {s}", .{ e.key_ptr.*, why }));
         }
+        // zfls's own errors and warnings on code gfortran accepts (#735)
+        for (try odiag.report(io, a, zfls, abs, zcmd.items[4..])) |d| try diffs.append(a, try a.print("zfls reports: {s}", .{d}));
         std.mem.sort([]const u8, diffs.items, {}, util.lessThan);
         const base = std.Io.Dir.path.basename(src);
         var unexpected: std.ArrayList([]const u8) = .empty;
@@ -583,6 +586,7 @@ pub fn main(init: std.process.Init) !u8 {
 test {
     _ = guards;
     _ = associates;
+    _ = odiag;
 }
 
 test "the temporaries of type guards take the associate name listed after them" {

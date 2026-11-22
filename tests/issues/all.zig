@@ -9,6 +9,7 @@ test {
     _ = @import("coarrays.zig");
     _ = @import("deep_nesting.zig");
     _ = @import("long_lines.zig");
+    _ = @import("document_highlight.zig");
     _ = @import("declarations_f2023.zig");
     _ = @import("statements_f2023.zig");
     _ = @import("directives.zig");

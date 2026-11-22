@@ -15,6 +15,7 @@ const parser = @import("../parser.zig");
 const intrinsics = @import("../intrinsics.zig");
 const constructs = @import("../constructs.zig");
 const patterns = @import("../patterns.zig");
+const fpm = @import("../fpm.zig");
 
 fn R() *const patterns.Patterns {
     return patterns.get();
@@ -387,6 +388,19 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
 /// procedures of its C name's and the C name's places in C files too
 /// (bindc.zig)
 pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, with_c: bool) !Value {
+    const places = try placesAt(self, a, params, with_c);
+    if (with_c) return places;
+    // highlights are the document's own places (#781)
+    const doc = try self.pathFromUri(a, params.textDocument.uri);
+    var own: std.ArrayList(Value) = .empty;
+    for (json.items(places)) |p| {
+        const uri = json.str(json.get(p, "uri")) orelse continue;
+        if (fpm.samePath(try self.pathFromUri(a, uri), doc)) try own.append(a, p);
+    }
+    return json.from(a, own.items);
+}
+
+fn placesAt(self: *Server, a: Allocator, params: lsp.PositionParams, with_c: bool) !Value {
     if (with_c) if (self.c_docs.get(try self.pathFromUri(a, params.textDocument.uri))) |doc| return bindc.cReferences(self, a, doc, params);
     if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.assignmentAt(self, a, params)) |b| return assignment.references(self, a, b);
@@ -397,7 +411,9 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (d.obj.kind == .intrinsic) return .null;
     const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
     const rs = referenceScope(self, obj) orelse return .null;
-    const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);
+    // a highlight reads the document alone
+    const only = if (with_c) rs.restrict else (try self.fileFromUri(a, params.textDocument.uri)) orelse rs.restrict;
+    const all = try getAllReferences(self, a, obj, rs.type_mem, only, false);
     var out: std.ArrayList(lsp.Location) = .empty;
     for (all) |fr| {
         const uri = try paths.pathToUri(a, fr.path);
