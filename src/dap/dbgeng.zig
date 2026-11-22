@@ -295,6 +295,21 @@ pub const Engine = struct {
     /// Why breakpoints of the program's lines may not resolve: its module's
     /// symbols (0 none, 1 COFF, 2 CodeView, 3 PDB, 4 export, 5 deferred, 6
     /// SYM) and the symbol path
+    /// A processor breakpoint on `size` bytes at `address` (1, 2, 4 or 8,
+    /// at an address of their alignment), on writes, or `reads` too: its id
+    pub fn addDataBreakpoint(self: *Engine, address: u64, size: u32, reads: bool) !u32 {
+        var bp: ?*dbg.IDebugBreakpoint2 = null;
+        try ok(self.control.AddBreakpoint2(dbg.DEBUG_BREAKPOINT_DATA, DEBUG_ANY_ID, &bp));
+        const b = bp.?;
+        var id: u32 = 0;
+        try ok(b.GetId(&id));
+        errdefer self.removeBreakpoint(id);
+        try ok(b.SetDataParameters(size, if (reads) dbg.DEBUG_BREAK_READ | dbg.DEBUG_BREAK_WRITE else dbg.DEBUG_BREAK_WRITE));
+        try ok(b.SetOffset(address));
+        try ok(b.AddFlags(DEBUG_BREAKPOINT_ENABLED));
+        return id;
+    }
+
     pub fn symbolState(self: *Engine, a: Allocator) []const u8 {
         var params: [1]dbg.DEBUG_MODULE_PARAMETERS = undefined;
         const kind: i64 = if (succeeded(self.symbols.GetModuleParameters(1, null, 0, &params))) params[0].SymbolType else -1;

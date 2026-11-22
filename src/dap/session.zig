@@ -76,6 +76,7 @@ const gdb_requests = @import("gdb_requests.zig");
 const choice = @import("choice.zig");
 const capabilities = @import("capabilities.zig");
 const engine_conditions = @import("engine_conditions.zig");
+const engine_data = @import("engine_data.zig");
 const engine_completions = @import("engine_completions.zig");
 const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
@@ -189,6 +190,8 @@ pub const Session = struct {
     /// The breakpoints whose lines had no code yet (a module not loaded):
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    /// The client's data breakpoints: the engine's ids
+    data_breakpoints: std.ArrayList(u32) = .empty,
     /// The breakpoints' conditions, hits ignored and log messages, by id
     /// (engine_conditions.zig)
     conditions: std.AutoHashMapUnmanaged(u32, engine_conditions.Condition) = .empty,
@@ -372,6 +375,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         s.breakpoints.deinit(gpa);
         s.error_breakpoints.deinit(gpa);
         s.unverified.deinit(gpa);
+        s.data_breakpoints.deinit(gpa);
         var cit = s.conditions.valueIterator();
         while (cit.next()) |c| c.deinit(gpa);
         s.conditions.deinit(gpa);
@@ -539,7 +543,7 @@ fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
-    const Cmd = enum { launch, attach, setBreakpoints, setExceptionBreakpoints, setFunctionBreakpoints, exceptionInfo, configurationDone, threads, stackTrace, scopes, variables, evaluate, completions, @"continue", next, stepIn, stepOut, pause, disconnect, terminate };
+    const Cmd = enum { launch, attach, setBreakpoints, setExceptionBreakpoints, setFunctionBreakpoints, exceptionInfo, configurationDone, threads, stackTrace, scopes, variables, evaluate, completions, dataBreakpointInfo, setDataBreakpoints, @"continue", next, stepIn, stepOut, pause, disconnect, terminate };
     const cmd = std.meta.stringToEnum(Cmd, command) orelse return s.fail(a, req, "not supported");
     switch (cmd) {
         .launch => {
@@ -658,6 +662,8 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .pause => s.respond(a, req, null),
         .completions => try engine_completions.complete(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
+        .dataBreakpointInfo => try engine_data.info(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
+        .setDataBreakpoints => try engine_data.set(s, a, req, args),
         .disconnect, .terminate => {
             const keep = s.attached and !flag(args, "terminateDebuggee");
             if (keep) s.engine.detach() else s.engine.terminate();
@@ -743,6 +749,9 @@ fn stopped(s: *Session, a: Allocator, stop: dbgeng.Stop) void {
             // a condition false, a hit ignored, a log message: on
             if (!engine_conditions.stops(s, a, b.id, b.thread)) return go(s, .go, null) catch {};
             s.event(a, "stopped", .{ .reason = "breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} });
+        } else if (engine_data.isDataBreakpoint(s, b.id)) {
+            if (!engine_conditions.stops(s, a, b.id, b.thread)) return go(s, .go, null) catch {};
+            s.event(a, "stopped", .{ .reason = "data breakpoint", .threadId = b.thread, .allThreadsStopped = true, .hitBreakpointIds = &[_]u32{b.id} });
         } else {
             // the engine's own (step out, stop at entry)
             s.event(a, "stopped", .{ .reason = "step", .threadId = b.thread, .allThreadsStopped = true });
