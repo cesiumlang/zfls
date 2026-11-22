@@ -190,7 +190,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             continue;
         }
         const sym = symtree(line) orelse {
-            if (stack.items.len > 0) try out.assocs.line(a, stack.items[stack.items.len - 1].path, line);
+            if (stack.items.len > 0) out.assocs.line(stack.items[stack.items.len - 1].path, line);
             i += 1;
             continue;
         };
@@ -251,8 +251,9 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
         const assoc = !temp and (tokens.contains("ASSOCIATE-VAR") or tokens.contains("SELECT-TYPE-TEMPORARY"));
         try listings.symbol(a, &out.temps, ns, indentOf(line), name, block, temp, assoc);
         const in_assoc = try out.assocs.symbol(a, indentOf(line), name, block, assoc);
-        // the code after the symbols: a construct's ASSOCIATE line
-        for (block) |b| if (indentOf(b) <= indentOf(line)) try out.assocs.line(a, ns, b);
+        // the code after the symbols: a construct's ASSOCIATE or CHANGE
+        // TEAM line
+        for (block) |b| if (indentOf(b) <= indentOf(line)) out.assocs.line(ns, b);
         if (temp) continue;
         const skip = from_host or
             std.mem.startsWith(u8, name, "_") or
@@ -752,4 +753,36 @@ test "each ASSOCIATE construct's names with their own construct's (#754)" {
     try associates.check(a, &diffs, g.assocs.names.items, wrong.assocs.items);
     try std.testing.expectEqual(1, diffs.items.len);
     try std.testing.expectEqualStrings("differs: test_associate_block::x (ASSOCIATE on line 4): type INTEGER, gfortran (REAL 4)", diffs.items[0]);
+}
+
+test "a CHANGE TEAM's coarray names, numbered among the constructs with names (#754)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // gfortran 16.1, tests/fortran/f2018.f90 (an excerpt): a CHANGE TEAM
+    // without names, then one naming `x`
+    const g = try gfortranEntities(a,
+        \\Namespace: A-Z: (UNKNOWN 0)
+        \\procedure name = f2018
+        \\  procedure name = teams
+        \\    code:
+        \\
+        \\    CHANGE TEAM teams:t
+        \\      symtree: 'block@1'     || symbol: 'block@1'
+        \\        type spec : (UNKNOWN 0)
+        \\        attributes: (LABEL )
+        \\      ASSIGN teams:k 1
+        \\      END TEAM
+        \\
+        \\    CHANGE TEAM teams:t x = teams:y()[THIS_IMAGE] stat=teams:st errmsg=teams:msg
+        \\      symtree: 'x'           || symbol: 'x'
+        \\        type spec : (REAL 4)
+        \\        attributes: (VARIABLE  CODIMENSION ASSOCIATE-VAR)
+        \\        Array spec:(0 [1] AS_DEFERRED 1 () )
+        \\      ASSIGN named:x()[THIS_IMAGE] 1.00000000e0
+        \\      END TEAM stat=teams:st
+    );
+    try std.testing.expectEqual(1, g.assocs.names.items.len);
+    try std.testing.expectEqualStrings("f2018::teams", g.assocs.names.items[0].ns);
+    try std.testing.expectEqual(1, g.assocs.names.items[0].n);
 }

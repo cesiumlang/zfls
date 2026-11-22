@@ -1,49 +1,56 @@
-//! The names of ASSOCIATE constructs for the gfortran oracle
-//! (gfortran_oracle.zig, #754). gfortran lists each construct's names
-//! after its `ASSOCIATE  x = ...` line, constructs in the order of the
-//! source; zfls's `Associate Constructs` section gives each construct's
-//! line. Several constructs of a procedure can have a name of the same
-//! name: the n-th construct of a procedure in zfls is compared with the
+//! The names of ASSOCIATE constructs, and the coarrays a CHANGE TEAM
+//! associates, for the gfortran oracle (gfortran_oracle.zig, #754).
+//! gfortran lists each construct's names after its `ASSOCIATE  x = ...` or
+//! `CHANGE TEAM t x = ...` line, constructs in the order of the source;
+//! zfls's `Associate Constructs` section gives each construct's line.
+//! Several constructs of a procedure can have a name of the same name: the
+//! n-th construct with names of a procedure in zfls is compared with the
 //! n-th in gfortran, each name with its own construct's.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const types = @import("types.zig");
 
-/// gfortran's name `name` of the `n`-th (1-based) ASSOCIATE construct of
+/// gfortran's name `name` of the `n`-th (1-based) construct with names of
 /// namespace `ns`
 pub const Name = struct { ns: []const u8, n: usize, name: []const u8, v: types.Var };
 
-/// Reads the ASSOCIATE constructs of gfortran's dump
+/// Reads the ASSOCIATE and CHANGE TEAM constructs of gfortran's dump
 pub const Reader = struct {
-    /// the constructs of each namespace so far
+    /// the constructs with names of each namespace so far
     counts: std.StringHashMapUnmanaged(usize) = .empty,
-    /// the construct whose names follow its line
-    open: ?struct { indent: usize, ns: []const u8, n: usize } = null,
+    /// the construct whose names follow its line: its number once it has
+    /// one
+    open: ?struct { indent: usize, ns: []const u8, n: ?usize = null } = null,
     names: std.ArrayList(Name) = .empty,
 
-    /// A line of namespace `ns` that is not a symbol's: an ASSOCIATE's
-    /// opens its construct, any other closes it
-    pub fn line(r: *Reader, a: Allocator, ns: []const u8, text: []const u8) !void {
+    /// A line of namespace `ns` that is not a symbol's: an ASSOCIATE's or
+    /// CHANGE TEAM's opens its construct, any other closes it
+    pub fn line(r: *Reader, ns: []const u8, text: []const u8) void {
         r.open = null;
         const indent = std.mem.findNone(u8, text, " \t") orelse return;
-        const t = std.mem.trimEnd(u8, text[indent..], " \r");
-        if (!std.mem.startsWith(u8, t, "ASSOCIATE ")) return;
-        // a block of SELECT TYPE (`ASSOCIATE   = ...`) has no name
-        if (std.mem.startsWith(u8, std.mem.trimStart(u8, t["ASSOCIATE".len..], " "), "=")) return;
-        const gop = try r.counts.getOrPut(a, ns);
-        if (!gop.found_existing) gop.value_ptr.* = 0;
-        gop.value_ptr.* += 1;
-        r.open = .{ .indent = indent, .ns = ns, .n = gop.value_ptr.* };
+        const t = text[indent..];
+        if (std.mem.startsWith(u8, t, "ASSOCIATE ")) {
+            // a block of SELECT TYPE (`ASSOCIATE   = ...`) has no name
+            if (std.mem.startsWith(u8, std.mem.trimStart(u8, t["ASSOCIATE".len..], " "), "=")) return;
+        } else if (!std.mem.startsWith(u8, t, "CHANGE TEAM ")) return;
+        r.open = .{ .indent = indent, .ns = ns };
     }
 
     /// Symbol `name` at `indent`, with its detail lines `block`, an
     /// associate name (`assoc`) or not: whether it is a name of the open
     /// construct
     pub fn symbol(r: *Reader, a: Allocator, indent: usize, name: []const u8, block: []const []const u8, assoc: bool) !bool {
-        const o = r.open orelse return false;
+        const o = if (r.open) |*o| o else return false;
         if (indent <= o.indent or !assoc) return false;
-        try r.names.append(a, .{ .ns = o.ns, .n = o.n, .name = name, .v = types.varOf(block) });
+        const n = o.n orelse blk: {
+            const gop = try r.counts.getOrPut(a, o.ns);
+            if (!gop.found_existing) gop.value_ptr.* = 0;
+            gop.value_ptr.* += 1;
+            o.n = gop.value_ptr.*;
+            break :blk gop.value_ptr.*;
+        };
+        try r.names.append(a, .{ .ns = o.ns, .n = n, .name = name, .v = types.varOf(block) });
         return true;
     }
 };
@@ -53,8 +60,8 @@ pub const Reader = struct {
 /// construct `construct` on line `line`
 pub const Zname = struct { key: []const u8, ns: []const u8, construct: []const u8, line: usize, decl: []const u8 };
 
-/// The number (1-based) of the construct of `z` among zfls's constructs of
-/// its namespace, by their lines
+/// The number (1-based) of the construct of `z` among zfls's constructs
+/// with names of its namespace, by their lines
 fn ordinal(znames: []const Zname, z: Zname) usize {
     var n: usize = 1;
     for (znames, 0..) |o, i| {
