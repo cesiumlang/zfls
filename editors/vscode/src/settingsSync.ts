@@ -37,9 +37,14 @@ export function withoutArguments(s: ServerSettings, args: readonly string[]): Se
 /** Whether a running server that has the settings `prev` can take `next`
  * without a restart: not when `next` leaves out a setting that `prev` has
  * (the server would keep its command line's value, which was `prev`'s), nor
- * when a feature is turned off (the editor would keep offering it) */
+ * when a feature is turned off (the editor would keep offering it), nor
+ * when workspace diagnostics are turned on (the server needs them at start) */
 export function appliesLive(prev: ServerSettings, next: ServerSettings): boolean {
   if (Object.keys(prev).some((k) => !(k in next))) {
+    return false;
+  }
+  // the client pulls the workspace's diagnostics only if told so at start
+  if (next.workspace_diagnostics === true && prev.workspace_diagnostics !== true) {
     return false;
   }
   const before = providers(prev);
