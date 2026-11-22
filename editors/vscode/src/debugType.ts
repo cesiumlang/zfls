@@ -15,6 +15,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { TargetKind } from "./fpm";
 import { FpmProject, buildTarget, debugBuild, findProjects, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
+import { initialConfiguration } from "./debugConfigs";
 import { findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
 import { CompilerInfo, adapterArgs, fortranLaunch, parseProcesses } from "./run";
 import { chooseInstalledDebugger, compilerInfo, gdbFor, lldbWanted } from "./runFile";
@@ -54,16 +55,7 @@ export function registerDebugType(
     vscode.commands.registerCommand("zfls.pickProcess", () => pickProcess()),
     vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, {
       resolveDebugConfigurationWithSubstitutedVariables: (folder, config) => resolve(folder, config, log),
-      provideDebugConfigurations: () => [
-        {
-          type: DEBUG_TYPE,
-          request: "launch",
-          name: "Debug Fortran program",
-          program: "${workspaceFolder}/a.out",
-          args: [],
-          cwd: "${workspaceFolder}",
-        },
-      ],
+      provideDebugConfigurations: () => [initialConfiguration()],
     }),
     vscode.debug.registerDebugConfigurationProvider(
       DEBUG_TYPE,
