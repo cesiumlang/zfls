@@ -33,6 +33,7 @@ const util = @import("oracle_util.zig");
 const listing = @import("ifx_oracle/listing.zig");
 const zfls_side = @import("oracle_zfls.zig");
 const known = @import("ifx_oracle/known.zig");
+const odiag = @import("oracle_diagnostics.zig");
 
 const is_windows = sysinfo.target.os.tag == .windows;
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
@@ -402,7 +403,9 @@ pub fn main(init: std.process.Init) !u8 {
             continue;
         };
         checked += 1;
-        const diffs = try compare(a, l, objs);
+        var diffs = try compare(a, l, objs);
+        // zfls's own errors and warnings on code ifx accepts (#735)
+        for (try odiag.report(io, a, zfls, abs, zcmd.items[4..])) |d| try diffs.append(a, try a.print("zfls reports: {s}", .{d}));
         const base = std.Io.Dir.path.basename(src);
         var unexpected: std.ArrayList([]const u8) = .empty;
         var expected: usize = 0;
