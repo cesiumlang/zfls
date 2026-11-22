@@ -69,14 +69,6 @@ pub fn rankOf(dims: ?[]const u8) ?usize {
     return n;
 }
 
-/// The rank of an actual argument that is a whole array, `x` or `t%x`
-/// (no subscripts), or null
-fn wholeArrayRank(actual: []const u8, typed: Typed) ?usize {
-    if (!typed.designator or std.mem.findScalar(u8, actual, '(') != null) return null;
-    const v = typed.obj orelse return null;
-    return rankOf(dimensions.of(v));
-}
-
 /// What variable `v` takes its type from: what an associate name is
 /// linked to, else `v`; null when that is no variable
 fn typeSource(v: *Obj) ?*Obj {
@@ -370,7 +362,7 @@ pub const Checker = struct {
     /// (sequence association). `generic` asks what a generic reference
     /// asks instead: the same rank (an elemental procedure's scalar takes
     /// any), and the same derived type (or one that extends it, for a
-    /// CLASS); it tells the ranks of whole arrays apart.
+    /// CLASS); it tells the ranks of arrays apart.
     pub fn compare(c: *Checker, dummy: *Obj, actual: []const u8, elemental: bool, generic: bool, scope: ?*Obj, line_no: usize) !Match {
         if (dummy.kind != .variable or actual.len == 0) return .unknown;
         const want = varCategory(dummy);
@@ -418,7 +410,8 @@ pub const Checker = struct {
         if (typed.array and dummy_array) {
             if (!generic) return .unknown;
             const want_rank = rankOf(dims) orelse return .unknown;
-            const have_rank = wholeArrayRank(actual, typed) orelse return .unknown;
+            // a section's or an expression's (#718)
+            const have_rank = if (typed.rank > 0) typed.rank else return .unknown;
             if (want_rank != have_rank) return .rank;
         }
         return if (known) .fits else .unknown;
@@ -809,6 +802,14 @@ pub fn checker(a: Allocator, env: objects.Env, ast: *Ast) Checker {
 pub fn expressionType(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, expr: []const u8, line_no: usize) !?Typed {
     var c = checker(a, env, ast);
     return c.exprType(expr, scope, line_no, 0);
+}
+
+/// The value of integer constant expression `expr` in `scope` (1-based
+/// `line_no`) as kinds are told: a number, a named constant, an inquiry of
+/// a kind; null when it cannot be told
+pub fn constantValue(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, expr: []const u8, line_no: usize) !?i64 {
+    var c = checker(a, env, ast);
+    return c.kindValue(expr, scope, line_no, 0);
 }
 
 /// `files`: the workspace's; `real10`: the compiler has REAL(10)
