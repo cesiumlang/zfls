@@ -108,6 +108,8 @@ pub const dap_capabilities = @import("dap/capabilities.zig");
 pub const dap_conditions = @import("dap/conditions.zig");
 pub const dap_completions = @import("dap/completions.zig");
 pub const dap_cpp_filters = @import("dap/cpp_filters.zig");
+pub const dap_data_ids = @import("dap/data_ids.zig");
+pub const dap_gdb_data = @import("dap/gdb_data.zig");
 
 test {
     std.testing.refAllDecls(@This());

@@ -37,6 +37,7 @@ const capabilities = @import("capabilities.zig");
 const gdb_completions = @import("gdb_completions.zig");
 const completions = @import("completions.zig");
 const cpp_filters = @import("cpp_filters.zig");
+const gdb_data = @import("gdb_data.zig");
 const Variable = vars.Variable;
 
 /// gdb's exception breakpoint filters of Ada, of no use to Fortran
@@ -75,6 +76,8 @@ pub fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         try o.put(a, "supportsExceptionInfoRequest", .{ .bool = true });
         if (!s.g.lldb) {
             try o.put(a, "supportsSetVariable", .{ .bool = true });
+            // gdb's watchpoints (gdb_data.zig)
+            try o.put(a, "supportsDataBreakpoints", .{ .bool = true });
             // the adapter's own, also where gdb has none (gdb 15)
             s.g.gdb_completes = if (o.get("supportsCompletionsRequest")) |v| v == .bool and v.bool else false;
             try o.put(a, "supportsCompletionsRequest", .{ .bool = true });
@@ -309,7 +312,7 @@ fn killTerminal(s: *Session) void {
 pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
-    const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, completions, disconnect, terminate };
+    const Cmd = enum { configurationDone, setFunctionBreakpoints, setExceptionBreakpoints, exceptionInfo, stackTrace, scopes, variables, evaluate, setVariable, completions, dataBreakpointInfo, setDataBreakpoints, disconnect, terminate };
     if (s.g.lldb) try lldb.afterEntry(s, a) else try gdb_entry.afterEntry(s, a);
     const cmd = std.meta.stringToEnum(Cmd, command) orelse {
         if (std.mem.eql(u8, command, "setBreakpoints")) try loadForConditions(s, a, args);
@@ -320,7 +323,7 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
     // lldb reads no Fortran: its own variables and expressions
     if (s.g.lldb) switch (cmd) {
         .variables => if (s.g.lfortran) return lldb.variables(s, a, req, args) else return gdb.forward(s, a, req, args),
-        .scopes, .evaluate, .setVariable, .completions => return gdb.forward(s, a, req, args),
+        .scopes, .evaluate, .setVariable, .completions, .dataBreakpointInfo, .setDataBreakpoints => return gdb.forward(s, a, req, args),
         else => {},
     };
     switch (cmd) {
@@ -387,6 +390,8 @@ pub fn handle(s: *Session, a: Allocator, req: Value) !void {
         .evaluate => try evaluate(s, a, req, args),
         .setVariable => try setVariable(s, a, req, args),
         .completions => try gdb_completions.complete(s, a, req, args),
+        .dataBreakpointInfo => try gdb_data.info(s, a, req, args),
+        .setDataBreakpoints => try gdb_data.set(s, a, req, args),
         .disconnect, .terminate => {
             s.g.stopping = true;
             const r = try gdb.request(s, a, command, args orelse Value.null);
@@ -748,7 +753,7 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
     } else if (std.mem.eql(u8, name, "breakpoint")) {
         // those of the runtime's errors and of the stop at the start are
         // the adapter's own
-        if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id) or id == s.g.entry_breakpoint) return;
+        if (json.int(json.path(body, &.{ "breakpoint", "id" }))) |id| if (s.g.error_breakpoints.contains(id) or id == s.g.entry_breakpoint or std.mem.findScalar(i64, s.g.data_breakpoints.items, id) != null) return;
     } else if (std.mem.eql(u8, name, "exited")) {
         killTerminal(s);
         // a signal's end: its exit code (#440)

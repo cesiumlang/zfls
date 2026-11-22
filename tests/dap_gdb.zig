@@ -43,6 +43,7 @@ const dap_gdb_silent = @import("dap_gdb_silent.zig");
 const dap_gdb_attach = @import("dap_gdb_attach.zig");
 const dap_completions = @import("dap_completions.zig");
 const dap_gdb_cpp = @import("dap_gdb_cpp.zig");
+const dap_data = @import("dap_data.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -164,7 +165,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("{s}, gdb {d}.{d}\n", .{ program, v[0], v[1] });
 
     var failed = false;
-    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "conditions, hit conditions, logpoints", conditions }, .{ "attaching", attaching }, .{ "completions", completing }, .{ "C++ exception filters", cppFilters }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
+    inline for (.{ .{ "a session", walkThrough }, .{ "stopping at the start", atEntry }, .{ "ERROR STOP, not STOP", errorStop }, .{ "a crash", crash }, .{ "gdb's end", gdbEnds }, .{ "an associate name gdb cannot show", associated }, .{ "CHARACTER of kind 4", wideCharacters }, .{ "a module's COMMON blocks", commonBlocks }, .{ "gfortran's runtime errors and stops", gfortranRuntime }, .{ "conditions, hit conditions, logpoints", conditions }, .{ "attaching", attaching }, .{ "completions", completing }, .{ "C++ exception filters", cppFilters }, .{ "data breakpoints", dataBreakpoints }, .{ "a gdb that does not answer", silentGdb }, .{ "a terminal", terminal } }) |t| {
         std.debug.print("-- {s}\n", .{t[0]});
         t[1](io, init.gpa, setup) catch |e| {
             std.debug.print("{s}: {s}\n", .{ t[0], @errorName(e) });
@@ -673,6 +674,12 @@ fn completing(io: Io, gpa: Allocator, setup: Setup) !void {
 fn cppFilters(io: Io, gpa: Allocator, setup: Setup) !void {
     if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran only\n", .{});
     try dap_gdb_cpp.run(io, gpa, .{ .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb }, .dir = setup.dir, .fc = setup.fc, .fortran = setup.program });
+}
+
+/// Data breakpoints, gdb's watchpoints (tests/dap_data.zig)
+fn dataBreakpoints(io: Io, gpa: Allocator, setup: Setup) !void {
+    if (setup.compiler == .lfortran or setup.compiler == .ifx) return std.debug.print("skipped: gfortran's and Flang's\n", .{});
+    try dap_data.run(io, gpa, .{ .argv = &.{ setup.zfls, "dap", "--gdb", setup.gdb }, .program = setup.program, .src = setup.src, .dir = setup.dir, .engine = false });
 }
 
 /// A gdb that answers nothing (tests/dap_gdb_silent.zig)
