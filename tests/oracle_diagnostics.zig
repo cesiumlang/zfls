@@ -13,7 +13,9 @@ const util = @import("oracle_util.zig");
 /// message
 pub const Known = struct { file: []const u8, text: []const u8, why: []const u8 };
 
-pub const known = [_]Known{};
+pub const known = [_]Known{
+    .{ .file = "test_variable.f90", .text = "masks variable in parent scope", .why = "zfls's lint of a name that hides one of the scope around it; compilers accept it" },
+};
 
 /// The errors and warnings (`ERROR  "text"`, without their line) zfls
 /// reports on `abs` that are not in `known`, found by running `zfls` with
