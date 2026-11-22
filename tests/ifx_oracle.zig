@@ -108,6 +108,14 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     // components and type-bound procedures
     var ifx_comps: std.StringHashMapUnmanaged(void) = .empty;
     for (l.components) |e| {
+        // a variable's components of a parameterized type's instance
+        // (`matrix#8&3.tag`) are those of the type (`matrix.tag`)
+        if (std.mem.findScalar(u8, e.name, '#')) |hash| {
+            const component = e.name[std.mem.findScalarLast(u8, e.name, '.') orelse continue ..];
+            const of_type = try a.print("{s}{s}", .{ e.name[0..hash], component });
+            if (!components.contains(of_type)) try out.append(a, try a.print("missing in zfls: component {s} of the instance {s}", .{ of_type, e.name }));
+            continue;
+        }
         const dot = std.mem.findScalar(u8, e.name, '.') orelse continue;
         // an extension's parent type is a component of it
         if (types.contains(e.name[dot + 1 ..]) and std.ascii.eqlIgnoreCase(e.type, e.name[dot + 1 ..])) continue;
@@ -161,7 +169,9 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
 fn ifxType(a: Allocator, t: zfls_side.Type, listed: []const u8) !bool {
     return switch (t) {
         .character => std.mem.eql(u8, listed, "CHAR"),
-        .derived => |d| std.ascii.eqlIgnoreCase(listed, d.name) or std.mem.eql(u8, listed, "RECORD"),
+        // an instance of a parameterized type lists its parameters after
+        // `#` (`MATRIX#8&3`), which are not compared
+        .derived => |d| std.ascii.eqlIgnoreCase(listed[0 .. std.mem.findScalar(u8, listed, '#') orelse listed.len], d.name) or std.mem.eql(u8, listed, "RECORD"),
         .intrinsic => |i| std.mem.eql(u8, listed, try a.print("{c}({d})", .{ i.name[0], @as(u16, i.kind) * @as(u16, if (i.name[0] == 'C') 2 else 1) })),
     };
 }
@@ -174,6 +184,8 @@ test ifxType {
     try std.testing.expect(try ifxType(a, .{ .intrinsic = .{ .name = "REAL", .kind = 4 } }, "R(4)"));
     try std.testing.expect(!try ifxType(a, .{ .intrinsic = .{ .name = "INTEGER", .kind = 4 } }, "I(8)"));
     try std.testing.expect(try ifxType(a, .{ .derived = .{ .name = "SHAPE", .class = true } }, "RECORD"));
+    try std.testing.expect(try ifxType(a, .{ .derived = .{ .name = "MATRIX", .class = false, .pdt = true } }, "MATRIX#8&3"));
+    try std.testing.expect(!try ifxType(a, .{ .derived = .{ .name = "MATRIX", .class = false, .pdt = true } }, "OTHER#8&3"));
 }
 
 test "each block's associate name with its own block's entry (#715)" {
