@@ -16,6 +16,11 @@ contains
     class(*), intent(in) :: any(:)
     select type (it => items)
     type is (base_t)
+      ! a SELECT in a guard's block (#708)
+      select case (size(it))
+      case (1)
+        print *, it(1)%id
+      end select
       print *, size(it)
     class is (child_t)
       print *, size(it)
