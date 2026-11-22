@@ -28,6 +28,7 @@ import { affectsServer, restartsServer, serverArguments, serverSettings, startSe
 import { appliesLive, ServerSettings } from "./settingsSync";
 import { languageToSet, SourceFormNote } from "./sourceForm";
 import { checkSuperseded } from "./superseded";
+import { servedPattern } from "./servedPattern";
 import { FORTRAN_FILES, fortranFiles, serverExecutable } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -651,7 +652,7 @@ async function startClient(
   const serverOptions: ServerOptions = { run: executable, debug: executable };
   // a folder's server takes the files under it; a directory's server only
   // the files directly in it
-  const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
+  const pattern = servedPattern(root.toString(), folder !== undefined);
   // the server follows Fortran files changed outside the editor; it asks
   // for the files it reads its settings from itself, and reads them again
   const suffixes = vscode.workspace.getConfiguration("zfls", folder?.uri);
