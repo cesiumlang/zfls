@@ -269,7 +269,6 @@ pub fn beforeRequest(self: *Server, a: Allocator, method: []const u8, params: Va
     const Kind = enum { file, names, all };
     const kinds = std.StaticStringMap(Kind).initComptime(.{
         .{ "textDocument/references", .names },
-        .{ "textDocument/documentHighlight", .names },
         .{ "textDocument/rename", .names },
         .{ "codeLens/resolve", .names },
         .{ "callHierarchy/incomingCalls", .names },
@@ -304,8 +303,7 @@ pub fn beforeRequest(self: *Server, a: Allocator, method: []const u8, params: Va
         pos = .{ .textDocument = .{ .uri = data.uri }, .position = lens.range.start };
     } else pos = json.decode(lsp.PositionParams, a, params) catch return;
     const rename = std.mem.eql(u8, method, "textDocument/rename");
-    const with_c = !rename and !std.mem.eql(u8, method, "textDocument/documentHighlight");
-    return wakeForPosition(self, a, pos, rename, with_c);
+    return wakeForPosition(self, a, pos, rename, !rename);
 }
 
 /// What `references.serveReferences` and `serveRename` search the
