@@ -2,7 +2,8 @@
 //! are answered with ServerNotInitialized, not with empty results of a
 //! server that indexed nothing; a `capabilities` that is not an object is
 //! read as none rather than refused. The messages go through the server's
-//! `handle`, as a client's do.
+//! `handle`, as a client's do. And the server's name and version in the
+//! result (#743).
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -67,4 +68,13 @@ test "capabilities that is not an object: none, and the server initialized (#368
         if (std.mem.eql(u8, json.str(json.get(s, "name")) orelse "", "found_me")) names += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), names);
+}
+
+test "the initialize result names the server and its version (#743)" {
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    try std.testing.expectEqualStrings("zfls", json.str(json.path(w.init_result, &.{ "serverInfo", "name" })) orelse "");
+    const version = json.str(json.path(w.init_result, &.{ "serverInfo", "version" })) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(h.zfls.version_info.reported, version);
+    try std.testing.expect(version.len > 0);
 }

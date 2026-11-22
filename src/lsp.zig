@@ -245,7 +245,10 @@ pub const TextDocumentSyncOptions = struct {
     save: struct { includeText: bool = false } = .{},
 };
 
-pub const InitializeResult = struct { capabilities: ServerCapabilities };
+/// The server's name and version, which a client may show (#743)
+pub const ServerInfo = struct { name: []const u8, version: []const u8 };
+
+pub const InitializeResult = struct { capabilities: ServerCapabilities, serverInfo: ServerInfo };
 
 /// The `data` of an error response
 pub const ErrorData = struct { traceback: []const u8 };
