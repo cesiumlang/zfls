@@ -31,6 +31,7 @@ const util = @import("oracle_util.zig");
 const dump = @import("flang_oracle/dump.zig");
 const entities = @import("flang_oracle/entities.zig");
 const known = @import("flang_oracle/known.zig");
+const odiag = @import("oracle_diagnostics.zig");
 const types = @import("flang_oracle/types.zig");
 
 const Entities = entities.Entities;
@@ -230,6 +231,8 @@ const Oracle = struct {
         const global = try self.flangDump(key, abs, fixed, dir, std.Io.Dir.path.dirname(abs), flang_args) orelse return;
         const ref = try self.flangEntities(key, global, null) orelse return;
         try self.compare(key, ref, got);
+        // zfls's own errors and warnings on code Flang accepts (#735)
+        for (try odiag.report(self.io, a, self.zfls, abs, zfls_args)) |d| self.fail(key, "zfls reports: {s}", .{d});
         // the module files, in the order of their names
         var mods: std.ArrayList([]const u8) = .empty;
         var d = try Io.Dir.cwd().openDir(self.io, dir, .{ .iterate = true });
