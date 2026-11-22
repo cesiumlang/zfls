@@ -9,7 +9,9 @@
 //! and kind, rank, ALLOCATABLE, POINTER, TARGET and INTENT with what zfls's
 //! hover declares (gfortran_oracle/types.zig, #551); the associate names
 //! of the blocks of SELECT TYPE and RANK each with its own block's
-//! temporary (gfortran_oracle/guards.zig). gfortran serves as an
+//! temporary (gfortran_oracle/guards.zig), and the names of ASSOCIATE
+//! constructs each with its own construct's (gfortran_oracle/associates.zig).
+//! gfortran serves as an
 //! independent oracle for the Fortran semantics zfls approximates with
 //! line-based parsing. The differences known, each with its reason, are in
 //! gfortran_oracle/known.zig.
@@ -35,6 +37,7 @@ const util = @import("oracle_util.zig");
 const types = @import("gfortran_oracle/types.zig");
 const known = @import("gfortran_oracle/known.zig");
 const guards = @import("gfortran_oracle/guards.zig");
+const associates = @import("gfortran_oracle/associates.zig");
 const oz = @import("oracle_zfls.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
@@ -146,6 +149,8 @@ const Gfortran = struct {
     vars: std.StringHashMapUnmanaged(types.Var) = .empty,
     /// the temporaries of the blocks of SELECT TYPE and RANK
     temps: guards.Temps = .{},
+    /// the names of ASSOCIATE constructs
+    assocs: associates.Reader = .{},
 };
 
 /// The entities in gfortran's dump of `text` (`-fdump-fortran-original`)
@@ -168,6 +173,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
     while (i < lines.items.len) {
         const line = lines.items[i];
         if (procName(line)) |p| {
+            out.assocs.open = null;
             while (stack.items.len > 0 and stack.items[stack.items.len - 1].indent >= p.indent) _ = stack.pop();
             var name = try lower(a, p.name);
             // submodules are named "ancestor.submodule"
@@ -184,6 +190,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             continue;
         }
         const sym = symtree(line) orelse {
+            if (stack.items.len > 0) out.assocs.line(stack.items[stack.items.len - 1].path, line);
             i += 1;
             continue;
         };
@@ -243,6 +250,10 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
         const temp = guards.isTemp(name) and tokens.contains("SELECT-TYPE-TEMPORARY");
         const assoc = !temp and (tokens.contains("ASSOCIATE-VAR") or tokens.contains("SELECT-TYPE-TEMPORARY"));
         try listings.symbol(a, &out.temps, ns, indentOf(line), name, block, temp, assoc);
+        const in_assoc = try out.assocs.symbol(a, indentOf(line), name, block, assoc);
+        // the code after the symbols: a construct's ASSOCIATE or CHANGE
+        // TEAM line
+        for (block) |b| if (indentOf(b) <= indentOf(line)) out.assocs.line(ns, b);
         if (temp) continue;
         const skip = from_host or
             std.mem.startsWith(u8, name, "_") or
@@ -288,7 +299,8 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             if (!gop.found_existing) gop.value_ptr.* = .procedure;
         } else if (tokens.contains("VARIABLE") or tokens.contains("PARAMETER")) {
             try out.entities.put(a, fq, .variable);
-            try out.vars.put(a, fq, types.varOf(block));
+            // those of ASSOCIATE constructs each with its own construct's
+            if (!in_assoc) try out.vars.put(a, fq, types.varOf(block));
             if (tokens.contains("DUMMY")) try out.dummies.put(a, fq, {});
         }
     }
@@ -309,6 +321,8 @@ const Zfls = struct {
     decls: std.StringHashMapUnmanaged([]const u8) = .empty,
     /// those, in the order of the source
     blocks: std.ArrayList(guards.Block) = .empty,
+    /// and of the names of ASSOCIATE constructs
+    assocs: std.ArrayList(associates.Zname) = .empty,
 };
 
 /// The entities of zfls's object tree (`--debug_parser` output), null when
@@ -338,6 +352,7 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
         }
     }
     const select_blocks = try oz.selectBlocks(a, out);
+    const assoc_lines = try oz.associates(a, out);
     var block_seen: Names = .empty;
     // block, select, do, where, if, associate and enum scopes
     var constructs: Names = .empty;
@@ -368,6 +383,10 @@ fn zflsEntities(a: Allocator, out: []const u8) !?Zfls {
                 if ((try block_seen.getOrPut(a, r.fqsn)).found_existing) continue;
                 const select = parent[0 .. std.mem.findLast(u8, parent, "::") orelse 0];
                 try res.blocks.append(a, .{ .key = kept.items, .select = select, .select_line = b.select_line, .line = b.line, .decl = d });
+            } else if (assoc_lines.get(try lower(a, parent))) |l| {
+                if ((try block_seen.getOrPut(a, r.fqsn)).found_existing) continue;
+                const ns = kept.items[0 .. std.mem.findLast(u8, kept.items, "::") orelse 0];
+                try res.assocs.append(a, .{ .key = kept.items, .ns = ns, .construct = try lower(a, parent), .line = l, .decl = d });
             } else try res.decls.put(a, kept.items, d);
         }
     }
@@ -535,6 +554,7 @@ pub fn main(init: std.process.Init) !u8 {
         // the associate names of blocks of SELECT TYPE and RANK, each with
         // its block's temporary
         try guards.check(a, &diffs, &ref.vars, &ref.temps, got.blocks.items, try sourceLines(a, text));
+        try associates.check(a, &diffs, ref.assocs.names.items, got.assocs.items);
         var vit = ref.vars.iterator();
         while (vit.next()) |e| {
             const decl = got.decls.get(e.key_ptr.*) orelse continue;
@@ -562,6 +582,7 @@ pub fn main(init: std.process.Init) !u8 {
 
 test {
     _ = guards;
+    _ = associates;
 }
 
 test "the temporaries of type guards take the associate name listed after them" {
@@ -645,4 +666,123 @@ test "dump parsing" {
     try std.testing.expectEqual(.variable, z.entities.get("shapes::f::x").?);
     try std.testing.expect(isFunctionResult("shapes::f::f"));
     try std.testing.expect(!isFunctionResult("shapes::f::x"));
+}
+
+test "each ASSOCIATE construct's names with their own construct's (#754)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // gfortran 16.1, fortls's test/test_source/hover/associate_block.f90
+    // (an excerpt): two constructs name `x`
+    const g = try gfortranEntities(a,
+        \\Namespace: A-Z: (UNKNOWN 0)
+        \\procedure name = test_associate_block
+        \\  symtree: 'a'           || symbol: 'a'
+        \\    type spec : (REAL 4)
+        \\    attributes: (VARIABLE  DIMENSION IMPLICIT-SAVE)
+        \\    Array spec:(1 [0] AS_EXPLICIT 1 5 )
+        \\
+        \\  code:
+        \\
+        \\  ASSOCIATE  x = test_associate_block:a(FULL)
+        \\    symtree: 'block@1'     || symbol: 'block@1'
+        \\      type spec : (UNKNOWN 0)
+        \\      attributes: (LABEL  ARRAY-OUTER-DEPENDENCY)
+        \\    symtree: 'x'           || symbol: 'x'
+        \\      type spec : (REAL 4)
+        \\      attributes: (VARIABLE  DIMENSION ASSOCIATE-VAR)
+        \\      Array spec:(1 [0] AS_DEFERRED () () )
+        \\    WRITE UNIT=6 FMT=-1
+        \\    TRANSFER block@1:x(FULL)
+        \\    DT_END
+        \\  END ASSOCIATE
+        \\
+        \\  ASSOCIATE  x = 1
+        \\    symtree: 'block@2'     || symbol: 'block@2'
+        \\      type spec : (UNKNOWN 0)
+        \\      attributes: (LABEL )
+        \\    symtree: 'x'           || symbol: 'x'
+        \\      type spec : (INTEGER 4)
+        \\      attributes: (VARIABLE  ASSOCIATE-VAR)
+        \\    WRITE UNIT=6 FMT=-1
+        \\    TRANSFER block@2:x
+        \\    DT_END
+        \\  END ASSOCIATE
+    );
+    try std.testing.expectEqual(2, g.assocs.names.items.len);
+    try std.testing.expectEqual(2, g.assocs.names.items[1].n);
+    // not compared by name alone
+    try std.testing.expect(!g.vars.contains("test_associate_block::x"));
+    const tree =
+        \\Object Tree
+        \\1: test_associate_block
+        \\  6: test_associate_block::a
+        \\  14: test_associate_block::#assoc1
+        \\    6: test_associate_block::#assoc1::x
+        \\  14: test_associate_block::#assoc2
+        \\    6: test_associate_block::#assoc2::x
+        \\Exportable Objects
+        \\1: test_associate_block
+        \\================================================================================
+        \\Associate Constructs
+        \\================================================================================
+        \\
+        \\test_associate_block::#assoc1: 4
+        \\test_associate_block::#assoc2: 7
+        \\
+        \\================================================================================
+        \\Declarations
+        \\================================================================================
+        \\
+        \\test_associate_block::a: REAL, DIMENSION(5) :: A
+        \\
+    ;
+    const right = (try zflsEntities(a, tree ++
+        \\test_associate_block::#assoc1::x: REAL, DIMENSION(5) :: X
+        \\test_associate_block::#assoc2::x: INTEGER :: X
+    )).?;
+    var diffs: std.ArrayList([]const u8) = .empty;
+    try associates.check(a, &diffs, g.assocs.names.items, right.assocs.items);
+    try std.testing.expectEqual(0, diffs.items.len);
+    // the first `x` with the second's type: before #754, compared with
+    // gfortran's last `x`, it passed
+    const wrong = (try zflsEntities(a, tree ++
+        \\test_associate_block::#assoc1::x: INTEGER :: X
+        \\test_associate_block::#assoc2::x: INTEGER :: X
+    )).?;
+    try associates.check(a, &diffs, g.assocs.names.items, wrong.assocs.items);
+    try std.testing.expectEqual(1, diffs.items.len);
+    try std.testing.expectEqualStrings("differs: test_associate_block::x (ASSOCIATE on line 4): type INTEGER, gfortran (REAL 4)", diffs.items[0]);
+}
+
+test "a CHANGE TEAM's coarray names, numbered among the constructs with names (#754)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // gfortran 16.1, tests/fortran/f2018.f90 (an excerpt): a CHANGE TEAM
+    // without names, then one naming `x`
+    const g = try gfortranEntities(a,
+        \\Namespace: A-Z: (UNKNOWN 0)
+        \\procedure name = f2018
+        \\  procedure name = teams
+        \\    code:
+        \\
+        \\    CHANGE TEAM teams:t
+        \\      symtree: 'block@1'     || symbol: 'block@1'
+        \\        type spec : (UNKNOWN 0)
+        \\        attributes: (LABEL )
+        \\      ASSIGN teams:k 1
+        \\      END TEAM
+        \\
+        \\    CHANGE TEAM teams:t x = teams:y()[THIS_IMAGE] stat=teams:st errmsg=teams:msg
+        \\      symtree: 'x'           || symbol: 'x'
+        \\        type spec : (REAL 4)
+        \\        attributes: (VARIABLE  CODIMENSION ASSOCIATE-VAR)
+        \\        Array spec:(0 [1] AS_DEFERRED 1 () )
+        \\      ASSIGN named:x()[THIS_IMAGE] 1.00000000e0
+        \\      END TEAM stat=teams:st
+    );
+    try std.testing.expectEqual(1, g.assocs.names.items.len);
+    try std.testing.expectEqualStrings("f2018::teams", g.assocs.names.items[0].ns);
+    try std.testing.expectEqual(1, g.assocs.names.items[0].n);
 }
