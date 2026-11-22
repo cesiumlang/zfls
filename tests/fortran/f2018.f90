@@ -1,6 +1,9 @@
 ! oracle-gfortran-args: -fcoarray=single
+! oracle-gfortran-min: 16
 ! oracle-ifx-args: /Qcoarray:single
-! Fortran 2018 features that gfortran, Flang and ifx all accept
+! Fortran 2018 features that gfortran 16, Flang and ifx accept (gfortran 15
+! and older read neither CRITICAL nor END TEAM with STAT=, nor coarray
+! associations)
 module f2018
   use iso_fortran_env, only: team_type
   implicit none
