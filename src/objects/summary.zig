@@ -54,7 +54,7 @@ pub fn summarize(gpa: Allocator, full: *Ast) Allocator.Error!?struct { ast: *Ast
     defer full.summary = null;
     const bytes = serial.save(gpa, full) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.Foreign => return null,
+        error.Foreign, error.TooDeep => return null,
     };
     errdefer gpa.free(bytes);
     const ast = try Ast.create(gpa, full.file);
