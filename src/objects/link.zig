@@ -22,6 +22,7 @@ const climbTypeTree = objects.climbTypeTree;
 const selector = @import("selector.zig");
 const dimensions = @import("dimensions.zig");
 const argcheck = @import("../argcheck.zig");
+const typing = @import("../argcheck/typing.zig");
 
 pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Error!void {
     switch (self.kind) {
@@ -178,14 +179,16 @@ pub fn resolveLink(self: *Obj, env: Env) Allocator.Error!void {
             for (self.assocData().links.items) |*assoc| {
                 const v = assoc.var_.varData();
                 v.link_obj = null;
-                if (try selectorVariable(env, outer, assoc.link_name)) |o| if (!assoc.var_.linkLoops(o)) {
+                // of a conditional expression, its first value (#733)
+                const sel = typing.conditionalValue(assoc.link_name) orelse assoc.link_name;
+                if (try selectorVariable(env, outer, sel)) |o| if (!assoc.var_.linkLoops(o)) {
                     v.link_obj = o;
-                    v.slice_rank = try selector.associateRank(env, outer, assoc.link_name, self.sline, o);
+                    v.slice_rank = try selector.associateRank(env, outer, sel, self.sline, o);
                     continue;
                 };
-                v.slice_rank = try selector.associateRank(env, outer, assoc.link_name, self.sline, null);
+                v.slice_rank = try selector.associateRank(env, outer, sel, self.sline, null);
                 // a literal or an expression: its type
-                const t = try selector.typeOf(env, outer, assoc.link_name, self.sline);
+                const t = try selector.typeOf(env, outer, sel, self.sline);
                 v.desc = if (t) |typ| try self.al().dupe(u8, typ.desc) else "UNKNOWN";
                 v.vkind = if (t) |typ| if (typ.kind) |k| try self.al().dupe(u8, k) else null else null;
             }

@@ -466,6 +466,11 @@ pub const Checker = struct {
         if (e.len == 0) return null;
         if (literalCategory(e)) |lc| return .{ .cat = lc, .literal = true };
         if (std.ascii.isAlphabetic(e[0])) if (try c.designator(e, scope, line_no, depth)) |t| return t;
+        // a conditional expression (F2023): the type of its values (#733)
+        if (typing.conditionalValue(e)) |value| {
+            const t = (try c.exprType(value, scope, line_no, depth + 1)) orelse return null;
+            return .{ .cat = t.cat, .array = t.array, .rank = t.rank, .rank_known = t.rank_known, .obj = t.obj };
+        }
         // a whole expression in parentheses, or a complex literal
         if (e[0] == '(' and matching(e, 0) == e.len - 1) {
             const inner = e[1 .. e.len - 1];
