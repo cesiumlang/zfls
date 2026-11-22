@@ -6,8 +6,9 @@
 //! and with its DLL, #615),
 //! ERROR STOP with a text and with `quiet=` stops, as with `-fcoarray=lib`
 //! (#532, when libcaf_single links), with gdb a CHARACTER of kind 4
-//! (#533), and a program linked with libcaf_shmem, whose images the
-//! launch says are not followed (#616). For tests/dap_gdb.zig and tests/dap_lldb.zig.
+//! (#533) and the I/O error after a breakpoint of a condition (#776),
+//! and a program linked with libcaf_shmem, whose images the launch says
+//! are not followed (#616). For tests/dap_gdb.zig and tests/dap_lldb.zig.
 
 const std = @import("std");
 const sysinfo = @import("builtin");
@@ -34,6 +35,10 @@ const Case = struct {
     exit: i64,
     /// In the messages, when not the argument
     label: ?[]const u8 = null,
+    /// A breakpoint at the stop's line first, of a Fortran condition that
+    /// never holds: gdb has the program before the runtime's breakpoints
+    /// (#776)
+    conditional: bool = false,
 };
 
 const cases = [_]Case{
@@ -69,7 +74,15 @@ pub fn run(io: Io, gpa: Allocator, argv: []const []const u8, fc: []const u8, dir
             try runCase(io, gpa, argv, with_dll, dir, dc, if (c.marker) |m| lineOf(text, m) else 0);
         }
     }
-    if (gdb) try wide(io, gpa, argv, exe, dir, src, lineOf(text, "stop here: wide"));
+    if (gdb) {
+        const open_line = lineOf(text, cases[0].marker.?);
+        try runCase(io, gpa, argv, exe, dir, .{ .arg = "open", .stop = cases[0].stop, .exit = 2, .label = "open, a condition first", .conditional = true }, open_line);
+        if (sysinfo.target.os.tag == .windows) {
+            const with_dll = try std.Io.Dir.path.join(a, &.{ dir, "runtime_dll.exe" });
+            try runCase(io, gpa, argv, with_dll, dir, .{ .arg = "open", .stop = cases[0].stop, .exit = 2, .label = "open (DLL), a condition first", .conditional = true }, open_line);
+        }
+        try wide(io, gpa, argv, exe, dir, src, lineOf(text, "stop here: wide"));
+    }
     // images as processes of their own (-lcaf_shmem): said at the launch
     try imagesApart(io, gpa, argv, fc, dir);
     // ERROR STOP with -fcoarray=lib, where libcaf_single is there
@@ -151,6 +164,12 @@ fn runCase(io: Io, gpa: Allocator, argv: []const []const u8, exe: []const u8, di
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path" });
     const launched = try c.send("launch", .{ .program = exe, .args = if (case.arg.len > 0) &[_][]const u8{case.arg} else &[_][]const u8{}, .cwd = dir });
     _ = try c.event("initialized");
+    if (case.conditional) {
+        const src = try std.Io.Dir.path.join(gpa, &.{ dir, "runtime.f90" });
+        defer gpa.free(src);
+        const r = try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = line, .condition = "ios .eq. 1 .and. ios .eq. 2" }} });
+        try check(items(r, "breakpoints").len == 1, "{s}: a breakpoint", .{name});
+    }
     _ = try c.request("setExceptionBreakpoints", .{ .filters = .{"fortranRuntimeErrors"} });
     _ = try c.request("configurationDone", .{});
     _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
