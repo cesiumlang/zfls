@@ -127,9 +127,11 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     const hold = std.mem.eql(u8, command, "launch") and s.g.runs_at_launch;
     // the program's symbols now, before the client's breakpoints: gdb 16
     // and later load them at `configurationDone`, and a breakpoint pending
-    // until then takes a condition of Fortran's (`k .ne. 0`) for invalid
+    // until then takes a condition of Fortran's (`k .ne. 0`) for invalid;
+    // gdb's `launch` or `attach` then without it, not loaded twice
+    var loaded = false;
     if (!hold and !s.g.lldb) if (gdb_entry.programPath(a, program, cwd)) |p| {
-        _ = try gdb.request(s, a, "evaluate", .{ .expression = try a.print("file {s}", .{try cliPath(a, p)}), .context = "repl" });
+        loaded = gdb.isSuccess(try gdb.request(s, a, "evaluate", .{ .expression = try a.print("file {s}", .{try cliPath(a, p)}), .context = "repl" }));
     };
     if (std.mem.eql(u8, command, "launch")) {
         if (hold) {
@@ -140,7 +142,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
                 if (!gdb.isSuccess(r)) return gdb.respondWith(s, a, req, r);
             }
         } else {
-            if (program) |p| try o.put(a, "program", .{ .string = p });
+            if (program) |p| if (!loaded) try o.put(a, "program", .{ .string = p });
             if (cwd) |c| try o.put(a, "cwd", .{ .string = c });
         }
         var list: json.Array = .init(a);
@@ -158,7 +160,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
             .string => |t| if (t.len > 0) try o.put(a, "pid", .{ .integer = std.fmt.parseInt(i64, std.mem.trim(u8, t, " "), 10) catch return s.fail(a, req, "processId is not a number") }),
             else => {},
         };
-        if (program) |p| if (p.len > 0) try o.put(a, "program", .{ .string = p });
+        if (program) |p| if (p.len > 0 and !loaded) try o.put(a, "program", .{ .string = p });
         if (json.get(args, "target")) |t| if (t != .null) try o.put(a, "target", .{ .string = try text(a, t) });
     }
     if (hold) {
@@ -173,13 +175,21 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     try gdb.forward(s, a, req, .{ .object = o });
 }
 
-/// A path for gdb's command line, whose arguments take `\` for an
-/// escape: Windows's with `/`
+/// A path for gdb's command line, as gdb's own `launch` gives it: a
+/// blank, a quote or a `\` escaped by a `\`
 fn cliPath(a: Allocator, p: []const u8) ![]const u8 {
-    if (builtin.target.os.tag != .windows) return p;
-    const out = try a.dupe(u8, p);
-    std.mem.replaceScalar(u8, out, '\\', '/');
-    return out;
+    var out: std.ArrayList(u8) = .empty;
+    for (p) |c| {
+        if (std.mem.findScalar(u8, " \t\n\r\x0b\x0c\\'\"", c) != null) try out.append(a, '\\');
+        try out.append(a, c);
+    }
+    return out.items;
+}
+
+test cliPath {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectEqualStrings("C:\\\\My\\ Files\\\\a.exe", try cliPath(arena.allocator(), "C:\\My Files\\a.exe"));
 }
 
 /// A JSON value as text: a string's own

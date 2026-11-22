@@ -82,11 +82,16 @@ fn session(c: *Client, p: Program, child: *std.process.Child, args: anytype, wha
     _ = try c.request("setBreakpoints", .{ .source = .{ .path = p.src }, .breakpoints = .{.{ .line = p.line }} });
     _ = try c.request("configurationDone", .{});
     _ = try Client.bodyOf(try c.response(attached, "attach"), "attach");
-    // gdb stops the program it attaches to: on, to its input
-    const first = get(try c.event("stopped"), "body").?;
-    _ = try c.request("continue", .{ .threadId = int(first, "threadId").? });
+    // gdb stops the program it attaches to (gdb 15 tells no stop of a
+    // target's): on, to its input
+    const threads = items(try c.request("threads", .{}), "threads");
+    try check(threads.len > 0, "{s}: {d} threads", .{ what, threads.len });
+    _ = try c.request("continue", .{ .threadId = int(threads[0], "id").? });
     try child.stdin.?.writeStreamingAll(c.io, "3\n");
-    const stopped = get(try c.event("stopped"), "body").?;
+    const stopped = while (true) {
+        const b = get(try c.event("stopped"), "body").?;
+        if (std.mem.eql(u8, str(b, "reason") orelse "", "breakpoint")) break b;
+    };
     const thread = int(stopped, "threadId").?;
     const frames = items(try c.request("stackTrace", .{ .threadId = thread }), "stackFrames");
     try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint") and int(frames[0], "line") == p.line, "{s}: at the breakpoint, line {d} ({s}, {?d})", .{ what, p.line, str(stopped, "reason") orelse "?", int(frames[0], "line") });
