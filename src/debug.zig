@@ -270,7 +270,12 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     // for the oracles to tell the blocks' associate names apart (#715)
     o.print("\n{s}\nSelect Blocks\n{s}\n\n", .{ sep80, sep80 });
     var blocks_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
-    for (try ast.getScopes(a, null)) |obj| try printSelectBlocks(a, o, obj, &blocks_seen);
+    for (try ast.getScopes(a, null)) |obj| try printConstructLines(a, o, obj, &blocks_seen, .select_block);
+    // the line of each ASSOCIATE construct, for the oracles to pair its
+    // names with their own construct's (#754)
+    o.print("\n{s}\nAssociate Constructs\n{s}\n\n", .{ sep80, sep80 });
+    var assoc_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
+    for (try ast.getScopes(a, null)) |obj| try printConstructLines(a, o, obj, &assoc_seen, .associate);
     // what hover shows of each variable, for the oracles' types and kinds,
     // with the file's links resolved as a workspace of it alone would
     var tree: objects.ObjTree = .empty;
@@ -281,13 +286,17 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     separator(o);
 }
 
-/// `fqsn: SELECT_LINE LINE` of each TYPE IS, CLASS IS, CLASS DEFAULT and
-/// RANK block under `obj` (each once)
-fn printSelectBlocks(a: Allocator, o: *Out, obj: *objects.Obj, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void)) !void {
+/// Under `obj` (each once): `fqsn: SELECT_LINE LINE` of each TYPE IS,
+/// CLASS IS, CLASS DEFAULT and RANK block, or `fqsn: LINE` of each
+/// ASSOCIATE construct
+fn printConstructLines(a: Allocator, o: *Out, obj: *objects.Obj, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void), which: enum { select_block, associate }) !void {
     for (try obj.getChildren(a, false)) |child| {
         if ((try seen.getOrPut(a, child)).found_existing) continue;
-        if (child.isTypeRegion()) o.print("{s}: {d} {d}\n", .{ child.fqsn, if (child.parent) |p| p.sline else 0, child.sline });
-        try printSelectBlocks(a, o, child, seen);
+        switch (which) {
+            .select_block => if (child.isTypeRegion()) o.print("{s}: {d} {d}\n", .{ child.fqsn, if (child.parent) |p| p.sline else 0, child.sline }),
+            .associate => if (child.kind == .associate) o.print("{s}: {d}\n", .{ child.fqsn, child.sline }),
+        }
+        try printConstructLines(a, o, child, seen, which);
     }
 }
 
