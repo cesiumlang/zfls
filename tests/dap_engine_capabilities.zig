@@ -17,7 +17,7 @@ const str = dap.str;
 const check = dap.check;
 
 /// gdb's capabilities that the engine has not
-const lacking = [_][]const u8{ "supportsConditionalBreakpoints", "supportsHitConditionalBreakpoints", "supportsLogPoints", "supportsFunctionBreakpoints", "supportsSetVariable", "supportsCompletionsRequest", "supportsDisassembleRequest", "supportsReadMemoryRequest" };
+const lacking = [_][]const u8{ "supportsConditionalBreakpoints", "supportsHitConditionalBreakpoints", "supportsLogPoints", "supportsFunctionBreakpoints", "supportsSetVariable", "supportsDisassembleRequest", "supportsReadMemoryRequest" };
 
 /// The leg (skipped without `gdb`)
 pub fn run(io: Io, gpa: Allocator, a: Allocator, zfls: []const u8, gdb: []const u8, exe: []const u8, tmp: []const u8, src_dir: []const u8) !void {
@@ -43,7 +43,8 @@ fn walk(c: *Client, exe: []const u8, tmp: []const u8, src_dir: []const u8) !void
     for (lacking) |name| try check(isFalse(changed, name), "the engine's: no {s}", .{name});
     const filters = items(changed, "exceptionBreakpointFilters");
     try check(filters.len == 1 and std.mem.eql(u8, str(filters[0], "filter") orelse "", "fortranRuntimeErrors"), "the engine's filters: the Fortran runtime errors' alone ({d})", .{filters.len});
-    try check(dap.isArray(changed, "completionTriggerCharacters", 0), "the engine's: no completion characters", .{});
+    const chars = items(changed, "completionTriggerCharacters");
+    try check(chars.len == 1 and std.mem.eql(u8, chars[0].string, "%"), "the engine's completion characters: `%` alone ({d})", .{chars.len});
     _ = try c.request("configurationDone", .{});
     const exited = get(try c.event("exited"), "body").?;
     try check(int(exited, "exitCode") == 3, "the engine's run: exit code 3 ({?d})", .{int(exited, "exitCode")});
