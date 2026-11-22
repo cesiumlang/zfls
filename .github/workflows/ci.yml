@@ -612,6 +612,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/tools-bin"
           ln -sf "/usr/bin/clangd-$CLANGD_VERSION" "$RUNNER_TEMP/tools-bin/clangd"
           echo "$RUNNER_TEMP/tools-bin" >> "$GITHUB_PATH"
+          # the tests of the tools fail, not skip, when one is missing
+          echo "ZFLS_TEST_TOOLS=1" >> "$GITHUB_ENV"
           fortitude --version && fypp --version && findent -v && fprettify --version && "$RUNNER_TEMP/tools-bin/clangd" --version
 
       - name: Unit tests

@@ -65,11 +65,18 @@ pub fn expectIn(text: []const u8, needle: []const u8) !void {
     return error.TestExpectedText;
 }
 
-/// Skips the test when tool `name` is not on the PATH
+/// Skips the test when tool `name` is not on the PATH (fails it when
+/// `ZFLS_TEST_TOOLS` is set)
 pub fn need(name: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var env = try std.testing.environ.createMap(a);
-    if (try h.zfls.executables.onPath(a, io, &env, name) == null) return error.SkipZigTest;
+    if (try h.zfls.executables.onPath(a, io, &env, name) != null) return;
+    // CI installs them all: there a missing one fails the test
+    if (env.get("ZFLS_TEST_TOOLS") != null) {
+        std.debug.print("\n{s} is not on the PATH, and ZFLS_TEST_TOOLS is set\n", .{name});
+        return error.ToolMissing;
+    }
+    return error.SkipZigTest;
 }
