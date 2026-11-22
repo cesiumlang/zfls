@@ -71,10 +71,10 @@ pub fn encode(a: Allocator, v: Val, value: conditions.Scalar) EncodeError![]cons
     if (v.empty or v.rank > v.chosen.len) return error.NotSet;
     const size = v.t.size;
     const out = try a.alloc(u8, switch (v.t.kind) {
-        .integer, .real, .logical => size,
-        .character => size,
+        .integer, .real, .logical, .character => size,
         else => return error.NotSet,
     });
+    errdefer a.free(out);
     switch (v.t.kind) {
         .integer => {
             const n: i64 = switch (value) {
