@@ -234,7 +234,7 @@ test "a rank that differs from an assumed-shape dummy argument's, a scalar for a
     // not be associated with assumed-shape dummy argument", "Whole scalar
     // actual argument may not be associated with a dummy argument 'e='
     // array", ifx #6634 and #8284), and line 90, a CLASS(*) array given a
-    // scalar, which is left unchecked
+    // scalar (#762)
     try w.expectDiagnostics("t.f90", &.{
         "69: Argument v of takes_v: an array expected, a scalar given",
         "70: Argument v of takes_v: rank 1 expected, rank 2 given",
@@ -257,6 +257,7 @@ test "a rank that differs from an assumed-shape dummy argument's, a scalar for a
         "87: Argument d of takes_i: an array expected, a scalar given",
         "88: Argument d of takes_tp: an array expected, a scalar given",
         "89: Argument d of takes_cls: an array expected, a scalar given",
+        "90: Argument d of takes_any: an array expected, a scalar given",
         "91: Argument p of takes_p: rank 1 expected, rank 2 given",
         "92: Argument d of takes_al: rank 2 expected, rank 1 given",
         "93: Argument c of takes_cz: character expected, real given",
@@ -339,12 +340,14 @@ test "components, characters, interface blocks, internal and external procedures
         \\
     }}, .{});
     defer w.deinit();
-    // the three compilers report these lines, and lines 25 and 26 (an
-    // element of an assumed-shape array for an explicit-shape one), left
-    // unchecked; lines 40 to 42 call an external procedure without an
+    // the three compilers report these lines, lines 25 and 26 among them (an
+    // element of an assumed-shape array for an explicit-shape one, #762);
+    // lines 40 to 42 call an external procedure without an
     // interface, which is not checked
     try w.expectDiagnostics("t.f90", &.{
         "23: Argument e of takes_e: an array expected, a scalar given",
+        "25: Argument e of takes_e: an array expected, a scalar given",
+        "26: Argument d of takes_cls: an array expected, a scalar given",
         "28: Argument c of takes_ch: an array expected, a scalar given",
         "29: Argument c of takes_ch: an array expected, a scalar given",
         "51: Argument v of ext: an array expected, a scalar given",
@@ -391,11 +394,12 @@ test "assumed type and the other intrinsic types (#719)" {
         \\
     }}, .{});
     defer w.deinit();
-    // the three compilers report these lines and line 26 (CLASS(*), left
-    // unchecked); gfortran and Flang accept a scalar for a TYPE(*)
+    // the three compilers report these lines, line 26 (CLASS(*), #762) among
+    // them; gfortran and Flang accept a scalar for a TYPE(*)
     // assumed-size array (lines 24 and 29), which ifx does not
     try w.expectDiagnostics("t.f90", &.{
         "25: Argument b of takes_ta: an array expected, a scalar given",
+        "26: Argument b of takes_any: an array expected, a scalar given",
         "27: Argument b of takes_l: an array expected, a scalar given",
         "28: Argument b of takes_cx: an array expected, a scalar given",
         "30: Argument b of takes_l: an array expected, a scalar given",
@@ -467,4 +471,71 @@ test "an associate name of a rank not known, an array COMMON gives its bounds: s
     // the bounds of the COMMON statement of a module procedure followed by
     // another program unit (they were read from a reused line buffer)
     try w.expectHoverContains("c.f90", w.pos("c.f90", "w)", 0, 0), "REAL, DIMENSION(4) :: w");
+}
+
+test "elements of assumed-shape, pointer and polymorphic arrays, a scalar for CLASS(*) (#762)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  type :: t
+        \\    real :: x = 0
+        \\  end type
+        \\contains
+        \\  subroutine takes_e(e)
+        \\    real, intent(in) :: e(10)
+        \\  end subroutine
+        \\  subroutine takes_star(e)
+        \\    real, intent(in) :: e(*)
+        \\  end subroutine
+        \\  subroutine takes_cls(a)
+        \\    class(t), intent(in) :: a(*)
+        \\  end subroutine
+        \\  subroutine takes_tys(a)
+        \\    type(t), intent(in) :: a(*)
+        \\  end subroutine
+        \\  subroutine takes_any(d)
+        \\    class(*), intent(in) :: d(3)
+        \\  end subroutine
+        \\  subroutine takes_tstar(b)
+        \\    type(*), intent(in) :: b(*)
+        \\  end subroutine
+        \\  subroutine s(vv, cv, n, cs, ts, pc)
+        \\    real, intent(in) :: vv(:)
+        \\    real, contiguous, intent(in) :: cv(:)
+        \\    integer, intent(in) :: n
+        \\    class(t), intent(in) :: cs(3)
+        \\    type(t), intent(in) :: ts(3)
+        \\    real, pointer, contiguous, intent(in) :: pc(:)
+        \\    real, pointer :: pp(:)
+        \\    real, allocatable :: al(:)
+        \\    real, target :: ex(10)
+        \\    allocate(al(10))
+        \\    pp => ex
+        \\    call takes_e(vv(1))
+        \\    call takes_star(vv(1))
+        \\    call takes_e(cv(1))
+        \\    call takes_e(pp(1))
+        \\    call takes_e(pc(1))
+        \\    call takes_e(al(1))
+        \\    call takes_e(ex(1))
+        \\    call takes_cls(cs(1))
+        \\    call takes_tys(ts(1))
+        \\    call takes_any(n)
+        \\    call takes_tstar(n)
+        \\    call takes_any(ts(1))
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // the errors gfortran 16.1, Flang 23.1.5 and ifx 2026.2.0 all report;
+    // not the elements of CONTIGUOUS arrays (`cv(1)`, `pc(1)`), which Flang
+    // takes, nor the scalar for TYPE(*), which gfortran and Flang take
+    try w.expectDiagnostics("t.f90", &.{
+        "37: Argument e of takes_e: an array expected, a scalar given",
+        "38: Argument e of takes_star: an array expected, a scalar given",
+        "40: Argument e of takes_e: an array expected, a scalar given",
+        "44: Argument a of takes_cls: an array expected, a scalar given",
+        "46: Argument d of takes_any: an array expected, a scalar given",
+    });
 }

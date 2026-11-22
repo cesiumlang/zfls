@@ -15,6 +15,7 @@ const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
 const KW = @import("constants.zig").KW;
 const typing = @import("argcheck/typing.zig");
+const arithmetic = @import("argcheck/arithmetic.zig");
 const default_kinds = @import("default_kinds.zig");
 const unit_kinds = @import("argcheck/unit_kinds.zig");
 const ignore_tkr = @import("argcheck/ignore_tkr.zig");
@@ -419,6 +420,10 @@ pub const Checker = struct {
         if (typed.array and !dummy_array) return .scalar_expected;
         if (!typed.array and dummy_array) {
             if (generic or assumed_shape) return .array_expected;
+            // what starts no element sequence (#762)
+            if (mode == .explicit and have != .character and typed.designator) if (typed.obj) |v| {
+                if (dimensions.startsNoSequence(dummy, v, typed.subscripted)) return .array_expected;
+            };
             // an element (`x(1)`) or a character may start an element
             // sequence, as anything may for TYPE(*); with an implicit
             // interface also a scalar variable
@@ -707,7 +712,7 @@ pub const Checker = struct {
     /// The value of a kind expression: a number, a named constant (of
     /// ISO_FORTRAN_ENV, ISO_C_BINDING, or a PARAMETER), `kind(...)`,
     /// `selected_real_kind(p, r)`, `selected_int_kind(r)`
-    fn kindValue(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?i64 {
+    pub fn kindValue(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?i64 {
         if (depth > 8) return null;
         const expr = std.mem.trim(u8, expr_in, " ");
         if (expr.len == 0) return null;
@@ -722,6 +727,7 @@ pub const Checker = struct {
             if (!v.varDataConst().is_const) return null;
             return c.kindValue(v.varDataConst().param_val orelse return null, v.parent, v.sline, depth + 1);
         }
+        if (try arithmetic.value(c, expr, scope, line_no, depth)) |n| return n;
         // a call of an inquiry function
         const open = std.mem.findScalar(u8, expr, '(') orelse return null;
         if (expr[expr.len - 1] != ')' or matching(expr, open) != expr.len - 1) return null;
@@ -733,6 +739,7 @@ pub const Checker = struct {
             if (!isName(arg)) return null;
             return c.kindOfVar((try c.lookup(scope, arg, line_no)) orelse return null);
         }
+        if (std.ascii.eqlIgnoreCase(fun, "merge")) return arithmetic.merge(c, args, scope, line_no, depth);
         const real = std.ascii.eqlIgnoreCase(fun, "selected_real_kind");
         if (!real and !std.ascii.eqlIgnoreCase(fun, "selected_int_kind")) return null;
         // the precision and range, by position or keyword

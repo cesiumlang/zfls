@@ -59,7 +59,9 @@ const defs = [_]Def{
     .{ "SELECT_DEFAULT", "[ ]*CLASS[ ]+DEFAULT", true },
     // a case of SELECT RANK, `rank (1)`, `rank (*)`, `rank default` (not
     // an assignment to an element of an array named rank)
-    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([ ]*[\\w*]*[ ]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
+    // (`=` only in a rank's keyword arguments, not in the assignment
+    // `rank(1) = 2`, #763)
+    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([^=]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
     .{ "END_SELECT", "SELECT", true },
     .{ "PROG", "[ ]*PROGRAM[ ]+([\\w$]+)", true },
     .{ "END_PROG", "PROGRAM", true },

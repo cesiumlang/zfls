@@ -305,3 +305,44 @@ test "SELECT RANK: a case's rank given by a named constant (#717)" {
         "21: Argument x of takes_s: a scalar expected, an array given",
     });
 }
+
+test "SELECT RANK: a case's rank with parentheses or arithmetic (#763)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m
+        \\  implicit none
+        \\  integer, parameter :: one = 1
+        \\contains
+        \\  subroutine takes_s(x)
+        \\    real, intent(in) :: x
+        \\  end subroutine
+        \\  subroutine t(z)
+        \\    real, intent(in) :: z(..)
+        \\    select rank (w => z)
+        \\    rank (merge(0, 3, .true.))
+        \\      call takes_s(w)
+        \\    rank (one+1)
+        \\      call takes_s(w)
+        \\    rank (2*one - 1)
+        \\      call takes_s(w)
+        \\    rank (merge(4, 5, .false.)) ! a comment (5)
+        \\      print *, w(1, 1, 1, 1, 1)
+        \\    end select
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    const want = [_]struct { []const u8, []const u8 }{
+        .{ "w)\n    rank (one+1)", "REAL :: w" },
+        .{ "w)\n    rank (2*one", "REAL, DIMENSION(:,:) :: w" },
+        .{ "w)\n    rank (merge(4", "REAL, DIMENSION(:) :: w" },
+        .{ "w(1, 1, 1, 1, 1)", "REAL, DIMENSION(:,:,:,:,:) :: w" },
+    };
+    for (want) |x| try w.expectHoverContains("t.f90", w.pos("t.f90", x[0], 0, 0), x[1]);
+    // as Flang and ifx report them (gfortran 16 takes no MERGE there: "The
+    // SELECT RANK CASE expression at (1) must be a scalar, integer constant")
+    try w.expectDiagnostics("t.f90", &.{
+        "14: Argument x of takes_s: a scalar expected, an array given",
+        "16: Argument x of takes_s: a scalar expected, an array given",
+    });
+}
