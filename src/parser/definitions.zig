@@ -220,7 +220,7 @@ pub fn readVarDef(a: Allocator, line: []const u8, var_type_in: ?[]const u8, fun_
         trailing = line[tm.end(0)..];
     }
     var_type = try std.ascii.allocUpperString(a, var_type);
-    trailing = str.beforeFirst(trailing, "!");
+    trailing = helpers.beforeComment(trailing);
     if (trailing.len == 0) return null;
 
     const kr = (try parseKind(a, trailing)) orelse return null;
@@ -258,7 +258,7 @@ pub const ProcMods = struct { name: []const u8, args: []const u8, trailing: []co
 pub fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Regex) E!?ProcMods {
     const m = re.match(line) orelse return null;
     const name = m.group(1).?;
-    var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    var trailing = str.strip(helpers.beforeComment(line[m.end(0)..]));
     var args: []const u8 = "";
     if (R().SUB_PAREN.match(trailing)) |pm| {
         const words = try R().WORD.findall(a, pm.str());
@@ -334,7 +334,7 @@ pub fn readBlockDataDef(a: Allocator, line: []const u8) E!?DefResult {
 
 pub fn readTypeDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().TYPE_DEF.match(line) orelse return null;
-    var trailing = str.strip(str.beforeFirst(line[m.end(1)..], "!"));
+    var trailing = str.strip(helpers.beforeComment(line[m.end(1)..]));
     var keywords: std.ArrayList([]const u8) = .empty;
     var parent: ?[]const u8 = null;
     var km = R().TATTR_LIST.match(trailing);
@@ -369,7 +369,7 @@ pub fn readEnumDef(a: Allocator, line: []const u8) E!?DefResult {
 
 pub fn readGenericDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().GENERIC_PRO.match(line) orelse return null;
-    const trailing = str.strip(str.beforeFirst(line[m.end(0) - 1 ..], "!"));
+    const trailing = str.strip(helpers.beforeComment(line[m.end(0) - 1 ..]));
     if (trailing.len == 0) return null;
     var vis_flag: objects.Vis = .default;
     if (m.group(2)) |v| {
@@ -432,7 +432,7 @@ pub fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
     var ancestor_name: []const u8 = "";
     var parent_name: []const u8 = "";
     var name: []const u8 = "";
-    const trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    const trailing = str.strip(helpers.beforeComment(line[m.end(0)..]));
     const close = std.mem.findScalar(u8, trailing, ')') orelse trailing.len;
     const parents = trailing[0..close];
     const colon = std.mem.findScalar(u8, parents, ':') orelse parents.len;
@@ -464,7 +464,7 @@ pub fn readIntDef(a: Allocator, line: []const u8) E!?DefResult {
 
 pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().USE.match(line) orelse return null;
-    const trailing = str.beforeFirst(try std.ascii.allocLowerString(a, line[m.end(0)..]), "!");
+    const trailing = helpers.beforeComment(try std.ascii.allocLowerString(a, line[m.end(0)..]));
     const use_mod = m.group(2).?;
     var only: std.ArrayList([]const u8) = .empty;
     var renames: std.ArrayList([2][]const u8) = .empty;
@@ -535,7 +535,7 @@ pub fn readIncStmt(a: Allocator, line: []const u8) E!?DefResult {
 pub fn readVisStmnt(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().VIS.match(line) orelse return null;
     const is_private = std.ascii.eqlIgnoreCase(m.group(1).?, "private");
-    const trailing = str.beforeFirst(line[m.end(0)..], "!");
+    const trailing = helpers.beforeComment(line[m.end(0)..]);
     const words = try R().WORD.findall(a, trailing);
     return .{ .vis = .{ .private = is_private, .obj_names = words } };
 }
@@ -560,7 +560,7 @@ pub fn readEnumeratorDef(a: Allocator, line: []const u8) E!?DefResult {
     if (t.len <= word.len or !std.ascii.startsWithIgnoreCase(t, word)) return null;
     var rest = t[word.len..];
     if (rest[0] != ' ' and rest[0] != ':') return null;
-    rest = str.strip(str.beforeFirst(rest, "!"));
+    rest = str.strip(helpers.beforeComment(rest));
     if (std.mem.startsWith(u8, rest, "::")) rest = str.strip(rest[2..]);
     const names = (try helpers.separateDefList(a, rest)) orelse return null;
     return .{ .var_ = .{ .var_type = "INTEGER", .keywords = &.{"PARAMETER"}, .var_names = names, .var_kind = null } };

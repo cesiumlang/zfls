@@ -535,6 +535,27 @@ def items_within(a, b) -> bool:
 NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
 
 
+def in_string_with_bang(lines: list, line: int, char: int) -> bool:
+    """Whether a string literal before (line, char) holds a `!`: fortls
+    reads that `!` as a comment and offers nothing (null), zfls knows it is
+    a string (zfls #842) and offers an empty list."""
+    if not 0 <= line < len(lines):
+        return False
+    quote = None
+    bang = False
+    for c in lines[line][:char]:
+        if quote:
+            if c == quote:
+                quote = None
+            elif c == "!":
+                bang = True
+        elif c in "'\"":
+            quote = c
+        elif c == "!":
+            return False
+    return bang
+
+
 def after_non_code_line(lines: list, line: int) -> bool:
     """Whether the line continues a statement across a preprocessor
     directive, comment or blank line before it (`REAL &` / `#ifdef X` /

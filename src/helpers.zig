@@ -85,6 +85,23 @@ pub fn isRecordMark(s: []const u8, i: usize) bool {
     return s[i] == '\'' and i > 0 and std.ascii.isAlphanumeric(s[i - 1]) and std.mem.findScalarPos(u8, s, i + 1, '\'') == null;
 }
 
+/// `s` up to its first `!` outside a string: the code of a line, without its
+/// comment. A string the line ends in has no end, so a `!` in it is text.
+pub fn beforeComment(s: []const u8) []const u8 {
+    var i: usize = 0;
+    while (i < s.len) : (i += 1) {
+        switch (s[i]) {
+            '!' => return s[0..i],
+            '\'', '"' => {
+                if (isRecordMark(s, i)) continue;
+                i = stringEnd(s, i) orelse return s;
+            },
+            else => {},
+        }
+    }
+    return s;
+}
+
 /// Strips string literals from code line, found from left to right: the
 /// first quote opens a literal and only the same kind closes it.
 /// `maintain_len` blanks their contents instead of removing them. A literal
@@ -660,4 +677,11 @@ test "helper functions" {
     try testing.expectEqual(@as(?usize, 6), stringEnd("'it''s'", 0));
     try testing.expectEqual(@as(?usize, null), stringEnd("'it''s", 0));
     try testing.expect((try getLinePrefix(a, &.{""}, "#pragma once", 0, true)) == null);
+}
+
+test "beforeComment skips a ! in a string" {
+    try testing.expectEqualStrings("a = \"x!y\", b = 'z' ", beforeComment("a = \"x!y\", b = 'z' ! c, d"));
+    try testing.expectEqualStrings("s = \"it\"\"s!\" ", beforeComment("s = \"it\"\"s!\" !c"));
+    try testing.expectEqualStrings("x = 'open !", beforeComment("x = 'open !"));
+    try testing.expectEqualStrings("", beforeComment("! only"));
 }
