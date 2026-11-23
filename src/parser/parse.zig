@@ -685,7 +685,7 @@ pub const Parser = struct {
                 try ast.scopeLabel(open),
                 open.sline,
             });
-            try ast.scope_errors.append(pa, .{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
+            try ast.addScopeError(.{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
         }
         // a scope further out that the word fits
         var k = @min(ast.scope_stack.items.len, ast.end_stack.items.len);

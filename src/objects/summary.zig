@@ -102,6 +102,7 @@ fn prune(gpa: Allocator, ast: *Ast) Allocator.Error!void {
     // diagnostics read
     ast.end_errors.clearRetainingCapacity();
     ast.scope_errors.clearRetainingCapacity();
+    ast.scope_flags.map.clearRetainingCapacity();
     ast.parse_errors.clearRetainingCapacity();
     ast.main_errors.clearRetainingCapacity();
     ast.implicit_errors.clearRetainingCapacity();
