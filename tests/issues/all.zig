@@ -5,6 +5,8 @@
 test {
     _ = @import("argchecks.zig");
     _ = @import("argument_definable.zig");
+    _ = @import("argument_types.zig");
+    _ = @import("argument_extent.zig");
     _ = @import("sequence_association.zig");
     _ = @import("associate.zig");
     _ = @import("coarrays.zig");

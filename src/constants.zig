@@ -116,6 +116,8 @@ pub const DiagCode = enum {
     argument_kind,
     intent_in_assigned,
     argument_not_definable,
+    argument_too_short,
+    argument_storage_short,
     include_not_found,
     preprocessor_condition,
 

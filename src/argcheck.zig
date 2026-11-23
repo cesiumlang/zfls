@@ -20,6 +20,10 @@ const default_kinds = @import("default_kinds.zig");
 const unit_kinds = @import("argcheck/unit_kinds.zig");
 const ignore_tkr = @import("argcheck/ignore_tkr.zig");
 const definable = @import("argcheck/definable.zig");
+const derived = @import("argcheck/derived.zig");
+const allocatable = @import("argcheck/allocatable.zig");
+const extent = @import("argcheck/extent.zig");
+const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
 const Typed = typing.Typed;
@@ -40,7 +44,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in, not_definable };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -156,6 +160,12 @@ const statement_words = [_][]const u8{
     "flush", "wait",  "allocate", "deallocate", "nullify", "if",     "where",     "forall",
 };
 
+/// A word that a procedure's name follows in its header or declaration
+fn isHeaderWord(word: ?[]const u8) bool {
+    const w = word orelse return false;
+    return oneOf(w, &.{ "subroutine", "function", "entry", "procedure", "is" });
+}
+
 fn isSpec(word: []const u8) bool {
     for (spec_words) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
     return std.ascii.startsWithIgnoreCase(word, "end");
@@ -178,6 +188,8 @@ pub const Checker = struct {
     real10: bool = typing.native_real10,
     /// the kinds of the types without one, of the file checked's options
     kinds: default_kinds.Kinds = .{},
+    /// the dialect the file is linted against (dialect.zig)
+    dialect: Dialect = .neutral,
 
     /// The kinds of the file that declares `v` (else of the file checked),
     /// with the `!DEC$ REAL:n` before its program unit
@@ -259,9 +271,16 @@ pub const Checker = struct {
             if (proc.file_ast.file == null or headerHasDirective(proc)) continue;
             // a function's name in its own body is its result
             if (proc == scope and proc.kind == .function and !proc.hasKeyword(KW.recursive)) continue;
+            const after_call = prev_word != null and std.ascii.eqlIgnoreCase(prev_word.?, "call");
+            // a module or internal procedure called as the other kind
+            if (proc.parent != null and !is_member and (proc.kind == .function) == after_call and !isHeaderWord(prev_word)) {
+                const what: []const u8 = if (after_call) "a function, not a subroutine" else "a subroutine, not a function";
+                try c.report(j, s + w.start, s + w.end, .arguments, "{s} is {s}", .{ proc.name, what });
+                continue;
+            }
             // a variable named like an external procedure, `x(i)` in a
             // DIMENSION: only after CALL or as a function
-            if (proc.kind == .subroutine and !is_member and !(prev_word != null and std.ascii.eqlIgnoreCase(prev_word.?, "call"))) continue;
+            if (proc.kind == .subroutine and !is_member and !after_call) continue;
             try c.callArgs(j, s, text, w, k, close, proc, drop, scope, line_no);
         }
     }
@@ -349,6 +368,20 @@ pub const Checker = struct {
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, mode: Mode, scope: ?*Obj, line_no: usize) !void {
         // those that `!dir$ ignore_tkr` or `NO_ARG_CHECK` leaves out
         const ignored = try c.ignoredChecks(proc, dummy.name);
+        if (mode == .explicit and !ignored.type) if (try c.exprType(actual, scope, line_no, 0)) |t| {
+            if (try derived.mismatch(c.env, dummy, t)) |n| {
+                try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s}({s}) expected, type({s}) given", .{ dummy.name, proc.name, if (n.class) "class" else "type", n.want, n.have });
+            }
+            if (allocatable.mismatch(dummy, t)) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an ALLOCATABLE variable expected", .{ dummy.name, proc.name });
+            if (!ignored.rank and varCategory(dummy) != .character) if (extent.wanted(dummy)) |want| if (t.designator and t.cat != .character) if (t.obj) |v| if (dimensions.isArray(v)) {
+                const g = extent.given(actual, v);
+                if (g.array) |n| if (t.array and n < want) try c.report(j, s + w.start, s + w.end, .too_short, "Argument {s} of {s}: {d} elements expected, {d} given", .{ dummy.name, proc.name, want, n });
+                // gfortran and Flang count the elements left in the array; ifx does not
+                if (g.from_element) |n| if (!t.array and c.dialect.applies(.initMany(&.{ .gfortran, .flang })) and n < want) {
+                    try c.report(j, s + w.start, s + w.end, .storage_short, "Argument {s} of {s}: {d} elements expected, {d} left in the array from the element given", .{ dummy.name, proc.name, want, n });
+                };
+            };
+        };
         if (mode == .explicit) if (definable.definedIntent(dummy)) |intent| if (try c.exprType(actual, scope, line_no, 0)) |t| if (definable.reason(t)) |r| {
             try c.report(j, s + w.start, s + w.end, .not_definable, "Argument {s} of {s} is INTENT({s}): a variable is expected, {s} given", .{ dummy.name, proc.name, intent, definable.describe(r) });
         };
@@ -407,7 +440,7 @@ pub const Checker = struct {
                 known = false;
             };
         }
-        if (generic and known and want == .derived) switch (try c.sameType(dummy, typed.obj)) {
+        if (generic and known and want == .derived) switch (try derived.sameType(c.env, dummy, typed.obj)) {
             .no => return .derived,
             .unknown => known = false,
             .yes => {},
@@ -444,25 +477,6 @@ pub const Checker = struct {
             if (want_rank != have_rank) return .{ .rank = .{ .want = want_rank, .have = have_rank } };
         }
         return if (known) .fits else .unknown;
-    }
-
-    /// Whether variable `v` has the derived type of dummy argument `dummy`
-    /// (or, for a CLASS dummy argument, a type that extends it)
-    fn sameType(c: *Checker, dummy: *Obj, v_opt: ?*Obj) !enum { yes, no, unknown } {
-        const v = v_opt orelse return .unknown;
-        const want = (try dummy.getTypeObj(c.env)) orelse return .unknown;
-        var t = (try v.getTypeObj(c.env)) orelse return .unknown;
-        if (want.kind != .type or t.kind != .type) return .unknown;
-        if (t == want) return .yes;
-        if (!std.ascii.startsWithIgnoreCase(std.mem.trim(u8, dummy.descOf(), " "), "class")) return .no;
-        var n: usize = 0;
-        while (n < 20) : (n += 1) {
-            // a type that extends one not found
-            if (t.data == .scope and t.data.scope.inherit != null and t.typeDataConst().inherit_var == null) return .unknown;
-            t = t.typeDataConst().inherit_var orelse return .no;
-            if (t == want) return .yes;
-        }
-        return .unknown;
     }
 
     /// The type of an argument: a literal, a variable or a part of one
@@ -855,9 +869,9 @@ pub fn constantValue(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, ex
 }
 
 /// `files`: the workspace's; `real10`: the compiler has REAL(10)
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool) ![]const Problem {
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool, dialect: Dialect) ![]const Problem {
     const n = file.nLines();
-    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10, .kinds = file.default_kinds };
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10, .kinds = file.default_kinds, .dialect = dialect };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);

@@ -35,6 +35,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const completion = @import("completion.zig");
 const compile = @import("compile.zig");
+const dialect = @import("dialect.zig");
 const compiler_macros = @import("compiler_macros.zig");
 const linters = @import("linters.zig");
 const convert = @import("convert.zig");
@@ -411,7 +412,7 @@ fn isDotWord(w: []const u8) bool {
 /// assignments to INTENT(IN) arguments
 pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values(), compiler_macros.hasReal10(self))) |p| try out.append(a, .{
+    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values(), compiler_macros.hasReal10(self), dialect.of(self, file.declared_fixed))) |p| try out.append(a, .{
         .sln = p.line,
         .sch = p.start,
         .eln = p.line,
@@ -423,6 +424,8 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .kinds => .argument_kind,
             .intent_in => .intent_in_assigned,
             .not_definable => .argument_not_definable,
+            .too_short => .argument_too_short,
+            .storage_short => .argument_storage_short,
         },
     });
     return out.items;
