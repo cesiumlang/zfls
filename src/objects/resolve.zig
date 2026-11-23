@@ -334,8 +334,13 @@ const UseWalk = struct {
 /// Find a named object visible from `scope_opt`
 pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindOpts) Allocator.Error!?*Obj {
     const scope = scope_opt orelse return null;
+    return findLowered(env, scope, var_name, try std.ascii.allocLowerString(env.tmp, var_name), opts);
+}
+
+/// `findInScope` with the name in lowercase too, so that the walk up the
+/// scopes lowercases it once, not at each of thousands of nested scopes
+fn findLowered(env: Env, scope: *Obj, var_name: []const u8, name_lower: []const u8, opts: FindOpts) Allocator.Error!?*Obj {
     const a = env.tmp;
-    const name_lower = try std.ascii.allocLowerString(a, var_name);
     const tmp_var = try checkScope(env, scope, name_lower, false, opts.var_line_number);
     if (opts.local_only or tmp_var != null) return tmp_var;
     // Check INCLUDE statements
@@ -365,16 +370,16 @@ pub fn findInScope(env: Env, scope_opt: ?*Obj, var_name: []const u8, opts: FindO
     if (opts.interface) {
         import_type = checkImportScope(scope, name_lower) orelse return null;
     }
-    if (scope.parent != null and import_type != .none) {
-        if (try findInScope(env, scope.parent, var_name, .{})) |v| return v;
-    }
+    if (scope.parent) |p| if (import_type != .none) {
+        if (try findLowered(env, p, var_name, name_lower, .{})) |v| return v;
+    };
     for (try scope.getAncestors(a)) |anc| {
-        if (try findInScope(env, anc, var_name, .{})) |v| return v;
+        if (try findLowered(env, anc, var_name, name_lower, .{})) |v| return v;
         if (importHides(anc, name_lower)) break;
     }
     // A file included into a scope sees that scope
     if (scope.parent == null) if (scope.file_ast.included_in) |host| {
-        if (host.file_ast != scope.file_ast) return findInScope(env, host, var_name, .{});
+        if (host.file_ast != scope.file_ast) return findLowered(env, host, var_name, name_lower, .{});
     };
     return null;
 }

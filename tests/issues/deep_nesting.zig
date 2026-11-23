@@ -117,8 +117,27 @@ test "a file of 3000 unclosed procedures has its diagnostics in seconds (#803)" 
     const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
     defer w.deinit();
     const found = try w.diagnostics("u.f90");
-    // each one is not closed
-    try h.expect(found.len >= 3000, "{d} diagnostics", .{found.len});
+    // each one is not closed, and that is all (#837)
+    try h.expect(found.len == 3000, "{d} diagnostics", .{found.len});
     // 33 seconds before, about 3 now
     try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 12 * std.time.ns_per_s);
+}
+
+test "6000 nested loops have their diagnostics in seconds (#837)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try std.mem.concat(a, u8, &.{
+        "program p\n  integer :: i\n",
+        try repeated(a, 6000, "do i = 1, {d}\n", ""),
+        try repeated(a, 6000, "end do ! {d}\n", "end program p\n"),
+    });
+    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
+    const w = try h.Workspace.init(&.{.{ .name = "l.f90", .text = text }}, .{});
+    defer w.deinit();
+    const found = try w.diagnostics("l.f90");
+    try h.expect(found.len == 0, "{d} diagnostics", .{found.len});
+    // 31 seconds before (each `i` looked for through all the loops around
+    // it), about 7 now
+    try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
 }

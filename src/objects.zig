@@ -44,6 +44,7 @@ pub const InnerScopes = objects_ast.InnerScopes;
 pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
+pub const checkScope = objects_resolve.checkScope;
 pub const importHides = objects_resolve.importHides;
 pub const findThroughUse = objects_resolve.findThroughUse;
 pub const findAllThroughUse = objects_resolve.findAllThroughUse;
@@ -53,6 +54,13 @@ pub const findInWorkspace = objects_resolve.findInWorkspace;
 pub const declaredProcedure = objects_resolve.declaredProcedure;
 pub const findSymbolsInWorkspace = objects_resolve.findSymbolsInWorkspace;
 pub const climbTypeTree = objects_resolve.climbTypeTree;
+
+/// `path` in lowercase: itself when it is, as the path of a scope is, so
+/// that nesting thousands deep does not copy it again at each level
+fn lowerPath(a: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    for (path) |c| if (std.ascii.isUpper(c)) return std.ascii.allocLowerString(a, path);
+    return path;
+}
 
 pub const Kind = enum {
     /// plain `Scope` (e.g. MODULE PROCEDURE implementation in a submodule)
@@ -357,7 +365,7 @@ pub const Obj = struct {
     pub fn computeFqsn(a: Allocator, file_ast: *Ast, name: []const u8) ![]const u8 {
         const lname = try std.ascii.allocLowerString(a, name);
         if (file_ast.enc_scope_name) |enc| {
-            return std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", lname });
+            return std.mem.concat(a, u8, &.{ try lowerPath(a, enc), "::", lname });
         }
         return lname;
     }
@@ -519,7 +527,7 @@ pub const Obj = struct {
         const a = self.al();
         const lname = try std.ascii.allocLowerString(a, self.name);
         if (enc_scope) |e| {
-            self.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, e), "::", lname });
+            self.fqsn = try std.mem.concat(a, u8, &.{ try lowerPath(a, e), "::", lname });
         } else {
             self.fqsn = lname;
         }
