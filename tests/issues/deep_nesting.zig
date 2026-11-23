@@ -109,9 +109,6 @@ test "a file of 3000 nested loops beside a small one, indexed again and again (#
     }
 }
 
-/// 8 times the nesting takes about 28 times as long (it is not linear), 64 if quadratic
-const nesting_limit = 40;
-
 fn nestedLoops(n: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -129,7 +126,7 @@ fn nestedLoops(n: usize) !void {
 
 test "6000 nested loops have their diagnostics in seconds (#837)" {
     // 31 seconds before (each `i` looked for through all the loops around it)
-    try timing.expectGrowth(nestedLoops, 750, 6000, nesting_limit);
+    try timing.expectLinear(nestedLoops, 750, 6000);
 }
 
 test "--debug_parser prints each of 1000 nested loops once (#838)" {
@@ -170,7 +167,7 @@ fn unclosed(n: usize) !void {
 test "6000 unclosed procedures have their diagnostics in seconds (#803, #841)" {
     // 33 seconds before for 3000 (#803), then 9 for 6000 (checkDefinitions
     // hashed each scope's whole path)
-    try timing.expectGrowth(unclosed, 750, 6000, nesting_limit);
+    try timing.expectLinear(unclosed, 750, 6000);
 }
 
 test "every unclosed procedure of a long run of them is reported (#869)" {

@@ -62,6 +62,23 @@ fn lowerPath(a: Allocator, path: []const u8) Allocator.Error![]const u8 {
     return path;
 }
 
+/// The longest path a scope's `fqsn` holds. A scope nested deeper (thousands
+/// of them, in half-typed code) gets the path of an outer one with its own
+/// name, so that all the paths together stay linear in the nesting.
+const max_fqsn_bytes = 1024;
+
+/// `enc_scope`, `::` and `lname` as one path (kept to `max_fqsn_bytes`)
+fn joinPath(a: Allocator, enc_scope: []const u8, lname: []const u8) Allocator.Error![]const u8 {
+    const enc = try lowerPath(a, enc_scope);
+    var keep = enc;
+    const room = max_fqsn_bytes -| (lname.len + 2);
+    if (enc.len > room) {
+        const head = enc[0..room];
+        keep = head[0 .. std.mem.findLast(u8, head, "::") orelse std.mem.find(u8, enc, "::") orelse enc.len];
+    }
+    return std.mem.concat(a, u8, &.{ keep, "::", lname });
+}
+
 pub const Kind = enum {
     /// plain `Scope` (e.g. MODULE PROCEDURE implementation in a submodule)
     scope,
@@ -365,7 +382,7 @@ pub const Obj = struct {
     pub fn computeFqsn(a: Allocator, file_ast: *Ast, name: []const u8) ![]const u8 {
         const lname = try std.ascii.allocLowerString(a, name);
         if (file_ast.enc_scope_name) |enc| {
-            return std.mem.concat(a, u8, &.{ try lowerPath(a, enc), "::", lname });
+            return joinPath(a, enc, lname);
         }
         return lname;
     }
@@ -527,7 +544,7 @@ pub const Obj = struct {
         const a = self.al();
         const lname = try std.ascii.allocLowerString(a, self.name);
         if (enc_scope) |e| {
-            self.fqsn = try std.mem.concat(a, u8, &.{ try lowerPath(a, e), "::", lname });
+            self.fqsn = try joinPath(a, e, lname);
         } else {
             self.fqsn = lname;
         }
@@ -771,3 +788,17 @@ pub fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 // --------------------------------------------------------------------------
 // Name resolution utilities (port of `utilities.py`)
+
+test "a path of thousands of nested scopes stays within its limit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var path: []const u8 = "p";
+    for (0..5000) |i| {
+        path = try joinPath(a, path, try a.print("#do{d}", .{i}));
+        try std.testing.expect(path.len <= max_fqsn_bytes);
+    }
+    try std.testing.expect(std.mem.startsWith(u8, path, "p::#do0::"));
+    try std.testing.expect(std.mem.endsWith(u8, path, "::#do4999"));
+    try std.testing.expectEqualStrings("a::b", try joinPath(a, "A", "b"));
+}
