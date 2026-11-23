@@ -54,6 +54,7 @@ from differential_known import (
     notifications,
     on_assignment,
     on_construct_name_or_label,
+    on_implicit_variable,
     on_enumerator_statement,
     on_import_statement,
     on_include_directive,
@@ -496,6 +497,14 @@ def main() -> int:
                 and on_construct_name_or_label(src_lines, pos.get("line", -1), pos.get("character", 0))
             ):
                 # construct names and statement labels (fortls #424)
+                continue
+            if (
+                kind in ("definition", "references", "rename")
+                and a is None
+                and on_implicit_variable(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # an implicitly typed variable: its first use is its
+                # definition (#849); fortls has no answer
                 continue
             if (
                 kind in ("hover", "definition", "references", "completion")

@@ -642,6 +642,31 @@ def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
     return any(name.match(l) for l in lines)
 
 
+DECLARATION_LINE = re.compile(
+    r"\s*(?:\d+\s+)?(?:integer|real|double|complex|logical|character|type|class|dimension|parameter|common|data|"
+    r"external|intrinsic|pointer|allocatable|target|save|intent|optional|public|private|equivalence|namelist|use|"
+    r"procedure|contains|interface|enum|implicit)\b",
+    re.I,
+)
+
+
+def on_implicit_variable(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on a name that no declaration of the file
+    mentions (an implicitly typed variable or an undeclared dummy
+    argument); zfls answers definition, references and rename there (the
+    first use is the definition, #849), fortls has no answer."""
+    if not 0 <= line < len(lines):
+        return False
+    for m in re.finditer(r"[A-Za-z_]\w*", lines[line]):
+        if m.start() <= char <= m.end():
+            token = m.group(0)
+            break
+    else:
+        return False
+    word = re.compile(r"\b" + re.escape(token) + r"\b", re.I)
+    return not any(DECLARATION_LINE.match(l) and word.search(l) for l in lines)
+
+
 def own_file_definition(ref, got, own: str) -> bool:
     """Whether zfls found the definition in the requesting file (path
     suffix `own`) where fortls found one in another file."""
