@@ -429,7 +429,10 @@
               "use-name-not-found",
               "argument-not-definable",
               "argument-too-short",
-              "argument-storage-short"
+              "argument-storage-short",
+              "constant-assigned",
+              "label-defined-twice",
+              "label-not-found"
             ]
           },
           "additionalProperties": {

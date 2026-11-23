@@ -44,7 +44,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -800,6 +800,10 @@ pub const Checker = struct {
         if (k + 1 < text.len and (text[k + 1] == '=' or text[k + 1] == '>')) return;
         const v = (try c.lookup(scope, first.str, line_no)) orelse return;
         if (v.kind != .variable) return;
+        if (v.hasKeyword(KW.parameter)) {
+            try c.report(j, s + first.start, s + first.end, .constant_assigned, "Assignment to named constant {s}", .{v.name});
+            return;
+        }
         const intent = v.keyword_info.intent orelse return;
         if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, intent, " "), "in")) return;
         // INTENT(IN) of a pointer fixes its association, not its target
@@ -869,6 +873,24 @@ pub fn constantValue(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, ex
 }
 
 /// `files`: the workspace's; `real10`: the compiler has REAL(10)
+/// Whether the last line of free-form lines `first`..`last` that holds code
+/// ends in `&`: the statement goes on after a blank line or a comment
+fn endsOpen(a: Allocator, file: *const FortranFile, first: usize, last: usize) !bool {
+    if (file.fixed) return false;
+    var ln = last + 1;
+    while (ln > first) {
+        ln -= 1;
+        const raw = file.getLine(ln, false) orelse continue;
+        if (helpers.isComment(false, raw)) continue;
+        var code = try helpers.stripStrings(a, raw, true);
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
+        const t = std.mem.trim(u8, code, " \t\r");
+        if (t.len == 0) continue;
+        return t[t.len - 1] == '&';
+    }
+    return false;
+}
+
 pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool, dialect: Dialect) ![]const Problem {
     const n = file.nLines();
     var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10, .kinds = file.default_kinds, .dialect = dialect };
@@ -880,6 +902,7 @@ pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast
         while (ln + 1 < sk.end and ln < n) : (ln += 1) inactive[ln] = true;
     }
     var ln: usize = 0;
+    var dangling = false;
     while (ln < n) {
         const st = selection.statementLines(file, ln);
         defer ln = st.last + 1;
@@ -887,6 +910,10 @@ pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast
         if (inactive[ln] or helpers.isComment(file.fixed, raw)) continue;
         const t = std.mem.trimStart(u8, raw, " \t");
         if (t.len == 0 or t[0] == '#') continue;
+        // the rest of a statement that a blank line or a comment cut (#259)
+        const was_open = dangling;
+        dangling = try endsOpen(a, file, st.first, st.last);
+        if (was_open) continue;
         const j = try join(a, file, st.first, st.last);
         // statements separated by `;`
         var s: usize = 0;

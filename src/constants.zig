@@ -121,6 +121,9 @@ pub const DiagCode = enum {
     include_not_found,
     preprocessor_condition,
     use_name_not_found,
+    label_defined_twice,
+    label_not_found,
+    constant_assigned,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

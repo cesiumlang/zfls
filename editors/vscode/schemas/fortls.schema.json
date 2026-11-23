@@ -236,7 +236,10 @@
           "argument-storage-short",
           "include-not-found",
           "preprocessor-condition",
-          "use-name-not-found"
+          "use-name-not-found",
+          "label-defined-twice",
+          "label-not-found",
+          "constant-assigned"
         ]
       },
       "additionalProperties": {
