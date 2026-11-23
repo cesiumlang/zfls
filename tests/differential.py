@@ -32,6 +32,7 @@ from differential_known import (
     adjacent_references,
     after_non_code_line,
     in_string_with_bang,
+    on_keyword_or_operator,
     associate_bound,
     associate_names,
     conditional_attributes,
@@ -518,6 +519,15 @@ def main() -> int:
             ):
                 # an IMPORT statement: zfls offers every name the host sees
                 # (#486), fortls only those its IMPORT statements name
+                continue
+            if (
+                kind == "hover"
+                and a is not None
+                and b is None
+                and on_keyword_or_operator(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # a type keyword or an operator is no call of the intrinsic
+                # of that name (zfls #845)
                 continue
             if kind == "references" and adjacent_references(a, b, src_lines):
                 # names right behind a name, `i*i` (zfls #844), which fortls
