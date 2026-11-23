@@ -425,7 +425,8 @@
               "argument-kind",
               "intent-in-assigned",
               "include-not-found",
-              "preprocessor-condition"
+              "preprocessor-condition",
+              "argument-not-definable"
             ]
           },
           "additionalProperties": {

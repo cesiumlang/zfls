@@ -422,6 +422,7 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .arguments => .argument_mismatch,
             .kinds => .argument_kind,
             .intent_in => .intent_in_assigned,
+            .not_definable => .argument_not_definable,
         },
     });
     return out.items;

@@ -231,6 +231,7 @@
           "argument-mismatch",
           "argument-kind",
           "intent-in-assigned",
+          "argument-not-definable",
           "include-not-found",
           "preprocessor-condition"
         ]

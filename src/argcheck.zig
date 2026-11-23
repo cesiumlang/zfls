@@ -19,6 +19,7 @@ const arithmetic = @import("argcheck/arithmetic.zig");
 const default_kinds = @import("default_kinds.zig");
 const unit_kinds = @import("argcheck/unit_kinds.zig");
 const ignore_tkr = @import("argcheck/ignore_tkr.zig");
+const definable = @import("argcheck/definable.zig");
 const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
 const Typed = typing.Typed;
@@ -39,7 +40,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -348,6 +349,9 @@ pub const Checker = struct {
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, mode: Mode, scope: ?*Obj, line_no: usize) !void {
         // those that `!dir$ ignore_tkr` or `NO_ARG_CHECK` leaves out
         const ignored = try c.ignoredChecks(proc, dummy.name);
+        if (mode == .explicit) if (definable.definedIntent(dummy)) |intent| if (try c.exprType(actual, scope, line_no, 0)) |t| if (definable.reason(t)) |r| {
+            try c.report(j, s + w.start, s + w.end, .not_definable, "Argument {s} of {s} is INTENT({s}): a variable is expected, {s} given", .{ dummy.name, proc.name, intent, definable.describe(r) });
+        };
         switch (try c.compare(dummy, actual, elemental, mode, scope, line_no)) {
             .type => |t| if (!ignored.type) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(t.want), @tagName(t.have) }),
             .kind => |k| if (!ignored.kind) {
