@@ -535,6 +535,36 @@ def items_within(a, b) -> bool:
 NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
 
 
+def adjacent_references(a, b, lines: list) -> bool:
+    """Whether references `b` are those of `a` and more, the more being
+    names one character after a name (`i*i`, `a(i,i)`, `%n=n`): fortls
+    consumes the delimiter after each name, so it misses a name right behind
+    it (zfls #844)."""
+    if not isinstance(a, list) or not isinstance(b, list) or len(a) >= len(b):
+        return False
+
+    def key(x):
+        r = x.get("range", {}).get("start", {})
+        return (x.get("uri"), r.get("line"), r.get("character"))
+
+    have = {key(x) for x in a}
+    if not have <= {key(x) for x in b}:
+        return False
+    for x in b:
+        k = key(x)
+        if k in have:
+            continue
+        ln, ch = k[1], k[2]
+        if ln is None or not 0 <= ln < len(lines) or ch is None or ch < 2:
+            return False
+        text = lines[ln]
+        if ch > len(text) or text[ch - 1].isalnum() or text[ch - 1] == "_":
+            return False
+        if not (text[ch - 2].isalnum() or text[ch - 2] == "_"):
+            return False
+    return True
+
+
 def in_string_with_bang(lines: list, line: int, char: int) -> bool:
     """Whether a string literal before (line, char) holds a `!`: fortls
     reads that `!` as a comment and offers nothing (null), zfls knows it is
