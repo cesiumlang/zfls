@@ -205,13 +205,23 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                 // the result variable of an ENTRY of this function
                 if (parent_var.kind == .function and parent_var.procDataConst().entry_of == self) continue;
-                var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
+                var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks {s} in parent scope", .{ child.name, maskedNoun(parent_var.kind) }), 2, child.name);
                 d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                 try errors.append(a, d);
             }
         }
     }
     return errors.items;
+}
+
+/// What a name that another masks is, for the message
+fn maskedNoun(kind: objects.Kind) []const u8 {
+    return switch (kind) {
+        .subroutine, .function, .interface, .method => "procedure",
+        .type => "type",
+        .module, .submodule, .program => "module",
+        else => "variable",
+    };
 }
 
 /// The scoping unit `scope` is where no IMPORT statement may be (F2018

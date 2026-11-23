@@ -22,6 +22,7 @@ test {
     _ = @import("completion_resolve.zig");
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
+    _ = @import("masks_procedure.zig");
     _ = @import("adjacent_names.zig");
     _ = @import("blank_continuation.zig");
     _ = @import("string_bang.zig");
