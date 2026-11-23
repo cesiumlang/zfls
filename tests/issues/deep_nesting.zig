@@ -165,3 +165,18 @@ test "--debug_parser prints each of 1000 nested loops once (#838)" {
     try h.expect(out.items.len < 40_000_000, "{d} bytes", .{out.items.len});
     try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
 }
+
+test "6000 unclosed procedures have their diagnostics in seconds (#841)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try repeated(a, 6000, "subroutine s{d}()\n", "");
+    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
+    const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
+    defer w.deinit();
+    const found = try w.diagnostics("u.f90");
+    try h.expect(found.len == 6000, "{d} diagnostics", .{found.len});
+    // 9 seconds before (checkDefinitions hashed each scope's whole path), about 4.5 now
+    const took = std.Io.Clock.awake.now(std.testing.io).nanoseconds - before;
+    try std.testing.expect(took < 8 * std.time.ns_per_s);
+}

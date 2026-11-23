@@ -152,18 +152,28 @@ fn nestedDeeper(scope: *const Obj, limit: usize) bool {
     return false;
 }
 
+const Seen = struct { fqsn: []const u8, line: usize };
+
+fn fqsnTail(fqsn: []const u8) []const u8 {
+    const i = std.mem.findLast(u8, fqsn, "::") orelse return fqsn;
+    return fqsn[i + 2 ..];
+}
+
 pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
     const a = env.tmp;
-    var fqsn_dict = std.array_hash_map.String(usize).empty;
+    // keyed by the name after the last `::`: the children of a scope share
+    // the path before it, and hashing a long path for each is quadratic
+    var fqsn_dict = std.array_hash_map.String(Seen).empty;
     var errors: std.ArrayList(Diagnostic) = .empty;
     var known_types = Obj.KnownTypes.empty;
 
     for (self.childList()) |child| {
         if (child.getType(false) == C.TypeId.interface) continue;
-        if (fqsn_dict.get(child.fqsn)) |v| {
-            if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
+        const key = fqsnTail(child.fqsn);
+        if (fqsn_dict.get(key)) |v| {
+            if (child.sline < v.line and std.mem.eql(u8, v.fqsn, child.fqsn)) try fqsn_dict.put(a, key, .{ .fqsn = child.fqsn, .line = child.sline -| 1 });
         } else {
-            try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
+            try fqsn_dict.put(a, key, .{ .fqsn = child.fqsn, .line = child.sline -| 1 });
         }
     }
 
@@ -187,7 +197,8 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
             try errors.append(a, Diagnostic.init(.procedure_before_contains, line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
         }
         if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
-        if (fqsn_dict.get(child.fqsn)) |first| if (line_number > first) {
+        if (fqsn_dict.get(fqsnTail(child.fqsn))) |seen| if (std.mem.eql(u8, seen.fqsn, child.fqsn) and line_number > seen.line) {
+            const first = seen.line;
             var d = Diagnostic.init(.declared_twice, line_number, try a.print("Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
             d.addRelated(self.file_ast.path, first, "First declaration");
             try errors.append(a, d);
