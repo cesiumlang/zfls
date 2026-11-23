@@ -180,6 +180,20 @@ const Tokenizer = struct {
         const key = try t.a.print("{x}:{s}", .{ @intFromPtr(scope), lower });
         const gop = try t.cache.getOrPut(t.a, key);
         if (gop.found_existing) return gop.value_ptr.*;
+        // a construct without USE or IMPORT has what its own names and, when
+        // they lack it, the scope around it has: asked of that one, whose
+        // answer is kept, the names of thousands of nested constructs are
+        // not each looked for up through all of them
+        if (scope) |s| if (s.kind.isBlock() and s.kind != .enum_ and s.parent != null and s.data == .scope and s.scopeDataConst().use.items.len == 0 and s.file_ast.include_statements.items.len == 0) {
+            const own = try objects.checkScope(t.env, s, lower, false, line_no);
+            var answer = own orelse try t.lookup(s.parent, name, line_no);
+            if (answer) |o| if (o.kind == .intrinsic) {
+                answer = null;
+            };
+            // the cache may have grown meanwhile
+            try t.cache.put(t.a, key, answer);
+            return answer;
+        };
         var found = try objects.findInScope(t.env, scope, lower, .{ .var_line_number = line_no });
         // in a derived type, the procedures its bindings name (`procedure
         // :: get => get_area`) and its parent type are those of the

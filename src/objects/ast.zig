@@ -461,6 +461,13 @@ pub const Ast = struct {
         return false;
     }
 
+    /// Whether scope `s` is reported as not closed: a procedure typed in it
+    /// before its END is no definition before CONTAINS, but half-typed code
+    pub fn isUnclosed(self: *const Ast, s: *const Obj) bool {
+        for (self.scope_errors.items) |e| if (e.scope == s and e.code == .unclosed_scope) return true;
+        return false;
+    }
+
     /// A SELECT TYPE or SELECT RANK construct for one of its blocks (the
     /// parser opens a scope for each), else `s`
     pub fn constructOf(s: *Obj) *Obj {

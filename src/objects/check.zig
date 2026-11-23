@@ -183,7 +183,7 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
         const ct = child.getType(true);
         const stmt_function = child.kind == .function and child.procDataConst().stmt_function;
-        if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function) and !stmt_function) {
+        if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function) and !stmt_function and !self.file_ast.isUnclosed(self)) {
             try errors.append(a, Diagnostic.init(.procedure_before_contains, line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
         }
         if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
