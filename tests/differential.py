@@ -30,6 +30,7 @@ from differential_known import (
     SEMICOLON_STRINGS,
     ZFLS_ONLY_INTRINSICS,
     after_non_code_line,
+    in_string_with_bang,
     associate_bound,
     associate_names,
     conditional_attributes,
@@ -516,6 +517,15 @@ def main() -> int:
             ):
                 # an IMPORT statement: zfls offers every name the host sees
                 # (#486), fortls only those its IMPORT statements name
+                continue
+            if (
+                kind == "completion"
+                and a is None
+                and b == []
+                and in_string_with_bang(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside a string that holds a `!` (zfls #842): fortls reads
+                # the `!` as a comment
                 continue
             if (
                 kind in ("hover", "definition", "completion", "signature")
