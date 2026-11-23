@@ -121,4 +121,6 @@ test {
     _ = @import("loops.zig");
     _ = @import("declaration_checks.zig");
     _ = @import("subscripts_components.zig");
+    _ = @import("allocate_types.zig");
+    _ = @import("initializer_names.zig");
 }

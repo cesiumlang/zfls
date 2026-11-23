@@ -434,6 +434,11 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .bad_kind => .bad_kind,
             .subscript_count => .subscript_count,
             .unknown_component => .unknown_component,
+            .allocate_object => .allocate_object,
+            .allocate_shape => .allocate_shape,
+            .assignment_type => .assignment_type,
+            .condition_type => .condition_type,
+            .intrinsic_arguments => .intrinsic_arguments,
         },
     });
     return out.items;
@@ -813,8 +818,11 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     var cursor: str.Utf16Cursor = .{};
+    const flang = dialect.of(self, file.declared_fixed) == .flang;
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
+        // an INTENT outside the argument list: gfortran and ifx report it, Flang does not (#850)
+        if (flang and d.code == .intent_not_in_arguments) continue;
         // a file included by another may hold a part of a scope
         if (included and d.code == .unclosed_scope) continue;
         if (d.code == .module_not_found) if (d.subject) |m| if (isExternalModule(self, m)) continue;
