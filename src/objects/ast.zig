@@ -411,6 +411,7 @@ pub const Ast = struct {
         // that open at one line) to the first, each line once: `next` skips
         // the painted ones
         const order = try a.alloc(usize, self.scope_list.items.len);
+        defer a.free(order);
         for (order, 0..) |*o, i| o.* = i;
         const items = self.scope_list.items;
         const Ctx = struct {
@@ -423,6 +424,7 @@ pub const Ast = struct {
         };
         std.mem.sort(usize, order, Ctx{ .items = items }, Ctx.later);
         const next = try a.alloc(usize, n_lines + 1);
+        defer a.free(next);
         for (next, 0..) |*n, i| n.* = i;
         for (order) |i| {
             const s = items[i];
