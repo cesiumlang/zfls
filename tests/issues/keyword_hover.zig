@@ -19,6 +19,16 @@ const text =
     \\  r = logical(r)
     \\  r = a .eqv. b
     \\end subroutine
+    \\subroutine u(it)
+    \\  class(*) :: it
+    \\  real, allocatable :: x
+    \\  procedure(real) :: p
+    \\  allocate(real :: x)
+    \\  select type (it)
+    \\  type is (real)
+    \\  type is (character(len=*))
+    \\  end select
+    \\end subroutine
     \\
 ;
 
@@ -39,6 +49,10 @@ test "hover on an operator, a type keyword or DOUBLE PRECISION is no intrinsic's
     try expectNoIntrinsic(w, ".and.", 0, 2);
     try expectNoIntrinsic(w, ".not.", 0, 2);
     try expectNoIntrinsic(w, ".eqv.", 0, 2);
+    try expectNoIntrinsic(w, "real) :: p", 0, 2);
+    try expectNoIntrinsic(w, "real :: x)", 0, 2);
+    try expectNoIntrinsic(w, "real)\n  type is (char", 0, 2);
+    try expectNoIntrinsic(w, "character(len=*))", 0, 2);
 }
 
 test "hover on a call of an intrinsic of the same name still shows it (#845)" {

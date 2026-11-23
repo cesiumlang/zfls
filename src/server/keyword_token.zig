@@ -39,7 +39,16 @@ pub fn isKeywordOrOperator(line: []const u8, prefix: []const u8, col: usize) boo
     while (start.len > 0 and std.ascii.isDigit(start[0])) start = std.mem.trimStart(u8, start[1..], " \t");
     if (start.len == 0) return true;
     for (prefix_words) |p| if (endsWithWord(start, p)) return true;
-    return false;
+    return isTypeSpecPosition(start);
+}
+
+// a type-spec in parentheses: allocate(real :: x), type is (real), procedure(real) :: p
+fn isTypeSpecPosition(start: []const u8) bool {
+    if (!std.mem.endsWith(u8, start, "(")) return false;
+    const head = std.mem.trimEnd(u8, start[0 .. start.len - 1], " \t");
+    if (endsWithWord(head, "allocate") or endsWithWord(head, "procedure")) return true;
+    if (!endsWithWord(head, "is")) return false;
+    return std.ascii.startsWithIgnoreCase(start, "type") or std.ascii.startsWithIgnoreCase(start, "class");
 }
 
 fn endsWithWord(text: []const u8, word: []const u8) bool {
@@ -55,6 +64,12 @@ test "operators and type keywords are not intrinsic names" {
         .{ .line = "  logical r", .col = 4, .want = true },
         .{ .line = "  double precision function f(x)", .col = 12, .want = true },
         .{ .line = "  pure real function f(x)", .col = 8, .want = true },
+        .{ .line = "  allocate(real :: x)", .col = 12, .want = true },
+        .{ .line = "  allocate(character(len=3) :: x)", .col = 12, .want = true },
+        .{ .line = "  type is (real)", .col = 12, .want = true },
+        .{ .line = "  class is (integer(4))", .col = 14, .want = true },
+        .{ .line = "  procedure(real) :: p", .col = 13, .want = true },
+        .{ .line = "  r = is(real(x))", .col = 11, .want = false },
         .{ .line = "  r = logical(r)", .col = 8, .want = false },
         .{ .line = "  r = precision(x)", .col = 8, .want = false },
         .{ .line = "  i = real(x)", .col = 8, .want = false },
