@@ -426,7 +426,10 @@
               "intent-in-assigned",
               "include-not-found",
               "preprocessor-condition",
-              "use-name-not-found"
+              "use-name-not-found",
+              "argument-not-definable",
+              "argument-too-short",
+              "argument-storage-short"
             ]
           },
           "additionalProperties": {

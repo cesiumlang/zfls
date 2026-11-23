@@ -231,6 +231,9 @@
           "argument-mismatch",
           "argument-kind",
           "intent-in-assigned",
+          "argument-not-definable",
+          "argument-too-short",
+          "argument-storage-short",
           "include-not-found",
           "preprocessor-condition",
           "use-name-not-found"
