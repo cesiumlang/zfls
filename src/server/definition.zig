@@ -21,6 +21,7 @@ const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const directives = @import("../data/directives.zig");
 const operators = @import("operators.zig");
+const keyword_token = @import("keyword_token.zig");
 const assignment = @import("assignment.zig");
 const literals = @import("../literals.zig");
 const docmath = @import("../docmath.zig");
@@ -137,6 +138,8 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     // the file's own global definition before another file's of the
     // same name (fortls gets this from parsing the open file last)
     if (self.env(a).global(ast, key)) |o| return o;
+    // `.or.`, `logical r` and `double precision` are no calls of intrinsics (#845)
+    if (keyword_token.isKeywordOrOperator(curr_line, line_prefix, def_char)) return null;
     for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) return f;
     if (hover_req) if (curr_scope) |cs| {
         var var_type: ?[]const u8 = null;
