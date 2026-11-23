@@ -132,6 +132,7 @@ Whether a file is free or fixed form follows its language in VS Code (`FortranFr
 | --- | --- | --- |
 | `zfls.linter.compiler` | `gfortran` | The compiler, or `Disabled` |
 | `zfls.linter.compilerPath` | empty | The compiler executable, when it is not the one on the `PATH` |
+| `zfls.linter.dialect` | empty | The dialect zfls's own checks lint against: `neutral`, `gfortran`, `ifx` or `flang`; empty: that of the compiler, else neutral. See [Dialects](../../readme.md#dialects) |
 | `zfls.linter.extraArgs` | `[]` | Further options, such as `-std=f2018`; when set, they replace the default warning options |
 | `zfls.linter.fixedCompiler` | empty | The compiler of fixed-form files, when it is another (or `Disabled`); empty: `zfls.linter.compiler`. The modules a file uses are compiled with the file's compiler |
 | `zfls.linter.fixedCompilerPath` | empty | Its executable; empty: `zfls.linter.compilerPath` |

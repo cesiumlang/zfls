@@ -871,6 +871,26 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.compiler.markdownDescription%"
         },
+        "zfls.linter.dialect": {
+          "type": "string",
+          "enum": [
+            "",
+            "neutral",
+            "gfortran",
+            "ifx",
+            "flang"
+          ],
+          "enumDescriptions": [
+            "%config.zfls.linter.dialect.enumDescriptions.0%",
+            "%config.zfls.linter.dialect.enumDescriptions.1%",
+            "%config.zfls.linter.dialect.enumDescriptions.2%",
+            "%config.zfls.linter.dialect.enumDescriptions.3%",
+            "%config.zfls.linter.dialect.enumDescriptions.4%"
+          ],
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.dialect.markdownDescription%"
+        },
         "zfls.linter.compilerPath": {
           "type": "string",
           "default": "",

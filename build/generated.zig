@@ -197,6 +197,9 @@ fn specialSchema(a: Allocator, key: []const u8) !?Value {
         \\{"type": "string",
         \\ "enum": ["gfortran", "ifx", "ifort", "flang", "nvfortran", "nagfor", "lfortran", "none", null]}
     );
+    if (std.mem.eql(u8, key, "lint_dialect")) return try parseLiteral(a,
+        \\{"type": "string", "enum": ["neutral", "gfortran", "ifx", "flang", null]}
+    );
     if (std.mem.eql(u8, key, "formatter")) return try parseLiteral(a,
         \\{"type": "string", "enum": ["findent", "fprettify", "none", null]}
     );

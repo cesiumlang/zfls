@@ -312,6 +312,20 @@
         "null"
       ]
     },
+    "lint_dialect": {
+      "description": "The dialect zfls's own checks lint against: neutral (only what gfortran, ifx and Flang agree on), gfortran, ifx or flang, which also reports that compiler's quirks as you type (default: the dialect of compiler_diagnostics, else neutral)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "neutral",
+        "gfortran",
+        "ifx",
+        "flang",
+        null
+      ]
+    },
     "compiler_mod_dir": {
       "description": "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)",
       "type": [
