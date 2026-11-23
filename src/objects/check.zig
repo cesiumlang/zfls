@@ -136,6 +136,22 @@ fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
     return false;
 }
 
+/// How deep a scope may be nested for its names to be checked against
+/// those of the scopes around it: each check walks them all, so thousands
+/// of nested scopes (half-typed code) would take time in their square
+const max_masking_depth = 256;
+
+/// Whether `scope` is nested in more than `limit` scopes
+fn nestedDeeper(scope: *const Obj, limit: usize) bool {
+    var cur = scope.parent;
+    var n: usize = 0;
+    while (cur) |p| : (cur = p.parent) {
+        n += 1;
+        if (n > limit) return true;
+    }
+    return false;
+}
+
 pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
     const a = env.tmp;
     var fqsn_dict = std.array_hash_map.String(usize).empty;
@@ -184,7 +200,7 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         const in_stmt_function = self.kind == .function and self.procDataConst().stmt_function;
         // nor does a variable where IMPORT leaves the host's out (#804)
         const imported = !importHides(self, try std.ascii.allocLowerString(a, child.name));
-        if (self.parent != null and !is_interface and !in_stmt_function and imported and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
+        if (self.parent != null and !is_interface and !in_stmt_function and imported and !nestedDeeper(self, max_masking_depth) and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
             if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
                 // the result variable of an ENTRY of this function

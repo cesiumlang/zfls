@@ -14,6 +14,7 @@ const Ast = objects.Ast;
 const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
 const statement = @import("statement.zig");
+const word_index = @import("word_index.zig");
 
 pub const Unused = struct {
     /// 0-based line and byte columns of the name in its declaration
@@ -30,6 +31,8 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
     var out: std.ArrayList(Unused) = .empty;
     if (file.nLines() == 0) return out.items;
     var words: Words = .empty;
+    // the file's words, found when a scope needs them
+    var index: ?word_index.WordIndex = null;
     for (ast.scope_list.items) |scope| {
         switch (scope.kind) {
             .subroutine, .function, .program => {},
@@ -40,13 +43,16 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
         if (scope.parent) |p| if (p.kind == .interface) continue;
         const first = scope.sline - 1;
         const last = @min(@max(scope.eline, scope.sline) - 1, file.nLines() - 1);
-        const counts = (try wordCounts(a, file, first, last)) orelse continue;
+        if (index == null) index = try word_index.build(a, file);
+        const counts = &index.?;
+        // a scope that includes a file may use names
+        if (counts.hasInclude(first, last)) continue;
         for (scope.childList()) |c| {
             // a NAMELIST group is no variable (#556)
             if (c.kind != .variable or c.isGroup() or c.file_ast != ast or c.sline == 0) continue;
             if (isArgOrResult(scope, c)) continue;
             const lower = try std.ascii.allocLowerString(a, c.name);
-            if ((counts.get(lower) orelse 0) > 1) continue;
+            if (counts.count(lower, first, last) > 1) continue;
             const at = (try findName(a, file, &words, c.sline - 1, c.name)) orelse continue;
             try out.append(a, .{
                 .line = at.line,
@@ -62,7 +68,7 @@ pub fn find(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Unused {
             if (u.is_import or u.line_number == 0 or u.only_list.len() == 0 or u.included) continue;
             for (u.only_list.items.items) |name| {
                 if (!isName(name)) continue;
-                if ((counts.get(name) orelse 0) > 1) continue;
+                if (counts.count(name, first, last) > 1) continue;
                 const at = (try findName(a, file, &words, u.line_number - 1, name)) orelse continue;
                 try out.append(a, .{
                     .line = at.line,
@@ -91,30 +97,6 @@ fn isArgOrResult(scope: *const Obj, c: *const Obj) bool {
         if (proc.result_name) |r| if (c.nameLowerEql(r)) return true;
     }
     return scope.kind == .function and c.nameLowerEql(scope.name);
-}
-
-/// How many times each word (lowercase) occurs in the code of 0-based lines
-/// `first`..`last`, with their macros expanded (a name in a macro's value is
-/// used where the macro is); null when they include a file, whose code may
-/// use names
-fn wordCounts(a: Allocator, file: *const FortranFile, first: usize, last: usize) !?std.StringHashMapUnmanaged(usize) {
-    var counts: std.StringHashMapUnmanaged(usize) = .empty;
-    var ln = first;
-    while (ln <= last) : (ln += 1) {
-        const raw = file.getLine(ln, false) orelse continue;
-        if (helpers.isComment(file.fixed, raw)) continue;
-        const t = std.mem.trimStart(u8, raw, " \t");
-        if (std.ascii.startsWithIgnoreCase(t, "include") or std.mem.startsWith(u8, t, "#") and std.mem.find(u8, t, "include") != null) return null;
-        var code = try helpers.stripStrings(a, file.getLine(ln, true) orelse raw, true);
-        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
-        var it = helpers.words(code);
-        while (it.next()) |w| {
-            const gop = try counts.getOrPut(a, try std.ascii.allocLowerString(a, w.str));
-            if (!gop.found_existing) gop.value_ptr.* = 0;
-            gop.value_ptr.* += 1;
-        }
-    }
-    return counts;
 }
 
 const Place = struct { line: usize, start: usize, end: usize, text: []const u8 };
