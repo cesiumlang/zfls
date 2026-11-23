@@ -245,7 +245,9 @@
           "cycle-outside-loop",
           "parameter-without-value",
           "duplicate-dummy",
-          "bad-kind"
+          "bad-kind",
+          "subscript-count",
+          "unknown-component"
         ]
       },
       "additionalProperties": {

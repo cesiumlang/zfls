@@ -26,6 +26,8 @@ const extent = @import("argcheck/extent.zig");
 const parameter_value = @import("argcheck/parameter_value.zig");
 const dummy_names = @import("argcheck/dummy_names.zig");
 const kind_values = @import("argcheck/kind_values.zig");
+const subscript_count = @import("argcheck/subscript_count.zig");
+const unknown_component = @import("argcheck/unknown_component.zig");
 const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
@@ -47,7 +49,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -234,9 +236,11 @@ pub const Checker = struct {
         try dummy_names.check(c, j, s, text);
         try parameter_value.check(c, j, s, text, first);
         try kind_values.check(c, j, s, text, first);
+        if (!isSpec(first.str)) try unknown_component.check(c, j, s, text, scope);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
         // the calls
+        const is_alloc = oneOf(first.str, &.{ "allocate", "deallocate" });
         it = helpers.words(text);
         var prev_word: ?[]const u8 = null;
         while (it.next()) |w| {
@@ -264,6 +268,7 @@ pub const Checker = struct {
             if (!is_member) if (try objects.declaredProcedure(c.env, c.ast, c.files, obj, true)) |p| {
                 obj = p;
             };
+            if (obj.kind == .variable and !is_alloc) try subscript_count.check(c, j, s, text, w, k, close, obj);
             var drop: ?usize = null;
             const proc = switch (obj.kind) {
                 .subroutine, .function => obj,
@@ -291,11 +296,17 @@ pub const Checker = struct {
         }
     }
 
-    fn member(c: *Checker, scope: ?*Obj, prefix: []const u8, name: []const u8) !?*Obj {
+    /// The type scope of the variable that `prefix`, a statement's text up
+    /// to a component's name (`a%b`), reads the component of
+    pub fn memberScope(c: *Checker, scope: ?*Obj, prefix: []const u8) !?*Obj {
         const line_prefix = (try helpers.getLinePrefix(c.a, &.{}, prefix, prefix.len, false)) orelse return null;
         const var_stack = try helpers.getVarStack(c.a, line_prefix);
         if (var_stack.len < 2) return null;
-        const type_scope = (try objects.climbTypeTree(c.env, var_stack, scope)) orelse return null;
+        return objects.climbTypeTree(c.env, var_stack, scope);
+    }
+
+    fn member(c: *Checker, scope: ?*Obj, prefix: []const u8, name: []const u8) !?*Obj {
+        const type_scope = (try c.memberScope(scope, prefix)) orelse return null;
         const lower = try std.ascii.allocLowerString(c.a, name);
         return objects.findInScope(c.env, type_scope, lower, .{});
     }
