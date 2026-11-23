@@ -188,3 +188,19 @@ test "6000 unclosed procedures have their diagnostics in seconds (#841)" {
     const big = try unclosedTime(6000);
     try h.expect(big < 12 * @max(small, std.time.ns_per_ms * 50), "{d} ms for 1500 procedures, {d} ms for 6000", .{ small / std.time.ns_per_ms, big / std.time.ns_per_ms });
 }
+
+test "every unclosed procedure of a long run of them is reported (#869)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_]usize{ 2, 100, 499, 500, 501, 749, 750, 751, 1000, 1500 }) |n| {
+        const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = try repeated(a, n, "subroutine s{d}()\n", "") }}, .{});
+        defer w.deinit();
+        const found = try w.diagnostics("u.f90");
+        const seen = try a.alloc(bool, n);
+        @memset(seen, false);
+        for (found) |d| seen[@intCast(d.line)] = true;
+        for (seen, 0..) |s, i| if (!s) std.debug.print("MISSING n={d} line={d}\n", .{ n, i });
+        try h.expect(found.len == n, "{d} lines: {d} diagnostics", .{ n, found.len });
+    }
+}
