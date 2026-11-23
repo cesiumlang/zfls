@@ -270,6 +270,8 @@ const Tokenizer = struct {
         t.dir_depth = 0;
         const trimmed = std.mem.trimStart(u8, raw, " \t");
         if (trimmed.len > 0 and trimmed[0] == '#') return;
+        // a blank line between continuation lines leaves the statement as it is
+        if (std.mem.trim(u8, trimmed, " \t\r").len == 0) return;
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
         if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
         // the columns past the code of a fixed-form line are a comment
