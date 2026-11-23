@@ -35,6 +35,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const completion = @import("completion.zig");
 const compile = @import("compile.zig");
+const use_only = @import("use_only.zig");
 const compiler_macros = @import("compiler_macros.zig");
 const linters = @import("linters.zig");
 const convert = @import("convert.zig");
@@ -607,7 +608,7 @@ fn cutEdits(a: Allocator, file: *const FortranFile, cuts: []const unused.Cut) ![
 
 /// Whether `file` has fypp directives (`#:for`, `#:set`, ...) or inline
 /// expressions (`${...}$`)
-fn usesFypp(file: *const FortranFile) bool {
+pub fn usesFypp(file: *const FortranFile) bool {
     for (0..file.nLines()) |i| {
         const text = file.getLine(i, false) orelse continue;
         const t = std.mem.trimStart(u8, text, " \t");
@@ -796,7 +797,7 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     // those of its full AST
     if (summary.dormant(file)) try summary.wake(self, a, &.{file});
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast), try use_only.check(self, a, file, ast) });
     const hidden = try suppress.of(a, file);
     const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
