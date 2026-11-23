@@ -23,6 +23,9 @@ const definable = @import("argcheck/definable.zig");
 const derived = @import("argcheck/derived.zig");
 const allocatable = @import("argcheck/allocatable.zig");
 const extent = @import("argcheck/extent.zig");
+const parameter_value = @import("argcheck/parameter_value.zig");
+const dummy_names = @import("argcheck/dummy_names.zig");
+const kind_values = @import("argcheck/kind_values.zig");
 const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
@@ -44,7 +47,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -96,7 +99,7 @@ pub const Problem = struct { line: usize, start: usize, end: usize, message: []c
 
 /// A statement with its continuation lines joined, and where each of its
 /// bytes is in the file
-const Joined = struct {
+pub const Joined = struct {
     text: []const u8,
     lines: []const usize,
     cols: []const usize,
@@ -216,7 +219,7 @@ pub const Checker = struct {
         return found;
     }
 
-    fn report(c: *Checker, j: Joined, start: usize, end: usize, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
+    pub fn report(c: *Checker, j: Joined, start: usize, end: usize, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
         const line = j.lines[start];
         const e = if (end > start and j.lines[end - 1] == line) j.cols[end - 1] + 1 else j.cols[start] + 1;
         try c.out.append(c.a, .{ .line = line, .start = j.cols[start], .end = e, .message = try c.a.print(fmt, args), .kind = kind });
@@ -228,6 +231,9 @@ pub const Checker = struct {
         const first = it.next() orelse return;
         const line_no = j.lines[s + first.start] + 1;
         const scope = c.inner.at(line_no);
+        try dummy_names.check(c, j, s, text);
+        try parameter_value.check(c, j, s, text, first);
+        try kind_values.check(c, j, s, text, first);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
         // the calls

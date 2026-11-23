@@ -435,7 +435,10 @@
               "label-not-found",
               "case-value-overlap",
               "exit-outside-loop",
-              "cycle-outside-loop"
+              "cycle-outside-loop",
+              "parameter-without-value",
+              "duplicate-dummy",
+              "bad-kind"
             ]
           },
           "additionalProperties": {
