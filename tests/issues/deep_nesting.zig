@@ -106,3 +106,19 @@ test "a file of 3000 nested loops beside a small one, indexed again and again (#
         try h.expect(syms.len == 1, "x: {any}", .{syms});
     }
 }
+
+test "a file of 3000 unclosed procedures has its diagnostics in seconds (#803)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // half-typed code: each procedure inside the one before
+    const text = try repeated(a, 3000, "subroutine s{d}()\n", "");
+    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
+    const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
+    defer w.deinit();
+    const found = try w.diagnostics("u.f90");
+    // each one is not closed
+    try h.expect(found.len >= 3000, "{d} diagnostics", .{found.len});
+    // 33 seconds before, about 3 now
+    try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 12 * std.time.ns_per_s);
+}

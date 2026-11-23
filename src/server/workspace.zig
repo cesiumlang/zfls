@@ -766,7 +766,7 @@ pub fn isSourceFile(self: *const Server, path: []const u8) bool {
 /// and it leaves the workspace when it is closed
 pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
     if (did_close) {
-        if (self.workspace.get(path)) |f| if (f.ast) |ast| linking.removeFromTree(self, ast);
+        if (self.workspace.get(path)) |f| if (f.ast) |ast| try linking.removeFromTree(self, ast);
         return .null;
     }
     if (did_open) {
@@ -850,7 +850,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         }
         if (f.ast) |old| try self.retired.append(self.gpa, old);
     }
-    if (f.ast) |old| linking.removeFromTree(self, old);
+    if (f.ast) |old| try linking.removeFromTree(self, old);
     f.ast = ast_new;
     pull.changed(self);
     try linking.addToTree(self, f);
