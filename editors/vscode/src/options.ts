@@ -161,10 +161,12 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   const config = vscode.workspace.getConfiguration("zfls.linter", folder?.uri);
   const compiler = config.get<string>("compiler", "gfortran");
   const fixed = fixedCompilerSettings(config, folder);
+  const dialect = config.get<string>("dialect", "").trim();
+  const lint = dialect ? ["--lint_dialect", dialect] : [];
   if (compiler === "Disabled" && !fixed.compiler_diagnostics_fixed) {
-    return [];
+    return lint;
   }
-  const args = ["--compiler_diagnostics", compiler === "Disabled" ? "none" : compiler];
+  const args = [...lint, "--compiler_diagnostics", compiler === "Disabled" ? "none" : compiler];
   if (fixed.compiler_diagnostics_fixed) {
     args.push("--compiler_diagnostics_fixed", fixed.compiler_diagnostics_fixed);
   }
@@ -404,6 +406,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
     compiler_diagnostics: compiler !== "Disabled" ? compiler : null,
     ...fixed,
     compiler_path: on && exe ? resolvePath(exe, folder) : null,
+    lint_dialect: config.get<string>("dialect", "").trim() || null,
     compiler_args: on && extra.length ? extra.map((a) => resolvePath(a, folder)) : null,
     compiler_include_dirs: on ? directories(config.get<string[]>("includePaths", []), folder) : [],
     compiler_mod_dir: on && modDir ? resolvePath(modDir, folder) : null,
