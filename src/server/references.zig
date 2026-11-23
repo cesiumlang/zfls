@@ -14,6 +14,7 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const intrinsics = @import("../intrinsics.zig");
 const constructs = @import("../constructs.zig");
+const implicit_names = @import("implicit_names.zig");
 const patterns = @import("../patterns.zig");
 const fpm = @import("../fpm.zig");
 
@@ -483,7 +484,7 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
 pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, file: *const FortranFile, t: constructs.Target) !Value {
     const new = params.newName;
     const valid = switch (t.kind) {
-        .construct => new.len > 0 and std.ascii.isAlphabetic(new[0]) and
+        .construct, .implicit => new.len > 0 and std.ascii.isAlphabetic(new[0]) and
             for (new) |ch| {
                 if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) break false;
             } else true,
@@ -491,7 +492,15 @@ pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, fi
             (std.fmt.parseInt(u32, new, 10) catch 0) > 0,
     };
     if (!valid) {
-        self.postMessage(a, try a.print("Rename failed: \"{s}\" is not a valid {s}", .{ new, if (t.kind == .construct) "construct name" else "statement label" }), C.Severity.warn);
+        self.postMessage(a, try a.print("Rename failed: \"{s}\" is not a valid {s}", .{ new, switch (t.kind) {
+            .construct => "construct name",
+            .label => "statement label",
+            .implicit => "variable name",
+        } }), C.Severity.warn);
+        return .null;
+    }
+    if (t.kind == .implicit and try implicit_names.taken(self, a, file, t, new)) {
+        self.postMessage(a, try a.print("Rename failed: \"{s}\" is a name in use in its scope", .{new}), C.Severity.warn);
         return .null;
     }
     const edits = try a.alloc(lsp.TextEdit, t.spans.len);
