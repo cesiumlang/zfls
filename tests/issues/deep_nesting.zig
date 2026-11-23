@@ -7,6 +7,7 @@
 const std = @import("std");
 const h = @import("harness.zig");
 const zfls = @import("zfls");
+const timing = @import("timing.zig");
 const json = h.json;
 
 /// `n` lines of `line_fmt` (with the line's number), then `tail`
@@ -108,39 +109,27 @@ test "a file of 3000 nested loops beside a small one, indexed again and again (#
     }
 }
 
-test "a file of 3000 unclosed procedures has its diagnostics in seconds (#803)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    // half-typed code: each procedure inside the one before
-    const text = try repeated(a, 3000, "subroutine s{d}()\n", "");
-    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
-    const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
-    defer w.deinit();
-    const found = try w.diagnostics("u.f90");
-    // each one is not closed, and that is all (#837)
-    try h.expect(found.len == 3000, "{d} diagnostics", .{found.len});
-    // 33 seconds before, about 3 now
-    try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 12 * std.time.ns_per_s);
-}
+/// 8 times the nesting takes about 28 times as long (it is not linear), 64 if quadratic
+const nesting_limit = 40;
 
-test "6000 nested loops have their diagnostics in seconds (#837)" {
+fn nestedLoops(n: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const text = try std.mem.concat(a, u8, &.{
         "program p\n  integer :: i\n",
-        try repeated(a, 6000, "do i = 1, {d}\n", ""),
-        try repeated(a, 6000, "end do ! {d}\n", "end program p\n"),
+        try repeated(a, n, "do i = 1, {d}\n", ""),
+        try repeated(a, n, "end do ! {d}\n", "end program p\n"),
     });
-    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
     const w = try h.Workspace.init(&.{.{ .name = "l.f90", .text = text }}, .{});
     defer w.deinit();
     const found = try w.diagnostics("l.f90");
     try h.expect(found.len == 0, "{d} diagnostics", .{found.len});
-    // 31 seconds before (each `i` looked for through all the loops around
-    // it), about 7 now
-    try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
+}
+
+test "6000 nested loops have their diagnostics in seconds (#837)" {
+    // 31 seconds before (each `i` looked for through all the loops around it)
+    try timing.expectGrowth(nestedLoops, 750, 6000, nesting_limit);
 }
 
 test "--debug_parser prints each of 1000 nested loops once (#838)" {
@@ -156,37 +145,32 @@ test "--debug_parser prints each of 1000 nested loops once (#838)" {
     defer w.deinit();
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(std.testing.allocator);
-    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
     _ = try zfls.debug.runTo(std.testing.allocator, std.testing.io, .{ .debug_parser = true, .debug_filepath = try w.path("t.f90"), .debug_rootpath = w.root }, .{ .a = std.testing.allocator, .out = &out });
     // each loop is listed once (it was in the tree of every loop around it
     // too: about 1.5 GB of output before, 5 MB now)
     const tree = out.items[std.mem.find(u8, out.items, "Object Tree").?..std.mem.find(u8, out.items, "Exportable Objects").?];
     try h.expect(std.mem.count(u8, tree, "::#do1000\n") == 1, "listed {d} times", .{std.mem.count(u8, tree, "::#do1000\n")});
     try h.expect(out.items.len < 40_000_000, "{d} bytes", .{out.items.len});
-    try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
 }
 
-/// Nanoseconds to get the diagnostics of `n` unclosed procedures, each in the one before.
-fn unclosedTime(n: usize) !u64 {
+/// Gets the diagnostics of `n` unclosed procedures, each in the one before.
+fn unclosed(n: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    // half-typed code
     const text = try repeated(a, n, "subroutine s{d}()\n", "");
-    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
     const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
     defer w.deinit();
     const found = try w.diagnostics("u.f90");
+    // each one is not closed, and that is all (#837)
     try h.expect(found.len == n, "{d} diagnostics", .{found.len});
-    return @intCast(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before);
 }
 
-test "6000 unclosed procedures have their diagnostics in seconds (#841)" {
-    // 9 seconds before (checkDefinitions hashed each scope's whole path), about
-    // 4.5 now. The time of 6000 against that of 1500 does not depend on the
-    // machine: 4 times if linear, 9 now, 16 if quadratic.
-    const small = try unclosedTime(1500);
-    const big = try unclosedTime(6000);
-    try h.expect(big < 12 * @max(small, std.time.ns_per_ms * 50), "{d} ms for 1500 procedures, {d} ms for 6000", .{ small / std.time.ns_per_ms, big / std.time.ns_per_ms });
+test "6000 unclosed procedures have their diagnostics in seconds (#803, #841)" {
+    // 33 seconds before for 3000 (#803), then 9 for 6000 (checkDefinitions
+    // hashed each scope's whole path)
+    try timing.expectGrowth(unclosed, 750, 6000, nesting_limit);
 }
 
 test "every unclosed procedure of a long run of them is reported (#869)" {
