@@ -126,9 +126,9 @@ const Tokenizer = struct {
     /// construct repeated on a branch (`else n1`), a keyword
     /// inside a statement (`then`, `while`, `concurrent`, ...), an
     /// intrinsic procedure, a component
-    fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool) !void {
+    fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool, in_init: bool) !void {
         const list = t.unknown orelse return;
-        if (t.spec_stmt or in_end or before == '%') return;
+        if ((t.spec_stmt and !in_init) or in_end or before == '%') return;
         if (prev) |p| for ([_][]const u8{ "call", "exit", "cycle" }) |k| {
             if (std.ascii.eqlIgnoreCase(p, k)) return;
         };
@@ -344,6 +344,7 @@ const Tokenizer = struct {
                 }
                 if (isStatementKeyword(w.str) and !isAssignment(code, w.end)) {
                     keyword = w.str;
+                    st.decl = isTypeKeyword(w.str);
                     st.stop = std.ascii.eqlIgnoreCase(w.str, "stop") or std.ascii.eqlIgnoreCase(w.str, "errorstop");
                     st.in_end = isEndKeyword(w.str);
                     t.spec_stmt = isSpecKeyword(w.str);
@@ -413,7 +414,7 @@ const Tokenizer = struct {
                     w.start > 0 and code[w.start - 1] == '$';
                 // the kind of a character literal, `ck_'text'`
                 const kind_prefix = w.str[w.str.len - 1] == '_' and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"');
-                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, st.in_end);
+                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, st.in_end, st.init and std.mem.count(u8, code, "::") < 2);
                 continue;
             };
             // elsewhere in a function, its name is its result
@@ -476,9 +477,22 @@ const Stmt = struct {
     define_file: bool = false,
     /// STOP or ERROR STOP, whose QUIET= is no name (#732)
     stop: bool = false,
+    /// the statement is a type declaration (`real :: x = 1`)
+    decl: bool = false,
+    /// a `::` outside parentheses has been read (of this line)
+    colons: bool = false,
+    /// the initializer of a declaration (after its `=`) has begun (of this
+    /// line): its words are names, as in an executable statement (#850)
+    init: bool = false,
 
     fn punctuation(s: *Stmt, chars: []const u8) void {
-        for (chars) |c| switch (c) {
+        for (chars, 0..) |c, i| switch (c) {
+            ':' => if (s.depth == 0 and i + 1 < chars.len and chars[i + 1] == ':') {
+                s.colons = true;
+            },
+            '=' => if (s.depth == 0 and s.colons and s.decl) {
+                s.init = true;
+            },
             // (an image selector's too: `x[1, notify=nt]`, #732)
             '(', '[' => s.depth += 1,
             ']' => s.depth -|= 1,
@@ -496,6 +510,9 @@ const Stmt = struct {
                 s.prev = null;
                 s.define_file = false;
                 s.stop = false;
+                s.colons = false;
+                s.init = false;
+                s.decl = false;
             },
             else => {},
         };
@@ -688,6 +705,13 @@ pub fn unknownNames(a: Allocator, env: objects.Env, file: *const FortranFile, as
 fn isDotOperator(word: []const u8) bool {
     const ops = [_][]const u8{ "and", "or", "not", "eqv", "neqv", "xor", "eq", "ne", "lt", "le", "gt", "ge", "true", "false" };
     for (ops) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
+    return false;
+}
+
+fn isTypeKeyword(word: []const u8) bool {
+    for ([_][]const u8{ "integer", "real", "double", "complex", "logical", "character", "type", "class", "byte" }) |k| {
+        if (std.ascii.eqlIgnoreCase(word, k)) return true;
+    }
     return false;
 }
 

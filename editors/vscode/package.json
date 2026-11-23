@@ -440,7 +440,12 @@
               "duplicate-dummy",
               "bad-kind",
               "subscript-count",
-              "unknown-component"
+              "unknown-component",
+              "allocate-object",
+              "allocate-shape",
+              "assignment-type",
+              "condition-type",
+              "intrinsic-arguments"
             ]
           },
           "additionalProperties": {

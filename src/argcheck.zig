@@ -28,6 +28,9 @@ const dummy_names = @import("argcheck/dummy_names.zig");
 const kind_values = @import("argcheck/kind_values.zig");
 const subscript_count = @import("argcheck/subscript_count.zig");
 const unknown_component = @import("argcheck/unknown_component.zig");
+const allocate_objects = @import("argcheck/allocate_objects.zig");
+const assign_types = @import("argcheck/assign_types.zig");
+const intrinsic_count = @import("argcheck/intrinsic_count.zig");
 const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
@@ -49,7 +52,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component, allocate_object, allocate_shape, assignment_type, condition_type, intrinsic_arguments };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -195,6 +198,8 @@ pub const Checker = struct {
     kinds: default_kinds.Kinds = .{},
     /// the dialect the file is linted against (dialect.zig)
     dialect: Dialect = .neutral,
+    /// whether the workspace has an `assignment(=)` interface, once told
+    defined_assignment: ?bool = null,
 
     /// The kinds of the file that declares `v` (else of the file checked),
     /// with the `!DEC$ REAL:n` before its program unit
@@ -210,7 +215,7 @@ pub const Checker = struct {
         return unit_kinds.ofUnit(c.kinds, f.lines.items, c.ast, unit);
     }
 
-    fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
+    pub fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
         const key = try c.a.print("{x}:{s}", .{ @intFromPtr(scope), lower });
         const gop = try c.cache.getOrPut(c.a, key);
@@ -239,6 +244,8 @@ pub const Checker = struct {
         if (!isSpec(first.str)) try unknown_component.check(c, j, s, text, scope);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
+        try assign_types.check(c, j, s, text, first, scope, line_no);
+        try allocate_objects.check(c, j, s, text, first, scope, line_no);
         // the calls
         const is_alloc = oneOf(first.str, &.{ "allocate", "deallocate" });
         it = helpers.words(text);
@@ -263,6 +270,7 @@ pub const Checker = struct {
                 try c.member(scope, text[0..w.end], w.str)
             else
                 try c.lookup(scope, w.str, line_no);
+            if (callee_obj == null and !is_member) try intrinsic_count.check(c, j, s, text, w, k, close);
             var obj = callee_obj orelse continue;
             // the caller's own declaration of a procedure it calls (#232)
             if (!is_member) if (try objects.declaredProcedure(c.env, c.ast, c.files, obj, true)) |p| {
@@ -500,7 +508,7 @@ pub const Checker = struct {
     /// (`a(i)%b(:)`), or an expression of these with intrinsic operators;
     /// null when it cannot be told (a function, a user-defined operator, a
     /// derived type in an expression)
-    fn exprType(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
+    pub fn exprType(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
         if (depth > 16) return null;
         const e = std.mem.trim(u8, expr_in, " ");
         if (e.len == 0) return null;

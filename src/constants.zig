@@ -132,6 +132,11 @@ pub const DiagCode = enum {
     bad_kind,
     subscript_count,
     unknown_component,
+    allocate_object,
+    allocate_shape,
+    assignment_type,
+    condition_type,
+    intrinsic_arguments,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {
