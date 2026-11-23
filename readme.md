@@ -472,6 +472,14 @@ Each diagnostic has a code (shown by editors, e.g. in the VS Code Problems panel
 
 These are zfls's own options: fortls does not have them.
 
+### Dialects
+
+zfls's own error checks (the ones fortls does not have, beyond names and arguments) follow a dialect, the Fortran that one compiler accepts. `lint_dialect` (`zfls.linter.dialect` in VS Code) names it: `neutral`, `gfortran`, `ifx` or `flang`. Without it the dialect is that of the compiler of the file's form (`compiler_diagnostics`, or `compiler_diagnostics_fixed` for fixed form; `ifort` is `ifx`'s; or the compiler `compiler_path` names when `compiler_diagnostics` is not set), and neutral when that is none or a compiler with no dialect (`nvfortran`, `nagfor`, `lfortran`). Set it to lint against one compiler and build with another.
+
+- Neutral checks only what gfortran, ifx and Flang all agree on.
+- A compiler's dialect also applies that compiler's quirks, ahead of the compiler check: for example `real(kind=3)` is an error in gfortran's dialect and fine in Flang's. A quirk is implemented where its rule is simple; the rest is left to the compiler check on save.
+- Each rule has a diagnostic code of its own, so that `diagnostic_severity` or a `! zfls: disable=` comment can switch it off, and the documentation of the rule names the dialects that apply it. A file that the compilers accept gets no new diagnostic in any dialect.
+
 ### Compiler diagnostics
 
 With `compiler_diagnostics` set to a compiler (`gfortran`, `ifx`, `ifort`, `flang`, `nvfortran`, `nagfor` or `lfortran`), zfls has it check each file when the file is opened and saved, and publishes the compiler's errors and warnings with its own diagnostics of the file, labeled with the compiler's name. This works in every editor, not only VS Code.

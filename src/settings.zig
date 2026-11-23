@@ -146,6 +146,10 @@ pub const Settings = struct {
     compiler_diagnostics_fixed: ?[]const u8 = null,
     compiler_path_fixed: ?[]const u8 = null,
     compiler_args_fixed: ?StrList = null,
+    /// The dialect zfls's own checks lint against (`neutral`, `gfortran`,
+    /// `ifx` or `flang`); null: that of the compiler (`compiler_diagnostics`)
+    /// of the file's form, else neutral
+    lint_dialect: ?[]const u8 = null,
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
@@ -426,6 +430,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "compiler_diagnostics_fixed")) |v| s.compiler_diagnostics_fixed = json.str(v);
     if (json.get(cfg, "compiler_path_fixed")) |v| s.compiler_path_fixed = json.str(v);
     if (json.get(cfg, "compiler_args_fixed")) |v| s.compiler_args_fixed = if (v == .null) null else try argList(a, v) orelse s.compiler_args_fixed;
+    if (json.get(cfg, "lint_dialect")) |v| s.lint_dialect = json.str(v);
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
     if (json.get(cfg, "compiler_include_dirs")) |v| s.compiler_include_dirs = try jsonList(a, v);
     s.compiler_no_save = jsonBool(json.get(cfg, "compiler_no_save"), s.compiler_no_save);
@@ -628,6 +633,16 @@ test "formatter arguments: a string split at spaces, or a list" {
     try std.testing.expectEqualStrings("fprettify", s.formatter.?);
     try std.testing.expectEqual(@as(usize, 4), s.formatter_args.len());
     try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
+}
+
+test "lint_dialect: on the command line and in a configuration file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s = (try parseArgs(a, &.{ "--lint_dialect", "flang" }, "0.1.0")).run;
+    try std.testing.expectEqualStrings("flang", s.lint_dialect.?);
+    try applyConfig(a, &s, try json5.parse(a, "{\"lint_dialect\": \"gfortran\"}"));
+    try std.testing.expectEqualStrings("gfortran", s.lint_dialect.?);
 }
 
 test "the options as JSON" {
