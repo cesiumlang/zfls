@@ -15,7 +15,7 @@ const FortranFile = @import("parser.zig").FortranFile;
 /// A name or label on a line: 0-based line, byte columns
 pub const Span = struct { line: usize, start: usize, end: usize };
 
-pub const Kind = enum { construct, label };
+pub const Kind = enum { construct, label, implicit };
 
 /// A construct name or label and where it is written
 pub const Target = struct {
@@ -25,6 +25,8 @@ pub const Target = struct {
     def: ?Span,
     /// every occurrence, the definition included
     spans: []const Span,
+    /// of an implicitly typed variable, the scope it belongs to
+    scope: ?*Obj = null,
 };
 
 const Token = struct {
@@ -349,6 +351,7 @@ pub fn at(a: Allocator, file: *const FortranFile, ast: *Ast, ln: usize, col: usi
                     try spans.append(a, .{ .line = l, .start = t.start, .end = t.end });
                 };
             },
+            .implicit => unreachable,
             .label => {
                 if (li.label_def) |t| if (sameName(c[t.start..t.end], name, kind)) {
                     def = .{ .line = l, .start = t.start, .end = t.end };
@@ -378,7 +381,7 @@ pub fn isConstructUse(a: Allocator, file: *const FortranFile, ln: usize, start: 
 
 fn sameName(x: []const u8, y: []const u8, kind: Kind) bool {
     return switch (kind) {
-        .construct => std.ascii.eqlIgnoreCase(x, y),
+        .construct, .implicit => std.ascii.eqlIgnoreCase(x, y),
         // `10` and `010` are the same label
         .label => (std.fmt.parseInt(u32, x, 10) catch return false) == (std.fmt.parseInt(u32, y, 10) catch return false),
     };
