@@ -27,6 +27,9 @@ const sep75 = "=================================================================
 
 pub const DebugError = error{ DebugFailed, OutOfMemory };
 
+/// How much held output is written at once
+const hold_limit = 1 << 16;
+
 const Out = struct {
     io: Io,
     buf: std.ArrayList(u8) = .empty,
@@ -38,9 +41,27 @@ const Out = struct {
     capture: ?Capture = null,
     /// The error of the first write that failed: the output is incomplete
     write_error: ?anyerror = null,
+    /// Whether `print` waits for `hold_limit` bytes before it writes
+    hold: bool = false,
 
     fn print(self: *Out, comptime fmt: []const u8, args: anytype) void {
         self.buf.print(self.a, fmt, args) catch {};
+        if (!self.hold or self.buf.items.len >= hold_limit) self.flush();
+    }
+
+    /// `n` blanks
+    fn spaces(self: *Out, n: usize) void {
+        self.buf.appendNTimes(self.a, ' ', n) catch {};
+    }
+
+    /// From now on write in blocks, not at each line (for the thousands of
+    /// lines of a tree); `release` writes what is left
+    fn holdOutput(self: *Out) void {
+        self.hold = true;
+    }
+
+    fn release(self: *Out) void {
+        self.hold = false;
         self.flush();
     }
 
@@ -194,13 +215,21 @@ fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8
     }
 }
 
-fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {
+/// The children of `obj` at `depth` levels of indent, each followed by its
+/// own, unless `seen` has it: what is under a scope is printed once, where
+/// the scope is first reached
+fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, depth: usize, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void)) !void {
     for (try obj.getChildren(a, false)) |child| {
-        o.print("  {s}{d}: {s}{s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn, groupMark(child) });
-        try printChildren(a, o, child, try std.mem.concat(a, u8, &.{ indent, "  " }));
+        o.spaces(2 + 2 * depth);
+        o.print("{d}: {s}{s}\n", .{ @backingInt(child.getType(false)), child.fqsn, groupMark(child) });
+        if ((try seen.getOrPut(a, child)).found_existing) continue;
+        try printChildren(a, o, child, depth + 1, seen);
     }
     // its COMMON blocks (#556)
-    if (obj.data == .scope) for (obj.scopeData().commons.items) |c| o.print("  {s}{d}: {s}{s}\n", .{ indent, @backingInt(c.getType(false)), c.fqsn, groupMark(c) });
+    if (obj.data == .scope) for (obj.scopeData().commons.items) |c| {
+        o.spaces(2 + 2 * depth);
+        o.print("{d}: {s}{s}\n", .{ @backingInt(c.getType(false)), c.fqsn, groupMark(c) });
+    };
 }
 
 /// After a COMMON block or NAMELIST group in the object tree: what it is
@@ -257,9 +286,15 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
         }
     }
     o.print("\n{s}\nObject Tree\n{s}\n\n", .{ sep80, sep80 });
+    // in blocks: thousands of nested scopes make a long tree
+    o.holdOutput();
+    defer o.release();
+    var tree_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
     for (try ast.getScopes(a, null)) |obj| {
+        // a scope in the tree of another was printed there
+        if ((try tree_seen.getOrPut(a, obj)).found_existing) continue;
         o.print("{d}: {s}\n", .{ @backingInt(obj.getType(false)), obj.fqsn });
-        try printChildren(a, o, obj, "");
+        try printChildren(a, o, obj, 0, &tree_seen);
     }
     // the ENTRY procedures of external procedures, in no scope's lines
     for (ast.entry_list.items) |e| if (e.parent == null) o.print("{d}: {s}\n", .{ @backingInt(e.getType(false)), e.fqsn });

@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const h = @import("harness.zig");
+const zfls = @import("zfls");
 const json = h.json;
 
 /// `n` lines of `line_fmt` (with the line's number), then `tail`
@@ -139,5 +140,28 @@ test "6000 nested loops have their diagnostics in seconds (#837)" {
     try h.expect(found.len == 0, "{d} diagnostics", .{found.len});
     // 31 seconds before (each `i` looked for through all the loops around
     // it), about 7 now
+    try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
+}
+
+test "--debug_parser prints each of 1000 nested loops once (#838)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try std.mem.concat(a, u8, &.{
+        "program p\n  integer :: i\n",
+        try repeated(a, 1000, "do i = 1, {d}\n", ""),
+        try repeated(a, 1000, "end do ! {d}\n", "end program p\n"),
+    });
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text = text }}, .{});
+    defer w.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+    const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
+    _ = try zfls.debug.runTo(std.testing.allocator, std.testing.io, .{ .debug_parser = true, .debug_filepath = try w.path("t.f90"), .debug_rootpath = w.root }, .{ .a = std.testing.allocator, .out = &out });
+    // each loop is listed once (it was in the tree of every loop around it
+    // too: about 1.5 GB of output before, 5 MB now)
+    const tree = out.items[std.mem.find(u8, out.items, "Object Tree").?..std.mem.find(u8, out.items, "Exportable Objects").?];
+    try h.expect(std.mem.count(u8, tree, "::#do1000\n") == 1, "listed {d} times", .{std.mem.count(u8, tree, "::#do1000\n")});
+    try h.expect(out.items.len < 40_000_000, "{d} bytes", .{out.items.len});
     try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
 }
