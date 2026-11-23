@@ -22,9 +22,9 @@ test "a name after the same name and one operator is found (#844)" {
         const at = w.pos("t.f90", "i, a(3,3)", 0, 0);
         const refs = try w.references("t.f90", at);
         const edits = try w.rename("t.f90", at, "jj");
-        // `a(i,i)` (columns 8 and 10) and `i<op>i` (14 and 15 + op length)
-        const second: i64 = 15 + @as(i64, op.len);
-        inline for (.{ 8, 10, 14, second }) |c| {
+        // `a(i,i)` (columns 8 and 10) and `i<op>i` (15 and 16 + op length)
+        const second: i64 = 16 + @as(i64, op.len);
+        inline for (.{ 8, 10, 15, second }) |c| {
             try std.testing.expect(hasRef(refs, 3, c));
             try std.testing.expect(hasEdit(edits, 3, c));
         }
