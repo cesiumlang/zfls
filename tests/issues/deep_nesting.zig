@@ -128,14 +128,9 @@ test "6000 nested loops have their diagnostics in seconds (#837)" {
     defer arena.deinit();
     const a = arena.allocator();
     const text = try std.mem.concat(a, u8, &.{
-        "program p
-  integer :: i
-",
-        try repeated(a, 6000, "do i = 1, {d}
-", ""),
-        try repeated(a, 6000, "end do ! {d}
-", "end program p
-"),
+        "program p\n  integer :: i\n",
+        try repeated(a, 6000, "do i = 1, {d}\n", ""),
+        try repeated(a, 6000, "end do ! {d}\n", "end program p\n"),
     });
     const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
     const w = try h.Workspace.init(&.{.{ .name = "l.f90", .text = text }}, .{});
