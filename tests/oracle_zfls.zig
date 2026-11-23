@@ -190,8 +190,9 @@ pub const Type = union(enum) {
     /// `REAL`, `INTEGER`, `LOGICAL`, `COMPLEX` (its kind, not its bytes)
     intrinsic: struct { name: []const u8, kind: u8 },
     character,
-    /// `TYPE(x)` (`class` false) or `CLASS(x)`, `x` uppercase
-    derived: struct { name: []const u8, class: bool },
+    /// `TYPE(x)` (`class` false) or `CLASS(x)`, `x` uppercase; `pdt` for
+    /// `TYPE(x(8, n))`, a parameterized type's instance (`name` is `x`)
+    derived: struct { name: []const u8, class: bool, pdt: bool = false },
 };
 
 /// The type of type spec `spec`; null when the spec does not tell (a named
@@ -204,7 +205,9 @@ pub fn typeOf(a: Allocator, spec_in: []const u8) !?Type {
     if (std.mem.eql(u8, spec, "BYTE")) return .{ .intrinsic = .{ .name = "INTEGER", .kind = 1 } };
     if (std.mem.startsWith(u8, spec, "TYPE(") or std.mem.startsWith(u8, spec, "CLASS(")) {
         const open = std.mem.findScalar(u8, spec, '(').?;
-        return .{ .derived = .{ .name = spec[open + 1 .. spec.len - 1], .class = spec[0] == 'C' } };
+        const inner = spec[open + 1 .. spec.len - 1];
+        const params = std.mem.findScalar(u8, inner, '(');
+        return .{ .derived = .{ .name = std.mem.trim(u8, inner[0 .. params orelse inner.len], " "), .class = spec[0] == 'C', .pdt = params != null } };
     }
     for ([_][]const u8{ "REAL", "INTEGER", "LOGICAL", "COMPLEX" }) |name| {
         if (!std.mem.startsWith(u8, spec, name)) continue;
@@ -256,4 +259,8 @@ test "the type of a declaration" {
     try std.testing.expectEqual(@as(u8, 8), (try typeOf(a, "COMPLEX*16")).?.intrinsic.kind);
     try std.testing.expectEqualStrings("SHAPE", (try typeOf(a, "CLASS(shape)")).?.derived.name);
     try std.testing.expect((try typeOf(a, "REAL(dp)")) == null);
+    const pdt = (try typeOf(a, "TYPE(matrix(8, 3))")).?.derived;
+    try std.testing.expectEqualStrings("MATRIX", pdt.name);
+    try std.testing.expect(pdt.pdt and !pdt.class);
+    try std.testing.expect(!(try typeOf(a, "TYPE(point)")).?.derived.pdt);
 }
