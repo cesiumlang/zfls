@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const helpers = @import("helpers.zig");
 const lsp = @import("lsp.zig");
 const objects = @import("objects.zig");
+const directive_names = @import("directive_names.zig");
 const constructs = @import("constructs.zig");
 const str = @import("str.zig");
 const Obj = objects.Obj;
@@ -95,6 +96,8 @@ const Tokenizer = struct {
     stmt_next: bool = false,
     /// the quote of a character literal the last line left open
     quote: ?u8 = null,
+    /// the depth of parentheses a directive line left open (`directiveNames`)
+    dir_depth: usize = 0,
     /// the columns of code in a fixed-form line; the rest is a comment
     fixed_limit: ?usize = null,
     /// When set, the uses of named constants are collected here (not
@@ -223,6 +226,19 @@ const Tokenizer = struct {
         return .{ .type = .variable, .mods = if (obj.varData().is_const) bit(.readonly) else 0 };
     }
 
+    /// The names in the clauses of directive line `ln` (`!$omp private(x)`,
+    /// `!$acc copyin(a)`), as the code's are
+    fn directiveNames(t: *Tokenizer, ln: usize, raw: []const u8) !void {
+        const found = try directive_names.inClauses(t.a, t.file.fixed, raw, t.dir_depth);
+        t.dir_depth = found.depth;
+        if (found.words.len == 0) return;
+        const scope = try t.innerScope(ln);
+        for (found.words) |w| {
+            const o = (try t.lookup(scope, w.str, ln + 1)) orelse continue;
+            if (t.kindOf(o, ln + 1)) |k| try t.add(ln, raw, w.start, w.end, k);
+        }
+    }
+
     fn tokenizeLine(t: *Tokenizer, ln: usize) !void {
         const written = t.file.getLine(ln, false) orelse return;
         // the names of a line with macros are found in the text the
@@ -233,8 +249,11 @@ const Tokenizer = struct {
             // a debug line read as a comment (`d_lines`), which the grammar
             // colors as code: a comment token over it
             if (t.file.fixed and (raw[0] == 'd' or raw[0] == 'D') and t.unknown == null) try t.add(ln, raw, 0, raw.len, .{ .type = .comment });
+            // the variables in the clauses of an OpenMP or OpenACC directive
+            if (t.unknown == null and t.constants == null and helpers.isDirective(t.file.fixed, raw)) try t.directiveNames(ln, raw);
             return;
         }
+        t.dir_depth = 0;
         const trimmed = std.mem.trimStart(u8, raw, " \t");
         if (trimmed.len > 0 and trimmed[0] == '#') return;
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)

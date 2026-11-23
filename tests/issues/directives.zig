@@ -94,3 +94,36 @@ test "completion of OpenMP and OpenACC directive and clause names (#742)" {
     items = try labels(w, "f.f", "red\n", 3);
     try h.expect(has(items, "reduction"), "red: {any}", .{items});
 }
+
+fn tokenOn(toks: []const h.Token, line: i64, text: []const u8) ?[]const u8 {
+    for (toks) |t| if (t.line == line and std.mem.eql(u8, t.text, text)) return t.type;
+    return null;
+}
+
+test "the variables of OpenMP and OpenACC clauses are semantic tokens, their keywords are not (#725)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "t.f90", .text = loops },
+        .{ .name = "c.f90", .text = "subroutine c(x, y)\n  real :: x(10), y(10)\n  integer :: i\n  !$omp parallel do private(i) &\n  !$omp& shared(x, y)\n  do i = 1, 10\n    x(i) = y(i)\n  end do\nend subroutine\n" },
+        .{ .name = "f.f", .text = "      subroutine f(x)\n      real x(10)\nc$omp parallel do shared(x)\n      do 10 i = 1, 10\n        x(i) = 0\n   10 continue\n      end\n" },
+    }, .{});
+    defer w.deinit();
+    var toks = try w.semanticTokens("t.f90");
+    const omp = w.pos("t.f90", "total)\n  do", 0, 0).line;
+    try h.expect(std.mem.eql(u8, tokenOn(toks, omp, "total") orelse "", "parameter"), "omp total: {any}", .{toks});
+    const acc = w.pos("t.f90", "total)\n  do", 1, 0).line;
+    try h.expect(std.mem.eql(u8, tokenOn(toks, acc, "total") orelse "", "parameter"), "acc total: {any}", .{toks});
+    try h.expect(std.mem.eql(u8, tokenOn(toks, acc, "a") orelse "", "parameter"), "acc a: {any}", .{toks});
+    // the directive's words and clauses' names are none
+    for ([_][]const u8{ "parallel", "loop", "reduction", "copyin" }) |word| {
+        try h.expect(tokenOn(toks, acc, word) == null and tokenOn(toks, omp, word) == null, "{s} is a token", .{word});
+    }
+    // a clause that goes on after a continuation
+    toks = try w.semanticTokens("c.f90");
+    try h.expect(std.mem.eql(u8, tokenOn(toks, 3, "i") orelse "", "variable"), "private(i): {any}", .{toks});
+    try h.expect(std.mem.eql(u8, tokenOn(toks, 4, "x") orelse "", "parameter"), "shared(x: {any}", .{toks});
+    try h.expect(std.mem.eql(u8, tokenOn(toks, 4, "y") orelse "", "parameter"), "y): {any}", .{toks});
+    // fixed form
+    toks = try w.semanticTokens("f.f");
+    try h.expect(std.mem.eql(u8, tokenOn(toks, 2, "x") orelse "", "parameter"), "c$omp shared(x): {any}", .{toks});
+    try h.expect(tokenOn(toks, 2, "parallel") == null and tokenOn(toks, 2, "shared") == null, "words: {any}", .{toks});
+}
