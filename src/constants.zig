@@ -127,6 +127,9 @@ pub const DiagCode = enum {
     case_value_overlap,
     exit_outside_loop,
     cycle_outside_loop,
+    parameter_without_value,
+    duplicate_dummy,
+    bad_kind,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

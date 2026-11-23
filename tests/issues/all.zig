@@ -119,4 +119,5 @@ test {
     _ = @import("flang_modules.zig");
     _ = @import("flang_declarations.zig");
     _ = @import("loops.zig");
+    _ = @import("declaration_checks.zig");
 }
