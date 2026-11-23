@@ -166,17 +166,25 @@ test "--debug_parser prints each of 1000 nested loops once (#838)" {
     try std.testing.expect(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before < 20 * std.time.ns_per_s);
 }
 
-test "6000 unclosed procedures have their diagnostics in seconds (#841)" {
+/// Nanoseconds to get the diagnostics of `n` unclosed procedures, each in the one before.
+fn unclosedTime(n: usize) !u64 {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const text = try repeated(a, 6000, "subroutine s{d}()\n", "");
+    const text = try repeated(a, n, "subroutine s{d}()\n", "");
     const before = std.Io.Clock.awake.now(std.testing.io).nanoseconds;
     const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
     defer w.deinit();
     const found = try w.diagnostics("u.f90");
-    try h.expect(found.len == 6000, "{d} diagnostics", .{found.len});
-    // 9 seconds before (checkDefinitions hashed each scope's whole path), about 4.5 now
-    const took = std.Io.Clock.awake.now(std.testing.io).nanoseconds - before;
-    try std.testing.expect(took < 8 * std.time.ns_per_s);
+    try h.expect(found.len == n, "{d} diagnostics", .{found.len});
+    return @intCast(std.Io.Clock.awake.now(std.testing.io).nanoseconds - before);
+}
+
+test "6000 unclosed procedures have their diagnostics in seconds (#841)" {
+    // 9 seconds before (checkDefinitions hashed each scope's whole path), about
+    // 4.5 now. The time of 6000 against that of 1500 does not depend on the
+    // machine: 4 times if linear, 9 now, 16 if quadratic.
+    const small = try unclosedTime(1500);
+    const big = try unclosedTime(6000);
+    try h.expect(big < 12 * @max(small, std.time.ns_per_ms * 50), "{d} ms for 1500 procedures, {d} ms for 6000", .{ small / std.time.ns_per_ms, big / std.time.ns_per_ms });
 }
