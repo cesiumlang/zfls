@@ -239,7 +239,8 @@
           "use-name-not-found",
           "label-defined-twice",
           "label-not-found",
-          "constant-assigned"
+          "constant-assigned",
+          "case-value-overlap"
         ]
       },
       "additionalProperties": {

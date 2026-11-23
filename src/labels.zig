@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 const constructs = @import("constructs.zig");
 const objects = @import("objects.zig");
 const selection = @import("selection.zig");
+const inactive_lines = @import("inactive.zig");
 const FortranFile = @import("parser.zig").FortranFile;
 
 const Obj = objects.Obj;
@@ -49,16 +50,9 @@ pub fn check(a: Allocator, file: *const FortranFile, ast: *Ast) ![]const Problem
     const n = file.nLines();
     if (n == 0) return out.items;
     const inner = try ast.innerScopes(a, n);
-    const inactive = try a.alloc(bool, n);
-    @memset(inactive, false);
-    var all_active = true;
-    for (file.pp_skips) |sk| {
-        var l = sk.start;
-        while (l + 1 < sk.end and l < n) : (l += 1) {
-            inactive[l] = true;
-            all_active = false;
-        }
-    }
+    const skipped = try inactive_lines.of(a, file);
+    const inactive = skipped.lines;
+    const all_active = !skipped.any;
     const trusted = ast.include_statements.items.len == 0 and all_active;
     var units: std.AutoHashMapUnmanaged(?*Obj, *Unit) = .empty;
     var ln: usize = 0;

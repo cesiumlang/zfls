@@ -432,7 +432,8 @@
               "argument-storage-short",
               "constant-assigned",
               "label-defined-twice",
-              "label-not-found"
+              "label-not-found",
+              "case-value-overlap"
             ]
           },
           "additionalProperties": {
