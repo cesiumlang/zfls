@@ -432,6 +432,8 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .parameter_without_value => .parameter_without_value,
             .duplicate_dummy => .duplicate_dummy,
             .bad_kind => .bad_kind,
+            .subscript_count => .subscript_count,
+            .unknown_component => .unknown_component,
         },
     });
     return out.items;

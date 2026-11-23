@@ -130,6 +130,8 @@ pub const DiagCode = enum {
     parameter_without_value,
     duplicate_dummy,
     bad_kind,
+    subscript_count,
+    unknown_component,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {

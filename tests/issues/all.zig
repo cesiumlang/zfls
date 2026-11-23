@@ -120,4 +120,5 @@ test {
     _ = @import("flang_declarations.zig");
     _ = @import("loops.zig");
     _ = @import("declaration_checks.zig");
+    _ = @import("subscripts_components.zig");
 }
