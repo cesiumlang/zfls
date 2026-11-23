@@ -23,6 +23,7 @@ test {
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
     _ = @import("blank_continuation.zig");
+    _ = @import("string_bang.zig");
     _ = @import("convert.zig");
     _ = @import("build_command.zig");
     _ = @import("compiler_fixed.zig");
