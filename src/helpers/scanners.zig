@@ -6,6 +6,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const str = @import("../str.zig");
 const patterns = @import("../patterns.zig");
+const helpers = @import("../helpers.zig");
 const regex = @import("../regex.zig");
 const testing = std.testing;
 
@@ -254,7 +255,7 @@ pub fn detectFixedFormat(file_lines: []const []const u8) bool {
         // a declaration before column 6: VAR's keyword starts after the spaces
         if (n < 6 and R().VAR.match(line) != null) return false;
         if (!isFixedComment(line)) {
-            const line_end = str.strip(str.beforeFirst(line, "!"));
+            const line_end = str.strip(helpers.beforeComment(line));
             if (line_end.len > 0 and std.mem.endsWith(u8, line_end, "&")) return false;
         }
     }
@@ -351,7 +352,7 @@ test "the line scanners agree with the patterns they replace" {
             if (free_format_test.match(line) != null) break :blk false;
             if (R().VAR.match(line)) |m| if (m.start(1) < 6) break :blk false;
             if (fixed_comment.match(line) == null) {
-                const line_end = str.strip(str.beforeFirst(line, "!"));
+                const line_end = str.strip(helpers.beforeComment(line));
                 if (line_end.len > 0 and std.mem.endsWith(u8, line_end, "&")) break :blk false;
             }
             break :blk true;
