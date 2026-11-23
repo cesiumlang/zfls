@@ -46,6 +46,16 @@ pub fn varOf(block: []const []const u8) Var {
     return v;
 }
 
+/// Whether `type` (`(DERIVED PDTmatrix_8)`) is an instance of the
+/// parameterized type `name`: gfortran names each `PDT<name>_<n>`
+fn isInstanceOf(type_spec: []const u8, name: []const u8) bool {
+    const head = "(DERIVED PDT";
+    if (!std.ascii.startsWithIgnoreCase(type_spec, head) or type_spec.len < head.len + name.len + 2) return false;
+    const rest = type_spec[head.len..];
+    if (!std.ascii.eqlIgnoreCase(rest[0..name.len], name) or rest[name.len] != '_') return false;
+    return std.mem.endsWith(u8, rest, ")") and rest.len > name.len + 2;
+}
+
 /// How zfls's declaration `decl` (the first line of its hover) differs
 /// from gfortran's `v`, null when they agree
 pub fn mismatch(a: Allocator, v: Var, decl: []const u8) !?[]const u8 {
@@ -54,7 +64,8 @@ pub fn mismatch(a: Allocator, v: Var, decl: []const u8) !?[]const u8 {
         const ok = switch (t) {
             .character => std.mem.startsWith(u8, v.type, "(CHARACTER"),
             .derived => |d| std.mem.startsWith(u8, v.type, "(CLASS") or
-                std.ascii.eqlIgnoreCase(v.type, try a.print("(DERIVED {s})", .{d.name})),
+                std.ascii.eqlIgnoreCase(v.type, try a.print("(DERIVED {s})", .{d.name})) or
+                (d.pdt and isInstanceOf(v.type, d.name)),
             .intrinsic => |i| std.mem.eql(u8, v.type, try a.print("({s} {d})", .{ i.name, i.kind })),
         };
         if (!ok) return try a.print("type {s}, gfortran {s}", .{ spec, v.type });
@@ -135,6 +146,10 @@ test "a variable of gfortran's dump, against zfls's declaration" {
     const ar = varOf(&.{ "      type spec : (REAL 4)", "      attributes: (VARIABLE  DIMENSION DUMMY(IN))", "      Array spec:(-1 [0] AS_ASSUMED_RANK )" });
     try std.testing.expect(try mismatch(a, ar, "REAL, DIMENSION(..), INTENT(IN) :: x") == null);
     try std.testing.expect(try mismatch(a, ar, "REAL, DIMENSION(:), INTENT(IN) :: x") != null);
+    // gfortran 16.1: each instance of a parameterized type is `PDT<name>_<n>`
+    const p = varOf(&.{ "      type spec : (DERIVED PDTmatrix_8)", "      attributes: (VARIABLE)" });
+    try std.testing.expect(try mismatch(a, p, "TYPE(matrix(8, 3)) :: a") == null);
+    try std.testing.expect(try mismatch(a, p, "TYPE(other(8, 3)) :: a") != null);
 }
 
 test "the fields of a DEC structure, through its unions and maps" {
