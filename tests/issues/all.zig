@@ -101,6 +101,7 @@ test {
     _ = @import("unsigned.zig");
     _ = @import("unused.zig");
     _ = @import("implicit_variables.zig");
+    _ = @import("use_only.zig");
     _ = @import("workspace.zig");
     _ = @import("compiler_line_length.zig");
     _ = @import("compiler_lfortran.zig");
