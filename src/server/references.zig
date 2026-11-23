@@ -155,7 +155,7 @@ pub fn renameFile(ri: Server.RenamedImport, at: *FortranFile) *FortranFile {
 /// The uses of a renamed import: of its local name, in the scope of the
 /// USE statement and the statement itself, not of the original name
 pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj: *Obj, ri: Server.RenamedImport) ![]Server.FileRefs {
-    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{ri.alias}), regex.I) catch return &.{};
+    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?=\\W|$)", .{ri.alias}), regex.I) catch return &.{};
     defer name_re.deinit();
     var refs: std.ArrayList(Server.Ref) = .empty;
     const first = ri.scope.sline -| 1;
@@ -254,7 +254,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
     var n_res: usize = 0;
     defer for (name_res[0..n_res]) |*re| re.deinit();
     for (names) |name| {
-        name_res[n_res] = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{name}), regex.I) catch return &.{};
+        name_res[n_res] = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?=\\W|$)", .{name}), regex.I) catch return &.{};
         n_res += 1;
     }
     var files: std.ArrayList(*FortranFile) = .empty;

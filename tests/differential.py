@@ -29,6 +29,7 @@ from differential_known import (
     LITERAL_HOVER,
     SEMICOLON_STRINGS,
     ZFLS_ONLY_INTRINSICS,
+    adjacent_references,
     after_non_code_line,
     in_string_with_bang,
     associate_bound,
@@ -517,6 +518,10 @@ def main() -> int:
             ):
                 # an IMPORT statement: zfls offers every name the host sees
                 # (#486), fortls only those its IMPORT statements name
+                continue
+            if kind == "references" and adjacent_references(a, b, src_lines):
+                # names right behind a name, `i*i` (zfls #844), which fortls
+                # misses
                 continue
             if (
                 kind == "completion"
