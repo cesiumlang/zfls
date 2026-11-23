@@ -49,6 +49,9 @@ pub fn summarizable(ast: *const Ast) bool {
 pub fn summarize(gpa: Allocator, full: *Ast) Allocator.Error!?struct { ast: *Ast, bytes: []u8 } {
     if (!summarizable(full)) return null;
     const depth = maxScopeDepth(full);
+    // saving would fail, after `prune` took from `full` what its own
+    // diagnostics read (#869); the margin is for objects inside the scopes
+    if (depth + 4 > serial.max_nesting) return null;
     try prune(gpa, full);
     full.summary = .{ .depth = depth };
     defer full.summary = null;
