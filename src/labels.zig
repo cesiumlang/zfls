@@ -32,7 +32,7 @@ fn unitOf(scope: ?*Obj) ?*Obj {
     return null;
 }
 
-fn labelValue(file: *const FortranFile, s: constructs.Span) ?u32 {
+pub fn labelValue(file: *const FortranFile, s: constructs.Span) ?u32 {
     const text = file.getLine(s.line, false) orelse return null;
     if (s.end > text.len) return null;
     return std.fmt.parseInt(u32, text[s.start..s.end], 10) catch null;

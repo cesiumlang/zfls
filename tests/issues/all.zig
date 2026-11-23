@@ -118,4 +118,5 @@ test {
     _ = @import("compiler_include_globs.zig");
     _ = @import("flang_modules.zig");
     _ = @import("flang_declarations.zig");
+    _ = @import("loops.zig");
 }

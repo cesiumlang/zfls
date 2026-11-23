@@ -240,7 +240,9 @@
           "label-defined-twice",
           "label-not-found",
           "constant-assigned",
-          "case-value-overlap"
+          "case-value-overlap",
+          "exit-outside-loop",
+          "cycle-outside-loop"
         ]
       },
       "additionalProperties": {
