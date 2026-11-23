@@ -10,6 +10,7 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const resolve = @import("../objects/resolve.zig");
 const unused = @import("../unused.zig");
+const word_index = @import("../word_index.zig");
 const C = @import("../constants.zig");
 const diagnostics = @import("diagnostics.zig");
 
@@ -24,6 +25,7 @@ pub fn check(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]cons
     if (file.nLines() == 0) return out.items;
     var words: unused.Words = .empty;
     var known: std.AutoHashMapUnmanaged(*Obj, bool) = .empty;
+    var indexes: std.StringHashMapUnmanaged(word_index.WordIndex) = .empty;
     const env = self.env(a);
     for (ast.scope_list.items) |scope| {
         if (scope.file_ast != ast or scope.data != .scope) continue;
@@ -35,6 +37,8 @@ pub fn check(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]cons
                 if (!isName(local)) continue;
                 const there = u.nameThere(local) orelse continue;
                 const private = try privateIn(env, mod, there) orelse continue;
+                // a declaration zfls does not read is no absent name
+                if (!private and try mentions(self, a, mod, there, &indexes, 0)) continue;
                 const at = (try unused.findName(a, file, &words, u.line_number - 1, there)) orelse continue;
                 try out.append(a, .{
                     .sln = at.line,
@@ -58,6 +62,24 @@ fn privateIn(env: objects.Env, mod: *Obj, name: []const u8) !?bool {
     if (try resolve.checkScope(env, mod, name, true, null) != null) return null;
     if (try resolve.findThroughUse(env, mod, name, true) != null) return null;
     return try resolve.checkScope(env, mod, name, false, null) != null;
+}
+
+/// Whether `name` is a word of the text of module `mod` or of a module it
+/// uses, whatever zfls read of it
+fn mentions(self: *Server, a: Allocator, mod: *Obj, name: []const u8, indexes: *std.StringHashMapUnmanaged(word_index.WordIndex), depth: usize) Allocator.Error!bool {
+    const path = mod.file_ast.path orelse return true;
+    const f = self.workspace.get(path) orelse return true;
+    const gop = try indexes.getOrPut(a, path);
+    if (!gop.found_existing) gop.value_ptr.* = try word_index.build(a, f);
+    const lower = try std.ascii.allocLowerString(a, name);
+    if (f.nLines() > 0 and gop.value_ptr.count(lower, 0, f.nLines() - 1) > 0) return true;
+    if (depth > 32) return true;
+    for (mod.scopeDataConst().use.items) |u| {
+        if (u.is_import) continue;
+        const m = self.env(a).global(mod.file_ast, u.mod_name) orelse continue;
+        if (m.data == .scope and try mentions(self, a, m, name, indexes, depth + 1)) return true;
+    }
+    return false;
 }
 
 fn isName(s: []const u8) bool {

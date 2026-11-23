@@ -28,7 +28,7 @@ test "USE ONLY of a name the module does not have, or has PRIVATE" {
         \\  use m, only: b, c
         \\  use m, only: zz => b
         \\  use m, only: a, deep
-        \\  use m, only: hidden
+        \\  use m, only: nope
         \\  implicit none
         \\end program p
         \\
@@ -44,7 +44,7 @@ test "USE ONLY of a name the module does not have, or has PRIVATE" {
         "3:15: \"b\" is PRIVATE in module \"m\"",
         "3:18: \"c\" is PRIVATE in module \"m\"",
         "4:21: \"b\" is PRIVATE in module \"m\"",
-        "6:15: \"hidden\" not found in module \"m\"",
+        "6:15: \"nope\" not found in module \"m\"",
     };
     try std.testing.expectEqual(want.len, found.items.len);
     for (want, found.items) |x, y| try std.testing.expectEqualStrings(x, y);
@@ -61,7 +61,7 @@ test "USE ONLY: silent for exported names, generics, operators, renames, re-expo
         \\  use iso_c_binding, only: c_int
         \\  implicit none
         \\  private
-        \\  public :: a, t, gen, operator(+), deep, c_int, e1, g1, pub
+        \\  public :: a, t, gen, operator(+), deep, c_int, e1, g1, pub, ext
         \\  integer :: a
         \\  integer :: pub
         \\  type :: t
@@ -77,6 +77,11 @@ test "USE ONLY: silent for exported names, generics, operators, renames, re-expo
         \\    enumerator :: e1 = 1
         \\  end enum
         \\  namelist /g1/ a
+        \\  interface
+        \\    integer*4 function ext(i)
+        \\      integer :: i
+        \\    end function ext
+        \\  end interface
         \\contains
         \\  integer function f1(i)
         \\    integer :: i
@@ -98,7 +103,7 @@ test "USE ONLY: silent for exported names, generics, operators, renames, re-expo
         },
         .{ .name = "p.f90", .text =
         \\program p
-        \\  use m, only: a, t, gen, operator(+), deep, c_int, e1, g1, pub
+        \\  use m, only: a, t, gen, operator(+), deep, c_int, e1, g1, pub, ext
         \\  use m, only: aa => a
         \\  use lib, only: mpi_comm_world
         \\  use unknown_module, only: anything
