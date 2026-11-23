@@ -535,6 +535,28 @@ def items_within(a, b) -> bool:
 NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
 
 
+KEYWORD_WORDS = {"integer", "real", "complex", "logical", "character", "byte", "double", "precision"}
+DOT_OPERATORS = {"and", "or", "not", "eqv", "neqv", "xor", "eq", "ne", "lt", "le", "gt", "ge"}
+
+
+def on_keyword_or_operator(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on a type keyword (`real :: x`, `double
+    precision`) or an operator (`.or.`): fortls shows the manual page of the
+    intrinsic function of that name, zfls shows none (zfls #845)."""
+    if not 0 <= line < len(lines):
+        return False
+    text = lines[line]
+    s = e = min(char, len(text))
+    while s > 0 and (text[s - 1].isalnum() or text[s - 1] == "_"):
+        s -= 1
+    while e < len(text) and (text[e].isalnum() or text[e] == "_"):
+        e += 1
+    word = text[s:e].lower()
+    if word in KEYWORD_WORDS:
+        return True
+    return word in DOT_OPERATORS and s > 0 and text[s - 1] == "." and e < len(text) and text[e] == "."
+
+
 def adjacent_references(a, b, lines: list) -> bool:
     """Whether references `b` are those of `a` and more, the more being
     names one character after a name (`i*i`, `a(i,i)`, `%n=n`): fortls
