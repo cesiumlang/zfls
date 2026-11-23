@@ -54,8 +54,8 @@ fn expectAll(got: []const []const u8, want: []const []const u8) !void {
     for (want, got) |x, y| try std.testing.expectEqualStrings(x, y);
 }
 
-fn workspace(dialect: []const u8) !*h.Workspace {
-    const opts = try std.fmt.allocPrint(std.testing.allocator, "{{\"lint_dialect\": \"{s}\"}}", .{dialect});
+fn workspace(comptime dialect: []const u8) !*h.Workspace {
+    const opts = "{\"lint_dialect\": \"" ++ dialect ++ "\"}";
     return h.Workspace.init(&.{
         .{ .name = "m.f90", .text = module },
         .{ .name = "p.f90", .text = program },
@@ -63,7 +63,7 @@ fn workspace(dialect: []const u8) !*h.Workspace {
 }
 
 test "a whole array or a section with too few elements, in every dialect" {
-    for ([_][]const u8{ "neutral", "gfortran", "ifx", "flang" }) |d| {
+    inline for ([_][]const u8{ "neutral", "gfortran", "ifx", "flang" }) |d| {
         const w = try workspace(d);
         defer w.deinit();
         try expectAll(try collect(w, "p.f90", "argument-too-short"), &.{
@@ -75,7 +75,7 @@ test "a whole array or a section with too few elements, in every dialect" {
 }
 
 test "the elements left from an element on: gfortran's and Flang's dialects" {
-    for ([_][]const u8{ "neutral", "gfortran", "ifx", "flang" }) |d| {
+    inline for ([_][]const u8{ "neutral", "gfortran", "ifx", "flang" }) |d| {
         const w = try workspace(d);
         defer w.deinit();
         const got = try collect(w, "p.f90", "argument-storage-short");

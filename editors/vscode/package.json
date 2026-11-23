@@ -426,7 +426,9 @@
               "intent-in-assigned",
               "include-not-found",
               "preprocessor-condition",
-              "argument-not-definable"
+              "argument-not-definable",
+              "argument-too-short",
+              "argument-storage-short"
             ]
           },
           "additionalProperties": {

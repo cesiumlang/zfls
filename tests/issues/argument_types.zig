@@ -53,8 +53,7 @@ test "derived types and ALLOCATABLE dummies: another type, a variable that is no
     const w = try h.Workspace.init(&.{
         .{ .name = "m.f90", .text = module },
         .{ .name = "p.f90", .text =
-        \\end module m2
-program p
+        \\program p
         \\  use m2
         \\  implicit none
         \\  type(tt) :: a
