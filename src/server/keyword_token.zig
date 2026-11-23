@@ -48,12 +48,16 @@ fn endsWithWord(text: []const u8, word: []const u8) bool {
 }
 
 test "operators and type keywords are not intrinsic names" {
-    try std.testing.expect(isKeywordOrOperator("  r = a .or. b", "  r = a .or", 10));
-    try std.testing.expect(isKeywordOrOperator("  r = a .and. b", "  r = a .and", 11));
-    try std.testing.expect(isKeywordOrOperator("  logical r", "  logical", 4));
-    try std.testing.expect(isKeywordOrOperator("  double precision function f(x)", "  double precision", 12));
-    try std.testing.expect(isKeywordOrOperator("  pure real function f(x)", "  pure real", 8));
-    try std.testing.expect(!isKeywordOrOperator("  r = logical(r)", "  r = logical", 8));
-    try std.testing.expect(!isKeywordOrOperator("  r = precision(x)", "  r = precision", 8));
-    try std.testing.expect(!isKeywordOrOperator("  i = real(x)", "  i = real", 8));
+    // the prefix is the statement up to the cursor, as the line is read
+    const cases = [_]struct { line: []const u8, col: usize, want: bool }{
+        .{ .line = "  r = a .or. b", .col = 10, .want = true },
+        .{ .line = "  r = a .and. b", .col = 11, .want = true },
+        .{ .line = "  logical r", .col = 4, .want = true },
+        .{ .line = "  double precision function f(x)", .col = 12, .want = true },
+        .{ .line = "  pure real function f(x)", .col = 8, .want = true },
+        .{ .line = "  r = logical(r)", .col = 8, .want = false },
+        .{ .line = "  r = precision(x)", .col = 8, .want = false },
+        .{ .line = "  i = real(x)", .col = 8, .want = false },
+    };
+    for (cases) |c| try std.testing.expectEqual(c.want, isKeywordOrOperator(c.line, c.line[0..c.col], c.col));
 }
