@@ -209,5 +209,11 @@
   "config.zfls.disableIndexCache.markdownDescription": "Do not keep the workspace's files, and what zfls parsed from them, in one file of zfls's cache, from which a start reads those that have not changed (`--disable_index_cache`).",
   "config.zfls.disableCompileCommands.markdownDescription": "Do not read a `compile_commands.json` (`--disable_compile_commands`).",
   "config.zfls.disableBindCSearch.markdownDescription": "Go to definition of a `BIND(C)` procedure does not search the workspace's C files for its C declaration; the C language server can answer that instead (`--disable_bind_c_search`).",
-  "config.zfls.bindCClangd.markdownDescription": "Start this clangd (its path, or `clangd` for the one on the PATH) and ask it for the C declarations and calls of `BIND(C)` procedures too, besides zfls's search of the C files; empty: none (`--bind_c_clangd`)."
+  "config.zfls.bindCClangd.markdownDescription": "Start this clangd (its path, or `clangd` for the one on the PATH) and ask it for the C declarations and calls of `BIND(C)` procedures too, besides zfls's search of the C files; empty: none (`--bind_c_clangd`).",
+  "config.zfls.linter.dialect.markdownDescription": "The dialect zfls's own checks lint against (`lint_dialect`). Neutral checks only what gfortran, ifx and Flang agree on; a compiler's dialect also reports that compiler's quirks as you type, not at the next compiler check. Empty: the dialect of the compiler of the file's form, else neutral. Set it to lint against one compiler and build with another.",
+  "config.zfls.linter.dialect.enumDescriptions.0": "The dialect of the compiler (`zfls.linter.compiler`, or `zfls.linter.fixedCompiler` for fixed form); neutral when it has none",
+  "config.zfls.linter.dialect.enumDescriptions.1": "Only what gfortran, ifx and Flang agree on",
+  "config.zfls.linter.dialect.enumDescriptions.2": "gfortran's rules and quirks, reported as you type",
+  "config.zfls.linter.dialect.enumDescriptions.3": "ifx's (and ifort's) rules and quirks, reported as you type",
+  "config.zfls.linter.dialect.enumDescriptions.4": "LLVM Flang's rules and quirks, reported as you type"
 }
