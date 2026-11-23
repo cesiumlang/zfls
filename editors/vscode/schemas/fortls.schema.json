@@ -232,7 +232,8 @@
           "argument-kind",
           "intent-in-assigned",
           "include-not-found",
-          "preprocessor-condition"
+          "preprocessor-condition",
+          "use-name-not-found"
         ]
       },
       "additionalProperties": {

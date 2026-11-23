@@ -99,16 +99,16 @@ fn isArgOrResult(scope: *const Obj, c: *const Obj) bool {
     return scope.kind == .function and c.nameLowerEql(scope.name);
 }
 
-const Place = struct { line: usize, start: usize, end: usize, text: []const u8 };
+pub const Place = struct { line: usize, start: usize, end: usize, text: []const u8 };
 
 /// The first place of each word (lowercase) of the statement that starts on
 /// a line, found once per statement, so that a statement of thousands of
 /// names is read once (#795)
-const Words = std.AutoHashMapUnmanaged(usize, std.StringHashMapUnmanaged(Place));
+pub const Words = std.AutoHashMapUnmanaged(usize, std.StringHashMapUnmanaged(Place));
 
 /// Where `name` is written on the statement that starts on 0-based line
 /// `line`
-fn findName(a: Allocator, file: *const FortranFile, words: *Words, line: usize, name: []const u8) Allocator.Error!?Place {
+pub fn findName(a: Allocator, file: *const FortranFile, words: *Words, line: usize, name: []const u8) Allocator.Error!?Place {
     const gop = try words.getOrPut(a, line);
     if (!gop.found_existing) {
         gop.value_ptr.* = .empty;
