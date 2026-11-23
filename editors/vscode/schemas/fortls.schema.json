@@ -235,7 +235,8 @@
           "argument-too-short",
           "argument-storage-short",
           "include-not-found",
-          "preprocessor-condition"
+          "preprocessor-condition",
+          "use-name-not-found"
         ]
       },
       "additionalProperties": {
