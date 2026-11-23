@@ -47,6 +47,8 @@ const LineInfo = struct {
     label_refs: std.ArrayList(Token) = .empty,
     /// the statement ends the construct named by its last word
     ends: bool = false,
+    /// the first word of the statement (after a logical IF's condition)
+    word: []const u8 = "",
 };
 
 const construct_keywords = [_][]const u8{ "do", "if", "select", "selectcase", "selecttype", "selectrank", "block", "associate", "where", "forall", "critical", "change" };
@@ -150,11 +152,13 @@ fn analyze(a: Allocator, code: []const u8, fixed: bool) !LineInfo {
         // not `if (...) then`, nor the arithmetic IF `if (x) 10, 20, 30`
         if (j + 1 < stmt.len and stmt[j + 1].kind == .word and !std.ascii.eqlIgnoreCase(text(code, stmt[j + 1]), "then")) {
             stmt = stmt[j + 1 ..];
+            info.word = text(code, stmt[0]);
             try analyzeStatement(a, code, stmt, &info);
             try labelRefs(a, code, stmt, &info);
             return info;
         }
     }
+    info.word = text(code, stmt[0]);
     try analyzeStatement(a, code, stmt, &info);
     try labelRefs(a, code, stmt, &info);
     return info;
@@ -281,6 +285,24 @@ fn unitLines(file: *const FortranFile, ast: *Ast, ln: usize) struct { first: usi
 fn tokenAt(toks: []const Token, col: usize) ?Token {
     for (toks) |t| if (t.start <= col and col <= t.end) return t;
     return null;
+}
+
+/// The label a statement starts with and the labels its first line names,
+/// of the statements that name labels (GO TO, DO, I/O, the arithmetic IF)
+pub const LineLabels = struct { def: ?Span = null, refs: []const Span = &.{} };
+
+const label_statements = [_][]const u8{ "go", "goto", "assign", "do", "read", "write", "print", "open", "close", "inquire", "backspace", "rewind", "endfile", "flush", "wait", "if" };
+
+pub fn labelsOf(a: Allocator, file: *const FortranFile, ln: usize) !LineLabels {
+    const code = (try codeOf(a, file, ln)) orelse return .{};
+    const info = try analyze(a, code, file.fixed);
+    var out: LineLabels = .{};
+    if (info.label_def) |t| out.def = .{ .line = ln, .start = t.start, .end = t.end };
+    if (!eqlAny(info.word, &label_statements)) return out;
+    const refs = try a.alloc(Span, info.label_refs.items.len);
+    for (info.label_refs.items, refs) |t, *r| r.* = .{ .line = ln, .start = t.start, .end = t.end };
+    out.refs = refs;
+    return out;
 }
 
 /// The construct name or label at byte column `col` of 0-based line `ln`
