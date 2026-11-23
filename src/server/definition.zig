@@ -16,6 +16,7 @@ const objects = @import("../objects.zig");
 const objects_hover = @import("../objects/hover.zig");
 const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
+const implicit_names = @import("implicit_names.zig");
 const selection = @import("../selection.zig");
 const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
@@ -333,7 +334,7 @@ pub fn constructAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?st
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
     const ast = file.ast orelse return null;
     const col = Server.toByteCol(file, params.position.line, params.position.character);
-    const t = (try constructs.at(a, file, ast, params.position.line, col)) orelse return null;
+    const t = (try constructs.at(a, file, ast, params.position.line, col)) orelse (try implicit_names.at(self, a, file, ast, params.position.line, col)) orelse return null;
     return .{ .file = file, .target = t };
 }
 
