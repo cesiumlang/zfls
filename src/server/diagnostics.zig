@@ -435,6 +435,7 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .subscript_count => .subscript_count,
             .unknown_component => .unknown_component,
             .allocate_object => .allocate_object,
+            .allocate_duplicate => .allocate_duplicate,
             .allocate_shape => .allocate_shape,
             .assignment_type => .assignment_type,
             .condition_type => .condition_type,

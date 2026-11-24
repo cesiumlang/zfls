@@ -500,6 +500,7 @@ The rules, by the dialects that apply them:
 | `subscript-count` | an array reference with other subscripts than the rank its declaration gives (`a(1, 2)` for a rank-1 array); not for associate names, assumed-rank or arrays whose rank is not declared | all |
 | `unknown-component` | `v%b` where the type of `v` is found whole (its extended types too; none with type parameters or an INCLUDE not read) and has no component or binding `b` | all |
 | `allocate-object` | an ALLOCATE or DEALLOCATE of a variable that is neither ALLOCATABLE nor a POINTER (plain names only) | all |
+| `allocate-duplicate` | the same object twice in one ALLOCATE or DEALLOCATE statement (plain names, subscripts aside); Flang accepts it | gfortran, ifx |
 | `allocate-shape` | an ALLOCATE of an array with no shape (and no SOURCE or MOLD), or with a shape of another rank | all |
 | `assignment-type` | an assignment to a variable of a value of a type that cannot be converted: a numeric literal to a character variable (all dialects), a character literal to a numeric or logical variable (gfortran, flang; ifx accepts it); only literals are told, not expressions; not where the workspace has an `assignment(=)` interface | all, see the description |
 | `condition-type` | `if (i)` for a numeric or character variable (not the arithmetic IF) | gfortran, flang |

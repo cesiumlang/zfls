@@ -3,12 +3,13 @@
 //! 23.1.5 and ifx 2026.2.0: all three report each ALLOCATE problem and
 //! intrinsic count and a numeric value for a character variable; a
 //! character value for a numeric variable and `if (i)` are gfortran's and
-//! Flang's errors, ifx accepts them.
+//! Flang's errors, ifx accepts them. The same object twice in an ALLOCATE or
+//! DEALLOCATE is gfortran's and ifx's error (#878), not Flang's.
 
 const std = @import("std");
 const h = @import("harness.zig");
 
-const codes = [_][]const u8{ "allocate-object", "allocate-shape", "assignment-type", "condition-type", "intrinsic-arguments" };
+const codes = [_][]const u8{ "allocate-object", "allocate-duplicate", "allocate-shape", "assignment-type", "condition-type", "intrinsic-arguments" };
 
 fn collect(w: *h.Workspace, name: []const u8) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
@@ -216,4 +217,34 @@ test "the number of arguments of an intrinsic" {
         "7: intrinsic-arguments: too many arguments in the call of intrinsic atan2",
         "8: intrinsic-arguments: too few arguments in the call of intrinsic max",
     });
+}
+
+test "the same object twice in ALLOCATE or DEALLOCATE: gfortran and ifx report it" {
+    const text =
+        \\program p
+        \\  implicit none
+        \\  integer, allocatable :: a(:), b(:)
+        \\  type :: t
+        \\    integer, allocatable :: x(:), y(:)
+        \\  end type
+        \\  type(t) :: v
+        \\  allocate (a(2), a(3))
+        \\  allocate (a(2), b(3))
+        \\  deallocate (a, b, A)
+        \\  allocate (v%x(1), v%x(2))
+        \\  allocate (a(2), b(3), stat=i, errmsg=m)
+        \\end program
+        \\
+    ;
+    inline for ([_][]const u8{ "neutral", "gfortran", "ifx", "flang" }) |d| {
+        const w = try workspace(d, text);
+        defer w.deinit();
+        const got = try collect(w, "a.f90");
+        if (comptime std.mem.eql(u8, d, "gfortran") or std.mem.eql(u8, d, "ifx")) {
+            try expectAll(got, &.{
+                "8: allocate-duplicate: a appears more than once in the ALLOCATE statement",
+                "10: allocate-duplicate: A appears more than once in the DEALLOCATE statement",
+            });
+        } else try expectAll(got, &.{});
+    }
 }

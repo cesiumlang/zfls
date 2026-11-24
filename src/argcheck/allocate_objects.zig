@@ -2,7 +2,8 @@
 //! neither ALLOCATABLE nor a POINTER, an array allocated with no shape
 //! (and no SOURCE or MOLD), a shape of another rank than the array's.
 //! gfortran, Flang and ifx all report each. Only plain variable names are
-//! checked, not components.
+//! checked, not components. The same object twice in one statement
+//! (`allocate(a, a)`) is gfortran's and ifx's error, Flang accepts it.
 
 const std = @import("std");
 const helpers = @import("../helpers.zig");
@@ -66,8 +67,16 @@ pub fn check(c: *Checker, j: Joined, s: usize, text: []const u8, first: helpers.
         }
         pos += comma + 1;
     }
+    var seen: std.ArrayList([]const u8) = .empty;
     for (items.items) |it| {
         const item = itemOf(it.text, it.at) orelse continue;
+        if (c.dialect.applies(.initMany(&.{ .gfortran, .ifx }))) {
+            for (seen.items) |name| if (std.ascii.eqlIgnoreCase(name, item.name)) {
+                try c.report(j, s + item.at, s + item.at + item.name.len, .allocate_duplicate, "{s} appears more than once in the {s} statement", .{ item.name, if (is_allocate) "ALLOCATE" else "DEALLOCATE" });
+                break;
+            };
+            try seen.append(c.a, item.name);
+        }
         const v = (try c.lookup(scope, item.name, line_no)) orelse continue;
         if (v.kind != .variable or dimensions.isAssociateName(v) or v.linkObj() != null) continue;
         const end = item.at + item.name.len;
