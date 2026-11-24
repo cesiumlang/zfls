@@ -30,6 +30,7 @@ const subscript_count = @import("argcheck/subscript_count.zig");
 const unknown_component = @import("argcheck/unknown_component.zig");
 const allocate_objects = @import("argcheck/allocate_objects.zig");
 const assign_types = @import("argcheck/assign_types.zig");
+const expr_clash = @import("argcheck/expr_clash.zig");
 const intrinsic_count = @import("argcheck/intrinsic_count.zig");
 const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
@@ -200,6 +201,8 @@ pub const Checker = struct {
     dialect: Dialect = .neutral,
     /// whether the workspace has an `assignment(=)` interface, once told
     defined_assignment: ?bool = null,
+    /// the operator interfaces of the workspace, once told (expr_clash.zig)
+    defined_operators: ?expr_clash.Defined = null,
 
     /// The kinds of the file that declares `v` (else of the file checked),
     /// with the `!DEC$ REAL:n` before its program unit
