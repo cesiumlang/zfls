@@ -819,11 +819,11 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
     var cursor: str.Utf16Cursor = .{};
-    const flang = dialect.of(self, file.declared_fixed) == .flang;
+    const dia = dialect.of(self, file.declared_fixed);
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
         // an INTENT outside the argument list: gfortran and ifx report it, Flang does not (#850)
-        if (flang and d.code == .intent_not_in_arguments) continue;
+        if (d.code == .intent_not_in_arguments and !dia.applies(.initMany(&.{ .gfortran, .ifx }))) continue;
         // a file included by another may hold a part of a scope
         if (included and d.code == .unclosed_scope) continue;
         if (d.code == .module_not_found) if (d.subject) |m| if (isExternalModule(self, m)) continue;
