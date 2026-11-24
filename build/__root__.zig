@@ -85,10 +85,18 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const run_issue_tests = b.addRunArtifact(b.addTest(.{ .root_module = issue_mod }));
+    const issue_tests = b.addTest(.{ .root_module = issue_mod });
+    const run_issue_tests = b.addRunArtifact(issue_tests);
     const issues_step = b.step("test-issues", "Run the tests of open upstream fortls issues");
     issues_step.dependOn(&run_issue_tests.step);
     test_step.dependOn(&run_issue_tests.step);
+
+    // The test binaries, for valgrind (.github/workflows/memcheck.yml):
+    // zig-out/memcheck/unit and zig-out/memcheck/issues, run from the root
+    const memcheck_step = b.step("memcheck-bins", "Install the unit and request test binaries to run under valgrind (tests/memcheck)");
+    const memcheck_dest: std.Build.InstallDir = .{ .custom = "memcheck" };
+    memcheck_step.dependOn(&b.addInstallArtifact(tests, .{ .dest_dir = .{ .override = memcheck_dest }, .dest_sub_path = "unit" }).step);
+    memcheck_step.dependOn(&b.addInstallArtifact(issue_tests, .{ .dest_dir = .{ .override = memcheck_dest }, .dest_sub_path = "issues" }).step);
 
     // Mutated and arbitrary programs thrown at an in-process server
     // (tests/fuzz.zig); `zig build test --fuzz` runs the fuzzer on it

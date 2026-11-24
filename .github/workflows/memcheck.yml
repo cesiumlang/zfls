@@ -1,0 +1,177 @@
+name: Memcheck
+
+# zfls under valgrind on Linux (valgrind runs nowhere else: the macOS and
+# Windows runners cannot, and the unit tests there check leaks with Zig's
+# debug allocator instead): the unit tests and the request tests, the
+# server on the corpora of the oracles (LAPACK, OpenBLAS, numpy,
+# M_intrinsics, fortls) through the benchmark driver's session, the
+# differential and stress drivers, and the debug adapter against gdb. Each
+# process writes its own log (tests/memcheck/zfls-valgrind.sh); a log with
+# anything in it fails the job. Slow: valgrind makes a program 20 to 50
+# times slower. Start it by hand (`gh workflow run memcheck.yml --ref
+# BRANCH`); it runs weekly on main as well.
+#
+# Not a gate of any pull request. Findings that are not zfls's are listed in
+# tests/memcheck/zfls.supp with their reason. Zig's allocators map memory
+# themselves, so memcheck sees uninitialized reads, invalid accesses and
+# frees through the C ABI (the debug adapter's and the compiler check's
+# children), not leaks of Zig-allocated memory; helgrind and drd do not see
+# Zig's futex based locks, so their report is informational.
+
+on:
+  push:
+    branches: [issue-901-memcheck]
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZIG_VERSION: 0.17.1
+  FORTLS_REPO: fortran-lang/fortls
+  FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
+  PYTHON_VERSION: "3.12"
+  # valgrind has no AVX-512: the build targets x86-64-v2
+  BUILD_TARGET: -Dtarget=x86_64-linux-gnu -Dcpu=x86_64_v2
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  memcheck:
+    name: ${{ matrix.suite }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, issues, corpora, differential, stress, dap, threads]
+    env:
+      FORTLS: ${{ github.workspace }}/_fortls
+      MEMCHECK_LOGS: ${{ github.workspace }}/memcheck-logs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.FORTLS_REPO }}
+          ref: ${{ env.FORTLS_REF }}
+          path: _fortls
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: valgrind, gfortran and gdb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind gfortran gdb gdbserver
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          valgrind --version
+          mkdir -p "$MEMCHECK_LOGS"
+
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch
+
+      # a debug build: the safety checks are on, and valgrind has the
+      # symbols
+      - name: Build
+        run: zig build -Doptimize=debug $BUILD_TARGET bin test-tools memcheck-bins
+
+      - name: Server and its drivers
+        run: |
+          echo "ZFLS_REAL=$PWD/zig-out/bin/zfls" >> "$GITHUB_ENV"
+          echo "ZFLS=$PWD/tests/memcheck/zfls-valgrind.sh" >> "$GITHUB_ENV"
+          chmod +x tests/memcheck/*.sh
+
+      - name: Unit tests
+        if: matrix.suite == 'unit'
+        run: |
+          valgrind -q --error-exitcode=99 --suppressions=tests/memcheck/zfls.supp \
+            --log-file="$MEMCHECK_LOGS/unit-%p.log" --max-stackframe=268435456 --num-callers=40 \
+            zig-out/memcheck/unit
+
+      - name: Request tests (tests/issues)
+        if: matrix.suite == 'issues'
+        run: |
+          valgrind -q --error-exitcode=99 --suppressions=tests/memcheck/zfls.supp \
+            --log-file="$MEMCHECK_LOGS/issues-%p.log" --max-stackframe=268435456 --num-callers=40 \
+            zig-out/memcheck/issues
+
+      # the server, started by the benchmark driver, on each corpus: the
+      # initialization, a file opened, requests, edits and saves, and a
+      # second start from the cache
+      - name: Corpora
+        if: matrix.suite == 'corpora'
+        run: |
+          mkdir -p _corpora && cd _corpora
+          git clone --depth 1 --branch v3.12.0 https://github.com/Reference-LAPACK/lapack lapack
+          git clone --depth 1 --branch v0.3.27 https://github.com/OpenMathLib/OpenBLAS openblas
+          git clone --depth 1 --branch v2.0.0 https://github.com/numpy/numpy numpy
+          cd ..
+          for ws in _corpora/lapack/SRC _corpora/openblas/lapack-netlib/SRC _corpora/numpy vendor/M_intrinsics _fortls/test/test_source; do
+            echo "::group::$ws"
+            zig build bench -Doptimize=safe $BUILD_TARGET -- "$ws" --zfls "$ZFLS" --requests 10 --edits 3 --saves 1
+            echo "::endgroup::"
+          done
+
+      - name: Differential test against Python fortls
+        if: matrix.suite == 'differential'
+        run: python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS"
+
+      - name: Stress sessions
+        if: matrix.suite == 'stress'
+        run: |
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --seeds 3 --steps 1000
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 200 --seeds 2 --steps 1000 --no-incremental
+          zig-out/bin/stress_edit --zfls "$ZFLS" --fortls "$FORTLS" --first-seed 300 --seeds 2 --steps 1000 --preprocessor
+
+      # the adapter under valgrind, gdb and the debuggee not
+      - name: Debug adapter with gdb
+        if: matrix.suite == 'dap'
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS"
+
+      # the indexing threads, under helgrind and drd: informational
+      - name: Threads (helgrind, drd)
+        if: matrix.suite == 'threads'
+        run: |
+          for tool in helgrind drd; do
+            export MEMCHECK_TOOL=$tool
+            python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS" || true
+          done
+          unset MEMCHECK_TOOL
+
+      - name: Valgrind's reports
+        if: always()
+        run: |
+          if [ "${{ matrix.suite }}" = threads ]; then
+            sh tests/memcheck/summary.sh "$MEMCHECK_LOGS" || echo "::notice::helgrind and drd findings are informational (Zig's locks are futexes they do not see)"
+          else
+            sh tests/memcheck/summary.sh "$MEMCHECK_LOGS"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: memcheck-${{ matrix.suite }}
+          path: memcheck-logs
+          if-no-files-found: ignore

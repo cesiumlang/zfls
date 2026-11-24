@@ -1,0 +1,2 @@
+# Valgrind suppressions of zfls (memcheck.yml). One entry per finding that is
+# not zfls's, with the reason and the run that showed it.
