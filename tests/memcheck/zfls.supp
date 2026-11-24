@@ -10,3 +10,18 @@
    Memcheck:Addr4
    fun:dap.gdb_variables.present
 }
+
+# std.Io.Threaded (Zig 0.17.1): a worker wakes a future's status word
+# after the task that awaited the future freed it (the server's reader task
+# at its end, `io.concurrent` in __main__.zig). The kernel finds no waiter;
+# memcheck reports the address as unaddressable. Seen by the stress
+# drivers (run 45508429107). Not zfls's.
+{
+   zig-io-threaded-future-wake-after-free
+   Memcheck:Param
+   futex(futex)
+   fun:os.linux.x86_64.syscall3
+   fun:os.linux.futex_3arg
+   fun:Io.Threaded.Thread.futexWake
+   fun:Io.Threaded.Future.start
+}
