@@ -8,6 +8,7 @@
 //! does not stay behind.
 
 const std = @import("std");
+const executables = @import("../executables.zig");
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -103,6 +104,15 @@ const Group = struct {
     }
 };
 
+/// `o.argv` with the program found on the PATH when it is a bare name
+/// (`executables.resolve`)
+fn programArgv(a: Allocator, io: Io, o: Options) ![]const []const u8 {
+    if (o.argv.len == 0) return o.argv;
+    const argv = try a.dupe([]const u8, o.argv);
+    argv[0] = try executables.resolve(a, io, o.environ_map, argv[0]);
+    return argv;
+}
+
 /// Runs `o.argv` to its end, or for `o.timeout` (`error.Timeout`), and
 /// returns its output. The input is written on a thread of its own, so that
 /// a program that writes before it has read all of it cannot block on a
@@ -110,8 +120,11 @@ const Group = struct {
 pub fn run(a: Allocator, io: Io, o: Options) !Output {
     var writer: ?std.Thread = null;
     defer if (writer) |t| t.join();
+    var names: std.heap.ArenaAllocator = .init(a);
+    defer names.deinit();
+    const argv = try programArgv(names.allocator(), io, o);
     var child = try std.process.spawn(io, .{
-        .argv = o.argv,
+        .argv = argv,
         .cwd = if (o.cwd) |d| .{ .path = d } else .inherit,
         .environ_map = o.environ_map,
         .create_no_window = true,

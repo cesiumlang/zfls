@@ -19,7 +19,7 @@ import { initialConfiguration } from "./debugConfigs";
 import { attachGdb, findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
 import { CompilerInfo, adapterArgs, fortranLaunch, parseProcesses } from "./run";
 import { chooseInstalledDebugger, compilerInfo, gdbFor, lldbWanted } from "./runFile";
-import { expandVariables } from "./tools";
+import { expandVariables, programPath } from "./tools";
 import { folderVariables } from "./variables";
 
 export const DEBUG_TYPE = "fortran";
@@ -268,9 +268,10 @@ function evaluatableExpression(document: vscode.TextDocument, position: vscode.P
 /** A process to attach to, picked from those running: its id */
 async function pickProcess(): Promise<string | undefined> {
   const windows = process.platform === "win32";
+  const lister = programPath(windows ? "tasklist" : "ps");
   const text = await new Promise<string>((resolve) =>
     execFile(
-      windows ? "tasklist" : "ps",
+      lister ?? "",
       windows ? ["/fo", "csv", "/nh"] : ["-A", "-o", "pid=,args="],
       { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
       (error, stdout) => resolve(error ? "" : stdout),

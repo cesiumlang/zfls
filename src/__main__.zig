@@ -6,6 +6,7 @@ const root = @import("root");
 const json = @import("json.zig");
 const patterns = @import("patterns.zig");
 const paths = @import("paths.zig");
+const executables = @import("executables.zig");
 const settings = @import("settings.zig");
 const jsonrpc = @import("jsonrpc.zig");
 const server_mod = @import("server.zig");
@@ -226,6 +227,7 @@ pub fn main(init: std.process.Init) !void {
     paths.init(io);
     paths.initCache(init.arena.allocator(), init.environ_map);
     paths.initUserConfig(init.arena.allocator(), init.environ_map);
+    executables.initProcessEnv(init.environ_map);
 
     const arena = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(arena);
