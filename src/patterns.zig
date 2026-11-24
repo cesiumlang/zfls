@@ -3,6 +3,7 @@
 const std = @import("std");
 const regex = @import("regex.zig");
 const suffixes = @import("suffixes.zig");
+const valgrind = @import("_test/valgrind.zig");
 const Regex = regex.Regex;
 const I = regex.I;
 
@@ -239,6 +240,7 @@ test "src file exts regex" {
 }
 
 test "the prefilter never rejects a line that matches" {
+    try valgrind.skip();
     init();
     const words = [_][]const u8{
         "subroutine", "end", "module", "program", "integer",  "real",     "type",     "class", "use",       "only",

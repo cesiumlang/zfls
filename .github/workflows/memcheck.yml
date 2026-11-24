@@ -55,6 +55,8 @@ jobs:
         suite: [unit, issues, corpora, differential, stress, dap, threads]
     env:
       FORTLS: ${{ github.workspace }}/_fortls
+      # the tests that valgrind cannot run skip themselves (src/_test/valgrind.zig)
+      ZFLS_VALGRIND: "1"
       MEMCHECK_LOGS: ${{ github.workspace }}/memcheck-logs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -130,7 +132,7 @@ jobs:
           cd ..
           for ws in _corpora/lapack/SRC _corpora/openblas/lapack-netlib/SRC _corpora/numpy vendor/M_intrinsics _fortls/test/test_source; do
             echo "::group::$ws"
-            zig build bench -Doptimize=safe $BUILD_TARGET -- "$ws" --zfls "$ZFLS" --requests 10 --edits 3 --saves 1
+            zig build bench -Doptimize=safe $BUILD_TARGET -- "$ws" --zfls "$ZFLS" --requests 10 --edits 3 --saves 1 --timeout 3000
             echo "::endgroup::"
           done
 
@@ -148,6 +150,9 @@ jobs:
       # the adapter under valgrind, gdb and the debuggee not
       - name: Debug adapter with gdb
         if: matrix.suite == 'dap'
+        # (setup-python's library directory would give gdb another Python)
+        env:
+          LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
 
       # the indexing threads, under helgrind and drd: informational

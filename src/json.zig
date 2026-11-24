@@ -5,6 +5,7 @@
 //! Configuration files are JSON5 and have their own parser (`json5.zig`).
 
 const std = @import("std");
+const valgrind = @import("_test/valgrind.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Value = std.json.Value;
@@ -306,6 +307,7 @@ test "json round trip" {
 }
 
 test "the text of std.json.Stringify, at any depth (#779)" {
+    try valgrind.skip();
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
