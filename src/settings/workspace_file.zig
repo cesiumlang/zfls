@@ -1,7 +1,8 @@
 //! The settings of a workspace's own configuration file (`.fortlsrc`,
 //! `.fortls`, `.fortls.json`). A repository can ship that file, so what it
-//! says never chooses a program zfls runs: those settings are read only
-//! from the user's configuration file, the command line and the editor.
+//! says never chooses a program zfls runs, nor turns on the debug log:
+//! those settings are read only from the user's configuration file, the
+//! command line and the editor.
 //! The flags it gives a compiler or fypp are filtered to an allow-list.
 
 const std = @import("std");
@@ -10,9 +11,10 @@ const json = @import("../json.zig");
 const settings = @import("../settings.zig");
 const compile_flags = @import("../compile_flags.zig");
 
-/// The settings that name a program (or a directory that holds it)
-pub const program_keys = [_][]const u8{
-    "compiler_path", "compiler_path_fixed", "compiler_fypp", "bind_c_clangd", "formatter_path", "fortitude_path", "codee_path",
+/// The settings that name a program (or a directory that holds it), and
+/// the one that makes zfls write a file in the workspace
+pub const ignored_keys = [_][]const u8{
+    "compiler_path", "compiler_path_fixed", "compiler_fypp", "bind_c_clangd", "formatter_path", "fortitude_path", "codee_path", "debug_log",
 };
 
 /// Flags of fypp that stay: the include directories and definitions
@@ -50,7 +52,7 @@ fn fyppFlags(a: Allocator, args: []const []const u8) ![]const []const u8 {
 const Filter = *const fn (Allocator, []const []const u8) anyerror![]const []const u8;
 
 /// Applies `cfg`, the workspace's file, to `s`, leaving out the settings of
-/// `program_keys` and the flags that are not allowed (`compiler_args`,
+/// `ignored_keys` and the flags that are not allowed (`compiler_args`,
 /// `compiler_args_fixed`, `compiler_fypp_args`). The names of the settings
 /// changed that way are added to `ignored`.
 pub fn apply(a: Allocator, s: *settings.Settings, cfg: json.Value, ignored: *std.ArrayList([]const u8)) !void {
@@ -58,7 +60,7 @@ pub fn apply(a: Allocator, s: *settings.Settings, cfg: json.Value, ignored: *std
     var out: json.ObjectMap = .empty;
     var it = cfg.object.iterator();
     next: while (it.next()) |e| {
-        for (program_keys) |k| if (std.mem.eql(u8, k, e.key_ptr.*)) {
+        for (ignored_keys) |k| if (std.mem.eql(u8, k, e.key_ptr.*)) {
             try ignored.append(a, k);
             continue :next;
         };
@@ -87,7 +89,7 @@ test "a workspace's file does not choose the programs that run" {
         \\{"compiler_diagnostics": "gfortran", "compiler_path": "./x", "compiler_path_fixed": "./x", "compiler_fypp": "./f",
         \\ "bind_c_clangd": "./c", "formatter_path": "./p", "fortitude_path": "./p", "codee_path": "./p",
         \\ "compiler_args": ["-Wall", "-wrapper", "a,b", "-Iinc"], "compiler_fypp_args": ["-Iinc", "-m", "os", "-DX=1"],
-        \\ "formatter": "findent"}
+        \\ "formatter": "findent", "debug_log": true}
     );
     var s: settings.Settings = .{};
     var ignored: std.ArrayList([]const u8) = .empty;
@@ -96,7 +98,8 @@ test "a workspace's file does not choose the programs that run" {
     try std.testing.expectEqualStrings("findent", s.formatter.?);
     try std.testing.expect(s.compiler_path == null and s.compiler_path_fixed == null and s.compiler_fypp == null);
     try std.testing.expect(s.bind_c_clangd == null and s.formatter_path == null and s.fortitude_path == null and s.codee_path == null);
-    try std.testing.expectEqual(@as(usize, 9), ignored.items.len);
+    try std.testing.expectEqual(@as(usize, 10), ignored.items.len);
+    try std.testing.expect(!s.debug_log);
     const args = s.compiler_args.?.slice();
     try std.testing.expectEqual(@as(usize, 2), args.len);
     try std.testing.expectEqualStrings("-Wall", args[0]);
