@@ -507,6 +507,7 @@ const standard = [_]Module{
         .{ .name = "compiler_options", .kind = .function, .return_type = "CHARACTER(LEN=*)" },
         .{ .name = "compiler_version", .kind = .function, .return_type = "CHARACTER(LEN=*)" },
     } },
+    // Flang's extras (F2023 unsigned and half precision): see _test/iso_c_binding.zig
     .{ .name = "iso_c_binding", .members = &.{
         .{ .name = "c_int", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_short", .kind = .variable, .desc = "INTEGER" },
@@ -540,6 +541,29 @@ const standard = [_]Module{
         .{ .name = "c_double_complex", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_long_double_complex", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_float128_complex", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_float16", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_float16_complex", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint8_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint16_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint32_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint64_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint128_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least8_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least16_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least32_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least64_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least128_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast8_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast16_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast32_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast64_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast128_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uintmax_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_char", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_short", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_long", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_long_long", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_bool", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_char", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_null_char", .kind = .variable, .desc = "CHARACTER(KIND=c_char)" },
@@ -588,3 +612,7 @@ const standard = [_]Module{
         } },
     } },
 };
+
+test {
+    _ = @import("_test/iso_c_binding.zig");
+}
