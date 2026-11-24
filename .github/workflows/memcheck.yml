@@ -163,13 +163,14 @@ jobs:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
 
-      # the indexing threads, under helgrind and drd: informational
+      # the indexing threads, under helgrind and drd: informational (two hours
+      # at most for each)
       - name: Threads (helgrind, drd)
         if: matrix.suite == 'threads'
         run: |
           for tool in helgrind drd; do
             export MEMCHECK_TOOL=$tool
-            python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS" || true
+            timeout 7200 python tests/differential.py --zfls "$ZFLS" --fortls "$FORTLS" || true
           done
           unset MEMCHECK_TOOL
 
