@@ -41,12 +41,18 @@ have() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# download URL FILE
+# download URL FILE: over https only, also across redirects
 download() {
+    case "$1" in https://*) ;; *) die "not an https URL: $1" ;; esac
     if have curl; then
-        curl -fsSL --retry 3 -o "$2" "$1"
+        curl -fsSL --proto =https --proto-redir =https --tlsv1.2 --retry 3 -o "$2" "$1"
     elif have wget; then
-        wget -q -O "$2" "$1"
+        # busybox's wget has no option to stay on https; its URLs are https
+        if wget --help 2>&1 | grep -q -- --https-only; then
+            wget -q --https-only --secure-protocol=TLSv1_2 -O "$2" "$1"
+        else
+            wget -q -O "$2" "$1"
+        fi
     else
         die "needs curl or wget"
     fi
@@ -165,17 +171,14 @@ main() {
     download "$base/$archive" "$tmp/$archive" ||
         die "cannot download $base/$archive (is $version a release of zfls?)"
 
-    if download "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
-        expected=$(awk -v f="$archive" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
-        [ -n "$expected" ] || die "SHA256SUMS of v$version does not list $archive"
-        if actual=$(sha256 "$tmp/$archive"); then
-            [ "$actual" = "$expected" ] || die "$archive does not match its SHA-256 in SHA256SUMS"
-        else
-            echo "warning: neither sha256sum nor shasum found; the archive is not verified" >&2
-        fi
-    else
-        echo "warning: v$version has no SHA256SUMS; the archive is not verified" >&2
-    fi
+    # an archive that cannot be verified is not unpacked
+    download "$base/SHA256SUMS" "$tmp/SHA256SUMS" ||
+        die "cannot download $base/SHA256SUMS; the archive is not verified, so it is not installed"
+    expected=$(awk -v f="$archive" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
+    [ -n "$expected" ] || die "SHA256SUMS of v$version does not list $archive"
+    actual=$(sha256 "$tmp/$archive") ||
+        die "needs sha256sum or shasum to verify $archive"
+    [ "$actual" = "$expected" ] || die "$archive does not match its SHA-256 in SHA256SUMS"
 
     mkdir -p "$dir"
     unpack "$tmp/$archive" "$dir"

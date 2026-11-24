@@ -15,4 +15,4 @@ permissions:
 jobs:
   close:
     if: github.event.pull_request.merged
-    uses: cesiumlang/.github/.github/workflows/close-issues.yml@main
+    uses: cesiumlang/.github/.github/workflows/close-issues.yml@085fda620985af97b2a96cd613714b31d7af7d7a # main
