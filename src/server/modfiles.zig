@@ -32,6 +32,7 @@ const cache = @import("cache.zig");
 const compiler_sources = @import("compiler_sources.zig");
 const gfortran_modules = @import("gfortran_modules.zig");
 const shipped = @import("../compilers/shipped.zig");
+const fsio = @import("../fsio.zig");
 
 /// Whether `head`, the beginning of a file, is that of a module file of
 /// LLVM Flang's: `!mod$`, after a UTF-8 BOM or not
@@ -42,7 +43,7 @@ pub fn isFlangModuleFile(head: []const u8) bool {
 
 /// Whether the file at `path` is a module file of LLVM Flang's
 fn isFlangModulePath(io: Io, path: []const u8) bool {
-    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return false;
+    const file = fsio.openFile(io, path) catch return false;
     defer file.close(io);
     var buf: [8]u8 = undefined;
     const n = file.readPositionalAll(io, &buf, 0) catch return false;

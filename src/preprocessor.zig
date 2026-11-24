@@ -18,6 +18,7 @@ const intel = @import("preprocessor/intel.zig");
 const predefined = @import("preprocessor/predefined.zig");
 const PyEval = @import("preprocessor/py_eval.zig").PyEval;
 const dialects = @import("preprocessor/dialect.zig");
+const fsio = @import("fsio.zig");
 pub const Dialect = dialects.Dialect;
 
 fn R() *const patterns.Patterns {
@@ -393,7 +394,7 @@ fn preprocessInner(
             if (include_path) |ip| {
                 if (depth == 0) try pp_includes.append(a, .{ .line = i + 1, .path = ip });
                 // guard against include cycles
-                if (depth >= 32) {} else if (Io.Dir.cwd().readFileAlloc(io, ip, a, .limited(1 << 28))) |data| {
+                if (depth >= 32) {} else if (fsio.readFile(io, a, ip, .limited(1 << 28))) |data| {
                     const text = try std.mem.replaceOwned(u8, a, data, "\t", " ");
                     const inc_lines = try parser.splitLines(a, text);
                     const dir = try paths.abspath(a, paths.dirname(ip));

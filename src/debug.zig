@@ -22,6 +22,7 @@ const default_kinds = @import("default_kinds.zig");
 const command_options = @import("command_options.zig");
 const Settings = settings_mod.Settings;
 const Value = json.Value;
+const fsio = @import("fsio.zig");
 
 const sep80 = "================================================================================";
 const sep75 = "===========================================================================";
@@ -207,7 +208,7 @@ fn addPredefined(a: Allocator, io: Io, o: *Out, s: *const Settings, root: ?[]con
 /// The settings of the configuration file `path` over `s`; `trusted`: not
 /// the workspace's own (which names no program to run)
 fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8, trusted: bool) !void {
-    const data = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 26)) catch return;
+    const data = fsio.readFile(io, a, path, .limited(1 << 26)) catch return;
     var p: json5.Parser = .{ .a = a, .src = data };
     if (p.parseDocument()) |cfg| {
         if (cfg == .object) {
@@ -356,7 +357,7 @@ fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting preprocessor\n", .{});
     separator(o);
     const fp = try ensureFileAccessible(io, o, s.debug_filepath);
-    const data = Io.Dir.cwd().readFileAlloc(io, fp, a, .limited(1 << 30)) catch return fail(o, "File '{s}' does not exist or is not accessible", .{fp});
+    const data = fsio.readFile(io, a, fp, .limited(1 << 30)) catch return fail(o, "File '{s}' does not exist or is not accessible", .{fp});
     var lines = try parser.splitLines(a, data);
     // like Python's readlines(): no empty element after a final newline
     if (lines.len > 0 and lines[lines.len - 1].len == 0) lines = lines[0 .. lines.len - 1];

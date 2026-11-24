@@ -128,4 +128,5 @@ test {
     _ = @import("syntax_errors.zig");
     _ = @import("iso_c_names.zig");
     _ = @import("initializer_names.zig");
+    _ = @import("long_paths.zig");
 }

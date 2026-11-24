@@ -48,6 +48,7 @@ const summary = @import("summary.zig");
 const file_options = @import("file_options.zig");
 const source_form = @import("source_form.zig");
 const compiler_macros = @import("compiler_macros.zig");
+const fsio = @import("../fsio.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -121,7 +122,7 @@ pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
         }
     }
     const cp = config_path orelse return null;
-    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, self.arena.allocator(), .limited(1 << 26)) catch {
+    const data = fsio.readFile(self.io, self.arena.allocator(), cp, .limited(1 << 26)) catch {
         self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
         return null;
     };
@@ -157,7 +158,7 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
-        if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
+        if (fsio.readFile(self.io, a, p, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
                 self.module_dirs = found.module_dirs;
@@ -174,7 +175,7 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
         }
     }
     const fpm = try paths.join(a, &.{ self.root_path, "fpm.toml" });
-    if (Io.Dir.cwd().readFileAlloc(self.io, fpm, a, .limited(1 << 24))) |text| {
+    if (fsio.readFile(self.io, a, fpm, .limited(1 << 24))) |text| {
         try addProjectSettings(self, try project.readFpm(self.io, sa, self.root_path, text));
     } else |_| {}
 }
@@ -662,7 +663,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?pa
 /// there is no such file)
 fn differsFromDisk(self: *Server, filepath: []const u8) bool {
     const file = self.workspace.get(filepath) orelse return false;
-    const data = Io.Dir.cwd().readFileAlloc(self.io, filepath, self.gpa, .limited(1 << 30)) catch return true;
+    const data = fsio.readFile(self.io, self.gpa, filepath, .limited(1 << 30)) catch return true;
     defer self.gpa.free(data);
     return file.hash == null or file.hash.? != parser.FortranFile.textHash(data);
 }

@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const paths = @import("paths.zig");
+const fsio = @import("fsio.zig");
 
 const case_insensitive = builtin.target.os.tag == .windows or builtin.target.os.tag.isDarwin();
 
@@ -24,7 +25,7 @@ fn lessName(_: void, x: Entry, y: Entry) bool {
 
 /// List the entries of a directory, sorted by name (case-insensitive)
 pub fn listEntries(io: Io, a: Allocator, dir_path: []const u8) ![]Entry {
-    var dir = try Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
+    var dir = try fsio.openDir(io, dir_path, .{ .iterate = true });
     defer dir.close(io);
     var out: std.ArrayList(Entry) = .empty;
     var it = dir.iterate();

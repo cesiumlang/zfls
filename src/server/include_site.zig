@@ -18,6 +18,7 @@ const patterns = @import("../patterns.zig");
 const compilers = @import("../compilers.zig");
 const compile = @import("compile.zig");
 const messages = @import("compile_messages.zig");
+const fsio = @import("../fsio.zig");
 
 const is_windows = builtin.target.os.tag == .windows;
 
@@ -104,7 +105,7 @@ fn find(a: Allocator, io: Io, cwd: []const u8, lines: []const []const u8, dir: [
     for (lines, 0..) |l, i| {
         const name = named(l) orelse continue;
         const p = (try resolve(a, io, name, dir, dirs)) orelse continue;
-        const text = Io.Dir.cwd().readFileAlloc(io, p, a, .limited(16 * 1024 * 1024)) catch continue;
+        const text = fsio.readFile(io, a, p, .limited(16 * 1024 * 1024)) catch continue;
         const inner = try compile.splitLines(a, text);
         if (try find(a, io, cwd, inner, paths.dirname(p), dirs, file, via, found, depth + 1)) |n| {
             try via.append(a, .{ .file = p, .line = n });
@@ -172,7 +173,7 @@ fn findTab(a: Allocator, io: Io, lines: []const []const u8, dir: []const u8, dir
     for (lines, 0..) |l, i| {
         const name = named(l) orelse continue;
         const p = (try resolve(a, io, name, dir, dirs)) orelse continue;
-        const text = Io.Dir.cwd().readFileAlloc(io, p, a, .limited(16 * 1024 * 1024)) catch continue;
+        const text = fsio.readFile(io, a, p, .limited(16 * 1024 * 1024)) catch continue;
         const inner = try compile.splitLines(a, text);
         if (hasTab(inner, line, column)) {
             found.* = p;

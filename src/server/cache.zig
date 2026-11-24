@@ -25,6 +25,7 @@ const Ast = objects.Ast;
 
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 /// The start of a cache file: the format, which a new one changes
 const magic = "ZFLSIDX2";
@@ -37,7 +38,7 @@ fn parseSalt(io: Io) u64 {
     h.update(@import("build_options").version);
     var buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const n = std.process.executablePath(io, &buf) catch return h.final();
-    const st = Io.Dir.cwd().statFile(io, buf[0..n], .{}) catch return h.final();
+    const st = fsio.statFile(io, buf[0..n]) catch return h.final();
     const mtime: i128 = st.mtime.nanoseconds;
     h.update(std.mem.asBytes(&st.size));
     h.update(std.mem.asBytes(&mtime));
@@ -110,7 +111,7 @@ pub fn begin(self: *Server, a: Allocator, file_count: usize) void {
     snap.* = .{ .salt = parseSalt(self.io) };
     self.index = snap;
     const file = (cachePath(self, a) catch null) orelse return;
-    snap.data = Io.Dir.cwd().readFileAlloc(self.io, file, self.gpa, .limited(1 << 34)) catch return;
+    snap.data = fsio.readFile(self.io, self.gpa, file, .limited(1 << 34)) catch return;
     parse(self.gpa, snap) catch {
         self.log.info("index cache {s} is not readable; it will be written again", .{file});
         snap.entries.clearRetainingCapacity();
@@ -155,7 +156,7 @@ fn parse(gpa: Allocator, snap: *Snapshot) !void {
 /// takes (on any initialization thread)
 pub fn read(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]u8 {
     const snap = self.index orelse return readFile(self, path);
-    const st = Io.Dir.cwd().statFile(self.io, path, .{}) catch return readFile(self, path);
+    const st = fsio.statFile(self.io, path) catch return readFile(self, path);
     if (snap.entries.getEntry(path)) |kv| {
         const e = kv.value_ptr.*;
         if (e.size == st.size and e.mtime == st.mtime.nanoseconds) {
@@ -191,7 +192,7 @@ pub fn read(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]
 }
 
 fn readFile(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]u8 {
-    return Io.Dir.cwd().readFileAlloc(self.io, path, self.gpa, .limited(1 << 30)) catch |e| switch (e) {
+    return fsio.readFile(self.io, self.gpa, path, .limited(1 << 30)) catch |e| switch (e) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.ReadFailed,
     };
@@ -294,7 +295,7 @@ pub fn wait(self: *Server) void {
 
 fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
     const file = (try cachePath(self, a)) orelse return;
-    Io.Dir.cwd().createDirPath(self.io, paths.dirname(file)) catch {};
+    fsio.createDirPath(self.io, paths.dirname(file)) catch {};
     // a new file, then renamed over the old one: a reader never sees half
     const tmp = try a.print("{s}.{d}.tmp", .{ file, std.Thread.getCurrentId() });
     const count = snap.next.count();
@@ -319,7 +320,7 @@ fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
 
 /// Deletes the caches in `dir` not written for `max_age_days`
 fn prune(self: *Server, a: Allocator, dir_path: []const u8) void {
-    var dir = Io.Dir.cwd().openDir(self.io, dir_path, .{ .iterate = true }) catch return;
+    var dir = fsio.openDir(self.io, dir_path, .{ .iterate = true }) catch return;
     defer dir.close(self.io);
     const now = Io.Clock.real.now(self.io).nanoseconds;
     const max_age: i96 = @as(i96, max_age_days) * std.time.ns_per_day;

@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const win32 = @import("win32");
+const fsio = @import("fsio.zig");
 
 const is_windows = builtin.target.os.tag == .windows;
 
@@ -110,6 +111,7 @@ pub fn join(a: Allocator, parts: []const []const u8) ![]u8 {
 /// the path exists
 pub fn realpath(io: Io, a: Allocator, p: []const u8) ![]u8 {
     const abs = try abspath(a, p);
+    if (!fsio.fits(abs)) return abs;
     const rp = Io.Dir.realPathFileAbsoluteAlloc(io, abs, a) catch return abs;
     return rp[0..rp.len];
 }
@@ -136,17 +138,17 @@ pub fn longName(a: Allocator, p: []u8) ![]u8 {
 }
 
 pub fn isFile(io: Io, p: []const u8) bool {
-    const st = Io.Dir.cwd().statFile(io, p, .{}) catch return false;
+    const st = fsio.statFile(io, p) catch return false;
     return st.kind == .file;
 }
 
 pub fn isDir(io: Io, p: []const u8) bool {
-    const st = Io.Dir.cwd().statFile(io, p, .{}) catch return false;
+    const st = fsio.statFile(io, p) catch return false;
     return st.kind == .directory;
 }
 
 pub fn exists(io: Io, p: []const u8) bool {
-    _ = Io.Dir.cwd().statFile(io, p, .{}) catch return false;
+    _ = fsio.statFile(io, p) catch return false;
     return true;
 }
 
@@ -380,4 +382,19 @@ test "a path by its 8.3 short name, as its long one" {
     // a name that does not exist, and one without a short name, unchanged
     try std.testing.expectEqualStrings("C:\\NO~1\\x.f90", try longName(a, try a.dupe(u8, "C:\\NO~1\\x.f90")));
     try std.testing.expectEqualStrings(long, try longName(a, try a.dupe(u8, long)));
+}
+
+test "a path or URI that is too long names nothing" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    const long = try a.alloc(u8, fsio.max_path_len + 1000);
+    @memset(long, 'a');
+    try std.testing.expect(!isFile(io, long));
+    try std.testing.expect(!isDir(io, long));
+    try std.testing.expect(!exists(io, long));
+    _ = try realpath(io, a, long);
+    const uri = try std.mem.concat(a, u8, &.{ "file:///C:/", long, "/x.f90" });
+    _ = try pathFromUri(io, a, uri);
 }
