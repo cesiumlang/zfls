@@ -56,7 +56,7 @@ pub fn searchDirs(self: *Server, a: Allocator) ![]const []const u8 {
     try dirs.appendSlice(a, try definition.includeDirs(self, a));
     for ([_]bool{ false, true }) |fixed| {
         if (compile_args.compilerOf(self, fixed) != .flang) continue;
-        const exes = try compile_args.executables(self, a, .flang, compile_args.compilerPath(self, fixed), null);
+        const exes = try compile_args.executables(self, a, .flang, compile_args.compilerPath(self, fixed));
         const known = compiler_version.of(self, a, .flang, exes);
         const dir = known.module_dir orelse continue;
         const listed = for (dirs.items) |d| {

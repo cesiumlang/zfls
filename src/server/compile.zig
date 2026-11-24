@@ -384,7 +384,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     // the settings of the file's form, for the modules it uses too
     const user = userArgs(self, file.declared_fixed);
     const cmd = try commandOf(self, a, file, user);
-    const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed), cmd);
+    const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed));
     const known = compiler_version.of(self, a, id, exes);
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id, known.version));
     Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });

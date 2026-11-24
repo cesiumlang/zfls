@@ -72,6 +72,7 @@ pub const rewrite = @import("rewrite.zig");
 pub const outline = @import("outline.zig");
 pub const namelist = @import("namelist.zig");
 pub const project = @import("project.zig");
+pub const compile_flags = @import("compile_flags.zig");
 pub const fpm = @import("fpm.zig");
 pub const pfunit = @import("pfunit.zig");
 pub const semantic = @import("semantic.zig");
