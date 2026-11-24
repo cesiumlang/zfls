@@ -200,12 +200,43 @@ const Saver = struct {
     }
 };
 
+fn beyond(lim: usize, v: anytype) bool {
+    switch (@typeInfo(@TypeOf(v))) {
+        .int => return v > lim,
+        .optional => return if (v) |x| beyond(lim, x) else false,
+        .array => {
+            for (v) |x| if (beyond(lim, x)) return true;
+            return false;
+        },
+        else => return false,
+    }
+}
+
 pub const LoadError = error{ OutOfMemory, Format };
+
+/// The fields that hold a line number, and those that hold a column, of the
+/// file the AST is of (a related location in another file is not checked)
+fn isLineField(comptime T: type, comptime name: []const u8) bool {
+    if (@hasField(T, "path") and @hasField(T, "message")) return false;
+    const names = [_][]const u8{ "sline", "eline", "line", "line_number", "sln", "eln", "end_line", "scope_line", "contains_start", "implicit_line" };
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
+fn isColumnField(comptime name: []const u8) bool {
+    const names = [_][]const u8{ "sch", "ech", "missing" };
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
 
 /// Fills `ast`, created for its file (`Ast.create`), with the AST saved in
 /// `data`; `gpa` is for the time of loading
 pub fn load(gpa: Allocator, ast: *Ast, data: []const u8) LoadError!void {
     var l: Loader = .{ .a = ast.allocator(), .gpa = gpa, .ast = ast, .data = data };
+    if (ast.file) |f| {
+        l.max_line = @max(f.lines.items.len, if (f.pp_lines) |p| p.len else 0) + 1;
+        l.max_col = f.text.len + 1;
+    }
     defer l.objs.deinit(gpa);
     const n = try l.len();
     try ast.global_dict.ensureTotalCapacity(l.a, n);
@@ -230,6 +261,15 @@ const Loader = struct {
     objs: std.ArrayList(*Obj) = .empty,
     /// as `Saver.depth`
     depth: usize = 0,
+    /// The largest line number and column the file can have
+    max_line: usize = std.math.maxInt(usize),
+    max_col: usize = std.math.maxInt(usize),
+
+    /// A line or column field of `T` beyond the file's is damage
+    fn checked(l: *Loader, comptime T: type, comptime name: []const u8, v: anytype) !void {
+        const lim = if (comptime isLineField(T, name)) l.max_line else if (comptime isColumnField(name)) l.max_col else return;
+        if (beyond(lim, v)) return error.Format;
+    }
 
     fn byte(l: *Loader) !u8 {
         if (l.at >= l.data.len) return error.Format;
@@ -316,7 +356,11 @@ const Loader = struct {
                 } else if (p.child == Ast) {
                     return l.ast;
                 } else if (p.child == KeywordInfo) {
-                    if (try l.byte() == 0) return &KeywordInfo.empty;
+                    switch (try l.byte()) {
+                        0 => return &KeywordInfo.empty,
+                        1 => {},
+                        else => return error.Format,
+                    }
                     const k = try l.a.create(KeywordInfo);
                     k.* = try l.value(KeywordInfo);
                     return k;
@@ -337,7 +381,10 @@ const Loader = struct {
                     return list;
                 }
                 var v: T = undefined;
-                inline for (st.field_names, st.field_types) |name, F| @field(v, name) = try l.value(F);
+                inline for (st.field_names, st.field_types) |name, F| {
+                    @field(v, name) = try l.value(F);
+                    try l.checked(T, name, @field(v, name));
+                }
                 return v;
             },
             .@"union" => |u| {
@@ -452,6 +499,13 @@ test "an AST saved, loaded and saved again is the same" {
     for (0..20) |_| try mod.addChild(try Obj.newScope(back, .scope, 1, "extra", &.{}));
     try std.testing.expect(mod.childList()[0] == first);
     try std.testing.expectEqualStrings(ast.global_dict.get("shapes").?.childList()[0].name, first.name);
+    // an AST with lines the file does not have is not loaded
+    const short = try FortranFile.create(gpa, "/w/short.f90", null);
+    defer short.destroy();
+    _ = try short.setTextOwned(try gpa.dupe(u8, "module x\nend module\n"));
+    const odd = try Ast.create(gpa, short);
+    defer odd.destroy();
+    try std.testing.expectError(error.Format, load(gpa, odd, bytes));
     // a truncated or damaged AST is not loaded
     for ([_]usize{ 1, bytes.len / 2, bytes.len - 1 }) |cut| {
         const broken = try Ast.create(gpa, f);
