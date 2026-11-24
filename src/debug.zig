@@ -6,7 +6,7 @@ const Io = std.Io;
 const stdio = @import("stdio.zig");
 const str = @import("str.zig");
 const json = @import("json.zig");
-const json5 = @import("json5.zig");
+const config_file = @import("settings/config_file.zig");
 const paths = @import("paths.zig");
 const glob = @import("glob.zig");
 const parser = @import("parser.zig");
@@ -160,14 +160,8 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
         try applyConfigFile(a, io, o, &merged, u, true);
     };
     if (root) |r| {
-        var config_path: ?[]const u8 = null;
-        for (settings_mod.configFileNames(s.config)) |f| {
-            const p = try paths.join(a, &.{ r, f });
-            if (paths.isFile(io, p)) {
-                config_path = p;
-                break;
-            }
-        }
+        const found = try config_file.find(a, io, r, s.config);
+        const config_path: ?[]const u8 = if (found) |f| f.path else null;
         o.print("  Config file = {s}\n", .{config_path orelse "None"});
         if (config_path) |cp| try applyConfigFile(a, io, o, &merged, cp, false);
     }
@@ -209,15 +203,12 @@ fn addPredefined(a: Allocator, io: Io, o: *Out, s: *const Settings, root: ?[]con
 /// the workspace's own (which names no program to run)
 fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8, trusted: bool) !void {
     const data = fsio.readFile(io, a, path, .limited(1 << 26)) catch return;
-    var p: json5.Parser = .{ .a = a, .src = data };
-    if (p.parseDocument()) |cfg| {
-        if (cfg == .object) {
+    switch (try config_file.parse(a, a, data, path)) {
+        .ok => |loaded| {
             var ignored: std.ArrayList([]const u8) = .empty;
-            if (trusted) try settings_mod.applyConfig(a, s, cfg) else try workspace_file.apply(a, s, cfg, &ignored);
-        }
-    } else |_| {
-        const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, path });
+            if (trusted) try settings_mod.applyConfig(a, s, loaded.cfg) else try workspace_file.apply(a, s, loaded.cfg, &ignored);
+        },
+        .err => |msg| o.print("{s}\n", .{msg}),
     }
 }
 

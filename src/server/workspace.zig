@@ -7,7 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const json = @import("../json.zig");
-const json5 = @import("../json5.zig");
+const config_file = @import("../settings/config_file.zig");
 const lsp = @import("../lsp.zig");
 const patterns = @import("../patterns.zig");
 const paths = @import("../paths.zig");
@@ -113,40 +113,34 @@ pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames
 /// only allocation failures are errors.
 pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
     self.config.file_path = null;
-    var config_path: ?[]const u8 = null;
-    for (configFileNames(self)) |f| {
-        const p = try paths.join(a, &.{ self.root_path, f });
-        if (paths.isFile(self.io, p)) {
-            config_path = p;
-            break;
-        }
-    }
-    const cp = config_path orelse return null;
+    const found = try config_file.find(a, self.io, self.root_path, self.s.config) orelse return null;
+    const cp = found.path;
+    const name = found.name;
     const data = fsio.readFile(self.io, self.arena.allocator(), cp, .limited(1 << 26)) catch {
-        self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
+        self.postMessage(a, try a.print("Configuration file '{s}' not found", .{name}), C.Severity.err);
         return null;
     };
-    const cfg = try parseConfigFile(self, a, data, self.s.config) orelse return null;
+    const cfg = try parseConfigFile(self, a, data, name) orelse return null;
     self.config.file_path = try self.arena.allocator().dupe(u8, cp);
     return cfg;
 }
 
 /// The JSON object of a configuration file's text `data` (in the server's
 /// arena), null when it is none: an error then posted, naming the file as
-/// `name`
+/// `name`. The problems of a TOML file are posted as a warning.
 pub fn parseConfigFile(self: *Server, a: Allocator, data: []const u8, name: []const u8) Allocator.Error!?Value {
-    var p: json5.Parser = .{ .a = self.arena.allocator(), .src = data };
-    const cfg = p.parseDocument() catch {
-        const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, name });
-        self.postMessage(a, msg, C.Severity.err);
-        return null;
-    };
-    if (cfg != .object) {
-        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{name}), C.Severity.err);
-        return null;
+    switch (try config_file.parse(self.arena.allocator(), a, data, name)) {
+        .err => |msg| {
+            self.postMessage(a, msg, C.Severity.err);
+            return null;
+        },
+        .ok => |loaded| {
+            if (loaded.problems.len > 0) {
+                self.postMessage(a, try a.print("In the configuration file \"{s}\": {s}", .{ name, try std.mem.join(a, "; ", loaded.problems) }), C.Severity.warn);
+            }
+            return loaded.cfg;
+        },
     }
-    return cfg;
 }
 
 /// Adds the include directories and preprocessor definitions of the

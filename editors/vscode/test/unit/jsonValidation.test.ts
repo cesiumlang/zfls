@@ -12,3 +12,11 @@ test("the schema applies to the user configuration file", () => {
     assert.ok(match.includes(name), name);
   }
 });
+
+test("the schema applies to .zflsrc as TOML", () => {
+  const pkg = JSON.parse(readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8"));
+  const toml = pkg.contributes.tomlValidation.find((v: { fileMatch: string }) => v.fileMatch === ".zflsrc");
+  assert.equal(toml.url, "./schemas/fortls.schema.json");
+  const lang = pkg.contributes.languages.find((l: { id: string }) => l.id === "toml");
+  assert.deepEqual(lang.filenames, [".zflsrc"]);
+});

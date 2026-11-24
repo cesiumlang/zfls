@@ -12,11 +12,11 @@ const io = std.testing.io;
 
 /// A user configuration file with `text` (none when null) in a temporary
 /// directory, which the environment of zfls names, until `deinit`
-const UserConfig = struct {
+pub const UserConfig = struct {
     tmp: std.testing.TmpDir,
     arena: std.heap.ArenaAllocator,
 
-    fn init(text: ?[]const u8) !*UserConfig {
+    pub fn init(text: ?[]const u8) !*UserConfig {
         const u = try gpa.create(UserConfig);
         u.tmp = std.testing.tmpDir(.{});
         u.arena = .init(gpa);
@@ -42,7 +42,7 @@ const UserConfig = struct {
         try u.tmp.dir.writeFile(io, .{ .sub_path = "zfls/config.json", .data = text });
     }
 
-    fn deinit(u: *UserConfig) void {
+    pub fn deinit(u: *UserConfig) void {
         var none = std.process.Environ.Map.init(gpa);
         defer none.deinit();
         zfls.paths.initUserConfig(gpa, &none);

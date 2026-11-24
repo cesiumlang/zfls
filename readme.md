@@ -183,7 +183,40 @@ zfls --incremental_sync --hover_signature --use_signature_help
 zfls --help
 ```
 
-Options can also be set in a JSON or JSON5 configuration file in the project root, `.fortlsrc`, `.fortls.json` or `.fortls` by default (or the file named with `-c`/`--config`). The option names are those of the [fortls documentation](https://fortls.fortran-lang.org/options.html).
+Options can also be set in a configuration file in the project root: `.zflsrc` (TOML), else fortls's `.fortlsrc`, `.fortls.json` or `.fortls` (JSON or JSON5), the first found being read, or the file named with `-c`/`--config`, whose format is told by its content (a first token of `{`, `//` or `/*` is JSON5, anything else TOML). The option names are those of the command line and of the [fortls documentation](https://fortls.fortran-lang.org/options.html), the same in both formats.
+
+A `.zflsrc` is TOML with one key per option, comments with `#`, and a table for the options that take a dictionary (`pp_defs`, `diagnostic_severity`, `file_associations`):
+
+```toml
+#:schema https://raw.githubusercontent.com/cesiumlang/zfls/main/editors/vscode/schemas/fortls.schema.json
+source_dirs = ["src", "app"]
+include_dirs = ["include"]
+lowercase_hover = true
+compiler_diagnostics = "gfortran"
+
+[pp_defs]
+USE_MPI = 1
+
+[diagnostic_severity]
+masks-parent = "off"
+```
+
+A key that is no option, and a value of the wrong type, are reported as a warning and ignored, in a `.zflsrc` (a fortls file's unknown keys are still skipped silently). The settings that name a program are not read from a project's file, in either format (see Security below). `zfls config [--root DIR] [options]` prints each option in effect and where it came from (the default, the command line, the user's file or the project's file).
+
+Moving a fortls file over: the option names do not change, only the syntax.
+
+| `.fortlsrc` (JSON5) | `.zflsrc` (TOML) |
+| --- | --- |
+| `{ "source_dirs": ["src"] }` | `source_dirs = ["src"]` |
+| `"nthreads": 4,` | `nthreads = 4` |
+| `"lowercase_hover": true,` | `lowercase_hover = true` |
+| `"pp_defs": { "A": "1" },` | `[pp_defs]` then `A = "1"` |
+| `"diagnostic_severity": { "masks-parent": "off" }` | `[diagnostic_severity]` then `masks-parent = "off"` |
+| `// a comment` | `# a comment` |
+| `"compiler_args": ["-Wall"]` | `compiler_args = ["-Wall"]` |
+| `null` (not set) | leave the key out |
+
+Tables are only for the dictionary options; other options are top-level keys, so that the command line, the schema and the files all use one set of names.
 
 Personal defaults for every project go in a user configuration file of the same format: `%APPDATA%\zfls\config.json` on Windows, else `$XDG_CONFIG_HOME/zfls/config.json` (`~/.config/zfls/config.json` without that variable). Relative paths in it are relative to the workspace root, as in the project's file. It is read again when it changes, where the editor watches files outside the workspace, else at the next start.
 
@@ -207,7 +240,7 @@ Each source takes over from the one before: the command line, the user configura
 
 The configuration file, `fpm.toml` and `compile_commands.json` are read again when they change on disk, with the same effects (a change of `fpm.toml` or `compile_commands.json` indexes the workspace again): zfls asks the editor to watch them where it allows that (`workspace/didChangeWatchedFiles`); other editors restart zfls.
 
-The fortls debug options work as well, for instance `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and the resulting object tree, and `--debug_hover --debug_filepath file.f90 --debug_line 10 --debug_char 5` runs a single hover request. Their output is meant for testing zfls and may differ from fortls's. They take the options as the server does: the command line's, with the configuration file's (`.fortlsrc`, `.fortls.json`, `.fortls` or `-c`) in `--debug_rootpath` over them. With `--debug_log`, `fortls_debug.log` has a `Final options` line with the options in effect, after the command line, the editor's settings, the configuration file and the build files, at start-up and after each change of the settings.
+The fortls debug options work as well, for instance `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and the resulting object tree, and `--debug_hover --debug_filepath file.f90 --debug_line 10 --debug_char 5` runs a single hover request. Their output is meant for testing zfls and may differ from fortls's. They take the options as the server does: the command line's, with the configuration file's (`.zflsrc`, `.fortlsrc`, `.fortls.json`, `.fortls` or `-c`) in `--debug_rootpath` over them. With `--debug_log`, `fortls_debug.log` has a `Final options` line with the options in effect, after the command line, the editor's settings, the configuration file and the build files, at start-up and after each change of the settings.
 
 ### ifx without Visual Studio (Windows x64)
 
@@ -532,7 +565,7 @@ A compiler run that takes longer than 120 seconds is stopped, with the processes
 ```
 
 - `compiler_path`: the executable, or the directory that holds it (by default the compiler on the `PATH`).
-- Settings that name a program (`compiler_path`, `compiler_path_fixed`, `compiler_fypp`, `formatter_path`, `fortitude_path`, `codee_path`, `bind_c_clangd`) and `debug_log` are read only from the user's configuration file, the command line and `initializationOptions` (the editor's settings), never from the workspace's own `.fortlsrc`, `.fortls` or `.fortls.json`, which a repository can ship: they are ignored there, and the log says so once. `fortls_debug.log` is made as a new file, and not at all where a link or a directory is in its place. The flags that file gives the compiler (`compiler_args`) and fypp (`compiler_fypp_args`) are filtered to an allow-list as a command's of `compile_commands.json` are.
+- Settings that name a program (`compiler_path`, `compiler_path_fixed`, `compiler_fypp`, `formatter_path`, `fortitude_path`, `codee_path`, `bind_c_clangd`) and `debug_log` are read only from the user's configuration file, the command line and `initializationOptions` (the editor's settings), never from the workspace's own `.zflsrc`, `.fortlsrc`, `.fortls` or `.fortls.json`, which a repository can ship: they are ignored there, and the log says so once. `fortls_debug.log` is made as a new file, and not at all where a link or a directory is in its place. The flags that file gives the compiler (`compiler_args`) and fypp (`compiler_fypp_args`) are filtered to an allow-list as a command's of `compile_commands.json` are.
 - A program named without a directory (`gfortran`, `fprettify`, `gdb`, `clangd`) is looked up on the `PATH` and run by its absolute path; a relative `PATH` entry (`.`) is skipped, so a file of the workspace is never taken for it. The VS Code extension starts zfls in the directory of its executable, not in the workspace.
 - `compiler_args`: the compiler's own options; by default its warnings (`-Wall` for gfortran, `-warn all,nodeclarations,noexternals` for Intel, `-Minform=warn` for nvfortran, `-Wunused-variable -Wused-undefined-variable` for Flang 22 and later), one image of coarrays (`-fcoarray=single` for gfortran, `-coarray=single` for Intel; without it gfortran, ifx and ifort stop at the first coarray, and Flang needs none), and OpenMP while zfls reads its conditional lines (`-fopenmp`, Intel's `-qopenmp`; not with `disable_openmp_conditional`). On Windows Intel's are `/warn:all,nodeclarations,noexternals /Qcoarray:single /Qopenmp`. zfls adds the syntax-only, form, preprocessor and module directory options, the file's directory and `include_dirs` (`-I`), and, for files it preprocesses, `pp_defs` (`-D`). It also has the compiler read lines as zfls does: fixed-form lines up to `fixed_line_length` when it is set (`-ffixed-line-length-N` for gfortran, `-ffixed-line-length=N` for flang, `-extend-source N` for Intel with 72, 80 or 132, `-Mextend` for nvfortran and `-132` for nagfor with 132), and free-form lines without a limit (`-ffree-line-length-none` for gfortran, whose default is 132 columns before GCC 16); a line-length option in `compiler_args` replaces zfls's of that form. For LFortran, whose own dialect (its default `--std=lf`) rejects implicit typing and implicit interfaces, zfls passes `--implicit-typing --implicit-interface`, each unless `compiler_args` (or the project's command) has an option about it, and neither with a `--std`. On the command line it is one string, split at spaces: `--compiler_args="-Wall -std=f2018"`, or a JSON list, which keeps an argument with a space whole: `--compiler_args='["-Wall", "-I/my dir/inc"]'`. The same holds for the other options that are a program's arguments (`compiler_args_fixed`, `compiler_fypp_args`, `fortitude_args`, `codee_args`, `formatter_args`, `formatter_fixed_args`).
 - `compiler_diagnostics_fixed`, `compiler_path_fixed`, `compiler_args_fixed`: the compiler, executable and arguments of fixed-form files, for a project whose legacy code builds with another compiler or options; each is that of the free form when not set (an empty `compiler_args_fixed`: the compiler's defaults), and `compiler_diagnostics_fixed` `none` checks no fixed-form file. The modules a file uses are compiled with the compiler of that file, whatever their form (the `.mod` files of two compilers do not mix).
@@ -717,7 +750,7 @@ zfls deliberately differs from fortls in a few places:
 - `workspace/didChangeWatchedFiles` is read: Fortran files created, changed or deleted outside the editor (a checkout, generated code) are parsed again or dropped, except those open in the editor; fortls ignores it.
 - The interface modules that ifort and ifx write with `-warn interfaces` (`<name>__genmod.f90`, first line `!COMPILER-GENERATED INTERFACE MODULE`) are not indexed, so their procedures are not listed twice in the workspace symbols; one opened in the editor is served as usual. fortls indexes them (hansec PR #56).
 - Settings are taken over LSP as well, under the names of the configuration file: in `initializationOptions` and in `workspace/didChangeConfiguration`, which applies them at once, and the configuration file, `fpm.toml` and `compile_commands.json` are read again when they change (see [Usage](#usage)); fortls reads its settings once, from its command line and configuration file.
-- `--debug_parser` and `--debug_preproc` take the command line's preprocessor options (`--pp_defs`, `--include_dirs`, `--pp_suffixes`) with the configuration file's over them, and find `.fortls.json`, as the server does; fortls's take them from a configuration file only. The debug log names the final options.
+- `--debug_parser` and `--debug_preproc` take the command line's preprocessor options (`--pp_defs`, `--include_dirs`, `--pp_suffixes`) with the configuration file's over them, and find the configuration file as the server does; fortls's take them from a configuration file only. The debug log names the final options.
 - A user configuration file (`%APPDATA%\zfls\config.json`, `~/.config/zfls/config.json`) gives defaults for every project, under the editor's settings and the project's file (see [Usage](#usage)); fortls has none (FL #408).
 - Renaming or moving a file or directory in the editor (`workspace/willRenameFiles`) rewrites the `INCLUDE` statements and `#include` directives that name a file that moves, and the relative ones of a file that moves: relative to the including file's directory when the file was found there, to the include directory it was found in while it stays in it; fortls has none.
 - A document is served from the text the client sends with `didOpen` and its changes: a file whose text in the editor is not the one on disk (unsaved changes restored when the editor starts, a new file not saved yet: hansec #123), and a document that is not a file (an untitled one, `untitled:Untitled-1`). Closed without a save, a file is read from disk again, and one that was never saved leaves the workspace. fortls reads every document from disk.
