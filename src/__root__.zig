@@ -15,6 +15,7 @@ pub const suffixes = @import("suffixes.zig");
 pub const constants = @import("constants.zig");
 pub const helpers = @import("helpers.zig");
 pub const paths = @import("paths.zig");
+pub const fsio = @import("fsio.zig");
 pub const objects = @import("objects.zig");
 pub const parser = @import("parser.zig");
 pub const parser_openmp = @import("parser/openmp.zig");

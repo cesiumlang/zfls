@@ -16,6 +16,7 @@ const fpm = @import("../fpm.zig");
 const tests = @import("tests.zig");
 const Value = json.Value;
 const Server = @import("../server.zig").Server;
+const fsio = @import("../fsio.zig");
 
 const Target = struct {
     /// `executable`, `test` or `example`
@@ -43,7 +44,7 @@ pub fn serveFpmTargets(self: *Server, a: Allocator) !Value {
     try tests.filesBelow(self, a, self.root_path, tests.isManifest, &manifests, 0);
     var out: std.ArrayList(Project) = .empty;
     for (manifests.items) |path| {
-        const text = Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(1 << 24)) catch continue;
+        const text = fsio.readFile(self.io, a, path, .limited(1 << 24)) catch continue;
         const root = paths.dirname(path);
         const m = try fpm.parseManifest(a, text);
         var targets: std.ArrayList(Target) = .empty;

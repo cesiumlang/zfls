@@ -28,6 +28,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
+const fsio = @import("../fsio.zig");
 
 /// A test, or a suite of test-drive: its name and where it is
 const Item = struct { name: []const u8, uri: []const u8, range: lsp.Range };
@@ -147,7 +148,7 @@ pub fn serveFpmTests(self: *Server, a: Allocator) !Value {
     try filesBelow(self, a, self.root_path, isManifest, &manifests, 0);
     var out: std.ArrayList(FpmProject) = .empty;
     for (manifests.items) |path| {
-        const text = Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(1 << 24)) catch continue;
+        const text = fsio.readFile(self.io, a, path, .limited(1 << 24)) catch continue;
         const root = paths.dirname(path);
         const m = try fpm.parseManifest(a, text);
         // the main programs of test/, which fpm makes targets of
@@ -221,7 +222,7 @@ pub fn servePfunitTests(self: *Server, a: Allocator) !Value {
     var listed: std.ArrayList([]const u8) = .empty;
     if (pf_files.items.len > 0) for (found.items) |cmake| {
         if (!std.mem.eql(u8, std.Io.Dir.path.basename(cmake), "CMakeLists.txt")) continue;
-        const text = Io.Dir.cwd().readFileAlloc(self.io, cmake, a, .limited(1 << 24)) catch continue;
+        const text = fsio.readFile(self.io, a, cmake, .limited(1 << 24)) catch continue;
         if (std.ascii.findIgnoreCase(text, "add_pfunit_ctest") == null) continue;
         const uri = try paths.pathToUri(a, cmake);
         for (try pfunit.parseAddPfunitCtest(a, text)) |p| {

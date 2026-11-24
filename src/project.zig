@@ -10,6 +10,7 @@ const json = @import("json.zig");
 const paths = @import("paths.zig");
 const str = @import("str.zig");
 const compile_flags = @import("compile_flags.zig");
+const fsio = @import("fsio.zig");
 
 pub const Def = struct { name: []const u8, value: []const u8 };
 
@@ -382,7 +383,7 @@ pub fn isIfortInterface(io: Io, path: []const u8) bool {
     const suffix = "__genmod.f90";
     const base = std.Io.Dir.path.basename(path);
     if (!std.ascii.endsWithIgnoreCase(base, suffix)) return false;
-    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return false;
+    const file = fsio.openFile(io, path) catch return false;
     defer file.close(io);
     var buf: [128]u8 = undefined;
     const n = file.readPositionalAll(io, &buf, 0) catch return false;

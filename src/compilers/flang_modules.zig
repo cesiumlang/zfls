@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const Io = std.Io;
+const fsio = @import("../fsio.zig");
 const Allocator = std.mem.Allocator;
 
 /// The driver's target and directory, from `flang --version`'s `Target:`
@@ -57,7 +58,7 @@ fn find(io: Io, a: Allocator, version_output: []const u8) !?Found {
     const install = parseInstall(version_output) orelse return null;
     const arch = install.target[0 .. std.mem.findScalar(u8, install.target, '-') orelse install.target.len];
     const clang = try std.Io.Dir.path.join(a, &.{ install.bin, "..", "lib", "clang" });
-    var versions = Io.Dir.cwd().openDir(io, clang, .{ .iterate = true }) catch return null;
+    var versions = fsio.openDir(io, clang, .{ .iterate = true }) catch return null;
     defer versions.close(io);
     var found: ?[]const u8 = null;
     var vit = versions.iterate();
@@ -68,7 +69,7 @@ fn find(io: Io, a: Allocator, version_output: []const u8) !?Found {
         if (hasModules(io, a, own)) return .{ .dir = own, .driver_looks = true };
         // the layout before the triples (Flang 20)
         if (hasModules(io, a, flang)) return .{ .dir = flang, .driver_looks = true };
-        var triples = Io.Dir.cwd().openDir(io, flang, .{ .iterate = true }) catch continue;
+        var triples = fsio.openDir(io, flang, .{ .iterate = true }) catch continue;
         defer triples.close(io);
         var tit = triples.iterate();
         while (try tit.next(io)) |t| {
@@ -82,7 +83,7 @@ fn find(io: Io, a: Allocator, version_output: []const u8) !?Found {
 
 fn hasModules(io: Io, a: Allocator, dir: []const u8) bool {
     const mod = std.Io.Dir.path.join(a, &.{ dir, "iso_fortran_env.mod" }) catch return false;
-    Io.Dir.cwd().access(io, mod, .{}) catch return false;
+    fsio.access(io, mod) catch return false;
     return true;
 }
 

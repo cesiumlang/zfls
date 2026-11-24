@@ -30,6 +30,7 @@ const Value = json.Value;
 
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 /// The C search is done again when it is older than this
 const index_ttl_s = 60;
@@ -277,7 +278,7 @@ pub fn cFiles(self: *Server, a: Allocator) ![]const []const u8 {
 }
 
 fn scanFile(self: *Server, a: Allocator, ix: *CIndex, path: []const u8) !void {
-    const text = Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(16 * 1024 * 1024)) catch return;
+    const text = fsio.readFile(self.io, a, path, .limited(16 * 1024 * 1024)) catch return;
     var uri: ?[]const u8 = null;
     var it = std.mem.splitScalar(u8, text, '\n');
     var ln: usize = 0;

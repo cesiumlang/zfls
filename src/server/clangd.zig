@@ -19,10 +19,12 @@ const lsp = @import("../lsp.zig");
 const paths = @import("../paths.zig");
 const executables = @import("../executables.zig");
 const bindc = @import("bindc.zig");
+const tools = @import("tools.zig");
 const Value = json.Value;
 
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 /// How long a question waits for each of clangd's answers
 const answer_ms = 3000;
@@ -61,6 +63,11 @@ pub fn start(self: *Server, a: Allocator) void {
     const first = firstFile(self, a) orelse return;
     const first_uri = self.gpa.dupe(u8, paths.pathToUri(a, first) catch return) catch return;
     const program = executables.resolve(a, self.io, self.toolEnv(), exe) catch |e| {
+        self.gpa.free(first_uri);
+        self.log.warn("bind_c_clangd: could not start {s}: {s}", .{ exe, @errorName(e) });
+        return;
+    };
+    tools.checkLengths(&.{ program, "--background-index", "--log=error" }, self.root_path) catch |e| {
         self.gpa.free(first_uri);
         self.log.warn("bind_c_clangd: could not start {s}: {s}", .{ exe, @errorName(e) });
         return;
@@ -188,7 +195,7 @@ fn initialized(self: *Server, c: *Clangd, a: Allocator) void {
 
 fn openFile(self: *Server, c: *Clangd, a: Allocator, uri: []const u8) void {
     const path = paths.pathFromUri(self.io, a, uri) catch return;
-    const text = Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(64 * 1024 * 1024)) catch return;
+    const text = fsio.readFile(self.io, a, path, .limited(64 * 1024 * 1024)) catch return;
     const ext = std.Io.Dir.path.extension(path);
     const cpp = !std.mem.eql(u8, ext, ".c") and !std.mem.eql(u8, ext, ".h");
     const msg = json.from(a, .{

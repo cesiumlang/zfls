@@ -56,6 +56,7 @@ const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
 const source_form = @import("source_form.zig");
 const project = @import("../project.zig");
+const fsio = @import("../fsio.zig");
 
 pub const signature_triggers: []const []const u8 = &.{ "(", "," };
 
@@ -207,7 +208,7 @@ pub fn serveDidChange(self: *Server, a: Allocator, params: Value) !Value {
 pub fn readUserConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
     self.config.user_path = null;
     const p = paths.userConfigFile() orelse return null;
-    const data = std.Io.Dir.cwd().readFileAlloc(self.io, p, self.arena.allocator(), .limited(1 << 26)) catch return null;
+    const data = fsio.readFile(self.io, self.arena.allocator(), p, .limited(1 << 26)) catch return null;
     const cfg = try workspace.parseConfigFile(self, a, data, p) orelse return null;
     self.config.user_path = p;
     return cfg;
