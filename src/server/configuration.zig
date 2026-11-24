@@ -36,6 +36,7 @@ const patterns = @import("../patterns.zig");
 const paths = @import("../paths.zig");
 const C = @import("../constants.zig");
 const settings_mod = @import("../settings.zig");
+const workspace_file = @import("../settings/workspace_file.zig");
 const parser = @import("../parser.zig");
 
 const Settings = settings_mod.Settings;
@@ -79,6 +80,10 @@ pub const State = struct {
     /// The configuration files read: the user's and the project's
     user_path: ?[]const u8 = null,
     file_path: ?[]const u8 = null,
+    /// The log said that the config file's program settings are ignored
+    file_ignored_logged: bool = false,
+    /// That line, for the debug log once it is open
+    file_ignored_note: ?[]const u8 = null,
     client: lsp.ClientCapabilities = .{},
     /// The providers the client knows of: announced in the `initialize`
     /// answer, or registered since
@@ -143,12 +148,25 @@ pub fn load(self: *Server, a: Allocator, init_options: ?Value) !void {
         try settings_mod.applyConfig(sa, &self.s, self.config.editor.?);
     }
     self.config.file = try workspace.readConfigFile(self, a);
-    if (self.config.file) |f| try settings_mod.applyConfig(sa, &self.s, f);
+    if (self.config.file) |f| try applyFile(self, sa, &self.s, f);
     self.config.configured = try settings_mod.clone(sa, self.s);
     self.sync_type = if (self.s.incremental_sync) 2 else 1;
     // else the command line's, made when the server was created
     if (!settings_mod.sameValue(&self.config.cli, &self.s, "incl_suffixes")) try sourceSuffixes(self, a);
     try self.syncPpDefsFromSettings();
+}
+
+/// Applies the config file's settings (the project's own, which a repository
+/// can ship) to `s`, but for the programs to run (`workspace_file`); the
+/// log says so once
+fn applyFile(self: *Server, a: Allocator, s: *Settings, cfg: Value) !void {
+    var ignored: std.ArrayList([]const u8) = .empty;
+    try workspace_file.apply(a, s, cfg, &ignored);
+    if (ignored.items.len == 0 or self.config.file_ignored_logged) return;
+    self.config.file_ignored_logged = true;
+    const note = try a.print("the configuration file of the workspace cannot set {s}: set them in the user configuration file, on the command line or in the editor's settings", .{try std.mem.join(a, ", ", ignored.items)});
+    self.log.warn("{s}", .{note});
+    self.config.file_ignored_note = try self.arena.allocator().dupe(u8, note);
 }
 
 /// The pattern of source file names, of `incl_suffixes`
@@ -203,7 +221,7 @@ fn configured(self: *Server) !Settings {
     var next = try settings_mod.clone(sa, self.config.cli);
     if (self.config.user) |u| try settings_mod.applyConfig(sa, &next, u);
     if (self.config.editor) |e| try settings_mod.applyConfig(sa, &next, e);
-    if (self.config.file) |f| try settings_mod.applyConfig(sa, &next, f);
+    if (self.config.file) |f| try applyFile(self, sa, &next, f);
     return next;
 }
 
