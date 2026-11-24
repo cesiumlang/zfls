@@ -33,9 +33,17 @@ pub fn enabled(self: *const Logger, level: Level) bool {
     return false;
 }
 
-/// Start logging everything to `path` (truncating it)
+/// Start logging everything to `path`, a new file in the place of the old
+/// one. Nothing is logged to one that is not a regular file (a link in the
+/// workspace may point anywhere), and a link made in the meantime fails
+/// the creation.
 pub fn openFile(self: *Logger, io: Io, path: []const u8) void {
-    const f = Io.Dir.cwd().createFile(io, path, .{}) catch return;
+    const dir = Io.Dir.cwd();
+    if (dir.statFile(io, path, .{ .follow_symlinks = false })) |st| {
+        if (st.kind != .file) return;
+        dir.deleteFile(io, path) catch return;
+    } else |_| {}
+    const f = dir.createFile(io, path, .{ .exclusive = true }) catch return;
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
     if (self.file) |old| old.close(self.io);
@@ -89,4 +97,32 @@ pub fn warn(self: *Logger, comptime fmt: []const u8, args: anytype) void {
 
 pub fn err(self: *Logger, comptime fmt: []const u8, args: anytype) void {
     self.write(.err, fmt, args);
+}
+
+test "a log file in place of a regular file; none through a link" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", arena.allocator());
+    try tmp.dir.writeFile(io, .{ .sub_path = "victim.txt", .data = "keep" });
+    var log = Logger.init(io);
+    defer log.deinit();
+    // an old log is replaced
+    try tmp.dir.writeFile(io, .{ .sub_path = "old.log", .data = "old text" });
+    log.openFile(io, try std.Io.Dir.path.join(arena.allocator(), &.{ root, "old.log" }));
+    try std.testing.expect(log.file != null);
+    log.info("new", .{});
+    log.deinit();
+    log.file = null;
+    var buf: [64]u8 = undefined;
+    const text = try tmp.dir.readFile(io, "old.log", &buf);
+    try std.testing.expect(std.mem.find(u8, text, "old text") == null and std.mem.find(u8, text, "new") != null);
+    // a link: not followed, nothing written
+    tmp.dir.symLink(io, "victim.txt", "link.log", .{}) catch return;
+    log.openFile(io, try std.Io.Dir.path.join(arena.allocator(), &.{ root, "link.log" }));
+    try std.testing.expect(log.file == null);
+    const kept = try tmp.dir.readFile(io, "victim.txt", &buf);
+    try std.testing.expectEqualStrings("keep", kept);
 }
