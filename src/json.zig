@@ -195,6 +195,30 @@ pub fn stringify(a: Allocator, v: Value) Allocator.Error![]u8 {
     return write(a, v, false);
 }
 
+/// How many items `stringifyAll` converts at once
+const chunk_len = 256;
+
+/// The text of `from(a, items)`, the items converted a few at a time: the
+/// `Value` of an item takes some kilobytes, which with thousands of items
+/// (a diagnostic for each of a file's names) is the memory of the request
+pub fn stringifyAll(a: Allocator, items_in: anytype) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(a, '[');
+    var scratch: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    defer scratch.deinit();
+    var at: usize = 0;
+    while (at < items_in.len) : (at += chunk_len) {
+        _ = scratch.reset(.retain_capacity);
+        const chunk = items_in[at..@min(at + chunk_len, items_in.len)];
+        const text = try stringify(scratch.allocator(), try from(scratch.allocator(), chunk));
+        if (at > 0) try out.append(a, ',');
+        // without its own brackets
+        try out.appendSlice(a, text[1 .. text.len - 1]);
+    }
+    try out.append(a, ']');
+    return out.items;
+}
+
 /// Indented text for logs and the debug CLI (`json.dumps(indent=2)`)
 pub fn pretty(a: Allocator, v: Value) Allocator.Error![]u8 {
     return write(a, v, true);
@@ -339,4 +363,17 @@ test "from omits null defaults; decode decodes" {
     try std.testing.expectError(error.InvalidParams, decode(struct { n: usize }, a, try parse(a, "{\"n\":-1}")));
     const D = struct { x: ?i64 = null };
     try std.testing.expectEqual(@as(?i64, null), (try decode(D, a, .null)).x);
+}
+
+test "stringifyAll is stringify of from, in chunks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const P = struct { n: i64, s: []const u8, o: ?i64 = null };
+    var list: std.ArrayList(P) = .empty;
+    try std.testing.expectEqualStrings("[]", try stringifyAll(a, list.items));
+    for (0..chunk_len * 2 + 3) |i| try list.append(a, .{ .n = @intCast(i), .s = "x\xffé" });
+    for ([_]usize{ 1, chunk_len, chunk_len + 1, list.items.len }) |n| {
+        try std.testing.expectEqualStrings(try stringify(a, try from(a, list.items[0..n])), try stringifyAll(a, list.items[0..n]));
+    }
 }

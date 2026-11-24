@@ -15,6 +15,7 @@ const tools = @import("../server/tools.zig");
 const executables = @import("../executables.zig");
 const json = @import("../json.zig");
 const paths = @import("../paths.zig");
+const fsio = @import("../fsio.zig");
 const compiler = @import("compiler.zig");
 const debugger = @import("debugger.zig");
 const run_env = @import("env.zig");
@@ -123,7 +124,7 @@ pub fn plan(a: Allocator, ctx: Context, r: Request) !?Answer {
         try std.Io.Dir.path.join(a, &.{ c, "run", try outputName(a, source, os) })
     else
         paths.dirname(source);
-    try Io.Dir.cwd().createDirPath(ctx.io, out_dir);
+    try fsio.createDirPath(ctx.io, out_dir);
     const program = try std.Io.Dir.path.join(a, &.{ out_dir, try programName(a, source, os) });
     var note: ?[]const u8 = null;
     // the build's PATH has the compiler's directory as the program's does
@@ -224,7 +225,7 @@ fn ifxLink(a: Allocator, ctx: Context, exe: []const u8, user_args: ?[]const []co
     const bin = paths.dirname(exe);
     if (run_env.lookup(ctx.env, .windows, "IFXCFG")) |v| if (v.value.len > 0) return .{};
     const cfg = try std.Io.Dir.path.join(a, &.{ bin, "ifx.cfg" });
-    if (Io.Dir.cwd().readFileAlloc(ctx.io, cfg, a, .limited(1 << 16))) |text| {
+    if (fsio.readFile(ctx.io, a, cfg, .limited(1 << 16))) |text| {
         if (std.mem.find(u8, text, "fuse-ld") != null) return .{};
     } else |_| {}
     const kit_dir = ctx.kit_dir orelse {
@@ -242,11 +243,11 @@ fn ifxLink(a: Allocator, ctx: Context, exe: []const u8, user_args: ?[]const []co
 
 fn writeIfChanged(a: Allocator, io: Io, dir: []const u8, name: []const u8, data: []const u8) !void {
     const file = try std.Io.Dir.path.join(a, &.{ dir, name });
-    if (Io.Dir.cwd().readFileAlloc(io, file, a, .limited(1 << 16))) |old| {
+    if (fsio.readFile(io, a, file, .limited(1 << 16))) |old| {
         if (std.mem.eql(u8, old, data)) return;
     } else |_| {}
-    try Io.Dir.cwd().createDirPath(io, dir);
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = data });
+    try fsio.createDirPath(io, dir);
+    try fsio.writeFile(io, file, data);
 }
 
 /// On Windows, the compiler's directory first on the `PATH` of `env`, for

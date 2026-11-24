@@ -5,13 +5,14 @@
 
 const std = @import("std");
 const debugger = @import("debugger.zig");
+const fsio = @import("../fsio.zig");
 const Io = std.Io;
 const DebugInfo = debugger.DebugInfo;
 
 /// The debug information of the program at `path`; null when the file is
 /// not read or has none that zfls knows
 pub fn ofFile(io: Io, path: []const u8) ?DebugInfo {
-    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    const file = fsio.openFile(io, path) catch return null;
     defer file.close(io);
     return classify(FileReader{ .file = file, .io = io });
 }
