@@ -41,7 +41,7 @@ const Probe = struct { id: compilers.Id, exes: []const []const u8, args: []const
 fn probeOf(self: *Server, a: Allocator, fixed: bool, cmd: ?project.Command) !?Probe {
     const id = args_mod.compilerOf(self, fixed) orelse return null;
     if (!predefined.asks(id)) return null;
-    const exes = try args_mod.executables(self, a, id, args_mod.compilerPath(self, fixed), cmd);
+    const exes = try args_mod.executables(self, a, id, args_mod.compilerPath(self, fixed));
     const given: []const []const u8 = args_mod.userArgs(self, fixed) orelse if (cmd) |c| (if (c.args.len > 0) c.args[1..] else &.{}) else &.{};
     const args = try predefined.relevantArgs(a, id, given);
     var key: std.ArrayList(u8) = .empty;

@@ -64,27 +64,11 @@ pub fn checkSetting(self: *Server, a: Allocator) !void {
 }
 
 /// The executables to try: those of `compiler_path` (`configured`: a file,
-/// or a directory that holds the compiler), else the compiler of the
-/// file's command (`cmd`) when it is one of the compiler's names (with a
-/// version, a target or not: `compiler_names.namesCompiler`), then those names, found on
-/// the PATH
-pub fn executables(self: *Server, a: Allocator, id: compilers.Id, configured_path: ?[]const u8, cmd: ?project.Command) ![]const []const u8 {
+/// or a directory that holds the compiler), else the compiler's names, found
+/// on the PATH. A compile command's own compiler is never run.
+pub fn executables(self: *Server, a: Allocator, id: compilers.Id, configured_path: ?[]const u8) ![]const []const u8 {
     const names = compilers.executables(id);
-    const configured = configured_path orelse {
-        const c = cmd orelse return names;
-        if (c.args.len == 0) return names;
-        const exe = c.args[0];
-        const base = compiler_names.unversionedName(exe);
-        for (names) |n| if (compiler_names.namesCompiler(base, n)) {
-            const has_dir = std.mem.findAny(u8, exe, "/\\") != null;
-            const path = if (has_dir and !std.Io.Dir.path.isAbsolute(exe)) try paths.join(a, &.{ c.dir, exe }) else exe;
-            const out = try a.alloc([]const u8, names.len + 1);
-            out[0] = path;
-            @memcpy(out[1..], names);
-            return out;
-        };
-        return names;
-    };
+    const configured = configured_path orelse return names;
     if (configured.len == 0) return names;
     const p = if (std.Io.Dir.path.isAbsolute(configured)) configured else try paths.join(a, &.{ self.root_path, configured });
     if (!paths.isDir(self.io, p)) return a.dupe([]const u8, &.{p});
