@@ -5,7 +5,11 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 
-pub const ReadError = error{ ProtocolError, OutOfMemory, ReadFailed };
+pub const ReadError = error{ ProtocolError, MessageTooLong, OutOfMemory, ReadFailed };
+
+/// The longest message body that is read (the length is the sender's
+/// word, and the body is allocated before it is read)
+pub const max_message_len = 512 * 1024 * 1024;
 
 /// Read one message body; returns null at end of stream
 pub fn readMessage(r: *Io.Reader, a: Allocator) ReadError!?[]u8 {
@@ -31,6 +35,7 @@ pub fn readMessage(r: *Io.Reader, a: Allocator) ReadError!?[]u8 {
         }
     }
     const len = content_length orelse return error.ProtocolError;
+    if (len > max_message_len) return error.MessageTooLong;
     return r.readAllocAll(a, len) catch |e| switch (e) {
         error.EndOfStream => error.ProtocolError,
         error.OutOfMemory => error.OutOfMemory,
@@ -53,4 +58,10 @@ test "read framed message" {
     defer a.free(m2);
     try std.testing.expectEqualStrings("[1]", m2);
     try std.testing.expect((try readMessage(&r, a)) == null);
+}
+
+test "a message longer than the limit is refused before it is allocated" {
+    const a = std.testing.allocator;
+    var r: Io.Reader = .fixed("Content-Length: 3000000000\r\n\r\n{}");
+    try std.testing.expectError(error.MessageTooLong, readMessage(&r, a));
 }
