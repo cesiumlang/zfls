@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Typos fixed in zfls's copy of the fortls data files
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
+ISO_C_EXTRA = re.compile(r"(?i)c_(float16(_complex)?|uint(\d+|_least\d+|_fast\d+|max)_t|unsigned(_char|_short|_long|_long_long)?)$")
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
@@ -83,8 +84,9 @@ def zfls_only_item(item) -> bool:
     # (not a variable of the same name: `int1`, Intel's INT1)
     if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and item.get("kind") != 6:
         return True
-    # the F2023 names of ISO_C_BINDING (#730)
-    if str(item.get("label", "")).lower() in ("c_f_strpointer", "f_c_string"):
+    # the F2023 names of ISO_C_BINDING (#730) and the unsigned and half
+    # precision ones of Flang's (#881)
+    if str(item.get("label", "")).lower() in ("c_f_strpointer", "f_c_string") or ISO_C_EXTRA.match(str(item.get("label", ""))):
         return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in item:

@@ -123,5 +123,6 @@ test {
     _ = @import("declaration_checks.zig");
     _ = @import("subscripts_components.zig");
     _ = @import("allocate_types.zig");
+    _ = @import("iso_c_names.zig");
     _ = @import("initializer_names.zig");
 }
