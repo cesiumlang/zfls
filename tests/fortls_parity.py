@@ -180,6 +180,28 @@ def associate_function_replacement(mod):
     return test
 
 
+def function_diagnostics_replacement(mod):
+    """`test_server_diagnostics::test_function` expects an INTENT outside
+    the argument list to be reported: gfortran and ifx do, Flang does not,
+    so zfls does it only for them (#879); the test runs in gfortran's
+    dialect."""
+
+    def test():
+        test_dir = mod.test_dir
+        string = mod.write_rpc_request(1, "initialize", {"rootPath": str(test_dir)})
+        file_path = str(test_dir / "diag" / "test_function.f90")
+        string += mod.write_rpc_notification(
+            "textDocument/didOpen", {"textDocument": {"uri": file_path}}
+        )
+        errcode, results = mod.run_request(string, fortls_args=["--lint_dialect", "gfortran"])
+        assert errcode == 0
+        assert [d["message"] for d in results[1]["diagnostics"]] == [
+            'Variable "bar" with INTENT keyword not found in argument list'
+        ]
+
+    return test
+
+
 # Tests whose expectations zfls deliberately does not match verbatim, with a
 # replacement test implementing the zfls expectation.
 KNOWN_DEVIATIONS = {
@@ -187,6 +209,7 @@ KNOWN_DEVIATIONS = {
     "test_server_hover::test_associate_block_func_result": associate_function_replacement,
     "test_server::test_workspace_symbols": substring_symbols_replacement,
     "test_server::test_init": sync_options_replacement,
+    "test_server_diagnostics::test_function": function_diagnostics_replacement,
     "test_server_definitions::test_def_include_file": include_file_definition_replacement,
 }
 
