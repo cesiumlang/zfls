@@ -1,2 +1,12 @@
 # Valgrind suppressions of zfls (memcheck.yml). One entry per finding that is
 # not zfls's, with the reason and the run that showed it.
+
+# A debug build probes the stack of a function whose frame is larger than
+# a page (this one has many locals) by reading below the stack pointer;
+# memcheck reports that read as invalid. Seen in the unit tests of
+# dap/gdb_variables.zig (run 45504008192).
+{
+   zig-stack-probe-gdb-variables-present
+   Memcheck:Addr4
+   fun:dap.gdb_variables.present
+}
