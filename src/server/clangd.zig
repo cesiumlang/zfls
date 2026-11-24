@@ -17,6 +17,7 @@ const json = @import("../json.zig");
 const jsonrpc = @import("../jsonrpc.zig");
 const lsp = @import("../lsp.zig");
 const paths = @import("../paths.zig");
+const executables = @import("../executables.zig");
 const bindc = @import("bindc.zig");
 const Value = json.Value;
 
@@ -59,8 +60,13 @@ pub fn start(self: *Server, a: Allocator) void {
     if (exe.len == 0 or self.clangd != null or self.s.disable_bind_c_search) return;
     const first = firstFile(self, a) orelse return;
     const first_uri = self.gpa.dupe(u8, paths.pathToUri(a, first) catch return) catch return;
+    const program = executables.resolve(a, self.io, self.toolEnv(), exe) catch |e| {
+        self.gpa.free(first_uri);
+        self.log.warn("bind_c_clangd: could not start {s}: {s}", .{ exe, @errorName(e) });
+        return;
+    };
     var child = std.process.spawn(self.io, .{
-        .argv = &.{ exe, "--background-index", "--log=error" },
+        .argv = &.{ program, "--background-index", "--log=error" },
         .cwd = .{ .path = self.root_path },
         .stdin = .pipe,
         .stdout = .pipe,

@@ -14,6 +14,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const stdio = @import("../stdio.zig");
+const executables = @import("../executables.zig");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
@@ -182,20 +183,26 @@ pub const Fake = struct {
     answer: *const fn (ctx: *anyopaque, a: Allocator, command: []const u8, args: Value) anyerror!Value,
 };
 
+fn notStarted(a: Allocator, gdb: []const u8, e: anyerror) ![]const u8 {
+    return a.print("{s}: {s}; zfls dap debugs with gdb 14 or later, built with Python (--gdb PATH, or `gdb` in the launch configuration)", .{ gdb, @errorName(e) });
+}
+
 /// Whether a gdb has the Debug Adapter Protocol (gdb 14 or later, built
 /// with Python): null when it has, else why not. Notes whether it runs the
 /// program at `launch`.
 pub fn checkDap(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     const env = try gdbEnv(a, s.environ, gdb);
     const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(10), .clock = .awake } };
-    const version = std.process.run(a, s.io, .{ .argv = &.{ gdb, "--version" }, .environ_map = env, .timeout = timeout }) catch |e|
-        return try a.print("{s}: {s}; zfls dap debugs with gdb 14 or later, built with Python (--gdb PATH, or `gdb` in the launch configuration)", .{ gdb, @errorName(e) });
+    const exe = executables.resolve(a, s.io, env, gdb) catch |e|
+        return try notStarted(a, gdb, e);
+    const version = std.process.run(a, s.io, .{ .argv = &.{ exe, "--version" }, .environ_map = env, .timeout = timeout }) catch |e|
+        return try notStarted(a, gdb, e);
     const first = std.mem.trimEnd(u8, version.stdout[0 .. std.mem.findScalar(u8, version.stdout, '\n') orelse version.stdout.len], "\r");
     const v = fortran.gdbVersion(version.stdout) orelse [2]u32{ 0, 0 };
     if (v[0] < 14) return try a.print("{s} ({s}) has no Debug Adapter Protocol: zfls dap needs gdb 14 or later, built with Python", .{ gdb, first });
     // the modules its DAP needs, which another Python's library lacks
     const check = std.process.run(a, s.io, .{
-        .argv = &.{ gdb, "-nx", "-q", "-batch", "-ex", "python import json, struct, threading; print(6*7)" },
+        .argv = &.{ exe, "-nx", "-q", "-batch", "-ex", "python import json, struct, threading; print(6*7)" },
         .environ_map = env,
         .timeout = timeout,
     }) catch |e| return try a.print("{s}: {s}", .{ gdb, @errorName(e) });
@@ -236,7 +243,9 @@ const survive_internal_errors = .{ "-iex", "maint set internal-error quit no", "
 /// Starts the debugger's process, gdb's or (`lldb`) lldb-dap's, which
 /// speaks the Debug Adapter Protocol on its standard streams: null, or why
 /// it did not start
-pub fn spawn(s: *Session, a: Allocator, argv: []const []const u8, env: *const std.process.Environ.Map, lldb: bool) !?[]const u8 {
+pub fn spawn(s: *Session, a: Allocator, argv_in: []const []const u8, env: *const std.process.Environ.Map, lldb: bool) !?[]const u8 {
+    const argv = try a.dupe([]const u8, argv_in);
+    argv[0] = executables.resolve(a, s.io, env, argv[0]) catch |e| return try a.print("{s}: {s}", .{ argv_in[0], @errorName(e) });
     var child = std.process.spawn(s.io, .{
         .argv = argv,
         .environ_map = env,

@@ -156,7 +156,8 @@ export function findExecutable(
   }
   const dirs = (lookupEnv(env, "PATH") ?? "").split(platform === "win32" ? ";" : ":");
   for (const dir of dirs) {
-    if (dir) {
+    // a relative entry is the working directory in disguise
+    if (dir && pathMod.isAbsolute(dir)) {
       const found = tryFile(pathMod.join(dir, name));
       if (found) {
         return found;
@@ -164,6 +165,23 @@ export function findExecutable(
     }
   }
   return undefined;
+}
+
+/**
+ * What to spawn for `command`: a bare name is looked up on the PATH only,
+ * never in the working directory, where Windows looks first; a name with a
+ * directory is left as it is. Undefined when a bare name is on no PATH
+ * directory.
+ */
+export function programPath(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  if (command === "" || /[\\/]/.test(command) || (platform === "win32" && command.includes(":"))) {
+    return command;
+  }
+  return findExecutable(command, "", undefined, env, platform);
 }
 
 /**
@@ -232,8 +250,13 @@ export interface RunOptions {
 export function runProcess(command: string, args: string[], opts: RunOptions = {}): Promise<ProcessResult> {
   return new Promise((resolve) => {
     let child: cp.ChildProcess;
+    const program = programPath(command, opts.env ?? process.env);
+    if (program === undefined) {
+      resolve({ code: null, stdout: "", stderr: "", error: Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT" }) });
+      return;
+    }
     try {
-      child = cp.spawn(command, args, {
+      child = cp.spawn(program, args, {
         cwd: opts.cwd,
         env: opts.env,
         signal: opts.signal,

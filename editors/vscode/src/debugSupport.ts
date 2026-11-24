@@ -6,7 +6,7 @@
 
 import { execFile } from "node:child_process";
 import * as path from "node:path";
-import { findExecutable } from "./tools";
+import { findExecutable, programPath } from "./tools";
 
 /** gdb's version of `gdb --version`, the end of its first line:
  * `GNU gdb (GDB) 17.2` -> [17, 2] */
@@ -56,7 +56,12 @@ export function findLldbDap(configured?: string): Promise<string | undefined> {
 
 function output(exe: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
-    execFile(exe, args, { timeout: 10000, windowsHide: true, env: gdbEnv(exe, process.env) }, (error, stdout) =>
+    const program = programPath(exe);
+    if (program === undefined) {
+      resolve("");
+      return;
+    }
+    execFile(program, args, { timeout: 10000, windowsHide: true, env: gdbEnv(exe, process.env) }, (error, stdout) =>
       resolve(error ? "" : stdout),
     );
   });

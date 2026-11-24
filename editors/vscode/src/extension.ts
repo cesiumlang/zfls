@@ -2,6 +2,7 @@
 // also checks them with a compiler (the zfls.linter settings, options.ts).
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
@@ -648,7 +649,8 @@ async function startClient(
 
   // no `transport`: stdio is the default, and TransportKind.stdio would
   // also pass --stdio, which zfls (like fortls) does not accept
-  const executable = { command, args, options: { cwd: root.fsPath } };
+  // not the workspace: Windows would look for a program there first
+  const executable = { command, args, options: { cwd: neutralDirectory(command) } };
   const serverOptions: ServerOptions = { run: executable, debug: executable };
   // a folder's server takes the files under it; a directory's server only
   // the files directly in it
@@ -734,6 +736,13 @@ function findServer(context: vscode.ExtensionContext, folder: vscode.WorkspaceFo
     }
   }
   return {};
+}
+
+/** Where the server starts: the directory of its executable, else the
+ * temporary directory; never the workspace, whose files must not be taken
+ * for programs by a lookup of a bare name. The server is told its root. */
+function neutralDirectory(command: string): string {
+  return path.isAbsolute(command) ? path.dirname(command) : os.tmpdir();
 }
 
 /** Restores the executable bit of the bundled zfls should unpacking the
