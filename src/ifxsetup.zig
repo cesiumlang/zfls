@@ -167,10 +167,12 @@ pub const packages = [_][]const u8{
 
 /// Where a file of a package goes, relative to the destination, or null
 /// to leave it out: `_installdir/compiler/2026.2/bin/ifx.exe` ->
-/// `bin/ifx.exe`, `_installdir/tcm/1.6/bin/x.dll` -> `tcm/bin/x.dll`
-pub fn destination(a: Allocator, name: []const u8) !?[]const u8 {
+/// `bin/ifx.exe`, `_installdir/tcm/1.6/bin/x.dll` -> `tcm/bin/x.dll`;
+/// `error.UnsafeName` for a name that could leave the destination
+pub fn destination(a: Allocator, name: []const u8) error{ OutOfMemory, UnsafeName }!?[]const u8 {
     const prefix = "_installdir/";
     if (!std.mem.startsWith(u8, name, prefix) or std.mem.endsWith(u8, name, "/")) return null;
+    if (!safeName(name)) return error.UnsafeName;
     var parts = std.mem.splitScalar(u8, name[prefix.len..], '/');
     const product = parts.next() orelse return null;
     _ = parts.next() orelse return null; // its version
@@ -179,6 +181,17 @@ pub fn destination(a: Allocator, name: []const u8) !?[]const u8 {
     const rel = if (std.mem.eql(u8, product, "compiler")) try a.dupe(u8, rest) else try a.print("{s}/{s}", .{ product, rest });
     if (leftOut(rel)) return null;
     return rel;
+}
+
+/// Whether an entry's name stays inside the destination: no backslash or
+/// drive colon, and no empty, `.` or `..` part
+fn safeName(name: []const u8) bool {
+    if (std.mem.findAny(u8, name, "\\:\x00") != null) return false;
+    var parts = std.mem.splitScalar(u8, name, '/');
+    while (parts.next()) |p| {
+        if (p.len == 0 or std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "..")) return false;
+    }
+    return true;
 }
 
 /// The files Fortran on the CPU with `/MD` does not need: OpenCL and SYCL,
@@ -345,7 +358,10 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, args: []
         const b = pa.allocator();
         const inner = try Zip.open(b, .{ .mem = try zip.read(b, p) });
         for (inner.entries) |e| {
-            const rel = try destination(b, e.name) orelse continue;
+            const rel = destination(b, e.name) catch |err| switch (err) {
+                error.UnsafeName => return fail(io, a, "{s} has an entry whose name leaves the destination ({s}); not used", .{ path, e.name }),
+                else => |x| return x,
+            } orelse continue;
             const target = try std.Io.Dir.path.join(b, &.{ root, rel });
             try writeFile(io, target, try inner.read(b, e));
             files += 1;
@@ -506,6 +522,23 @@ test "an LZMA entry (Intel's packages)" {
     z.entries[0].method = 14;
     z.entries[0].size = plain.len;
     try std.testing.expectEqualStrings(plain, try z.read(a, z.entries[0]));
+}
+
+test "an entry name that leaves the destination is refused" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bad = [_][]const u8{
+        "_installdir/compiler/2026.2/../../../x.txt",
+        "_installdir/compiler/2026.2/bin/../../../x.txt",
+        "_installdir/../2026.2/bin/x.dll",
+        "_installdir/compiler/2026.2//etc/x",
+        "_installdir/compiler/2026.2/bin\\..\\x.dll",
+        "_installdir/compiler/2026.2/C:/x.dll",
+        "_installdir/compiler/2026.2/./x.dll",
+    };
+    for (bad) |n| try std.testing.expectError(error.UnsafeName, destination(a, n));
+    try std.testing.expectEqualStrings("bin/x.dll", (try destination(a, "_installdir/compiler/2026.2/bin/x.dll")).?);
 }
 
 test "what a Fortran compiler needs" {
