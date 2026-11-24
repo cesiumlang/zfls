@@ -493,7 +493,7 @@ The rules, by the dialects that apply them:
 | `label-not-found` | a label that a GO TO, DO, FORMAT reference or I/O specifier (`err=`, `end=`, `eor=`) names and the scoping unit does not define; not checked in a file with an INCLUDE or lines a preprocessor conditional leaves out | all |
 | `exit-outside-loop` | an EXIT with no construct name outside a DO construct (in a block or IF construct too); not checked in a file with an INCLUDE, `;` or lines a preprocessor conditional leaves out | all |
 | `cycle-outside-loop` | a CYCLE with no construct name outside a DO construct, checked as `exit-outside-loop` | all |
-| `intent-not-in-arguments` | a variable with INTENT that is not in the argument list; Flang accepts it, so its dialect reports nothing | neutral, gfortran, ifx |
+| `intent-not-in-arguments` | a variable with INTENT that is not in the argument list; Flang accepts it, so neither it nor the neutral dialect reports it | gfortran, ifx |
 | `parameter-without-value` | a named constant declared with no value (`integer, parameter :: n`) | all |
 | `duplicate-dummy` | a dummy argument named twice in a SUBROUTINE or FUNCTION statement | all |
 | `bad-kind` | a literal kind that no compiler of the dialect has (`integer(kind=3)`; `real(kind=3)` is gfortran's and ifx's error, Flang has it): neutral rejects what none of gfortran, ifx and Flang accepts | all, each by its compiler's kinds |

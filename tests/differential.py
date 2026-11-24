@@ -355,6 +355,8 @@ def main() -> int:
     zfls_cmd = [
         str(Path(args.zfls).resolve()), *common, "--disable_index_cache",
         "--hover_no_type_components",
+        # fortls reports an INTENT outside the argument list (#879)
+        "--lint_dialect", "gfortran",
     ]
 
     exts = {".f", ".f90", ".f08", ".f03", ".f95", ".f77", ".for", ".fpp", ".h"}

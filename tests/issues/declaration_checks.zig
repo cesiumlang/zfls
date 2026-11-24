@@ -129,13 +129,13 @@ test "kinds per compiler: REAL(3) is gfortran's and ifx's error, not Flang's" {
     });
 }
 
-test "an INTENT outside the argument list: gfortran and ifx report it, Flang does not" {
+test "an INTENT outside the argument list: gfortran and ifx report it, neutral and Flang do not" {
     const text = "subroutine t(x)\n  implicit none\n  integer, intent(in) :: x, y\nend subroutine\n";
     inline for ([_][]const u8{ "neutral", "gfortran", "ifx", "flang" }) |d| {
         const w = try workspace(d, text);
         defer w.deinit();
         const got = try collect(w, "a.f90", "intent-not-in-arguments");
-        if (comptime std.mem.eql(u8, d, "flang")) {
+        if (comptime std.mem.eql(u8, d, "flang") or std.mem.eql(u8, d, "neutral")) {
             try expectAll(got, &.{});
         } else try expectAll(got, &.{"3: Variable \"y\" with INTENT keyword not found in argument list"});
     }
