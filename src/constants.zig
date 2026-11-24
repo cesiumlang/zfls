@@ -138,6 +138,12 @@ pub const DiagCode = enum {
     assignment_type,
     condition_type,
     intrinsic_arguments,
+    unbalanced_parentheses,
+    dangling_operator,
+    abstract_type_declared,
+    extends_unknown_type,
+    pure_function_argument,
+    unknown_io_specifier,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {
@@ -150,6 +156,7 @@ pub const DiagCode = enum {
     }
 
     const names = blk: {
+        @setEvalBranchQuota(10000);
         const fields = @typeInfo(DiagCode).@"enum".field_names;
         var out: [fields.len][]const u8 = undefined;
         for (fields, 0..) |f, i| {

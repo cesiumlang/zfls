@@ -440,6 +440,12 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .assignment_type => .assignment_type,
             .condition_type => .condition_type,
             .intrinsic_arguments => .intrinsic_arguments,
+            .unbalanced_parentheses => .unbalanced_parentheses,
+            .dangling_operator => .dangling_operator,
+            .abstract_type_declared => .abstract_type_declared,
+            .extends_unknown_type => .extends_unknown_type,
+            .pure_function_argument => .pure_function_argument,
+            .unknown_io_specifier => .unknown_io_specifier,
         },
     });
     return out.items;

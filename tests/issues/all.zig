@@ -125,6 +125,7 @@ test {
     _ = @import("allocate_types.zig");
     _ = @import("intrinsic_counts.zig");
     _ = @import("expression_types.zig");
+    _ = @import("syntax_errors.zig");
     _ = @import("iso_c_names.zig");
     _ = @import("initializer_names.zig");
 }

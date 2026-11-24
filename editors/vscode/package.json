@@ -446,7 +446,13 @@
               "allocate-shape",
               "assignment-type",
               "condition-type",
-              "intrinsic-arguments"
+              "intrinsic-arguments",
+              "unbalanced-parentheses",
+              "dangling-operator",
+              "abstract-type-declared",
+              "extends-unknown-type",
+              "pure-function-argument",
+              "unknown-io-specifier"
             ]
           },
           "additionalProperties": {

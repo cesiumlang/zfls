@@ -122,7 +122,7 @@ pub fn checkDefinition(self: *Obj, env: Env, known_types: *Obj.KnownTypes, inter
 /// Whether names of `scope` may come from a module that is not in the
 /// workspace: one that it or a scope around it uses, or the ancestor of a
 /// submodule
-fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
+pub fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
     var cur = scope;
     var depth: usize = 0;
     while (cur) |s| : (cur = s.parent) {
