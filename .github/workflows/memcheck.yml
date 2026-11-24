@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [unit, issues, corpora, differential, stress, dap, threads]
+        suite: [unit, issues, lapack, openblas, numpy, small-corpora, differential, stress, dap, threads]
     env:
       FORTLS: ${{ github.workspace }}/_fortls
       # the tests that valgrind cannot run skip themselves (src/_test/valgrind.zig)
@@ -122,15 +122,23 @@ jobs:
       # the server, started by the benchmark driver, on each corpus: the
       # initialization, a file opened, requests, edits and saves, and a
       # second start from the cache
-      - name: Corpora
-        if: matrix.suite == 'corpora'
+      - name: Corpus
+        if: contains(fromJSON('["lapack", "openblas", "numpy", "small-corpora"]'), matrix.suite)
         run: |
-          mkdir -p _corpora && cd _corpora
-          git clone --depth 1 --branch v3.12.0 https://github.com/Reference-LAPACK/lapack lapack
-          git clone --depth 1 --branch v0.3.27 https://github.com/OpenMathLib/OpenBLAS openblas
-          git clone --depth 1 --branch v2.0.0 https://github.com/numpy/numpy numpy
-          cd ..
-          for ws in _corpora/lapack/SRC _corpora/openblas/lapack-netlib/SRC _corpora/numpy vendor/M_intrinsics _fortls/test/test_source; do
+          case "${{ matrix.suite }}" in
+            lapack)
+              git clone --depth 1 --branch v3.12.0 https://github.com/Reference-LAPACK/lapack _corpus
+              workspaces="_corpus/SRC" ;;
+            openblas)
+              git clone --depth 1 --branch v0.3.27 https://github.com/OpenMathLib/OpenBLAS _corpus
+              workspaces="_corpus/lapack-netlib/SRC" ;;
+            numpy)
+              git clone --depth 1 --branch v2.0.0 https://github.com/numpy/numpy _corpus
+              workspaces="_corpus" ;;
+            small-corpora)
+              workspaces="vendor/M_intrinsics _fortls/test/test_source" ;;
+          esac
+          for ws in $workspaces; do
             echo "::group::$ws"
             zig build bench -Doptimize=safe $BUILD_TARGET -- "$ws" --zfls "$ZFLS" --requests 10 --edits 3 --saves 1 --timeout 3000
             echo "::endgroup::"
