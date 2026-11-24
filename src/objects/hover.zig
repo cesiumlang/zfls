@@ -67,7 +67,20 @@ pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, dro
     }
 }
 
+/// How many hovers may be building one another's text (a procedure that
+/// has an argument declared with its own interface, `procedure(s) :: x`
+/// in `s`, would never end)
+const max_hover_depth = 8;
+threadlocal var hover_depth: u8 = 0;
+
 pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Allocator.Error!Obj.Hover {
+    if (hover_depth >= max_hover_depth) return .{};
+    hover_depth += 1;
+    defer hover_depth -= 1;
+    return hoverOf(self, a, long, drop_arg);
+}
+
+fn hoverOf(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Allocator.Error!Obj.Hover {
     switch (self.kind) {
         .module, .program, .submodule => return .{
             .msg = try std.mem.concat(a, u8, &.{ try self.getDesc(a), " ", self.name }),
