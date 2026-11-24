@@ -13,6 +13,7 @@ const parser = @import("parser.zig");
 const pp = @import("preprocessor.zig");
 const objects = @import("objects.zig");
 const settings_mod = @import("settings.zig");
+const workspace_file = @import("settings/workspace_file.zig");
 const server_mod = @import("server.zig");
 const Logger = @import("logger.zig");
 const compilers = @import("compilers.zig");
@@ -155,7 +156,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
     var merged = try settings_mod.clone(a, s.*);
     if (paths.userConfigFile()) |u| if (paths.isFile(io, u)) {
         o.print("  User config file = {s}\n", .{u});
-        try applyConfigFile(a, io, o, &merged, u);
+        try applyConfigFile(a, io, o, &merged, u, true);
     };
     if (root) |r| {
         var config_path: ?[]const u8 = null;
@@ -167,7 +168,7 @@ fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settin
             }
         }
         o.print("  Config file = {s}\n", .{config_path orelse "None"});
-        if (config_path) |cp| try applyConfigFile(a, io, o, &merged, cp);
+        if (config_path) |cp| try applyConfigFile(a, io, o, &merged, cp, false);
     }
     var info: ConfigInfo = .{};
     // an empty list is the default rule, as in the server
@@ -203,12 +204,16 @@ fn addPredefined(a: Allocator, io: Io, o: *Out, s: *const Settings, root: ?[]con
     o.print("  Predefined symbols of {s}: {d}\n", .{ exe, found.len });
 }
 
-/// The settings of the configuration file `path` over `s`
-fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8) !void {
+/// The settings of the configuration file `path` over `s`; `trusted`: not
+/// the workspace's own (which names no program to run)
+fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8, trusted: bool) !void {
     const data = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 26)) catch return;
     var p: json5.Parser = .{ .a = a, .src = data };
     if (p.parseDocument()) |cfg| {
-        if (cfg == .object) try settings_mod.applyConfig(a, s, cfg);
+        if (cfg == .object) {
+            var ignored: std.ArrayList([]const u8) = .empty;
+            if (trusted) try settings_mod.applyConfig(a, s, cfg) else try workspace_file.apply(a, s, cfg, &ignored);
+        }
     } else |_| {
         const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
         o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, path });

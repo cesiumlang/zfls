@@ -73,6 +73,7 @@ pub const outline = @import("outline.zig");
 pub const namelist = @import("namelist.zig");
 pub const project = @import("project.zig");
 pub const compile_flags = @import("compile_flags.zig");
+pub const workspace_file = @import("settings/workspace_file.zig");
 pub const fpm = @import("fpm.zig");
 pub const pfunit = @import("pfunit.zig");
 pub const semantic = @import("semantic.zig");

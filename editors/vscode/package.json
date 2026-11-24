@@ -47,6 +47,31 @@
     "virtualWorkspaces": {
       "supported": false,
       "description": "zfls reads the project's Fortran files from disk."
+    },
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted workspace the settings that choose which programs zfls runs or what flags they get are not read from the workspace.",
+      "restrictedConfigurations": [
+        "zfls.run.buildArgs",
+        "zfls.fpm.args",
+        "zfls.pfunit.args",
+        "zfls.formatting.findentArgs",
+        "zfls.formatting.fprettifyArgs",
+        "zfls.formatting.codeeArgs",
+        "zfls.formatting.forformatArgs",
+        "zfls.formatting.customArgs",
+        "zfls.linter.extraArgs",
+        "zfls.linter.fixedExtraArgs",
+        "zfls.fortitude.args",
+        "zfls.codee.args",
+        "zfls.linter.fypp.extraArgs",
+        "zfls.linter.fypp.enabled",
+        "zfls.compileCommands",
+        "zfls.linter.compiler",
+        "zfls.linter.fixedCompiler",
+        "zfls.fpm.compiler",
+        "zfls.run.compiler"
+      ]
     }
   },
   "contributes": {
@@ -235,7 +260,7 @@
         "zfls.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.path.markdownDescription%"
         },
         "zfls.incrementalSync": {
@@ -372,7 +397,7 @@
         "zfls.bindCClangd": {
           "type": "string",
           "default": "",
-          "scope": "resource",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.bindCClangd.markdownDescription%"
         },
         "zfls.disableDiagnostics": {
@@ -663,7 +688,7 @@
         "zfls.run.compilerPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.run.compilerPath.markdownDescription%"
         },
         "zfls.run.buildArgs": {
@@ -724,13 +749,13 @@
         "zfls.run.gdbPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.run.gdbPath.markdownDescription%"
         },
         "zfls.fpm.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.fpm.path.markdownDescription%"
         },
         "zfls.fpm.profile": {
@@ -824,7 +849,7 @@
         "zfls.formatting.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.formatting.path.markdownDescription%"
         },
         "zfls.formatting.findentArgs": {
@@ -921,7 +946,7 @@
         "zfls.linter.compilerPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.linter.compilerPath.markdownDescription%"
         },
         "zfls.linter.extraArgs": {
@@ -964,7 +989,7 @@
         "zfls.linter.fixedCompilerPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.linter.fixedCompilerPath.markdownDescription%"
         },
         "zfls.linter.fixedExtraArgs": {
@@ -1034,7 +1059,7 @@
         "zfls.fortitude.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.fortitude.path.markdownDescription%"
         },
         "zfls.fortitude.args": {
@@ -1068,7 +1093,7 @@
         "zfls.codee.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.codee.path.markdownDescription%"
         },
         "zfls.codee.args": {
@@ -1089,7 +1114,7 @@
         "zfls.linter.fypp.path": {
           "type": "string",
           "default": "fypp",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.linter.fypp.path.markdownDescription%"
         },
         "zfls.linter.fypp.definitions": {

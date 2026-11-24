@@ -233,6 +233,7 @@ pub fn configLogger(self: *Server) !void {
     if (self.s.debug_log and self.root_path.len > 0) {
         const fname = try paths.join(self.arena.allocator(), &.{ self.root_path, "fortls_debug.log" });
         self.log.openFile(self.io, fname);
+        if (self.config.file_ignored_note) |note| self.log.warn("{s}", .{note});
         try self.post_messages.append(self.gpa, .{ .severity = C.Severity.info, .message = "fortls debugging enabled" });
     }
 }
