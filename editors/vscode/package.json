@@ -442,6 +442,7 @@
               "subscript-count",
               "unknown-component",
               "allocate-object",
+              "allocate-duplicate",
               "allocate-shape",
               "assignment-type",
               "condition-type",

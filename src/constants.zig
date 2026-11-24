@@ -133,6 +133,7 @@ pub const DiagCode = enum {
     subscript_count,
     unknown_component,
     allocate_object,
+    allocate_duplicate,
     allocate_shape,
     assignment_type,
     condition_type,
