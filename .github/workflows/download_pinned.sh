@@ -11,9 +11,10 @@ case "$url" in https://*) ;; *) echo "download_pinned.sh: not an https URL: $url
 mkdir -p "$(dirname "$dest")"
 curl -fsSL --proto =https --tlsv1.2 --retry 5 -o "$dest" "$url"
 if command -v sha256sum >/dev/null 2>&1; then
-    got=$(sha256sum "$dest" | cut -d ' ' -f 1)
+    # from stdin: sha256sum writes a name with backslashes (Windows) with a \ before the sum
+    got=$(sha256sum < "$dest" | cut -d ' ' -f 1)
 else
-    got=$(shasum -a 256 "$dest" | cut -d ' ' -f 1)
+    got=$(shasum -a 256 < "$dest" | cut -d ' ' -f 1)
 fi
 if [ "$got" != "$want" ]; then
     rm -f "$dest"
