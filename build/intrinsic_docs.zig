@@ -14,6 +14,7 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const intrinsic_arity = @import("intrinsic_arity.zig");
 
 /// Where upstream publishes the pages (`docs/NAME.3fortran.html`)
 const pages_url = "https://urbanjost.github.io/M_intrinsics/";
@@ -46,14 +47,34 @@ pub fn main(init: std.process.Init) !void {
         \\pub const docs = [_]Doc{
         \\
     );
+    var arities: std.Io.Writer.Allocating = .init(a);
     for (names) |name| {
         const file = try a.print("{s}.md", .{name});
         const text = try md_dir.readFileAlloc(io, file, a, .limited(1 << 20));
         try out_dir.writeFile(io, .{ .sub_path = file, .data = try fixLinks(a, text, &pages) });
         try w.print("    .{{ .name = \"{s}\", .markdown = @embedFile(\"{s}\") }},\n", .{ name, file });
+        const lower = try std.ascii.allocLowerString(a, name);
+        if (try intrinsic_arity.parse(a, lower, text)) |arity| try writeArity(&arities.writer, lower, arity);
     }
     try w.writeAll("};\n");
+    try w.writeAll(
+        \\/// The argument counts of the intrinsic functions, read from the synopses
+        \\/// (build/intrinsic_arity.zig); no keywords: not trusted
+        \\pub const Arity = struct { name: []const u8, min: usize, max: ?usize, keywords: []const []const u8 };
+        \\pub const arities = [_]Arity{
+        \\
+    );
+    try w.writeAll(arities.written());
+    try w.writeAll("};\n");
     try out_dir.writeFile(io, .{ .sub_path = "intrinsic_docs.zig", .data = index.written() });
+}
+
+fn writeArity(w: *std.Io.Writer, name: []const u8, arity: intrinsic_arity.Arity) !void {
+    try w.print("    .{{ .name = \"{s}\", .min = {d}, .max = ", .{ name, arity.min });
+    if (arity.max) |m| try w.print("{d}", .{m}) else try w.writeAll("null");
+    try w.writeAll(", .keywords = &.{");
+    for (arity.keywords) |k| try w.print(" \"{s}\",", .{k});
+    try w.writeAll(" } },\n");
 }
 
 /// Stems of the files of `dir_path` named `*suffix`, sorted (upstream's
