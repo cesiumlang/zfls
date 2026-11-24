@@ -31,6 +31,7 @@ const unknown_component = @import("argcheck/unknown_component.zig");
 const allocate_objects = @import("argcheck/allocate_objects.zig");
 const assign_types = @import("argcheck/assign_types.zig");
 const expr_clash = @import("argcheck/expr_clash.zig");
+const syntax_errors = @import("argcheck/syntax_errors.zig");
 const intrinsic_count = @import("argcheck/intrinsic_count.zig");
 const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
@@ -53,7 +54,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component, allocate_object, allocate_duplicate, allocate_shape, assignment_type, condition_type, intrinsic_arguments };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component, allocate_object, allocate_duplicate, allocate_shape, assignment_type, condition_type, intrinsic_arguments, unbalanced_parentheses, dangling_operator, abstract_type_declared, extends_unknown_type, pure_function_argument, unknown_io_specifier };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -203,6 +204,12 @@ pub const Checker = struct {
     defined_assignment: ?bool = null,
     /// the operator interfaces of the workspace, once told (expr_clash.zig)
     defined_operators: ?expr_clash.Defined = null,
+    /// the statement being checked ends in `&` with a blank line or a comment
+    /// after it: it goes on, and what is read of it is a part (#259)
+    cut_statement: bool = false,
+    /// the joined statement (its text's address) that `partial` was told of
+    partial_of: usize = 0,
+    partial: bool = false,
 
     /// The kinds of the file that declares `v` (else of the file checked),
     /// with the `!DEC$ REAL:n` before its program unit
@@ -244,6 +251,7 @@ pub const Checker = struct {
         try dummy_names.check(c, j, s, text);
         try parameter_value.check(c, j, s, text, first);
         try kind_values.check(c, j, s, text, first);
+        try syntax_errors.check(c, j, s, e, first, scope, line_no);
         if (!isSpec(first.str)) try unknown_component.check(c, j, s, text, scope);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
@@ -941,6 +949,7 @@ pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast
         // the rest of a statement that a blank line or a comment cut (#259)
         const was_open = dangling;
         dangling = try endsOpen(a, file, st.first, st.last);
+        c.cut_statement = dangling;
         if (was_open) continue;
         const j = try join(a, file, st.first, st.last);
         // statements separated by `;`

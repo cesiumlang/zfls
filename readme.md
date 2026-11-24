@@ -505,6 +505,12 @@ The rules, by the dialects that apply them:
 | `assignment-type` | an assignment of a value of a type that cannot be converted: a numeric or logical literal to a character variable (all dialects), a character literal to a numeric or logical variable (gfortran, flang; ifx accepts it); the same for variables and expressions of known types, `i = c` and `c = i + 1` (all dialects); and the operands of the expression: a CHARACTER one mixed with a numeric or logical one in arithmetic or a comparison (a character literal there is ifx's to accept), `//` of anything but CHARACTER; operands of unknown type, signs, `.not.` and expressions with a function call are not told; not where the workspace has an `assignment(=)` or an `operator` interface | all, see the description |
 | `condition-type` | `if (i)` for a numeric or character variable (not the arithmetic IF) | gfortran, flang |
 | `intrinsic-arguments` | a call of an intrinsic function (the ones of the M_intrinsics pages that gfortran accepts the same counts for, about 160) with too few or too many arguments, or with a keyword the intrinsic has not (where it is certain), where nothing of the workspace has that name | all |
+| `unbalanced-parentheses` | a statement whose parentheses do not match, outside FORMAT and DATA statements and statements with a preprocessor line inside or cut by a blank line or comment after `&` | all |
+| `dangling-operator` | an assignment to a declared variable whose expression ends in an operator (`a = b +`) | all |
+| `abstract-type-declared` | a `type(t)` declaration of an ABSTRACT type (`class(t)` is fine) | all |
+| `extends-unknown-type` | `extends(t)` of a type that nothing defines, where no module of another project or include could bring it in | all |
+| `pure-function-argument` | a dummy argument of a PURE function with no INTENT(IN) or VALUE (all dialects), or with INTENT(OUT) or INTENT(INOUT) (Flang accepts them) | all, and gfortran and ifx for INTENT(OUT) and INTENT(INOUT) |
+| `unknown-io-specifier` | a specifier of a READ or WRITE that no I/O statement of any compiler has | all |
 
 ### Compiler diagnostics
 
