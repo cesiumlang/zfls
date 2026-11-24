@@ -3,7 +3,7 @@
 //! date (`zig build generated`, `zig build check-generated`):
 //!
 //! - editors/vscode/schemas/fortls.schema.json, the JSON schema of zfls
-//!   configuration files (.fortlsrc, .fortls.json, .fortls), from the
+//!   configuration files (.zflsrc, .fortlsrc, .fortls.json, .fortls), from the
 //!   options `applyConfig` in src/settings.zig reads: the type of their
 //!   command-line option (`opts`), its help text, and their default in
 //!   `Settings`. The extension contributes it for those file names.

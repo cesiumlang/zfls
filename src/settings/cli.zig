@@ -29,9 +29,9 @@ const default_suffixes: []const u8 = blk: {
     break :blk list;
 };
 
-const Kind = enum { flag, int, string, list, json, help, debug_help, version };
+pub const Kind = enum { flag, int, string, list, json, help, debug_help, version };
 
-const Opt = struct {
+pub const Opt = struct {
     long: []const u8,
     short: ?[]const u8 = null,
     kind: Kind,
@@ -44,7 +44,7 @@ const Opt = struct {
 pub const opts = [_]Opt{
     .{ .long = "help", .short = "-h", .kind = .help, .help = "show this help message and exit" },
     .{ .long = "version", .short = "-v", .kind = .version, .help = "Print server version number and exit" },
-    .{ .long = "config", .short = "-c", .kind = .string, .metavar = "CONFIG", .help = "Configuration options file (default file name: .fortlsrc, other default supported names: .fortls.json, .fortls)" },
+    .{ .long = "config", .short = "-c", .kind = .string, .metavar = "CONFIG", .help = "Configuration options file, TOML or JSON (default file name: .zflsrc, other default supported names: .fortlsrc, .fortls.json, .fortls)" },
     .{ .long = "nthreads", .short = "-n", .kind = .int, .metavar = "INTEGER", .help = "Number of threads to use during workspace initialization (default: 4)" },
     .{ .long = "notify_init", .kind = .flag, .help = "Send notification message when workspace initialization is complete" },
     .{ .long = "incremental_sync", .kind = .flag, .help = "Use incremental document synchronization (beta)" },
@@ -202,7 +202,7 @@ fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u
         try out.append(a, '\n');
     }
     try out.appendSlice(a, "\nAll options starting with '--' can also be set in a configuration file, by " ++
-        "default named '.fortlsrc', '.fortls.json' or '.fortls' (other names/paths can specified " ++
+        "default named '.zflsrc' (TOML), '.fortlsrc', '.fortls.json' or '.fortls' (other names/paths can specified " ++
         "via -c or --config). For more details see our documentation: " ++
         "https://fortls.fortran-lang.org/options.html#available-options\n");
     return out.items;

@@ -6,7 +6,7 @@ zfls finds most of what it needs by itself:
 - **CMake, Meson and others:** the include directories and macros of each file in `compile_commands.json`, when the build writes one (`zfls.compileCommands` says where, if it is not at the folder's root, in `build/` or in `builddir/`).
 - **Otherwise:** every Fortran file of the folder is a source.
 
-When that is not enough, set these in the settings (or in a `.fortlsrc` file, as for fortls):
+When that is not enough, set these in the settings (or in a `.zflsrc` file, in TOML with the same option names; fortls's `.fortlsrc` works too):
 
 | Setting | For |
 | --- | --- |
@@ -16,4 +16,4 @@ When that is not enough, set these in the settings (or in a `.fortlsrc` file, as
 | `zfls.ppDefs` | Preprocessor macros, such as `{"USE_MPI": "1"}` |
 | `zfls.ppSuffixes` | File extensions to preprocess, when not the upper-case ones (`.F90`, `.F`, ...) |
 
-zfls restarts by itself when `.fortlsrc`, `fpm.toml` or `compile_commands.json` changes.
+zfls restarts by itself when `.zflsrc`, `.fortlsrc`, `fpm.toml` or `compile_commands.json` changes.

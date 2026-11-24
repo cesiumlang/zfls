@@ -241,6 +241,13 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    // the options in effect, and where each came from
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "config")) {
+        const code = try @import("config_command.zig").run(gpa, io, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
     // the command that builds a Fortran file to run or debug, as JSON
     if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "build-command")) {
         const code = try @import("run/cli.zig").run(gpa, io, init.environ_map, args.items[1..]);

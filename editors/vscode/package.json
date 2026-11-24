@@ -157,6 +157,12 @@
           ".fortls.json",
           ".fortls"
         ]
+      },
+      {
+        "id": "toml",
+        "filenames": [
+          ".zflsrc"
+        ]
       }
     ],
     "breakpoints": [
@@ -179,6 +185,10 @@
       }
     ],
     "tomlValidation": [
+      {
+        "fileMatch": ".zflsrc",
+        "url": "./schemas/fortls.schema.json"
+      },
       {
         "fileMatch": "fpm.toml",
         "url": "https://github.com/fortran-lang/fpm-metadata/releases/download/v0.2.2/fpm-metadata-0.2.2.json"

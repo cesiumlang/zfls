@@ -12,6 +12,7 @@ pub const suffixes = @import("suffixes.zig");
 // The command line (settings/cli.zig)
 const cli = @import("settings/cli.zig");
 pub const opts = cli.opts;
+pub const Opt = cli.Opt;
 pub const CliResult = cli.CliResult;
 pub const parseArgs = cli.parseArgs;
 
@@ -50,7 +51,7 @@ pub const Association = struct { pattern: []const u8, language: []const u8 };
 
 pub const Settings = struct {
     // General options
-    config: []const u8 = ".fortlsrc",
+    config: []const u8 = ".zflsrc",
     nthreads: i64 = 4,
     notify_init: bool = false,
     incremental_sync: bool = false,
@@ -506,8 +507,9 @@ pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
 }
 
 /// The names of the configuration file looked for in the root, after the
-/// one `config` names (`-c`), the first found being read
-pub const default_config_files = [_][]const u8{ ".fortlsrc", ".fortls.json", ".fortls" };
+/// one `config` names (`-c`), the first found being read: zfls's own, then
+/// fortls's
+pub const default_config_files = [_][]const u8{ ".zflsrc", ".fortlsrc", ".fortls.json", ".fortls" };
 
 pub fn configFileNames(config: []const u8) [1 + default_config_files.len][]const u8 {
     return .{config} ++ default_config_files;
