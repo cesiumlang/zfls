@@ -173,6 +173,8 @@ fn splitParts(a: Allocator, pattern: []const u8) ![][]const u8 {
     var it = std.mem.tokenizeAny(u8, pattern, "/\\");
     while (it.next()) |p| {
         if (std.mem.eql(u8, p, ".")) continue;
+        // `**/**` matches what `**` does; each one walks every directory
+        if (std.mem.eql(u8, p, "**") and out.items.len > 0 and std.mem.eql(u8, out.items[out.items.len - 1], "**")) continue;
         try out.append(a, p);
     }
     return out.items;
@@ -321,4 +323,16 @@ test "fnmatch" {
     try std.testing.expect(!fnmatch("[!a-c]x", "bx"));
     try std.testing.expect(!fnmatch("*.f90", "a.f9"));
     try std.testing.expect(fnmatch("*", ".hidden"));
+}
+
+test "consecutive ** parts are one" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const parts = try splitParts(arena.allocator(), "**/**/a/**/**/**/b/**");
+    try std.testing.expectEqual(@as(usize, 5), parts.len);
+    try std.testing.expectEqualStrings("**", parts[0]);
+    try std.testing.expectEqualStrings("a", parts[1]);
+    try std.testing.expectEqualStrings("**", parts[2]);
+    try std.testing.expectEqualStrings("b", parts[3]);
+    try std.testing.expectEqualStrings("**", parts[4]);
 }
