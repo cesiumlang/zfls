@@ -118,7 +118,7 @@ CI runs zfls against gfortran (the symbols zfls extracts, compared with gfortran
 
 Each [release](https://github.com/cesiumlang/zfls/releases) publishes the `zfls` executable for Linux, macOS and Windows, each on x86_64 and ARM64, as `zfls-v<version>-<target>.tar.gz` (`.zip` on Windows), with `SHA256SUMS`. The executable needs nothing else: it can be run from wherever it is unpacked.
 
-The installation scripts in `packaging` download the archive for the computer they run on, check it against `SHA256SUMS` and unpack it, by default into the current directory, as `zfls-v<version>-<target>/zfls` (`zfls.exe` on Windows). They change nothing else, the `PATH` included. On macOS and Linux, or in Git Bash, MSYS2 or Cygwin on Windows:
+The installation scripts in `packaging` download the archive for the computer they run on, check it against `SHA256SUMS` (they stop, and unpack nothing, when that is missing or does not match) and unpack it, by default into the current directory, as `zfls-v<version>-<target>/zfls` (`zfls.exe` on Windows). They change nothing else, the `PATH` included. On macOS and Linux, or in Git Bash, MSYS2 or Cygwin on Windows:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh
