@@ -203,7 +203,7 @@ fn ptrs(maps: *[@typeInfo(Source).@"enum".field_names.len]std.StringHashMapUnman
 
 /// Publishes zfls's diagnostics of `uri` with the other sources' last ones
 pub fn publish(self: *Server, a: Allocator, uri: []const u8, diags: []const lsp.Diagnostic) !void {
-    const own = try json.stringify(a, try json.from(a, diags));
+    const own = try json.stringifyAll(a, diags);
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.own_diags, uri, own);
@@ -223,7 +223,7 @@ pub fn publishKept(self: *Server, a: Allocator, uri: []const u8) void {
 /// last ones (on the thread that ran it). While zfls's own of a changed
 /// text wait to be computed, they are kept for that publication.
 pub fn publishFrom(self: *Server, a: Allocator, source: Source, uri: []const u8, diags: []const lsp.Diagnostic) !void {
-    const mine = try json.stringify(a, try json.from(a, diags));
+    const mine = try json.stringifyAll(a, diags);
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.external_diags[@backingInt(source)], uri, mine);

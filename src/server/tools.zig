@@ -114,16 +114,6 @@ fn programArgv(a: Allocator, io: Io, o: Options) ![]const []const u8 {
     return argv;
 }
 
-/// A program, a directory or a command line that is longer than the system
-/// takes is an error, not a crash.
-pub fn checkLengths(argv: []const []const u8, cwd: ?[]const u8) error{ PathTooLong, ArgumentsTooLong }!void {
-    if (argv.len > 0) try fsio.check(argv[0]);
-    if (cwd) |d| try fsio.check(d);
-    var total: usize = 0;
-    for (argv) |arg| total += arg.len + 1;
-    if (total > fsio.max_path_len) return error.ArgumentsTooLong;
-}
-
 /// Runs `o.argv` to its end, or for `o.timeout` (`error.Timeout`), and
 /// returns its output. The input is written on a thread of its own, so that
 /// a program that writes before it has read all of it cannot block on a
@@ -134,7 +124,7 @@ pub fn run(a: Allocator, io: Io, o: Options) !Output {
     var names: std.heap.ArenaAllocator = .init(a);
     defer names.deinit();
     const argv = try programArgv(names.allocator(), io, o);
-    try checkLengths(argv, o.cwd);
+    try fsio.checkSpawn(argv, o.cwd);
     var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = if (o.cwd) |d| .{ .path = d } else .inherit,

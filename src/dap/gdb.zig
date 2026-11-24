@@ -15,6 +15,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const stdio = @import("../stdio.zig");
 const executables = @import("../executables.zig");
+const fsio = @import("../fsio.zig");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
@@ -195,6 +196,7 @@ pub fn checkDap(s: *Session, a: Allocator, gdb: []const u8) !?[]const u8 {
     const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(10), .clock = .awake } };
     const exe = executables.resolve(a, s.io, env, gdb) catch |e|
         return try notStarted(a, gdb, e);
+    fsio.checkSpawn(&.{exe}, null) catch |e| return try notStarted(a, gdb, e);
     const version = std.process.run(a, s.io, .{ .argv = &.{ exe, "--version" }, .environ_map = env, .timeout = timeout }) catch |e|
         return try notStarted(a, gdb, e);
     const first = std.mem.trimEnd(u8, version.stdout[0 .. std.mem.findScalar(u8, version.stdout, '\n') orelse version.stdout.len], "\r");
@@ -246,6 +248,7 @@ const survive_internal_errors = .{ "-iex", "maint set internal-error quit no", "
 pub fn spawn(s: *Session, a: Allocator, argv_in: []const []const u8, env: *const std.process.Environ.Map, lldb: bool) !?[]const u8 {
     const argv = try a.dupe([]const u8, argv_in);
     argv[0] = executables.resolve(a, s.io, env, argv[0]) catch |e| return try a.print("{s}: {s}", .{ argv_in[0], @errorName(e) });
+    fsio.checkSpawn(argv, null) catch |e| return try a.print("{s}: {s}", .{ argv_in[0], @errorName(e) });
     var child = std.process.spawn(s.io, .{
         .argv = argv,
         .environ_map = env,

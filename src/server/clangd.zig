@@ -67,7 +67,7 @@ pub fn start(self: *Server, a: Allocator) void {
         self.log.warn("bind_c_clangd: could not start {s}: {s}", .{ exe, @errorName(e) });
         return;
     };
-    tools.checkLengths(&.{ program, "--background-index", "--log=error" }, self.root_path) catch |e| {
+    fsio.checkSpawn(&.{ program, "--background-index", "--log=error" }, self.root_path) catch |e| {
         self.gpa.free(first_uri);
         self.log.warn("bind_c_clangd: could not start {s}: {s}", .{ exe, @errorName(e) });
         return;
