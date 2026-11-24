@@ -110,6 +110,7 @@ test {
     _ = @import("use_only.zig");
     _ = @import("workspace.zig");
     _ = @import("zflsrc.zig");
+    _ = @import("allocation_counts.zig");
     _ = @import("compiler_line_length.zig");
     _ = @import("compiler_lfortran.zig");
     _ = @import("compiler_flang.zig");

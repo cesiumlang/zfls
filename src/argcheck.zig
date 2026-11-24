@@ -113,9 +113,10 @@ pub const Joined = struct {
 };
 
 fn join(a: Allocator, file: *const FortranFile, first: usize, last: usize) !Joined {
-    var text: std.ArrayList(u8) = .empty;
-    var lines: std.ArrayList(usize) = .empty;
-    var cols: std.ArrayList(usize) = .empty;
+    // the part of each line that is code, then the three arrays at once
+    const Piece = struct { ln: usize, code: []const u8, s: usize, e: usize };
+    var pieces: std.ArrayList(Piece) = .empty;
+    var total: usize = 0;
     var ln = first;
     while (ln <= last) : (ln += 1) {
         const raw = file.getLine(ln, false) orelse continue;
@@ -134,15 +135,21 @@ fn join(a: Allocator, file: *const FortranFile, first: usize, last: usize) !Join
             while (s < e and (code[s] == ' ' or code[s] == '\t')) s += 1;
             if (ln != first and s < e and code[s] == '&') s += 1;
         }
-        var i = s;
-        while (i < e) : (i += 1) {
-            try text.append(a, code[i]);
-            try lines.append(a, ln);
-            try cols.append(a, i);
+        try pieces.append(a, .{ .ln = ln, .code = code, .s = s, .e = e });
+        total += e - s + 1;
+    }
+    var text: std.ArrayList(u8) = try .initCapacity(a, total);
+    var lines: std.ArrayList(usize) = try .initCapacity(a, total);
+    var cols: std.ArrayList(usize) = try .initCapacity(a, total);
+    for (pieces.items) |p| {
+        for (p.s..p.e) |i| {
+            text.appendAssumeCapacity(p.code[i]);
+            lines.appendAssumeCapacity(p.ln);
+            cols.appendAssumeCapacity(i);
         }
-        try text.append(a, ' ');
-        try lines.append(a, ln);
-        try cols.append(a, e);
+        text.appendAssumeCapacity(' ');
+        lines.appendAssumeCapacity(p.ln);
+        cols.appendAssumeCapacity(p.e);
     }
     return .{ .text = text.items, .lines = lines.items, .cols = cols.items };
 }

@@ -95,6 +95,11 @@ pub fn main(init: std.process.Init) !u8 {
             return 2;
         }
     }
+    if (args.workspace.len == 0 and argv.len == 3) {
+        // (`zig build bench` gives the server's path)
+        std.debug.print("no workspace given: only the allocation counts were compared\n{s}", .{usage});
+        return 0;
+    }
     if (args.workspace.len == 0 or args.zfls.len == 0) {
         std.debug.print("{s}", .{usage});
         return 2;
