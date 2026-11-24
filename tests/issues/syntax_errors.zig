@@ -147,3 +147,21 @@ test "valid statements are not reported" {
     defer w.deinit();
     try expectAll(try collect(w, "a.f90"), &.{});
 }
+
+test "LEADING_ZERO= of READ and WRITE is an error in gfortran only (#899)" {
+    const text =
+        \\program p
+        \\  character(len=20) :: s
+        \\  write (s, '(F8.3)', leading_zero='suppress') 0.5
+        \\end program
+        \\
+    ;
+    inline for ([_][]const u8{ "neutral", "ifx", "flang", "gfortran" }) |d| {
+        const w = try workspace(d, text);
+        defer w.deinit();
+        const got = try collect(w, "a.f90");
+        if (comptime std.mem.eql(u8, d, "gfortran")) {
+            try expectAll(got, &.{"3: unknown-io-specifier: leading_zero is no specifier of a write statement"});
+        } else try expectAll(got, &.{});
+    }
+}

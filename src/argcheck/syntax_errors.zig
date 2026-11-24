@@ -252,7 +252,9 @@ fn ioSpecifiers(c: *Checker, j: Joined, s: usize, text: []const u8, first: Word)
         const comma = typing.topLevel(rest, ',') orelse rest.len;
         const item = rest[0..comma];
         if (typing.keywordOf(item)) |kw| {
-            if (!typing.oneOf(kw, &specifiers)) {
+            // Fortran 2023's, which ifx and Flang take and gfortran does not
+            const known = typing.oneOf(kw, &specifiers) or (std.ascii.eqlIgnoreCase(kw, "leading_zero") and !c.dialect.applies(.initOne(.gfortran)));
+            if (!known) {
                 const at = pos + (std.mem.find(u8, item, kw) orelse 0);
                 try c.report(j, s + at, s + at + kw.len, .unknown_io_specifier, "{s} is no specifier of a {s} statement", .{ kw, first.str });
             }
