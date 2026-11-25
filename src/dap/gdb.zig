@@ -66,6 +66,9 @@ pub const State = struct {
     /// mutex)
     stderr: std.ArrayList(u8) = .empty,
     stderr_done: bool = false,
+    /// The threads reading gdb's output that have not ended: they use the
+    /// session, which must not end before them (`deinit`)
+    readers: std.atomic.Value(u32) = .init(0),
     /// The client's requests that gdb answers when it will (`launch` waits
     /// for `configurationDone`): its answer goes to the client as it comes
     relays: std.AutoHashMapUnmanaged(i64, Relay) = .empty,
@@ -275,6 +278,8 @@ pub fn spawn(s: *Session, a: Allocator, argv_in: []const []const u8, env: *const
     if (lldb) s.g.runs_at_launch = false;
     if (s.g.exit_message) |m| s.gpa.free(m);
     s.g.exit_message = null;
+    _ = s.g.readers.fetchAdd(2, .monotonic);
+    errdefer _ = s.g.readers.fetchSub(2, .monotonic);
     (try std.Thread.spawn(.{}, readOutput, .{ s, out, gen })).detach();
     (try std.Thread.spawn(.{}, readErrors, .{ s, err, gen })).detach();
     return null;
@@ -309,8 +314,16 @@ pub fn finish(s: *Session, a: Allocator) void {
     stop(s);
 }
 
+/// The last thing a reader does with the session
+fn readerEnds(readers: *std.atomic.Value(u32)) void {
+    _ = readers.fetchSub(1, .release);
+}
+
 fn readOutput(s: *Session, file: Io.File, gen: u32) void {
-    defer file.close(s.io);
+    const readers = &s.g.readers;
+    const io = s.io;
+    defer readerEnds(readers);
+    defer file.close(io);
     var buf: [64 * 1024]u8 = undefined;
     var reader = file.readerStreaming(s.io, &buf);
     while (true) {
@@ -332,7 +345,10 @@ fn push(s: *Session, gen: u32, body: ?[]u8) void {
 }
 
 fn readErrors(s: *Session, file: Io.File, gen: u32) void {
-    defer file.close(s.io);
+    const readers = &s.g.readers;
+    const io = s.io;
+    defer readerEnds(readers);
+    defer file.close(io);
     var buf: [4096]u8 = undefined;
     while (true) {
         const n = file.readStreaming(s.io, &.{&buf}) catch break;
@@ -574,6 +590,10 @@ pub fn isSuccess(r: Value) bool {
 
 pub fn deinit(s: *Session) void {
     stop(s);
+    // gdb is dead: its pipes end, unless a program it started holds them
+    // open (the end of the session does not wait for that for long)
+    const deadline = Io.Clock.awake.now(s.io).addDuration(.fromSeconds(2));
+    while (s.g.readers.load(.acquire) > 0 and Io.Clock.awake.now(s.io).nanoseconds < deadline.nanoseconds) s.io.sleep(.fromMilliseconds(5), .awake) catch {};
     s.g.relays.deinit(s.gpa);
     s.g.stderr.deinit(s.gpa);
     if (s.g.exit_message) |m| s.gpa.free(m);

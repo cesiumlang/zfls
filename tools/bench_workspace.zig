@@ -49,11 +49,13 @@ const Args = struct {
     requests: usize = 200,
     edits: usize = 20,
     saves: usize = 5,
+    /// Seconds a request waits for its answer (a server under valgrind is slow)
+    timeout: i64 = 120,
 };
 
 const usage =
     \\usage: zig build bench [-Doptimize=safe] -- WORKSPACE [--fortls CMD]
-    \\       [--requests N (200)] [--edits N (20)] [--saves N (5)]
+    \\       [--requests N (200)] [--edits N (20)] [--saves N (5)] [--timeout SECONDS (120)]
     \\
 ;
 
@@ -86,6 +88,8 @@ pub fn main(init: std.process.Init) !u8 {
             args.edits = try std.fmt.parseInt(usize, v, 10);
         } else if (std.mem.eql(u8, arg, "--saves")) {
             args.saves = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, arg, "--timeout")) {
+            args.timeout = try std.fmt.parseInt(i64, v, 10);
         } else {
             std.debug.print("unknown option {s}\n{s}", .{ arg, usage });
             return 2;
@@ -314,6 +318,7 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
     try argv.appendSlice(a, cmd);
     try argv.append(a, "--incremental_sync");
     const server = try lsp.Client.start(io, gpa, argv.items, null);
+    server.timeout = .fromSeconds(args.timeout);
     defer server.deinit();
     errdefer server.kill();
 
@@ -400,6 +405,7 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
 
     // a second start, which finds what the first left (zfls's index cache)
     const again = try lsp.Client.start(io, gpa, argv.items, null);
+    again.timeout = .fromSeconds(args.timeout);
     defer again.deinit();
     errdefer again.kill();
     start = now(io);

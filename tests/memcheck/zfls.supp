@@ -1,0 +1,27 @@
+# Valgrind suppressions of zfls (memcheck.yml). One entry per finding that is
+# not zfls's, with the reason and the run that showed it.
+
+# A debug build probes the stack of a function whose frame is larger than
+# a page (this one has many locals) by reading below the stack pointer;
+# memcheck reports that read as invalid. Seen in the unit tests of
+# dap/gdb_variables.zig (run 45504008192).
+{
+   zig-stack-probe-gdb-variables-present
+   Memcheck:Addr4
+   fun:dap.gdb_variables.present
+}
+
+# std.Io.Threaded (Zig 0.17.1): a worker wakes a future's status word
+# after the task that awaited the future freed it (the server's reader task
+# at its end, `io.concurrent` in __main__.zig). The kernel finds no waiter;
+# memcheck reports the address as unaddressable. Seen by the stress
+# drivers (run 45508429107). Not zfls's.
+{
+   zig-io-threaded-future-wake-after-free
+   Memcheck:Param
+   futex(futex)
+   fun:os.linux.x86_64.syscall3
+   fun:os.linux.futex_3arg
+   fun:Io.Threaded.Thread.futexWake
+   fun:Io.Threaded.Future.start
+}
