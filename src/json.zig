@@ -317,7 +317,10 @@ test "the text of std.json.Stringify, at any depth (#779)" {
     // 10000 levels of `{"children":[...]}`, as the document symbols of
     // unclosed procedures nest
     var deep: Value = .{ .string = "leaf" };
-    for (0..10000) |_| {
+    // (indented, 10000 levels took 2.5 GB of memory: pretty prints 1000)
+    var shallow: Value = deep;
+    for (0..10000) |i| {
+        if (i == 1000) shallow = deep;
         var arr: Array = .init(a);
         try arr.append(deep);
         var obj: ObjectMap = .empty;
@@ -329,7 +332,7 @@ test "the text of std.json.Stringify, at any depth (#779)" {
     try std.testing.expect(std.mem.startsWith(u8, text, "{\"children\":[{\"children\":["));
     try std.testing.expect(std.mem.find(u8, text, "[{\"children\":[\"leaf\"]}]}]}") != null);
     try std.testing.expect(std.mem.endsWith(u8, text, "]}]}"));
-    try std.testing.expect((try pretty(a, deep)).len > text.len);
+    try std.testing.expect((try pretty(a, shallow)).len > 1000 * "{\"children\":[]}".len);
 }
 
 test "parse replaces unpaired surrogates and invalid UTF-8" {
