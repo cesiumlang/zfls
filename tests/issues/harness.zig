@@ -172,12 +172,15 @@ pub const Options = struct {
     completion_resolve: bool = false,
     /// the files that are not open are kept as summaries (#219)
     summaries: bool = true,
+    /// counts the server's allocations and the requests' (counting.zig)
+    counts: ?*counting.Counts = null,
 };
 
 // --------------------------------------------------------------------------
 // Workspace
 
 const structure = @import("harness_structure.zig");
+const counting = @import("counting.zig");
 
 pub const Workspace = struct {
     tmp: std.testing.TmpDir,
@@ -191,6 +194,7 @@ pub const Workspace = struct {
     sent: std.ArrayList([]const u8) = .empty,
     /// the result of the initialize request
     init_result: Value = .null,
+    counts: ?*counting.Counts = null,
 
     fn collect(ctx: ?*anyopaque, body: []const u8) void {
         const w: *Workspace = @ptrCast(@alignCast(ctx.?));
@@ -215,6 +219,12 @@ pub const Workspace = struct {
         w.unreadable = &.{};
         w.sent = .empty;
         w.init_result = .null;
+        w.counts = opts.counts;
+        if (w.counts) |c| {
+            c.live = .{};
+            c.server = .{ .child = gpa, .sites = c.sites, .live = &c.live };
+            c.request = .{ .child = w.arena.allocator(), .sites = c.sites };
+        }
         for (files) |f| {
             if (std.Io.Dir.path.dirname(f.name)) |d| try w.tmp.dir.createDirPath(io, d);
             try w.tmp.dir.writeFile(io, .{ .sub_path = f.name, .data = f.text });
@@ -246,7 +256,7 @@ pub const Workspace = struct {
         for (opts.pp_defs) |d| try settings.pp_defs.append(aa, d);
         for (opts.external_modules) |m| try settings.external_modules.add(aa, m);
         for (opts.diagnostic_severity) |d| try settings.diagnostic_severity.append(aa, d);
-        w.server = try Server.create(gpa, io, settings, &w.log);
+        w.server = try Server.create(if (w.counts) |c| c.server.allocator() else gpa, io, settings, &w.log);
         errdefer w.server.destroy();
         // as `main` gives it
         var environ = try std.testing.environ.createMap(aa);
@@ -256,7 +266,7 @@ pub const Workspace = struct {
         // every file a request read rests at the next save
         w.server.keep_awake = 0;
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
-        w.init_result = try w.server.dispatchPublic(aa, "initialize", try json.from(aa, .{
+        w.init_result = try w.server.dispatchPublic(w.a(), "initialize", try json.from(aa, .{
             .rootPath = if (opts.unc_root) null else w.root,
             .rootUri = if (opts.unc_root) try paths.pathToUri(aa, w.root) else null,
             .capabilities = .{ .textDocument = .{
@@ -293,6 +303,7 @@ pub const Workspace = struct {
     }
 
     pub fn a(w: *Workspace) Allocator {
+        if (w.counts) |c| return c.request.allocator();
         return w.arena.allocator();
     }
 

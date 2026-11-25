@@ -64,7 +64,7 @@ fn report(self: *Server, a: Allocator, uri: []const u8, path: []const u8, previo
         if (last.id == id and last.generation == self.diag_generation) return .{ .kind = "unchanged", .resultId = previous.? };
     };
     const items: []const lsp.Diagnostic = if (self.s.disable_diagnostics) &.{} else (try diagnostics.diagnosticsOf(self, a, uri)) orelse &.{};
-    const id = std.hash.Wyhash.hash(0, try json.stringify(a, try json.from(a, items)));
+    const id = std.hash.Wyhash.hash(0, try json.stringifyAll(a, items));
     try remember(self, path, .{ .generation = self.diag_generation, .id = id });
     const result_id = try a.print("{x}", .{id});
     if (prev == id) return .{ .kind = "unchanged", .resultId = result_id };

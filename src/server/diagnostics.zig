@@ -553,8 +553,13 @@ pub fn includesNotFound(a: Allocator, ast: *Ast) ![]const objects.BuiltDiag {
 /// The local variables and USE ONLY names that their scope never uses,
 /// shown faded (`unused-name`, a hint)
 pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
+    return unusedDiagnostics(a, try unused.find(a, file, ast));
+}
+
+/// The hints of the names `found`
+fn unusedDiagnostics(a: Allocator, found: []const unused.Unused) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try unused.find(a, file, ast)) |u| {
+    for (found) |u| {
         const what: []const u8 = if (u.kind == .variable) "Variable" else "Name";
         try out.append(a, .{
             .sln = u.line,
@@ -581,7 +586,7 @@ pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, a
     const found = try unused.find(a, file, ast);
     // the names of each declaration statement, for the source action
     var by_statement: std.array_hash_map.Auto(usize, std.ArrayList([]const u8)) = .empty;
-    for (found, try unusedNames(a, file, ast)) |u, d| {
+    for (found, try unusedDiagnostics(a, found)) |u, d| {
         if (hidden.hides(d.code, d.sln)) continue;
         const gop = try by_statement.getOrPut(a, u.decl_line);
         if (!gop.found_existing) gop.value_ptr.* = .empty;

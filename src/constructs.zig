@@ -293,8 +293,21 @@ pub const LineLabels = struct { def: ?Span = null, refs: []const Span = &.{} };
 
 const label_statements = [_][]const u8{ "go", "goto", "assign", "do", "read", "write", "print", "open", "close", "inquire", "backspace", "rewind", "endfile", "flush", "wait", "if" };
 
+/// Whether a free-form line starts with a word that is not that of a
+/// statement naming labels, nor a construct name: it has no label then,
+/// and its tokens need not be made (a long statement is made of many)
+fn namesNoLabel(code: []const u8) bool {
+    const start = std.mem.findNone(u8, code, " \t") orelse return false;
+    if (!std.ascii.isAlphabetic(code[start]) and code[start] != '_') return false;
+    var end = start;
+    while (end < code.len and (std.ascii.isAlphanumeric(code[end]) or code[end] == '_' or code[end] == '$')) end += 1;
+    const after = std.mem.findNone(u8, code[end..], " \t") orelse return !eqlAny(code[start..end], &label_statements);
+    return code[end + after] != ':' and !eqlAny(code[start..end], &label_statements);
+}
+
 pub fn labelsOf(a: Allocator, file: *const FortranFile, ln: usize) !LineLabels {
     const code = (try codeOf(a, file, ln)) orelse return .{};
+    if (!file.fixed and namesNoLabel(code)) return .{};
     const info = try analyze(a, code, file.fixed);
     var out: LineLabels = .{};
     if (info.label_def) |t| out.def = .{ .line = ln, .start = t.start, .end = t.end };
