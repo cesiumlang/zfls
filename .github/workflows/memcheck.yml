@@ -19,8 +19,6 @@ name: Memcheck
 # Zig's futex based locks, so their report is informational.
 
 on:
-  push:
-    branches: [issue-901-memcheck]
   schedule:
     - cron: "17 3 * * 0"
   workflow_dispatch:
