@@ -1,202 +1,202 @@
 {
   "m_intrinsics/initialize": {
-    "allocs": 370,
-    "bytes": 13034993,
-    "peak_bytes": 8793610
+    "allocs": 371,
+    "bytes": 12247473,
+    "peak_bytes": 8793682
   },
   "m_intrinsics/open": {
     "allocs": 47,
     "bytes": 3432594,
-    "peak_bytes": 7356500
+    "peak_bytes": 7364118
   },
   "m_intrinsics/documentSymbol": {
     "allocs": 78,
     "bytes": 24683,
-    "peak_bytes": 6226280
+    "peak_bytes": 6233898
   },
   "m_intrinsics/semanticTokens": {
     "allocs": 35355,
     "bytes": 2546460,
-    "peak_bytes": 6226280
+    "peak_bytes": 6233898
   },
   "m_intrinsics/diagnostics": {
     "allocs": 117687,
     "bytes": 40367175,
-    "peak_bytes": 6226638
+    "peak_bytes": 6234256
   },
   "m_intrinsics/hover": {
     "allocs": 2868,
     "bytes": 4602977,
-    "peak_bytes": 6226638
+    "peak_bytes": 6234256
   },
   "m_intrinsics/definition": {
     "allocs": 6406,
     "bytes": 13237204,
-    "peak_bytes": 6226638
+    "peak_bytes": 6234256
   },
   "m_intrinsics/references": {
     "allocs": 12291,
     "bytes": 26411864,
-    "peak_bytes": 6226638
+    "peak_bytes": 6234256
   },
   "m_intrinsics/completion": {
     "allocs": 2407,
     "bytes": 955159,
-    "peak_bytes": 6226638
+    "peak_bytes": 6234256
   },
   "m_intrinsics/edits": {
     "allocs": 911,
     "bytes": 102161562,
-    "peak_bytes": 9856549
+    "peak_bytes": 9864167
   },
   "tests_fortran/initialize": {
-    "allocs": 696,
-    "bytes": 9665435,
-    "peak_bytes": 8793610
+    "allocs": 690,
+    "bytes": 9648141,
+    "peak_bytes": 8793682
   },
   "tests_fortran/open": {
     "allocs": 38,
-    "bytes": 119607,
-    "peak_bytes": 4679972
+    "bytes": 122397,
+    "peak_bytes": 4671002
   },
   "tests_fortran/documentSymbol": {
     "allocs": 149,
     "bytes": 57621,
-    "peak_bytes": 4606616
+    "peak_bytes": 4594972
   },
   "tests_fortran/semanticTokens": {
     "allocs": 692,
     "bytes": 112684,
-    "peak_bytes": 4606616
+    "peak_bytes": 4594972
   },
   "tests_fortran/diagnostics": {
     "allocs": 2432,
     "bytes": 237130,
-    "peak_bytes": 4606975
+    "peak_bytes": 4595331
   },
   "tests_fortran/hover": {
     "allocs": 1365,
     "bytes": 170630,
-    "peak_bytes": 4606975
+    "peak_bytes": 4595331
   },
   "tests_fortran/definition": {
     "allocs": 1458,
     "bytes": 222612,
-    "peak_bytes": 4606975
+    "peak_bytes": 4595331
   },
   "tests_fortran/references": {
-    "allocs": 3447,
-    "bytes": 1003029,
-    "peak_bytes": 4865241
+    "allocs": 3444,
+    "bytes": 1010953,
+    "peak_bytes": 4866739
   },
   "tests_fortran/completion": {
     "allocs": 6156,
     "bytes": 4273317,
-    "peak_bytes": 4735481
+    "peak_bytes": 4746413
   },
   "tests_fortran/edits": {
-    "allocs": 911,
-    "bytes": 2746583,
-    "peak_bytes": 5062618
+    "allocs": 909,
+    "bytes": 2728415,
+    "peak_bytes": 5048520
   },
   "synthetic/initialize": {
-    "allocs": 389,
-    "bytes": 24282008,
-    "peak_bytes": 16343031
+    "allocs": 391,
+    "bytes": 24282080,
+    "peak_bytes": 16343103
   },
   "synthetic/open": {
     "allocs": 56,
     "bytes": 9340789,
-    "peak_bytes": 17712185
+    "peak_bytes": 17712257
   },
   "synthetic/documentSymbol": {
     "allocs": 9037,
     "bytes": 3977569,
-    "peak_bytes": 12982137
+    "peak_bytes": 12982209
   },
   "synthetic/semanticTokens": {
     "allocs": 96055,
     "bytes": 19468249,
-    "peak_bytes": 12982137
+    "peak_bytes": 12982209
   },
   "synthetic/diagnostics": {
     "allocs": 439779,
     "bytes": 39739904,
-    "peak_bytes": 12982486
+    "peak_bytes": 12982558
   },
   "synthetic/hover": {
     "allocs": 1243,
     "bytes": 7193366,
-    "peak_bytes": 12982486
+    "peak_bytes": 12982558
   },
   "synthetic/definition": {
     "allocs": 1241,
     "bytes": 6212944,
-    "peak_bytes": 12982486
+    "peak_bytes": 12982558
   },
   "synthetic/references": {
     "allocs": 1101,
     "bytes": 6202144,
-    "peak_bytes": 12982486
+    "peak_bytes": 12982558
   },
   "synthetic/completion": {
     "allocs": 6610,
     "bytes": 6320450,
-    "peak_bytes": 12982486
+    "peak_bytes": 12982558
   },
   "synthetic/edits": {
     "allocs": 1101,
     "bytes": 197548543,
-    "peak_bytes": 29266955
+    "peak_bytes": 29267027
   },
   "long_expression/initialize": {
-    "allocs": 311,
-    "bytes": 9182112,
-    "peak_bytes": 8793610
+    "allocs": 313,
+    "bytes": 9182184,
+    "peak_bytes": 8793682
   },
   "long_expression/open": {
     "allocs": 31,
     "bytes": 412334,
-    "peak_bytes": 4549776
+    "peak_bytes": 4549848
   },
   "long_expression/documentSymbol": {
     "allocs": 23,
     "bytes": 4129,
-    "peak_bytes": 4421738
+    "peak_bytes": 4421810
   },
   "long_expression/semanticTokens": {
     "allocs": 35,
     "bytes": 4377,
-    "peak_bytes": 4421738
+    "peak_bytes": 4421810
   },
   "long_expression/diagnostics": {
     "allocs": 137,
     "bytes": 2712943,
-    "peak_bytes": 4422088
+    "peak_bytes": 4422160
   },
   "long_expression/hover": {
     "allocs": 703,
     "bytes": 153412,
-    "peak_bytes": 4422088
+    "peak_bytes": 4422160
   },
   "long_expression/definition": {
     "allocs": 756,
     "bytes": 2591528,
-    "peak_bytes": 4422088
+    "peak_bytes": 4422160
   },
   "long_expression/references": {
     "allocs": 920,
     "bytes": 2133150,
-    "peak_bytes": 4422088
+    "peak_bytes": 4422160
   },
   "long_expression/completion": {
     "allocs": 3959,
     "bytes": 2872255,
-    "peak_bytes": 4422088
+    "peak_bytes": 4422160
   },
   "long_expression/edits": {
     "allocs": 561,
     "bytes": 8722828,
-    "peak_bytes": 4552875
+    "peak_bytes": 4552947
   }
 }
