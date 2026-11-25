@@ -3,9 +3,10 @@
 
 const std = @import("std");
 const h = @import("harness.zig");
-const timing = @import("timing.zig");
+const counting = @import("counting.zig");
+const linear = @import("linear.zig");
 
-fn names(n: usize) !void {
+fn names(n: usize, counts: *counting.Counts) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -13,7 +14,7 @@ fn names(n: usize) !void {
     try text.appendSlice(a, "program p\n  integer :: v0");
     for (1..n) |i| try text.print(a, ", v{d}", .{i});
     try text.appendSlice(a, "\nend program p\n");
-    const w = try h.Workspace.init(&.{.{ .name = "d.f90", .text = text.items }}, .{});
+    const w = try h.Workspace.init(&.{.{ .name = "d.f90", .text = text.items }}, .{ .counts = counts });
     defer w.deinit();
     // each name is unused: a hint with its column each
     const found = try w.diagnostics("d.f90");
@@ -28,10 +29,10 @@ fn names(n: usize) !void {
 
 test "a declaration of 8000 names has its diagnostics and symbols in seconds (#795)" {
     // 8000 names took about 20 seconds before, a fraction of one now
-    try timing.expectLinear(names, 1000, 8000);
+    try linear.expectLinear(names, 1000, 8000);
 }
 
-fn statements(n: usize) !void {
+fn statements(n: usize, counts: *counting.Counts) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -39,11 +40,11 @@ fn statements(n: usize) !void {
     try text.appendSlice(a, "program p\n  integer :: x\n  x = 0");
     for (1..n) |_| try text.appendSlice(a, "; x = 1");
     try text.appendSlice(a, "\n  print *, x\nend program p\n");
-    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text = text.items }}, .{});
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text = text.items }}, .{ .counts = counts });
     defer w.deinit();
     try w.expectNoDiagnostics("s.f90");
 }
 
 test "8000 statements on a line have their diagnostics in seconds (#795)" {
-    try timing.expectLinear(statements, 1000, 8000);
+    try linear.expectLinear(statements, 1000, 8000);
 }

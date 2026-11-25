@@ -7,7 +7,8 @@
 const std = @import("std");
 const h = @import("harness.zig");
 const zfls = @import("zfls");
-const timing = @import("timing.zig");
+const counting = @import("counting.zig");
+const linear = @import("linear.zig");
 const json = h.json;
 
 /// `n` lines of `line_fmt` (with the line's number), then `tail`
@@ -109,7 +110,7 @@ test "a file of 3000 nested loops beside a small one, indexed again and again (#
     }
 }
 
-fn nestedLoops(n: usize) !void {
+fn nestedLoops(n: usize, counts: *counting.Counts) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -118,7 +119,7 @@ fn nestedLoops(n: usize) !void {
         try repeated(a, n, "do i = 1, {d}\n", ""),
         try repeated(a, n, "end do ! {d}\n", "end program p\n"),
     });
-    const w = try h.Workspace.init(&.{.{ .name = "l.f90", .text = text }}, .{});
+    const w = try h.Workspace.init(&.{.{ .name = "l.f90", .text = text }}, .{ .counts = counts });
     defer w.deinit();
     const found = try w.diagnostics("l.f90");
     try h.expect(found.len == 0, "{d} diagnostics", .{found.len});
@@ -126,7 +127,7 @@ fn nestedLoops(n: usize) !void {
 
 test "6000 nested loops have their diagnostics in seconds (#837)" {
     // 31 seconds before (each `i` looked for through all the loops around it)
-    try timing.expectLinear(nestedLoops, 750, 6000);
+    try linear.expectLinear(nestedLoops, 750, 6000);
 }
 
 test "--debug_parser prints each of 1000 nested loops once (#838)" {
@@ -151,13 +152,13 @@ test "--debug_parser prints each of 1000 nested loops once (#838)" {
 }
 
 /// Gets the diagnostics of `n` unclosed procedures, each in the one before.
-fn unclosed(n: usize) !void {
+fn unclosed(n: usize, counts: *counting.Counts) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     // half-typed code
     const text = try repeated(a, n, "subroutine s{d}()\n", "");
-    const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{});
+    const w = try h.Workspace.init(&.{.{ .name = "u.f90", .text = text }}, .{ .counts = counts });
     defer w.deinit();
     const found = try w.diagnostics("u.f90");
     // each one is not closed, and that is all (#837)
@@ -167,7 +168,7 @@ fn unclosed(n: usize) !void {
 test "6000 unclosed procedures have their diagnostics in seconds (#803, #841)" {
     // 33 seconds before for 3000 (#803), then 9 for 6000 (checkDefinitions
     // hashed each scope's whole path)
-    try timing.expectLinear(unclosed, 750, 6000);
+    try linear.expectLinear(unclosed, 750, 6000);
 }
 
 test "every unclosed procedure of a long run of them is reported (#869)" {

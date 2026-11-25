@@ -15,6 +15,7 @@ test {
     _ = @import("deep_nesting.zig");
     _ = @import("long_lines.zig");
     _ = @import("continuation_scan.zig");
+    _ = @import("linear.zig");
     _ = @import("timing.zig");
     _ = @import("document_highlight.zig");
     _ = @import("declarations_f2023.zig");
