@@ -541,3 +541,14 @@ direnv
 vadimcn
 AArch64
 SVE
+dsymutil
+esbuild
+fnm
+fpp
+GNUC
+NOFREEFORM
+dap
+gzip
+watchpoints
+libstdc
+RequestCancelled

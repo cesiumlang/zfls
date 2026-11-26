@@ -101,3 +101,5 @@
 
 {"rule":"THE_SUPERLATIVE","sentence":"^\\QThe build fetches the version \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q pins; a scheduled workflow moves the pin to upstream's latest commit.\\E$"}
 {"rule":"VERB_APOSTROPHE_S","sentence":"^\\QThe build fetches the version \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q pins; a scheduled workflow moves the pin to upstream's latest commit.\\E$"}
+{"rule":"SPACE_BEFORE_PARENTHESIS","sentence":"^\\QThe variables include a polymorphic object or array with its dynamic type's components (Flang's and ifx's), a module's variables by their own names in an expression (\\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q, \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Atrapa-|Dummy\\+|Dummy's\\+)[0-9]+\\Q) and those of its COMMON blocks, and REAL(16) values.\\E$"}
+{"rule":"HAVE_PART_AGREEMENT","sentence":"^\\QIt has hover, definition, signature help, references and symbols, and its dummy arguments and result are the procedure's variables of their names.\\E$"}
