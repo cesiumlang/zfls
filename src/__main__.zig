@@ -14,6 +14,7 @@ const debug = @import("debug.zig");
 const version_info = @import("version.zig");
 const Logger = @import("logger.zig");
 const stdio = @import("stdio.zig");
+const profile = @import("profile.zig");
 
 const app_name = if (@hasDecl(root, "app_name")) root.app_name else "zfls";
 const version = if (@hasDecl(root, "version")) root.version else @import("build_options").version;
@@ -289,7 +290,9 @@ pub fn main(init: std.process.Init) !void {
     var ctx: Ctx = .{ .gpa = gpa, .io = io, .s = s, .environ = init.environ_map };
     // Run on a thread with a large stack: Fortran code can nest deeply and
     // name resolution is recursive.
+    const sampler = profile.start(gpa, io, init.environ_map);
     const th = try std.Thread.spawn(.{ .stack_size = 256 * 1024 * 1024 }, runServer, .{&ctx});
     th.join();
+    profile.stop(sampler);
     if (ctx.exit_code != 0) std.process.exit(ctx.exit_code);
 }

@@ -27,6 +27,8 @@ pub fn build(b: *std.Build) !void {
     // (e.g. -Dlog-scope-level=...).
     const build_options = try rstdbuild.addBuildOptionsModule(b, @tagName(zon.name), zon.version, &rstd_mod);
     try rstdbuild.addLogScopeOptions(b, build_options, &.{});
+    // A profiling build samples its own threads (src/profile.zig); never a release
+    build_options.addOption(bool, "profile_sampler", b.option(bool, "profile-sampler", "Build in the in-process sampling profiler (Windows, profiling only)") orelse false);
     try rstdbuild.addBuildOptsModToModule(build_options, mod);
     // zigwin32 comes from rstd's build.zig.zon; nothing to declare here.
     rstdbuild.addWin32ToModIfWinTgt(b, target, mod);
