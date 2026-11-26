@@ -17,8 +17,10 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         // .link_libc = true,
     });
-    // Frame pointers and symbols for profilers (.github/workflows/profile.yml)
-    if (b.option(bool, "profile", "Keep frame pointers and debug info, for profilers") orelse false) {
+    // Frame pointers and symbols for profilers (.github/workflows/profile.yml);
+    // on Windows x64 also the in-process sampler (src/profile.zig)
+    const profiling = b.option(bool, "profile", "Keep frame pointers and debug info, for profilers; on Windows x64 build in the sampler") orelse false;
+    if (profiling) {
         mod.omit_frame_pointer = false;
         mod.strip = false;
     }
@@ -32,8 +34,8 @@ pub fn build(b: *std.Build) !void {
     // (e.g. -Dlog-scope-level=...).
     const build_options = try rstdbuild.addBuildOptionsModule(b, @tagName(zon.name), zon.version, &rstd_mod);
     try rstdbuild.addLogScopeOptions(b, build_options, &.{});
-    // A profiling build samples its own threads (src/profile.zig); never a release
-    build_options.addOption(bool, "profile_sampler", b.option(bool, "profile-sampler", "Build in the in-process sampling profiler (Windows, profiling only)") orelse false);
+    const tr = target.result;
+    build_options.addOption(bool, "profile_sampler", profiling and tr.os.tag == .windows and tr.cpu.arch == .x86_64);
     try rstdbuild.addBuildOptsModToModule(build_options, mod);
     // zigwin32 comes from rstd's build.zig.zon; nothing to declare here.
     rstdbuild.addWin32ToModIfWinTgt(b, target, mod);

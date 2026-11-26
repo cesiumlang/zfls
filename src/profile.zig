@@ -1,5 +1,5 @@
 //! The profiling build's sampler, started by `ZFLS_PROFILE_OUT=<prefix>`
-//! when built with `-Dprofile-sampler=true` (never in a release); see
+//! when built with `-Dprofile=true` on Windows x64 (never in a release); see
 //! profile/sampler.zig. Without the build option every function is empty.
 
 const std = @import("std");

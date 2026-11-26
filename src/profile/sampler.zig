@@ -1,5 +1,5 @@
 //! A sampling profiler for this process, for profiling builds only
-//! (`zig build -Dprofile-sampler=true`, Windows). A thread suspends each
+//! (`zig build -Dprofile=true`, Windows x64). A thread suspends each
 //! other thread of the process every few milliseconds, records its
 //! instruction pointer and unwinds its stack with the unwind tables (no
 //! frame pointers needed), then resumes it. Only threads of this process
