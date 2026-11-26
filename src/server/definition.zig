@@ -423,8 +423,10 @@ pub fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj
 pub fn callerTarget(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj) !?*Obj {
     if (v.kind != .variable) return null;
     const ast = file.ast orelse return null;
+    // the cheap checks first: most variables are no procedure's declaration
+    const target = (try objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, true)) orelse return null;
     const called = v.varDataConst().is_external or isCalledAt(file, line, col) or isCalledIn(v);
-    return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, called);
+    return if (called) target else null;
 }
 
 /// Whether the name at byte column `col` of 0-based line `line` is
@@ -444,6 +446,7 @@ fn isCalledIn(v: *const Obj) bool {
     var ln = v.sline;
     while (ln < scope.eline and ln < file.nLines()) : (ln += 1) {
         const text = file.getLine(ln, false) orelse continue;
+        if (std.ascii.findIgnoreCase(text, v.name) == null) continue;
         var it = helpers.words(text);
         while (it.next()) |w| {
             if (!std.ascii.eqlIgnoreCase(w.str, v.name)) continue;

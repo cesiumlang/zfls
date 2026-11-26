@@ -27,6 +27,7 @@ const FortranFile = parser.FortranFile;
 const Value = json.Value;
 
 const operators = @import("operators.zig");
+const name_hits = @import("name_hits.zig");
 const assignment = @import("assignment.zig");
 const srv = @import("../server.zig");
 const Server = srv.Server;
@@ -270,13 +271,13 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
             if (std.ascii.findIgnoreCase(line, name) == null) continue;
-            var it = name_re.iterator(line);
+            var it: name_hits.Iterator = .init(line, name, name_re);
             while (it.next()) |m| {
-                if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
-                    try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+                if (for_rename and isRenamedOriginal(line, m.start, def_obj)) {
+                    try file_refs.append(a, .{ .line = i, .start = m.start, .end = m.end });
                     continue;
                 }
-                const var_def = (try definition.getDefinition(self, a, file, i, m.start(1) + 1, false)) orelse continue;
+                const var_def = (try definition.getDefinition(self, a, file, i, m.start + 1, false)) orelse continue;
                 if (var_def.kind == .intrinsic) continue;
                 var ref_match = false;
                 var in_cache = false;
@@ -289,7 +290,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
                     isExtendedGenericPair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
-                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
+                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start, var_def) == def_obj))
                 {
                     ref_match = true;
                 } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
@@ -319,7 +320,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                         }
                     };
                 }
-                if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+                if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start, .end = m.end });
             }
         };
         if (file_refs.items.len > 0) try out.append(a, .{ .path = filename, .file = file, .refs = file_refs });

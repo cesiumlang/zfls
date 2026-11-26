@@ -26,6 +26,7 @@ pub const parser_stmt_functions = @import("parser/stmt_functions.zig");
 pub const parser_entries = @import("parser/entries.zig");
 pub const parser_groups = @import("parser/groups.zig");
 pub const server_groups = @import("server/groups.zig");
+pub const server_name_hits = @import("server/name_hits.zig");
 pub const parser_tab_format = @import("parser/tab_format.zig");
 pub const parser_code_line = @import("parser/code_line.zig");
 pub const preprocessor = @import("preprocessor.zig");
