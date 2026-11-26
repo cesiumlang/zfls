@@ -22,7 +22,7 @@ const findInScope = objects.findInScope;
 const importHides = objects.importHides;
 const findInWorkspace = objects.findInWorkspace;
 
-pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
+pub fn getDiagnostics(self: *const Obj, a: Allocator, implicit_flag: ?bool) ![]Diagnostic {
     var errors: std.ArrayList(Diagnostic) = .empty;
     switch (self.kind) {
         .type => {
@@ -57,7 +57,6 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
                     m.name,
                 ));
             }
-            const implicit_flag = self.getImplicit();
             if (implicit_flag == null or implicit_flag.?) return errors.items;
             const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.argList(), " ", ""), ",");
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {

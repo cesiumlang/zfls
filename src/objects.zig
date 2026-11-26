@@ -602,11 +602,12 @@ pub const Obj = struct {
         return self.doc_str;
     }
 
+    /// The IMPLICIT rule in effect: the scope's own, else that of the
+    /// nearest scope around it that has one
     pub fn getImplicit(self: *const Obj) ?bool {
-        const p = self.parent orelse return self.implicit_vars;
-        const parent_implicit = p.getImplicit();
-        if (self.implicit_vars != null or parent_implicit == null) return self.implicit_vars;
-        return parent_implicit;
+        var s: ?*const Obj = self;
+        while (s) |o| : (s = o.parent) if (o.implicit_vars) |v| return v;
+        return null;
     }
 
     pub fn isOptional(self: *const Obj) bool {

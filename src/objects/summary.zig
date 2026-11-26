@@ -23,13 +23,25 @@ const serial = @import("serial.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
 
-/// The deepest nesting of scopes in `ast` (scopes count, from 1)
-pub fn maxScopeDepth(ast: *const Ast) i64 {
+/// The deepest nesting of scopes in `ast` (scopes count, from 1): each
+/// scope's depth is its parent's and one, as scopes are listed after their
+/// parents, not a walk through all those around it (#923)
+pub fn maxScopeDepth(gpa: Allocator, ast: *const Ast) Allocator.Error!i64 {
+    var depth: std.AutoHashMapUnmanaged(*const Obj, i64) = .empty;
+    defer depth.deinit(gpa);
+    try depth.ensureTotalCapacity(gpa, @intCast(ast.scope_list.items.len));
     var max: i64 = 0;
     for (ast.scope_list.items) |s| {
-        var d: i64 = 0;
-        var p: ?*Obj = s;
-        while (p) |o| : (p = o.parent) d += 1;
+        var d: i64 = 1;
+        var p = s.parent;
+        while (p) |o| : (p = o.parent) {
+            if (depth.get(o)) |known| {
+                d += known;
+                break;
+            }
+            d += 1;
+        }
+        depth.putAssumeCapacity(s, d);
         max = @max(max, d);
     }
     return max;
@@ -48,7 +60,7 @@ pub fn summarizable(ast: *const Ast) bool {
 /// left as it is but for what it drops. Null when it cannot be summarized.
 pub fn summarize(gpa: Allocator, full: *Ast) Allocator.Error!?struct { ast: *Ast, bytes: []u8 } {
     if (!summarizable(full)) return null;
-    const depth = maxScopeDepth(full);
+    const depth = try maxScopeDepth(gpa, full);
     // saving would fail, after `prune` took from `full` what its own
     // diagnostics read (#869); the margin is for objects inside the scopes
     if (depth + 4 > serial.max_nesting) return null;
@@ -200,7 +212,7 @@ test "a summary keeps what other files see of a file" {
     _ = try f.setTextOwned(try gpa.dupe(u8, src));
     const full = try f.parse(std.testing.io, null, &.{}, .{});
     defer full.destroy();
-    const depth = maxScopeDepth(full);
+    const depth = try maxScopeDepth(gpa, full);
     const n_scopes = full.scope_list.items.len;
     const s = (try summarize(gpa, full)).?;
     defer s.ast.destroy();
@@ -240,6 +252,29 @@ test "a summary keeps what other files see of a file" {
     try serial.load(gpa, back, s.bytes);
     try std.testing.expectEqual(sum.scope_list.items.len, back.scope_list.items.len);
     try std.testing.expect(back.summary != null);
+}
+
+test "the deepest nesting of scopes, also beside shallower ones (#923)" {
+    const gpa = std.testing.allocator;
+    const src =
+        \\module m
+        \\contains
+        \\  subroutine a()
+        \\  end subroutine
+        \\  subroutine b()
+        \\  contains
+        \\    subroutine c()
+        \\    end subroutine
+        \\  end subroutine
+        \\end module
+        \\
+    ;
+    const f = try FortranFile.create(gpa, "/w/d.f90", null);
+    defer f.destroy();
+    _ = try f.setTextOwned(try gpa.dupe(u8, src));
+    const full = try f.parse(std.testing.io, null, &.{}, .{});
+    defer full.destroy();
+    try std.testing.expectEqual(@as(i64, 3), try maxScopeDepth(gpa, full));
 }
 
 test "an include's text or a file that includes is not summarized" {
