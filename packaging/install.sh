@@ -2,7 +2,8 @@
 # Installs a zfls release on macOS, Linux or Windows (in Git Bash, MSYS2 or
 # Cygwin; install.ps1 does the same in PowerShell): downloads the release
 # archive for this computer from GitHub, checks it against the release's SHA256SUMS
-# and unpacks it, by default into the current directory (a portable install:
+# (and SHA256SUMS against its GPG signature with gpg, or the archive's build
+# attestation with gh, when either is installed) and unpacks it, by default into the current directory (a portable install:
 # nothing is written anywhere else).
 #
 #   curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh
@@ -17,6 +18,9 @@
 set -eu
 
 repo=cesiumlang/zfls
+# the release signing key (SIGNING-KEY.asc in the repository) and its fingerprint
+key_url=https://raw.githubusercontent.com/$repo/main/SIGNING-KEY.asc
+key_fpr=9431367798CCD8E28BC0E589BB30DEF734E5F690
 
 usage() {
     cat <<EOF
@@ -121,6 +125,39 @@ sha256() {
     fi
 }
 
+# Checks SHA256SUMS against its signature with the release key (gpg), else
+# the archive's build attestation (an authenticated gh); stops on a failure.
+# Releases before 0.5.0 have neither.
+verify_release() {
+    case "$version" in
+        0.[0-4].*)
+            echo "Note: v$version is older than 0.5.0 and not signed; only its SHA-256 was checked"
+            return 0
+            ;;
+    esac
+    if have gpg; then
+        download "$base/SHA256SUMS.asc" "$tmp/SHA256SUMS.asc" ||
+            die "cannot download $base/SHA256SUMS.asc; the release is not verified, so it is not installed"
+        download "$key_url" "$tmp/key.asc" || die "cannot download the release signing key $key_url"
+        # a keyring of its own: the user's is not touched
+        GNUPGHOME="$tmp/gnupg"
+        export GNUPGHOME
+        mkdir "$GNUPGHOME" && chmod 700 "$GNUPGHOME" 2>/dev/null || true
+        gpg --batch --quiet --import "$tmp/key.asc" >/dev/null 2>&1 || die "cannot import the release signing key"
+        gpg --batch --status-fd 1 --verify "$tmp/SHA256SUMS.asc" "$tmp/SHA256SUMS" > "$tmp/gpg.status" 2>/dev/null ||
+            die "SHA256SUMS of v$version does not match its signature"
+        grep -q "^\[GNUPG:\] VALIDSIG .*$key_fpr" "$tmp/gpg.status" ||
+            die "SHA256SUMS of v$version is not signed by the release key ($key_fpr)"
+        echo "Verified the signature of SHA256SUMS (release key $key_fpr)"
+    elif have gh && gh auth status >/dev/null 2>&1; then
+        gh attestation verify "$tmp/$archive" --repo "$repo" >/dev/null 2>&1 ||
+            die "$archive has no valid build attestation of $repo"
+        echo "Verified the build attestation of $archive"
+    else
+        echo "Note: neither gpg nor a signed-in gh is installed, so only the SHA-256 was checked, not the release's signature or attestation"
+    fi
+}
+
 main() {
     dir=.
     version=
@@ -180,6 +217,7 @@ main() {
     actual=$(sha256 "$tmp/$archive") ||
         die "needs sha256sum or shasum to verify $archive"
     [ "$actual" = "$expected" ] || die "$archive does not match its SHA-256 in SHA256SUMS"
+    verify_release
 
     mkdir -p "$dir"
     unpack "$tmp/$archive" "$dir"

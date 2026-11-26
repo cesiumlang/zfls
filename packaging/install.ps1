@@ -1,6 +1,7 @@
 # Installs a zfls release on Windows: downloads the release archive for this
-# computer from GitHub, checks it against the release's SHA256SUMS and
-# unpacks it, by default into the current directory (a portable install:
+# computer from GitHub, checks it against the release's SHA256SUMS (and
+# SHA256SUMS against its GPG signature with gpg, or the archive's build
+# attestation with gh, when either is installed) and unpacks it, by default into the current directory (a portable install:
 # nothing is written anywhere else, and the PATH is left alone). install.sh
 # does the same on macOS and Linux.
 #
@@ -26,6 +27,9 @@ param(
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest is slow with it
     $repo = 'cesiumlang/zfls'
+    # the release signing key (SIGNING-KEY.asc in the repository) and its fingerprint
+    $keyUrl = "https://raw.githubusercontent.com/$repo/main/SIGNING-KEY.asc"
+    $keyFpr = '9431367798CCD8E28BC0E589BB30DEF734E5F690'
 
     # TLS 1.2 (Windows PowerShell 5.1 may not offer it by default), and
     # nothing older
@@ -43,6 +47,13 @@ param(
             Remove-Item -Force $OutFile -ErrorAction SilentlyContinue
             throw "install.ps1: $Url was redirected to $final, which is not https"
         }
+    }
+
+    # Runs a program; its errors are its exit code, not PowerShell's
+    function Invoke-Quiet([string]$Exe, [string[]]$Arguments) {
+        $saved = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & $Exe @Arguments 2>$null } finally { $ErrorActionPreference = $saved }
     }
 
     # The architecture of Windows itself, also when this PowerShell runs
@@ -106,6 +117,44 @@ param(
         if (-not $expected) { throw "install.ps1: SHA256SUMS of v$ver does not list $archive" }
         $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $archive)).Hash
         if ($actual -ne $expected) { throw "install.ps1: $archive does not match its SHA-256 in SHA256SUMS" }
+
+        # SHA256SUMS against its signature with the release key (gpg), else the
+        # archive's build attestation (a signed-in gh); releases before 0.5.0
+        # have neither
+        if ($ver -match '^0\.[0-4]\.') {
+            Write-Host "Note: v$ver is older than 0.5.0 and not signed; only its SHA-256 was checked"
+        } elseif (Get-Command gpg -ErrorAction SilentlyContinue) {
+            $asc = Join-Path $tmp 'SHA256SUMS.asc'
+            try {
+                Get-Https "$base/SHA256SUMS.asc" $asc
+            } catch {
+                throw "install.ps1: cannot download $base/SHA256SUMS.asc; the release is not verified, so it is not installed: $_"
+            }
+            $key = Join-Path $tmp 'key.asc'
+            try { Get-Https $keyUrl $key } catch { throw "install.ps1: cannot download the release signing key ${keyUrl}: $_" }
+            # a keyring of its own: the user's is not touched
+            $savedHome = $env:GNUPGHOME
+            $env:GNUPGHOME = Join-Path $tmp 'gnupg'
+            New-Item -ItemType Directory -Path $env:GNUPGHOME | Out-Null
+            try {
+                Invoke-Quiet gpg @('--batch', '--quiet', '--import', $key) | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "install.ps1: cannot import the release signing key" }
+                $status = Invoke-Quiet gpg @('--batch', '--status-fd', '1', '--verify', $asc, $sums)
+                if ($LASTEXITCODE -ne 0) { throw "install.ps1: SHA256SUMS of v$ver does not match its signature" }
+                if (-not ($status | Where-Object { $_ -match "^\[GNUPG:\] VALIDSIG .*$keyFpr" })) {
+                    throw "install.ps1: SHA256SUMS of v$ver is not signed by the release key ($keyFpr)"
+                }
+            } finally {
+                $env:GNUPGHOME = $savedHome
+            }
+            Write-Host "Verified the signature of SHA256SUMS (release key $keyFpr)"
+        } elseif ((Get-Command gh -ErrorAction SilentlyContinue) -and (& { Invoke-Quiet gh @('auth', 'status') | Out-Null; $LASTEXITCODE -eq 0 })) {
+            Invoke-Quiet gh @('attestation', 'verify', (Join-Path $tmp $archive), '--repo', $repo) | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1: $archive has no valid build attestation of $repo" }
+            Write-Host "Verified the build attestation of $archive"
+        } else {
+            Write-Host "Note: neither gpg nor a signed-in gh is installed, so only the SHA-256 was checked, not the release's signature or attestation"
+        }
 
         New-Item -ItemType Directory -Force -Path $Dir | Out-Null
         Expand-Archive -Path (Join-Path $tmp $archive) -DestinationPath $Dir -Force
