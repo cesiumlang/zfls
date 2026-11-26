@@ -83,7 +83,9 @@ serve() {
     echo sig > "$work/serve/SHA256SUMS.asc"
 }
 
-# check TITLE EXPECT PATH [args]: install.sh with the fake release; EXPECT is ok or fail
+# check TITLE EXPECT PATH [args]: install.sh with the fake release; EXPECT is ok or fail;
+# $mode is gpg's answer and $version the release (set them as statements:
+# an assignment before a function call stays set after it in some shells)
 check() {
     title=$1 expect=$2 path=$3
     shift 3
@@ -120,10 +122,13 @@ check "an archive that is not listed" fail "$with_shims"
 
 serve
 printf '%s  %s.tar.gz\n' "$good" "$name" > "$work/serve/SHA256SUMS"
-mode=bad check "a signature that does not verify" fail "$with_shims"
+mode=bad
+check "a signature that does not verify" fail "$with_shims"
 grep -q "does not match its signature" "$work/out" || { echo "FAIL a bad signature: wrong reason"; cat "$work/out"; fail=1; }
-mode=other check "a signature by another key" fail "$with_shims"
+mode=other
+check "a signature by another key" fail "$with_shims"
 grep -q "is not signed by the release key" "$work/out" || { echo "FAIL another key: wrong reason"; cat "$work/out"; fail=1; }
+mode=good
 check "a signed release, checked with gpg" ok "$with_shims"
 if grep -q "Verified the signature of SHA256SUMS" "$work/out"; then echo "ok   it says the signature was checked"; else echo "FAIL no word of the signature"; cat "$work/out"; fail=1; fi
 check "neither gpg nor gh: only the checksum" ok "$work/nogpg"
@@ -131,7 +136,9 @@ if grep -q "only the SHA-256 was checked" "$work/out"; then echo "ok   it says o
 rm "$work/serve/SHA256SUMS.asc"
 check "a release of 0.5.0 on without SHA256SUMS.asc" fail "$with_shims"
 printf '%s  %s.tar.gz\n' "$(sum "$work/rel/$old.tar.gz")" "$old" > "$work/serve/SHA256SUMS"
-version=0.4.9 check "a release before 0.5.0, which has no signature" ok "$with_shims"
+version=0.4.9
+check "a release before 0.5.0, which has no signature" ok "$with_shims"
+version=
 
 # every download asked for https only
 if [ -s "$work/protos" ] && ! grep -qv '^=https$' "$work/protos"; then
