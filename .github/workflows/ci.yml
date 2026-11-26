@@ -39,6 +39,13 @@ name: CI
 # a direct push, expired artifacts, a pull request whose CI was started by
 # hand as m-intrinsics.yml does) it builds and tests them itself, macOS
 # arm64 included.
+#
+# Signing: only a release (and a run started by hand with the `sign` input)
+# signs the Windows binaries and signs and notarizes the macOS ones, so a
+# release builds, signs and tests its own archives, the tests running on the
+# signed binaries, and never reuses those of a pull request run, which are
+# unsigned. Pull request runs are never signed. Each signing job is also
+# skipped while its configuration is unset (the SIGN_* and APPLE_* variables).
 
 on:
   push:
@@ -47,6 +54,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize the binaries, as a release does
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,6 +97,7 @@ jobs:
       sha: ${{ steps.ver.outputs.sha }}
       tree: ${{ steps.ver.outputs.tree }}
       ci: ${{ steps.ver.outputs.ci }}
+      sign: ${{ steps.ver.outputs.sign }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,6 +109,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          INPUT_SIGN: ${{ inputs.sign }}
         run: |
           # matches, no_ci, keeps_binaries
           source .github/workflows/changes.sh
@@ -174,11 +188,15 @@ jobs:
             fi
             version=$next
           fi
+          # signing and notarization only for a release, or a run started by hand that asks
+          sign=false
+          if [ "$release" = true ] || { [ "$EVENT" = workflow_dispatch ] && [ "$INPUT_SIGN" = true ]; }; then sign=true; fi
           sha=$(git rev-parse HEAD)
           tree=$(git rev-parse "HEAD^{tree}")
           {
             echo "version=$version"
             echo "release=$release"
+            echo "sign=$sign"
             echo "sha=$sha"
             echo "tree=$tree"
           } >> "$GITHUB_OUTPUT"
@@ -199,7 +217,9 @@ jobs:
   reuse:
     name: Find tested release binaries
     needs: version
-    if: needs.version.outputs.release == 'true'
+    # (not when signing is configured: the archives of a pull request run are
+    # unsigned, so a release builds, signs and tests its own)
+    if: needs.version.outputs.release == 'true' && vars.SIGN_AZURE_CLIENT_ID == '' && vars.APPLE_SIGNING != 'true'
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -369,7 +389,7 @@ jobs:
           # tar keeps the executables' modes for the other jobs
           tar -C pkg -cf unsigned.tar .
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned
           path: unsigned.tar
@@ -381,14 +401,14 @@ jobs:
   # (AZURE_*), and its federated credential must trust the refs that run this.
   sign-windows:
     name: Sign the Windows binaries
-    needs: compile
-    if: ${{ !cancelled() && needs.compile.result == 'success' && vars.SIGN_AZURE_CLIENT_ID != '' }}
+    needs: [version, compile]
+    if: ${{ !cancelled() && needs.compile.result == 'success' && needs.version.outputs.sign == 'true' && vars.SIGN_AZURE_CLIENT_ID != '' }}
     runs-on: windows-2025
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsigned
           path: unsigned
@@ -400,7 +420,7 @@ jobs:
           ls pkg
 
       - name: Sign in to Azure
-        uses: azure/login@v3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.SIGN_AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.SIGN_AZURE_TENANT_ID }}
@@ -409,7 +429,7 @@ jobs:
       # SHA-256 and a trusted timestamp: the certificates last 3 days, the
       # signature must stay valid after
       - name: Sign zfls.exe
-        uses: azure/artifact-signing-action@v2
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           endpoint: ${{ vars.SIGN_ENDPOINT }}
           signing-account-name: ${{ vars.SIGN_ACCOUNT }}
@@ -436,7 +456,7 @@ jobs:
       - name: Stage the signed packages
         run: tar -C pkg -cf signed-windows.tar .
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed-windows
           path: signed-windows.tar
@@ -447,7 +467,7 @@ jobs:
   sign-macos:
     name: Sign and notarize the macOS binaries
     needs: [version, compile]
-    if: ${{ !cancelled() && needs.compile.result == 'success' && vars.APPLE_SIGNING == 'true' }}
+    if: ${{ !cancelled() && needs.compile.result == 'success' && needs.version.outputs.sign == 'true' && vars.APPLE_SIGNING == 'true' }}
     runs-on: macos-15
     timeout-minutes: 120
     env:
@@ -457,13 +477,13 @@ jobs:
       APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
       APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           sparse-checkout: packaging
           sparse-checkout-cone-mode: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsigned
           path: unsigned
@@ -542,7 +562,7 @@ jobs:
       - name: Stage the signed packages
         run: tar -C pkg -cf signed-macos.tar .
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed-macos
           path: signed-macos.tar
@@ -559,22 +579,22 @@ jobs:
       && contains(fromJSON('["success","skipped"]'), needs.sign-macos.result) }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsigned
           path: unsigned
 
       # the signed packages replace the unsigned ones, when there are any
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: signed-*
           path: signed
@@ -903,7 +923,7 @@ jobs:
 
       # What users download must be the signed binary
       - name: The shipped zfls.exe is signed (Windows)
-        if: runner.os == 'Windows' && vars.SIGN_AZURE_CLIENT_ID != ''
+        if: runner.os == 'Windows' && needs.version.outputs.sign == 'true' && vars.SIGN_AZURE_CLIENT_ID != ''
         shell: pwsh
         run: |
           $exe = Get-ChildItem shipped -Recurse -Filter zfls.exe | Select-Object -First 1
@@ -912,7 +932,7 @@ jobs:
           if ($sig.Status -ne 'Valid') { throw "the shipped zfls.exe is not validly signed: $($sig.Status)" }
 
       - name: The shipped zfls is signed (macOS)
-        if: runner.os == 'macOS' && vars.APPLE_SIGNING == 'true'
+        if: runner.os == 'macOS' && needs.version.outputs.sign == 'true' && vars.APPLE_SIGNING == 'true'
         run: |
           exe=$(ls shipped/*/zfls)
           codesign --verify --strict --verbose=2 "$exe"
