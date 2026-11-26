@@ -288,8 +288,10 @@ jobs:
           fi
           echo "v$version is newer than the latest release v$latest." | tee -a "$GITHUB_STEP_SUMMARY"
 
-  build:
-    name: Build release binaries
+  # Compiles every target and stages each package folder (pkg/), unsigned.
+  # The sign-* jobs sign the executables in it; build then archives them.
+  compile:
+    name: Compile release binaries
     needs: [version, reuse]
     # reuse is skipped unless releasing, and its failure only means building;
     # skipped (with the tests and packages after it) when only files of
@@ -336,11 +338,10 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$VERSION\2/" build.zig.zon
 
-      - name: Cross-compile and package
+      - name: Cross-compile
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          mkdir -p dist
           for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
             # macOS 11 and later, rather than Zig's default minimum (15)
             case "$target" in
@@ -364,6 +365,265 @@ jobs:
               zig build ifx-kit --prefix "out/$target"
               cp -r "out/$target/lib/ifx" "$pkg/ifx-kit"
             fi
+          done
+          # tar keeps the executables' modes for the other jobs
+          tar -C pkg -cf unsigned.tar .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unsigned
+          path: unsigned.tar
+          if-no-files-found: error
+
+  # Signing needs the Artifact Signing account (#766): skipped, and the
+  # binaries stay unsigned, while the SIGN_AZURE_CLIENT_ID repository variable
+  # is unset. Its Entra identity is separate from the Marketplace one
+  # (AZURE_*), and its federated credential must trust the refs that run this.
+  sign-windows:
+    name: Sign the Windows binaries
+    needs: compile
+    if: ${{ !cancelled() && needs.compile.result == 'success' && vars.SIGN_AZURE_CLIENT_ID != '' }}
+    runs-on: windows-2025
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: unsigned
+          path: unsigned
+
+      - name: Unpack the Windows packages
+        run: |
+          mkdir pkg
+          tar -C pkg -xf unsigned/unsigned.tar --wildcards "./zfls-v*-windows/*"
+          ls pkg
+
+      - name: Sign in to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.SIGN_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.SIGN_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.SIGN_AZURE_SUBSCRIPTION_ID }}
+
+      # SHA-256 and a trusted timestamp: the certificates last 3 days, the
+      # signature must stay valid after
+      - name: Sign zfls.exe
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.SIGN_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGN_PROFILE }}
+          files-folder: ${{ github.workspace }}\pkg
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the signatures
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem pkg -Recurse -Filter zfls.exe
+          if ($exes.Count -ne 2) { throw "expected 2 zfls.exe, found $($exes.Count)" }
+          foreach ($exe in $exes) {
+            $sig = Get-AuthenticodeSignature $exe.FullName
+            "$($exe.FullName): $($sig.Status) $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "$($exe.FullName) is not validly signed: $($sig.Status)" }
+            if ($null -eq $sig.TimeStamperCertificate) { throw "$($exe.FullName) has no timestamp" }
+          }
+
+      - name: Stage the signed packages
+        run: tar -C pkg -cf signed-windows.tar .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signed-windows
+          path: signed-windows.tar
+          if-no-files-found: error
+
+  # Signing needs an Apple Developer ID (#767): skipped, and the binaries
+  # stay unsigned, while the APPLE_SIGNING repository variable is not true
+  sign-macos:
+    name: Sign and notarize the macOS binaries
+    needs: [version, compile]
+    if: ${{ !cancelled() && needs.compile.result == 'success' && vars.APPLE_SIGNING == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          sparse-checkout: packaging
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: unsigned
+          path: unsigned
+
+      - name: Unpack the macOS packages
+        run: |
+          mkdir pkg
+          tar -C pkg -xf unsigned/unsigned.tar --include "./zfls-v*-macos/*"
+          ls pkg
+
+      - name: Import the Developer ID certificate
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(uuidgen)
+          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$keychain"
+
+      # Hardened runtime and a secure timestamp, as notarization requires.
+      # packaging/zfls.entitlements: what zfls dap needs to debug other
+      # processes
+      - name: Sign
+        run: |
+          identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)
+          [ -n "$identity" ] || { echo "::error::no Developer ID Application identity"; exit 1; }
+          for exe in pkg/*/zfls; do
+            codesign --force --options runtime --timestamp \
+              --entitlements packaging/zfls.entitlements \
+              --sign "$identity" "$exe"
+            codesign --verify --strict --verbose=2 "$exe"
+          done
+
+      # A bare executable cannot be stapled: Gatekeeper looks the ticket up
+      # online. notarytool takes a zip.
+      - name: Notarize
+        run: |
+          echo "$APPLE_NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID")
+          # submit every file first, then wait for each verdict (a team's
+          # first submissions can take a long while on Apple's side)
+          ids=()
+          for dir in pkg/*/; do
+            name=$(basename "$dir")
+            ditto -c -k --keepParent "$dir/zfls" "$RUNNER_TEMP/$name.zip"
+            id=$(xcrun notarytool submit "$RUNNER_TEMP/$name.zip" --no-wait --output-format json "${auth[@]}" | jq -r .id)
+            echo "$name: submission $id"
+            ids+=("$id")
+          done
+          failed=0
+          for id in "${ids[@]}"; do
+            xcrun notarytool wait "$id" --timeout 90m --output-format json "${auth[@]}" > "$RUNNER_TEMP/result.json" || true
+            status=$(jq -r '.status // "no answer"' "$RUNNER_TEMP/result.json")
+            echo "submission $id: $status"
+            if [ "$status" != Accepted ]; then
+              xcrun notarytool log "$id" "${auth[@]}" || true
+              failed=1
+            fi
+          done
+          rm "$RUNNER_TEMP/notary.p8"
+          exit "$failed"
+
+      - name: Verify the signatures
+        run: |
+          for exe in pkg/*/zfls; do
+            codesign --verify --strict "$exe"
+            codesign -dv --verbose=2 "$exe" 2>&1 | grep -E "Authority|flags|Timestamp"
+          done
+
+      - name: Stage the signed packages
+        run: tar -C pkg -cf signed-macos.tar .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signed-macos
+          path: signed-macos.tar
+          if-no-files-found: error
+
+  build:
+    name: Build release binaries
+    needs: [version, compile, sign-windows, sign-macos]
+    # a signing job that was skipped (no credentials yet) leaves the
+    # binaries unsigned; one that failed fails the build
+    if: >-
+      ${{ !cancelled() && needs.compile.result == 'success'
+      && contains(fromJSON('["success","skipped"]'), needs.sign-windows.result)
+      && contains(fromJSON('["success","skipped"]'), needs.sign-macos.result) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          submodules: recursive
+
+      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: unsigned
+          path: unsigned
+
+      # the signed packages replace the unsigned ones, when there are any
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: signed-*
+          path: signed
+
+      # (a single matching artifact is extracted into signed/ itself, several
+      # into a folder each: find covers both). A signing job that succeeded
+      # must have its packages used, or the release would ship unsigned
+      - name: Unpack the packages
+        env:
+          WINDOWS: ${{ needs.sign-windows.result }}
+          MACOS: ${{ needs.sign-macos.result }}
+        run: |
+          mkdir pkg
+          tar -C pkg -xf unsigned/unsigned.tar
+          used=" "
+          while read -r t; do
+            tar -C pkg -xf "$t"
+            echo "using $t"
+            used="$used$(basename "$t") "
+          done < <(find signed -name 'signed-*.tar' 2>/dev/null)
+          if [ "$WINDOWS" = success ]; then
+            case "$used" in *" signed-windows.tar "*) ;; *) echo "::error::the Windows signing job succeeded but its packages were not found"; exit 1 ;; esac
+          fi
+          if [ "$MACOS" = success ]; then
+            case "$used" in *" signed-macos.tar "*) ;; *) echo "::error::the macOS signing job succeeded but its packages were not found"; exit 1 ;; esac
+          fi
+
+      # The extension's version comes from build.zig.zon, as in compile
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch
+
+      - name: Set version ${{ needs.version.outputs.version }}
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$VERSION\2/" build.zig.zon
+
+      - name: Archive
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            name="zfls-v$VERSION-$target"
             case "$target" in
               *windows) (cd pkg && zip -qr "../dist/$name.zip" "$name") ;;
               *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
@@ -640,6 +900,22 @@ jobs:
           exe=zfls
           case "$TARGET" in *windows) exe=zfls.exe ;; esac
           echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
+
+      # What users download must be the signed binary
+      - name: The shipped zfls.exe is signed (Windows)
+        if: runner.os == 'Windows' && vars.SIGN_AZURE_CLIENT_ID != ''
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem shipped -Recurse -Filter zfls.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          "$($exe.FullName): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "the shipped zfls.exe is not validly signed: $($sig.Status)" }
+
+      - name: The shipped zfls is signed (macOS)
+        if: runner.os == 'macOS' && vars.APPLE_SIGNING == 'true'
+        run: |
+          exe=$(ls shipped/*/zfls)
+          codesign --verify --strict --verbose=2 "$exe"
 
       - name: The ifx kit in the package (Windows x64)
         if: matrix.target == 'x86_64-windows'
@@ -1150,7 +1426,7 @@ jobs:
   # no check under its legs' names, so those cannot be required themselves.
   ci-result:
     name: CI
-    needs: [version, version-check, reuse, build, test, conda, install-script]
+    needs: [version, version-check, reuse, compile, sign-windows, sign-macos, build, test, conda, install-script]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -1179,6 +1455,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # the attestations of the release files
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
@@ -1239,6 +1518,17 @@ jobs:
           git tag -a "v$VERSION" -m "zfls v$VERSION" "$SHA"
           git push origin "v$VERSION"
           (cd dist && sha256sum -- * > SHA256SUMS)
+
+      # A detached GPG signature of SHA256SUMS (the public key is
+      # SIGNING-KEY.asc) and build attestations of the files: each skipped
+      # while its repository variable is not true
+      - name: Sign and attest the release files
+        uses: ./.github/actions/release-integrity
+        with:
+          sign: ${{ vars.RELEASE_GPG_SIGNING }}
+          attest: ${{ vars.RELEASE_ATTESTATIONS }}
+          gpg-key: ${{ secrets.RELEASE_GPG_KEY }}
+          gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
 
       - name: Publish release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4

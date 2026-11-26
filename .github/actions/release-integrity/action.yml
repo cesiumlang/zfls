@@ -1,0 +1,46 @@
+name: Sign and attest the release files
+description: >-
+  A detached GPG signature of dist/SHA256SUMS (checked against the public key
+  in the repository, as users do), and GitHub build attestations of dist/*.
+  The caller needs id-token and attestations write permissions to attest.
+inputs:
+  sign:
+    description: "true to sign SHA256SUMS with the release signing subkey"
+    default: "false"
+  attest:
+    description: "true to attest the files of dist/"
+    default: "false"
+  gpg-key:
+    description: The signing subkey, armored and base64-encoded
+    default: ""
+  gpg-passphrase:
+    description: Its passphrase
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Sign SHA256SUMS (GPG)
+      if: ${{ inputs.sign == 'true' }}
+      shell: bash
+      env:
+        RELEASE_GPG_KEY: ${{ inputs.gpg-key }}
+        RELEASE_GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
+      run: |
+        export GNUPGHOME="$RUNNER_TEMP/gnupg"
+        mkdir -m 700 "$GNUPGHOME"
+        echo "$RELEASE_GPG_KEY" | base64 --decode | gpg --batch --import
+        printf '%s' "$RELEASE_GPG_PASSPHRASE" > "$RUNNER_TEMP/pass"
+        gpg --batch --pinentry-mode loopback --passphrase-file "$RUNNER_TEMP/pass" \
+          --armor --detach-sign -o dist/SHA256SUMS.asc dist/SHA256SUMS
+        rm "$RUNNER_TEMP/pass"
+        export GNUPGHOME="$RUNNER_TEMP/verify"
+        mkdir -m 700 "$GNUPGHOME"
+        gpg --batch --import SIGNING-KEY.asc
+        gpg --batch --verify dist/SHA256SUMS.asc dist/SHA256SUMS
+
+    # Verify with: gh attestation verify FILE --repo cesiumlang/zfls
+    - name: Attest the release files
+      if: ${{ inputs.attest == 'true' }}
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: dist/*
