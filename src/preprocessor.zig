@@ -201,8 +201,24 @@ pub fn preprocessFile(
         if (!dup) try include_dirs.append(a, d);
     }
     const name = if (file_path) |fp| std.Io.Dir.path.basename(fp) else "";
-    return preprocessInner(a, io, contents, name, pp_defs, &include_dirs, 0, dialect, trace);
+    var budget: IncludeBudget = .{};
+    return preprocessInner(a, io, contents, name, pp_defs, &include_dirs, 0, &budget, dialect, trace);
 }
+
+/// What the INCLUDE lines of one file, its includes' too, may read: a file
+/// that includes another twice, which includes a third twice and so on,
+/// would read 2^32 files at the depth limit
+const IncludeBudget = struct {
+    files: usize = 0,
+    bytes: usize = 0,
+
+    const max_files = 4096;
+    const max_bytes = 1 << 26;
+};
+
+/// A line that macros make longer than this keeps its last substitution:
+/// macros that each double their text would otherwise fill memory
+const max_substituted_line = 1 << 20;
 
 fn preprocessInner(
     a: Allocator,
@@ -213,6 +229,7 @@ fn preprocessInner(
     pp_defs: ?*const Defs,
     include_dirs: *std.ArrayList([]const u8),
     depth: usize,
+    budget: *IncludeBudget,
     dialect: Dialect,
     trace: ?parser.Trace,
 ) !Output {
@@ -394,7 +411,9 @@ fn preprocessInner(
             if (include_path) |ip| {
                 if (depth == 0) try pp_includes.append(a, .{ .line = i + 1, .path = ip });
                 // guard against include cycles
-                if (depth >= 32) {} else if (fsio.readFile(io, a, ip, .limited(1 << 28))) |data| {
+                if (depth >= 32 or budget.files >= IncludeBudget.max_files or budget.bytes >= IncludeBudget.max_bytes) {} else if (fsio.readFile(io, a, ip, .limited(IncludeBudget.max_bytes - budget.bytes))) |data| {
+                    budget.files += 1;
+                    budget.bytes += data.len;
                     const text = try std.mem.replaceOwned(u8, a, data, "\t", " ");
                     const inc_lines = try parser.splitLines(a, text);
                     const dir = try paths.abspath(a, paths.dirname(ip));
@@ -404,7 +423,7 @@ fn preprocessInner(
                     };
                     if (!dup) try include_dirs.append(a, dir);
                     parser.Trace.print(trace, "\n!!! Parsing include file '{s}'", .{ip});
-                    const res = try preprocessInner(a, io, inc_lines, std.Io.Dir.path.basename(ip), &defs_tmp, include_dirs, depth + 1, dialect, trace);
+                    const res = try preprocessInner(a, io, inc_lines, std.Io.Dir.path.basename(ip), &defs_tmp, include_dirs, depth + 1, budget, dialect, trace);
                     defs_tmp = res.defs;
                     parser.Trace.print(trace, "!!! Completed parsing include file\n", .{});
                 } else |_| {
@@ -432,7 +451,7 @@ fn preprocessInner(
             }
             const c = &(gop.value_ptr.* orelse continue);
             const res = try macro.substitute(a, c, value.value, line);
-            if (res.count > 0) {
+            if (res.count > 0 and res.out.len <= max_substituted_line) {
                 parser.Trace.print(trace, "{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, value.value });
                 line = res.out;
             }
@@ -508,6 +527,18 @@ test "pp macro expansion" {
     try testing.expectEqual(@as(usize, 1), out.skips.len);
     try testing.expectEqual(@as(usize, 5), out.skips[0].start);
     try testing.expectEqual(@as(usize, 7), out.skips[0].end);
+}
+
+test "macros that double a line stop growing it at the cap" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var lines: std.ArrayList([]const u8) = .empty;
+    for (1..41) |k| try lines.append(a, try a.print("#define DD{d}Q DD{d}Q DD{d}Q", .{ k, k + 1, k + 1 }));
+    try lines.append(a, "x = DD1Q");
+    const out = try preprocessFile(a, undefined, lines.items, null, null, &.{}, .any, null);
+    try testing.expect(out.lines[out.lines.len - 1].len <= max_substituted_line);
 }
 
 test "pp function-like macro without arguments (#225)" {
