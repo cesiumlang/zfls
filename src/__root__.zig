@@ -87,6 +87,7 @@ pub const version_info = @import("version.zig");
 pub const debug = @import("debug.zig");
 pub const ifxsetup = @import("ifxsetup.zig");
 pub const executables = @import("executables.zig");
+pub const allocator_choice = @import("allocator_choice.zig");
 pub const compiler_names = @import("compiler_names.zig");
 pub const run_debugger = @import("run/debugger.zig");
 pub const run_debug_info = @import("run/debug_info.zig");
