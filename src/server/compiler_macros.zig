@@ -157,7 +157,7 @@ fn macrosOfExe(self: *Server, a: Allocator, id: compilers.Id, exe: []const u8, a
         .io = self.io,
         .env = self.toolEnv(),
         .work_dir = work_dir,
-        .cwd = if (self.root_path.len > 0) self.root_path else null,
+        .cwd = compile.probeDir(self, a),
         .openmp = openmp,
         .args = args,
     }) orelse return null;

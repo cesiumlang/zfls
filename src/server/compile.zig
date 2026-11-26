@@ -80,8 +80,8 @@ pub const Job = struct {
     /// `compiler_path` (settings can change while the job runs)
     compiler_path: ?[]const u8,
     /// Where the compiler runs: the directory of the file's command in
-    /// compile_commands.json, else the file's; for a compiler that writes
-    /// files there (`compilers.writesToWorkDir`) one of zfls's
+    /// compile_commands.json, else the file's; one of zfls's for a compiler
+    /// that writes files there and on Windows (`compilers.runsInWorkDir`)
     cwd: []const u8,
     /// The files of the modules it uses, in compile order: each one's
     /// arguments (the file last), whether it is in fixed form, and where
@@ -362,6 +362,21 @@ fn modDir(self: *Server, a: Allocator, id: compilers.Id, version: ?u32) ![]const
     return paths.join(a, &.{ try cacheDir(self, a, "mod"), name });
 }
 
+/// Where a compiler's probe (its version, its predefined macros) runs: in
+/// the workspace, as a compiler (or a script standing for one) may write
+/// files where it runs; on Windows in zfls's work directory instead, where
+/// no DLL of the workspace's is loaded (`compilers.runsInWorkDir`). Null:
+/// zfls's own directory
+pub fn probeDir(self: *Server, a: Allocator) ?[]const u8 {
+    if (is_windows) {
+        const dir = cacheDir(self, a, "work") catch return null;
+        if (!std.Io.Dir.path.isAbsolute(dir)) return null;
+        fsio.createDirPath(self.io, dir) catch return null;
+        return dir;
+    }
+    return if (self.root_path.len > 0) self.root_path else null;
+}
+
 /// zfls's directory `kind` (`mod`, `work`) for the root
 pub fn cacheDir(self: *Server, a: Allocator, kind: []const u8) ![]const u8 {
     const base = paths.cacheDir() orelse return paths.join(a, &.{ self.root_path, ".zfls", kind });
@@ -391,9 +406,10 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     fsio.createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = known.version, .intrinsic_modules = known.intrinsic_modules, .openmp = !self.s.disable_openmp_conditional };
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
-    // Intel's preprocessor output goes into the working directory: one of
-    // zfls's per file, not the source tree
-    const run_dir: ?[]const u8 = if (compilers.writesToWorkDir(id)) try paths.join(ja, &.{ work_dir, "run", try pathKey(a, file.path) }) else null;
+    // a directory of zfls's per file, not the source tree: Intel's
+    // preprocessor output goes into it, and on Windows a DLL there would be
+    // loaded (`compilers.runsInWorkDir`)
+    const run_dir: ?[]const u8 = if (compilers.runsInWorkDir(id, is_windows)) try paths.join(ja, &.{ work_dir, "run", try pathKey(a, file.path) }) else null;
     var dep_args: std.ArrayList([]const []const u8) = .empty;
     var dep_fixed: std.ArrayList(bool) = .empty;
     var dep_cwd: std.ArrayList([]const u8) = .empty;
@@ -637,7 +653,7 @@ fn runJob(w: *Worker, job: *Job) !void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    if (compilers.writesToWorkDir(job.id)) try fsio.createDirPath(io, job.cwd);
+    if (compilers.runsInWorkDir(job.id, is_windows)) try fsio.createDirPath(io, job.cwd);
     // the module files that did not compile, with their first error
     var failed: std.ArrayList(messages.FailedDependency) = .empty;
     for (job.deps, job.deps_fixed, job.deps_cwd, 0..) |args, fixed, cwd, i| {

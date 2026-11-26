@@ -174,10 +174,11 @@ test "gfortran: the macros of each file's command's options (#657)" {
     try h.expect(try active(w, "b.F90", "plain"), "b.F90: plain is in an inactive branch", .{});
 }
 
-/// A stand-in gfortran (`-dM`) that makes `probes/<option>` for its `-mk...`
-/// option, and `probes/dup<option>` when it was asked with it before
+/// A stand-in gfortran (`-dM`) that makes `probes/<option>` beside itself
+/// for its `-mk...` option, and `probes/dup<option>` when it was asked with
+/// it before (on Windows it runs in zfls's directory)
 const gfortran_once: h.File = if (is_windows)
-    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho %* | findstr /c:\" -dM \" >nul || exit /b 0\r\nfor %%a in (%*) do echo %%a| findstr /b /c:\"-mk\" >nul && (mkdir probes\\%%a 2>nul || mkdir probes\\dup%%a 2>nul)\r\necho #define __GFORTRAN__ 1\r\nexit /b 0\r\n" }
+    .{ .name = "gfortran.cmd", .text = "@echo off\r\necho %* | findstr /c:\" -dM \" >nul || exit /b 0\r\nfor %%a in (%*) do echo %%a| findstr /b /c:\"-mk\" >nul && (mkdir \"%~dp0probes\\%%a\" 2>nul || mkdir \"%~dp0probes\\dup%%a\" 2>nul)\r\necho #define __GFORTRAN__ 1\r\nexit /b 0\r\n" }
 else
     .{ .name = "gfortran.sh", .text = "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) ;; *) exit 0;; esac\nfor x in \"$@\"; do case $x in -mk*) mkdir probes/$x 2>/dev/null || mkdir probes/dup$x 2>/dev/null;; esac; done\nsleep 0.1\necho '#define __GFORTRAN__ 1'\n" };
 

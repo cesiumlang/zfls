@@ -11,13 +11,13 @@ const is_windows = builtin.target.os.tag == .windows;
 const io = std.testing.io;
 
 /// A stand-in compiler named `name` that appends its arguments to
-/// `name.log` in its working directory and says `name` (a driver message:
-/// `gfortran: name`)
+/// `name.log` beside itself (not in its working directory, zfls's on
+/// Windows) and says `name` (a driver message: `gfortran: name`)
 fn fake(comptime name: []const u8) h.File {
     return if (is_windows)
-        .{ .name = name ++ ".cmd", .text = "@echo off\r\necho %* >> " ++ name ++ ".log\r\necho gfortran: error: " ++ name ++ " 1>&2\r\n" }
+        .{ .name = name ++ ".cmd", .text = "@echo off\r\necho %* >> \"%~dp0" ++ name ++ ".log\"\r\necho gfortran: error: " ++ name ++ " 1>&2\r\n" }
     else
-        .{ .name = name ++ ".sh", .text = "#!/bin/sh\necho \"$@\" >> " ++ name ++ ".log\necho 'gfortran: error: " ++ name ++ "' >&2\n" };
+        .{ .name = name ++ ".sh", .text = "#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/" ++ name ++ ".log\"\necho 'gfortran: error: " ++ name ++ "' >&2\n" };
 }
 
 const module = h.File{ .name = "m.f90", .text = "module m\n  integer :: k\nend module m\n" };

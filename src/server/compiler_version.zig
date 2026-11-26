@@ -18,6 +18,7 @@ const flang_modules = @import("../compilers/flang_modules.zig");
 const gfortran = @import("../compilers/gfortran.zig");
 const intel = @import("../compilers/intel.zig");
 const tools = @import("tools.zig");
+const compile = @import("compile.zig");
 
 const Server = @import("../server.zig").Server;
 const fsio = @import("../fsio.zig");
@@ -111,11 +112,9 @@ fn fileOf(io: Io, a: Allocator, path: []const u8, suffixes: []const []const u8) 
 }
 
 fn ask(self: *Server, a: Allocator, id: compilers.Id, exe: []const u8) Known {
-    // in the workspace, not zfls's own directory: a compiler (or a script
-    // standing for one) may write files where it runs
     const r = tools.run(a, self.io, .{
         .argv = &.{ exe, "--version" },
-        .cwd = if (self.root_path.len > 0) self.root_path else null,
+        .cwd = compile.probeDir(self, a),
         .environ_map = self.toolEnv(),
         .timeout = tools.seconds(10),
     }) catch |e| return .{ .found = e != error.FileNotFound, .version = null, .ran = e == error.Timeout };
