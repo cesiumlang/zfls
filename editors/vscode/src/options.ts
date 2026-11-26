@@ -129,6 +129,11 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   return args;
 }
 
+/** Whether fypp runs: on, and in a trusted workspace */
+function fyppAllowed(config: vscode.WorkspaceConfiguration): boolean {
+  return vscode.workspace.isTrusted && config.get<boolean>("fypp.enabled", false);
+}
+
 /** `zfls.arguments`; the settings editor's "Add Item" leaves empty items
  * easily */
 function extraArguments(config: vscode.WorkspaceConfiguration): string[] {
@@ -204,7 +209,10 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   if (config.get<boolean>("noCompileCommands", false)) {
     args.push("--compiler_no_compile_commands");
   }
-  if (config.get<boolean>("fypp.enabled", false)) {
+  // fypp runs the Python of the files it reads: not in a workspace the user
+  // has not trusted (its own value of the setting is restricted, a user's
+  // is not)
+  if (fyppAllowed(config)) {
     const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
     // a name is looked for on the PATH; a path is resolved
     args.push("--compiler_fypp", programPath(fypp, folder));
@@ -401,7 +409,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
   const exe = config.get<string>("compilerPath", "").trim();
   const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
   const modDir = config.get<string>("modOutput", "").trim();
-  const fypp = on && config.get<boolean>("fypp.enabled", false);
+  const fypp = on && fyppAllowed(config);
   return {
     compiler_diagnostics: compiler !== "Disabled" ? compiler : null,
     ...fixed,
