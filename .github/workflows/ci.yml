@@ -563,15 +563,28 @@ jobs:
           pattern: signed-*
           path: signed
 
+      # (a single matching artifact is extracted into signed/ itself, several
+      # into a folder each: find covers both). A signing job that succeeded
+      # must have its packages used, or the release would ship unsigned
       - name: Unpack the packages
+        env:
+          WINDOWS: ${{ needs.sign-windows.result }}
+          MACOS: ${{ needs.sign-macos.result }}
         run: |
           mkdir pkg
           tar -C pkg -xf unsigned/unsigned.tar
-          for t in signed/*/*.tar; do
-            [ -e "$t" ] || continue
+          used=" "
+          while read -r t; do
             tar -C pkg -xf "$t"
             echo "using $t"
-          done
+            used="$used$(basename "$t") "
+          done < <(find signed -name 'signed-*.tar' 2>/dev/null)
+          if [ "$WINDOWS" = success ]; then
+            case "$used" in *" signed-windows.tar "*) ;; *) echo "::error::the Windows signing job succeeded but its packages were not found"; exit 1 ;; esac
+          fi
+          if [ "$MACOS" = success ]; then
+            case "$used" in *" signed-macos.tar "*) ;; *) echo "::error::the macOS signing job succeeded but its packages were not found"; exit 1 ;; esac
+          fi
 
       # The extension's version comes from build.zig.zon, as in compile
       - name: Fetch dependencies
@@ -871,6 +884,22 @@ jobs:
           exe=zfls
           case "$TARGET" in *windows) exe=zfls.exe ;; esac
           echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
+
+      # What users download must be the signed binary
+      - name: The shipped zfls.exe is signed (Windows)
+        if: runner.os == 'Windows' && vars.SIGN_AZURE_CLIENT_ID != ''
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem shipped -Recurse -Filter zfls.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          "$($exe.FullName): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "the shipped zfls.exe is not validly signed: $($sig.Status)" }
+
+      - name: The shipped zfls is signed (macOS)
+        if: runner.os == 'macOS' && vars.APPLE_SIGNING == 'true'
+        run: |
+          exe=$(ls shipped/*/zfls)
+          codesign --verify --strict --verbose=2 "$exe"
 
       - name: The ifx kit in the package (Windows x64)
         if: matrix.target == 'x86_64-windows'
