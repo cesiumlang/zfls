@@ -11,6 +11,7 @@
     ".env",
     "go.sum",
     "pixi.lock",
+    ".toolchains/**",
   ],
   "dictionaryDefinitions": [
     {

@@ -9,6 +9,9 @@ zig-pkg/
 .pixi/*
 !.pixi/config.toml
 
+# compiler environments for local tests (pixi), not repository content
+/.toolchains/
+
 # generated documentation
 docs/build/
 site/
