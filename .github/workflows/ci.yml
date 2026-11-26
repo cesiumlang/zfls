@@ -42,10 +42,12 @@ name: CI
 #
 # Signing: only a release (and a run started by hand with the `sign` input)
 # signs the Windows binaries and signs and notarizes the macOS ones, so a
-# release builds, signs and tests its own archives, the tests running on the
-# signed binaries, and never reuses those of a pull request run, which are
-# unsigned. Pull request runs are never signed. Each signing job is also
-# skipped while its configuration is unset (the SIGN_* and APPLE_* variables).
+# pull request run is never signed. A release that reuses the archives of a
+# pull request run signs them in place: it unpacks them (reused-packages),
+# signs the binaries, and packs them again (build), without rebuilding or
+# testing them again; one that builds its own signs what compile built. Each
+# signing job is also skipped while its configuration is unset (the SIGN_*
+# and APPLE_* variables).
 
 on:
   push:
@@ -59,6 +61,10 @@ on:
         description: Sign and notarize the binaries, as a release does
         type: boolean
         default: false
+      reuse_run:
+        description: With sign, the id of a passed run whose archives to sign in place, as a release does with a pull request's (nothing is published)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -110,6 +116,8 @@ jobs:
           REF: ${{ github.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           INPUT_SIGN: ${{ inputs.sign }}
+          SIGN_WINDOWS: ${{ vars.SIGN_AZURE_CLIENT_ID }}
+          SIGN_MACOS: ${{ vars.APPLE_SIGNING }}
         run: |
           # matches, no_ci, keeps_binaries
           source .github/workflows/changes.sh
@@ -188,9 +196,12 @@ jobs:
             fi
             version=$next
           fi
-          # signing and notarization only for a release, or a run started by hand that asks
+          # signing and notarization: for a release, or a run started by hand
+          # that asks, when a platform's signing is configured
           sign=false
-          if [ "$release" = true ] || { [ "$EVENT" = workflow_dispatch ] && [ "$INPUT_SIGN" = true ]; }; then sign=true; fi
+          if [ "$release" = true ] || { [ "$EVENT" = workflow_dispatch ] && [ "$INPUT_SIGN" = true ]; }; then
+            if [ -n "$SIGN_WINDOWS" ] || [ "$SIGN_MACOS" = true ]; then sign=true; fi
+          fi
           sha=$(git rev-parse HEAD)
           tree=$(git rev-parse "HEAD^{tree}")
           {
@@ -217,9 +228,7 @@ jobs:
   reuse:
     name: Find tested release binaries
     needs: version
-    # (not when signing is configured: the archives of a pull request run are
-    # unsigned, so a release builds, signs and tests its own)
-    if: needs.version.outputs.release == 'true' && vars.SIGN_AZURE_CLIENT_ID == '' && vars.APPLE_SIGNING != 'true'
+    if: needs.version.outputs.release == 'true' || inputs.reuse_run != ''
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -231,11 +240,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
+          NAMED: ${{ inputs.reuse_run }}
           # the test matrix (6, macOS arm64 included: only runs of pull
           # requests into main have it, see test, so only they count) and
           # the conda package matrix (5)
           JOBS: 11
         run: |
+          if [ -n "$NAMED" ]; then
+            echo "run_id=$NAMED" >> "$GITHUB_OUTPUT"
+            echo "Using the archives of run $NAMED, as named." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
           for id in $runs; do
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
@@ -395,14 +410,52 @@ jobs:
           path: unsigned.tar
           if-no-files-found: error
 
+  # The archives of the pull request run a release reuses, unpacked as
+  # compile stages its own, for the signing jobs and build
+  reused-packages:
+    name: Unpack the tested archives for signing
+    needs: [version, reuse]
+    if: ${{ !cancelled() && needs.version.outputs.sign == 'true' && needs.reuse.outputs.run_id != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+          run-id: ${{ needs.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Unpack the archives
+        run: |
+          mkdir pkg
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            name="zfls-v$VERSION-$target"
+            case "$target" in
+              *windows) unzip -q "dist/$name.zip" -d pkg ;;
+              *) tar -C pkg -xzf "dist/$name.tar.gz" ;;
+            esac
+            test -d "pkg/$name"
+          done
+          tar -C pkg -cf unsigned.tar .
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned
+          path: unsigned.tar
+          if-no-files-found: error
+
   # Signing needs the Artifact Signing account (#766): skipped, and the
   # binaries stay unsigned, while the SIGN_AZURE_CLIENT_ID repository variable
   # is unset. Its Entra identity is separate from the Marketplace one
   # (AZURE_*), and its federated credential must trust the refs that run this.
   sign-windows:
     name: Sign the Windows binaries
-    needs: [version, compile]
-    if: ${{ !cancelled() && needs.compile.result == 'success' && needs.version.outputs.sign == 'true' && vars.SIGN_AZURE_CLIENT_ID != '' }}
+    needs: [version, compile, reused-packages]
+    if: ${{ !cancelled() && (needs.compile.result == 'success' || needs.reused-packages.result == 'success') && needs.version.outputs.sign == 'true' && vars.SIGN_AZURE_CLIENT_ID != '' }}
     runs-on: windows-2025
     permissions:
       contents: read
@@ -453,6 +506,11 @@ jobs:
             if ($null -eq $sig.TimeStamperCertificate) { throw "$($exe.FullName) has no timestamp" }
           }
 
+      - name: The signed zfls.exe runs (x86_64)
+        run: |
+          exe=$(ls pkg/*-x86_64-windows/zfls.exe)
+          "$exe" --version
+
       - name: Stage the signed packages
         run: tar -C pkg -cf signed-windows.tar .
 
@@ -466,8 +524,8 @@ jobs:
   # stay unsigned, while the APPLE_SIGNING repository variable is not true
   sign-macos:
     name: Sign and notarize the macOS binaries
-    needs: [version, compile]
-    if: ${{ !cancelled() && needs.compile.result == 'success' && needs.version.outputs.sign == 'true' && vars.APPLE_SIGNING == 'true' }}
+    needs: [version, compile, reused-packages]
+    if: ${{ !cancelled() && (needs.compile.result == 'success' || needs.reused-packages.result == 'success') && needs.version.outputs.sign == 'true' && vars.APPLE_SIGNING == 'true' }}
     runs-on: macos-15
     timeout-minutes: 120
     env:
@@ -559,6 +617,11 @@ jobs:
             codesign -dv --verbose=2 "$exe" 2>&1 | grep -E "Authority|flags|Timestamp"
           done
 
+      - name: The signed zfls runs
+        run: |
+          pkg/*-aarch64-macos/zfls --version
+          arch -x86_64 pkg/*-x86_64-macos/zfls --version || echo "::warning::the x86_64 zfls did not run here (Rosetta?)"
+
       - name: Stage the signed packages
         run: tar -C pkg -cf signed-macos.tar .
 
@@ -568,15 +631,121 @@ jobs:
           path: signed-macos.tar
           if-no-files-found: error
 
+  # A universal zfls in a signed, notarized and stapled installer package
+  # (Developer ID Installer), for those who want one besides the archives:
+  # skipped while the repository variable APPLE_PKG is not true
+  pkg-macos:
+    name: macOS installer package
+    needs: [version, sign-macos]
+    if: ${{ !cancelled() && needs.sign-macos.result == 'success' && vars.APPLE_PKG == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_INSTALLER_P12: ${{ secrets.APPLE_INSTALLER_P12 }}
+      APPLE_INSTALLER_P12_PASSWORD: ${{ secrets.APPLE_INSTALLER_P12_PASSWORD }}
+      APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          sparse-checkout: |
+            packaging
+            LICENSE
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-macos
+          path: signed
+
+      - name: Import the certificates
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(uuidgen)
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          for kind in DEVELOPER_ID INSTALLER; do
+            p12="APPLE_${kind}_P12"
+            pw="APPLE_${kind}_P12_PASSWORD"
+            echo "${!p12}" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -P "${!pw}" -A -t cert -f pkcs12 -k "$keychain"
+            rm "$RUNNER_TEMP/cert.p12"
+          done
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security find-identity -v
+
+      # One universal zfls (lipo of the two signed binaries, signed again)
+      - name: Build the universal binary and the installer
+        run: |
+          app=$(security find-identity -v | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)
+          inst=$(security find-identity -v | sed -n 's/.*"\(Developer ID Installer:.*\)"/\1/p' | head -1)
+          [ -n "$app" ] && [ -n "$inst" ] || { echo "::error::an identity is missing"; exit 1; }
+          mkdir pkg
+          tar -C pkg -xf signed/signed-macos.tar
+          root="$RUNNER_TEMP/root"
+          mkdir -p "$root/usr/local/bin" "$root/usr/local/share/doc/zfls"
+          lipo -create pkg/*-x86_64-macos/zfls pkg/*-aarch64-macos/zfls -output "$root/usr/local/bin/zfls"
+          lipo -info "$root/usr/local/bin/zfls"
+          codesign --force --options runtime --timestamp \
+            --entitlements packaging/zfls.entitlements --sign "$app" "$root/usr/local/bin/zfls"
+          cp LICENSE "$root/usr/local/share/doc/zfls/"
+          pkgbuild --root "$root" --identifier com.github.cesiumlang.zfls --version "$VERSION" \
+            --install-location / "$RUNNER_TEMP/zfls-component.pkg"
+          mkdir out
+          productbuild --package "$RUNNER_TEMP/zfls-component.pkg" --sign "$inst" --timestamp \
+            "out/zfls-v$VERSION-macos.pkg"
+          pkgutil --check-signature "out/zfls-v$VERSION-macos.pkg"
+
+      - name: Notarize and staple the installer
+        run: |
+          echo "$APPLE_NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID")
+          pkg="out/zfls-v$VERSION-macos.pkg"
+          xcrun notarytool submit "$pkg" --wait --timeout 90m --output-format json "${auth[@]}" > "$RUNNER_TEMP/result.json" || true
+          status=$(jq -r '.status // "no answer"' "$RUNNER_TEMP/result.json")
+          echo "notarization: $status"
+          if [ "$status" != Accepted ]; then
+            xcrun notarytool log "$(jq -r .id "$RUNNER_TEMP/result.json")" "${auth[@]}" || true
+            exit 1
+          fi
+          rm "$RUNNER_TEMP/notary.p8"
+          xcrun stapler staple "$pkg"
+          xcrun stapler validate "$pkg"
+
+      - name: The installer is accepted and its zfls runs
+        run: |
+          pkg="out/zfls-v$VERSION-macos.pkg"
+          spctl --assess --type install -vv "$pkg"
+          pkgutil --expand-full "$pkg" "$RUNNER_TEMP/expanded"
+          exe=$(find "$RUNNER_TEMP/expanded" -path '*usr/local/bin/zfls' | head -1)
+          "$exe" --version
+          arch -x86_64 "$exe" --version || echo "::warning::the x86_64 slice did not run here (Rosetta?)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-pkg
+          path: out/*.pkg
+          if-no-files-found: error
+
   build:
     name: Build release binaries
-    needs: [version, compile, sign-windows, sign-macos]
+    needs: [version, compile, reused-packages, sign-windows, sign-macos, pkg-macos]
     # a signing job that was skipped (no credentials yet) leaves the
-    # binaries unsigned; one that failed fails the build
+    # binaries unsigned; one that failed fails the build. Not for a release
+    # that reuses archives, unless it signs them
     if: >-
-      ${{ !cancelled() && needs.compile.result == 'success'
+      ${{ !cancelled()
+      && (needs.compile.result == 'success' || needs.reused-packages.result == 'success')
       && contains(fromJSON('["success","skipped"]'), needs.sign-windows.result)
-      && contains(fromJSON('["success","skipped"]'), needs.sign-macos.result) }}
+      && contains(fromJSON('["success","skipped"]'), needs.sign-macos.result)
+      && contains(fromJSON('["success","skipped"]'), needs.pkg-macos.result) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -602,6 +771,12 @@ jobs:
       # (a single matching artifact is extracted into signed/ itself, several
       # into a folder each: find covers both). A signing job that succeeded
       # must have its packages used, or the release would ship unsigned
+      # the macOS installer, when it was built
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: macos-pkg
+          path: pkgs
+
       - name: Unpack the packages
         env:
           WINDOWS: ${{ needs.sign-windows.result }}
@@ -642,6 +817,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist
+          find pkgs -name '*.pkg' -exec cp {} dist/ \; 2>/dev/null || true
           for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
             name="zfls-v$VERSION-$target"
             case "$target" in
@@ -670,10 +846,11 @@ jobs:
 
   test:
     name: Test (${{ matrix.target }})
-    needs: [version, build]
+    needs: [version, reuse, build]
     # explicit: a skipped job anywhere upstream (reuse, on pull requests)
-    # would otherwise skip the tests too
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    # would otherwise skip the tests too; not for archives signed in place
+    # (a pull request run tested them)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.reuse.outputs.run_id == '' }}
     # The macOS arm64 leg runs on a self-hosted runner instead when the
     # repository variable MACOS_ARM64_RUNNER names one (a label of it, such
     # as `self-hosted`): a switch for the hours when GitHub's own runners
@@ -1296,8 +1473,8 @@ jobs:
 
   conda:
     name: Conda package (${{ matrix.platform }})
-    needs: [version, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    needs: [version, reuse, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.reuse.outputs.run_id == '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1446,7 +1623,7 @@ jobs:
   # no check under its legs' names, so those cannot be required themselves.
   ci-result:
     name: CI
-    needs: [version, version-check, reuse, compile, sign-windows, sign-macos, build, test, conda, install-script]
+    needs: [version, version-check, reuse, compile, reused-packages, sign-windows, sign-macos, pkg-macos, build, test, conda, install-script]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -1464,11 +1641,12 @@ jobs:
   release:
     name: Release v${{ needs.version.outputs.version }}
     needs: [version, reuse, build, test, conda]
-    # with archives a pull request run tested, or ones this run built and
-    # tested on every platform
+    # with archives a pull request run tested (signed in place by this run,
+    # when it signs), or ones this run built and tested on every platform
     if: >-
       ${{ !cancelled() && needs.version.outputs.release == 'true'
-      && (needs.reuse.outputs.run_id != ''
+      && ((needs.reuse.outputs.run_id != ''
+      && (needs.version.outputs.sign != 'true' || needs.build.result == 'success'))
       || (needs.build.result == 'success' && needs.test.result == 'success'
       && needs.conda.result == 'success')) }}
     runs-on: ubuntu-24.04
@@ -1492,7 +1670,7 @@ jobs:
         with:
           name: dist
           path: dist
-          run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
+          run-id: ${{ (needs.version.outputs.sign == 'true' && github.run_id) || needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
 
       - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
