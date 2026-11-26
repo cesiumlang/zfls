@@ -28,6 +28,8 @@ const DebugCreateFn = *const fn (iid: *const GUID, out: *?*anyopaque) callconv(.
 
 // dbghelp's lookups (dbgeng_symbols.zig)
 const lookups = @import("dbgeng_symbols.zig");
+const fsio = @import("../fsio.zig");
+const code_lookups = @import("dbgeng_code.zig");
 pub const SymbolInfo = lookups.SymbolInfo;
 pub const TypeQuery = lookups.TypeQuery;
 pub const SymTag = lookups.SymTag;
@@ -172,6 +174,8 @@ pub const Engine = struct {
     /// console of its own unless not `window`, in `cwd`, with zfls's
     /// environment, and stops at its first instruction
     pub fn launch(self: *Engine, a: Allocator, program: []const u8, command_line: []const u8, cwd: ?[]const u8, window: bool) !void {
+        try fsio.check(program);
+        try fsio.checkSpawn(&.{command_line}, cwd);
         try self.setup();
         // symbols from the program's own directory, where compilers put its
         // PDB: not a machine's symbol server (`srv*`), which then hides it
@@ -518,6 +522,12 @@ pub const Engine = struct {
     pub const typeName = lookups.typeName;
     pub const Member = lookups.Member;
     pub const members = lookups.members;
+
+    // instructions, modules, sources (dbgeng_code.zig)
+    pub const nearInstruction = code_lookups.nearInstruction;
+    pub const disassemble = code_lookups.disassemble;
+    pub const modules = code_lookups.modules;
+    pub const sources = code_lookups.sources;
 };
 
 comptime {

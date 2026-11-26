@@ -29,7 +29,11 @@ from differential_known import (
     LITERAL_HOVER,
     SEMICOLON_STRINGS,
     ZFLS_ONLY_INTRINSICS,
+    adjacent_references,
     after_non_code_line,
+    dollar_name_references,
+    in_string_with_bang,
+    on_keyword_or_operator,
     associate_bound,
     associate_names,
     conditional_attributes,
@@ -37,6 +41,7 @@ from differential_known import (
     forget_associate_types,
     generic_specific_definition,
     ignore_associate_attributes,
+    ignore_associate_functions,
     ignore_conditional_attributes,
     ignore_param_strings,
     ignore_slice_dimensions,
@@ -50,6 +55,7 @@ from differential_known import (
     notifications,
     on_assignment,
     on_construct_name_or_label,
+    on_implicit_variable,
     on_enumerator_statement,
     on_import_statement,
     on_include_directive,
@@ -350,6 +356,8 @@ def main() -> int:
     zfls_cmd = [
         str(Path(args.zfls).resolve()), *common, "--disable_index_cache",
         "--hover_no_type_components",
+        # fortls reports an INTENT outside the argument list (#879)
+        "--lint_dialect", "gfortran",
     ]
 
     exts = {".f", ".f90", ".f08", ".f03", ".f95", ".f77", ".for", ".fpp", ".h"}
@@ -399,6 +407,8 @@ def main() -> int:
             if bound_names and kind in ("hover", "completion"):
                 a = ignore_associate_attributes(a, bound_names)
                 b = ignore_associate_attributes(b, bound_names)
+                a = ignore_associate_functions(a, bound_names)
+                b = ignore_associate_functions(b, bound_names)
             if bound and kind in ("hover", "completion"):
                 untyped = untyped_by_fortls(a, bound)
                 if untyped:
@@ -492,6 +502,14 @@ def main() -> int:
                 # construct names and statement labels (fortls #424)
                 continue
             if (
+                kind in ("definition", "references", "rename")
+                and a is None
+                and on_implicit_variable(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # an implicitly typed variable: its first use is its
+                # definition (#849); fortls has no answer
+                continue
+            if (
                 kind in ("hover", "definition", "references", "completion")
                 and not a
                 and on_enumerator_statement(src_lines, pos.get("line", -1))
@@ -513,6 +531,31 @@ def main() -> int:
             ):
                 # an IMPORT statement: zfls offers every name the host sees
                 # (#486), fortls only those its IMPORT statements name
+                continue
+            if (
+                kind == "hover"
+                and a is not None
+                and b is None
+                and on_keyword_or_operator(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # a type keyword or an operator is no call of the intrinsic
+                # of that name (zfls #845)
+                continue
+            if kind == "references" and adjacent_references(a, b, src_lines):
+                # names right behind a name, `i*i` (zfls #844), which fortls
+                # misses
+                continue
+            if kind == "references" and dollar_name_references(a, b, src_lines, pos.get("line", -1), pos.get("character", 0)):
+                # a name with a `$`, which fortls cannot search for
+                continue
+            if (
+                kind == "completion"
+                and a is None
+                and b == []
+                and in_string_with_bang(src_lines, pos.get("line", -1), pos.get("character", 0))
+            ):
+                # inside a string that holds a `!` (zfls #842): fortls reads
+                # the `!` as a comment
                 continue
             if (
                 kind in ("hover", "definition", "completion", "signature")

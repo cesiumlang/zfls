@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const helpers = @import("helpers.zig");
 const lsp = @import("lsp.zig");
 const objects = @import("objects.zig");
+const directive_names = @import("directive_names.zig");
 const constructs = @import("constructs.zig");
 const str = @import("str.zig");
 const Obj = objects.Obj;
@@ -72,6 +73,8 @@ const Tokenizer = struct {
     ast: *Ast,
     /// What a name means in a scope: `{scope address}:{lowercase name}`
     cache: std.StringHashMapUnmanaged(?*Obj) = .empty,
+    /// the columns of the line being read, counted on from the last
+    cursor: str.Utf16Cursor = .{},
     tokens: std.ArrayList(Token) = .empty,
     /// the last code line ended with `&` (free form)
     continued: bool = false,
@@ -93,6 +96,8 @@ const Tokenizer = struct {
     stmt_next: bool = false,
     /// the quote of a character literal the last line left open
     quote: ?u8 = null,
+    /// the depth of parentheses a directive line left open (`directiveNames`)
+    dir_depth: usize = 0,
     /// the columns of code in a fixed-form line; the rest is a comment
     fixed_limit: ?usize = null,
     /// When set, the uses of named constants are collected here (not
@@ -121,9 +126,9 @@ const Tokenizer = struct {
     /// construct repeated on a branch (`else n1`), a keyword
     /// inside a statement (`then`, `while`, `concurrent`, ...), an
     /// intrinsic procedure, a component
-    fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool) !void {
+    fn noteUnknown(t: *Tokenizer, scope: ?*Obj, ln: usize, w: helpers.Word, before: u8, prev: ?[]const u8, in_end: bool, in_init: bool) !void {
         const list = t.unknown orelse return;
-        if (t.spec_stmt or in_end or before == '%') return;
+        if ((t.spec_stmt and !in_init) or in_end or before == '%') return;
         if (prev) |p| for ([_][]const u8{ "call", "exit", "cycle" }) |k| {
             if (std.ascii.eqlIgnoreCase(p, k)) return;
         };
@@ -159,11 +164,11 @@ const Tokenizer = struct {
     }
 
     fn add(t: *Tokenizer, line: usize, text: []const u8, start: usize, end: usize, kind: Kind) !void {
-        const s = str.byteToUtf16(text, start);
+        const s = t.cursor.at(text, start);
         try t.tokens.append(t.a, .{
             .line = line,
             .start = s,
-            .len = str.byteToUtf16(text, end) - s,
+            .len = t.cursor.at(text, end) - s,
             .type = kind.type,
             .mods = kind.mods,
         });
@@ -175,6 +180,20 @@ const Tokenizer = struct {
         const key = try t.a.print("{x}:{s}", .{ @intFromPtr(scope), lower });
         const gop = try t.cache.getOrPut(t.a, key);
         if (gop.found_existing) return gop.value_ptr.*;
+        // a construct without USE or IMPORT has what its own names and, when
+        // they lack it, the scope around it has: asked of that one, whose
+        // answer is kept, the names of thousands of nested constructs are
+        // not each looked for up through all of them
+        if (scope) |s| if (s.kind.isBlock() and s.kind != .enum_ and s.parent != null and s.data == .scope and s.scopeDataConst().use.items.len == 0 and s.file_ast.include_statements.items.len == 0) {
+            const own = try objects.checkScope(t.env, s, lower, false, line_no);
+            var answer = own orelse try t.lookup(s.parent, name, line_no);
+            if (answer) |o| if (o.kind == .intrinsic) {
+                answer = null;
+            };
+            // the cache may have grown meanwhile
+            try t.cache.put(t.a, key, answer);
+            return answer;
+        };
         var found = try objects.findInScope(t.env, scope, lower, .{ .var_line_number = line_no });
         // in a derived type, the procedures its bindings name (`procedure
         // :: get => get_area`) and its parent type are those of the
@@ -221,6 +240,19 @@ const Tokenizer = struct {
         return .{ .type = .variable, .mods = if (obj.varData().is_const) bit(.readonly) else 0 };
     }
 
+    /// The names in the clauses of directive line `ln` (`!$omp private(x)`,
+    /// `!$acc copyin(a)`), as the code's are
+    fn directiveNames(t: *Tokenizer, ln: usize, raw: []const u8) !void {
+        const found = try directive_names.inClauses(t.a, t.file.fixed, raw, t.dir_depth);
+        t.dir_depth = found.depth;
+        if (found.words.len == 0) return;
+        const scope = try t.innerScope(ln);
+        for (found.words) |w| {
+            const o = (try t.lookup(scope, w.str, ln + 1)) orelse continue;
+            if (t.kindOf(o, ln + 1)) |k| try t.add(ln, raw, w.start, w.end, k);
+        }
+    }
+
     fn tokenizeLine(t: *Tokenizer, ln: usize) !void {
         const written = t.file.getLine(ln, false) orelse return;
         // the names of a line with macros are found in the text the
@@ -231,10 +263,15 @@ const Tokenizer = struct {
             // a debug line read as a comment (`d_lines`), which the grammar
             // colors as code: a comment token over it
             if (t.file.fixed and (raw[0] == 'd' or raw[0] == 'D') and t.unknown == null) try t.add(ln, raw, 0, raw.len, .{ .type = .comment });
+            // the variables in the clauses of an OpenMP or OpenACC directive
+            if (t.unknown == null and t.constants == null and helpers.isDirective(t.file.fixed, raw)) try t.directiveNames(ln, raw);
             return;
         }
+        t.dir_depth = 0;
         const trimmed = std.mem.trimStart(u8, raw, " \t");
         if (trimmed.len > 0 and trimmed[0] == '#') return;
+        // a blank line between continuation lines leaves the statement as it is
+        if (std.mem.trim(u8, trimmed, " \t\r").len == 0) return;
         // fypp: an eval line (`$: expr`) or a macro call (`@:assert(x)`)
         if (std.mem.startsWith(u8, trimmed, "$:") or std.mem.startsWith(u8, trimmed, "@:")) return;
         // the columns past the code of a fixed-form line are a comment
@@ -307,6 +344,8 @@ const Tokenizer = struct {
                 }
                 if (isStatementKeyword(w.str) and !isAssignment(code, w.end)) {
                     keyword = w.str;
+                    st.decl = isTypeKeyword(w.str);
+                    st.stop = std.ascii.eqlIgnoreCase(w.str, "stop") or std.ascii.eqlIgnoreCase(w.str, "errorstop");
                     st.in_end = isEndKeyword(w.str);
                     t.spec_stmt = isSpecKeyword(w.str);
                     st.cond = isConditionKeyword(w.str);
@@ -318,6 +357,7 @@ const Tokenizer = struct {
                     // `else if (x) then`
                     if (std.ascii.eqlIgnoreCase(w.str, "if")) st.cond = true;
                     if (std.ascii.eqlIgnoreCase(w.str, "file")) st.define_file = true;
+                    if (std.ascii.eqlIgnoreCase(w.str, "stop")) st.stop = true;
                     continue;
                 }
             }
@@ -346,6 +386,8 @@ const Tokenizer = struct {
             // that continues the call)
             const in_list = before == '(' or before == ',' or before == '&' or before == 0;
             if (st.depth > 0 and after == '=' and !startsWithOp(code, w.end, "==") and !startsWithOp(code, w.end, "=>") and in_list) continue;
+            // `stop 1, quiet=q` (F2018)
+            if (st.stop and st.depth == 0 and before == ',' and after == '=' and std.ascii.eqlIgnoreCase(w.str, "quiet")) continue;
             // a BOZ literal, `z'7F'`, `b"101"`
             if (w.str.len == 1 and std.mem.findScalar(u8, "bBoOzZ", w.str[0]) != null and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"')) continue;
             if (t.file.pp_defs.contains(w.str)) {
@@ -372,7 +414,7 @@ const Tokenizer = struct {
                     w.start > 0 and code[w.start - 1] == '$';
                 // the kind of a character literal, `ck_'text'`
                 const kind_prefix = w.str[w.str.len - 1] == '_' and w.end < code.len and (code[w.end] == '\'' or code[w.end] == '"');
-                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, st.in_end);
+                if (!defines and !split and !kind_prefix) try t.noteUnknown(scope, ln, w, before, prev_word, st.in_end, st.init and std.mem.count(u8, code, "::") < 2);
                 continue;
             };
             // elsewhere in a function, its name is its result
@@ -433,10 +475,27 @@ const Stmt = struct {
     /// DEC's DEFINE FILE, whose form is a letter (`define file 3 (100, 10,
     /// u, iv)`)
     define_file: bool = false,
+    /// STOP or ERROR STOP, whose QUIET= is no name (#732)
+    stop: bool = false,
+    /// the statement is a type declaration (`real :: x = 1`)
+    decl: bool = false,
+    /// a `::` outside parentheses has been read (of this line)
+    colons: bool = false,
+    /// the initializer of a declaration (after its `=`) has begun (of this
+    /// line): its words are names, as in an executable statement (#850)
+    init: bool = false,
 
     fn punctuation(s: *Stmt, chars: []const u8) void {
-        for (chars) |c| switch (c) {
-            '(' => s.depth += 1,
+        for (chars, 0..) |c, i| switch (c) {
+            ':' => if (s.depth == 0 and i + 1 < chars.len and chars[i + 1] == ':') {
+                s.colons = true;
+            },
+            '=' => if (s.depth == 0 and s.colons and s.decl) {
+                s.init = true;
+            },
+            // (an image selector's too: `x[1, notify=nt]`, #732)
+            '(', '[' => s.depth += 1,
+            ']' => s.depth -|= 1,
             ')' => {
                 s.depth -|= 1;
                 if (s.depth == 0 and s.cond) {
@@ -450,6 +509,10 @@ const Stmt = struct {
                 s.in_end = false;
                 s.prev = null;
                 s.define_file = false;
+                s.stop = false;
+                s.colons = false;
+                s.init = false;
+                s.decl = false;
             },
             else => {},
         };
@@ -532,6 +595,12 @@ const statement_keywords = [_][]const u8{
     // Flang's too)
     "automatic",       "static",        "virtual",     "encode",          "decode",
     "accept",          "define",        "find",        "unsigned",
+    // Fortran 2018's NON_RECURSIVE (#727), Fortran 2023's SIMPLE (#727),
+    // TYPEOF and CLASSOF (#728)
+           "non_recursive",
+    "simple",          "typeof",        "classof",
+    // Fortran 2023's NOTIFY WAIT (#732)
+        "notify",
 };
 
 /// The statement keywords that start a specification or a definition, whose
@@ -549,7 +618,8 @@ const spec_keywords = [_][]const u8{
     "sequence",    "submodule",   "subroutine",   "target",          "type",          "use",
     "value",       "volatile",    "blockdata",    "doubleprecision", "doublecomplex", "structure",
     "record",      "union",       "map",          "attributes",      "byte",          "automatic",
-    "static",      "virtual",     "unsigned",
+    "static",      "virtual",     "unsigned",     "non_recursive",   "simple",        "typeof",
+    "classof",
 };
 
 fn isSpecKeyword(word: []const u8) bool {
@@ -638,6 +708,13 @@ fn isDotOperator(word: []const u8) bool {
     return false;
 }
 
+fn isTypeKeyword(word: []const u8) bool {
+    for ([_][]const u8{ "integer", "real", "double", "complex", "logical", "character", "type", "class", "byte" }) |k| {
+        if (std.ascii.eqlIgnoreCase(word, k)) return true;
+    }
+    return false;
+}
+
 fn isStatementKeyword(word: []const u8) bool {
     for (statement_keywords) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
     // END joined to what it ends: `endenum`, `endmodule`, `endselect`
@@ -668,7 +745,7 @@ fn isSecondKeyword(first: []const u8, word: []const u8) bool {
         .{ "module", "procedure" }, .{ "module", "function" }, .{ "module", "subroutine" },
         .{ "event", "post" },       .{ "event", "wait" },      .{ "form", "team" },
         .{ "change", "team" },      .{ "fail", "image" },      .{ "sync", "team" },
-        .{ "define", "file" },
+        .{ "define", "file" },      .{ "notify", "wait" },
     };
     for (pairs) |p| if (std.ascii.eqlIgnoreCase(first, p[0]) and std.ascii.eqlIgnoreCase(word, p[1])) return true;
     if (std.ascii.eqlIgnoreCase(first, "end")) return isStatementKeyword(word) or std.ascii.eqlIgnoreCase(word, "team");

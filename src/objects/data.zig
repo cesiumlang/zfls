@@ -109,6 +109,8 @@ pub const Interface = struct {
 
 pub const Associate = struct {
     links: std.ArrayList(AssocLink) = .empty,
+    /// a CHANGE TEAM construct, whose associations are its coarrays'
+    change_team: bool = false,
 };
 
 pub const Select = struct {
@@ -150,7 +152,15 @@ pub const Variable = struct {
     members: []const u8 = "",
     /// A Cray pointer or pointee (`p` and `b` of `POINTER (p, b)`)
     cray: ?Cray = null,
+    /// Declared `TYPEOF(ref)` or `CLASSOF(ref)` (F2023): `(ref)`, whose
+    /// type linking gives it (#728)
+    type_of: ?TypeOf = null,
+    /// The rank of a RANK clause (F2023) that is no literal, `rank(n)`,
+    /// which linking evaluates (#729)
+    rank_clause: ?[]const u8 = null,
 };
+
+pub const TypeOf = struct { ref: []const u8, class: bool };
 
 pub const Group = enum { none, common, namelist };
 

@@ -20,7 +20,14 @@ const all = [_]Known{
     .{ .file = "cray_pointers.f90", .diff = "differs: cray::p3: POINTER false, ifx PTR", .why = cray_ptr },
     .{ .file = "cray_pointers.f90", .diff = "differs: cray_implicit::q: POINTER false, ifx PTR", .why = cray_ptr },
     .{ .file = "cray_pointers.f90", .diff = "differs: cray_implicit::q2: POINTER false, ifx PTR", .why = cray_ptr },
+    .{ .file = "f2018.f90", .diff = "missing in zfls: type team_type", .why = "a type by USE, which ifx lists as an entity of the unit that uses it" },
+    .{ .file = "f2018.f90", .diff = "missing in zfls: variable cg_$1_mtx (Local)", .why = critical_lock },
+    .{ .file = "f2018.f90", .diff = "missing in zfls: variable cg_$2_mtx (Local)", .why = critical_lock },
+    .{ .file = "f2018.f90", .diff = "missing in zfls: variable named (Local)", .why = "ifx lists the name of a CHANGE TEAM construct as a variable" },
+    .{ .file = "f2023.f90", .diff = "missing in zfls: type notify_type", .why = "a type by USE, which ifx lists as an entity of the unit that uses it" },
 };
+
+const critical_lock = "the lock ifx makes for a CRITICAL construct";
 
 const cray_ptr = "ifx lists a Cray pointer with the attribute PTR of a POINTER; it has no POINTER attribute";
 

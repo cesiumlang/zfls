@@ -46,8 +46,8 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
             type_index = s.engine.typeInfo(u32, v.mod_base, type_index, .type) orelse break;
         }
     }
-    const d = decl orelse return .{ .address = address, .t = rawType(s, v.mod_base, type_index), .expr = expr, .type_index = type_index, .mod_base = v.mod_base };
-    var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj };
+    const d = decl orelse return .{ .address = address, .t = rawType(s, v.mod_base, type_index), .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .frame = frame };
+    var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj, .frame = frame };
     if (d.t.kind == .derived) val.type_index = try structure(s, a, v.mod_base, elementType(s, v.mod_base, type_index), d.t.name);
     if (d.t.kind == .derived and d.t.polymorphic and d.dims.len == 0) {
         if (try classTypeInfo(s, box, v.parameter, address)) |info| try toDynamic(s, a, &val, info, d);
@@ -247,7 +247,7 @@ pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
             break :blk null;
         } else null;
         const mv: dbgeng.Variable = .{ .name = m.name, .address = v.address + m.offset, .size = 0, .type_index = m.type_index, .mod_base = v.mod_base, .parameter = false };
-        const cv = valueOf(s, a, mv, comp_decl, .{ .thread = 0, .index = 0 }, expr) catch continue;
+        const cv = valueOf(s, a, mv, comp_decl, v.frame, expr) catch continue;
         var c = cv;
         if (comp_decl == null) {
             c.t = rawType(s, v.mod_base, m.type_index);

@@ -23,8 +23,9 @@ const parser = @import("../parser.zig");
 const FortranFile = parser.FortranFile;
 const Trace = parser.Trace;
 const Options = parser.Options;
-const DefResult = @import("definitions.zig").DefResult;
-const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
+const definitions = @import("definitions.zig");
+const DefResult = definitions.DefResult;
+const getFortranDefinition = definitions.getFortranDefinition;
 const plain_docs = @import("plain_docs.zig");
 const attributes = @import("attributes.zig");
 const stmt_functions = @import("stmt_functions.zig");
@@ -181,6 +182,8 @@ pub const Parser = struct {
             }
             const lr = try helpers.stripLineLabel(a, line);
             line = lr.line;
+            // a statement of blanks only (continuation lines with no text)
+            if (get_full and std.mem.trim(u8, line, " \t\r").len == 0) continue;
             const line_label = lr.label;
             var line_stripped = try helpers.stripStrings(a, line, true);
             var line_no_comment = line;
@@ -286,7 +289,7 @@ pub const Parser = struct {
                 continue;
             };
             switch (obj_read) {
-                .do_, .where, .assoc, .if_, .select, .block => try p.stmt_fns.markExec(sa, ast),
+                .do_, .where, .assoc, .team, .if_, .select, .block => try p.stmt_fns.markExec(sa, ast),
                 else => {},
             }
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
@@ -325,6 +328,7 @@ pub const Parser = struct {
                     }
                     var var_keywords: std.ArrayList([]const u8) = .empty;
                     try var_keywords.appendSlice(a, info.keywords);
+                    const rank_clause = try definitions.rankClause(a, &var_keywords);
                     if (std.mem.startsWith(u8, name, "(")) continue;
                     const dim = try parseImpDim(a, name);
                     name = dim.line;
@@ -377,6 +381,8 @@ pub const Parser = struct {
                                 new_var.varData().param_val = try pa.dupe(u8, try helpers.collapseBlanks(a, value));
                             }
                         }
+                        if (definitions.isTypeOf(desc)) new_var.varData().type_of = .{ .ref = try pa.dupe(u8, info.var_kind orelse "()"), .class = desc[0] == 'C' };
+                        if (rank_clause) |r| new_var.varData().rank_clause = try pa.dupe(u8, r);
                         if (try findExternal(ast, desc, name, new_var)) continue;
                     }
                     try ast.addVariable(new_var);
@@ -465,11 +471,13 @@ pub const Parser = struct {
                 }
                 p.dbg("{s} !!! WHERE - Ln:{d}", .{ line, line_no });
             },
-            .assoc => |bound| {
+            .assoc, .team => |bound| {
                 counters.block += 1;
                 const name = try a.print("#ASSOC{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .associate, line_no, name, &.{});
-                try ast.addScope(o, &R().END_ASSOCIATE, true, true);
+                const team = obj_read == .team;
+                o.assocData().change_team = team;
+                try ast.addScope(o, if (team) &R().END_TEAM else &R().END_ASSOCIATE, true, true);
                 for (bound) |bv| {
                     const parts = try str.split(a, bv, "=>");
                     if (parts.len != 2) continue;
@@ -479,7 +487,7 @@ pub const Parser = struct {
                     try o.assocData().links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
-                p.dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! {s} - Ln:{d}", .{ line, if (team) "CHANGE TEAM" else "ASSOCIATE", line_no });
             },
             .if_ => {
                 counters.if_ += 1;
@@ -677,7 +685,7 @@ pub const Parser = struct {
                 try ast.scopeLabel(open),
                 open.sline,
             });
-            try ast.scope_errors.append(pa, .{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
+            try ast.addScopeError(.{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
         }
         // a scope further out that the word fits
         var k = @min(ast.scope_stack.items.len, ast.end_stack.items.len);

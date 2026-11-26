@@ -15,7 +15,7 @@ const FortranFile = @import("parser.zig").FortranFile;
 /// A name or label on a line: 0-based line, byte columns
 pub const Span = struct { line: usize, start: usize, end: usize };
 
-pub const Kind = enum { construct, label };
+pub const Kind = enum { construct, label, implicit };
 
 /// A construct name or label and where it is written
 pub const Target = struct {
@@ -25,6 +25,8 @@ pub const Target = struct {
     def: ?Span,
     /// every occurrence, the definition included
     spans: []const Span,
+    /// of an implicitly typed variable, the scope it belongs to
+    scope: ?*Obj = null,
 };
 
 const Token = struct {
@@ -45,6 +47,8 @@ const LineInfo = struct {
     label_refs: std.ArrayList(Token) = .empty,
     /// the statement ends the construct named by its last word
     ends: bool = false,
+    /// the first word of the statement (after a logical IF's condition)
+    word: []const u8 = "",
 };
 
 const construct_keywords = [_][]const u8{ "do", "if", "select", "selectcase", "selecttype", "selectrank", "block", "associate", "where", "forall", "critical", "change" };
@@ -148,11 +152,13 @@ fn analyze(a: Allocator, code: []const u8, fixed: bool) !LineInfo {
         // not `if (...) then`, nor the arithmetic IF `if (x) 10, 20, 30`
         if (j + 1 < stmt.len and stmt[j + 1].kind == .word and !std.ascii.eqlIgnoreCase(text(code, stmt[j + 1]), "then")) {
             stmt = stmt[j + 1 ..];
+            info.word = text(code, stmt[0]);
             try analyzeStatement(a, code, stmt, &info);
             try labelRefs(a, code, stmt, &info);
             return info;
         }
     }
+    info.word = text(code, stmt[0]);
     try analyzeStatement(a, code, stmt, &info);
     try labelRefs(a, code, stmt, &info);
     return info;
@@ -281,6 +287,37 @@ fn tokenAt(toks: []const Token, col: usize) ?Token {
     return null;
 }
 
+/// The label a statement starts with and the labels its first line names,
+/// of the statements that name labels (GO TO, DO, I/O, the arithmetic IF)
+pub const LineLabels = struct { def: ?Span = null, refs: []const Span = &.{} };
+
+const label_statements = [_][]const u8{ "go", "goto", "assign", "do", "read", "write", "print", "open", "close", "inquire", "backspace", "rewind", "endfile", "flush", "wait", "if" };
+
+/// Whether a free-form line starts with a word that is not that of a
+/// statement naming labels, nor a construct name: it has no label then,
+/// and its tokens need not be made (a long statement is made of many)
+fn namesNoLabel(code: []const u8) bool {
+    const start = std.mem.findNone(u8, code, " \t") orelse return false;
+    if (!std.ascii.isAlphabetic(code[start]) and code[start] != '_') return false;
+    var end = start;
+    while (end < code.len and (std.ascii.isAlphanumeric(code[end]) or code[end] == '_' or code[end] == '$')) end += 1;
+    const after = std.mem.findNone(u8, code[end..], " \t") orelse return !eqlAny(code[start..end], &label_statements);
+    return code[end + after] != ':' and !eqlAny(code[start..end], &label_statements);
+}
+
+pub fn labelsOf(a: Allocator, file: *const FortranFile, ln: usize) !LineLabels {
+    const code = (try codeOf(a, file, ln)) orelse return .{};
+    if (!file.fixed and namesNoLabel(code)) return .{};
+    const info = try analyze(a, code, file.fixed);
+    var out: LineLabels = .{};
+    if (info.label_def) |t| out.def = .{ .line = ln, .start = t.start, .end = t.end };
+    if (!eqlAny(info.word, &label_statements)) return out;
+    const refs = try a.alloc(Span, info.label_refs.items.len);
+    for (info.label_refs.items, refs) |t, *r| r.* = .{ .line = ln, .start = t.start, .end = t.end };
+    out.refs = refs;
+    return out;
+}
+
 /// The construct name or label at byte column `col` of 0-based line `ln`
 pub fn at(a: Allocator, file: *const FortranFile, ast: *Ast, ln: usize, col: usize) !?Target {
     const code = (try codeOf(a, file, ln)) orelse return null;
@@ -327,6 +364,7 @@ pub fn at(a: Allocator, file: *const FortranFile, ast: *Ast, ln: usize, col: usi
                     try spans.append(a, .{ .line = l, .start = t.start, .end = t.end });
                 };
             },
+            .implicit => unreachable,
             .label => {
                 if (li.label_def) |t| if (sameName(c[t.start..t.end], name, kind)) {
                     def = .{ .line = l, .start = t.start, .end = t.end };
@@ -356,7 +394,7 @@ pub fn isConstructUse(a: Allocator, file: *const FortranFile, ln: usize, start: 
 
 fn sameName(x: []const u8, y: []const u8, kind: Kind) bool {
     return switch (kind) {
-        .construct => std.ascii.eqlIgnoreCase(x, y),
+        .construct, .implicit => std.ascii.eqlIgnoreCase(x, y),
         // `10` and `010` are the same label
         .label => (std.fmt.parseInt(u32, x, 10) catch return false) == (std.fmt.parseInt(u32, y, 10) catch return false),
     };

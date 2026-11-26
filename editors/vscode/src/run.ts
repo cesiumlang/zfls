@@ -365,7 +365,12 @@ export function fortranLaunch(config: Record<string, unknown>, r: FortranResolut
     out[r.type === "lldb" ? "stopOnEntry" : "stopAtEntry"] = true;
   }
   for (const [k, v] of Object.entries(config)) {
-    if (!(FORTRAN_LAUNCH_KEYS as readonly string[]).includes(k)) {
+    if (k === "setupCommands" && r.type === "cppdbg" && Array.isArray(v)) {
+      // the fortran type's are gdb command strings; C/C++ wants objects, and
+      // keeps its pretty-printing
+      const own = Array.isArray(out.setupCommands) ? out.setupCommands : [];
+      out.setupCommands = [...own, ...v.map((c) => (typeof c === "string" ? { text: c } : c))];
+    } else if (!(FORTRAN_LAUNCH_KEYS as readonly string[]).includes(k)) {
       out[k] = v;
     }
   }

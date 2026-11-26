@@ -43,6 +43,7 @@ buildutils
 byterecl
 cafrun
 callees
+callgrind
 case-expr
 case-stmt
 CCYY
@@ -109,6 +110,7 @@ dispmt
 dlltool
 doubleprecision
 DPROD
+drd
 dshifr
 DSHIFTL
 DSHIFTR
@@ -135,6 +137,7 @@ EOSHIFT
 erfc
 ERRMSG
 esub
+ETW
 eval
 FDATE
 Fehler
@@ -168,6 +171,7 @@ frmt
 frmtc
 fsource
 funptr
+futex
 fuzzer
 fval
 fvals
@@ -186,6 +190,7 @@ globbing
 gofmt
 Grisu
 hansec
+helgrind
 Heroux
 HiDPI
 Hinnant
@@ -315,6 +320,7 @@ Mchkptr
 Mchkstk
 MCLOCK
 Mdlines
+memcheck
 Mesures
 Mfixed
 Mfree
@@ -376,6 +382,7 @@ OpenMP
 openvsx
 ovsx
 PARAMETERs
+perf
 pFUnit
 phasor
 Plotly
@@ -461,6 +468,7 @@ TATTR
 testit
 tform
 TOFROM
+TOML
 toupper
 TRAILZ
 TrueType
@@ -477,6 +485,7 @@ urbanjs
 UserForm
 UserForms
 usleep
+valgrind
 vcruntime
 vkind
 vsce
@@ -506,6 +515,7 @@ xvals
 xyzab
 yvals
 zfls
+zflsrc
 zig
 Zig
 Zigify
@@ -529,3 +539,5 @@ bufnr
 defun
 direnv
 vadimcn
+AArch64
+SVE

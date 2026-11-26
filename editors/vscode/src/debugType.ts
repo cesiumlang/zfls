@@ -15,10 +15,11 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { TargetKind } from "./fpm";
 import { FpmProject, buildTarget, debugBuild, findProjects, fpmExecutable, listTargets, projectOf } from "./fpmCommands";
-import { findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
+import { initialConfiguration } from "./debugConfigs";
+import { attachGdb, findLldbDap, gdbHasDap, hoverExpressionStart } from "./debugSupport";
 import { CompilerInfo, adapterArgs, fortranLaunch, parseProcesses } from "./run";
 import { chooseInstalledDebugger, compilerInfo, gdbFor, lldbWanted } from "./runFile";
-import { expandVariables } from "./tools";
+import { expandVariables, programPath } from "./tools";
 import { folderVariables } from "./variables";
 
 export const DEBUG_TYPE = "fortran";
@@ -54,16 +55,7 @@ export function registerDebugType(
     vscode.commands.registerCommand("zfls.pickProcess", () => pickProcess()),
     vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, {
       resolveDebugConfigurationWithSubstitutedVariables: (folder, config) => resolve(folder, config, log),
-      provideDebugConfigurations: () => [
-        {
-          type: DEBUG_TYPE,
-          request: "launch",
-          name: "Debug Fortran program",
-          program: "${workspaceFolder}/a.out",
-          args: [],
-          cwd: "${workspaceFolder}",
-        },
-      ],
+      provideDebugConfigurations: () => [initialConfiguration()],
     }),
     vscode.debug.registerDebugConfigurationProvider(
       DEBUG_TYPE,
@@ -191,7 +183,7 @@ async function attach(
     log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
     return resolved;
   }
-  const gdb = gdbFor(folder?.uri ?? vscode.Uri.file(process.cwd()), undefined);
+  const gdb = attachGdb(config.gdb, () => gdbFor(folder?.uri ?? vscode.Uri.file(process.cwd()), undefined));
   if (!gdb || !(await gdbHasDap(gdb))) {
     void vscode.window.showErrorMessage(
       vscode.l10n.t("zfls: attaching needs zfls's debugger, which needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath.", gdb ?? "gdb"),
@@ -205,7 +197,7 @@ async function attach(
   const resolved = {
     ...config,
     type: DEBUG_TYPE,
-    gdb: typeof config.gdb === "string" && config.gdb ? config.gdb : gdb,
+    gdb,
     // the sources zfls dap indexes, for the module variables
     ...(typeof config.sourceRoot !== "string" && folder ? { sourceRoot: folder.uri.fsPath } : {}),
     ...(typeof config.program === "string" && config.program ? { program: path.resolve(folder?.uri.fsPath ?? "", config.program) } : {}),
@@ -275,9 +267,10 @@ function evaluatableExpression(document: vscode.TextDocument, position: vscode.P
 /** A process to attach to, picked from those running: its id */
 async function pickProcess(): Promise<string | undefined> {
   const windows = process.platform === "win32";
+  const lister = programPath(windows ? "tasklist" : "ps");
   const text = await new Promise<string>((resolve) =>
     execFile(
-      windows ? "tasklist" : "ps",
+      lister ?? "",
       windows ? ["/fo", "csv", "/nh"] : ["-A", "-o", "pid=,args="],
       { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
       (error, stdout) => resolve(error ? "" : stdout),

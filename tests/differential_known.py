@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Typos fixed in zfls's copy of the fortls data files
 # cSpell:disable-next-line
 TEXT_FIXES = [("RSHIFT(I,SHIFT) eturns", "RSHIFT(I,SHIFT) returns")]
+ISO_C_EXTRA = re.compile(r"(?i)c_(float16(_complex)?|uint(\d+|_least\d+|_fast\d+|max)_t|unsigned(_char|_short|_long|_long_long)?)$")
 PARAM_VALUE = re.compile(r"(PARAMETER[^\n:]*:: \w+ = [^\n(\[]*)[(\[][^\n]*")
 INTRINSIC_DOC = re.compile(
     r"(?:(?:```\w*\n.*?\n```)?\n-----\n)?## `?(\w+)`?\n\n### \*\*Name\*\*",
@@ -83,6 +84,10 @@ def zfls_only_item(item) -> bool:
     # (not a variable of the same name: `int1`, Intel's INT1)
     if str(item.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and item.get("kind") != 6:
         return True
+    # the F2023 names of ISO_C_BINDING (#730) and the unsigned and half
+    # precision ones of Flang's (#881)
+    if str(item.get("label", "")).lower() in ("c_f_strpointer", "f_c_string") or ISO_C_EXTRA.match(str(item.get("label", ""))):
+        return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in item:
         return True
@@ -105,6 +110,9 @@ def normalize(v):
     if isinstance(v, dict):
         # zfls gives each diagnostic a code and source (fortls has neither)
         diagnostic = {"range", "message", "severity"} <= v.keys()
+        # and names the unit an IMPORT may not be in (#724)
+        if diagnostic and v.get("code") == "import-outside-interface":
+            v = {**v, "message": "IMPORT statement outside of interface"}
         return {
             k: normalize(x) for k, x in v.items()
             if k != "traceback" and not (diagnostic and k in ("code", "source"))
@@ -114,13 +122,16 @@ def normalize(v):
         # and unused names: zfls only; so are mismatched ENDs and scopes
         # left open (#285), and the diagnostic on an #include whose file is
         # not found (#282)
-        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "mismatched-end", "unclosed-scope", "include-not-found"))]
+        return [normalize(x) for x in v if not (isinstance(x, dict) and x.get("code") in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned", "mismatched-end", "unclosed-scope", "include-not-found", "unbalanced-parentheses"))]
     if isinstance(v, str):
         for old, new in TEXT_FIXES:
             v = v.replace(old, new)
         # fortls cuts the value of a parameter at its first parenthesis or
         # bracket; zfls shows it whole (upstream issue 124)
         v = PARAM_VALUE.sub(r"\1", v)
+        # zfls has the LOWER argument of C_F_POINTER (F2018, #730)
+        v = v.replace("${3:shape}, ${4:lower})", "${3:shape})")
+        v = v.replace("c_f_pointer(cptr, fptr, shape, lower)", "c_f_pointer(cptr, fptr, shape)")
         # zfls ships a newer M_intrinsics than fortls, its links rewritten
         m = INTRINSIC_DOC.match(v)
         if m:
@@ -350,6 +361,33 @@ def ignore_associate_attributes(v, names: set):
     return v
 
 
+def ignore_associate_functions(v, names: set):
+    """fortls shows an associate name bound to a function's result as that
+    function (`LOGICAL FUNCTION :: hi`, completed as `hi()`); zfls as the
+    variable it is, of the result's type (#721)."""
+    if isinstance(v, dict):
+        label = str(v.get("label", "")).lower()
+        out = {k: ignore_associate_functions(x, names) for k, x in v.items()}
+        text = str(out.get("insertText", ""))
+        if label in names and text.lower().startswith(label + "("):
+            del out["insertText"]
+            out.pop("insertTextFormat", None)
+            if out.get("kind") == 3:
+                out["kind"] = 6
+            detail = str(out.get("detail", ""))
+            if detail.lower().endswith(" function " + label + "()"):
+                out["detail"] = detail[: -len(" function " + label + "()")]
+        return out
+    if isinstance(v, list):
+        return [ignore_associate_functions(x, names) for x in v]
+    if isinstance(v, str) and names:
+        def repl(m):
+            return m.group(1) + m.group(2) if m.group(2)[4:].lower() in names else m.group(0)
+
+        return re.sub(r"^([^\n]*?) FUNCTION( :: \w+)$", repl, v, flags=re.M)
+    return v
+
+
 def untyped_by_fortls(v, names: set) -> set:
     """The names of `names` that fortls's answer `v` gives the type UNKNOWN
     (in a hover, or as the detail of a completion item)."""
@@ -499,6 +537,93 @@ def items_within(a, b) -> bool:
 NON_CODE = re.compile(r"\s*(?:[#!].*)?$")
 
 
+KEYWORD_WORDS = {"integer", "real", "complex", "logical", "character", "byte", "double", "precision"}
+DOT_OPERATORS = {"and", "or", "not", "eqv", "neqv", "xor", "eq", "ne", "lt", "le", "gt", "ge"}
+
+
+def on_keyword_or_operator(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on a type keyword (`real :: x`, `double
+    precision`) or an operator (`.or.`): fortls shows the manual page of the
+    intrinsic function of that name, zfls shows none (zfls #845)."""
+    if not 0 <= line < len(lines):
+        return False
+    text = lines[line]
+    s = e = min(char, len(text))
+    while s > 0 and (text[s - 1].isalnum() or text[s - 1] == "_"):
+        s -= 1
+    while e < len(text) and (text[e].isalnum() or text[e] == "_"):
+        e += 1
+    word = text[s:e].lower()
+    if word in KEYWORD_WORDS:
+        return True
+    return word in DOT_OPERATORS and s > 0 and text[s - 1] == "." and e < len(text) and text[e] == "."
+
+
+def adjacent_references(a, b, lines: list) -> bool:
+    """Whether references `b` are those of `a` and more, the more being
+    names one character after a name (`i*i`, `a(i,i)`, `%n=n`): fortls
+    consumes the delimiter after each name, so it misses a name right behind
+    it (zfls #844)."""
+    if not isinstance(a, list) or not isinstance(b, list) or len(a) >= len(b):
+        return False
+
+    def key(x):
+        r = x.get("range", {}).get("start", {})
+        return (x.get("uri"), r.get("line"), r.get("character"))
+
+    have = {key(x) for x in a}
+    if not have <= {key(x) for x in b}:
+        return False
+    for x in b:
+        k = key(x)
+        if k in have:
+            continue
+        ln, ch = k[1], k[2]
+        if ln is None or not 0 <= ln < len(lines) or ch is None or ch < 2:
+            return False
+        text = lines[ln]
+        if ch > len(text) or text[ch - 1].isalnum() or text[ch - 1] == "_":
+            return False
+        if not (text[ch - 2].isalnum() or text[ch - 2] == "_"):
+            return False
+    return True
+
+
+def dollar_name_references(a, b, lines: list, line: int, char: int) -> bool:
+    """Whether fortls finds no references to a name with a `$` in it, which
+    it puts in a regular expression unescaped (an end of line): zfls finds
+    them."""
+    if not isinstance(a, list) or a or not isinstance(b, list) or not b:
+        return False
+    if not 0 <= line < len(lines):
+        return False
+    for m in re.finditer(r"[A-Za-z0-9_$]+", lines[line]):
+        if m.start() <= char <= m.end():
+            return "$" in m.group(0)
+    return False
+
+
+def in_string_with_bang(lines: list, line: int, char: int) -> bool:
+    """Whether a string literal before (line, char) holds a `!`: fortls
+    reads that `!` as a comment and offers nothing (null), zfls knows it is
+    a string (zfls #842) and offers an empty list."""
+    if not 0 <= line < len(lines):
+        return False
+    quote = None
+    bang = False
+    for c in lines[line][:char]:
+        if quote:
+            if c == quote:
+                quote = None
+            elif c == "!":
+                bang = True
+        elif c in "'\"":
+            quote = c
+        elif c == "!":
+            return False
+    return bang
+
+
 def after_non_code_line(lines: list, line: int) -> bool:
     """Whether the line continues a statement across a preprocessor
     directive, comment or blank line before it (`REAL &` / `#ifdef X` /
@@ -531,6 +656,31 @@ def on_construct_name_or_label(lines: list, line: int, char: int) -> bool:
         r"^\s*(\d+\s+)?" + re.escape(token) + r"\s*:(?!:)\s*" + CONSTRUCT_KEYWORDS, re.I
     )
     return any(name.match(l) for l in lines)
+
+
+DECLARATION_LINE = re.compile(
+    r"\s*(?:\d+\s+)?(?:integer|real|double|complex|logical|character|type|class|dimension|parameter|common|data|"
+    r"external|intrinsic|pointer|allocatable|target|save|intent|optional|public|private|equivalence|namelist|use|"
+    r"procedure|contains|interface|enum|implicit)\b",
+    re.I,
+)
+
+
+def on_implicit_variable(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on a name that no declaration of the file
+    mentions (an implicitly typed variable or an undeclared dummy
+    argument); zfls answers definition, references and rename there (the
+    first use is the definition, #849), fortls has no answer."""
+    if not 0 <= line < len(lines):
+        return False
+    for m in re.finditer(r"[A-Za-z_]\w*", lines[line]):
+        if m.start() <= char <= m.end():
+            token = m.group(0)
+            break
+    else:
+        return False
+    word = re.compile(r"\b" + re.escape(token) + r"\b", re.I)
+    return not any(DECLARATION_LINE.match(l) and word.search(l) for l in lines)
 
 
 def own_file_definition(ref, got, own: str) -> bool:

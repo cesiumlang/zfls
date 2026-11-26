@@ -5,6 +5,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const h = @import("harness.zig");
+const timing = @import("timing.zig");
 
 const is_windows = builtin.target.os.tag == .windows;
 const io = std.testing.io;
@@ -97,5 +98,5 @@ test "a server shutdown stops the compiler running, and what it started (#280)" 
     const before = std.Io.Clock.awake.now(io).nanoseconds;
     w.deinit();
     // not after the compiler's 60 seconds, nor its timeout
-    try std.testing.expect(std.Io.Clock.awake.now(io).nanoseconds - before < 20 * std.time.ns_per_s);
+    try timing.expectWithin(20, before);
 }

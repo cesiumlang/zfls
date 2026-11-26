@@ -2,6 +2,7 @@
 // also checks them with a compiler (the zfls.linter settings, options.ts).
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
@@ -24,11 +25,12 @@ import { registerModuleVariables } from "./moduleVariablesView";
 import { registerConvertCommands } from "./convertForm";
 import { lensCommandsFeature, ProtocolPosition, referenceArgs } from "./codeLenses";
 
-import { affectsServer, restartsServer, serverArguments, serverSettings } from "./options";
+import { affectsServer, restartsServer, serverArguments, serverSettings, startSettings } from "./options";
 import { appliesLive, ServerSettings } from "./settingsSync";
 import { languageToSet, SourceFormNote } from "./sourceForm";
 import { checkSuperseded } from "./superseded";
-import { FORTRAN_FILES, serverExecutable } from "./tools";
+import { servedPattern } from "./servedPattern";
+import { FORTRAN_FILES, fortranFiles, serverExecutable } from "./tools";
 import { folderVariables } from "./variables";
 
 const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
@@ -42,8 +44,7 @@ const clients = new Map<string, Promise<LanguageClient | undefined>>();
 /** The file watchers of each client, disposed when it stops */
 const watchers = new Map<string, vscode.Disposable[]>();
 /** The workspace folder of each running client (none for a directory's) and
- * the settings its server has: those of its command line, or those sent
- * since */
+ * the settings its server has: those sent at start, or since */
 const serverState = new Map<string, { folder: vscode.WorkspaceFolder | undefined; settings: ServerSettings }>();
 let output: vscode.LogOutputChannel | undefined;
 let context: vscode.ExtensionContext;
@@ -648,15 +649,21 @@ async function startClient(
 
   // no `transport`: stdio is the default, and TransportKind.stdio would
   // also pass --stdio, which zfls (like fortls) does not accept
-  const executable = { command, args, options: { cwd: root.fsPath } };
+  // not the workspace: Windows would look for a program there first
+  const executable = { command, args, options: { cwd: neutralDirectory(command) } };
   const serverOptions: ServerOptions = { run: executable, debug: executable };
   // a folder's server takes the files under it; a directory's server only
   // the files directly in it
-  const pattern = folder ? `${root.fsPath}/**/*` : `${root.fsPath}/*`;
+  const pattern = servedPattern(root.toString(), folder !== undefined);
   // the server follows Fortran files changed outside the editor; it asks
   // for the files it reads its settings from itself, and reads them again
+  const suffixes = vscode.workspace.getConfiguration("zfls", folder?.uri);
+  const files = fortranFiles([
+    ...suffixes.get<string[]>("includeSuffixes", []),
+    ...suffixes.get<string[]>("ppSuffixes", []),
+  ]);
   const sourceWatcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(root, folder ? `**/${FORTRAN_FILES}` : FORTRAN_FILES),
+    new vscode.RelativePattern(root, folder ? `**/${files}` : files),
   );
   watchers.set(root.toString(), [sourceWatcher]);
   const clientOptions: LanguageClientOptions = {
@@ -665,6 +672,9 @@ async function startClient(
       ...(untitled ? SERVED_LANGUAGES.map((language) => ({ scheme: "untitled", language })) : []),
     ],
     workspaceFolder: folder ?? { uri: root, name: path.basename(root.fsPath), index: -1 },
+    // as sent later, so that they take over from the user's configuration
+    // file from the start (#782)
+    initializationOptions: { zfls: startSettings(folder) },
     synchronize: { fileEvents: sourceWatcher },
     outputChannel: output,
     middleware: {
@@ -726,6 +736,13 @@ function findServer(context: vscode.ExtensionContext, folder: vscode.WorkspaceFo
     }
   }
   return {};
+}
+
+/** Where the server starts: the directory of its executable, else the
+ * temporary directory; never the workspace, whose files must not be taken
+ * for programs by a lookup of a bare name. The server is told its root. */
+function neutralDirectory(command: string): string {
+  return path.isAbsolute(command) ? path.dirname(command) : os.tmpdir();
 }
 
 /** Restores the executable bit of the bundled zfls should unpacking the

@@ -158,9 +158,9 @@ fn ppSkipped(self: *const FortranFile, line_no: usize) bool {
 
 pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
     if (self.fixed) {
-        if (helpers.isFixedComment(line) and !helpers.isOpenMp(true, line)) return "";
+        if (helpers.isFixedComment(line) and !helpers.isDirective(true, line)) return "";
     } else {
-        if (!helpers.isOpenMp(false, line)) return str.beforeFirst(line, "!");
+        if (!helpers.isDirective(false, line)) return helpers.beforeComment(line);
     }
     return line;
 }

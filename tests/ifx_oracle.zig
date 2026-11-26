@@ -11,7 +11,8 @@
 //! ranks, ALLOCATABLE, POINTER, TARGET and INTENT. ifx names a host's or a
 //! module's entity in the unit that uses it, at its first use, so names are
 //! compared over the whole file, not by scope; but the associate names of
-//! the blocks of SELECT TYPE and RANK each with its own block's entry. The
+//! the blocks of SELECT TYPE and RANK and of ASSOCIATE constructs each with
+//! its own block's or construct's entry. The
 //! differences known, each with its reason, are in ifx_oracle/known.zig;
 //! any other fails the run.
 //!
@@ -27,10 +28,12 @@ const sysinfo = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const lsp = @import("lsp_client");
+const zfls_mod = @import("zfls");
 const util = @import("oracle_util.zig");
 const listing = @import("ifx_oracle/listing.zig");
 const zfls_side = @import("oracle_zfls.zig");
 const known = @import("ifx_oracle/known.zig");
+const odiag = @import("oracle_diagnostics.zig");
 
 const is_windows = sysinfo.target.os.tag == .windows;
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
@@ -105,6 +108,14 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     // components and type-bound procedures
     var ifx_comps: std.StringHashMapUnmanaged(void) = .empty;
     for (l.components) |e| {
+        // a variable's components of a parameterized type's instance
+        // (`matrix#8&3.tag`) are those of the type (`matrix.tag`)
+        if (std.mem.findScalar(u8, e.name, '#')) |hash| {
+            const component = e.name[std.mem.findScalarLast(u8, e.name, '.') orelse continue ..];
+            const of_type = try a.print("{s}{s}", .{ e.name[0..hash], component });
+            if (!components.contains(of_type)) try out.append(a, try a.print("missing in zfls: component {s} of the instance {s}", .{ of_type, e.name }));
+            continue;
+        }
         const dot = std.mem.findScalar(u8, e.name, '.') orelse continue;
         // an extension's parent type is a component of it
         if (types.contains(e.name[dot + 1 ..]) and std.ascii.eqlIgnoreCase(e.type, e.name[dot + 1 ..])) continue;
@@ -113,15 +124,16 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     }
     var cit = components.keyIterator();
     while (cit.next()) |c| if (!ifx_comps.contains(c.*)) try out.append(a, try a.print("missing in ifx: component {s}", .{c.*}));
-    // the associate names of blocks of SELECT TYPE and RANK: ifx lists
-    // each block's, declared on its SELECT's line, in the order of the
-    // blocks (#715)
+    // the associate names of blocks of SELECT TYPE and RANK and of
+    // ASSOCIATE constructs: ifx lists each block's, declared on its
+    // SELECT's line, in the order of the blocks (#715), and each
+    // construct's, declared on its ASSOCIATE's line (#754)
     var claimed: std.StringHashMapUnmanaged(void) = .empty;
     for (objs, 0..) |o, i| {
-        const line = o.select_line orelse continue;
+        const line = o.construct_line orelse continue;
         try claimed.put(a, try a.print("{s}@{d}", .{ o.name(), line }), {});
         var n: usize = 0;
-        for (objs[0..i]) |p| if (p.select_line == line and std.mem.eql(u8, p.name(), o.name())) {
+        for (objs[0..i]) |p| if (p.construct_line == line and std.mem.eql(u8, p.name(), o.name())) {
             n += 1;
         };
         for (l.symbols) |e| {
@@ -132,7 +144,7 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
     }
     // the other variables, with their types and attributes
     for (objs) |o| {
-        if (o.kind != 6 or o.group or o.in_interface or o.select_line != null) continue;
+        if (o.kind != 6 or o.group or o.in_interface or o.construct_line != null) continue;
         if (o.parent_kind == 4) {
             try checkVariable(a, &out, o, l.components, try a.print("{s}.{s}", .{ o.parentName(), o.name() }), &claimed);
             continue;
@@ -157,7 +169,9 @@ fn compare(a: Allocator, l: listing.Listing, objs: []const zfls_side.Object) !Di
 fn ifxType(a: Allocator, t: zfls_side.Type, listed: []const u8) !bool {
     return switch (t) {
         .character => std.mem.eql(u8, listed, "CHAR"),
-        .derived => |d| std.ascii.eqlIgnoreCase(listed, d.name) or std.mem.eql(u8, listed, "RECORD"),
+        // an instance of a parameterized type lists its parameters after
+        // `#` (`MATRIX#8&3`), which are not compared
+        .derived => |d| std.ascii.eqlIgnoreCase(listed[0 .. std.mem.findScalar(u8, listed, '#') orelse listed.len], d.name) or std.mem.eql(u8, listed, "RECORD"),
         .intrinsic => |i| std.mem.eql(u8, listed, try a.print("{c}({d})", .{ i.name[0], @as(u16, i.kind) * @as(u16, if (i.name[0] == 'C') 2 else 1) })),
     };
 }
@@ -170,6 +184,8 @@ test ifxType {
     try std.testing.expect(try ifxType(a, .{ .intrinsic = .{ .name = "REAL", .kind = 4 } }, "R(4)"));
     try std.testing.expect(!try ifxType(a, .{ .intrinsic = .{ .name = "INTEGER", .kind = 4 } }, "I(8)"));
     try std.testing.expect(try ifxType(a, .{ .derived = .{ .name = "SHAPE", .class = true } }, "RECORD"));
+    try std.testing.expect(try ifxType(a, .{ .derived = .{ .name = "MATRIX", .class = false, .pdt = true } }, "MATRIX#8&3"));
+    try std.testing.expect(!try ifxType(a, .{ .derived = .{ .name = "MATRIX", .class = false, .pdt = true } }, "OTHER#8&3"));
 }
 
 test "each block's associate name with its own block's entry (#715)" {
@@ -187,8 +203,8 @@ test "each block's associate name with its own block's entry (#715)" {
     );
     var objs = [_]zfls_side.Object{
         .{ .kind = 6, .fqsn = "m::s::a", .group = false, .parent_kind = 2, .declaration = "REAL, DIMENSION(..), INTENT(IN) :: a" },
-        .{ .kind = 6, .fqsn = "m::s::#select1::#select2::r", .group = false, .parent_kind = 10, .declaration = "REAL :: r", .select_line = 11 },
-        .{ .kind = 6, .fqsn = "m::s::#select1::#select3::r", .group = false, .parent_kind = 10, .declaration = "REAL, DIMENSION(:,:) :: r", .select_line = 11 },
+        .{ .kind = 6, .fqsn = "m::s::#select1::#select2::r", .group = false, .parent_kind = 10, .declaration = "REAL :: r", .construct_line = 11 },
+        .{ .kind = 6, .fqsn = "m::s::#select1::#select3::r", .group = false, .parent_kind = 10, .declaration = "REAL, DIMENSION(:,:) :: r", .construct_line = 11 },
     };
     try std.testing.expectEqual(0, (try compare(a, l, &objs)).items.len);
     // RANK (0)'s name with another block's rank (before #711)
@@ -196,6 +212,35 @@ test "each block's associate name with its own block's entry (#715)" {
     const d = try compare(a, l, &objs);
     try std.testing.expectEqual(1, d.items.len);
     try std.testing.expectEqualStrings("differs: m::s::#select1::#select2::r: rank 2, ifx null", d.items[0]);
+}
+
+test "each ASSOCIATE construct's name with its own construct's entry (#754)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ifx 2026.2.0, fortls's test/test_source/hover/associate_block.f90
+    // (an excerpt): `associate (x => a, ...)` on line 4, `associate (x =>
+    // 1)` on line 7
+    const l = try listing.parse(a,
+        \\SYMBOL CROSS REFERENCE
+        \\ Name                       Object Declared Type            Bytes Dimen Elements Attributes       References
+        \\ A                          Local  3        R(4)            4     1     5                         4
+        \\ X                          Local  4        R(4)            4     1     5                         5
+        \\ X                          Local  7        I(4)            4           scalar                    8
+        \\
+    );
+    var objs = [_]zfls_side.Object{
+        .{ .kind = 6, .fqsn = "p::a", .group = false, .parent_kind = 1, .declaration = "REAL, DIMENSION(5) :: A" },
+        .{ .kind = 6, .fqsn = "p::#assoc1::x", .group = false, .parent_kind = 14, .declaration = "REAL, DIMENSION(5) :: X", .construct_line = 4 },
+        .{ .kind = 6, .fqsn = "p::#assoc2::x", .group = false, .parent_kind = 14, .declaration = "INTEGER :: X", .construct_line = 7 },
+    };
+    try std.testing.expectEqual(0, (try compare(a, l, &objs)).items.len);
+    // the first `x` with the second's type: before #754, it matched the
+    // second's entry
+    objs[1].declaration = "INTEGER :: X";
+    const d = try compare(a, l, &objs);
+    try std.testing.expectEqual(1, d.items.len);
+    try std.testing.expectEqualStrings("differs: p::#assoc1::x: type INTEGER, ifx R(4)", d.items[0]);
 }
 
 fn hasInterfaceVar(objs: []const zfls_side.Object, name: []const u8) bool {
@@ -248,12 +293,19 @@ fn mismatch(a: Allocator, o: zfls_side.Object, e: listing.Entry) !?[]const u8 {
     return null;
 }
 
+/// The options whose Linux spelling is not the rule's (`-real-size 64`)
+const linux_spellings = [_][2][]const u8{.{ "/Qcoarray:", "-coarray=" }};
+
 /// A fixture's ifx options, written as on Windows (`/real-size:64`): on
 /// Linux `-real-size 64`
 fn ifxArgs(a: Allocator, args: []const []const u8) ![]const []const u8 {
     if (is_windows) return args;
     var out: std.ArrayList([]const u8) = .empty;
-    for (args) |x| {
+    next: for (args) |x| {
+        for (linux_spellings) |sp| if (std.mem.startsWith(u8, x, sp[0])) {
+            try out.append(a, try std.mem.concat(a, u8, &.{ sp[1], x[sp[0].len..] }));
+            continue :next;
+        };
         if (x.len < 2 or x[0] != '/') {
             try out.append(a, x);
             continue;
@@ -268,12 +320,13 @@ fn ifxArgs(a: Allocator, args: []const []const u8) ![]const []const u8 {
 test ifxArgs {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const got = try ifxArgs(arena.allocator(), &.{ "/real-size:64", "/fpp" });
+    const got = try ifxArgs(arena.allocator(), &.{ "/real-size:64", "/fpp", "/Qcoarray:single" });
     if (is_windows) return;
-    try std.testing.expectEqual(@as(usize, 3), got.len);
+    try std.testing.expectEqual(@as(usize, 4), got.len);
     try std.testing.expectEqualStrings("-real-size", got[0]);
     try std.testing.expectEqualStrings("64", got[1]);
     try std.testing.expectEqualStrings("-fpp", got[2]);
+    try std.testing.expectEqualStrings("-coarray=single", got[3]);
 }
 
 fn findIfx(io: Io, a: Allocator, env: *const std.process.Environ.Map) !?[]const u8 {
@@ -311,6 +364,9 @@ pub fn main(init: std.process.Init) !u8 {
     const version = try util.run(io, a, &.{ ifx, "--version" }, null, &ifx_env);
     var first = std.mem.splitScalar(u8, version.stdout, '\n');
     std.debug.print("ifx: {s} ({s})\n", .{ ifx, std.mem.trim(u8, first.next() orelse "?", " \r") });
+    // the intrinsic modules of conda-forge's ifx, which its driver does
+    // not look in
+    const modules = try zfls_mod.compilers_intel.moduleDir(io, a, ifx);
     const fixtures = paths.items.len == 0;
     if (fixtures) try paths.appendSlice(a, &.{ "tests/fortran", "tests/ifx" });
     const files = try util.collect(io, a, paths.items, isFortran);
@@ -332,6 +388,7 @@ pub fn main(init: std.process.Init) !u8 {
         const ext = std.Io.Dir.path.extension(src);
         const ext_lower = try std.ascii.allocLowerString(a, ext);
         if (!std.mem.eql(u8, ext, ext_lower) or std.mem.eql(u8, ext_lower, ".fpp")) try cmd.append(a, if (is_windows) "/fpp" else "-fpp");
+        if (modules) |m| try cmd.appendSlice(a, if (is_windows) &.{try a.print("/I{s}", .{m})} else &.{ "-I", m });
         try cmd.appendSlice(a, try ifxArgs(a, try util.headerArgs(a, text, "oracle-ifx-args:")));
         try cmd.append(a, abs);
         const r = try util.run(io, a, cmd.items, workdir, &ifx_env);
@@ -358,7 +415,9 @@ pub fn main(init: std.process.Init) !u8 {
             continue;
         };
         checked += 1;
-        const diffs = try compare(a, l, objs);
+        var diffs = try compare(a, l, objs);
+        // zfls's own errors and warnings on code ifx accepts (#735)
+        for (try odiag.report(io, a, zfls, abs, zcmd.items[4..])) |d| try diffs.append(a, try a.print("zfls reports: {s}", .{d}));
         const base = std.Io.Dir.path.basename(src);
         var unexpected: std.ArrayList([]const u8) = .empty;
         var expected: usize = 0;

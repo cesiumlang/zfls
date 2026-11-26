@@ -20,6 +20,7 @@ const tools = @import("tools.zig");
 const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 const fortitude_timeout_s = 30;
 const codee_timeout_s = 120;
@@ -281,7 +282,7 @@ fn runJob(w: *Worker, job: *Job) !void {
                 self.log.warn("codee: no report for {s}: {s}", .{ job.path, std.mem.trim(u8, if (out.stderr.len > 0) out.stderr else out.stdout, " \r\n") });
                 return;
             };
-            const text = Io.Dir.cwd().readFileAlloc(self.io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
+            const text = fsio.readFile(self.io, a, job.path, .limited(64 * 1024 * 1024)) catch "";
             const lines = try compile.splitLines(a, text);
             const here = try compile.comparable(a, job.cwd, job.path);
             var diags: std.ArrayList(lsp.Diagnostic) = .empty;

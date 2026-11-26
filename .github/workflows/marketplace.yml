@@ -40,12 +40,12 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       # only for .node-version
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .node-version
           sparse-checkout-cone-mode: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
 
@@ -79,7 +79,7 @@ jobs:
       # this repository's main branch)
       - name: Sign in to Azure as the Marketplace publishing identity
         if: steps.oidc.outputs.fallback == 'true'
-        uses: azure/login@v3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}

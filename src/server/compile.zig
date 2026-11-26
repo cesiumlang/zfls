@@ -44,6 +44,7 @@ const Value = json.Value;
 
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 const is_windows = builtin.target.os.tag == .windows;
 /// A compiler run that takes longer is stopped
@@ -202,7 +203,7 @@ fn ptrs(maps: *[@typeInfo(Source).@"enum".field_names.len]std.StringHashMapUnman
 
 /// Publishes zfls's diagnostics of `uri` with the other sources' last ones
 pub fn publish(self: *Server, a: Allocator, uri: []const u8, diags: []const lsp.Diagnostic) !void {
-    const own = try json.stringify(a, try json.from(a, diags));
+    const own = try json.stringifyAll(a, diags);
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.own_diags, uri, own);
@@ -222,7 +223,7 @@ pub fn publishKept(self: *Server, a: Allocator, uri: []const u8) void {
 /// last ones (on the thread that ran it). While zfls's own of a changed
 /// text wait to be computed, they are kept for that publication.
 pub fn publishFrom(self: *Server, a: Allocator, source: Source, uri: []const u8, diags: []const lsp.Diagnostic) !void {
-    const mine = try json.stringify(a, try json.from(a, diags));
+    const mine = try json.stringifyAll(a, diags);
     self.diag_lock.lockUncancelable(self.io);
     defer self.diag_lock.unlock(self.io);
     try store(self, &self.external_diags[@backingInt(source)], uri, mine);
@@ -384,10 +385,10 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
     // the settings of the file's form, for the modules it uses too
     const user = userArgs(self, file.declared_fixed);
     const cmd = try commandOf(self, a, file, user);
-    const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed), cmd);
+    const exes = try executables(self, a, id, compilerPath(self, file.declared_fixed));
     const known = compiler_version.of(self, a, id, exes);
     const mod_dir = try ja.dupe(u8, try modDir(self, a, id, known.version));
-    Io.Dir.cwd().createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
+    fsio.createDirPath(self.io, mod_dir) catch |e| self.log.warn("compiler_diagnostics: could not create {s}: {s}", .{ mod_dir, @errorName(e) });
     const o: compilers.Options = .{ .windows = is_windows, .mod_dir = mod_dir, .version = known.version, .intrinsic_modules = known.intrinsic_modules, .openmp = !self.s.disable_openmp_conditional };
     const work_dir = try ja.dupe(u8, try cacheDir(self, a, "work"));
     // Intel's preprocessor output goes into the working directory: one of
@@ -487,14 +488,14 @@ fn dependencies(self: *Server, a: Allocator, file: *FortranFile) ![]const *Fortr
 /// file, or an older one; a file of submodules only always does
 fn stale(self: *Server, a: Allocator, file: *const FortranFile, mod_dir: []const u8) bool {
     const ast = file.ast orelse return true;
-    const src = Io.Dir.cwd().statFile(self.io, file.path, .{}) catch return true;
+    const src = fsio.statFile(self.io, file.path) catch return true;
     var modules: usize = 0;
     for (ast.scope_list.items) |sc| {
         if (sc.kind != .module) continue;
         modules += 1;
         const name = a.print("{s}.mod", .{sc.name}) catch return true;
         const mod = paths.join(a, &.{ mod_dir, std.ascii.lowerString(name, name) }) catch return true;
-        const st = Io.Dir.cwd().statFile(self.io, mod, .{}) catch return true;
+        const st = fsio.statFile(self.io, mod) catch return true;
         if (st.mtime.nanoseconds < src.mtime.nanoseconds) return true;
     }
     return modules == 0;
@@ -559,7 +560,7 @@ fn runFypp(w: *Worker, a: Allocator, job: *const Job, origin: []const u8, input:
     const fypp = job.fypp.?;
     const stem = std.Io.Dir.path.stem(origin);
     const out = try paths.join(a, &.{ job.work_dir, "fypp", try pathKey(a, origin), try a.print("{s}{s}", .{ stem, if (fixed) ".f" else ".f90" }) });
-    try Io.Dir.cwd().createDirPath(io, paths.dirname(out));
+    try fsio.createDirPath(io, paths.dirname(out));
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(a, &.{ fypp[0], "--line-numbering", "--line-marker-format=cpp" });
     if (fixed) try argv.append(a, "--fixed-format");
@@ -590,7 +591,7 @@ fn runFypp(w: *Worker, a: Allocator, job: *const Job, origin: []const u8, input:
     self.log.debug("compiler_fypp {s}: {s}", .{ origin, output });
     if (report) {
         const m = fyppMessage(output);
-        const lines = try splitLines(a, job.text orelse Io.Dir.cwd().readFileAlloc(io, origin, a, .limited(64 * 1024 * 1024)) catch "");
+        const lines = try splitLines(a, job.text orelse fsio.readFile(io, a, origin, .limited(64 * 1024 * 1024)) catch "");
         try publishCompiler(self, a, job.uri, &.{.{
             .range = rangeAt(lines, m.line, null, null, null),
             .message = m.text,
@@ -636,7 +637,7 @@ fn runJob(w: *Worker, job: *Job) !void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    if (compilers.writesToWorkDir(job.id)) try Io.Dir.cwd().createDirPath(io, job.cwd);
+    if (compilers.writesToWorkDir(job.id)) try fsio.createDirPath(io, job.cwd);
     // the module files that did not compile, with their first error
     var failed: std.ArrayList(messages.FailedDependency) = .empty;
     for (job.deps, job.deps_fixed, job.deps_cwd, 0..) |args, fixed, cwd, i| {
@@ -666,8 +667,8 @@ fn runJob(w: *Worker, job: *Job) !void {
     var target = job.path;
     if (job.text) |text| {
         target = try paths.join(a, &.{ job.work_dir, "unsaved", try pathKey(a, job.path), std.Io.Dir.path.basename(job.path) });
-        try Io.Dir.cwd().createDirPath(io, paths.dirname(target));
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = text });
+        try fsio.createDirPath(io, paths.dirname(target));
+        try fsio.writeFile(io, target, text);
         try aliases.append(a, target);
     }
     if (job.fypp != null) {
@@ -712,7 +713,7 @@ fn runJob(w: *Worker, job: *Job) !void {
             self.postMessage(a, said, 2);
         }
     };
-    const text = job.text orelse Io.Dir.cwd().readFileAlloc(io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
+    const text = job.text orelse fsio.readFile(io, a, job.path, .limited(64 * 1024 * 1024)) catch "";
     // a message in an included file, at the line that includes it (#496)
     try include_site.fill(a, io, job, try splitLines(a, text), aliases.items, msgs);
     // the error of a module file that did not compile, with the messages

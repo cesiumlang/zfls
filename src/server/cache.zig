@@ -25,9 +25,17 @@ const Ast = objects.Ast;
 
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 /// The start of a cache file: the format, which a new one changes
-const magic = "ZFLSIDX2";
+const magic = "ZFLSIDX3";
+/// The checksum ends the file: a damaged cache is not read
+const sum_len = @sizeOf(u64);
+
+fn checksum(data: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, data);
+}
+
 /// What the parse of a file depends on besides its text: the layout of the
 /// objects kept, the version of zfls, whose parser a new release may
 /// change, and the executable's size and time, which a new build changes
@@ -37,7 +45,7 @@ fn parseSalt(io: Io) u64 {
     h.update(@import("build_options").version);
     var buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const n = std.process.executablePath(io, &buf) catch return h.final();
-    const st = Io.Dir.cwd().statFile(io, buf[0..n], .{}) catch return h.final();
+    const st = fsio.statFile(io, buf[0..n]) catch return h.final();
     const mtime: i128 = st.mtime.nanoseconds;
     h.update(std.mem.asBytes(&st.size));
     h.update(std.mem.asBytes(&mtime));
@@ -110,7 +118,7 @@ pub fn begin(self: *Server, a: Allocator, file_count: usize) void {
     snap.* = .{ .salt = parseSalt(self.io) };
     self.index = snap;
     const file = (cachePath(self, a) catch null) orelse return;
-    snap.data = Io.Dir.cwd().readFileAlloc(self.io, file, self.gpa, .limited(1 << 34)) catch return;
+    snap.data = fsio.readFile(self.io, self.gpa, file, .limited(1 << 34)) catch return;
     parse(self.gpa, snap) catch {
         self.log.info("index cache {s} is not readable; it will be written again", .{file});
         snap.entries.clearRetainingCapacity();
@@ -133,9 +141,13 @@ const Reader = struct {
 };
 
 /// The entries of `snap.data`: `magic`, a count, then for each file its
-/// path, size, time, text, AST key and AST, little-endian
+/// path, size, time, text, AST key and AST, then the checksum of all that,
+/// little-endian
 fn parse(gpa: Allocator, snap: *Snapshot) !void {
-    var r: Reader = .{ .data = snap.data };
+    if (snap.data.len < magic.len + sum_len) return error.Truncated;
+    const body = snap.data[0 .. snap.data.len - sum_len];
+    if (std.mem.readInt(u64, snap.data[body.len..][0..sum_len], .little) != checksum(body)) return error.Checksum;
+    var r: Reader = .{ .data = body };
     if (!std.mem.eql(u8, try r.bytes(magic.len), magic)) return error.Format;
     const n = try r.int(u32);
     try snap.entries.ensureTotalCapacity(gpa, n);
@@ -148,6 +160,7 @@ fn parse(gpa: Allocator, snap: *Snapshot) !void {
         const ast = try r.bytes(try r.int(u64));
         snap.entries.putAssumeCapacity(path, .{ .size = size, .mtime = @truncate(mtime), .text = text, .key = key, .ast = ast });
     }
+    if (r.at != body.len) return error.Format;
 }
 
 /// The text of a workspace file, owned by `gpa`: its entry's when the file
@@ -155,7 +168,7 @@ fn parse(gpa: Allocator, snap: *Snapshot) !void {
 /// takes (on any initialization thread)
 pub fn read(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]u8 {
     const snap = self.index orelse return readFile(self, path);
-    const st = Io.Dir.cwd().statFile(self.io, path, .{}) catch return readFile(self, path);
+    const st = fsio.statFile(self.io, path) catch return readFile(self, path);
     if (snap.entries.getEntry(path)) |kv| {
         const e = kv.value_ptr.*;
         if (e.size == st.size and e.mtime == st.mtime.nanoseconds) {
@@ -191,7 +204,7 @@ pub fn read(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]
 }
 
 fn readFile(self: *Server, path: []const u8) error{ OutOfMemory, ReadFailed }![]u8 {
-    return Io.Dir.cwd().readFileAlloc(self.io, path, self.gpa, .limited(1 << 30)) catch |e| switch (e) {
+    return fsio.readFile(self.io, self.gpa, path, .limited(1 << 30)) catch |e| switch (e) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.ReadFailed,
     };
@@ -226,12 +239,12 @@ pub fn parseFile(self: *Server, f: *FortranFile, prepared: ?pp.Output, opts: par
         // a file that cannot be summarized is kept in full
         bytes = s.bytes orelse serial.save(self.gpa, ast) catch |err| switch (err) {
             error.OutOfMemory => return ast,
-            error.Foreign => return ast,
+            error.Foreign, error.TooDeep => return ast,
         };
     } else bytes = serial.save(self.gpa, ast) catch |err| switch (err) {
         error.OutOfMemory => return ast,
         // not kept: parsed every time
-        error.Foreign => return ast,
+        error.Foreign, error.TooDeep => return ast,
     };
     snap.mutex.lockUncancelable(self.io);
     defer snap.mutex.unlock(self.io);
@@ -294,7 +307,7 @@ pub fn wait(self: *Server) void {
 
 fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
     const file = (try cachePath(self, a)) orelse return;
-    Io.Dir.cwd().createDirPath(self.io, paths.dirname(file)) catch {};
+    fsio.createDirPath(self.io, paths.dirname(file)) catch {};
     // a new file, then renamed over the old one: a reader never sees half
     const tmp = try a.print("{s}.{d}.tmp", .{ file, std.Thread.getCurrentId() });
     const count = snap.next.count();
@@ -307,7 +320,7 @@ fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
         try w.int(u32, @intCast(count));
         var it = snap.next.iterator();
         while (it.next()) |kv| try w.entry(kv.key_ptr.*, kv.value_ptr.entry);
-        try w.flush();
+        try w.finish();
     }
     Io.Dir.cwd().rename(tmp, Io.Dir.cwd(), file, self.io) catch |e| {
         Io.Dir.cwd().deleteFile(self.io, tmp) catch {};
@@ -319,7 +332,7 @@ fn write(self: *Server, a: Allocator, snap: *Snapshot) !void {
 
 /// Deletes the caches in `dir` not written for `max_age_days`
 fn prune(self: *Server, a: Allocator, dir_path: []const u8) void {
-    var dir = Io.Dir.cwd().openDir(self.io, dir_path, .{ .iterate = true }) catch return;
+    var dir = fsio.openDir(self.io, dir_path, .{ .iterate = true }) catch return;
     defer dir.close(self.io);
     const now = Io.Clock.real.now(self.io).nanoseconds;
     const max_age: i96 = @as(i96, max_age_days) * std.time.ns_per_day;
@@ -345,8 +358,22 @@ const Writer = struct {
     n: usize = 0,
     list: ?*std.ArrayList(u8) = null,
     a: ?Allocator = null,
+    hash: std.hash.Wyhash = .init(0),
 
     fn bytes(w: *Writer, b: []const u8) !void {
+        w.hash.update(b);
+        return w.put(b);
+    }
+
+    /// The checksum of what was written, then the buffer
+    fn finish(w: *Writer) !void {
+        var b: [sum_len]u8 = undefined;
+        std.mem.writeInt(u64, &b, w.hash.final(), .little);
+        try w.put(&b);
+        try w.flush();
+    }
+
+    fn put(w: *Writer, b: []const u8) !void {
         if (w.list) |l| return l.appendSlice(w.a.?, b);
         if (w.n + b.len > w.buf.len) try w.flush();
         if (b.len > w.buf.len) return w.file.?.writeStreamingAll(w.io.?, b);
@@ -396,6 +423,7 @@ test "a cache's entries read back" {
     try w.int(u32, 2);
     try w.entry("/w/a.f90", .{ .size = 5, .mtime = -7, .text = "x = 1", .key = 42, .ast = "abc" });
     try w.entry("/w/b.f90", .{ .size = 0, .mtime = 1 << 70, .text = "" });
+    try w.finish();
     var snap: Snapshot = .{ .data = try gpa.dupe(u8, out.items) };
     defer snap.deinit(gpa);
     try parse(gpa, &snap);
@@ -410,5 +438,28 @@ test "a cache's entries read back" {
     // a truncated file is no cache
     var bad: Snapshot = .{ .data = try gpa.dupe(u8, out.items[0 .. out.items.len - 3]) };
     defer bad.deinit(gpa);
-    try std.testing.expectError(error.Truncated, parse(gpa, &bad));
+    try std.testing.expectError(error.Checksum, parse(gpa, &bad));
+    var short: Snapshot = .{ .data = try gpa.dupe(u8, out.items[0..9]) };
+    defer short.deinit(gpa);
+    try std.testing.expectError(error.Truncated, parse(gpa, &short));
+}
+
+test "a cache with any byte changed is not read" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var out: std.ArrayList(u8) = .empty;
+    var w: Writer = .{ .list = &out, .a = a };
+    try w.bytes(magic);
+    try w.int(u32, 1);
+    try w.entry("/w/a.f90", .{ .size = 5, .mtime = 7, .text = "x = 1", .key = 42, .ast = "abc" });
+    try w.finish();
+    for (0..out.items.len) |i| {
+        out.items[i] ^= 0x10;
+        defer out.items[i] ^= 0x10;
+        var snap: Snapshot = .{ .data = try gpa.dupe(u8, out.items) };
+        defer snap.deinit(gpa);
+        try std.testing.expect(std.meta.isError(parse(gpa, &snap)));
+    }
 }

@@ -58,6 +58,7 @@ pub const getLineContext = parser_definitions.getLineContext;
 const firstWord = parser_definitions.firstWord;
 const Parser = parser_parse.Parser;
 const Split = @import("parser/entities.zig").Split;
+const fsio = @import("fsio.zig");
 
 /// Receives parser/preprocessor trace lines (debug CLI)
 pub const Trace = struct {
@@ -468,7 +469,7 @@ pub const FortranFile = struct {
 
     /// Read the file from disk; returns whether its contents changed
     pub fn loadFromDisk(self: *FortranFile, io: Io) LoadError!bool {
-        const data = Io.Dir.cwd().readFileAlloc(io, self.path, self.gpa, .limited(1 << 30)) catch |e| return switch (e) {
+        const data = fsio.readFile(io, self.gpa, self.path, .limited(1 << 30)) catch |e| return switch (e) {
             error.OutOfMemory => error.OutOfMemory,
             else => error.ReadFailed,
         };

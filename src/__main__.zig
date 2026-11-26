@@ -6,6 +6,7 @@ const root = @import("root");
 const json = @import("json.zig");
 const patterns = @import("patterns.zig");
 const paths = @import("paths.zig");
+const executables = @import("executables.zig");
 const settings = @import("settings.zig");
 const jsonrpc = @import("jsonrpc.zig");
 const server_mod = @import("server.zig");
@@ -226,6 +227,7 @@ pub fn main(init: std.process.Init) !void {
     paths.init(io);
     paths.initCache(init.arena.allocator(), init.environ_map);
     paths.initUserConfig(init.arena.allocator(), init.environ_map);
+    executables.initProcessEnv(init.environ_map);
 
     const arena = init.arena.allocator();
     const argv = try init.minimal.args.toSlice(arena);
@@ -235,6 +237,13 @@ pub fn main(init: std.process.Init) !void {
     // ifx without Intel's installer or Visual Studio (Windows)
     if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "setup-ifx")) {
         const code = try @import("ifxsetup.zig").run(gpa, io, init.environ_map, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
+    // the options in effect, and where each came from
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "config")) {
+        const code = try @import("config_command.zig").run(gpa, io, args.items[1..]);
         if (code != 0) std.process.exit(code);
         return;
     }

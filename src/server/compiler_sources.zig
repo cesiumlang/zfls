@@ -26,7 +26,7 @@ pub fn find(self: *Server, a: Allocator, name: []const u8) !?[]const u8 {
     for ([_]bool{ false, true }) |fixed| {
         const id = compile_args.compilerOf(self, fixed) orelse continue;
         if (id != .ifx and id != .ifort and id != .gfortran) continue;
-        const exes = try compile_args.executables(self, a, id, compile_args.compilerPath(self, fixed), null);
+        const exes = try compile_args.executables(self, a, id, compile_args.compilerPath(self, fixed));
         for (exes) |exe| {
             const path = compiler_version.pathOf(self.io, a, exe, self.toolEnv()) orelse continue;
             if ((try modulesOf(self, a, id, path)).get(name)) |f| return f;

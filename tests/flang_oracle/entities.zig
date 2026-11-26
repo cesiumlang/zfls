@@ -95,6 +95,8 @@ const Walk = struct {
                 try self.scope(c, path);
                 continue;
             }
+            // an instance of a parameterized type, which zfls has no scope for
+            if (c.instantiation) continue;
             const name = c.name orelse if (std.mem.eql(u8, c.kind, "MainProgram")) unnamed_program else return error.UnknownDetails;
             // one Flang made (`.dp.t.c`, an instantiation of a type)
             if (std.mem.startsWith(u8, name, ".")) continue;

@@ -7,7 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const json = @import("../json.zig");
-const json5 = @import("../json5.zig");
+const config_file = @import("../settings/config_file.zig");
 const lsp = @import("../lsp.zig");
 const patterns = @import("../patterns.zig");
 const paths = @import("../paths.zig");
@@ -20,6 +20,7 @@ const glob = @import("../glob.zig");
 const project = @import("../project.zig");
 const semantic = @import("../semantic.zig");
 const namelist = @import("../namelist.zig");
+const version = @import("../version.zig");
 
 const Ast = objects.Ast;
 const FortranFile = parser.FortranFile;
@@ -47,6 +48,7 @@ const summary = @import("summary.zig");
 const file_options = @import("file_options.zig");
 const source_form = @import("source_form.zig");
 const compiler_macros = @import("compiler_macros.zig");
+const fsio = @import("../fsio.zig");
 
 pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams) !Value {
     const sa = self.arena.allocator();
@@ -81,7 +83,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
 
     try workspaceInit(self, a, params.workDoneToken);
     clangd.start(self, a);
-    self.log.info("zfls - Fortran Language Server {s} Initialized", .{@import("../version.zig").reported});
+    self.log.info("zfls - Fortran Language Server {s} Initialized", .{version.reported});
     try logOptions(self, a);
 
     if (self.s.notify_init) self.postMessage(a, "fortls initialization complete", C.Severity.info);
@@ -98,7 +100,7 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
         .documentFormattingProvider = if (on.formatting) true else null,
         .documentRangeFormattingProvider = if (on.formatting) true else null,
         .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
-    } });
+    }, .serverInfo = .{ .name = "zfls", .version = version.reported } });
 }
 
 /// The names of the configuration file, the first found being read
@@ -111,40 +113,34 @@ pub fn configFileNames(self: *const Server) @TypeOf(settings_mod.configFileNames
 /// only allocation failures are errors.
 pub fn readConfigFile(self: *Server, a: Allocator) Allocator.Error!?Value {
     self.config.file_path = null;
-    var config_path: ?[]const u8 = null;
-    for (configFileNames(self)) |f| {
-        const p = try paths.join(a, &.{ self.root_path, f });
-        if (paths.isFile(self.io, p)) {
-            config_path = p;
-            break;
-        }
-    }
-    const cp = config_path orelse return null;
-    const data = Io.Dir.cwd().readFileAlloc(self.io, cp, self.arena.allocator(), .limited(1 << 26)) catch {
-        self.postMessage(a, try a.print("Configuration file '{s}' not found", .{self.s.config}), C.Severity.err);
+    const found = try config_file.find(a, self.io, self.root_path, self.s.config) orelse return null;
+    const cp = found.path;
+    const name = found.name;
+    const data = fsio.readFile(self.io, self.arena.allocator(), cp, .limited(1 << 26)) catch {
+        self.postMessage(a, try a.print("Configuration file '{s}' not found", .{name}), C.Severity.err);
         return null;
     };
-    const cfg = try parseConfigFile(self, a, data, self.s.config) orelse return null;
+    const cfg = try parseConfigFile(self, a, data, name) orelse return null;
     self.config.file_path = try self.arena.allocator().dupe(u8, cp);
     return cfg;
 }
 
 /// The JSON object of a configuration file's text `data` (in the server's
 /// arena), null when it is none: an error then posted, naming the file as
-/// `name`
+/// `name`. The problems of a TOML file are posted as a warning.
 pub fn parseConfigFile(self: *Server, a: Allocator, data: []const u8, name: []const u8) Allocator.Error!?Value {
-    var p: json5.Parser = .{ .a = self.arena.allocator(), .src = data };
-    const cfg = p.parseDocument() catch {
-        const emsg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        const msg = try a.print("Error: \"{s}\" while reading \"{s}\" Configuration file", .{ emsg, name });
-        self.postMessage(a, msg, C.Severity.err);
-        return null;
-    };
-    if (cfg != .object) {
-        self.postMessage(a, try a.print("Error: \"<string>:1 Unexpected value\" while reading \"{s}\" Configuration file", .{name}), C.Severity.err);
-        return null;
+    switch (try config_file.parse(self.arena.allocator(), a, data, name)) {
+        .err => |msg| {
+            self.postMessage(a, msg, C.Severity.err);
+            return null;
+        },
+        .ok => |loaded| {
+            if (loaded.problems.len > 0) {
+                self.postMessage(a, try a.print("In the configuration file \"{s}\": {s}", .{ name, try std.mem.join(a, "; ", loaded.problems) }), C.Severity.warn);
+            }
+            return loaded.cfg;
+        },
     }
-    return cfg;
 }
 
 /// Adds the include directories and preprocessor definitions of the
@@ -156,7 +152,7 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
     self.compile_commands = .empty;
     const db = if (self.s.disable_compile_commands) null else try project.findCompileCommands(self.io, a, self.root_path, self.s.compile_commands);
     if (db) |p| {
-        if (Io.Dir.cwd().readFileAlloc(self.io, p, a, .limited(1 << 28))) |text| {
+        if (fsio.readFile(self.io, a, p, .limited(1 << 28))) |text| {
             if (project.readCompileCommands(sa, text, paths.dirname(p))) |found| {
                 try addProjectSettings(self, found);
                 self.module_dirs = found.module_dirs;
@@ -173,7 +169,7 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
         }
     }
     const fpm = try paths.join(a, &.{ self.root_path, "fpm.toml" });
-    if (Io.Dir.cwd().readFileAlloc(self.io, fpm, a, .limited(1 << 24))) |text| {
+    if (fsio.readFile(self.io, a, fpm, .limited(1 << 24))) |text| {
         try addProjectSettings(self, try project.readFpm(self.io, sa, self.root_path, text));
     } else |_| {}
 }
@@ -232,6 +228,7 @@ pub fn configLogger(self: *Server) !void {
     if (self.s.debug_log and self.root_path.len > 0) {
         const fname = try paths.join(self.arena.allocator(), &.{ self.root_path, "fortls_debug.log" });
         self.log.openFile(self.io, fname);
+        if (self.config.file_ignored_note) |note| self.log.warn("{s}", .{note});
         try self.post_messages.append(self.gpa, .{ .severity = C.Severity.info, .message = "fortls debugging enabled" });
     }
 }
@@ -660,7 +657,7 @@ fn openDocument(self: *Server, filepath: []const u8, text: []const u8, form: ?pa
 /// there is no such file)
 fn differsFromDisk(self: *Server, filepath: []const u8) bool {
     const file = self.workspace.get(filepath) orelse return false;
-    const data = Io.Dir.cwd().readFileAlloc(self.io, filepath, self.gpa, .limited(1 << 30)) catch return true;
+    const data = fsio.readFile(self.io, self.gpa, filepath, .limited(1 << 30)) catch return true;
     defer self.gpa.free(data);
     return file.hash == null or file.hash.? != parser.FortranFile.textHash(data);
 }
@@ -765,7 +762,7 @@ pub fn isSourceFile(self: *const Server, path: []const u8) bool {
 /// and it leaves the workspace when it is closed
 pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
     if (did_close) {
-        if (self.workspace.get(path)) |f| if (f.ast) |ast| linking.removeFromTree(self, ast);
+        if (self.workspace.get(path)) |f| if (f.ast) |ast| try linking.removeFromTree(self, ast);
         return .null;
     }
     if (did_open) {
@@ -849,7 +846,7 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         }
         if (f.ast) |old| try self.retired.append(self.gpa, old);
     }
-    if (f.ast) |old| linking.removeFromTree(self, old);
+    if (f.ast) |old| try linking.removeFromTree(self, old);
     f.ast = ast_new;
     pull.changed(self);
     try linking.addToTree(self, f);

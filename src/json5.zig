@@ -10,10 +10,15 @@ const Value = std.json.Value;
 
 pub const ParseError = error{ SyntaxError, OutOfMemory };
 
+/// How deep arrays and objects may nest; a configuration file has a few
+/// levels, and each one is a call of the parser
+pub const max_depth = 256;
+
 pub const Parser = struct {
     a: Allocator,
     src: []const u8,
     pos: usize = 0,
+    depth: usize = 0,
     /// Position of the last error, for messages
     err_pos: usize = 0,
 
@@ -204,6 +209,9 @@ pub const Parser = struct {
     }
 
     fn parseObject(p: *Parser) ParseError!Value {
+        if (p.depth >= max_depth) return p.fail();
+        p.depth += 1;
+        defer p.depth -= 1;
         p.pos += 1;
         var obj: std.json.ObjectMap = .empty;
         while (true) {
@@ -229,6 +237,9 @@ pub const Parser = struct {
     }
 
     fn parseArray(p: *Parser) ParseError!Value {
+        if (p.depth >= max_depth) return p.fail();
+        p.depth += 1;
+        defer p.depth -= 1;
         p.pos += 1;
         var arr: std.json.Array = .init(p.a);
         while (true) {
@@ -272,4 +283,21 @@ test "json5: a configuration file with a UTF-8 byte-order mark (#407)" {
         const text = try arena.allocator().print("{s}{{\"pp_defs\": {{}}}}", .{mark});
         try std.testing.expect((try parse(arena.allocator(), text)) == .object);
     }
+}
+
+test "json5: deeply nested arrays and objects are a syntax error" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const n = max_depth + 1;
+    const open = try a.alloc(u8, n);
+    @memset(open, '[');
+    const close = try a.alloc(u8, n);
+    @memset(close, ']');
+    try std.testing.expectError(error.SyntaxError, parse(a, try std.mem.concat(a, u8, &.{ open, close })));
+    // the same depth in objects, and a document nested to the limit
+    const deep = try a.alloc(u8, 1_000_000);
+    @memset(deep, '[');
+    try std.testing.expectError(error.SyntaxError, parse(a, deep));
+    _ = try parse(a, try std.mem.concat(a, u8, &.{ open[1..], close[1..] }));
 }

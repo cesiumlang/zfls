@@ -5,7 +5,7 @@
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
-import { gdbEnv, gdbVersion, hoverExpressionStart } from "../../src/debugSupport";
+import { attachGdb, gdbEnv, gdbVersion, hoverExpressionStart } from "../../src/debugSupport";
 
 test("the expression under the mouse", () => {
   const line = "  y = p%x + a(i, 2)%w(3) + q % z";
@@ -32,4 +32,16 @@ test("gdb's own directory first on its PATH, for its Python", () => {
   assert.equal(env.HOME, "h");
   // a bare name: the PATH as it is
   assert.deepEqual(gdbEnv("gdb", { PATH: "x" }), { PATH: "x" });
+});
+
+test("an attach configuration's own gdb is the one checked (#785)", () => {
+  let looked = false;
+  const fallback = () => {
+    looked = true;
+    return "gdb";
+  };
+  assert.equal(attachGdb("/opt/gdb17/gdb", fallback), "/opt/gdb17/gdb");
+  assert.equal(looked, false);
+  assert.equal(attachGdb(undefined, fallback), "gdb");
+  assert.equal(attachGdb("", () => undefined), undefined);
 });

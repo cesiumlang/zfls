@@ -21,6 +21,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
+const fsio = @import("../fsio.zig");
 const Value = json.Value;
 const Session = @import("session.zig").Session;
 const gdb = @import("gdb.zig");
@@ -143,7 +144,7 @@ pub fn afterEntry(s: *Session, a: Allocator) !void {
 /// Whether the file at `path` has the bytes of `name` followed by a 0 (a
 /// symbol's name in the program's string tables), read a piece at a time
 pub fn programHas(io: Io, path: []const u8, name: []const u8) bool {
-    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return false;
+    const file = fsio.openFile(io, path) catch return false;
     defer file.close(io);
     var buf: [1 << 16]u8 = undefined;
     // the end of the piece before, in case the name spans two

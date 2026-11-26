@@ -56,6 +56,40 @@ pub fn topLevel(s: []const u8, ch: u8) ?usize {
     return null;
 }
 
+/// The first value of conditional expression `e` (F2023), `(c ? a : b)`:
+/// `a`, whose type, kind and rank the expression has; null for another
+/// expression (#733)
+pub fn conditionalValue(e_in: []const u8) ?[]const u8 {
+    const e = std.mem.trim(u8, e_in, " \t");
+    if (e.len < 2 or e[0] != '(' or matching(e, 0) != e.len - 1) return null;
+    const inner = e[1 .. e.len - 1];
+    const q = outsideLiterals(inner, '?') orelse return null;
+    const rest = inner[q + 1 ..];
+    const colon = outsideLiterals(rest, ':') orelse return null;
+    const value = std.mem.trim(u8, rest[0..colon], " \t");
+    return if (value.len > 0) value else null;
+}
+
+/// The first `ch` of `s` outside parentheses, brackets and character
+/// literals
+fn outsideLiterals(s: []const u8, ch: u8) ?usize {
+    var depth: usize = 0;
+    var quote: u8 = 0;
+    for (s, 0..) |x, i| {
+        if (quote != 0) {
+            if (x == quote) quote = 0;
+            continue;
+        }
+        switch (x) {
+            '\'', '"' => quote = x,
+            '(', '[' => depth += 1,
+            ')', ']' => depth -|= 1,
+            else => if (x == ch and depth == 0) return i,
+        }
+    }
+    return null;
+}
+
 /// The end of the operand that starts at `i` of `e`: a literal, a string,
 /// a name with its subscripts and components, or a parenthesized
 /// expression or array constructor
@@ -164,6 +198,11 @@ pub fn category(desc_in: []const u8) Category {
 /// literal (`1`, `1.0d0`, `2e3_dp`, `.true.`, `'text'`)
 pub fn literalCategory(arg: []const u8) ?Category {
     if (arg.len == 0) return null;
+    // a character literal with a kind, `4_'h'`, `ck_"x"`
+    if (std.mem.findAny(u8, arg, "'\"")) |q| if (q > 1 and arg[q - 1] == '_') {
+        const kind = arg[0 .. q - 1];
+        if (std.mem.findNone(u8, kind, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") == null) return literalCategory(arg[q..]);
+    };
     if (arg[0] == '\'' or arg[0] == '"') {
         // one string, its closing quote last (`'a' == b` is an expression)
         var i: usize = 1;
@@ -276,6 +315,8 @@ test "literal categories" {
     try std.testing.expectEqual(Category.integer, literalCategory("3").?);
     try std.testing.expectEqual(Category.integer, literalCategory("-3_int64").?);
     try std.testing.expectEqual(Category.real, literalCategory("1.0d0").?);
+    try std.testing.expectEqual(Category.character, literalCategory("4_'h'").?);
+    try std.testing.expectEqual(Category.character, literalCategory("ck_\"x\"").?);
     try std.testing.expectEqual(Category.real, literalCategory("2e-3").?);
     try std.testing.expectEqual(Category.real, literalCategory(".5_dp").?);
     try std.testing.expectEqual(Category.logical, literalCategory(".TRUE.").?);

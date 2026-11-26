@@ -16,11 +16,13 @@ const objects = @import("../objects.zig");
 const objects_hover = @import("../objects/hover.zig");
 const parser = @import("../parser.zig");
 const constructs = @import("../constructs.zig");
+const implicit_names = @import("implicit_names.zig");
 const selection = @import("../selection.zig");
 const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
 const directives = @import("../data/directives.zig");
 const operators = @import("operators.zig");
+const keyword_token = @import("keyword_token.zig");
 const assignment = @import("assignment.zig");
 const literals = @import("../literals.zig");
 const docmath = @import("../docmath.zig");
@@ -137,6 +139,8 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     // the file's own global definition before another file's of the
     // same name (fortls gets this from parsing the open file last)
     if (self.env(a).global(ast, key)) |o| return o;
+    // `.or.`, `logical r` and `double precision` are no calls of intrinsics (#845)
+    if (keyword_token.isKeywordOrOperator(curr_line, line_prefix, def_char)) return null;
     for (self.intr.funs) |f| if (std.ascii.eqlIgnoreCase(f.name, key)) return f;
     if (hover_req) if (curr_scope) |cs| {
         var var_type: ?[]const u8 = null;
@@ -330,7 +334,7 @@ pub fn constructAt(self: *Server, a: Allocator, params: lsp.PositionParams) !?st
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return null;
     const ast = file.ast orelse return null;
     const col = Server.toByteCol(file, params.position.line, params.position.character);
-    const t = (try constructs.at(a, file, ast, params.position.line, col)) orelse return null;
+    const t = (try constructs.at(a, file, ast, params.position.line, col)) orelse (try implicit_names.at(self, a, file, ast, params.position.line, col)) orelse return null;
     return .{ .file = file, .target = t };
 }
 
@@ -417,10 +421,26 @@ pub fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj
 /// for (`objects.declaredProcedure`, #232), `v` being found at byte
 /// column `col` of 0-based line `line` of `file`, where it may be called
 pub fn callerTarget(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj) !?*Obj {
+    return callerTargetMemo(self, a, file, line, col, v, null);
+}
+
+/// What `isCalledIn` found per variable, for a search over many uses of a name
+pub const CalledMemo = std.AutoHashMapUnmanaged(*const Obj, bool);
+
+/// `callerTarget`, remembering in `memo` what the scope scan found
+pub fn callerTargetMemo(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj, memo: ?*CalledMemo) !?*Obj {
     if (v.kind != .variable) return null;
     const ast = file.ast orelse return null;
-    const called = v.varDataConst().is_external or isCalledAt(file, line, col) or isCalledIn(v);
+    const called = v.varDataConst().is_external or isCalledAt(file, line, col) or try calledIn(a, v, memo);
     return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, called);
+}
+
+fn calledIn(a: Allocator, v: *const Obj, memo: ?*CalledMemo) !bool {
+    const m = memo orelse return isCalledIn(v);
+    if (m.get(v)) |r| return r;
+    const r = isCalledIn(v);
+    try m.put(a, v, r);
+    return r;
 }
 
 /// Whether the name at byte column `col` of 0-based line `line` is

@@ -9,6 +9,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const paths = @import("../paths.zig");
 const tools = @import("../server/tools.zig");
+const fsio = @import("../fsio.zig");
 
 /// Module names (lowercase) and the files that define them
 pub const Modules = std.array_hash_map.String([]const u8);
@@ -55,7 +56,7 @@ pub fn replacesTable(name: []const u8) bool {
 /// Adds to `out` (in `out_a`) the modules that the `.f90` files of `dir`
 /// define; a module several files define keeps the first's
 pub fn scan(io: Io, a: Allocator, out_a: Allocator, dir: []const u8, out: *Modules) !void {
-    var d = Io.Dir.cwd().openDir(io, dir, .{ .iterate = true }) catch return;
+    var d = fsio.openDir(io, dir, .{ .iterate = true }) catch return;
     defer d.close(io);
     var names: std.ArrayList([]const u8) = .empty;
     var it = d.iterate();
@@ -71,7 +72,7 @@ pub fn scan(io: Io, a: Allocator, out_a: Allocator, dir: []const u8, out: *Modul
     }.lt);
     for (names.items) |name| {
         const path = try std.Io.Dir.path.join(out_a, &.{ dir, name });
-        const text = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 26)) catch continue;
+        const text = fsio.readFile(io, a, path, .limited(1 << 26)) catch continue;
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |line| {
             const m = moduleOf(line) orelse continue;

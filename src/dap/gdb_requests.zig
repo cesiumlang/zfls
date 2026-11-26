@@ -30,6 +30,7 @@ const lldb = @import("lldb.zig");
 const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
 const gdb_pending = @import("gdb_pending.zig");
+const gdb_io = @import("gdb_io.zig");
 const gdb_exit = @import("gdb_exit.zig");
 const vars = @import("gdb_variables.zig");
 const gdb_values = @import("gdb_values.zig");
@@ -274,8 +275,21 @@ fn prepare(s: *Session, a: Allocator, args: ?Value) !void {
 /// A terminal of the client for the program: its tty, which a shell in it
 /// writes to a file and then waits
 pub fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8) !?[]const u8 {
-    const tmp = s.environ.get("TMPDIR") orelse "/tmp";
-    const file = try a.print("{s}/zfls-tty-{d}", .{ std.mem.trimEnd(u8, tmp, "/"), Io.Clock.real.now(s.io).nanoseconds });
+    var tmp = std.mem.trimEnd(u8, s.environ.get("TMPDIR") orelse "/tmp", "/");
+    // the path goes in a shell command in quotes
+    if (tmp.len == 0 or std.mem.findAny(u8, tmp, "'\n") != null) tmp = "/tmp";
+    // a directory of our own that only we can use: a name in a shared one
+    // can be taken beforehand, or made a link
+    var rnd: [8]u8 = undefined;
+    s.io.random(&rnd);
+    const dir = try a.print("{s}/zfls-tty-{s}", .{ tmp, std.fmt.bytesToHex(rnd, .lower) });
+    const private: Io.Dir.Permissions = if (builtin.target.os.tag == .windows) .default_dir else .fromMode(0o700);
+    Io.Dir.cwd().createDir(s.io, dir, private) catch return null;
+    const file = try a.print("{s}/tty", .{dir});
+    defer {
+        Io.Dir.cwd().deleteFile(s.io, file) catch {};
+        Io.Dir.cwd().deleteDir(s.io, dir) catch {};
+    }
     const seq = s.sendSeq(a, .{
         .type = "request",
         .command = "runInTerminal",
@@ -292,14 +306,28 @@ pub fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8
     for (0..100) |_| {
         if (Io.Dir.cwd().readFileAlloc(s.io, file, a, .limited(4096))) |content| {
             const tty = std.mem.trim(u8, content, " \t\r\n");
-            if (tty.len > 0 and tty[0] == '/') {
-                Io.Dir.cwd().deleteFile(s.io, file) catch {};
-                return tty;
-            }
+            if (validTty(tty)) return try a.dupe(u8, tty);
         } else |_| {}
         s.io.sleep(.fromMilliseconds(100), .awake) catch {};
     }
     return null;
+}
+
+/// Whether `tty` is a terminal device's path (`/dev/pts/3`, `/dev/ttys003`):
+/// it goes into the debugger's commands
+fn validTty(tty: []const u8) bool {
+    if (!std.mem.startsWith(u8, tty, "/dev/") or std.mem.find(u8, tty, "..") != null) return false;
+    for (tty) |c| if (!std.ascii.isAlphanumeric(c) and std.mem.findScalar(u8, "/_.-", c) == null) return false;
+    return true;
+}
+
+test "a terminal's path is a device path" {
+    try std.testing.expect(validTty("/dev/pts/3"));
+    try std.testing.expect(validTty("/dev/ttys003"));
+    try std.testing.expect(!validTty("/etc/passwd"));
+    try std.testing.expect(!validTty("/dev/../etc/x"));
+    try std.testing.expect(!validTty("/dev/pts/3; run x"));
+    try std.testing.expect(!validTty("/dev/pts/3\nset x"));
 }
 
 fn killTerminal(s: *Session) void {
@@ -422,8 +450,12 @@ pub fn syncFunctions(s: *Session, a: Allocator) !Value {
         if (!(s.g.gfortran_dll and gdb_dll.isDllFunction(b.name))) try kept.append(a, b);
     };
     const ours: []const runtime_errors.GdbBreakpoint = kept.items;
+    for (ours) |b| if (b.gdb_condition != null) {
+        try gdb_io.define(s, a);
+        break;
+    };
     // Flang's STOP functions: only at ERROR STOP
-    for (ours) |b| try list.append(if (b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
+    for (ours) |b| try list.append(if (b.gdb_condition orelse b.condition) |c| try json.from(a, .{ .name = b.name, .condition = c }) else try json.from(a, .{ .name = b.name }));
     if (s.g.entry_function) |f| try list.append(try json.from(a, .{ .name = f }));
     const r = try gdb.request(s, a, "setFunctionBreakpoints", .{ .breakpoints = Value{ .array = list } });
     s.g.error_breakpoints.clearRetainingCapacity();

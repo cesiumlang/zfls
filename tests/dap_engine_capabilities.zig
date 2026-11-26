@@ -17,7 +17,7 @@ const str = dap.str;
 const check = dap.check;
 
 /// gdb's capabilities that the engine has not
-const lacking = [_][]const u8{ "supportsFunctionBreakpoints", "supportsSetVariable", "supportsDisassembleRequest", "supportsReadMemoryRequest" };
+const lacking = [_][]const u8{ "supportsWriteMemoryRequest", "supportsInstructionBreakpoints" };
 
 /// The leg (skipped without `gdb`)
 pub fn run(io: Io, gpa: Allocator, a: Allocator, zfls: []const u8, gdb: []const u8, exe: []const u8, tmp: []const u8, src_dir: []const u8) !void {

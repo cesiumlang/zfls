@@ -20,6 +20,7 @@ const intel = @import("../compilers/intel.zig");
 const tools = @import("tools.zig");
 
 const Server = @import("../server.zig").Server;
+const fsio = @import("../fsio.zig");
 
 /// What is known of the compiler that the check runs, the first of `exes`
 /// that runs: for LLVM Flang and gfortran (Intel's: `intelOf`), else
@@ -79,7 +80,7 @@ pub const Stamp = struct { size: u64, mtime: i96 };
 /// The stamp of the file that runs as `exe` (`pathOf`)
 pub fn stampOf(io: Io, a: Allocator, exe: []const u8, env: ?*const std.process.Environ.Map) ?Stamp {
     const p = pathOf(io, a, exe, env) orelse return null;
-    const st = Io.Dir.cwd().statFile(io, p, .{}) catch return null;
+    const st = fsio.statFile(io, p) catch return null;
     return .{ .size = st.size, .mtime = st.mtime.nanoseconds };
 }
 
@@ -102,7 +103,7 @@ pub fn pathOf(io: Io, a: Allocator, exe: []const u8, env: ?*const std.process.En
 fn fileOf(io: Io, a: Allocator, path: []const u8, suffixes: []const []const u8) ?[]const u8 {
     for (suffixes) |x| {
         const p = if (x.len == 0) path else a.print("{s}{s}", .{ path, x }) catch return null;
-        const st = Io.Dir.cwd().statFile(io, p, .{}) catch continue;
+        const st = fsio.statFile(io, p) catch continue;
         if (st.kind != .file) continue;
         return p;
     }

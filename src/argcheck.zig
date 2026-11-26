@@ -15,9 +15,25 @@ const FortranFile = @import("parser.zig").FortranFile;
 const selection = @import("selection.zig");
 const KW = @import("constants.zig").KW;
 const typing = @import("argcheck/typing.zig");
+const arithmetic = @import("argcheck/arithmetic.zig");
 const default_kinds = @import("default_kinds.zig");
 const unit_kinds = @import("argcheck/unit_kinds.zig");
 const ignore_tkr = @import("argcheck/ignore_tkr.zig");
+const definable = @import("argcheck/definable.zig");
+const derived = @import("argcheck/derived.zig");
+const allocatable = @import("argcheck/allocatable.zig");
+const extent = @import("argcheck/extent.zig");
+const parameter_value = @import("argcheck/parameter_value.zig");
+const dummy_names = @import("argcheck/dummy_names.zig");
+const kind_values = @import("argcheck/kind_values.zig");
+const subscript_count = @import("argcheck/subscript_count.zig");
+const unknown_component = @import("argcheck/unknown_component.zig");
+const allocate_objects = @import("argcheck/allocate_objects.zig");
+const assign_types = @import("argcheck/assign_types.zig");
+const expr_clash = @import("argcheck/expr_clash.zig");
+const syntax_errors = @import("argcheck/syntax_errors.zig");
+const intrinsic_count = @import("argcheck/intrinsic_count.zig");
+const Dialect = @import("dialect.zig").Dialect;
 const dimensions = @import("objects/dimensions.zig");
 const Category = typing.Category;
 const Typed = typing.Typed;
@@ -38,7 +54,7 @@ const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
 
-pub const Kind = enum { arguments, kinds, intent_in };
+pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component, allocate_object, allocate_duplicate, allocate_shape, assignment_type, condition_type, intrinsic_arguments, unbalanced_parentheses, dangling_operator, abstract_type_declared, extends_unknown_type, pure_function_argument, unknown_io_specifier };
 
 /// How an actual argument fits a dummy argument (`Checker.compare`)
 pub const Match = union(enum) {
@@ -90,16 +106,17 @@ pub const Problem = struct { line: usize, start: usize, end: usize, message: []c
 
 /// A statement with its continuation lines joined, and where each of its
 /// bytes is in the file
-const Joined = struct {
+pub const Joined = struct {
     text: []const u8,
     lines: []const usize,
     cols: []const usize,
 };
 
 fn join(a: Allocator, file: *const FortranFile, first: usize, last: usize) !Joined {
-    var text: std.ArrayList(u8) = .empty;
-    var lines: std.ArrayList(usize) = .empty;
-    var cols: std.ArrayList(usize) = .empty;
+    // the part of each line that is code, then the three arrays at once
+    const Piece = struct { ln: usize, code: []const u8, s: usize, e: usize };
+    var pieces: std.ArrayList(Piece) = .empty;
+    var total: usize = 0;
     var ln = first;
     while (ln <= last) : (ln += 1) {
         const raw = file.getLine(ln, false) orelse continue;
@@ -118,15 +135,21 @@ fn join(a: Allocator, file: *const FortranFile, first: usize, last: usize) !Join
             while (s < e and (code[s] == ' ' or code[s] == '\t')) s += 1;
             if (ln != first and s < e and code[s] == '&') s += 1;
         }
-        var i = s;
-        while (i < e) : (i += 1) {
-            try text.append(a, code[i]);
-            try lines.append(a, ln);
-            try cols.append(a, i);
+        try pieces.append(a, .{ .ln = ln, .code = code, .s = s, .e = e });
+        total += e - s + 1;
+    }
+    var text: std.ArrayList(u8) = try .initCapacity(a, total);
+    var lines: std.ArrayList(usize) = try .initCapacity(a, total);
+    var cols: std.ArrayList(usize) = try .initCapacity(a, total);
+    for (pieces.items) |p| {
+        for (p.s..p.e) |i| {
+            text.appendAssumeCapacity(p.code[i]);
+            lines.appendAssumeCapacity(p.ln);
+            cols.appendAssumeCapacity(i);
         }
-        try text.append(a, ' ');
-        try lines.append(a, ln);
-        try cols.append(a, e);
+        text.appendAssumeCapacity(' ');
+        lines.appendAssumeCapacity(p.ln);
+        cols.appendAssumeCapacity(p.e);
     }
     return .{ .text = text.items, .lines = lines.items, .cols = cols.items };
 }
@@ -143,6 +166,7 @@ const spec_words = [_][]const u8{
     "final",       "contains",    "bind",       "value",       "volatile",  "asynchronous", "contiguous",
     "equivalence", "enum",        "enumerator", "attributes",  "structure", "record",       "include",
     "abstract",    "codimension", "block",      "blockdata",   "select",    "case",         "rank",
+    "simple",      "typeof",      "classof",
 };
 
 /// The statements whose first word has parentheses after it that are no
@@ -152,6 +176,12 @@ const statement_words = [_][]const u8{
     "open",  "close", "read",     "write",      "inquire", "rewind", "backspace", "endfile",
     "flush", "wait",  "allocate", "deallocate", "nullify", "if",     "where",     "forall",
 };
+
+/// A word that a procedure's name follows in its header or declaration
+fn isHeaderWord(word: ?[]const u8) bool {
+    const w = word orelse return false;
+    return oneOf(w, &.{ "subroutine", "function", "entry", "procedure", "is" });
+}
 
 fn isSpec(word: []const u8) bool {
     for (spec_words) |k| if (std.ascii.eqlIgnoreCase(word, k)) return true;
@@ -175,6 +205,18 @@ pub const Checker = struct {
     real10: bool = typing.native_real10,
     /// the kinds of the types without one, of the file checked's options
     kinds: default_kinds.Kinds = .{},
+    /// the dialect the file is linted against (dialect.zig)
+    dialect: Dialect = .neutral,
+    /// whether the workspace has an `assignment(=)` interface, once told
+    defined_assignment: ?bool = null,
+    /// the operator interfaces of the workspace, once told (expr_clash.zig)
+    defined_operators: ?expr_clash.Defined = null,
+    /// the statement being checked ends in `&` with a blank line or a comment
+    /// after it: it goes on, and what is read of it is a part (#259)
+    cut_statement: bool = false,
+    /// the joined statement (its text's address) that `partial` was told of
+    partial_of: usize = 0,
+    partial: bool = false,
 
     /// The kinds of the file that declares `v` (else of the file checked),
     /// with the `!DEC$ REAL:n` before its program unit
@@ -190,7 +232,7 @@ pub const Checker = struct {
         return unit_kinds.ofUnit(c.kinds, f.lines.items, c.ast, unit);
     }
 
-    fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
+    pub fn lookup(c: *Checker, scope: ?*Obj, name: []const u8, line_no: usize) !?*Obj {
         const lower = try std.ascii.allocLowerString(c.a, name);
         const key = try c.a.print("{x}:{s}", .{ @intFromPtr(scope), lower });
         const gop = try c.cache.getOrPut(c.a, key);
@@ -201,7 +243,7 @@ pub const Checker = struct {
         return found;
     }
 
-    fn report(c: *Checker, j: Joined, start: usize, end: usize, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
+    pub fn report(c: *Checker, j: Joined, start: usize, end: usize, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
         const line = j.lines[start];
         const e = if (end > start and j.lines[end - 1] == line) j.cols[end - 1] + 1 else j.cols[start] + 1;
         try c.out.append(c.a, .{ .line = line, .start = j.cols[start], .end = e, .message = try c.a.print(fmt, args), .kind = kind });
@@ -213,9 +255,17 @@ pub const Checker = struct {
         const first = it.next() orelse return;
         const line_no = j.lines[s + first.start] + 1;
         const scope = c.inner.at(line_no);
+        try dummy_names.check(c, j, s, text);
+        try parameter_value.check(c, j, s, text, first);
+        try kind_values.check(c, j, s, text, first);
+        try syntax_errors.check(c, j, s, e, first, scope, line_no);
+        if (!isSpec(first.str)) try unknown_component.check(c, j, s, text, scope);
         if (isSpec(first.str)) return;
         try c.intentIn(j, s, text, first, scope, line_no);
+        try assign_types.check(c, j, s, text, first, scope, line_no);
+        try allocate_objects.check(c, j, s, text, first, scope, line_no);
         // the calls
+        const is_alloc = oneOf(first.str, &.{ "allocate", "deallocate" });
         it = helpers.words(text);
         var prev_word: ?[]const u8 = null;
         while (it.next()) |w| {
@@ -238,11 +288,13 @@ pub const Checker = struct {
                 try c.member(scope, text[0..w.end], w.str)
             else
                 try c.lookup(scope, w.str, line_no);
+            if (callee_obj == null and !is_member) try intrinsic_count.check(c, j, s, text, w, k, close);
             var obj = callee_obj orelse continue;
             // the caller's own declaration of a procedure it calls (#232)
             if (!is_member) if (try objects.declaredProcedure(c.env, c.ast, c.files, obj, true)) |p| {
                 obj = p;
             };
+            if (obj.kind == .variable and !is_alloc) try subscript_count.check(c, j, s, text, w, k, close, obj);
             var drop: ?usize = null;
             const proc = switch (obj.kind) {
                 .subroutine, .function => obj,
@@ -256,18 +308,31 @@ pub const Checker = struct {
             if (proc.file_ast.file == null or headerHasDirective(proc)) continue;
             // a function's name in its own body is its result
             if (proc == scope and proc.kind == .function and !proc.hasKeyword(KW.recursive)) continue;
+            const after_call = prev_word != null and std.ascii.eqlIgnoreCase(prev_word.?, "call");
+            // a module or internal procedure called as the other kind
+            if (proc.parent != null and !is_member and (proc.kind == .function) == after_call and !isHeaderWord(prev_word)) {
+                const what: []const u8 = if (after_call) "a function, not a subroutine" else "a subroutine, not a function";
+                try c.report(j, s + w.start, s + w.end, .arguments, "{s} is {s}", .{ proc.name, what });
+                continue;
+            }
             // a variable named like an external procedure, `x(i)` in a
             // DIMENSION: only after CALL or as a function
-            if (proc.kind == .subroutine and !is_member and !(prev_word != null and std.ascii.eqlIgnoreCase(prev_word.?, "call"))) continue;
+            if (proc.kind == .subroutine and !is_member and !after_call) continue;
             try c.callArgs(j, s, text, w, k, close, proc, drop, scope, line_no);
         }
     }
 
-    fn member(c: *Checker, scope: ?*Obj, prefix: []const u8, name: []const u8) !?*Obj {
+    /// The type scope of the variable that `prefix`, a statement's text up
+    /// to a component's name (`a%b`), reads the component of
+    pub fn memberScope(c: *Checker, scope: ?*Obj, prefix: []const u8) !?*Obj {
         const line_prefix = (try helpers.getLinePrefix(c.a, &.{}, prefix, prefix.len, false)) orelse return null;
         const var_stack = try helpers.getVarStack(c.a, line_prefix);
         if (var_stack.len < 2) return null;
-        const type_scope = (try objects.climbTypeTree(c.env, var_stack, scope)) orelse return null;
+        return objects.climbTypeTree(c.env, var_stack, scope);
+    }
+
+    fn member(c: *Checker, scope: ?*Obj, prefix: []const u8, name: []const u8) !?*Obj {
+        const type_scope = (try c.memberScope(scope, prefix)) orelse return null;
         const lower = try std.ascii.allocLowerString(c.a, name);
         return objects.findInScope(c.env, type_scope, lower, .{});
     }
@@ -346,6 +411,23 @@ pub const Checker = struct {
     fn argType(c: *Checker, j: Joined, s: usize, w: helpers.Word, proc: *Obj, dummy: *Obj, actual: []const u8, elemental: bool, mode: Mode, scope: ?*Obj, line_no: usize) !void {
         // those that `!dir$ ignore_tkr` or `NO_ARG_CHECK` leaves out
         const ignored = try c.ignoredChecks(proc, dummy.name);
+        if (mode == .explicit and !ignored.type) if (try c.exprType(actual, scope, line_no, 0)) |t| {
+            if (try derived.mismatch(c.env, dummy, t)) |n| {
+                try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s}({s}) expected, type({s}) given", .{ dummy.name, proc.name, if (n.class) "class" else "type", n.want, n.have });
+            }
+            if (allocatable.mismatch(dummy, t)) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: an ALLOCATABLE variable expected", .{ dummy.name, proc.name });
+            if (!ignored.rank and varCategory(dummy) != .character) if (extent.wanted(dummy)) |want| if (t.designator and t.cat != .character) if (t.obj) |v| if (dimensions.isArray(v)) {
+                const g = extent.given(actual, v);
+                if (g.array) |n| if (t.array and n < want) try c.report(j, s + w.start, s + w.end, .too_short, "Argument {s} of {s}: {d} elements expected, {d} given", .{ dummy.name, proc.name, want, n });
+                // gfortran and Flang count the elements left in the array; ifx does not
+                if (g.from_element) |n| if (!t.array and c.dialect.applies(.initMany(&.{ .gfortran, .flang })) and n < want) {
+                    try c.report(j, s + w.start, s + w.end, .storage_short, "Argument {s} of {s}: {d} elements expected, {d} left in the array from the element given", .{ dummy.name, proc.name, want, n });
+                };
+            };
+        };
+        if (mode == .explicit) if (definable.definedIntent(dummy)) |intent| if (try c.exprType(actual, scope, line_no, 0)) |t| if (definable.reason(t)) |r| {
+            try c.report(j, s + w.start, s + w.end, .not_definable, "Argument {s} of {s} is INTENT({s}): a variable is expected, {s} given", .{ dummy.name, proc.name, intent, definable.describe(r) });
+        };
         switch (try c.compare(dummy, actual, elemental, mode, scope, line_no)) {
             .type => |t| if (!ignored.type) try c.report(j, s + w.start, s + w.end, .arguments, "Argument {s} of {s}: {s} expected, {s} given", .{ dummy.name, proc.name, @tagName(t.want), @tagName(t.have) }),
             .kind => |k| if (!ignored.kind) {
@@ -401,7 +483,7 @@ pub const Checker = struct {
                 known = false;
             };
         }
-        if (generic and known and want == .derived) switch (try c.sameType(dummy, typed.obj)) {
+        if (generic and known and want == .derived) switch (try derived.sameType(c.env, dummy, typed.obj)) {
             .no => return .derived,
             .unknown => known = false,
             .yes => {},
@@ -418,6 +500,10 @@ pub const Checker = struct {
         if (typed.array and !dummy_array) return .scalar_expected;
         if (!typed.array and dummy_array) {
             if (generic or assumed_shape) return .array_expected;
+            // what starts no element sequence (#762)
+            if (mode == .explicit and have != .character and typed.designator) if (typed.obj) |v| {
+                if (dimensions.startsNoSequence(dummy, v, typed.subscripted)) return .array_expected;
+            };
             // an element (`x(1)`) or a character may start an element
             // sequence, as anything may for TYPE(*); with an implicit
             // interface also a scalar variable
@@ -436,35 +522,21 @@ pub const Checker = struct {
         return if (known) .fits else .unknown;
     }
 
-    /// Whether variable `v` has the derived type of dummy argument `dummy`
-    /// (or, for a CLASS dummy argument, a type that extends it)
-    fn sameType(c: *Checker, dummy: *Obj, v_opt: ?*Obj) !enum { yes, no, unknown } {
-        const v = v_opt orelse return .unknown;
-        const want = (try dummy.getTypeObj(c.env)) orelse return .unknown;
-        var t = (try v.getTypeObj(c.env)) orelse return .unknown;
-        if (want.kind != .type or t.kind != .type) return .unknown;
-        if (t == want) return .yes;
-        if (!std.ascii.startsWithIgnoreCase(std.mem.trim(u8, dummy.descOf(), " "), "class")) return .no;
-        var n: usize = 0;
-        while (n < 20) : (n += 1) {
-            // a type that extends one not found
-            if (t.data == .scope and t.data.scope.inherit != null and t.typeDataConst().inherit_var == null) return .unknown;
-            t = t.typeDataConst().inherit_var orelse return .no;
-            if (t == want) return .yes;
-        }
-        return .unknown;
-    }
-
     /// The type of an argument: a literal, a variable or a part of one
     /// (`a(i)%b(:)`), or an expression of these with intrinsic operators;
     /// null when it cannot be told (a function, a user-defined operator, a
     /// derived type in an expression)
-    fn exprType(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
+    pub fn exprType(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
         if (depth > 16) return null;
         const e = std.mem.trim(u8, expr_in, " ");
         if (e.len == 0) return null;
         if (literalCategory(e)) |lc| return .{ .cat = lc, .literal = true };
         if (std.ascii.isAlphabetic(e[0])) if (try c.designator(e, scope, line_no, depth)) |t| return t;
+        // a conditional expression (F2023): the type of its values (#733)
+        if (typing.conditionalValue(e)) |value| {
+            const t = (try c.exprType(value, scope, line_no, depth + 1)) orelse return null;
+            return .{ .cat = t.cat, .array = t.array, .rank = t.rank, .rank_known = t.rank_known, .obj = t.obj };
+        }
         // a whole expression in parentheses, or a complex literal
         if (e[0] == '(' and matching(e, 0) == e.len - 1) {
             const inner = e[1 .. e.len - 1];
@@ -701,7 +773,7 @@ pub const Checker = struct {
     /// The value of a kind expression: a number, a named constant (of
     /// ISO_FORTRAN_ENV, ISO_C_BINDING, or a PARAMETER), `kind(...)`,
     /// `selected_real_kind(p, r)`, `selected_int_kind(r)`
-    fn kindValue(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?i64 {
+    pub fn kindValue(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?i64 {
         if (depth > 8) return null;
         const expr = std.mem.trim(u8, expr_in, " ");
         if (expr.len == 0) return null;
@@ -716,6 +788,7 @@ pub const Checker = struct {
             if (!v.varDataConst().is_const) return null;
             return c.kindValue(v.varDataConst().param_val orelse return null, v.parent, v.sline, depth + 1);
         }
+        if (try arithmetic.value(c, expr, scope, line_no, depth)) |n| return n;
         // a call of an inquiry function
         const open = std.mem.findScalar(u8, expr, '(') orelse return null;
         if (expr[expr.len - 1] != ')' or matching(expr, open) != expr.len - 1) return null;
@@ -727,6 +800,7 @@ pub const Checker = struct {
             if (!isName(arg)) return null;
             return c.kindOfVar((try c.lookup(scope, arg, line_no)) orelse return null);
         }
+        if (std.ascii.eqlIgnoreCase(fun, "merge")) return arithmetic.merge(c, args, scope, line_no, depth);
         const real = std.ascii.eqlIgnoreCase(fun, "selected_real_kind");
         if (!real and !std.ascii.eqlIgnoreCase(fun, "selected_int_kind")) return null;
         // the precision and range, by position or keyword
@@ -769,6 +843,10 @@ pub const Checker = struct {
         if (k + 1 < text.len and (text[k + 1] == '=' or text[k + 1] == '>')) return;
         const v = (try c.lookup(scope, first.str, line_no)) orelse return;
         if (v.kind != .variable) return;
+        if (v.hasKeyword(KW.parameter)) {
+            try c.report(j, s + first.start, s + first.end, .constant_assigned, "Assignment to named constant {s}", .{v.name});
+            return;
+        }
         const intent = v.keyword_info.intent orelse return;
         if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, intent, " "), "in")) return;
         // INTENT(IN) of a pointer fixes its association, not its target
@@ -838,9 +916,27 @@ pub fn constantValue(a: Allocator, env: objects.Env, ast: *Ast, scope: ?*Obj, ex
 }
 
 /// `files`: the workspace's; `real10`: the compiler has REAL(10)
-pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool) ![]const Problem {
+/// Whether the last line of free-form lines `first`..`last` that holds code
+/// ends in `&`: the statement goes on after a blank line or a comment
+fn endsOpen(a: Allocator, file: *const FortranFile, first: usize, last: usize) !bool {
+    if (file.fixed) return false;
+    var ln = last + 1;
+    while (ln > first) {
+        ln -= 1;
+        const raw = file.getLine(ln, false) orelse continue;
+        if (helpers.isComment(false, raw)) continue;
+        var code = try helpers.stripStrings(a, raw, true);
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
+        const t = std.mem.trim(u8, code, " \t\r");
+        if (t.len == 0) continue;
+        return t[t.len - 1] == '&';
+    }
+    return false;
+}
+
+pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast, files: []const *FortranFile, real10: bool, dialect: Dialect) ![]const Problem {
     const n = file.nLines();
-    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10, .kinds = file.default_kinds };
+    var c: Checker = .{ .a = a, .env = env, .ast = ast, .files = files, .inner = try ast.innerScopes(a, n), .real10 = real10, .kinds = file.default_kinds, .dialect = dialect };
     // the lines a preprocessor conditional leaves out
     const inactive = try a.alloc(bool, n);
     @memset(inactive, false);
@@ -849,6 +945,7 @@ pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast
         while (ln + 1 < sk.end and ln < n) : (ln += 1) inactive[ln] = true;
     }
     var ln: usize = 0;
+    var dangling = false;
     while (ln < n) {
         const st = selection.statementLines(file, ln);
         defer ln = st.last + 1;
@@ -856,6 +953,11 @@ pub fn check(a: Allocator, env: objects.Env, file: *const FortranFile, ast: *Ast
         if (inactive[ln] or helpers.isComment(file.fixed, raw)) continue;
         const t = std.mem.trimStart(u8, raw, " \t");
         if (t.len == 0 or t[0] == '#') continue;
+        // the rest of a statement that a blank line or a comment cut (#259)
+        const was_open = dangling;
+        dangling = try endsOpen(a, file, st.first, st.last);
+        c.cut_statement = dangling;
+        if (was_open) continue;
         const j = try join(a, file, st.first, st.last);
         // statements separated by `;`
         var s: usize = 0;

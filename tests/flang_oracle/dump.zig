@@ -41,6 +41,11 @@ pub const Scope = struct {
     kind: []const u8,
     name: ?[]const u8,
     parent: ?*Scope,
+    /// the scope of one instance of a parameterized type: `DerivedType
+    /// scope: size=80 ... instantiation of matrix(k=8_4,n=3_4)`, without
+    /// a name (a type's own scope has one: `base_t size=4 ... instantiation
+    /// of base_t`)
+    instantiation: bool = false,
     symbols: std.ArrayList(Symbol) = .empty,
     children: std.ArrayList(*Scope) = .empty,
     line: usize,
@@ -83,7 +88,7 @@ pub fn parse(a: Allocator, text: []const u8) Allocator.Error!Result {
             } else if (depth > stack.items.len) return bad(n, line, "a scope deeper than the scope it is in");
             stack.shrinkRetainingCapacity(depth);
             const s = try a.create(Scope);
-            s.* = .{ .kind = h.kind, .name = h.name, .parent = if (depth > 0) stack.items[depth - 1] else null, .line = n };
+            s.* = .{ .kind = h.kind, .name = h.name, .parent = if (depth > 0) stack.items[depth - 1] else null, .line = n, .instantiation = h.name == null and std.mem.find(u8, body, " instantiation of ") != null };
             if (s.parent) |p| try p.children.append(a, s) else global = s;
             try stack.append(a, s);
             continue;
@@ -224,4 +229,14 @@ test "a main program without a name" {
     const r = try parse(arena.allocator(), "Global scope: size=0\n  : MainProgram\n  MainProgram scope:  size=4 alignment=4\n    n size=4 offset=0: ObjectEntity type: INTEGER(4)\n");
     try std.testing.expectEqualStrings("", r.global.symbols.items[0].name);
     try std.testing.expectEqual(null, r.global.children.items[0].name);
+}
+
+test "the scope of an instance of a parameterized type" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Flang 23.1.5
+    const r = try parse(arena.allocator(), "Global scope: size=0\n  Subprogram scope: s size=8\n    a size=8 offset=0: ObjectEntity type: TYPE(matrix(k=8_4,n=3_4))\n    DerivedType scope: size=80 alignment=8 instantiation of matrix(k=8_4,n=3_4) sourceRange=0 bytes\n      k: TypeParam type:INTEGER(4) Kind init:8_4\n");
+    const inst = r.global.children.items[0].children.items[0];
+    try std.testing.expect(inst.instantiation and inst.name == null);
+    try std.testing.expect(!r.global.children.items[0].instantiation);
 }

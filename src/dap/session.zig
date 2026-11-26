@@ -78,6 +78,9 @@ const capabilities = @import("capabilities.zig");
 const engine_conditions = @import("engine_conditions.zig");
 const engine_data = @import("engine_data.zig");
 const engine_completions = @import("engine_completions.zig");
+const engine_set = @import("engine_set.zig");
+const engine_functions = @import("engine_functions.zig");
+const engine_inspect = @import("engine_inspect.zig");
 const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
@@ -190,6 +193,8 @@ pub const Session = struct {
     /// The breakpoints whose lines had no code yet (a module not loaded):
     /// their lines, until they have
     unverified: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    /// The client's function breakpoints: the engine's ids
+    function_breakpoints: std.ArrayList(u32) = .empty,
     /// The client's data breakpoints: the engine's ids
     data_breakpoints: std.ArrayList(u32) = .empty,
     /// The breakpoints' conditions, hits ignored and log messages, by id
@@ -314,6 +319,8 @@ pub const Val = struct {
     dynamic: ?*const Obj = null,
     /// Not allocated, not associated
     empty: bool = false,
+    /// The frame whose expression it is, for its children's (engine_set.zig)
+    frame: Frame = .{ .thread = 0, .index = 0 },
 };
 
 /// Runs `zfls dap [--gdb PATH | --lldb [PATH]] [--dbgeng] [--text JSON]`:
@@ -375,6 +382,7 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
         s.breakpoints.deinit(gpa);
         s.error_breakpoints.deinit(gpa);
         s.unverified.deinit(gpa);
+        s.function_breakpoints.deinit(gpa);
         s.data_breakpoints.deinit(gpa);
         var cit = s.conditions.valueIterator();
         while (cit.next()) |c| c.deinit(gpa);
@@ -543,7 +551,7 @@ fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
-    const Cmd = enum { launch, attach, setBreakpoints, setExceptionBreakpoints, setFunctionBreakpoints, exceptionInfo, configurationDone, threads, stackTrace, scopes, variables, evaluate, completions, dataBreakpointInfo, setDataBreakpoints, @"continue", next, stepIn, stepOut, pause, disconnect, terminate };
+    const Cmd = enum { launch, attach, setBreakpoints, setExceptionBreakpoints, setFunctionBreakpoints, exceptionInfo, configurationDone, threads, stackTrace, scopes, variables, evaluate, completions, setVariable, setExpression, readMemory, disassemble, modules, loadedSources, dataBreakpointInfo, setDataBreakpoints, @"continue", next, stepIn, stepOut, pause, disconnect, terminate };
     const cmd = std.meta.stringToEnum(Cmd, command) orelse return s.fail(a, req, "not supported");
     switch (cmd) {
         .launch => {
@@ -576,13 +584,7 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .setBreakpoints => try breakpoints.set(s, a, req, args),
         .setExceptionBreakpoints => try breakpoints.setExceptions(s, a, req, args),
-        .setFunctionBreakpoints => {
-            // none set: one unverified breakpoint for each asked
-            const asked = json.items(json.get(args, "breakpoints"));
-            const none = try a.alloc(struct { verified: bool, message: []const u8 }, asked.len);
-            @memset(none, .{ .verified = false, .message = "Windows's Debugger Engine sets no function breakpoints" });
-            s.respond(a, req, .{ .breakpoints = none });
-        },
+        .setFunctionBreakpoints => try engine_functions.set(s, a, req, args),
         .exceptionInfo => s.respond(a, req, .{
             .exceptionId = s.last_error,
             .description = if (runtime_errors.isErrorStop(s.last_error)) s.text.error_stop else s.text.runtime_error,
@@ -619,9 +621,10 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
                         .line = f.line,
                         .column = 1,
                         .presentationHint = if (exists) "normal" else "subtle",
+                        .instructionPointerReference = try engine_inspect.reference(a, f.instruction),
                     }));
                 } else {
-                    try out.append(a, try json.from(a, .{ .id = id, .name = name, .line = 0, .column = 0, .presentationHint = "subtle" }));
+                    try out.append(a, try json.from(a, .{ .id = id, .name = name, .line = 0, .column = 0, .presentationHint = "subtle", .instructionPointerReference = try engine_inspect.reference(a, f.instruction) }));
                 }
             }
             s.respond(a, req, .{ .stackFrames = out.items, .totalFrames = out.items.len });
@@ -662,6 +665,12 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         },
         .pause => s.respond(a, req, null),
         .completions => try engine_completions.complete(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
+        .setVariable => try engine_set.setVariable(s, a, req, args),
+        .readMemory => try engine_inspect.readMemory(s, a, req, args),
+        .disassemble => try engine_inspect.disassemble(s, a, req, args),
+        .modules => try engine_inspect.modules(s, a, req),
+        .loadedSources => try engine_inspect.loadedSources(s, a, req),
+        .setExpression => try engine_set.setExpression(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
         .dataBreakpointInfo => try engine_data.info(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
         .setDataBreakpoints => try engine_data.set(s, a, req, args),
         .disconnect, .terminate => {

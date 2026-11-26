@@ -44,6 +44,12 @@ pub const ScopeError = struct {
     scope: *Obj,
 };
 
+/// Per scope, whether it is reported as not closed (rebuilt, not saved)
+pub const ScopeFlags = struct {
+    map: std.AutoHashMapUnmanaged(*const Obj, bool) = .empty,
+    pub const not_saved = {};
+};
+
 pub const IncludeInfo = struct {
     line_number: usize,
     path: []const u8,
@@ -116,6 +122,9 @@ pub const Ast = struct {
     include_statements: std.ArrayList(*IncludeInfo) = .empty,
     end_errors: std.ArrayList(EndError) = .empty,
     scope_errors: std.ArrayList(ScopeError) = .empty,
+    /// The scopes `scope_errors` names, each with whether it is reported as
+    /// not closed
+    scope_flags: ScopeFlags = .{},
     parse_errors: std.ArrayList(BuiltDiag) = .empty,
     inherit_objs: std.ArrayList(*Obj) = .empty,
     linkable_objs: std.ArrayList(*Obj) = .empty,
@@ -398,15 +407,48 @@ pub const Ast = struct {
     pub fn innerScopes(self: *Ast, a: Allocator, n_lines: usize) Allocator.Error!InnerScopes {
         const scopes = try a.alloc(?*Obj, n_lines);
         @memset(scopes, null);
-        for (self.scope_list.items) |s| {
+        // paint from the scope that opens last (the last listed of those
+        // that open at one line) to the first, each line once: `next` skips
+        // the painted ones
+        const order = try a.alloc(usize, self.scope_list.items.len);
+        defer a.free(order);
+        for (order, 0..) |*o, i| o.* = i;
+        const items = self.scope_list.items;
+        const Ctx = struct {
+            items: []*Obj,
+            fn later(c: @This(), x: usize, y: usize) bool {
+                const sx = c.items[x].sline;
+                const sy = c.items[y].sline;
+                return if (sx != sy) sx > sy else x > y;
+            }
+        };
+        std.mem.sort(usize, order, Ctx{ .items = items }, Ctx.later);
+        const next = try a.alloc(usize, n_lines + 1);
+        defer a.free(next);
+        for (next, 0..) |*n, i| n.* = i;
+        for (order) |i| {
+            const s = items[i];
             // scopes count lines from 1
-            var l = @max(s.sline, 1);
-            while (l <= s.eline and l <= n_lines) : (l += 1) {
-                if (scopes[l - 1]) |prev| if (s.sline < prev.sline) continue;
-                scopes[l - 1] = s;
+            var l = findFree(next, @min(@max(s.sline, 1) - 1, n_lines));
+            while (l < n_lines and l + 1 <= s.eline) : (l = findFree(next, l)) {
+                scopes[l] = s;
+                next[l] = l + 1;
             }
         }
         return .{ .lines = scopes, .none_scope = self.none_scope };
+    }
+
+    /// The first line index from `i` on that no scope has painted
+    fn findFree(next: []usize, i: usize) usize {
+        var r = i;
+        while (next[r] != r) r = next[r];
+        var c = i;
+        while (next[c] != r) {
+            const n = next[c];
+            next[c] = r;
+            c = n;
+        }
+        return r;
     }
 
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
@@ -457,8 +499,13 @@ pub const Ast = struct {
 
     /// Whether an error names scope `s` already
     pub fn scopeReported(self: *const Ast, s: *const Obj) bool {
-        for (self.scope_errors.items) |e| if (e.scope == s) return true;
-        return false;
+        return self.scope_flags.map.contains(s);
+    }
+
+    /// Whether scope `s` is reported as not closed: a procedure typed in it
+    /// before its END is no definition before CONTAINS, but half-typed code
+    pub fn isUnclosed(self: *const Ast, s: *const Obj) bool {
+        return self.scope_flags.map.get(s) orelse false;
     }
 
     /// A SELECT TYPE or SELECT RANK construct for one of its blocks (the
@@ -474,7 +521,14 @@ pub const Ast = struct {
         const s = constructOf(s_in);
         if (s == self.none_scope or self.scopeReported(s)) return;
         const message = try self.allocator().print("{s} is not closed", .{try self.scopeLabel(s)});
-        try self.scope_errors.append(self.allocator(), .{ .code = .unclosed_scope, .line = s.sline, .message = message, .scope = s });
+        try self.addScopeError(.{ .code = .unclosed_scope, .line = s.sline, .message = message, .scope = s });
+    }
+
+    pub fn addScopeError(self: *Ast, e: ScopeError) !void {
+        const a = self.allocator();
+        try self.scope_errors.append(a, e);
+        const g = try self.scope_flags.map.getOrPut(a, e.scope);
+        g.value_ptr.* = (g.found_existing and g.value_ptr.*) or e.code == .unclosed_scope;
     }
 
     pub fn closeFile(self: *Ast, line_number: usize) !void {

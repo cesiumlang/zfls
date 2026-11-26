@@ -29,9 +29,9 @@ const default_suffixes: []const u8 = blk: {
     break :blk list;
 };
 
-const Kind = enum { flag, int, string, list, json, help, debug_help, version };
+pub const Kind = enum { flag, int, string, list, json, help, debug_help, version };
 
-const Opt = struct {
+pub const Opt = struct {
     long: []const u8,
     short: ?[]const u8 = null,
     kind: Kind,
@@ -44,7 +44,7 @@ const Opt = struct {
 pub const opts = [_]Opt{
     .{ .long = "help", .short = "-h", .kind = .help, .help = "show this help message and exit" },
     .{ .long = "version", .short = "-v", .kind = .version, .help = "Print server version number and exit" },
-    .{ .long = "config", .short = "-c", .kind = .string, .metavar = "CONFIG", .help = "Configuration options file (default file name: .fortlsrc, other default supported names: .fortls.json, .fortls)" },
+    .{ .long = "config", .short = "-c", .kind = .string, .metavar = "CONFIG", .help = "Configuration options file, TOML or JSON (default file name: .zflsrc, other default supported names: .fortlsrc, .fortls.json, .fortls)" },
     .{ .long = "nthreads", .short = "-n", .kind = .int, .metavar = "INTEGER", .help = "Number of threads to use during workspace initialization (default: 4)" },
     .{ .long = "notify_init", .kind = .flag, .help = "Send notification message when workspace initialization is complete" },
     .{ .long = "incremental_sync", .kind = .flag, .help = "Use incremental document synchronization (beta)" },
@@ -98,6 +98,7 @@ pub const opts = [_]Opt{
     .{ .long = "compiler_diagnostics_fixed", .kind = .string, .metavar = "COMPILER", .help = "The compiler that checks fixed-form files, as compiler_diagnostics, or none (default: compiler_diagnostics). The modules a file uses are compiled with the compiler of the file", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_path_fixed", .kind = .string, .metavar = "PATH", .help = "The executable of compiler_diagnostics_fixed, as compiler_path (default: compiler_path)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_args_fixed", .kind = .string, .metavar = "ARGS", .help = "The arguments of the compiler for fixed-form files, as compiler_args (default: compiler_args; empty: the compiler's defaults)", .group = "Compiler diagnostics options" },
+    .{ .long = "lint_dialect", .kind = .string, .metavar = "DIALECT", .help = "The dialect zfls's own checks lint against: neutral (only what gfortran, ifx and Flang agree on), gfortran, ifx or flang, which also reports that compiler's quirks as you type (default: the dialect of compiler_diagnostics, else neutral)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root; glob patterns match directories (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
     .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
@@ -201,7 +202,7 @@ fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u
         try out.append(a, '\n');
     }
     try out.appendSlice(a, "\nAll options starting with '--' can also be set in a configuration file, by " ++
-        "default named '.fortlsrc', '.fortls.json' or '.fortls' (other names/paths can specified " ++
+        "default named '.zflsrc' (TOML), '.fortlsrc', '.fortls.json' or '.fortls' (other names/paths can specified " ++
         "via -c or --config). For more details see our documentation: " ++
         "https://fortls.fortran-lang.org/options.html#available-options\n");
     return out.items;

@@ -68,6 +68,8 @@ pub fn isAssociateName(v: *const Obj) bool {
 /// associate name bound to an expression of a rank not known (`y =>
 /// f(x)`, #719)
 pub fn known(v: *const Obj) bool {
+    // a RANK clause not evaluated (#729)
+    if (v.varDataConst().rank_clause != null and std.mem.eql(u8, v.keyword_info.dimension orelse "", "..")) return false;
     if (!isAssociateName(v) or v.varDataConst().slice_rank >= 0) return true;
     if (v.isRankName() and (v.parent orelse return true).selectDataConst().case_rank != null) return false;
     return rankSource(v) != v;
@@ -84,6 +86,30 @@ pub const Shape = enum {
     any,
     unknown,
 };
+
+/// Whether a scalar actual argument, variable `v` (of a subscript when
+/// `element`), starts no element sequence for array dummy argument `dummy`
+/// (F2018 15.5.2.11, #762): an element of an assumed-shape or pointer
+/// array, or of a polymorphic one; a whole scalar for a CLASS(*) array.
+/// Not an element of a CONTIGUOUS one, which Flang takes (gfortran and ifx
+/// do not), nor a scalar for TYPE(*), which gfortran and Flang take (ifx
+/// does not).
+pub fn startsNoSequence(dummy: *const Obj, v: *const Obj, element: bool) bool {
+    if (v.kind != .variable or isAssociateName(v)) return false;
+    if (!element) return unlimited(dummy);
+    if (!isArray(v)) return false;
+    if (std.ascii.startsWithIgnoreCase(std.mem.trim(u8, v.descOf(), " "), "class")) return true;
+    if (v.hasKeyword(KW.contiguous)) return false;
+    if (v.hasKeyword(KW.pointer)) return true;
+    return !v.hasKeyword(KW.allocatable) and shapeOf(of(v)) == .assumed;
+}
+
+/// Whether variable `v` is CLASS(*)
+fn unlimited(v: *const Obj) bool {
+    if (!std.ascii.startsWithIgnoreCase(std.mem.trim(u8, v.descOf(), " "), "class")) return false;
+    const k = v.varDataOptConst() orelse return false;
+    return std.mem.eql(u8, std.mem.trim(u8, k.vkind orelse "", " ()"), "*");
+}
 
 /// What DIMENSION `dims` takes as an actual argument
 pub fn shapeOf(dims: ?[]const u8) Shape {
