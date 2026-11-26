@@ -104,6 +104,7 @@ pub const dap_gdb_variables = @import("dap/gdb_variables.zig");
 pub const dap_gdb_children = @import("dap/gdb_children.zig");
 pub const dap_gdb_values = @import("dap/gdb_values.zig");
 pub const dap_lldb = @import("dap/lldb.zig");
+pub const dap_process_id = @import("dap/process_id.zig");
 pub const dap_gdb_entry = @import("dap/gdb_entry.zig");
 pub const dap_gdb_exit = @import("dap/gdb_exit.zig");
 pub const dap_gdb_pending = @import("dap/gdb_pending.zig");

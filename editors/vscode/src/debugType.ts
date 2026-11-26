@@ -183,6 +183,20 @@ async function attach(
     log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
     return resolved;
   }
+  // Windows's Debugger Engine attaches by itself: no gdb (#784)
+  if (process.platform === "win32" && config.dbgeng === true) {
+    if (!config.processId) {
+      void vscode.window.showErrorMessage(vscode.l10n.t("zfls: a fortran attach configuration with dbgeng needs a processId."));
+      return undefined;
+    }
+    const resolved = {
+      ...config,
+      type: DEBUG_TYPE,
+      ...(typeof config.sourceRoot !== "string" && folder ? { sourceRoot: folder.uri.fsPath } : {}),
+    };
+    log.info(`[debug] ${config.name}: ${JSON.stringify(resolved)}`);
+    return resolved;
+  }
   const gdb = attachGdb(config.gdb, () => gdbFor(folder?.uri ?? vscode.Uri.file(process.cwd()), undefined));
   if (!gdb || !(await gdbHasDap(gdb))) {
     void vscode.window.showErrorMessage(

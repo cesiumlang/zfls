@@ -35,6 +35,7 @@ const session = @import("session.zig");
 const Session = session.Session;
 const gdb = @import("gdb.zig");
 const gdb_requests = @import("gdb_requests.zig");
+const process_id = @import("process_id.zig");
 
 /// lldb-dap's exception breakpoint filters of Objective-C and Swift, of no
 /// use to Fortran (C++'s stay, for programs of both)
@@ -96,7 +97,7 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         if (json.str(json.get(args, "target"))) |t| if (t.len > 0)
             return s.fail(a, req, "zfls dap: lldb-dap attaches to a processId; a gdbserver's target needs gdb (`gdb` in the configuration)");
         s.stop_at_entry = false;
-        const o = attachArguments(a, args) catch return s.fail(a, req, "processId is not a number");
+        const o = attachArguments(a, args) catch return s.fail(a, req, "processId is not a process id");
         return gdb.forward(s, a, req, o);
     }
     s.stop_at_entry = flag(args, "stopAtEntry");
@@ -153,11 +154,7 @@ pub fn launchArguments(a: Allocator, args: ?Value, tty: ?[]const u8) !Value {
 /// An `attach` configuration in lldb-dap's words: the process `pid`
 fn attachArguments(a: Allocator, args: ?Value) !Value {
     var o: json.ObjectMap = .empty;
-    if (json.get(args, "processId")) |p| switch (p) {
-        .integer => |n| try o.put(a, "pid", .{ .integer = n }),
-        .string => |t| if (t.len > 0) try o.put(a, "pid", .{ .integer = try std.fmt.parseInt(i64, std.mem.trim(u8, t, " "), 10) }),
-        else => {},
-    };
+    if (try process_id.parse(json.get(args, "processId"))) |n| try o.put(a, "pid", .{ .integer = n });
     if (json.str(json.get(args, "program"))) |p| if (p.len > 0) try o.put(a, "program", .{ .string = p });
     if (json.get(args, "waitFor")) |w| try o.put(a, "waitFor", w);
     var pre: json.Array = .init(a);
@@ -389,7 +386,7 @@ test "a launch in lldb-dap's words" {
     , try json.stringify(a, try launchArguments(a, try json.parse(a, "{\"program\": \"/w/grid\"}"), null)));
     const attached = try attachArguments(a, try json.parse(a, "{\"processId\": \"123 \", \"program\": \"/w/grid\"}"));
     try eq("{\"pid\":123,\"program\":\"/w/grid\"}", try json.stringify(a, attached));
-    try std.testing.expectError(error.InvalidCharacter, attachArguments(a, try json.parse(a, "{\"processId\": \"x\"}")));
+    try std.testing.expectError(error.NotAProcessId, attachArguments(a, try json.parse(a, "{\"processId\": \"x\"}")));
 }
 
 test "finding lldb-dap: the configured one first, else the PATH's" {

@@ -215,5 +215,6 @@
   "config.zfls.linter.dialect.enumDescriptions.1": "Only what gfortran, ifx and Flang agree on",
   "config.zfls.linter.dialect.enumDescriptions.2": "gfortran's rules and quirks, reported as you type",
   "config.zfls.linter.dialect.enumDescriptions.3": "ifx's (and ifort's) rules and quirks, reported as you type",
-  "config.zfls.linter.dialect.enumDescriptions.4": "LLVM Flang's rules and quirks, reported as you type"
+  "config.zfls.linter.dialect.enumDescriptions.4": "LLVM Flang's rules and quirks, reported as you type",
+  "debugger.fortran.attach.dbgeng.description": "Windows only: attach with Windows's Debugger Engine instead of gdb, to a program with Microsoft's debug information (LLVM Flang's built with -g, ifx's and ifort's). It needs a processId; no gdb is needed."
 }

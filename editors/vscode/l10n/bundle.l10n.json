@@ -63,6 +63,7 @@
   "zfls failed to start: {0}": "zfls failed to start: {0}",
   "zfls unpacks ifx from Intel's Fortran offline installer for Windows, without running the installer, and sets it up to build without Visual Studio. Download the offline installer from Intel, then choose it.": "zfls unpacks ifx from Intel's Fortran offline installer for Windows, without running the installer, and sets it up to build without Visual Studio. Download the offline installer from Intel, then choose it.",
   "zfls: a fortran attach configuration needs a processId or a target.": "zfls: a fortran attach configuration needs a processId or a target.",
+  "zfls: a fortran attach configuration with dbgeng needs a processId.": "zfls: a fortran attach configuration with dbgeng needs a processId.",
   "zfls: a fortran attach configuration with lldb-dap needs a processId.": "zfls: a fortran attach configuration with lldb-dap needs a processId.",
   "zfls: a fortran launch configuration needs a program or an fpmTarget.": "zfls: a fortran launch configuration needs a program or an fpmTarget.",
   "zfls: added the build task \"{0}\" to tasks.json and the configuration \"Debug {1}\" to launch.json.": "zfls: added the build task \"{0}\" to tasks.json and the configuration \"Debug {1}\" to launch.json.",
