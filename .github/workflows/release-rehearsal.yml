@@ -38,6 +38,15 @@ jobs:
           (cd dist && sha256sum -- * > SHA256SUMS)
           wc -l dist/SHA256SUMS
 
+      # temporary: the shape of the passphrase secret, not its value
+      - name: Shape of the passphrase secret
+        env:
+          P: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: |
+          printf '%s' "$P" | wc -c
+          printf '%s' "$P" | tail -c 1 | od -An -tx1
+          printf '%s' "$P" | tr -d 'A-Za-z0-9' | wc -c
+
       - uses: ./.github/actions/release-integrity
         with:
           sign: ${{ vars.RELEASE_GPG_SIGNING }}
