@@ -82,6 +82,7 @@
       "zfls",
       "zigwin"
     ],
+    "powershell.cwd": "zfls",
   },
   "tasks": {
     "version": "2.0.0",
