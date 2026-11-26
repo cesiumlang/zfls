@@ -221,7 +221,10 @@ fn sameId(x: json.Value, y: json.Value) bool {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.gpa;
+    // The safe build's allocator maps and unmaps memory for every
+    // allocation and never reuses it: half the time of an index on macOS.
+    // Debug builds keep it for its leak and misuse checks.
+    const gpa = if (builtin.optimize == .debug) init.gpa else std.heap.smp_allocator;
     const io = init.io;
     patterns.init();
     paths.init(io);
