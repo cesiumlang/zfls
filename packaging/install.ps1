@@ -145,9 +145,11 @@ param(
             }
             $key = Join-Path $tmp 'key.asc'
             try { Get-Https $keyUrl $key } catch { throw "install.ps1: cannot download the release signing key ${keyUrl}: $_" }
-            # a keyring of its own: the user's is not touched
+            # a keyring of its own: the user's is not touched; a short path, as
+            # MSYS2's gpg fails on agent socket paths over 108 bytes, even
+            # when it only looks for an agent
             $savedHome = $env:GNUPGHOME
-            $gpgHome = Join-Path $tmp 'gnupg'
+            $gpgHome = Join-Path ([IO.Path]::GetTempPath()) ('zg' + [guid]::NewGuid().ToString('N').Substring(0, 8))
             New-Item -ItemType Directory -Path $gpgHome | Out-Null
             $env:GNUPGHOME = $gpgHome
             # Git for Windows' gpg, an MSYS2 program (its home is /c/...), takes
@@ -156,8 +158,7 @@ param(
                 $env:GNUPGHOME = ConvertTo-MsysPath $gpgHome
             }
             try {
-                # no gpg-agent (checking a signature needs none): MSYS2's could
-                # not start in a keyring whose socket paths are over 108 bytes
+                # no gpg-agent: checking a signature needs none
                 $said = Invoke-Captured gpg @('--batch', '--quiet', '--no-autostart', '--import', $key)
                 if ($LASTEXITCODE -ne 0) {
                     throw "install.ps1: cannot import the release signing key with $((Get-Command gpg).Source) (GNUPGHOME $env:GNUPGHOME): $(($said | Select-Object -Last 4) -join ' | ')"
@@ -169,6 +170,7 @@ param(
                 }
             } finally {
                 $env:GNUPGHOME = $savedHome
+                Remove-Item -Recurse -Force $gpgHome -ErrorAction SilentlyContinue
             }
             Write-Host "Verified the signature of SHA256SUMS (release key $keyFpr)"
         } elseif ((Get-Command gh -ErrorAction SilentlyContinue) -and (& { Invoke-Quiet gh @('auth', 'status') | Out-Null; $LASTEXITCODE -eq 0 })) {
