@@ -15,8 +15,12 @@ $script:requested = New-Object System.Collections.Generic.List[string]
 $script:gpgMode = 'good'
 $fpr = '9431367798CCD8E28BC0E589BB30DEF734E5F690'
 
+$script:gpgHomeLine = $null
+$script:importHome = $null
+
 function gpg {
-    if ($args -contains '--import') { $global:LASTEXITCODE = 0; return }
+    if ($args -contains '--version') { $global:LASTEXITCODE = 0; if ($script:gpgHomeLine) { $script:gpgHomeLine }; return }
+    if ($args -contains '--import') { $script:importHome = $env:GNUPGHOME; $global:LASTEXITCODE = 0; return }
     switch ($script:gpgMode) {
         'good' { $global:LASTEXITCODE = 0; "[GNUPG:] VALIDSIG $fpr 2026-11-25 0 4 0 22 8 00 $fpr" }
         'other' { $global:LASTEXITCODE = 0; '[GNUPG:] VALIDSIG 0000000000000000000000000000000000000000 2026-11-25' }
@@ -76,6 +80,22 @@ try {
     [IO.File]::WriteAllText("$work\serve\SHA256SUMS.asc", 'sig')
     $script:gpgMode = 'bad'
     Check 'a signature that does not verify' 'does not match its signature' ("{0}  {1}`n" -f $good, $archive)
+    if ($script:importHome -notmatch '^[A-Za-z]:\\') {
+        Write-Host "FAIL a native gpg's keyring is not given as a Windows path: '$($script:importHome)'"
+        $script:failed++
+    } else {
+        Write-Host "ok   a native gpg's keyring is given as a Windows path"
+    }
+    # Git for Windows' gpg (MSYS2) reads GNUPGHOME as /c/...
+    $script:gpgHomeLine = 'Home: /c/Users/someone/.gnupg'
+    Check 'a signature that does not verify, with an MSYS2 gpg' 'does not match its signature' ("{0}  {1}`n" -f $good, $archive)
+    $script:gpgHomeLine = $null
+    if ($script:importHome -notmatch '^/[a-z]/') {
+        Write-Host "FAIL an MSYS2 gpg's keyring is not given as /c/...: '$($script:importHome)'"
+        $script:failed++
+    } else {
+        Write-Host "ok   an MSYS2 gpg's keyring is given as /c/..."
+    }
     $script:gpgMode = 'other'
     Check 'a signature by another key' 'not signed by the release key' ("{0}  {1}`n" -f $good, $archive)
     $script:gpgMode = 'good'

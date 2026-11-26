@@ -20,11 +20,14 @@ if [ -z "$item" ]; then
   agent=$(field '.fields[] | select(.name == "Next action") | .options[] | select(.name == "agent") | .id')
   gh project item-edit --id "$item" --project-id "$project" --field-id "$next" --single-select-option-id "$agent" < /dev/null > /dev/null
 fi
+# the $ in the queries are GraphQL variables, not the shell's
 if [ "$after" = top ]; then
+  # shellcheck disable=SC2016
   gh api graphql -f query='mutation($p: ID!, $i: ID!) { updateProjectV2ItemPosition(input: {projectId: $p, itemId: $i}) { clientMutationId } }' -f p="$project" -f i="$item" < /dev/null > /dev/null
 else
   after_item=$(items ".items[] | select(.content.number == $after) | .id")
   [ -n "$after_item" ] || { echo "#$after is not on the Roadmap" >&2; exit 1; }
+  # shellcheck disable=SC2016
   gh api graphql -f query='mutation($p: ID!, $i: ID!, $a: ID!) { updateProjectV2ItemPosition(input: {projectId: $p, itemId: $i, afterId: $a}) { clientMutationId } }' -f p="$project" -f i="$item" -f a="$after_item" < /dev/null > /dev/null
 fi
 echo "#$number placed"
