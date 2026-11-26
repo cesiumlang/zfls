@@ -17,6 +17,7 @@
       "**/*.ziggy-schema": true,
       "**/zine.exe": true,
       "**/.pixi/**": true,
+      "**/.toolchains/**": true,
     },
     "files.watcherExclude": {
 			"**/node_modules/**": true,
@@ -24,6 +25,7 @@
       "**/zig-pkg/**": true,
 			"**/zig-cache*/**": true,
       "**/.pixi/**": true,
+      "**/.toolchains/**": true,
     },
     "lldb.launch.initCommands": [
       "command script import ${workspaceFolder}/zig-src/tools/lldb_pretty_printers.py",
