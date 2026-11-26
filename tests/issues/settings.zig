@@ -231,7 +231,7 @@ test "the server asks a client that allows it to watch the configuration files (
     _ = try w.zflsRequest("initialized", .{});
     const regs = try w.sentWith("client/registerCapability");
     try std.testing.expectEqual(@as(usize, 1), regs.len);
-    try std.testing.expect(std.mem.find(u8, regs[0], "**/{.fortlsrc,.fortls.json,.fortls,fpm.toml,compile_commands.json}") != null);
+    try std.testing.expect(std.mem.find(u8, regs[0], "**/{.zflsrc,.fortlsrc,.fortls.json,.fortls,fpm.toml,compile_commands.json}") != null);
 }
 
 test "a client that cannot is asked nothing (#196)" {

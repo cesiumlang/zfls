@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { FORTRAN_FILES, expandVariables, findExecutable, runProcess, serverExecutable } from "../../src/tools";
+import { FORTRAN_FILES, expandVariables, findExecutable, programPath, runProcess, serverExecutable } from "../../src/tools";
 
 const ctx = {
   workspaceFolder: path.join("/ws", "proj"),
@@ -125,4 +125,29 @@ test("FORTRAN_FILES has the extensions of the Fortran languages of package.json"
     .filter((l: { id: string }) => l.id === "FortranFreeForm" || l.id === "FortranFixedForm")
     .flatMap((l: { extensions: string[] }) => l.extensions.map((e) => e.slice(1)));
   assert.deepEqual(FORTRAN_FILES, `*.{${exts.join(",")}}`);
+});
+
+test("a bare program name is looked up on the PATH, not in the working directory", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-unit-"));
+  try {
+    const name = process.platform === "win32" ? "prog.exe" : "prog";
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, name), "");
+    fs.writeFileSync(path.join(dir, name), "");
+    const sep = path.delimiter;
+    const env = { PATH: `.${sep}bin${sep}${bin}`, PATHEXT: ".EXE" };
+    const saved = process.cwd();
+    process.chdir(dir);
+    try {
+      assert.equal(programPath("prog", env), path.join(bin, name));
+      assert.equal(programPath("prog", { PATH: `.${sep}bin`, PATHEXT: ".EXE" }), undefined);
+    } finally {
+      process.chdir(saved);
+    }
+    // a path is left alone
+    assert.equal(programPath(path.join(dir, name), env), path.join(dir, name));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

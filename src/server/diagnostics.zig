@@ -35,10 +35,14 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 const completion = @import("completion.zig");
 const compile = @import("compile.zig");
+const dialect = @import("dialect.zig");
+const use_only = @import("use_only.zig");
+const statement_problems = @import("statement_problems.zig");
 const compiler_macros = @import("compiler_macros.zig");
 const linters = @import("linters.zig");
 const convert = @import("convert.zig");
 const summary = @import("summary.zig");
+const import_hidden = @import("import_hidden.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     var out: std.ArrayList(lsp.CodeAction) = .empty;
@@ -101,6 +105,10 @@ pub fn undeclaredNames(self: *Server, a: Allocator, file: *FortranFile, ast: *As
     for (names) |u| {
         const scope = u.scope orelse continue;
         if (hasUnreadInclude(scope, unread.items)) continue;
+        if (try import_hidden.diagnostic(self.env(a), a, scope, u)) |d| {
+            try out.append(a, d);
+            continue;
+        }
         if (implicit.typeOf(scope, u.name) != null) continue;
         if (renamed.contains(try std.ascii.allocLowerString(a, u.name))) continue;
         const gop = try known.getOrPut(a, scope);
@@ -406,7 +414,7 @@ fn isDotWord(w: []const u8) bool {
 /// assignments to INTENT(IN) arguments
 pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values(), compiler_macros.hasReal10(self))) |p| try out.append(a, .{
+    for (try argcheck.check(a, self.env(a), file, ast, self.workspace.values(), compiler_macros.hasReal10(self), dialect.of(self, file.declared_fixed))) |p| try out.append(a, .{
         .sln = p.line,
         .sch = p.start,
         .eln = p.line,
@@ -417,6 +425,27 @@ pub fn argumentProblems(self: *Server, a: Allocator, file: *FortranFile, ast: *A
             .arguments => .argument_mismatch,
             .kinds => .argument_kind,
             .intent_in => .intent_in_assigned,
+            .not_definable => .argument_not_definable,
+            .too_short => .argument_too_short,
+            .storage_short => .argument_storage_short,
+            .constant_assigned => .constant_assigned,
+            .parameter_without_value => .parameter_without_value,
+            .duplicate_dummy => .duplicate_dummy,
+            .bad_kind => .bad_kind,
+            .subscript_count => .subscript_count,
+            .unknown_component => .unknown_component,
+            .allocate_object => .allocate_object,
+            .allocate_duplicate => .allocate_duplicate,
+            .allocate_shape => .allocate_shape,
+            .assignment_type => .assignment_type,
+            .condition_type => .condition_type,
+            .intrinsic_arguments => .intrinsic_arguments,
+            .unbalanced_parentheses => .unbalanced_parentheses,
+            .dangling_operator => .dangling_operator,
+            .abstract_type_declared => .abstract_type_declared,
+            .extends_unknown_type => .extends_unknown_type,
+            .pure_function_argument => .pure_function_argument,
+            .unknown_io_specifier => .unknown_io_specifier,
         },
     });
     return out.items;
@@ -524,8 +553,13 @@ pub fn includesNotFound(a: Allocator, ast: *Ast) ![]const objects.BuiltDiag {
 /// The local variables and USE ONLY names that their scope never uses,
 /// shown faded (`unused-name`, a hint)
 pub fn unusedNames(a: Allocator, file: *FortranFile, ast: *Ast) ![]const objects.BuiltDiag {
+    return unusedDiagnostics(a, try unused.find(a, file, ast));
+}
+
+/// The hints of the names `found`
+fn unusedDiagnostics(a: Allocator, found: []const unused.Unused) ![]const objects.BuiltDiag {
     var out: std.ArrayList(objects.BuiltDiag) = .empty;
-    for (try unused.find(a, file, ast)) |u| {
+    for (found) |u| {
         const what: []const u8 = if (u.kind == .variable) "Variable" else "Name";
         try out.append(a, .{
             .sln = u.line,
@@ -552,7 +586,7 @@ pub fn addRemoveUnusedActions(self: *Server, a: Allocator, file: *FortranFile, a
     const found = try unused.find(a, file, ast);
     // the names of each declaration statement, for the source action
     var by_statement: std.array_hash_map.Auto(usize, std.ArrayList([]const u8)) = .empty;
-    for (found, try unusedNames(a, file, ast)) |u, d| {
+    for (found, try unusedDiagnostics(a, found)) |u, d| {
         if (hidden.hides(d.code, d.sln)) continue;
         const gop = try by_statement.getOrPut(a, u.decl_line);
         if (!gop.found_existing) gop.value_ptr.* = .empty;
@@ -602,7 +636,7 @@ fn cutEdits(a: Allocator, file: *const FortranFile, cuts: []const unused.Cut) ![
 
 /// Whether `file` has fypp directives (`#:for`, `#:set`, ...) or inline
 /// expressions (`${...}$`)
-fn usesFypp(file: *const FortranFile) bool {
+pub fn usesFypp(file: *const FortranFile) bool {
     for (0..file.nLines()) |i| {
         const text = file.getLine(i, false) orelse continue;
         const t = std.mem.trimStart(u8, text, " \t");
@@ -661,6 +695,7 @@ pub fn addDeclareActions(self: *Server, a: Allocator, file: *FortranFile, ast: *
     const uri = try paths.pathToUri(a, file.path);
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     for (try undeclaredNames(self, a, file, ast)) |d| {
+        if (d.code != .undeclared_name) continue;
         if (d.sln < sline or d.sln > eline) continue;
         const name = d.subject orelse continue;
         const unit = autouse.unitOf(try ast.getScopes(a, d.sln + 1)) orelse continue;
@@ -790,19 +825,23 @@ pub fn diagnosticsOf(self: *Server, a: Allocator, uri: []const u8) !?[]const lsp
     // those of its full AST
     if (summary.dormant(file)) try summary.wake(self, a, &.{file});
     var diags: []const objects.BuiltDiag = try file.checkFile(self.env(a), self.s.max_line_length, self.s.max_comment_line_length);
-    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast) });
+    if (file.ast) |ast| diags = try std.mem.concat(a, objects.BuiltDiag, &.{ diags, try includesNotFound(a, ast), try undeclaredNames(self, a, file, ast), try unusedNames(a, file, ast), try circularUses(self, a, file, ast), try argumentProblems(self, a, file, ast), try use_only.check(self, a, file, ast), try statement_problems.check(a, file, ast) });
     const hidden = try suppress.of(a, file);
     const included = isIncluded(self, file);
     var out: std.ArrayList(lsp.Diagnostic) = .empty;
+    var cursor: str.Utf16Cursor = .{};
+    const dia = dialect.of(self, file.declared_fixed);
     for (diags) |d| {
         if (hidden.hides(d.code, d.sln)) continue;
+        // an INTENT outside the argument list: gfortran and ifx report it, Flang does not (#850)
+        if (d.code == .intent_not_in_arguments and !dia.applies(.initMany(&.{ .gfortran, .ifx }))) continue;
         // a file included by another may hold a part of a scope
         if (included and d.code == .unclosed_scope) continue;
         if (d.code == .module_not_found) if (d.subject) |m| if (isExternalModule(self, m)) continue;
         var dd = d;
         dd.severity = severityOf(self, d.code) orelse d.severity;
         if (dd.severity == 0) continue;
-        try out.append(a, try self.diagnosticOf(a, file, dd));
+        try out.append(a, try self.diagnosticOfAt(a, file, dd, &cursor));
     }
     return out.items;
 }

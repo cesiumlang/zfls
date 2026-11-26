@@ -17,6 +17,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         // .link_libc = true,
     });
+    // Frame pointers and symbols for profilers (.github/workflows/profile.yml)
+    if (b.option(bool, "profile", "Keep frame pointers and debug info, for profilers") orelse false) {
+        mod.omit_frame_pointer = false;
+        mod.strip = false;
+    }
 
     const intrinsic_docs_tests = addIntrinsicDocs(b, mod);
 
@@ -85,10 +90,31 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const run_issue_tests = b.addRunArtifact(b.addTest(.{ .root_module = issue_mod }));
+    const issue_tests = b.addTest(.{ .root_module = issue_mod });
+    const run_issue_tests = b.addRunArtifact(issue_tests);
     const issues_step = b.step("test-issues", "Run the tests of open upstream fortls issues");
     issues_step.dependOn(&run_issue_tests.step);
     test_step.dependOn(&run_issue_tests.step);
+
+    // The allocation counts of the hot paths against tests/bench/baseline.json
+    // (tests/issues/allocation_counts.zig; `zig build bench` without a
+    // workspace runs it, `zig build bench-baseline` records the file again)
+    const counts_tests = b.addTest(.{ .root_module = issue_mod, .filters = &.{"allocation counts"} });
+    const run_counts = b.addRunArtifact(counts_tests);
+    run_counts.has_side_effects = true;
+    const counts_step = b.step("bench-counts", "Compare the allocation counts of the server's hot paths with tests/bench/baseline.json");
+    counts_step.dependOn(&run_counts.step);
+    const run_record = b.addRunArtifact(counts_tests);
+    run_record.has_side_effects = true;
+    run_record.setEnvironmentVariable("ZFLS_BASELINE", "record");
+    b.step("bench-baseline", "Record the allocation counts of the server's hot paths in tests/bench/baseline.json").dependOn(&run_record.step);
+
+    // The test binaries, for valgrind (.github/workflows/memcheck.yml):
+    // zig-out/memcheck/unit and zig-out/memcheck/issues, run from the root
+    const memcheck_step = b.step("memcheck-bins", "Install the unit and request test binaries to run under valgrind (tests/memcheck)");
+    const memcheck_dest: std.Build.InstallDir = .{ .custom = "memcheck" };
+    memcheck_step.dependOn(&b.addInstallArtifact(tests, .{ .dest_dir = .{ .override = memcheck_dest }, .dest_sub_path = "unit" }).step);
+    memcheck_step.dependOn(&b.addInstallArtifact(issue_tests, .{ .dest_dir = .{ .override = memcheck_dest }, .dest_sub_path = "issues" }).step);
 
     // Mutated and arbitrary programs thrown at an in-process server
     // (tests/fuzz.zig); `zig build test --fuzz` runs the fuzzer on it
@@ -118,7 +144,7 @@ pub fn build(b: *std.Build) !void {
     const damaged_step = b.step("test-damaged", "Damage every line of the test corpus and check the server's answers (minutes)");
     damaged_step.dependOn(&run_damaged_long.step);
 
-    addScriptTests(b, mod, exe, test_step, damaged_step, kit.dir);
+    addScriptTests(b, mod, exe, test_step, damaged_step, counts_step, kit.dir);
 }
 
 /// Steps running the test drivers in tests/ against the built server: the
@@ -128,7 +154,7 @@ pub fn build(b: *std.Build) !void {
 /// zfls (and fortls when CMD starts it) timed on a large workspace
 /// (tools/bench_workspace.zig; build with -Doptimize=safe). Their
 /// unit tests are part of `test_step`.
-fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step, damaged_step: *std.Build.Step, kit: std.Build.LazyPath) void {
+fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Compile, test_step: *std.Build.Step, damaged_step: *std.Build.Step, counts_step: *std.Build.Step, kit: std.Build.LazyPath) void {
     const python = b.option([]const u8, "python", "Python interpreter for script tests (default: python)") orelse "python";
     const fortls = b.option([]const u8, "fortls", "Path to a fortls checkout (default: ../fortls)");
     const all = b.step("test-all", "Run unit tests, fortls parity, the gfortran, Flang and ifx oracles and the stress test");
@@ -235,6 +261,8 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .needs_fortls = false,
         },
     };
+    // The benchmark driver, installed for the profilers (tests/profile)
+    const profile_bins = b.step("profile-bins", "Install the benchmark driver, to profile the server with it (tests/profile)");
     for (tools) |t| {
         const tool_mod = b.createModule(.{
             .root_source_file = b.path(t.root),
@@ -248,6 +276,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tool_mod })).step);
         const tool = b.addExecutable(.{ .name = t.name, .root_module = tool_mod });
         if (t.step != null) tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
+        if (t.step == null) profile_bins.dependOn(&b.addInstallArtifact(tool, .{}).step);
         const run = b.addRunArtifact(tool);
         run.setCwd(b.path(""));
         run.addArg("--zfls");
@@ -265,7 +294,11 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         run.addPassthruArgs();
         // They report their own results; always rerun them
         run.has_side_effects = true;
-        b.step(t.step orelse "bench", t.desc).dependOn(&run.step);
+        const tool_step = b.step(t.step orelse "bench", t.desc);
+        // `zig build bench` compares the allocation counts, then times a
+        // workspace if it is given one
+        tool_step.dependOn(&run.step);
+        if (t.step == null) run.step.dependOn(counts_step);
         if (t.step != null) all.dependOn(&run.step);
         // quick, and needs nothing installed: also part of `zig build test`
         const native = b.graph.host.result.os.tag == target.os.tag and b.graph.host.result.cpu.arch == target.cpu.arch;

@@ -241,7 +241,7 @@ pub const Regex = struct {
     /// `matchAt` without the prefilter, for comparing against it in tests
     pub fn matchAtUnfiltered(self: *const Regex, input: []const u8, pos: usize) ?Match {
         var m: Match = .{ .input = input, .ngroups = self.ngroups };
-        if (self.run(0, input, pos, &m.slots, null, false)) return m;
+        if (self.run(0, input, pos, &m.slots, null, false, 0)) return m;
         return null;
     }
 
@@ -253,7 +253,7 @@ pub const Regex = struct {
     /// Python `pattern.fullmatch(s)`
     pub fn fullmatch(self: *const Regex, input: []const u8) ?Match {
         var m: Match = .{ .input = input, .ngroups = self.ngroups };
-        if (self.run(0, input, 0, &m.slots, input.len, false)) return m;
+        if (self.run(0, input, 0, &m.slots, input.len, false, 0)) return m;
         return null;
     }
 
@@ -360,6 +360,12 @@ pub const Regex = struct {
         restore_reg: struct { reg: u16, val: usize },
     };
 
+    // The backtracking stack of a thread, shared by nested runs (a lookaround
+    // starts where the run around it is): a buffer of the run's own was
+    // filled with 0xaa at every run, in the safe build
+    threadlocal var scratch: [1024]Frame = undefined;
+
+    /// `base`: where in `scratch` this run's stack starts
     fn run(
         self: *const Regex,
         prog_index: usize,
@@ -368,6 +374,7 @@ pub const Regex = struct {
         slots: *[max_slots]?usize,
         required_end: ?usize,
         is_sub: bool,
+        base: usize,
     ) bool {
         const prog = self.progs[prog_index];
         var regs: [max_loop_regs]usize = undefined;
@@ -376,8 +383,7 @@ pub const Regex = struct {
         @memset(regs[0..self.nloop_regs], std.math.maxInt(usize));
         if (!is_sub) @memset(slots[0 .. @as(usize, self.ngroups) * 2], null);
 
-        var stack_buf: [256]Frame = undefined;
-        var stack: std.ArrayList(Frame) = .initBuffer(&stack_buf);
+        var stack: std.ArrayList(Frame) = .initBuffer(if (base < scratch.len) scratch[base..] else scratch[0..0]);
         var heap_stack: std.ArrayList(Frame) = .empty;
         defer heap_stack.deinit(std.heap.page_allocator);
         var using_heap = false;
@@ -435,7 +441,7 @@ pub const Regex = struct {
                     break :blk false;
                 },
                 .look => |l| {
-                    const matched = self.runLook(l.prog, input, pos, l.behind, slots);
+                    const matched = self.runLook(l.prog, input, pos, l.behind, slots, base + stack.items.len);
                     if (matched != l.negate) {
                         pc += 1;
                         break :blk true;
@@ -511,14 +517,14 @@ pub const Regex = struct {
         return stack.pop();
     }
 
-    fn runLook(self: *const Regex, prog: u16, input: []const u8, pos: usize, behind: bool, slots: *[max_slots]?usize) bool {
+    fn runLook(self: *const Regex, prog: u16, input: []const u8, pos: usize, behind: bool, slots: *[max_slots]?usize, base: usize) bool {
         var tmp: [max_slots]?usize = slots.*;
-        if (!behind) return self.run(prog, input, pos, &tmp, null, true);
+        if (!behind) return self.run(prog, input, pos, &tmp, null, true, base);
         var j: usize = pos + 1;
         while (j > 0) {
             j -= 1;
             tmp = slots.*;
-            if (self.run(prog, input, j, &tmp, pos, true)) return true;
+            if (self.run(prog, input, j, &tmp, pos, true, base)) return true;
         }
         return false;
     }
@@ -778,4 +784,21 @@ test "sub, split, findall" {
 test "nested empty loops terminate" {
     try expectMatch("(a*)*b", .{}, "aab", "aab");
     try expectMatch("(a*)*", .{}, "c", "");
+}
+
+test "a lookahead backtracks deeper than the shared stack" {
+    // the lookahead's run starts after the stack of the run around it, and
+    // spills to the heap when the thread's buffer is full
+    const a = testing.allocator;
+    const input = try a.alloc(u8, 5000);
+    defer a.free(input);
+    @memset(input, 'a');
+    input[input.len - 1] = 'c';
+    var re = try Regex.compile(a, "(a|b)*(?=(a|b)*c)", .{});
+    defer re.deinit();
+    const m = re.match(input).?;
+    try testing.expectEqual(@as(usize, input.len - 1), m.end(0));
+    var neg = try Regex.compile(a, "x?(?!(a|b)*d)", .{});
+    defer neg.deinit();
+    try testing.expect(neg.match(input) != null);
 }

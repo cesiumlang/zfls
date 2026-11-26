@@ -5,7 +5,7 @@ const Module = schema.Module;
 
 /// The intrinsic modules of the standard and of OpenMP and OpenACC, and
 /// stubs of the MPI modules
-pub const all = standard ++ @import("mpi.zig").modules;
+pub const all = standard ++ @import("modules_ieee.zig").modules ++ @import("mpi.zig").modules;
 
 const standard = [_]Module{
     .{ .name = "omp_lib", .members = &.{
@@ -507,6 +507,7 @@ const standard = [_]Module{
         .{ .name = "compiler_options", .kind = .function, .return_type = "CHARACTER(LEN=*)" },
         .{ .name = "compiler_version", .kind = .function, .return_type = "CHARACTER(LEN=*)" },
     } },
+    // Flang's extras (F2023 unsigned and half precision): see _test/iso_c_binding.zig
     .{ .name = "iso_c_binding", .members = &.{
         .{ .name = "c_int", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_short", .kind = .variable, .desc = "INTEGER" },
@@ -540,6 +541,29 @@ const standard = [_]Module{
         .{ .name = "c_double_complex", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_long_double_complex", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_float128_complex", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_float16", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_float16_complex", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint8_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint16_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint32_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint64_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint128_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least8_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least16_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least32_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least64_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_least128_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast8_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast16_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast32_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast64_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uint_fast128_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_uintmax_t", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_char", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_short", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_long", .kind = .variable, .desc = "INTEGER" },
+        .{ .name = "c_unsigned_long_long", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_bool", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_char", .kind = .variable, .desc = "INTEGER" },
         .{ .name = "c_null_char", .kind = .variable, .desc = "CHARACTER(KIND=c_char)" },
@@ -558,10 +582,20 @@ const standard = [_]Module{
             .{ .name = "c_ptr_1", .kind = .variable, .desc = "TYPE(c_ptr)", .mods = &.{"INTENT(in)"} },
             .{ .name = "c_ptr_2", .kind = .variable, .desc = "TYPE(c_ptr)", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
         } },
-        .{ .name = "c_f_pointer", .kind = .subroutine, .args = "cptr,fptr,shape", .children = &.{
+        .{ .name = "c_f_pointer", .kind = .subroutine, .args = "cptr,fptr,shape,lower", .children = &.{
             .{ .name = "cptr", .kind = .variable, .desc = "INTENT(in)", .mods = &.{"INTENT(in)"} },
             .{ .name = "fptr", .kind = .variable, .desc = "ANY", .mods = &.{ "POINTER", "INTENT(out)" } },
             .{ .name = "shape", .kind = .variable, .desc = "INTEGER", .mods = &.{ "DIMENSION(:)", "INTENT(in)" } },
+            .{ .name = "lower", .kind = .variable, .desc = "INTEGER", .mods = &.{ "OPTIONAL", "DIMENSION(:)", "INTENT(in)" } },
+        } },
+        .{ .name = "c_f_strpointer", .kind = .subroutine, .args = "cstrarray,fstrptr,nchars", .children = &.{
+            .{ .name = "cstrarray", .kind = .variable, .desc = "CHARACTER(KIND=c_char) or TYPE(c_ptr)", .mods = &.{"INTENT(in)"} },
+            .{ .name = "fstrptr", .kind = .variable, .desc = "CHARACTER(LEN=:,KIND=c_char)", .mods = &.{ "POINTER", "INTENT(out)" } },
+            .{ .name = "nchars", .kind = .variable, .desc = "INTEGER", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
+        } },
+        .{ .name = "f_c_string", .kind = .function, .args = "string,asis", .return_type = "CHARACTER(KIND=c_char)", .children = &.{
+            .{ .name = "string", .kind = .variable, .desc = "CHARACTER(KIND=c_char)", .mods = &.{"INTENT(in)"} },
+            .{ .name = "asis", .kind = .variable, .desc = "LOGICAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
         } },
         .{ .name = "c_f_procpointer", .kind = .subroutine, .args = "cptr,fptr", .children = &.{
             .{ .name = "cptr", .kind = .variable, .desc = "TYPE(c_funptr)", .mods = &.{"INTENT(in)"} },
@@ -577,160 +611,8 @@ const standard = [_]Module{
             .{ .name = "x", .kind = .variable, .desc = "ANY", .mods = &.{"INTENT(in)"} },
         } },
     } },
-    .{ .name = "ieee_exceptions", .members = &.{
-        .{ .name = "ieee_flag_type", .kind = .type },
-        .{ .name = "ieee_overflow", .kind = .variable, .desc = "TYPE(ieee_flag_type)" },
-        .{ .name = "ieee_divide_by_zero", .kind = .variable, .desc = "TYPE(ieee_flag_type)" },
-        .{ .name = "ieee_invalid", .kind = .variable, .desc = "TYPE(ieee_flag_type)" },
-        .{ .name = "ieee_underflow", .kind = .variable, .desc = "TYPE(ieee_flag_type)" },
-        .{ .name = "ieee_inexact", .kind = .variable, .desc = "TYPE(ieee_flag_type)" },
-        .{ .name = "ieee_usual", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"DIMENSION(3)"} },
-        .{ .name = "ieee_all", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"DIMENSION(5)"} },
-    } },
-    .{ .name = "ieee_arithmetic", .use = "ieee_exceptions", .members = &.{
-        .{ .name = "ieee_status_type", .kind = .type },
-        .{ .name = "ieee_class_type", .kind = .type },
-        .{ .name = "ieee_round_type", .kind = .type },
-        .{ .name = "ieee_signaling_nan", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_quiet_nan", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_negative_inf", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_negative_normal", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_negative_denormal", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_negative_zero", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_positive_zero", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_positive_denormal", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_positive_normal", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_positive_inf", .kind = .variable, .desc = "TYPE(ieee_class_type)" },
-        .{ .name = "ieee_nearest", .kind = .variable, .desc = "TYPE(ieee_round_type)" },
-        .{ .name = "ieee_to_zero", .kind = .variable, .desc = "TYPE(ieee_round_type)" },
-        .{ .name = "ieee_away", .kind = .variable, .desc = "TYPE(ieee_round_type)" },
-        .{ .name = "ieee_up", .kind = .variable, .desc = "TYPE(ieee_round_type)" },
-        .{ .name = "ieee_down", .kind = .variable, .desc = "TYPE(ieee_round_type)" },
-        .{ .name = "ieee_other", .kind = .variable, .desc = "TYPE(ieee_round_type)" },
-        .{ .name = "ieee_class", .kind = .function, .args = "X", .return_type = "TYPE(ieee_class_type)", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_copy_sign", .kind = .subroutine, .args = "X,Y", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(inout)"} },
-            .{ .name = "Y", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_get_flag", .kind = .subroutine, .args = "FLAG,FLAG_VALUE", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"INTENT(in)"} },
-            .{ .name = "FLAG_VALUE", .kind = .variable, .desc = "LOGICAL", .mods = &.{"INTENT(out)"} },
-        } },
-        .{ .name = "ieee_set_flag", .kind = .subroutine, .args = "FLAG,FLAG_VALUE", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"INTENT(in)"} },
-            .{ .name = "FLAG_VALUE", .kind = .variable, .desc = "LOGICAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_get_halting_mode", .kind = .subroutine, .args = "FLAG,HALTING", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"INTENT(in)"} },
-            .{ .name = "HALTING", .kind = .variable, .desc = "LOGICAL", .mods = &.{"INTENT(out)"} },
-        } },
-        .{ .name = "ieee_set_halting_mode", .kind = .subroutine, .args = "FLAG,HALTING", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"INTENT(in)"} },
-            .{ .name = "HALTING", .kind = .variable, .desc = "LOGICAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_get_rounding_mode", .kind = .subroutine, .args = "ROUND_VALUE", .children = &.{
-            .{ .name = "ROUND_VALUE", .kind = .variable, .desc = "TYPE(ieee_round_type)", .mods = &.{"INTENT(out)"} },
-        } },
-        .{ .name = "ieee_set_rounding_mode", .kind = .subroutine, .args = "ROUND_VALUE", .children = &.{
-            .{ .name = "ROUND_VALUE", .kind = .variable, .desc = "TYPE(ieee_round_type)", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_get_status", .kind = .subroutine, .args = "STATUS_VALUE", .children = &.{
-            .{ .name = "STATUS_VALUE", .kind = .variable, .desc = "TYPE(ieee_status_type)", .mods = &.{"INTENT(out)"} },
-        } },
-        .{ .name = "ieee_set_status", .kind = .subroutine, .args = "STATUS_VALUE", .children = &.{
-            .{ .name = "STATUS_VALUE", .kind = .variable, .desc = "TYPE(ieee_status_type)", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_is_finite", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_is_nan", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_is_negative", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_is_normal", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_logb", .kind = .function, .args = "X", .return_type = "REAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_next_after", .kind = .function, .args = "X,Y", .return_type = "REAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-            .{ .name = "Y", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_rem", .kind = .function, .args = "X,Y", .return_type = "REAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-            .{ .name = "Y", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_rint", .kind = .function, .args = "X", .return_type = "REAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_scalb", .kind = .function, .args = "X,I", .return_type = "REAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-            .{ .name = "I", .kind = .variable, .desc = "INTEGER", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_selected_real_kind", .kind = .function, .args = "P,R", .return_type = "INTEGER", .children = &.{
-            .{ .name = "P", .kind = .variable, .desc = "INTEGER", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-            .{ .name = "R", .kind = .variable, .desc = "INTEGER", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_datatype", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_denormal", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_divide", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_flag", .kind = .function, .args = "FLAG,X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"INTENT(in)"} },
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_halting", .kind = .function, .args = "FLAG", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_flag_type)", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_support_inf", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_io", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_nan", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_rounding", .kind = .function, .args = "ROUND_VALUE,X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "FLAG", .kind = .variable, .desc = "TYPE(ieee_round_type)", .mods = &.{"INTENT(in)"} },
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_sqrt", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_support_standard", .kind = .function, .args = "X", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{ "OPTIONAL", "INTENT(in)" } },
-        } },
-        .{ .name = "ieee_unordered", .kind = .function, .args = "X,Y", .return_type = "LOGICAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-            .{ .name = "Y", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-        } },
-        .{ .name = "ieee_value", .kind = .function, .args = "X,CLASS", .return_type = "REAL", .children = &.{
-            .{ .name = "X", .kind = .variable, .desc = "REAL", .mods = &.{"INTENT(in)"} },
-            .{ .name = "CLASS", .kind = .variable, .desc = "TYPE(ieee_class_type)", .mods = &.{"INTENT(in)"} },
-        } },
-    } },
-    .{ .name = "ieee_features", .members = &.{
-        .{ .name = "ieee_features_type", .kind = .type },
-        .{ .name = "ieee_denormal", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_divide", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_halting", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_inexact_flag", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_inf", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_invalid_flag", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_nan", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_rounding", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_sqrt", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-        .{ .name = "ieee_underflow_flag", .kind = .variable, .desc = "TYPE(ieee_features_type)" },
-    } },
 };
+
+test {
+    _ = @import("_test/iso_c_binding.zig");
+}

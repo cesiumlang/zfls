@@ -3,7 +3,7 @@
 //! date (`zig build generated`, `zig build check-generated`):
 //!
 //! - editors/vscode/schemas/fortls.schema.json, the JSON schema of zfls
-//!   configuration files (.fortlsrc, .fortls.json, .fortls), from the
+//!   configuration files (.zflsrc, .fortlsrc, .fortls.json, .fortls), from the
 //!   options `applyConfig` in src/settings.zig reads: the type of their
 //!   command-line option (`opts`), its help text, and their default in
 //!   `Settings`. The extension contributes it for those file names.
@@ -196,6 +196,9 @@ fn specialSchema(a: Allocator, key: []const u8) !?Value {
     if (std.mem.eql(u8, key, "compiler_diagnostics")) return try parseLiteral(a,
         \\{"type": "string",
         \\ "enum": ["gfortran", "ifx", "ifort", "flang", "nvfortran", "nagfor", "lfortran", "none", null]}
+    );
+    if (std.mem.eql(u8, key, "lint_dialect")) return try parseLiteral(a,
+        \\{"type": "string", "enum": ["neutral", "gfortran", "ifx", "flang", null]}
     );
     if (std.mem.eql(u8, key, "formatter")) return try parseLiteral(a,
         \\{"type": "string", "enum": ["findent", "fprettify", "none", null]}

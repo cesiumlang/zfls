@@ -217,6 +217,7 @@
           "declared-twice",
           "masks-parent",
           "import-outside-interface",
+          "import-excludes-name",
           "module-not-found",
           "use-after-implicit",
           "deferred-not-implemented",
@@ -230,8 +231,35 @@
           "argument-mismatch",
           "argument-kind",
           "intent-in-assigned",
+          "argument-not-definable",
+          "argument-too-short",
+          "argument-storage-short",
           "include-not-found",
-          "preprocessor-condition"
+          "preprocessor-condition",
+          "use-name-not-found",
+          "label-defined-twice",
+          "label-not-found",
+          "constant-assigned",
+          "case-value-overlap",
+          "exit-outside-loop",
+          "cycle-outside-loop",
+          "parameter-without-value",
+          "duplicate-dummy",
+          "bad-kind",
+          "subscript-count",
+          "unknown-component",
+          "allocate-object",
+          "allocate-duplicate",
+          "allocate-shape",
+          "assignment-type",
+          "condition-type",
+          "intrinsic-arguments",
+          "unbalanced-parentheses",
+          "dangling-operator",
+          "abstract-type-declared",
+          "extends-unknown-type",
+          "pure-function-argument",
+          "unknown-io-specifier"
         ]
       },
       "additionalProperties": {
@@ -309,6 +337,20 @@
       "type": [
         "string",
         "null"
+      ]
+    },
+    "lint_dialect": {
+      "description": "The dialect zfls's own checks lint against: neutral (only what gfortran, ifx and Flang agree on), gfortran, ifx or flang, which also reports that compiler's quirks as you type (default: the dialect of compiler_diagnostics, else neutral)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "neutral",
+        "gfortran",
+        "ifx",
+        "flang",
+        null
       ]
     },
     "compiler_mod_dir": {

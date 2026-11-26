@@ -14,7 +14,9 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const intrinsics = @import("../intrinsics.zig");
 const constructs = @import("../constructs.zig");
+const implicit_names = @import("implicit_names.zig");
 const patterns = @import("../patterns.zig");
+const fpm = @import("../fpm.zig");
 
 fn R() *const patterns.Patterns {
     return patterns.get();
@@ -31,6 +33,7 @@ const Server = srv.Server;
 const definition = @import("definition.zig");
 const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
+const name_places = @import("name_places.zig");
 const groups = @import("groups.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
@@ -154,7 +157,7 @@ pub fn renameFile(ri: Server.RenamedImport, at: *FortranFile) *FortranFile {
 /// The uses of a renamed import: of its local name, in the scope of the
 /// USE statement and the statement itself, not of the original name
 pub fn aliasReferences(self: *Server, a: Allocator, file: *FortranFile, def_obj: *Obj, ri: Server.RenamedImport) ![]Server.FileRefs {
-    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{ri.alias}), regex.I) catch return &.{};
+    var name_re = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?=\\W|$)", .{ri.alias}), regex.I) catch return &.{};
     defer name_re.deinit();
     var refs: std.ArrayList(Server.Ref) = .empty;
     const first = ri.scope.sline -| 1;
@@ -249,32 +252,25 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
     // the entity's own name, and for references the local names USE
     // statements give it (#233): a rename changes only the name it starts on
     const names = if (for_rename) &[_][]const u8{def_name} else try useAliases(self, a, def_obj, def_name);
-    const name_res = try a.alloc(regex.Regex, names.len);
-    var n_res: usize = 0;
-    defer for (name_res[0..n_res]) |*re| re.deinit();
-    for (names) |name| {
-        name_res[n_res] = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?:\\W|$)", .{name}), regex.I) catch return &.{};
-        n_res += 1;
-    }
     var files: std.ArrayList(*FortranFile) = .empty;
     if (restrict) |f| try files.append(a, f) else try files.appendSlice(a, self.workspace.values());
     var override_cache: std.ArrayList([]const u8) = .empty;
+    var called_memo: definition.CalledMemo = .empty;
     var out: std.ArrayList(Server.FileRefs) = .empty;
     for (files.items) |file| {
         var file_refs: std.ArrayList(Server.Ref) = .empty;
         const filename = file.path;
-        for (names, name_res) |name, *name_re| for (file.lines.items, 0..) |raw_line, i| {
+        for (names) |name| for (file.lines.items, 0..) |raw_line, i| {
             if (raw_line.len == 0) continue;
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
-            if (std.ascii.findIgnoreCase(line, name) == null) continue;
-            var it = name_re.iterator(line);
+            var it = name_places.places(line, name);
             while (it.next()) |m| {
-                if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
-                    try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+                if (for_rename and isRenamedOriginal(line, m.start, def_obj)) {
+                    try file_refs.append(a, .{ .line = i, .start = m.start, .end = m.end });
                     continue;
                 }
-                const var_def = (try definition.getDefinition(self, a, file, i, m.start(1) + 1, false)) orelse continue;
+                const var_def = (try definition.getDefinition(self, a, file, i, m.start + 1, false)) orelse continue;
                 if (var_def.kind == .intrinsic) continue;
                 var ref_match = false;
                 var in_cache = false;
@@ -287,7 +283,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
                     isExtendedGenericPair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
-                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
+                    (var_def.kind == .variable and try definition.callerTargetMemo(self, a, file, i, m.start, var_def, &called_memo) == def_obj))
                 {
                     ref_match = true;
                 } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
@@ -317,7 +313,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                         }
                     };
                 }
-                if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+                if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start, .end = m.end });
             }
         };
         if (file_refs.items.len > 0) try out.append(a, .{ .path = filename, .file = file, .refs = file_refs });
@@ -387,6 +383,19 @@ pub fn referenceScope(self: *Server, def_obj: *Obj) ?struct { type_mem: bool, re
 /// procedures of its C name's and the C name's places in C files too
 /// (bindc.zig)
 pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, with_c: bool) !Value {
+    const places = try placesAt(self, a, params, with_c);
+    if (with_c) return places;
+    // highlights are the document's own places (#781)
+    const doc = try self.pathFromUri(a, params.textDocument.uri);
+    var own: std.ArrayList(Value) = .empty;
+    for (json.items(places)) |p| {
+        const uri = json.str(json.get(p, "uri")) orelse continue;
+        if (fpm.samePath(try self.pathFromUri(a, uri), doc)) try own.append(a, p);
+    }
+    return json.from(a, own.items);
+}
+
+fn placesAt(self: *Server, a: Allocator, params: lsp.PositionParams, with_c: bool) !Value {
     if (with_c) if (self.c_docs.get(try self.pathFromUri(a, params.textDocument.uri))) |doc| return bindc.cReferences(self, a, doc, params);
     if (try definition.operatorAt(self, a, params)) |op| return operators.references(self, a, op);
     if (try definition.assignmentAt(self, a, params)) |b| return assignment.references(self, a, b);
@@ -397,7 +406,9 @@ pub fn serveReferences(self: *Server, a: Allocator, params: lsp.PositionParams, 
     if (d.obj.kind == .intrinsic) return .null;
     const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
     const rs = referenceScope(self, obj) orelse return .null;
-    const all = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, false);
+    // a highlight reads the document alone
+    const only = if (with_c) rs.restrict else (try self.fileFromUri(a, params.textDocument.uri)) orelse rs.restrict;
+    const all = try getAllReferences(self, a, obj, rs.type_mem, only, false);
     var out: std.ArrayList(lsp.Location) = .empty;
     for (all) |fr| {
         const uri = try paths.pathToUri(a, fr.path);
@@ -467,7 +478,7 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
 pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, file: *const FortranFile, t: constructs.Target) !Value {
     const new = params.newName;
     const valid = switch (t.kind) {
-        .construct => new.len > 0 and std.ascii.isAlphabetic(new[0]) and
+        .construct, .implicit => new.len > 0 and std.ascii.isAlphabetic(new[0]) and
             for (new) |ch| {
                 if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) break false;
             } else true,
@@ -475,7 +486,15 @@ pub fn renameConstruct(self: *Server, a: Allocator, params: lsp.RenameParams, fi
             (std.fmt.parseInt(u32, new, 10) catch 0) > 0,
     };
     if (!valid) {
-        self.postMessage(a, try a.print("Rename failed: \"{s}\" is not a valid {s}", .{ new, if (t.kind == .construct) "construct name" else "statement label" }), C.Severity.warn);
+        self.postMessage(a, try a.print("Rename failed: \"{s}\" is not a valid {s}", .{ new, switch (t.kind) {
+            .construct => "construct name",
+            .label => "statement label",
+            .implicit => "variable name",
+        } }), C.Severity.warn);
+        return .null;
+    }
+    if (t.kind == .implicit and try implicit_names.taken(self, a, file, t, new)) {
+        self.postMessage(a, try a.print("Rename failed: \"{s}\" is a name in use in its scope", .{new}), C.Severity.warn);
         return .null;
     }
     const edits = try a.alloc(lsp.TextEdit, t.spans.len);

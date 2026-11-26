@@ -32,6 +32,9 @@ pub const Kw = enum(u8) {
     // DEC's, of ifx and gfortran (`-fdec-static`)
     automatic,
     static,
+    // Fortran 2018's and 2023's procedure prefixes (#727)
+    non_recursive,
+    simple,
 
     /// The keyword with this (lowercase) name
     pub fn fromName(name: []const u8) ?Kw {
@@ -98,6 +101,7 @@ pub const DiagCode = enum {
     declared_twice,
     masks_parent,
     import_outside_interface,
+    import_excludes_name,
     module_not_found,
     use_after_implicit,
     deferred_not_implemented,
@@ -111,8 +115,35 @@ pub const DiagCode = enum {
     argument_mismatch,
     argument_kind,
     intent_in_assigned,
+    argument_not_definable,
+    argument_too_short,
+    argument_storage_short,
     include_not_found,
     preprocessor_condition,
+    use_name_not_found,
+    label_defined_twice,
+    label_not_found,
+    constant_assigned,
+    case_value_overlap,
+    exit_outside_loop,
+    cycle_outside_loop,
+    parameter_without_value,
+    duplicate_dummy,
+    bad_kind,
+    subscript_count,
+    unknown_component,
+    allocate_object,
+    allocate_duplicate,
+    allocate_shape,
+    assignment_type,
+    condition_type,
+    intrinsic_arguments,
+    unbalanced_parentheses,
+    dangling_operator,
+    abstract_type_declared,
+    extends_unknown_type,
+    pure_function_argument,
+    unknown_io_specifier,
 
     /// The name of the code, `masks-parent`
     pub fn name(self: DiagCode) []const u8 {
@@ -125,6 +156,7 @@ pub const DiagCode = enum {
     }
 
     const names = blk: {
+        @setEvalBranchQuota(10000);
         const fields = @typeInfo(DiagCode).@"enum".field_names;
         var out: [fields.len][]const u8 = undefined;
         for (fields, 0..) |f, i| {

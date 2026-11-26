@@ -9,6 +9,8 @@ const Io = std.Io;
 const json = @import("json.zig");
 const paths = @import("paths.zig");
 const str = @import("str.zig");
+const compile_flags = @import("compile_flags.zig");
+const fsio = @import("fsio.zig");
 
 pub const Def = struct { name: []const u8, value: []const u8 };
 
@@ -32,7 +34,8 @@ pub fn pathKey(a: Allocator, path: []const u8) ![]const u8 {
 pub const Command = struct {
     /// Where it runs (absolute)
     dir: []const u8,
-    /// The compiler, then its arguments
+    /// The compiler (only to tell which one it is, never run), then its
+    /// arguments that pass `compile_flags`
     args: []const []const u8,
     /// The source file (absolute)
     file: []const u8,
@@ -113,7 +116,7 @@ pub fn readCompileCommands(a: Allocator, text: []const u8, base: []const u8) !Fo
         // the first entry of a file is its command
         const abs = try paths.normpath(a, if (std.Io.Dir.path.isAbsolute(file)) file else try paths.join(a, &.{ dir, file }));
         const gop = try found.commands.getOrPut(a, try fileKey(a, abs));
-        if (!gop.found_existing) gop.value_ptr.* = .{ .dir = try paths.normpath(a, dir), .args = args.items, .file = abs };
+        if (!gop.found_existing) gop.value_ptr.* = .{ .dir = try paths.normpath(a, dir), .args = try compile_flags.safeArgs(a, args.items), .file = abs };
     }
     return found;
 }
@@ -380,7 +383,7 @@ pub fn isIfortInterface(io: Io, path: []const u8) bool {
     const suffix = "__genmod.f90";
     const base = std.Io.Dir.path.basename(path);
     if (!std.ascii.endsWithIgnoreCase(base, suffix)) return false;
-    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return false;
+    const file = fsio.openFile(io, path) catch return false;
     defer file.close(io);
     var buf: [128]u8 = undefined;
     const n = file.readPositionalAll(io, &buf, 0) catch return false;
@@ -528,4 +531,22 @@ test "compile_commands.json and fpm.toml with a UTF-8 byte-order mark (#407)" {
         try std.testing.expectEqual(@as(usize, 1), g.defs.items.len);
         try std.testing.expectEqualStrings("BAR", g.defs.items[0].name);
     }
+}
+
+test "compile_commands.json: only allow-listed flags reach the compiler check" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const windows = @import("builtin").target.os.tag == .windows;
+    const root = if (windows) "C:\\\\p" else "/p";
+    const text = try a.print(
+        \\[{{"directory": "{s}", "file": "a.f90",
+        \\  "arguments": ["./bin/gfortran", "-wrapper", "x,y", "-B/d", "-specs=s", "-fplugin=p.so", "@r.txt", "-Iinc", "-DX", "-std=f2018", "-c", "a.f90"]}}]
+    , .{root});
+    const f = try readCompileCommands(a, text, root);
+    const cmd = (try commandFor(a, &f.commands, try paths.join(a, &.{ if (windows) "C:\\p" else "/p", "a.f90" }))).?;
+    const got = try compilerArgs(a, cmd);
+    const want = [_][]const u8{ "-Iinc", "-DX", "-std=f2018" };
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
 }

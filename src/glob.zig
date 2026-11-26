@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const str = @import("str.zig");
 const paths = @import("paths.zig");
+const fsio = @import("fsio.zig");
 
 const case_insensitive = builtin.target.os.tag == .windows or builtin.target.os.tag.isDarwin();
 
@@ -24,7 +25,7 @@ fn lessName(_: void, x: Entry, y: Entry) bool {
 
 /// List the entries of a directory, sorted by name (case-insensitive)
 pub fn listEntries(io: Io, a: Allocator, dir_path: []const u8) ![]Entry {
-    var dir = try Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
+    var dir = try fsio.openDir(io, dir_path, .{ .iterate = true });
     defer dir.close(io);
     var out: std.ArrayList(Entry) = .empty;
     var it = dir.iterate();
@@ -172,13 +173,20 @@ fn splitParts(a: Allocator, pattern: []const u8) ![][]const u8 {
     var it = std.mem.tokenizeAny(u8, pattern, "/\\");
     while (it.next()) |p| {
         if (std.mem.eql(u8, p, ".")) continue;
+        // `**/**` matches what `**` does; each one walks every directory
+        if (std.mem.eql(u8, p, "**") and out.items.len > 0 and std.mem.eql(u8, out.items[out.items.len - 1], "**")) continue;
         try out.append(a, p);
     }
     return out.items;
 }
 
-fn globWalk(io: Io, a: Allocator, base: []const u8, parts: []const []const u8, out: *std.ArrayList([]const u8), depth: usize) !void {
+/// The directories and files `parts` match from `base`, in `out`. A state (the
+/// parts left, a directory) is walked once: the walks of separated `**` parts
+/// would otherwise repeat for each way of reaching a directory.
+fn globWalk(io: Io, a: Allocator, base: []const u8, parts: []const []const u8, out: *std.ArrayList([]const u8), seen: *std.StringHashMapUnmanaged(void), depth: usize) !void {
     if (depth > 512) return;
+    const gop = try seen.getOrPut(a, try a.print("{d}:{s}", .{ parts.len, base }));
+    if (gop.found_existing) return;
     if (parts.len == 0) {
         try out.append(a, base);
         return;
@@ -186,13 +194,18 @@ fn globWalk(io: Io, a: Allocator, base: []const u8, parts: []const []const u8, o
     const part = parts[0];
     const rest = parts[1..];
     if (std.mem.eql(u8, part, "**")) {
-        // `**` matches this directory and all subdirectories
-        const dirs = try walkDirs(io, a, base);
-        for (dirs) |d| try globWalk(io, a, d, rest, out, depth + 1);
+        // `**` matches this directory and all subdirectories (symlinked
+        // ones are not entered), top down
+        try globWalk(io, a, base, rest, out, seen, depth + 1);
+        const entries = listEntries(io, a, base) catch return;
+        for (entries) |e| {
+            if (!e.is_dir or e.is_symlink) continue;
+            try globWalk(io, a, try paths.join(a, &.{ base, e.name }), parts, out, seen, depth + 1);
+        }
         return;
     }
     if (std.mem.eql(u8, part, "..")) {
-        try globWalk(io, a, paths.dirname(base), rest, out, depth + 1);
+        try globWalk(io, a, paths.dirname(base), rest, out, seen, depth + 1);
         return;
     }
     if (hasWildcard(part)) {
@@ -200,13 +213,13 @@ fn globWalk(io: Io, a: Allocator, base: []const u8, parts: []const []const u8, o
         for (entries) |e| {
             if (!fnmatch(part, e.name)) continue;
             if (rest.len > 0 and !e.is_dir) continue;
-            try globWalk(io, a, try paths.join(a, &.{ base, e.name }), rest, out, depth + 1);
+            try globWalk(io, a, try paths.join(a, &.{ base, e.name }), rest, out, seen, depth + 1);
         }
         return;
     }
     const candidate = try paths.join(a, &.{ base, part });
     if (paths.exists(io, candidate) or rest.len == 0) {
-        try globWalk(io, a, candidate, rest, out, depth + 1);
+        try globWalk(io, a, candidate, rest, out, seen, depth + 1);
     }
 }
 
@@ -242,7 +255,8 @@ pub fn resolveGlobs(io: Io, a: Allocator, glob_path: []const u8, root_path: ?[]c
         pattern = abs[anchor_len..];
     }
     var raw: std.ArrayList([]const u8) = .empty;
-    try globWalk(io, a, base, try splitParts(a, pattern), &raw, 0);
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    try globWalk(io, a, base, try splitParts(a, pattern), &raw, &seen, 0);
     var out: std.ArrayList([]const u8) = .empty;
     for (raw.items) |p| {
         if (!paths.exists(io, p)) continue;
@@ -320,4 +334,32 @@ test "fnmatch" {
     try std.testing.expect(!fnmatch("[!a-c]x", "bx"));
     try std.testing.expect(!fnmatch("*.f90", "a.f9"));
     try std.testing.expect(fnmatch("*", ".hidden"));
+}
+
+test "consecutive ** parts are one" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const parts = try splitParts(arena.allocator(), "**/**/a/**/**/**/b/**");
+    try std.testing.expectEqual(@as(usize, 5), parts.len);
+    try std.testing.expectEqualStrings("**", parts[0]);
+    try std.testing.expectEqualStrings("a", parts[1]);
+    try std.testing.expectEqualStrings("**", parts[2]);
+    try std.testing.expectEqualStrings("b", parts[3]);
+    try std.testing.expectEqualStrings("**", parts[4]);
+}
+
+test "separated ** parts match each directory once" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    for ([_][]const u8{ "a/b/c/d", "a/x/c/d", "a/b/y/d" }) |d| try tmp.dir.createDirPath(io, d);
+    try tmp.dir.writeFile(io, .{ .sub_path = "a/b/c/d/zz1", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a/x/c/zz2", .data = "" });
+    const root = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const got = try resolveGlobs(io, a, "**/*/**/*/**/*/**/zz*", root);
+    try std.testing.expectEqual(@as(usize, 2), got.len);
+    try std.testing.expectEqual(@as(usize, 1), (try resolveGlobs(io, a, "**/c/**/d/zz*", root)).len);
 }

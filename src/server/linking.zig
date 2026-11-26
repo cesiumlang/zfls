@@ -46,8 +46,12 @@ pub fn addToTree(self: *Server, f: *FortranFile) !void {
 
 /// Drops the names `ast` owns, handing each to the next file (or
 /// intrinsic module) that defines it.
-pub fn removeFromTree(self: *Server, ast: *Ast) void {
+pub fn removeFromTree(self: *Server, ast: *Ast) Allocator.Error!void {
     self.same_names.remove(self.gpa, ast);
+    // the names nobody else defines, taken out together (one at a time is
+    // quadratic in a file of thousands of procedures)
+    var gone: std.ArrayList(usize) = .empty;
+    defer gone.deinit(self.gpa);
     for (ast.global_dict.keys()) |key| {
         const held = self.obj_tree.getEntry(key) orelse continue;
         if (held.value_ptr.obj.file_ast != ast) continue;
@@ -66,14 +70,16 @@ pub fn removeFromTree(self: *Server, ast: *Ast) void {
         if (best) |b| {
             held.key_ptr.* = b.key;
             held.value_ptr.* = b.entry;
-        } else _ = self.obj_tree.orderedRemove(key);
+        } else if (self.obj_tree.getIndex(key)) |i| try gone.append(self.gpa, i);
     }
+    std.mem.sort(usize, gone.items, {}, std.sort.asc(usize));
+    try self.obj_tree.orderedRemoveAtMany(self.gpa, gone.items);
 }
 
 pub fn retireFileAst(self: *Server, f: *FortranFile) !void {
     if (f.ast) |old| {
         try self.retired.append(self.gpa, old);
-        removeFromTree(self, old);
+        try removeFromTree(self, old);
     }
 }
 

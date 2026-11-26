@@ -27,8 +27,23 @@ param(
     $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest is slow with it
     $repo = 'cesiumlang/zfls'
 
-    # Windows PowerShell 5.1 may not offer TLS 1.2 by default
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    # TLS 1.2 (Windows PowerShell 5.1 may not offer it by default), and
+    # nothing older
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    # Downloads URL to FILE, over https only: a redirect to another scheme is
+    # an error
+    function Get-Https([string]$Url, [string]$OutFile) {
+        if (-not $Url.StartsWith('https://')) { throw "install.ps1: not an https URL: $Url" }
+        $r = Invoke-WebRequest -UseBasicParsing $Url -OutFile $OutFile -PassThru
+        $final = $null
+        if ($r.BaseResponse.PSObject.Properties['ResponseUri']) { $final = $r.BaseResponse.ResponseUri }
+        elseif ($r.BaseResponse.PSObject.Properties['RequestMessage']) { $final = $r.BaseResponse.RequestMessage.RequestUri }
+        if ($final -and $final.Scheme -ne 'https') {
+            Remove-Item -Force $OutFile -ErrorAction SilentlyContinue
+            throw "install.ps1: $Url was redirected to $final, which is not https"
+        }
+    }
 
     # The architecture of Windows itself, also when this PowerShell runs
     # emulated (x64 on Arm)
@@ -50,7 +65,7 @@ param(
         # limit (60 requests an hour from one address, which CI runners share)
         $latest = [IO.Path]::GetTempFileName()
         try {
-            Invoke-WebRequest -UseBasicParsing "https://github.com/$repo/releases/latest/download/SHA256SUMS" -OutFile $latest
+            Get-Https "https://github.com/$repo/releases/latest/download/SHA256SUMS" $latest
             foreach ($line in Get-Content $latest) {
                 if ($line -match "zfls-v(.+)-$arch-windows\.zip$") { $ver = $Matches[1]; break }
             }
@@ -71,26 +86,26 @@ param(
     try {
         Write-Host "Downloading $archive"
         try {
-            Invoke-WebRequest -UseBasicParsing "$base/$archive" -OutFile (Join-Path $tmp $archive)
+            Get-Https "$base/$archive" (Join-Path $tmp $archive)
         } catch {
             throw "install.ps1: cannot download $base/$archive (is $ver a release of zfls?): $_"
         }
 
+        # an archive that cannot be verified is not unpacked
         $sums = Join-Path $tmp 'SHA256SUMS'
-        $haveSums = $true
-        try { Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS" -OutFile $sums } catch { $haveSums = $false }
-        if ($haveSums) {
-            $expected = $null
-            foreach ($line in Get-Content $sums) {
-                $fields = $line.Trim() -split '\s+', 2
-                if ($fields.Count -eq 2 -and $fields[1].TrimStart('*') -eq $archive) { $expected = $fields[0] }
-            }
-            if (-not $expected) { throw "install.ps1: SHA256SUMS of v$ver does not list $archive" }
-            $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $archive)).Hash
-            if ($actual -ne $expected) { throw "install.ps1: $archive does not match its SHA-256 in SHA256SUMS" }
-        } else {
-            Write-Warning "v$ver has no SHA256SUMS; the archive is not verified"
+        try {
+            Get-Https "$base/SHA256SUMS" $sums
+        } catch {
+            throw "install.ps1: cannot download $base/SHA256SUMS; the archive is not verified, so it is not installed: $_"
         }
+        $expected = $null
+        foreach ($line in Get-Content $sums) {
+            $fields = $line.Trim() -split '\s+', 2
+            if ($fields.Count -eq 2 -and $fields[1].TrimStart('*') -eq $archive) { $expected = $fields[0] }
+        }
+        if (-not $expected) { throw "install.ps1: SHA256SUMS of v$ver does not list $archive" }
+        $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $archive)).Hash
+        if ($actual -ne $expected) { throw "install.ps1: $archive does not match its SHA-256 in SHA256SUMS" }
 
         New-Item -ItemType Directory -Force -Path $Dir | Out-Null
         Expand-Archive -Path (Join-Path $tmp $archive) -DestinationPath $Dir -Force

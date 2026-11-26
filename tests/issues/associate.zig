@@ -310,3 +310,78 @@ test "a type guard outside SELECT TYPE, with a declaration in it, as while editi
     defer w.deinit();
     try w.expectHoverContains("t.f90", w.pos("t.f90", "v\n", 1, 0), "REAL :: v");
 }
+
+test "an ASSOCIATE selector ending in a subscripted component has its type, a function call its result's (#721)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m_assoc
+        \\  implicit none
+        \\  type :: inner
+        \\    real :: c(4) = 0
+        \\  end type
+        \\  type :: outer
+        \\    type(inner) :: b(3)
+        \\  end type
+        \\contains
+        \\  subroutine takes_real(v)
+        \\    real, intent(in) :: v
+        \\    print *, v
+        \\  end subroutine
+        \\  function mk() result(r)
+        \\    type(inner) :: r
+        \\    r%c = 1
+        \\  end function
+        \\  type(inner) function mk2()
+        \\    mk2%c = 2
+        \\  end function
+        \\  subroutine s(a)
+        \\    type(outer), intent(inout) :: a
+        \\    associate (y => a%b(2)%c(1), z => mk(), f => a%b(:)%c(1), u => mk2())
+        \\      call takes_real(y)
+        \\      call takes_real(a%b(2)%c(1))
+        \\      print *, z%c, f, u%c
+        \\    end associate
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // as gfortran, Flang and ifx accept it
+    try w.expectNoDiagnostics("t.f90");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "y)\n", 0, 0), "REAL :: y");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "f, u%c", 0, 0), "REAL, DIMENSION(:) :: f");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "z%c", 0, 0), "TYPE(inner) :: z");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "z%c", 0, 2), "REAL, DIMENSION(4) :: c");
+    const def = (try w.definition("t.f90", w.pos("t.f90", "z%c", 0, 2))) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(i64, 3), def.line);
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "u%c", 0, 0), "TYPE(inner) :: u");
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "u%c", 0, 2), "REAL, DIMENSION(4) :: c");
+}
+
+test "an ASSOCIATE selector of a component's element of another type is checked by that type (#721)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module m_assoc
+        \\  implicit none
+        \\  type :: inner
+        \\    integer :: c(4) = 0
+        \\  end type
+        \\  type :: outer
+        \\    type(inner) :: b(3)
+        \\  end type
+        \\contains
+        \\  subroutine takes_real(v)
+        \\    real, intent(in) :: v
+        \\    print *, v
+        \\  end subroutine
+        \\  subroutine s(a)
+        \\    type(outer), intent(inout) :: a
+        \\    associate (y => a%b(2)%c(1))
+        \\      call takes_real(y)
+        \\    end associate
+        \\  end subroutine
+        \\end module
+        \\
+    }}, .{});
+    defer w.deinit();
+    // as gfortran, Flang and ifx report it
+    try w.expectDiagnostics("t.f90", &.{"17: Argument v of takes_real: real expected, integer given"});
+}

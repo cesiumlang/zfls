@@ -3,6 +3,7 @@
 const std = @import("std");
 const regex = @import("regex.zig");
 const suffixes = @import("suffixes.zig");
+const valgrind = @import("_test/valgrind.zig");
 const Regex = regex.Regex;
 const I = regex.I;
 
@@ -22,7 +23,7 @@ const defs = [_]Def{
     .{ "INCLUDE", "[ ]*INCLUDE[ :]*[\\'\\\"]([^\\'\\\"]*)", true },
     .{ "CONTAINS", "[ ]*(CONTAINS)[ ]*$", true },
     .{ "IMPLICIT", "[ ]*IMPLICIT[ ]+([a-z]*)", true },
-    .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE)\\b(?![,\\)][ ]*)", true },
+    .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE|NON_RECURSIVE|SIMPLE)\\b(?![,\\)][ ]*)", true },
     .{ "SUB", "[ ]*SUBROUTINE[ ]+([\\w$]+)", true },
     .{ "END_SUB", "SUBROUTINE", true },
     .{ "FUN", "[ ]*FUNCTION[ ]+([\\w$]+)", true },
@@ -59,7 +60,9 @@ const defs = [_]Def{
     .{ "SELECT_DEFAULT", "[ ]*CLASS[ ]+DEFAULT", true },
     // a case of SELECT RANK, `rank (1)`, `rank (*)`, `rank default` (not
     // an assignment to an element of an array named rank)
-    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([ ]*[\\w*]*[ ]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
+    // (`=` only in a rank's keyword arguments, not in the assignment
+    // `rank(1) = 2`, #763)
+    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([^=]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
     .{ "END_SELECT", "SELECT", true },
     .{ "PROG", "[ ]*PROGRAM[ ]+([\\w$]+)", true },
     .{ "END_PROG", "PROGRAM", true },
@@ -83,12 +86,12 @@ const defs = [_]Def{
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
-        "|EXTERNAL|CLASS|TYPE|BYTE|UNSIGNED)", true },
+        "|EXTERNAL|TYPEOF|CLASSOF|CLASS|TYPE|BYTE|UNSIGNED)", true },
     // `()`: PROCEDURE() of no interface; `((4))`: a kind in parentheses
     .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:(]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
     // CUDA Fortran's data attributes too, which hover does not show (#715)
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
-        "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
+        "POINTER|TARGET|DIMENSION[ ]*\\(|RANK[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
         "PASS[ ]*\\([ ]*\\w*[ ]*\\)|SAVE|PARAMETER|EXTERNAL|" ++
         "CONTIGUOUS|VOLATILE|ASYNCHRONOUS|PROTECTED|VALUE|AUTOMATIC|STATIC|CODIMENSION[ ]*\\[|" ++
@@ -237,6 +240,7 @@ test "src file exts regex" {
 }
 
 test "the prefilter never rejects a line that matches" {
+    try valgrind.skip();
     init();
     const words = [_][]const u8{
         "subroutine", "end", "module", "program", "integer",  "real",     "type",     "class", "use",       "only",

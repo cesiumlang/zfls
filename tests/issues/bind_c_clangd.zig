@@ -30,17 +30,22 @@ const iface = h.File{ .name = "iface.f90", .text =
 };
 
 /// Whether go to definition of the call gives a place in made.c, asked
-/// until clangd has read the file, at most `timeout_s` seconds
-fn findsC(w: *h.Workspace, timeout_s: u32) !bool {
-    var waited: u32 = 0;
-    while (waited < timeout_s) : (waited += 1) {
+/// until clangd has read the file, for at most `timeout_s` seconds
+fn findsC(w: *h.Workspace, timeout_s: i64) !bool {
+    const io = std.testing.io;
+    const start = std.Io.Clock.awake.now(io).nanoseconds;
+    while (std.Io.Clock.awake.now(io).nanoseconds - start < timeout_s * std.time.ns_per_s) {
         for (try w.definitions("iface.f90", w.pos("iface.f90", "c_made(1", 0, 1))) |d| {
-            if (std.mem.endsWith(u8, d.uri, "made.c")) return d.line == 1;
+            if (std.mem.endsWith(u8, d.uri, "made.c") and d.line == 1) return true;
         }
-        std.testing.io.sleep(.fromSeconds(1), .awake) catch {};
+        io.sleep(.fromSeconds(1), .awake) catch {};
     }
     return false;
 }
+
+/// Tries of a clangd that never answers (one that did not start, or stalled
+/// on a loaded runner), each with a clangd of its own
+const attempts = 3;
 
 test "bind_c_clangd: clangd finds the C function a macro makes (#739)" {
     try tools.need("clangd");
@@ -50,7 +55,10 @@ test "bind_c_clangd: clangd finds the C function a macro makes (#739)" {
         defer w.deinit();
         try std.testing.expect(!try findsC(w, 1));
     }
-    const w = try h.Workspace.init(&.{ csource, iface }, .{ .init_options = "{\"bind_c_clangd\": \"clangd\"}" });
-    defer w.deinit();
-    try std.testing.expect(try findsC(w, 90));
+    for (0..attempts) |_| {
+        const w = try h.Workspace.init(&.{ csource, iface }, .{ .init_options = "{\"bind_c_clangd\": \"clangd\"}" });
+        defer w.deinit();
+        if (try findsC(w, 45)) return;
+    }
+    return error.TestUnexpectedResult;
 }

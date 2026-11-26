@@ -44,6 +44,8 @@ pub const InnerScopes = objects_ast.InnerScopes;
 pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
+pub const checkScope = objects_resolve.checkScope;
+pub const importHides = objects_resolve.importHides;
 pub const findThroughUse = objects_resolve.findThroughUse;
 pub const findAllThroughUse = objects_resolve.findAllThroughUse;
 pub const renamingModule = objects_resolve.renamingModule;
@@ -52,6 +54,30 @@ pub const findInWorkspace = objects_resolve.findInWorkspace;
 pub const declaredProcedure = objects_resolve.declaredProcedure;
 pub const findSymbolsInWorkspace = objects_resolve.findSymbolsInWorkspace;
 pub const climbTypeTree = objects_resolve.climbTypeTree;
+
+/// `path` in lowercase: itself when it is, as the path of a scope is, so
+/// that nesting thousands deep does not copy it again at each level
+fn lowerPath(a: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    for (path) |c| if (std.ascii.isUpper(c)) return std.ascii.allocLowerString(a, path);
+    return path;
+}
+
+/// The longest path a scope's `fqsn` holds. A scope nested deeper (thousands
+/// of them, in half-typed code) gets the path of an outer one with its own
+/// name, so that all the paths together stay linear in the nesting.
+const max_fqsn_bytes = 1024;
+
+/// `enc_scope`, `::` and `lname` as one path (kept to `max_fqsn_bytes`)
+fn joinPath(a: Allocator, enc_scope: []const u8, lname: []const u8) Allocator.Error![]const u8 {
+    const enc = try lowerPath(a, enc_scope);
+    var keep = enc;
+    const room = max_fqsn_bytes -| (lname.len + 2);
+    if (enc.len > room) {
+        const head = enc[0..room];
+        keep = head[0 .. std.mem.findLast(u8, head, "::") orelse std.mem.find(u8, enc, "::") orelse enc.len];
+    }
+    return std.mem.concat(a, u8, &.{ keep, "::", lname });
+}
 
 pub const Kind = enum {
     /// plain `Scope` (e.g. MODULE PROCEDURE implementation in a submodule)
@@ -143,6 +169,7 @@ pub const Procedure = data.Procedure;
 pub const TypeDef = data.TypeDef;
 pub const Interface = data.Interface;
 pub const Associate = data.Associate;
+pub const TypeOf = data.TypeOf;
 pub const Select = data.Select;
 pub const Variable = data.Variable;
 pub const Group = data.Group;
@@ -355,7 +382,7 @@ pub const Obj = struct {
     pub fn computeFqsn(a: Allocator, file_ast: *Ast, name: []const u8) ![]const u8 {
         const lname = try std.ascii.allocLowerString(a, name);
         if (file_ast.enc_scope_name) |enc| {
-            return std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", lname });
+            return joinPath(a, enc, lname);
         }
         return lname;
     }
@@ -517,7 +544,7 @@ pub const Obj = struct {
         const a = self.al();
         const lname = try std.ascii.allocLowerString(a, self.name);
         if (enc_scope) |e| {
-            self.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, e), "::", lname });
+            self.fqsn = try joinPath(a, e, lname);
         } else {
             self.fqsn = lname;
         }
@@ -666,7 +693,8 @@ pub const Obj = struct {
 
     pub fn requireLink(self: *const Obj) bool {
         return switch (self.kind) {
-            .variable => self.varDataConst().link_name != null or self.isGuardName(),
+            // (and TYPEOF, a RANK clause not literal: #728, #729)
+            .variable => self.varDataConst().link_name != null or self.isGuardName() or self.varDataConst().type_of != null or self.varDataConst().rank_clause != null,
             .method => self.varDataConst().link_name != null,
             .interface, .subroutine, .function, .submodule, .associate => true,
             else => false,
@@ -760,3 +788,17 @@ pub fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 // --------------------------------------------------------------------------
 // Name resolution utilities (port of `utilities.py`)
+
+test "a path of thousands of nested scopes stays within its limit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var path: []const u8 = "p";
+    for (0..5000) |i| {
+        path = try joinPath(a, path, try a.print("#do{d}", .{i}));
+        try std.testing.expect(path.len <= max_fqsn_bytes);
+    }
+    try std.testing.expect(std.mem.startsWith(u8, path, "p::#do0::"));
+    try std.testing.expect(std.mem.endsWith(u8, path, "::#do4999"));
+    try std.testing.expectEqualStrings("a::b", try joinPath(a, "A", "b"));
+}

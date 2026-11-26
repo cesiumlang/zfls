@@ -39,11 +39,14 @@ const known = @import("gfortran_oracle/known.zig");
 const guards = @import("gfortran_oracle/guards.zig");
 const associates = @import("gfortran_oracle/associates.zig");
 const oz = @import("oracle_zfls.zig");
+const odiag = @import("oracle_diagnostics.zig");
 
 const fortran_exts = [_][]const u8{ ".f", ".f90", ".f95", ".f03", ".f08", ".for", ".fpp" };
 
-/// gfortran symbol attributes of entities zfls does not report
-const skip_attrs = [_][]const u8{ "ARTIFICIAL", "INTRINSIC-PROC", "USE-ASSOC", "MODULE", "PROGRAM", "IFSRC-IFBODY", "UNLIMITED-POLYMORPHIC" };
+/// gfortran symbol attributes of entities zfls does not report; the
+/// instances of a parameterized type (`PDTmatrix_8`) and the type
+/// parameters of its template's formal namespace
+const skip_attrs = [_][]const u8{ "PDT-TYPE", "PDT-KIND", "PDT-LEN", "ARTIFICIAL", "INTRINSIC-PROC", "USE-ASSOC", "MODULE", "PROGRAM", "IFSRC-IFBODY", "UNLIMITED-POLYMORPHIC" };
 /// Attributes of procedures declared in the file (as opposed to procedures
 /// that are only called)
 const declared_proc_attrs = [_][]const u8{ "IFSRC-DECL", "CONTAINED", "MODULE-PROC", "GENERIC", "DUMMY", "EXTERNAL" };
@@ -261,6 +264,9 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             std.mem.startsWith(u8, lastPart(ns, "::"), "_") or
             std.mem.eql(u8, name, lastPart(ns, "::")) or
             has(&skip_attrs, &tokens) or
+            // the generic functions gfortran makes in a scope that has a
+            // variable of a parameterized type (`pDTmatrix_8`)
+            (std.ascii.startsWithIgnoreCase(name, "pdt") and tokens.contains("GENERIC") and !tokens.contains("IFSRC-DECL")) or
             // parent-module entities seen from a submodule
             (tokens.contains("USED-IN-SUBMODULE") and !tokens.contains("MODULE-PROCEDURE"));
         if (skip) continue;
@@ -272,7 +278,7 @@ fn gfortranEntities(a: Allocator, dump: []const u8) !Gfortran {
             if (types.isArtificial(sym.name)) continue;
             try out.entities.put(a, fq, .type);
             try structures.append(a, .{ .fq = fq, .name = sym.name });
-        } else if (tokens.contains("DERIVED")) {
+        } else if (tokens.contains("DERIVED") or tokens.contains("PDT-TEMPLATE")) {
             try out.entities.put(a, fq, .type);
             var in_components = false;
             for (block) |b| {
@@ -560,6 +566,8 @@ pub fn main(init: std.process.Init) !u8 {
             const decl = got.decls.get(e.key_ptr.*) orelse continue;
             if (try types.mismatch(a, e.value_ptr.*, decl)) |why| try diffs.append(a, try a.print("differs: {s}: {s}", .{ e.key_ptr.*, why }));
         }
+        // zfls's own errors and warnings on code gfortran accepts (#735)
+        for (try odiag.report(io, a, zfls, abs, zcmd.items[4..])) |d| try diffs.append(a, try a.print("zfls reports: {s}", .{d}));
         std.mem.sort([]const u8, diffs.items, {}, util.lessThan);
         const base = std.Io.Dir.path.basename(src);
         var unexpected: std.ArrayList([]const u8) = .empty;
@@ -583,6 +591,7 @@ pub fn main(init: std.process.Init) !u8 {
 test {
     _ = guards;
     _ = associates;
+    _ = odiag;
 }
 
 test "the temporaries of type guards take the associate name listed after them" {

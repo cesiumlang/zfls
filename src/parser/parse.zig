@@ -23,8 +23,9 @@ const parser = @import("../parser.zig");
 const FortranFile = parser.FortranFile;
 const Trace = parser.Trace;
 const Options = parser.Options;
-const DefResult = @import("definitions.zig").DefResult;
-const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
+const definitions = @import("definitions.zig");
+const DefResult = definitions.DefResult;
+const getFortranDefinition = definitions.getFortranDefinition;
 const plain_docs = @import("plain_docs.zig");
 const attributes = @import("attributes.zig");
 const stmt_functions = @import("stmt_functions.zig");
@@ -181,6 +182,8 @@ pub const Parser = struct {
             }
             const lr = try helpers.stripLineLabel(a, line);
             line = lr.line;
+            // a statement of blanks only (continuation lines with no text)
+            if (get_full and std.mem.trim(u8, line, " \t\r").len == 0) continue;
             const line_label = lr.label;
             var line_stripped = try helpers.stripStrings(a, line, true);
             var line_no_comment = line;
@@ -325,6 +328,7 @@ pub const Parser = struct {
                     }
                     var var_keywords: std.ArrayList([]const u8) = .empty;
                     try var_keywords.appendSlice(a, info.keywords);
+                    const rank_clause = try definitions.rankClause(a, &var_keywords);
                     if (std.mem.startsWith(u8, name, "(")) continue;
                     const dim = try parseImpDim(a, name);
                     name = dim.line;
@@ -377,6 +381,8 @@ pub const Parser = struct {
                                 new_var.varData().param_val = try pa.dupe(u8, try helpers.collapseBlanks(a, value));
                             }
                         }
+                        if (definitions.isTypeOf(desc)) new_var.varData().type_of = .{ .ref = try pa.dupe(u8, info.var_kind orelse "()"), .class = desc[0] == 'C' };
+                        if (rank_clause) |r| new_var.varData().rank_clause = try pa.dupe(u8, r);
                         if (try findExternal(ast, desc, name, new_var)) continue;
                     }
                     try ast.addVariable(new_var);
@@ -679,7 +685,7 @@ pub const Parser = struct {
                 try ast.scopeLabel(open),
                 open.sline,
             });
-            try ast.scope_errors.append(pa, .{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
+            try ast.addScopeError(.{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
         }
         // a scope further out that the word fits
         var k = @min(ast.scope_stack.items.len, ast.end_stack.items.len);

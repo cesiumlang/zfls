@@ -86,7 +86,7 @@ jobs:
       tree: ${{ steps.ver.outputs.tree }}
       ci: ${{ steps.ver.outputs.ci }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -190,7 +190,7 @@ jobs:
 
       # What this run builds, for a release to find (see the top); only kept
       # from runs that pass
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-tree
           path: tested-tree.txt
@@ -248,7 +248,7 @@ jobs:
       || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -301,12 +301,12 @@ jobs:
       && needs.version.outputs.ci == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -633,7 +633,7 @@ jobs:
           zig build source-archive -- dist
           ls -l dist
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
 
@@ -642,7 +642,7 @@ jobs:
       - name: Package the VS Code extension
         run: zig build package-vscode -- dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
@@ -708,23 +708,23 @@ jobs:
           echo "ZIG_LOCAL_CACHE_DIR=$RUNNER_TEMP/zig-local-cache" >> "$GITHUB_ENV"
           echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
       - name: Check out fortls (reference implementation and test corpus)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.FORTLS_REPO }}
           ref: ${{ env.FORTLS_REF }}
           path: _fortls
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -782,7 +782,7 @@ jobs:
       - name: gfortran and gdb (Windows x64)
         if: matrix.target == 'x86_64-windows'
         id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         with:
           msystem: UCRT64
           update: false
@@ -814,7 +814,7 @@ jobs:
           mm="$RUNNER_TEMP/micromamba"
           mkdir -p "$mm" "$RUNNER_TEMP/lfortran-bin"
           for wait in 15 30 60 0; do
-            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$mm" bin/micromamba &&
+            sh .github/workflows/get_micromamba.sh linux-64 "$mm" &&
               MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools python && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
@@ -879,7 +879,7 @@ jobs:
       - name: Unit tests
         run: zig build test --summary failures
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -941,7 +941,7 @@ jobs:
           mm="$tmp/micromamba"
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
-            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+            sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
               MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
@@ -975,7 +975,7 @@ jobs:
           mm="$tmp/micromamba"
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
-            [ -x "$mm/Library/bin/micromamba.exe" ] || curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+            [ -x "$mm/Library/bin/micromamba.exe" ] || sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
               MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/flang")" -c conda-forge flang_win-64 lld && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
@@ -1012,7 +1012,7 @@ jobs:
           mm="$tmp/micromamba"
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
-            [ -x "$mm/Library/bin/micromamba.exe" ] || curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/win-64/latest | tar -xj -C "$mm" Library/bin/micromamba.exe &&
+            [ -x "$mm/Library/bin/micromamba.exe" ] || sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
               MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/ifx")" -c conda-forge ifx_win-64 && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing ifx failed; retrying in ${wait}s"
@@ -1112,7 +1112,7 @@ jobs:
           mm="$RUNNER_TEMP/micromamba"
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
-            curl -fsSL --retry 5 https://micro.mamba.pm/api/micromamba/osx-64/latest | tar -xj -C "$mm" bin/micromamba &&
+            sh .github/workflows/get_micromamba.sh osx-64 "$mm" &&
               MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
@@ -1217,7 +1217,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
 
@@ -1288,26 +1288,26 @@ jobs:
       # are skipped there; the macOS arm64 test job runs the binaries
       matrix:
         include:
-          - {os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl}
-          - {os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl}
-          - {os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe}
-          - {os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin}
-          - {os: macos-15-intel, platform: osx-arm64, rattler: x86_64-apple-darwin}
+          - {os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl, rattler_sha: 38359a75f4a880442432923d6e984d349bb4134d330edd712eb1cfb2fa80581a}
+          - {os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl, rattler_sha: 8f5ae1c3faf08c50007bbfe896cee84dcf5f4b8e8cc3a5fa400695c82abed2ae}
+          - {os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe, rattler_sha: 131e3d9e6d67e7b5e873627567e74708e1722a40e78bcd3619dc4b20906fbb64}
+          - {os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin, rattler_sha: 4b0183a60e8d2a93ddaf34d0def0f3a27effcf973d097c016250dfbdb7f15c1b}
+          - {os: macos-15-intel, platform: osx-arm64, rattler: x86_64-apple-darwin, rattler_sha: 4b0183a60e8d2a93ddaf34d0def0f3a27effcf973d097c016250dfbdb7f15c1b}
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PLATFORM: ${{ matrix.platform }}
       RATTLER_BUILD_VERSION: v0.76.1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -1315,13 +1315,14 @@ jobs:
       - name: Install rattler-build
         env:
           ASSET: rattler-build-${{ matrix.rattler }}
+          ASSET_SHA256: ${{ matrix.rattler_sha }}
         run: |
           dir="$RUNNER_TEMP/rattler-build"
           mkdir -p "$dir"
           exe="$dir/rattler-build"
           case "$ASSET" in *.exe) exe="$exe.exe" ;; esac
-          curl -fsSL --retry 5 -o "$exe" "https://github.com/prefix-dev/rattler-build/releases/download/$RATTLER_BUILD_VERSION/$ASSET"
-          chmod +x "$exe"
+          # pinned by version (RATTLER_BUILD_VERSION) and by the checksum of each asset
+          sh .github/workflows/download_pinned.sh "https://github.com/prefix-dev/rattler-build/releases/download/$RATTLER_BUILD_VERSION/$ASSET" "$ASSET_SHA256" "$exe"
           echo "$dir" >> "$GITHUB_PATH"
 
       # The conda-forge recipe, built from this run's source archive with
@@ -1358,13 +1359,30 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15-intel, windows-2025]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: packaging
+          sparse-checkout: |
+            /packaging/
+            /tests/install_*
+          sparse-checkout-cone-mode: false
 
       - name: ShellCheck
         if: runner.os == 'Linux'
         run: shellcheck --shell=sh packaging/install.sh
+
+      # install.sh and install.ps1 stop, and unpack nothing, without a
+      # SHA256SUMS or when the archive does not match it (a fake release)
+      - name: Failure paths of install.sh
+        run: sh tests/install_sh_test.sh
+
+      - name: Failure paths of install.ps1 (PowerShell 7 and Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tests/install_ps1_test.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/install_ps1_test.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Install the latest release into the current directory
         run: |
@@ -1444,20 +1462,20 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
           run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -1513,7 +1531,7 @@ jobs:
           gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
 
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: zfls v${{ needs.version.outputs.version }}
@@ -1537,7 +1555,7 @@ jobs:
       # cannot be a bypass actor); without the secret the token is used
       DEPLOY_KEY: ${{ secrets.DEV_DEPLOY_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
@@ -1647,7 +1665,7 @@ jobs:
       FEEDSTOCK: conda-forge/zfls-feedstock
       FORK: emanspeaks/zfls-feedstock
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0

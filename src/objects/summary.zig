@@ -49,12 +49,15 @@ pub fn summarizable(ast: *const Ast) bool {
 pub fn summarize(gpa: Allocator, full: *Ast) Allocator.Error!?struct { ast: *Ast, bytes: []u8 } {
     if (!summarizable(full)) return null;
     const depth = maxScopeDepth(full);
+    // saving would fail, after `prune` took from `full` what its own
+    // diagnostics read (#869); the margin is for objects inside the scopes
+    if (depth + 4 > serial.max_nesting) return null;
     try prune(gpa, full);
     full.summary = .{ .depth = depth };
     defer full.summary = null;
     const bytes = serial.save(gpa, full) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.Foreign => return null,
+        error.Foreign, error.TooDeep => return null,
     };
     errdefer gpa.free(bytes);
     const ast = try Ast.create(gpa, full.file);
@@ -102,6 +105,7 @@ fn prune(gpa: Allocator, ast: *Ast) Allocator.Error!void {
     // diagnostics read
     ast.end_errors.clearRetainingCapacity();
     ast.scope_errors.clearRetainingCapacity();
+    ast.scope_flags.map.clearRetainingCapacity();
     ast.parse_errors.clearRetainingCapacity();
     ast.main_errors.clearRetainingCapacity();
     ast.implicit_errors.clearRetainingCapacity();

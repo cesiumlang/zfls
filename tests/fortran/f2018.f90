@@ -53,4 +53,11 @@ contains
       print *, 'inner'
     end subroutine inner
   end subroutine imports
+
+  ! QUIET= of STOP and ERROR STOP (#732)
+  subroutine stops(shh)
+    logical, intent(in) :: shh
+    if (shh) stop 2, quiet=shh
+    if (.not. shh) error stop "x", quiet=.false.
+  end subroutine stops
 end module f2018

@@ -4,9 +4,23 @@
 
 test {
     _ = @import("argchecks.zig");
+    _ = @import("argument_definable.zig");
+    _ = @import("argument_types.zig");
+    _ = @import("argument_extent.zig");
+    _ = @import("labels_constants.zig");
+    _ = @import("case_values.zig");
     _ = @import("sequence_association.zig");
     _ = @import("associate.zig");
     _ = @import("coarrays.zig");
+    _ = @import("deep_nesting.zig");
+    _ = @import("long_lines.zig");
+    _ = @import("continuation_scan.zig");
+    _ = @import("linear.zig");
+    _ = @import("timing.zig");
+    _ = @import("document_highlight.zig");
+    _ = @import("declarations_f2023.zig");
+    _ = @import("statements_f2023.zig");
+    _ = @import("directives.zig");
     _ = @import("select_blocks.zig");
     _ = @import("command_options.zig");
     _ = @import("compile_commands.zig");
@@ -15,6 +29,11 @@ test {
     _ = @import("completion_resolve.zig");
     _ = @import("constructs.zig");
     _ = @import("continuation.zig");
+    _ = @import("masks_procedure.zig");
+    _ = @import("keyword_hover.zig");
+    _ = @import("adjacent_names.zig");
+    _ = @import("blank_continuation.zig");
+    _ = @import("string_bang.zig");
     _ = @import("convert.zig");
     _ = @import("build_command.zig");
     _ = @import("compiler_fixed.zig");
@@ -64,6 +83,7 @@ test {
     _ = @import("real_tools.zig");
     _ = @import("gfortran_modules.zig");
     _ = @import("language.zig");
+    _ = @import("import_hides.zig");
     _ = @import("lenses.zig");
     _ = @import("macros.zig");
     _ = @import("navigation.zig");
@@ -87,7 +107,11 @@ test {
     _ = @import("use.zig");
     _ = @import("unsigned.zig");
     _ = @import("unused.zig");
+    _ = @import("implicit_variables.zig");
+    _ = @import("use_only.zig");
     _ = @import("workspace.zig");
+    _ = @import("zflsrc.zig");
+    _ = @import("allocation_counts.zig");
     _ = @import("compiler_line_length.zig");
     _ = @import("compiler_lfortran.zig");
     _ = @import("compiler_flang.zig");
@@ -98,4 +122,15 @@ test {
     _ = @import("compiler_include_globs.zig");
     _ = @import("flang_modules.zig");
     _ = @import("flang_declarations.zig");
+    _ = @import("loops.zig");
+    _ = @import("declaration_checks.zig");
+    _ = @import("subscripts_components.zig");
+    _ = @import("allocate_types.zig");
+    _ = @import("intrinsic_counts.zig");
+    _ = @import("expression_types.zig");
+    _ = @import("syntax_errors.zig");
+    _ = @import("iso_c_names.zig");
+    _ = @import("initializer_names.zig");
+    _ = @import("long_paths.zig");
+    _ = @import("self_interface.zig");
 }
