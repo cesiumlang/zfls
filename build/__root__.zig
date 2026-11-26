@@ -17,6 +17,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         // .link_libc = true,
     });
+    // Frame pointers and symbols for profilers (.github/workflows/profile.yml)
+    if (b.option(bool, "profile", "Keep frame pointers and debug info, for profilers") orelse false) {
+        mod.omit_frame_pointer = false;
+        mod.strip = false;
+    }
 
     const intrinsic_docs_tests = addIntrinsicDocs(b, mod);
 
@@ -256,6 +261,8 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .needs_fortls = false,
         },
     };
+    // The benchmark driver, installed for the profilers (tests/profile)
+    const profile_bins = b.step("profile-bins", "Install the benchmark driver, to profile the server with it (tests/profile)");
     for (tools) |t| {
         const tool_mod = b.createModule(.{
             .root_source_file = b.path(t.root),
@@ -269,6 +276,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tool_mod })).step);
         const tool = b.addExecutable(.{ .name = t.name, .root_module = tool_mod });
         if (t.step != null) tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
+        if (t.step == null) profile_bins.dependOn(&b.addInstallArtifact(tool, .{}).step);
         const run = b.addRunArtifact(tool);
         run.setCwd(b.path(""));
         run.addArg("--zfls");
