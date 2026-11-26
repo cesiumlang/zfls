@@ -41,7 +41,6 @@
   "The process to attach to": "The process to attach to",
   "The program was ended by a signal": "The program was ended by a signal",
   "Use It": "Use It",
-  "Windows's Debugger Engine takes no conditions, hit conditions or log messages yet": "Windows's Debugger Engine takes no conditions, hit conditions or log messages yet",
   "`{0}` ({1}) in {2}": "`{0}` ({1}) in {2}",
   "building {0} failed (exit code {1}); see the terminal.": "building {0} failed (exit code {1}); see the terminal.",
   "could not run the build task of {0}.": "could not run the build task of {0}.",
