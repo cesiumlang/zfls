@@ -129,6 +129,8 @@ pub const State = struct {
     data_breakpoints: std.ArrayList(i64) = .empty,
     dll_breakpoints: std.AutoHashMapUnmanaged(i64, []const u8) = .empty,
     last_error: ?[]const u8 = null,
+    /// The thread of the stop at `last_error` (lldb_windows.zig)
+    last_error_thread: ?i64 = null,
     /// The client supports `runInTerminal`
     run_in_terminal: bool = false,
     /// The shell of the program's terminal (not Windows)
@@ -547,6 +549,20 @@ pub fn request(s: *Session, a: Allocator, command: []const u8, args: anytype) !V
         if (std.mem.eql(u8, json.str(json.get(msg, "type")) orelse "", "response") and json.int(json.get(msg, "request_seq")) == seq) return msg;
         handleMessage(s, a, msg);
     }
+}
+
+/// Sends a request of the adapter's own to gdb, whose answer is dropped
+/// when it comes (`relay` knows no client request of its seq)
+pub fn requestUnanswered(s: *Session, a: Allocator, command: []const u8, args: anytype) void {
+    const v: Value = (if (@TypeOf(args) == Value) args else json.from(a, args)) catch return;
+    if (s.g.fake) |f| {
+        _ = f.answer(f.ctx, a, command, v) catch {};
+        return;
+    }
+    if (s.g.exit_message != null) return;
+    const seq = s.g.seq;
+    s.g.seq += 1;
+    _ = write(s, a, seq, command, v);
 }
 
 /// Passes the client's request to gdb, whose answer goes back to the

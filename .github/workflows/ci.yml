@@ -1300,6 +1300,29 @@ jobs:
           xcrun --find lldb-dap
           zig-out/bin/dap_lldb --zfls "$ZFLS"
 
+      # lldb-dap of LLVM 23.1.6, the oldest that tells Windows's stops
+      # (#452): LLVM's Windows installer has lldb (its clang+llvm archive
+      # does not), unpacked with 7-Zip, not installed; liblldb.dll loads
+      # python3.dll, setup-python's
+      - name: lldb-dap (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          d="$RUNNER_TEMP/lldb"
+          mkdir -p "$d"
+          curl -sSfL --retry 3 -o "$d/llvm.msi" https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/LLVM-23.1.6-win64.msi
+          echo "81f7eb520ca698eb2d5cd8bc4b8f24f7add9ed66ed40a6f722a6e6f060737c00  $d/llvm.msi" | sha256sum -c -
+          "/c/Program Files/7-Zip/7z.exe" e -y -o"$d/bin" "$d/llvm.msi" CM_FP_bin.liblldb.dll CM_FP_bin.lldb_dap.exe CM_FP_bin.lldb_server.exe CM_FP_bin.lldb_argdumper.exe > /dev/null
+          for f in liblldb.dll lldb_dap.exe lldb_server.exe lldb_argdumper.exe; do mv "$d/bin/CM_FP_bin.$f" "$d/bin/${f//_/-}"; done
+          rm "$d/llvm.msi"
+          "$d/bin/lldb-dap.exe" --version
+          echo "LLDB_DAP=$(cygpath -w "$d/bin/lldb-dap.exe")" >> "$GITHUB_ENV"
+
+      # zfls dap with it on a gfortran program (GFORTRAN names MSYS2's):
+      # breakpoints, a step, the stack, runtime errors, ERROR STOP, attaching
+      - name: zfls dap with lldb-dap (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: zig-out/bin/dap_lldb --zfls "$ZFLS"
+
       # LFortran from conda-forge (LFORTRAN names it; the PATH does not have
       # it), for zfls dap with lldb-dap on its program
       - name: LFortran (macOS x64)

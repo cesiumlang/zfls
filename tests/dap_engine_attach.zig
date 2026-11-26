@@ -16,15 +16,13 @@ const items = dap.items;
 const contains = dap.contains;
 const check = dap.check;
 
-extern "kernel32" fn GetProcessId(process: std.os.windows.HANDLE) callconv(.winapi) u32;
-
 pub fn run(io: Io, gpa: Allocator, zfls: []const u8, exe: []const u8, src: []const u8, tmp: []const u8) !void {
     var child = try std.process.spawn(io, .{ .argv = &.{exe}, .cwd = .{ .path = tmp }, .stdin = .pipe, .stdout = .pipe, .create_no_window = true });
     var waited = false;
     defer if (!waited) child.kill(io);
     const c = try Client.start(io, gpa, &.{ zfls, "dap" });
     defer c.deinit();
-    session(c, &child, GetProcessId(child.id.?), src) catch |e| {
+    session(c, &child, @intCast(dap.processId(child)), src) catch |e| {
         if (c.child.id != null) c.child.kill(io);
         return e;
     };
