@@ -27,6 +27,7 @@ const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
 const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
+const lldb_windows = @import("lldb_windows.zig");
 const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
 const process_id = @import("process_id.zig");
@@ -757,7 +758,14 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
                 break;
             }
         }
+        const thread = json.int(json.get(body, "threadId"));
+        // LLVM 23's lldb on Windows reports such a stop twice (#452, #947)
+        if (builtin.target.os.tag == .windows and s.g.lldb and lldb_windows.repeatsStop(hit, thread, s.g.last_error, s.g.last_error_thread)) {
+            s.g.last_error_thread = null;
+            return gdb.requestUnanswered(s, a, "continue", .{ .threadId = thread.? });
+        }
         s.g.last_error = hit;
+        s.g.last_error_thread = thread;
         // the breakpoint of the stop at the start (lldb's, or gdb's on
         // Flang's main program), and lldb's stop of a pause
         if (s.g.entry_breakpoint) |entry| for (json.items(json.get(body, "hitBreakpointIds"))) |id| {
