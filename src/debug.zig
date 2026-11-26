@@ -3,24 +3,34 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const stdio = @import("stdio.zig");
 const str = @import("str.zig");
 const json = @import("json.zig");
-const json5 = @import("json5.zig");
+const config_file = @import("settings/config_file.zig");
 const paths = @import("paths.zig");
 const glob = @import("glob.zig");
 const parser = @import("parser.zig");
 const pp = @import("preprocessor.zig");
 const objects = @import("objects.zig");
 const settings_mod = @import("settings.zig");
+const workspace_file = @import("settings/workspace_file.zig");
 const server_mod = @import("server.zig");
 const Logger = @import("logger.zig");
+const compilers = @import("compilers.zig");
+const predefined = @import("compilers/predefined.zig");
+const default_kinds = @import("default_kinds.zig");
+const command_options = @import("command_options.zig");
 const Settings = settings_mod.Settings;
 const Value = json.Value;
+const fsio = @import("fsio.zig");
 
 const sep80 = "================================================================================";
 const sep75 = "===========================================================================";
 
 pub const DebugError = error{ DebugFailed, OutOfMemory };
+
+/// How much held output is written at once
+const hold_limit = 1 << 16;
 
 const Out = struct {
     io: Io,
@@ -28,17 +38,46 @@ const Out = struct {
     a: Allocator,
     /// What `fail` reported
     fail_msg: []const u8 = "",
+    /// Where the output goes instead of stdout (for tests), with its
+    /// allocator
+    capture: ?Capture = null,
+    /// The error of the first write that failed: the output is incomplete
+    write_error: ?anyerror = null,
+    /// Whether `print` waits for `hold_limit` bytes before it writes
+    hold: bool = false,
 
     fn print(self: *Out, comptime fmt: []const u8, args: anytype) void {
         self.buf.print(self.a, fmt, args) catch {};
+        if (!self.hold or self.buf.items.len >= hold_limit) self.flush();
+    }
+
+    /// `n` blanks
+    fn spaces(self: *Out, n: usize) void {
+        self.buf.appendNTimes(self.a, ' ', n) catch {};
+    }
+
+    /// From now on write in blocks, not at each line (for the thousands of
+    /// lines of a tree); `release` writes what is left
+    fn holdOutput(self: *Out) void {
+        self.hold = true;
+    }
+
+    fn release(self: *Out) void {
+        self.hold = false;
         self.flush();
     }
 
     fn flush(self: *Out) void {
-        Io.File.stdout().writeStreamingAll(self.io, self.buf.items) catch {};
+        if (self.capture) |c| {
+            c.out.appendSlice(c.a, self.buf.items) catch {};
+        } else if (self.write_error == null) stdio.stdout().writeStreamingAll(self.io, self.buf.items) catch |e| {
+            self.write_error = e;
+        };
         self.buf.clearRetainingCapacity();
     }
 };
+
+pub const Capture = struct { a: Allocator, out: *std.ArrayList(u8) };
 
 fn fail(o: *Out, comptime fmt: []const u8, args: anytype) DebugError {
     o.fail_msg = o.a.print(fmt, args) catch "debug error";
@@ -60,10 +99,15 @@ fn traceTo(o: *Out) parser.Trace {
 
 /// Run the requested debug mode; returns the process exit code
 pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
+    return runTo(gpa, io, s_in, null);
+}
+
+/// `run`, its output in `capture` instead of on stdout
+pub fn runTo(gpa: Allocator, io: Io, s_in: Settings, capture: ?Capture) !u8 {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    var o: Out = .{ .io = io, .a = a };
+    var o: Out = .{ .io = io, .a = a, .capture = capture };
     var s = s_in;
     const result = blk: {
         if (s.debug_parser) break :blk debugParser(a, io, &o, &s);
@@ -77,6 +121,15 @@ pub fn run(gpa: Allocator, io: Io, s_in: Settings) !u8 {
         },
         else => return e,
     };
+    if (o.write_error) |e| {
+        // a reader that has gone away (`| head`) knows
+        if (e != error.BrokenPipe) {
+            var buf: [128]u8 = undefined;
+            const msg = std.mem.print(&buf, "ERROR: the output is incomplete: {s}\n", .{@errorName(e)}) catch "";
+            stdio.stderr().writeStreamingAll(io, msg) catch {};
+        }
+        return 1;
+    }
     return 0;
 }
 
@@ -91,55 +144,124 @@ const ConfigInfo = struct {
     pp_suffixes: ?[]const []const u8 = null,
     pp_defs: pp.Defs = .empty,
     include_dirs: []const []const u8 = &.{},
+    /// `d_lines`: debug lines read as code
+    d_lines_code: bool = false,
+    /// `fixed_line_length`
+    fixed_columns: ?usize = null,
 };
 
-fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, input_config: []const u8) !ConfigInfo {
-    var info: ConfigInfo = .{};
-    const r = root orelse return info;
-    const candidates = [_][]const u8{ input_config, ".fortlsrc", ".fortls.json5", ".fortls" };
-    var config_path: ?[]const u8 = null;
-    for (candidates) |f| {
-        const p = try paths.join(a, &.{ r, f });
-        if (paths.isFile(io, p)) {
-            config_path = p;
-            break;
-        }
-    }
-    o.print("  Config file = {s}\n", .{config_path orelse "None"});
-    const cp = config_path orelse return info;
-    const data = Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 26)) catch return info;
-    var p: json5.Parser = .{ .a = a, .src = data };
-    const cfg = p.parseDocument() catch {
-        const msg = try settings_mod.json5ErrorMessage(a, data, p.err_pos);
-        o.print("Error {s} while parsing '{s}' settings file\n", .{ msg, cp });
-        return info;
+/// The preprocessor options as the server takes them: the command line's
+/// (`s`), the user's configuration file's over them, and the configuration
+/// file's in `root` over those
+fn readConfig(a: Allocator, io: Io, o: *Out, root: ?[]const u8, s: *const Settings) !ConfigInfo {
+    var merged = try settings_mod.clone(a, s.*);
+    if (paths.userConfigFile()) |u| if (paths.isFile(io, u)) {
+        o.print("  User config file = {s}\n", .{u});
+        try applyConfigFile(a, io, o, &merged, u, true);
     };
-    var s: Settings = .{};
-    try settings_mod.applyConfig(a, &s, cfg);
-    if (s.pp_suffixes) |l| info.pp_suffixes = l.slice();
-    for (s.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
+    if (root) |r| {
+        const found = try config_file.find(a, io, r, s.config);
+        const config_path: ?[]const u8 = if (found) |f| f.path else null;
+        o.print("  Config file = {s}\n", .{config_path orelse "None"});
+        if (config_path) |cp| try applyConfigFile(a, io, o, &merged, cp, false);
+    }
+    var info: ConfigInfo = .{};
+    // an empty list is the default rule, as in the server
+    if (merged.pp_suffixes) |l| if (l.len() > 0) {
+        info.pp_suffixes = l.slice();
+    };
+    for (merged.pp_defs.items) |d| try info.pp_defs.put(a, d.name, .{ .value = d.value });
+    try addPredefined(a, io, o, &merged, root, &info.pp_defs);
     var dirs: std.ArrayList([]const u8) = .empty;
-    for (s.include_dirs.slice()) |inc| {
-        for (try glob.resolveGlobs(io, a, inc, r)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
+    for (merged.include_dirs.slice()) |inc| {
+        for (try glob.resolveGlobs(io, a, inc, root)) |d| if (paths.isDir(io, d)) try dirs.append(a, d);
     }
     info.include_dirs = dirs.items;
+    info.d_lines_code = merged.dLinesCode();
+    info.fixed_columns = merged.fixedColumns();
     return info;
 }
 
-fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, indent: []const u8) !void {
-    for (try obj.getChildren(a, false)) |child| {
-        o.print("  {s}{d}: {s}\n", .{ indent, @backingInt(child.getType(false)), child.fqsn });
-        try printChildren(a, o, child, try std.mem.concat(a, u8, &.{ indent, "  " }));
+/// The symbols `compiler_diagnostics`'s compiler predefines, as the server
+/// adds them (server/compiler_macros.zig), to `defs`, those there kept
+fn addPredefined(a: Allocator, io: Io, o: *Out, s: *const Settings, root: ?[]const u8, defs: *pp.Defs) !void {
+    const name = s.compiler_diagnostics orelse return;
+    const id = compilers.Id.fromName(std.mem.trim(u8, name, " ")) orelse return;
+    if (!predefined.asks(id)) return;
+    const configured = s.compiler_path orelse "";
+    const exe = if (configured.len == 0) compilers.executables(id)[0] else if (root != null and !std.Io.Dir.path.isAbsolute(configured)) try paths.join(a, &.{ root.?, configured }) else configured;
+    const base = paths.cacheDir() orelse root orelse ".";
+    const found = predefined.ask(a, a, id, exe, .{ .io = io, .env = null, .work_dir = try paths.join(a, &.{ base, "work", "debug" }), .cwd = root, .openmp = !s.disable_openmp_conditional }) orelse {
+        o.print("  Predefined symbols: {s} did not run\n", .{exe});
+        return;
+    };
+    for (found) |d| if (!defs.contains(d.name)) try defs.put(a, d.name, .{ .value = d.value });
+    o.print("  Predefined symbols of {s}: {d}\n", .{ exe, found.len });
+}
+
+/// The settings of the configuration file `path` over `s`; `trusted`: not
+/// the workspace's own (which names no program to run)
+fn applyConfigFile(a: Allocator, io: Io, o: *Out, s: *Settings, path: []const u8, trusted: bool) !void {
+    const data = fsio.readFile(io, a, path, .limited(1 << 26)) catch return;
+    switch (try config_file.parse(a, a, data, path)) {
+        .ok => |loaded| {
+            var ignored: std.ArrayList([]const u8) = .empty;
+            if (trusted) try settings_mod.applyConfig(a, s, loaded.cfg) else try workspace_file.apply(a, s, loaded.cfg, &ignored);
+        },
+        .err => |msg| o.print("{s}\n", .{msg}),
     }
+}
+
+/// The children of `obj` at `depth` levels of indent, each followed by its
+/// own, unless `seen` has it: what is under a scope is printed once, where
+/// the scope is first reached
+fn printChildren(a: Allocator, o: *Out, obj: *objects.Obj, depth: usize, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void)) !void {
+    for (try obj.getChildren(a, false)) |child| {
+        o.spaces(2 + 2 * depth);
+        o.print("{d}: {s}{s}\n", .{ @backingInt(child.getType(false)), child.fqsn, groupMark(child) });
+        if ((try seen.getOrPut(a, child)).found_existing) continue;
+        try printChildren(a, o, child, depth + 1, seen);
+    }
+    // its COMMON blocks (#556)
+    if (obj.data == .scope) for (obj.scopeData().commons.items) |c| {
+        o.spaces(2 + 2 * depth);
+        o.print("{d}: {s}{s}\n", .{ @backingInt(c.getType(false)), c.fqsn, groupMark(c) });
+    };
+}
+
+/// After a COMMON block or NAMELIST group in the object tree: what it is
+fn groupMark(obj: *const objects.Obj) []const u8 {
+    if (obj.kind != .variable) return "";
+    return switch (obj.varDataConst().group) {
+        .none => "",
+        .common => " COMMON",
+        .namelist => " NAMELIST",
+    };
 }
 
 fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting parser\n", .{});
     separator(o);
     const fp = try ensureFileAccessible(io, o, s.debug_filepath);
-    const cfg = try readConfig(a, io, o, s.debug_rootpath, s.config);
+    const cfg = try readConfig(a, io, o, s.debug_rootpath, s);
     o.print("  File = \"{s}\"\n", .{fp});
     const file = try parser.FortranFile.create(a, fp, cfg.pp_suffixes);
+    // as the server reads the file (workspace.loadFile)
+    file.d_lines_code = cfg.d_lines_code;
+    file.fixed_columns = cfg.fixed_columns;
+    // as the options of `compiler_args` say (server/file_options.zig), for
+    // the oracles
+    if (s.compiler_args) |l| {
+        const ro = command_options.parse(l.slice());
+        if (ro.fixed) |fixed| file.command_form = if (fixed) .fixed else .free;
+        if (ro.columns) |c| file.fixed_columns = switch (c) {
+            .limit => |n| n,
+            .none => null,
+        };
+        if (ro.d_lines_code) |code| file.d_lines_code = code;
+        file.implicit_none = ro.implicit_none;
+        file.default_kinds = default_kinds.parse(l.slice());
+    }
     _ = file.loadFromDisk(io) catch |e| return fail(o, "Reading file failed: {s}", .{parser.describeFileError(e)});
     o.print("  Detected format: {s}\n", .{if (file.fixed) "fixed" else "free"});
     o.print("\n{s}\nParser Output\n{s}\n\n", .{ sep80, sep80 });
@@ -161,29 +283,80 @@ fn debugParser(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
         }
     }
     o.print("\n{s}\nObject Tree\n{s}\n\n", .{ sep80, sep80 });
+    // in blocks: thousands of nested scopes make a long tree
+    o.holdOutput();
+    defer o.release();
+    var tree_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
     for (try ast.getScopes(a, null)) |obj| {
+        // a scope in the tree of another was printed there
+        if ((try tree_seen.getOrPut(a, obj)).found_existing) continue;
         o.print("{d}: {s}\n", .{ @backingInt(obj.getType(false)), obj.fqsn });
-        try printChildren(a, o, obj, "");
+        try printChildren(a, o, obj, 0, &tree_seen);
     }
+    // the ENTRY procedures of external procedures, in no scope's lines
+    for (ast.entry_list.items) |e| if (e.parent == null) o.print("{d}: {s}\n", .{ @backingInt(e.getType(false)), e.fqsn });
     o.print("\n{s}\nExportable Objects\n{s}\n\n", .{ sep80, sep80 });
     var it = ast.global_dict.iterator();
     while (it.next()) |e| o.print("{d}: {s}\n", .{ @backingInt(e.value_ptr.*.getType(false)), e.value_ptr.*.fqsn });
+    // the lines of each block of SELECT TYPE and RANK and of its SELECT,
+    // for the oracles to tell the blocks' associate names apart (#715)
+    o.print("\n{s}\nSelect Blocks\n{s}\n\n", .{ sep80, sep80 });
+    var blocks_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
+    for (try ast.getScopes(a, null)) |obj| try printConstructLines(a, o, obj, &blocks_seen, .select_block);
+    // the line of each ASSOCIATE construct, for the oracles to pair its
+    // names with their own construct's (#754)
+    o.print("\n{s}\nAssociate Constructs\n{s}\n\n", .{ sep80, sep80 });
+    var assoc_seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
+    for (try ast.getScopes(a, null)) |obj| try printConstructLines(a, o, obj, &assoc_seen, .associate);
+    // what hover shows of each variable, for the oracles' types and kinds,
+    // with the file's links resolved as a workspace of it alone would
+    var tree: objects.ObjTree = .empty;
+    try ast.resolveLinks(.{ .tree = &tree, .tmp = a }, 0);
+    o.print("\n{s}\nDeclarations\n{s}\n\n", .{ sep80, sep80 });
+    var seen: std.AutoHashMapUnmanaged(*const objects.Obj, void) = .empty;
+    for (try ast.getScopes(a, null)) |obj| try printDeclarations(a, o, obj, &seen);
     separator(o);
+}
+
+/// Under `obj` (each once): `fqsn: SELECT_LINE LINE` of each TYPE IS,
+/// CLASS IS, CLASS DEFAULT and RANK block, or `fqsn: LINE` of each
+/// ASSOCIATE construct
+fn printConstructLines(a: Allocator, o: *Out, obj: *objects.Obj, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void), which: enum { select_block, associate }) !void {
+    for (try obj.getChildren(a, false)) |child| {
+        if ((try seen.getOrPut(a, child)).found_existing) continue;
+        switch (which) {
+            .select_block => if (child.isTypeRegion()) o.print("{s}: {d} {d}\n", .{ child.fqsn, if (child.parent) |p| p.sline else 0, child.sline }),
+            .associate => if (child.kind == .associate) o.print("{s}: {d}\n", .{ child.fqsn, child.sline }),
+        }
+        try printConstructLines(a, o, child, seen, which);
+    }
+}
+
+/// `fqsn: declaration` of each variable under `obj` (each once), the
+/// first line of its hover
+fn printDeclarations(a: Allocator, o: *Out, obj: *objects.Obj, seen: *std.AutoHashMapUnmanaged(*const objects.Obj, void)) !void {
+    for (try obj.getChildren(a, false)) |child| {
+        if ((try seen.getOrPut(a, child)).found_existing) continue;
+        if (child.kind == .variable) if ((try child.getHover(a, false, null)).msg) |msg| {
+            o.print("{s}: {s}\n", .{ child.fqsn, msg[0 .. std.mem.findScalar(u8, msg, '\n') orelse msg.len] });
+        };
+        try printDeclarations(a, o, child, seen);
+    }
 }
 
 fn debugPreprocessor(a: Allocator, io: Io, o: *Out, s: *Settings) !void {
     o.print("\nTesting preprocessor\n", .{});
     separator(o);
     const fp = try ensureFileAccessible(io, o, s.debug_filepath);
-    const data = Io.Dir.cwd().readFileAlloc(io, fp, a, .limited(1 << 30)) catch return fail(o, "File '{s}' does not exist or is not accessible", .{fp});
+    const data = fsio.readFile(io, a, fp, .limited(1 << 30)) catch return fail(o, "File '{s}' does not exist or is not accessible", .{fp});
     var lines = try parser.splitLines(a, data);
     // like Python's readlines(): no empty element after a final newline
     if (lines.len > 0 and lines[lines.len - 1].len == 0) lines = lines[0 .. lines.len - 1];
     const root = s.debug_rootpath orelse paths.dirname(fp);
-    const cfg = try readConfig(a, io, o, root, s.config);
+    const cfg = try readConfig(a, io, o, root, s);
     const sep2 = sep75;
     o.print("\n{s}\nPreprocessor Pass:\n{s}\n", .{ sep2, sep2 });
-    const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, traceTo(o));
+    const res = try pp.preprocessFile(a, io, lines, fp, &cfg.pp_defs, cfg.include_dirs, .any, traceTo(o));
     o.print("\n{s}\nPreprocessor Skipped Lines:\n{s}\n", .{ sep2, sep2 });
     for (res.skips) |sk| o.print("  [{d}, {d}]\n", .{ sk.start, sk.end });
     o.print("\n{s}\nPreprocessor Macros:\n{s}\n", .{ sep2, sep2 });

@@ -111,6 +111,12 @@ pub fn newFunction(file_ast: *Ast, line_number: usize, name: []const u8, opts: O
 }
 
 pub fn newSelect(file_ast: *Ast, line_number: usize, name: []const u8, info: parser.SelectInfo) !*Obj {
+    // a guard closes the one before it, before it takes its path (#708);
+    // a SELECT inside a guard does not
+    const region = info.type == 3 or info.type == 4 or info.type == 5;
+    if (file_ast.current_scope) |cs| if (region and cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) {
+        try file_ast.endScope(line_number, true);
+    };
     const o = try newScope(file_ast, .select, line_number, name, &.{});
     const a = o.al();
     const sel = o.selectData();
@@ -126,12 +132,8 @@ pub fn newSelect(file_ast: *Ast, line_number: usize, name: []const u8, info: par
         }
     } else if (sel.select_type == 3) {
         sel.binding_type = try str.dupeOpt(a, info.binding);
-    }
-    // Close previous "TYPE IS" region if open
-    if (file_ast.current_scope) |cs| {
-        if (cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) {
-            try file_ast.endScope(line_number, true);
-        }
+    } else if (sel.select_type == 5) {
+        sel.case_rank = try str.dupeOpt(a, info.rank);
     }
     return o;
 }

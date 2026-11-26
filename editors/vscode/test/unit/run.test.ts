@@ -1,91 +1,20 @@
 // Plain Node.js tests (no VS Code) of the run and debug helpers:
-// `npm run unit`.
+// `npm run unit`. zfls's answer to `zfls/buildCommand` (the compiler's
+// arguments, the output directory, the kit's link) is tested in Zig
+// (src/run/, tests/issues/build_command.zig).
 
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
 import {
-  buildArgs,
+  adapterArgs,
   chooseDebugger,
-  compilerKind,
-  compilerName,
   fortranLaunch,
   launchConfiguration,
-  outputDirFor,
   parseProcesses,
-  programPath,
-  runtimeEnv,
   upsertByKey,
   workspaceRelative,
 } from "../../src/run";
-
-test("compiler names", () => {
-  assert.equal(compilerName("gfortran"), "gfortran");
-  assert.equal(compilerName("/usr/bin/gfortran-14"), "gfortran");
-  assert.equal(compilerName("C:\\oneAPI\\bin\\ifx.exe"), "ifx");
-  assert.equal(compilerName("flang-new-19"), "flang-new");
-  assert.equal(compilerName("x86_64-w64-mingw32-gfortran.exe"), "x86_64-w64-mingw32-gfortran");
-});
-
-test("compiler kinds", () => {
-  assert.deepEqual(compilerKind("ifx", "win32"), { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] });
-  assert.deepEqual(compilerKind("ifx", "linux"), { argStyle: "gnu", msvc: false, defaultArgs: ["-g", "-O0"] });
-  assert.equal(compilerKind("gfortran.exe", "win32").msvc, false);
-  assert.equal(compilerKind("flang-new", "win32").msvc, true);
-  assert.equal(compilerKind("flang", "darwin").msvc, false);
-  assert.deepEqual(compilerKind("lfortran", "linux").defaultArgs, ["-g"]);
-});
-
-test("build arguments, GNU style", () => {
-  const src = path.join("/p", "src", "main.f90");
-  const exe = path.join("/out", "main");
-  assert.deepEqual(buildArgs(compilerKind("gfortran", "linux"), src, exe, undefined), [
-    "-g",
-    "-O0",
-    `-I${path.dirname(src)}`,
-    "-o",
-    exe,
-    src,
-  ]);
-  assert.deepEqual(buildArgs(compilerKind("gfortran", "linux"), src, exe, ["-O2", "-fcheck=all"]), [
-    "-O2",
-    "-fcheck=all",
-    `-I${path.dirname(src)}`,
-    "-o",
-    exe,
-    src,
-  ]);
-  assert.deepEqual(buildArgs(compilerKind("gfortran", "linux"), src, exe, []), [`-I${path.dirname(src)}`, "-o", exe, src]);
-});
-
-test("build arguments, Intel on Windows", () => {
-  const src = path.join("C:", "p q", "main.f90");
-  const exe = path.join("C:", "out", "main.exe");
-  assert.deepEqual(buildArgs(compilerKind("ifx", "win32"), src, exe, undefined), [
-    "/nologo",
-    "/Zi",
-    "/Od",
-    `/I${path.dirname(src)}`,
-    `/exe:${exe}`,
-    src,
-  ]);
-});
-
-test("each source gets its own output directory", () => {
-  const base = "/storage/run";
-  const a = outputDirFor(base, "/p/a/main.f90", "linux");
-  const b = outputDirFor(base, "/p/b/main.f90", "linux");
-  assert.notEqual(a, b);
-  assert.equal(path.posix.dirname(a), base);
-  assert.match(path.posix.basename(a), /^main-[0-9a-f]{10}$/);
-  assert.equal(a, outputDirFor(base, "/p/a/main.f90", "linux"));
-  // Windows paths that differ only in case are the same file
-  const win = outputDirFor("C:\\storage", "C:\\P\\main.f90", "win32");
-  assert.equal(win, outputDirFor("C:\\storage", "c:\\p\\main.f90", "win32"));
-  assert.match(win, /^C:\\storage\\main-[0-9a-f]{10}$/);
-  assert.equal(programPath("/out", "/p/hello.F90", "linux"), "/out/hello");
-  assert.equal(programPath("C:\\out", "C:\\p\\hello.f", "win32"), "C:\\out\\hello.exe");
-});
 
 test("the first installed debugger is used", () => {
   const has = (...ids: string[]) => (id: string) => ids.includes(id);
@@ -195,13 +124,6 @@ test("the processes to attach to", () => {
   assert.deepEqual(ps[1], { pid: 4242, name: "solver", command: "/home/me/solver -n 3" });
 });
 
-test("the compiler's directory goes on the PATH on Windows", () => {
-  const compiler = "C:\\mingw64\\bin\\gfortran.exe";
-  assert.deepEqual(runtimeEnv(compiler, "linux", { PATH: "/usr/bin" }), {});
-  assert.deepEqual(runtimeEnv(compiler, "win32", { Path: "C:\\Windows" }), { Path: "C:\\mingw64\\bin;C:\\Windows" });
-  assert.deepEqual(runtimeEnv(compiler, "win32", { Path: "C:\\MinGW64\\bin\\;C:\\Windows" }), {});
-});
-
 test("entries are replaced by name", () => {
   const list = [{ name: "a", v: 1 }, { name: "b", v: 1 }];
   assert.deepEqual(upsertByKey(list, { name: "a", v: 2 }, "name"), [{ name: "a", v: 2 }, { name: "b", v: 1 }]);
@@ -239,7 +161,11 @@ test("a fortran configuration becomes the chosen debugger's", () => {
   assert.equal(cpp.stopAtEntry, true);
   assert.equal(cpp.miDebuggerPath, "/usr/bin/gdb");
   assert.deepEqual(cpp.environment, [{ name: "OMP_NUM_THREADS", value: "2" }]);
-  assert.deepEqual(cpp.setupCommands, [{ text: "set print pretty on" }]);
+  const pretty = { description: "Enable pretty-printing for gdb", text: "-enable-pretty-printing", ignoreFailures: true };
+  assert.deepEqual(cpp.setupCommands, [pretty, { text: "set print pretty on" }]);
+  // the fortran type's setupCommands are strings, which C/C++ refuses (#797)
+  const strings = fortranLaunch({ ...config, setupCommands: ["set print elements 0"] }, r);
+  assert.deepEqual(strings.setupCommands, [pretty, { text: "set print elements 0" }]);
   assert.equal(cpp.debugger, undefined);
   const lldb = fortranLaunch(config, { ...r, type: "lldb" });
   assert.equal(lldb.stopOnEntry, true);
@@ -258,4 +184,18 @@ test("a fortran configuration becomes the chosen debugger's", () => {
   assert.deepEqual(z.setupCommands, [{ text: "set print pretty on" }]);
   // resolved again (Debug Fortran File starts a fortran configuration): the same
   assert.deepEqual(fortranLaunch(z, { ...r, type: "zfls" }), z);
+});
+
+test("zfls dap's debugger: the configuration's, else zfls dap's choice", () => {
+  // none named: zfls dap chooses by the program, else the platform's
+  assert.deepEqual(adapterArgs({}), []);
+  assert.deepEqual(adapterArgs({ gdb: "/opt/gdb" }), ["--gdb", "/opt/gdb"]);
+  assert.deepEqual(adapterArgs({ lldb: false }), ["--gdb", "gdb"]);
+  assert.deepEqual(adapterArgs({ lldb: true }), ["--lldb"]);
+  assert.deepEqual(adapterArgs({ lldb: "/opt/llvm/bin/lldb-dap", gdb: "gdb" }), ["--lldb", "/opt/llvm/bin/lldb-dap"]);
+  assert.deepEqual(adapterArgs({ dbgeng: true, lldb: true }), ["--dbgeng"]);
+  // the launch configuration says lldb, not gdb
+  const z = launchConfiguration({ ...spec, type: "zfls", gdbPath: "/opt/gdb", lldb: true });
+  assert.equal(z.lldb, true);
+  assert.equal(z.gdb, undefined);
 });

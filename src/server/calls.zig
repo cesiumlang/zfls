@@ -64,7 +64,7 @@ pub fn itemOf(self: *Server, a: Allocator, o: *const Obj) !?lsp.CallHierarchyIte
 }
 
 /// The procedure an item stands for
-fn procedureOf(self: *Server, a: Allocator, item: lsp.CallHierarchyItem) !?*Obj {
+pub fn procedureOf(self: *Server, a: Allocator, item: lsp.CallHierarchyItem) !?*Obj {
     const file = (try self.fileFromUri(a, item.uri)) orelse return null;
     const line = item.selectionRange.start.line;
     const col = Server.toByteCol(file, line, item.selectionRange.start.character);

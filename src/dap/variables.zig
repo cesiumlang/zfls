@@ -51,7 +51,10 @@ pub fn show(s: *Session, a: Allocator, name: []const u8, v: Val) !Value {
     } else {
         text = try scalarText(s, a, v);
     }
-    return json.from(a, .{ .name = name, .value = text, .type = type_name, .variablesReference = ref, .evaluateName = v.expr });
+    var out = try json.from(a, .{ .name = name, .value = text, .type = type_name, .variablesReference = ref, .evaluateName = v.expr });
+    // its address, for `readMemory`; none (not null) when it has none
+    if (!v.empty and v.address != 0) try out.object.put(a, "memoryReference", .{ .string = try a.print("0x{x}", .{v.address}) });
+    return out;
 }
 
 fn hasKeyword(o: *const Obj, k: C.Kw) bool {
@@ -145,6 +148,8 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
             var seen: std.ArrayList([]const u8) = .empty;
             for (json.items(items)) |it| {
                 const module = json.str(json.get(it, "module")) orelse continue;
+                // an intrinsic module's names are constants, not the program's
+                if (declarations.isIntrinsicModule(s, module)) continue;
                 const listed = for (seen.items) |m| {
                     if (std.ascii.eqlIgnoreCase(m, module)) break true;
                 } else false;

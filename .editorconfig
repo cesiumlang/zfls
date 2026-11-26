@@ -15,7 +15,7 @@ charset = utf-8
 [*.{py,zig,zig.zon}]
 indent_size = 4
 
-# Go files use tabs — gofmt enforces this and will revert spaces
+# Go files use tabs; gofmt enforces this and will revert spaces
 [*.go]
 indent_style = tab
 

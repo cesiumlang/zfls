@@ -958,6 +958,15 @@
         }
       }
     },
+    "simple-attribute": {
+      "comment": "Introduced in the Fortran 2023 standard.",
+      "match": "(?i)\\s*\\b(simple)\\b",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.simple.fortran"
+        }
+      }
+    },
     "extends-attribute": {
       "begin": "(?i)\\s*\\b(extends)\\s*\\(",
       "beginCaptures": {
@@ -4194,6 +4203,9 @@
               "include": "#elemental-attribute"
             },
             {
+              "include": "#simple-attribute"
+            },
+            {
               "include": "#module-attribute"
             },
             {
@@ -4533,6 +4545,9 @@
               "include": "#elemental-attribute"
             },
             {
+              "include": "#simple-attribute"
+            },
+            {
               "include": "#module-attribute"
             },
             {
@@ -4709,10 +4724,20 @@
         }
       ]
     },
+    "type-spec-before-double-colon": {
+      "comment": "zfls: a type-spec followed by :: inside a statement: allocate (real(dp) :: x), [integer :: 1, 2].",
+      "begin": "(?ix)(?=\\b(?:character|class|complex|double\\s*precision|double\\s*complex|integer|logical|real|type)\\b\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\)|\\*\\s*\\d+)?\\s*::)",
+      "end": "(?=::)",
+      "patterns": [
+        {
+          "include": "#types"
+        }
+      ]
+    },
     "type-specification-statements": {
       "name": "meta.specification.type.fortran",
-      "comment": "Supported types for function and escape :: if function is used as a variable name (which is bad practice).",
-      "begin": "(?ix)(?=\\b(?:character|class|complex|double\\s*precision|double\\s*complex|integer|logical|real|type|dimension)\\b(?![^'\";!\\n:]*\\bfunction\\b))",
+      "comment": "Supported types for function and escape :: if function is used as a variable name (which is bad practice). zfls: only where a statement starts (after blanks and a label, or after ;), and not when the keyword with its parenthesized part is assigned to (type(i) = 'a', real(1) = 2.0, type(i)%a = 1): elsewhere a type keyword is the intrinsic function or a variable. Type-specs inside statements are matched by implicit-statement and type-spec-before-double-colon.",
+      "begin": "(?ix)(?<=(?:^|;)\\s*(?:\\d+\\s+)?)(?=\\b(?:character|class|complex|double\\s*precision|double\\s*complex|integer|logical|real|type|dimension)\\b(?![^'\";!\\n:]*\\bfunction\\b)(?!\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*(?:=|%)))",
       "end": "(?=[\\);!\\n])",
       "patterns": [
         {
@@ -5038,6 +5063,9 @@
               "name": "keyword.other.none.fortran"
             }
           }
+        },
+        {
+          "include": "#types"
         },
         {
           "include": "$base"
@@ -5439,6 +5467,9 @@
           },
           "patterns": [
             {
+              "include": "#type-spec-before-double-colon"
+            },
+            {
               "include": "#comments"
             },
             {
@@ -5477,6 +5508,9 @@
         }
       },
       "patterns": [
+        {
+          "include": "#type-spec-before-double-colon"
+        },
         {
           "include": "#comments"
         },
@@ -5834,6 +5868,9 @@
         }
       },
       "patterns": [
+        {
+          "include": "#type-spec-before-double-colon"
+        },
         {
           "include": "#procedure-call-dummy-variable"
         },

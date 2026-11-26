@@ -1,26 +1,24 @@
 // Runs or debugs the Fortran file in the editor (zfls.runFile,
-// zfls.debugFile): builds it with a compiler (zfls.run.*) into the
-// extension's storage, then runs it in a terminal or starts a debug session
-// with the installed debugger extension. zfls.generateLaunchConfig writes
-// the same as a tasks.json build task and a launch.json configuration.
+// zfls.debugFile): zfls says how to build it (`zfls/buildCommand`, with the
+// zfls.run.* settings), the build runs as a task, then the program runs in
+// a terminal or a debug session starts with the debugger chosen.
+// zfls.generateLaunchConfig writes the same as a tasks.json build task and
+// a launch.json configuration.
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
+  BuildCommand,
+  BuildCommandParams,
+  CompilerInfo,
   DEBUGGER_EXTENSIONS,
   DebugType,
-  buildArgs,
   chooseDebugger,
-  compilerKind,
   launchConfiguration,
-  outputDirFor,
-  programPath,
-  runtimeEnv,
   upsertByKey,
   workspaceRelative,
 } from "./run";
-import { gdbHasDap } from "./debugSupport";
+import { findLldbDap, gdbHasDap } from "./debugSupport";
 import { expandVariables, findExecutable } from "./tools";
 import { documentVariables } from "./variables";
 
@@ -37,40 +35,52 @@ export function addFileRunner(runner: FileRunner): void {
   fileRunners.push(runner);
 }
 
-export function registerRunCommands(context: vscode.ExtensionContext, log: vscode.LogOutputChannel): void {
+/** Sends `zfls/buildCommand` to the zfls of a file or folder: undefined
+ * when none runs */
+export type BuildCommandSender = (
+  uri: vscode.Uri,
+  params: BuildCommandParams,
+) => Promise<BuildCommand | CompilerInfo | null | undefined>;
+
+let sender: BuildCommandSender = async () => undefined;
+
+export function registerRunCommands(context: vscode.ExtensionContext, log: vscode.LogOutputChannel, send: BuildCommandSender): void {
+  sender = send;
   context.subscriptions.push(
-    vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, false)),
-    vscode.commands.registerCommand("zfls.debugFile", (uri?: vscode.Uri) => runOrDebug(context, log, uri, true)),
-    vscode.commands.registerCommand("zfls.generateLaunchConfig", (uri?: vscode.Uri) =>
-      generateLaunchConfig(context, uri),
-    ),
+    // a code lens above a program gives the URI as a string
+    vscode.commands.registerCommand("zfls.runFile", (uri?: vscode.Uri | string) => runOrDebug(log, asUri(uri), false)),
+    vscode.commands.registerCommand("zfls.debugFile", (uri?: vscode.Uri | string) => runOrDebug(log, asUri(uri), true)),
+    vscode.commands.registerCommand("zfls.generateLaunchConfig", (uri?: vscode.Uri) => generateLaunchConfig(uri)),
   );
 }
 
-/** Everything about building and running one file */
+/** What zfls says about a compiler, for a program built otherwise (fpm,
+ * launch.json): undefined when it is not found or no zfls runs */
+export async function compilerInfo(scope: vscode.Uri, compiler: string, compilerPath = ""): Promise<CompilerInfo | undefined> {
+  return (await sender(scope, { compiler, compilerPath })) ?? undefined;
+}
+
+function asUri(uri: vscode.Uri | string | undefined): vscode.Uri | undefined {
+  return typeof uri === "string" ? vscode.Uri.parse(uri) : uri;
+}
+
+/** Everything about building and running one file: zfls's answer, and the
+ * settings of running it */
 interface Plan {
   document: vscode.TextDocument;
   folder: vscode.WorkspaceFolder | undefined;
   source: string;
-  compiler: string;
-  args: string[];
-  /** Where the compiler runs and module files go */
-  outDir: string;
-  program: string;
+  build: BuildCommand;
   programArgs: string[];
   cwd: string;
-  env: Record<string, string>;
   msvc: boolean;
   debuggerPreference: string;
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap (`lldbWanted`) */
+  lldb: boolean;
 }
 
-async function runOrDebug(
-  context: vscode.ExtensionContext,
-  log: vscode.LogOutputChannel,
-  uri: vscode.Uri | undefined,
-  debug: boolean,
-): Promise<void> {
+async function runOrDebug(log: vscode.LogOutputChannel, uri: vscode.Uri | undefined, debug: boolean): Promise<void> {
   const document = await fortranDocument(uri);
   if (!document) {
     return;
@@ -80,7 +90,7 @@ async function runOrDebug(
       return;
     }
   }
-  const plan = makePlan(context, document);
+  const plan = await makePlan(document, log);
   if (!plan) {
     return;
   }
@@ -92,18 +102,25 @@ async function runOrDebug(
       return;
     }
   }
-  fs.mkdirSync(plan.outDir, { recursive: true });
-  log.info(`[run] ${plan.compiler} ${plan.args.join(" ")} (in ${plan.outDir})`);
-  const built = await runTask(
-    new vscode.Task(
-      { type: "zfls", task: "build" },
-      plan.folder ?? vscode.TaskScope.Workspace,
-      `build ${path.basename(plan.source)}`,
-      "zfls",
-      new vscode.ProcessExecution(plan.compiler, plan.args, { cwd: plan.outDir }),
-      [],
-    ),
-  );
+  const { build } = plan;
+  let built: number | undefined | { error: unknown } = 0;
+  // a build in two steps: the compile, then the link
+  for (const [task, args] of [["build", build.args], ["link", build.linkArgs]] as const) {
+    if (!args || built !== 0) {
+      continue;
+    }
+    log.info(`[run] ${build.compiler} ${args.join(" ")} (in ${build.cwd})`);
+    built = await runTask(
+      new vscode.Task(
+        { type: "zfls", task },
+        plan.folder ?? vscode.TaskScope.Workspace,
+        `${task} ${path.basename(plan.source)}`,
+        "zfls",
+        new vscode.ProcessExecution(build.compiler, [...args], { cwd: build.cwd, env: build.env }),
+        [],
+      ),
+    );
+  }
   if (built !== 0) {
     if (typeof built !== "number") {
       const why = built ? `: ${String(built.error)}` : "";
@@ -120,14 +137,13 @@ async function runOrDebug(
     return;
   }
   if (!debug) {
-    log.info(`[run] ${plan.program} ${plan.programArgs.join(" ")} (in ${plan.cwd})`);
-    const env = { ...plan.env };
+    log.info(`[run] ${build.program} ${plan.programArgs.join(" ")} (in ${plan.cwd})`);
     const run = new vscode.Task(
       { type: "zfls", task: "run" },
       plan.folder ?? vscode.TaskScope.Workspace,
       `run ${path.basename(plan.source)}`,
       "zfls",
-      new vscode.ProcessExecution(plan.program, plan.programArgs, { cwd: plan.cwd, env }),
+      new vscode.ProcessExecution(build.program, plan.programArgs, { cwd: plan.cwd, env: { ...build.runEnv } }),
       [],
     );
     run.presentationOptions = { reveal: vscode.TaskRevealKind.Always, focus: true, clear: true };
@@ -137,12 +153,13 @@ async function runOrDebug(
   const config = launchConfiguration({
     name: `Debug ${path.basename(plan.source)}`,
     type: debugType!,
-    program: plan.program,
+    program: build.program,
     args: plan.programArgs,
     cwd: plan.cwd,
-    env: plan.env,
+    env: build.runEnv,
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    lldb: plan.lldb,
     msvc: plan.msvc,
     sourceRoot: plan.folder?.uri.fsPath ?? path.dirname(plan.source),
   }) as vscode.DebugConfiguration;
@@ -173,14 +190,36 @@ async function fortranDocument(uri: vscode.Uri | undefined): Promise<vscode.Text
   return document;
 }
 
-function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocument): Plan | undefined {
+/** The plan of running `document`: zfls's answer for the zfls.run
+ * settings, or undefined after saying why there is none. `env`: values in
+ * place of the environment's, for the answer's additions. */
+async function makePlan(
+  document: vscode.TextDocument,
+  log?: vscode.LogOutputChannel,
+  env?: Record<string, string>,
+): Promise<Plan | undefined> {
   const config = vscode.workspace.getConfiguration("zfls.run", document.uri);
   const ctx = documentVariables(document.uri);
   const source = document.uri.fsPath;
+  const base = ctx.workspaceFolder ?? path.dirname(source);
   const compilerName = config.get<string>("compiler", "gfortran").trim() || "gfortran";
   const configuredPath = expandVariables(config.get<string>("compilerPath", "").trim(), ctx);
-  const compiler = findExecutable(compilerName, configuredPath, ctx.workspaceFolder);
-  if (!compiler) {
+  const configuredArgs = config.get<string[] | null>("buildArgs", null);
+  const configuredOut = expandVariables(config.get<string>("outputDirectory", "").trim(), ctx);
+  const answer = await sender(document.uri, {
+    textDocument: { uri: document.uri.toString() },
+    compiler: compilerName,
+    // a path relative to the file's workspace folder; a bare name, on the PATH
+    compilerPath: /[\\/]/.test(configuredPath) ? path.resolve(base, configuredPath) : configuredPath,
+    ...(configuredArgs ? { args: configuredArgs.map((a) => expandVariables(a, ctx)) } : {}),
+    ...(configuredOut ? { outputDirectory: path.resolve(base, configuredOut) } : {}),
+    ...(env ? { env } : {}),
+  });
+  if (answer === undefined) {
+    void vscode.window.showErrorMessage(vscode.l10n.t("zfls: the zfls language server is not running; Run Fortran File needs it to build {0}.", path.basename(source)));
+    return undefined;
+  }
+  if (answer === null || !("program" in answer)) {
     void vscode.window
       .showErrorMessage(
         configuredPath
@@ -202,46 +241,43 @@ function makePlan(context: vscode.ExtensionContext, document: vscode.TextDocumen
       });
     return undefined;
   }
-  const kind = compilerKind(compiler, process.platform);
-  const userArgs = config.get<string[] | null>("buildArgs", null);
-  const configuredOut = expandVariables(config.get<string>("outputDirectory", "").trim(), ctx);
-  const outDir = configuredOut
-    ? path.resolve(ctx.workspaceFolder ?? path.dirname(source), configuredOut)
-    : outputDirFor(path.join(context.globalStorageUri.fsPath, "run"), source);
-  const program = programPath(outDir, source);
+  if (answer.note) {
+    log?.info(`[run] ${answer.note}`);
+  }
   const cwdSetting = expandVariables(config.get<string>("cwd", "${fileDirname}").trim() || "${fileDirname}", ctx);
-  const gdbPath = gdbFor(document.uri, compiler);
   return {
     document,
     folder: vscode.workspace.getWorkspaceFolder(document.uri),
     source,
-    compiler,
-    args: buildArgs(kind, source, program, userArgs ? userArgs.map((a) => expandVariables(a, ctx)) : undefined),
-    outDir,
-    program,
+    build: answer,
     programArgs: config.get<string[]>("programArgs", []).map((a) => expandVariables(a, ctx)),
     cwd: path.resolve(path.dirname(source), cwdSetting),
-    env: runtimeEnv(compiler, process.platform, process.env),
-    msvc: kind.msvc,
+    msvc: answer.debugInfo === "pdb",
     debuggerPreference: config.get<string>("debugger", "auto"),
-    gdbPath,
+    gdbPath: gdbFor(document.uri, answer.compiler),
+    lldb: lldbWanted(document.uri),
   };
 }
 
 /** The debugger to use, or undefined (with a message) when none is installed */
 async function pickDebugger(plan: Plan): Promise<DebugType | undefined> {
-  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath);
+  return chooseInstalledDebugger(plan.debuggerPreference, plan.msvc, plan.gdbPath, plan.lldb);
 }
 
 /** The debugger of `preference` (zfls.run.debugger) for a program, MSVC-ABI
  * or not, or undefined (with a message) when none is installed; `gdb`: the
- * gdb that zfls's debugger would run */
+ * gdb that zfls's debugger would run, unless it runs lldb-dap (`lldb`:
+ * true, or the lldb-dap configured) */
 export async function chooseInstalledDebugger(
   preference: string,
   msvc: boolean,
   gdb: string | undefined,
+  lldb: boolean | string = false,
 ): Promise<DebugType | undefined> {
-  const dap = !msvc && (preference === "auto" || preference === "zfls") && gdb ? await gdbHasDap(gdb) : false;
+  const own = !msvc && (preference === "auto" || preference === "zfls");
+  const dap = own && lldb
+    ? (await findLldbDap(typeof lldb === "string" ? lldb : undefined)) !== undefined
+    : own && gdb ? await gdbHasDap(gdb) : false;
   // MSVC-ABI programs: Windows's Debugger Engine, which every Windows has
   const dbgeng = msvc && process.platform === "win32";
   const choice = chooseDebugger(
@@ -258,8 +294,10 @@ export async function chooseInstalledDebugger(
     const settings = vscode.l10n.t("Open Settings");
     const picked = await vscode.window.showErrorMessage(
       msvc
-        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug MSVC-ABI programs (ifx, ifort, LLVM Flang on Windows); set zfls.run.debugger to cppvsdbg.")
-        : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
+        ? vscode.l10n.t("zfls: its debugger runs gdb, which cannot debug a program without DWARF debug information (ifx's, ifort's, or LLVM Flang's built with -g on Windows); set zfls.run.debugger to cppvsdbg.")
+        : lldb
+          ? vscode.l10n.t("zfls: its debugger needs lldb-dap, which Xcode's command line tools have (xcode-select --install); or set zfls.run.gdbPath to debug with gdb, or zfls.run.debugger to another debugger.")
+          : vscode.l10n.t("zfls: its debugger needs gdb 14 or later, built with Python ({0}); set zfls.run.gdbPath, or zfls.run.debugger to another debugger.", gdb ?? "gdb"),
       settings,
     );
     if (picked === settings) {
@@ -285,6 +323,13 @@ export async function chooseInstalledDebugger(
     await vscode.commands.executeCommand("workbench.extensions.search", choice.extensions.map((id) => `@id:${id}`).join(" "));
   }
   return undefined;
+}
+
+/** Whether zfls's debugger runs lldb-dap rather than gdb: on macOS, where
+ * gdb does not run on Apple silicon and must be code-signed on Intel,
+ * unless zfls.run.gdbPath names a gdb */
+export function lldbWanted(uri: vscode.Uri): boolean {
+  return process.platform === "darwin" && !vscode.workspace.getConfiguration("zfls.run", uri).get<string>("gdbPath", "").trim();
 }
 
 /** The gdb of zfls.run.gdbPath, else the one next to `compiler`, else on
@@ -333,7 +378,7 @@ export async function runTask(task: vscode.Task): Promise<number | undefined | {
   });
 }
 
-async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscode.Uri | undefined): Promise<void> {
+async function generateLaunchConfig(uri: vscode.Uri | undefined): Promise<void> {
   const document = await fortranDocument(uri);
   if (!document) {
     return;
@@ -345,7 +390,9 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
     );
     return;
   }
-  const plan = makePlan(context, document);
+  // the environment of the machine running the task, not this one's
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "Path";
+  const plan = await makePlan(document, undefined, { [pathKey]: `\${env:${pathKey}}`, LIB: "${env:LIB}", LINK: "${env:LINK}" });
   if (!plan) {
     return;
   }
@@ -353,7 +400,7 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
   if (!debugType) {
     return;
   }
-  fs.mkdirSync(plan.outDir, { recursive: true });
+  const { build } = plan;
   const root = folder.uri.fsPath;
   const rel = (p: string): string => workspaceRelative(p, root);
   const base = path.basename(plan.source);
@@ -361,28 +408,31 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
   const compilerName = vscode.workspace.getConfiguration("zfls.run", document.uri).get<string>("compiler", "gfortran");
   // the compiler as configured when it is on the PATH, so the task works on
   // other machines too
-  const command = findExecutable(compilerName, "", undefined) === plan.compiler ? compilerName : plan.compiler;
-  const task: Record<string, unknown> = {
-    label,
+  const command = findExecutable(compilerName, "", undefined) === build.compiler ? compilerName : build.compiler;
+  const object = `${build.program}.o`;
+  const taskOf = (taskLabel: string, args: string[]): Record<string, unknown> => ({
+    label: taskLabel,
     type: "process",
     command,
-    args: plan.args.map((a) => replaceAll(a, [plan.source, plan.program, path.dirname(plan.source)], rel)),
-    options: { cwd: rel(plan.outDir) },
+    args: args.map((a) => replaceAll(a, [object, plan.source, build.program, path.dirname(plan.source)], rel)),
+    options: { cwd: rel(build.cwd), ...(Object.keys(build.env).length > 0 ? { env: build.env } : {}) },
     group: "build",
     problemMatcher: [],
-  };
+  });
+  // a build in two steps: the link task depends on the compile task
+  const compileLabel = `zfls: compile ${base}`;
+  const compileTask = build.linkArgs ? taskOf(compileLabel, build.args) : undefined;
+  const task = build.linkArgs ? { ...taskOf(label, build.linkArgs), dependsOn: compileLabel } : taskOf(label, build.args);
   const launch = launchConfiguration({
     name: `Debug ${base}`,
     type: debugType,
-    program: rel(plan.program),
+    program: rel(build.program),
     args: plan.programArgs,
     cwd: rel(plan.cwd),
-    // the PATH of the machine running it, not this one's
-    env: Object.fromEntries(
-      Object.keys(plan.env).map((key) => [key, `${path.dirname(plan.compiler)};\${env:${key}}`]),
-    ),
+    env: build.runEnv,
     platform: process.platform,
     gdbPath: plan.gdbPath,
+    lldb: plan.lldb,
     preLaunchTask: label,
   });
 
@@ -391,7 +441,8 @@ async function generateLaunchConfig(context: vscode.ExtensionContext, uri: vscod
   if (!tasksConfig.inspect<string>("version")?.workspaceFolderValue) {
     await tasksConfig.update("version", "2.0.0", vscode.ConfigurationTarget.WorkspaceFolder);
   }
-  await tasksConfig.update("tasks", upsertByKey(tasks, task, "label"), vscode.ConfigurationTarget.WorkspaceFolder);
+  const withCompile = compileTask ? upsertByKey(tasks, compileTask, "label") : tasks;
+  await tasksConfig.update("tasks", upsertByKey(withCompile, task, "label"), vscode.ConfigurationTarget.WorkspaceFolder);
   const launchConfig = vscode.workspace.getConfiguration("launch", folder.uri);
   const configs = launchConfig.inspect<Record<string, unknown>[]>("configurations")?.workspaceFolderValue ?? [];
   if (!launchConfig.inspect<string>("version")?.workspaceFolderValue) {

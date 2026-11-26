@@ -28,6 +28,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
+const fsio = @import("../fsio.zig");
 
 /// A test, or a suite of test-drive: its name and where it is
 const Item = struct { name: []const u8, uri: []const u8, range: lsp.Range };
@@ -67,7 +68,7 @@ const PfProgram = struct {
 /// The files of the workspace that `wanted` takes, in `dir` and below, but
 /// in hidden directories and those of builds (fpm's dependencies are in
 /// build/dependencies, CMake's fetched ones in _deps)
-fn filesBelow(self: *Server, a: Allocator, dir: []const u8, wanted: *const fn ([]const u8) bool, out: *std.ArrayList([]const u8), depth: usize) !void {
+pub fn filesBelow(self: *Server, a: Allocator, dir: []const u8, wanted: *const fn ([]const u8) bool, out: *std.ArrayList([]const u8), depth: usize) !void {
     if (depth > 32) return;
     const entries = glob.listEntries(self.io, a, dir) catch return;
     for (entries) |e| {
@@ -83,7 +84,7 @@ fn filesBelow(self: *Server, a: Allocator, dir: []const u8, wanted: *const fn ([
     }
 }
 
-fn isManifest(name: []const u8) bool {
+pub fn isManifest(name: []const u8) bool {
     return std.mem.eql(u8, name, "fpm.toml");
 }
 
@@ -95,13 +96,13 @@ fn isPfOrCmake(name: []const u8) bool {
 const Source = struct { file: *FortranFile, ast: *Ast };
 
 /// The sources the request reads: the workspace's, else parsed once
-const Sources = struct {
+pub const Sources = struct {
     server: *Server,
     a: Allocator,
     parsed: std.StringHashMapUnmanaged(?Source) = .empty,
 
     /// The file, or null when it cannot be read or parsed
-    fn get(s: *Sources, path: []const u8) !?Source {
+    pub fn get(s: *Sources, path: []const u8) !?Source {
         if (s.server.workspace.get(path)) |f| if (f.ast) |ast| return .{ .file = f, .ast = ast };
         const gop = try s.parsed.getOrPut(s.a, path);
         if (!gop.found_existing) gop.value_ptr.* = s.parse(path) catch |e| switch (e) {
@@ -116,6 +117,10 @@ const Sources = struct {
         const self = s.server;
         const f = try FortranFile.create(s.a, path, workspace.ppSuffixes(self));
         f.comment_markers = self.s.comment_markers.slice();
+        f.openmp_conditional = !self.s.disable_openmp_conditional;
+        f.d_lines_code = self.s.dLinesCode();
+        f.fixed_columns = self.s.fixedColumns();
+        f.fixed_tab_wide = self.s.fixedTabWide();
         _ = try f.loadFromDisk(self.io);
         const ast = try f.parse(self.io, &self.pp_defs, self.s.include_dirs.slice(), workspace.parseOptions(self));
         return .{ .file = f, .ast = ast };
@@ -143,7 +148,7 @@ pub fn serveFpmTests(self: *Server, a: Allocator) !Value {
     try filesBelow(self, a, self.root_path, isManifest, &manifests, 0);
     var out: std.ArrayList(FpmProject) = .empty;
     for (manifests.items) |path| {
-        const text = Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(1 << 24)) catch continue;
+        const text = fsio.readFile(self.io, a, path, .limited(1 << 24)) catch continue;
         const root = paths.dirname(path);
         const m = try fpm.parseManifest(a, text);
         // the main programs of test/, which fpm makes targets of
@@ -169,7 +174,7 @@ pub fn serveFpmTests(self: *Server, a: Allocator) !Value {
 
 /// A test target, with the suites its program makes and the tests their
 /// collect procedures return, in the sources next to the program
-fn fpmTarget(self: *Server, a: Allocator, sources: *Sources, t: fpm.TestTarget) !FpmTarget {
+fn fpmTarget(self: *Server, a: Allocator, sources: *Sources, t: fpm.Target) !FpmTarget {
     const src = (try sources.get(t.main)) orelse return .{ .name = t.name };
     const uri = try paths.pathToUri(a, t.main);
     const program = fpm.mainProgram(src.ast);
@@ -217,7 +222,7 @@ pub fn servePfunitTests(self: *Server, a: Allocator) !Value {
     var listed: std.ArrayList([]const u8) = .empty;
     if (pf_files.items.len > 0) for (found.items) |cmake| {
         if (!std.mem.eql(u8, std.Io.Dir.path.basename(cmake), "CMakeLists.txt")) continue;
-        const text = Io.Dir.cwd().readFileAlloc(self.io, cmake, a, .limited(1 << 24)) catch continue;
+        const text = fsio.readFile(self.io, a, cmake, .limited(1 << 24)) catch continue;
         if (std.ascii.findIgnoreCase(text, "add_pfunit_ctest") == null) continue;
         const uri = try paths.pathToUri(a, cmake);
         for (try pfunit.parseAddPfunitCtest(a, text)) |p| {

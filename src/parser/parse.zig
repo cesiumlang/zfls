@@ -23,8 +23,20 @@ const parser = @import("../parser.zig");
 const FortranFile = parser.FortranFile;
 const Trace = parser.Trace;
 const Options = parser.Options;
-const DefResult = @import("definitions.zig").DefResult;
-const getFortranDefinition = @import("definitions.zig").getFortranDefinition;
+const definitions = @import("definitions.zig");
+const DefResult = definitions.DefResult;
+const getFortranDefinition = definitions.getFortranDefinition;
+const plain_docs = @import("plain_docs.zig");
+const attributes = @import("attributes.zig");
+const stmt_functions = @import("stmt_functions.zig");
+const entries = @import("entries.zig");
+const groups = @import("groups.zig");
+const doc_comments = @import("doc_comments.zig");
+const entities = @import("entities.zig");
+const entityLength = entities.entityLength;
+const afterEntitySpecs = entities.afterEntitySpecs;
+const parseImpDim = entities.parseImpDim;
+const parseImpChar = entities.parseImpChar;
 
 pub fn findExternalType(file_ast: *Ast, desc_string: []const u8, name: []const u8) !bool {
     if (!std.ascii.eqlIgnoreCase(desc_string, "EXTERNAL")) return false;
@@ -77,9 +89,15 @@ pub const Parser = struct {
     pp_skips: []const pp.Skip = &.{},
     pp_defines: []const usize = &.{},
     docs: std.ArrayList([]const u8) = .empty,
+    /// plain comments as documentation (`hover_plain_comments`)
+    plain: plain_docs.PlainDocs = .{},
     comment_re: *const regex.Regex = undefined,
     cur_line: usize = 0,
     doc_re: *const regex.Regex = undefined,
+    /// what the attribute statements say, applied at the end
+    attrs: std.ArrayList(attributes.Attr) = .empty,
+    /// where the specification parts end, for statement functions
+    stmt_fns: stmt_functions.State = .{},
 
     pub fn dbg(p: *const Parser, comptime fmt: []const u8, args: anytype) void {
         Trace.print(p.opts.trace, fmt, args);
@@ -124,6 +142,11 @@ pub const Parser = struct {
                 get_full = false;
             }
             if (line.len == 0) continue;
+            if (p.opts.plain_comments and get_full) if (try p.parsePlainDocs(line, line_no)) |idx| {
+                line_no = idx;
+                line_no_end = line_no;
+                continue;
+            };
             // a fixed-form comment line (C, D or * in column 1) has no code,
             // whatever it contains, even a semicolon (#411)
             if (get_full and f.fixed and std.mem.findScalar(u8, "cCdD*", line[0]) != null) continue;
@@ -150,6 +173,8 @@ pub const Parser = struct {
             if (get_full) {
                 const cl = try f.getCodeLine(a, line_no -| 1, true, false, true, false);
                 line_no_end += @intCast(cl.post.len);
+                p.plain.stmt_start = line_no;
+                p.plain.stmt_end = line_no_end;
                 var parts: std.ArrayList([]const u8) = .empty;
                 try parts.append(a, cl.curr.?);
                 try parts.appendSlice(a, cl.post);
@@ -157,6 +182,8 @@ pub const Parser = struct {
             }
             const lr = try helpers.stripLineLabel(a, line);
             line = lr.line;
+            // a statement of blanks only (continuation lines with no text)
+            if (get_full and std.mem.trim(u8, line, " \t\r").len == 0) continue;
             const line_label = lr.label;
             var line_stripped = try helpers.stripStrings(a, line, true);
             var line_no_comment = line;
@@ -164,9 +191,19 @@ pub const Parser = struct {
                 line_no_comment = line[0..ci];
                 line_stripped = line_stripped[0..ci];
                 try p.setSingleLineDocstring(line[ci..]);
+                if (p.opts.plain_comments) if (plain_docs.trailingText(line[ci..])) |t| try p.plain.trailing.put(sa, line_no, try sa.dupe(u8, t));
             }
             if (std.mem.findScalar(u8, line_stripped, ';') != null) {
-                const pieces = try str.split(sa, line_stripped, ";");
+                // the statements, with their strings: split at the `;`
+                // outside strings
+                var pieces_list: std.ArrayList([]const u8) = .empty;
+                var piece_start: usize = 0;
+                for (line_stripped, 0..) |c, ci| if (c == ';') {
+                    try pieces_list.append(sa, line_no_comment[piece_start..ci]);
+                    piece_start = ci + 1;
+                };
+                try pieces_list.append(sa, line_no_comment[piece_start..]);
+                const pieces = pieces_list.items;
                 // extendleft + pop: process pieces in order
                 var k: usize = pieces.len;
                 var tmp: std.ArrayList([]const u8) = .empty;
@@ -186,6 +223,7 @@ pub const Parser = struct {
                 line_stripped = line;
                 line_no_comment = line;
             }
+            try p.placeMain(a, line, line_no_comment, line_no);
             // UNION and MAP in a DEC structure only overlay its fields: `END
             // MAP` ends no scope
             if (ast.current_scope) |cs| if (cs.kind == .type and R().DEC_UNION_MAP.match(line_no_comment) != null) {
@@ -206,6 +244,7 @@ pub const Parser = struct {
                     continue;
                 }
                 if (try p.parseDoFixedFormat(line, line_no, line_label, &block_id_stack)) {
+                    try p.stmt_fns.markExec(sa, ast);
                     ast.pending_doc = null;
                     continue;
                 }
@@ -218,10 +257,12 @@ pub const Parser = struct {
             // cannot have documentation: it must not wait for a later
             // procedure (upstream #237)
             if (R().NON_DEF.match(line_no_comment) != null) {
+                try p.stmt_fns.markExec(sa, ast);
                 ast.pending_doc = null;
                 continue;
             }
-            if (try p.parseParameterStmt(a, line_no_comment)) {
+            if (try attributes.read(sa, line_no_comment, ast.current_scope, line_no, &p.attrs)) {
+                p.dbg("{s} !!! ATTRIBUTE statement - Ln:{d}", .{ str.strip(line_no_comment), line_no });
                 ast.pending_doc = null;
                 continue;
             }
@@ -233,10 +274,29 @@ pub const Parser = struct {
                 ast.pending_doc = null;
                 continue;
             }
-            const obj_read = (try getFortranDefinition(a, line)) orelse continue;
+            const obj_read = (try getFortranDefinition(a, line)) orelse {
+                if (try groups.read(ast, sa, &p.attrs, line_no_comment, line_no)) {
+                    p.dbg("{s} !!! COMMON/NAMELIST - Ln:{d}", .{ str.strip(line_no_comment), line_no });
+                    continue;
+                }
+                if (try entries.read(ast, sa, line_no_comment, line_no)) {
+                    p.dbg("{s} !!! ENTRY - Ln:{d}", .{ str.strip(line_no_comment), line_no });
+                    continue;
+                }
+                if (try stmt_functions.read(&p.stmt_fns, sa, ast, p.attrs.items, line_no_comment, line_no)) {
+                    p.dbg("{s} !!! STATEMENT FUNCTION - Ln:{d}", .{ str.strip(line_no_comment), line_no });
+                }
+                continue;
+            };
+            switch (obj_read) {
+                .do_, .where, .assoc, .team, .if_, .select, .block => try p.stmt_fns.markExec(sa, ast),
+                else => {},
+            }
             try p.handleDef(a, obj_read, line, line_no, &counters, &block_id_stack);
         }
+        try attributes.apply(ast, sa, p.attrs.items, p.opts.sort_keywords);
         try ast.closeFile(line_no);
+        try p.plain.apply(ast);
     }
 
     fn handleDef(p: *Parser, a: Allocator, obj_read: DefResult, line: []const u8, line_no: usize, counters: *Counters, block_id_stack: *std.ArrayList([]const u8)) !void {
@@ -264,23 +324,42 @@ pub const Parser = struct {
                         const ln = str.strip(str.beforeFirst(parts[1], "("));
                         link_name = if (std.ascii.eqlIgnoreCase(ln, "null")) null else ln;
                     } else {
-                        name = str.beforeFirst(var_name, "=");
+                        name = helpers.entityBeforeInit(var_name);
                     }
                     var var_keywords: std.ArrayList([]const u8) = .empty;
                     try var_keywords.appendSlice(a, info.keywords);
+                    const rank_clause = try definitions.rankClause(a, &var_keywords);
                     if (std.mem.startsWith(u8, name, "(")) continue;
                     const dim = try parseImpDim(a, name);
                     name = dim.line;
+                    // the codimensions of a coarray, x[:], are not part of its
+                    // name (upstream #172); a length may follow them, x[*]*10
+                    var codims: ?[]const u8 = null;
+                    if (std.mem.findScalar(u8, name, '[')) |bracket| {
+                        const close = std.mem.findScalarLast(u8, name, ']') orelse bracket;
+                        if (close > bracket) {
+                            codims = name[bracket .. close + 1];
+                            name = try std.mem.concat(a, u8, &.{ name[0..bracket], name[close + 1 ..] });
+                        } else name = name[0..bracket];
+                    }
                     const chr = try parseImpChar(a, name);
                     name = chr.line;
-                    if (dim.extra) |d| try var_keywords.append(a, d);
-                    if (chr.extra) |c| desc = try std.mem.concat(a, u8, &.{ desc, c });
-                    // the codimensions of a coarray, x[:], are not part of its name (upstream #172)
-                    if (std.mem.findScalar(u8, name, '[')) |bracket| {
-                        if (std.mem.findScalarLast(u8, name, ']')) |close| if (close > bracket) {
-                            try var_keywords.append(a, try a.print("CODIMENSION{s}", .{name[bracket .. close + 1]}));
-                        };
-                        name = name[0..bracket];
+                    // the entity's own bounds take the place of the
+                    // declaration's DIMENSION
+                    if (dim.extra) |d| {
+                        for (var_keywords.items) |*kw| {
+                            if (std.ascii.startsWithIgnoreCase(kw.*, "dimension")) {
+                                kw.* = d;
+                                break;
+                            }
+                        } else try var_keywords.append(a, d);
+                    }
+                    if (codims) |c| try var_keywords.append(a, try a.print("CODIMENSION{s}", .{c}));
+                    // and its own length that of the type, `v*8` in
+                    // `character*(*) u, v*8`
+                    var kind = info.var_kind;
+                    if (chr.extra) |c| {
+                        if (procedure_def) desc = try std.mem.concat(a, u8, &.{ desc, c }) else kind = try entityLength(a, info.var_kind, c);
                     }
                     name = str.strip(name);
                     const mk = try helpers.mapKeywords(a, var_keywords.items, p.opts.sort_keywords);
@@ -288,19 +367,22 @@ pub const Parser = struct {
                     if (procedure_def) {
                         new_var = try Obj.newMethod(ast, line_no, name, desc, mk.ids, mk.info, info.var_kind, link_name);
                     } else {
+                        // a data pointer's initial target is not what it
+                        // stands for, `p(:) => t` (#700)
                         new_var = try Obj.newVariable(ast, line_no, name, desc, mk.ids, .{
                             .keyword_info = mk.info,
-                            .kind = info.var_kind,
-                            .link_obj = link_name,
+                            .kind = kind,
                         });
                         if (new_var.isParameter()) {
                             const r = helpers.findWordInLine(line, name);
                             const col: usize = @intCast(@max(r.end, 0));
-                            if (helpers.parameterValue(str.from(line, col))) |value| {
-                                const words = try str.splitWhitespace(a, value);
-                                new_var.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
+                            // the value follows the entity's bounds and length
+                            if (helpers.parameterValue(afterEntitySpecs(str.from(line, col)))) |value| {
+                                new_var.varData().param_val = try pa.dupe(u8, try helpers.collapseBlanks(a, value));
                             }
                         }
+                        if (definitions.isTypeOf(desc)) new_var.varData().type_of = .{ .ref = try pa.dupe(u8, info.var_kind orelse "()"), .class = desc[0] == 'C' };
+                        if (rank_clause) |r| new_var.varData().rank_clause = try pa.dupe(u8, r);
                         if (try findExternal(ast, desc, name, new_var)) continue;
                     }
                     try ast.addVariable(new_var);
@@ -346,6 +428,8 @@ pub const Parser = struct {
                         .kind = info.result.kind,
                     });
                     try ast.addVariable(v);
+                    // a comment after the statement documents the function
+                    ast.last_obj = o;
                 };
                 p.dbg("{s} !!! FUNCTION - Ln:{d}", .{ line, line_no });
             },
@@ -366,6 +450,7 @@ pub const Parser = struct {
                     name = try a.print("#BLOCKDATA{d}", .{counters.block});
                 }
                 const o = try Obj.newScope(ast, .block, line_no, name, &.{});
+                o.scopeData().block_data = true;
                 try ast.addScope(o, &R().END_BLOCK_DATA, true, false);
                 p.dbg("{s} !!! BLOCK DATA - Ln:{d}", .{ line, line_no });
             },
@@ -386,28 +471,23 @@ pub const Parser = struct {
                 }
                 p.dbg("{s} !!! WHERE - Ln:{d}", .{ line, line_no });
             },
-            .assoc => |bound| {
+            .assoc, .team => |bound| {
                 counters.block += 1;
                 const name = try a.print("#ASSOC{d}", .{counters.block});
                 const o = try Obj.newScope(ast, .associate, line_no, name, &.{});
-                try ast.addScope(o, &R().END_ASSOCIATE, true, true);
+                const team = obj_read == .team;
+                o.assocData().change_team = team;
+                try ast.addScope(o, if (team) &R().END_TEAM else &R().END_ASSOCIATE, true, true);
                 for (bound) |bv| {
                     const parts = try str.split(a, bv, "=>");
                     if (parts.len != 2) continue;
                     const bind_name = str.strip(parts[0]);
                     const link = str.strip(parts[1]);
                     const v = try Obj.newVariable(ast, line_no, bind_name, "UNKNOWN", &.{}, .{});
-                    if (helpers.getParenSubstring(link)) |subscripts| {
-                        var rank: i32 = 0;
-                        for (try helpers.splitArgs(a, subscripts)) |sub| {
-                            if (std.mem.findScalar(u8, sub, ':') != null) rank += 1;
-                        }
-                        v.varData().slice_rank = rank;
-                    }
                     try o.assocData().links.append(pa, .{ .var_ = v, .bind_name = try pa.dupe(u8, bind_name), .link_name = try pa.dupe(u8, link) });
                     try ast.addVariable(v);
                 }
-                p.dbg("{s} !!! ASSOCIATE - Ln:{d}", .{ line, line_no });
+                p.dbg("{s} !!! {s} - Ln:{d}", .{ line, if (team) "CHANGE TEAM" else "ASSOCIATE", line_no });
             },
             .if_ => {
                 counters.if_ += 1;
@@ -421,8 +501,10 @@ pub const Parser = struct {
                 const name = try a.print("#SELECT{d}", .{counters.select});
                 const o = try Obj.newSelect(ast, line_no, name, info);
                 try ast.addScope(o, &R().END_SELECT, true, true);
-                const var_desc = try a.print("{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
-                if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.type)) |v| try ast.addVariable(v);
+                // a type guard's type, else that of a SELECT statement
+                // (whose associate names have their selector's)
+                const var_desc = if (info.type == 3) info.desc.? else try a.print("{s}({s})", .{ info.desc orelse "None", info.binding orelse "None" });
+                if (try createSelectBindingVariable(o, ast, line_no, var_desc, info.kind, info.type)) |v| try ast.addVariable(v);
                 p.dbg("{s} !!! SELECT - Ln:{d}", .{ line, line_no });
             },
             .typ => |info| {
@@ -446,6 +528,7 @@ pub const Parser = struct {
                     name = try a.print("#GEN_INT{d}", .{counters.interface});
                 }
                 const o = try Obj.newInterface(ast, line_no, name, info.abstract);
+                o.ifaceData().generic = info.generic;
                 try ast.addScope(o, &R().END_INT, true, true);
                 p.dbg("{s} !!! INTERFACE - Ln:{d}", .{ line, line_no });
             },
@@ -490,12 +573,15 @@ pub const Parser = struct {
             },
             .vis => |info| {
                 if (ast.current_scope) |cs| {
+                    if (ast.inMain()) try ast.addMainError(.statement_without_scope, "Visibility statement without enclosing scope", line_no, 0, null);
                     if (info.obj_names.len == 0 and info.private) {
                         cs.def_vis = .private;
                     } else if (info.private) {
                         for (info.obj_names) |w| try ast.addPrivate(w);
+                        if (cs.data == .scope) for (info.obj_names) |w| try cs.scopeData().private_names.append(pa, try std.ascii.allocLowerString(pa, w));
                     } else {
                         for (info.obj_names) |w| try ast.addPublic(w);
+                        if (cs.data == .scope) for (info.obj_names) |w| try cs.scopeData().public_names.append(pa, try std.ascii.allocLowerString(pa, w));
                     }
                 } else {
                     try ast.addError(.statement_without_scope, "Visibility statement without enclosing scope", C.Severity.err, line_no, 0, null);
@@ -505,21 +591,63 @@ pub const Parser = struct {
         }
     }
 
+    /// A statement outside every program unit is in the unnamed scope: of a
+    /// main program without a PROGRAM statement, or the text of an include
+    /// (`Ast.openMain`). A program unit that starts there leaves it, but for
+    /// a procedure after its CONTAINS.
+    fn placeMain(p: *Parser, a: Allocator, line: []const u8, code: []const u8, ln: usize) !void {
+        const ast = p.file_ast;
+        const in_main = ast.inMain();
+        if (ast.current_scope != null and !in_main) return;
+        if (str.strip(code).len == 0 or helpers.isPpDirective(line) or R().END_WORD.match(code) != null) return;
+        if (continuesDirective(p.file, ln -| 1)) return;
+        const unit = if (try getFortranDefinition(a, line)) |def| switch (def) {
+            .mod, .smod, .prog, .block_data => true,
+            .sub, .fun => !in_main or ast.none_scope.?.scopeData().contains_start == null,
+            // an INCLUDE may bring in whole program units
+            .inc => !in_main,
+            else => false,
+        } else false;
+        if (!unit and !in_main) {
+            try ast.openMain(ln);
+        } else if (unit and in_main) ast.leaveMain();
+    }
+
+    /// Whether line `i` (0-based) is a part of a preprocessor directive
+    /// continued with `\` (a macro's body), which a file that is not
+    /// preprocessed has as is
+    fn continuesDirective(f: *const FortranFile, i: usize) bool {
+        var k = i;
+        while (k > 0) {
+            k -= 1;
+            const l = str.rstrip(f.getLine(k, false) orelse return false);
+            if (!std.mem.endsWith(u8, l, "\\")) return false;
+            if (helpers.isPpDirective(l)) return true;
+        }
+        return false;
+    }
+
     fn parseEndScopeWord(p: *Parser, line: []const u8, ln: usize, match: ?regex.Match) !bool {
         const m = match orelse return false;
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
         var end_scope_word: ?[]const u8 = null;
-        // a main program without a PROGRAM statement: its statements are
-        // outside any scope, and END ends it
-        if (m.group(1) == null and cs == ast.none_scope and ast.scope_stack.items.len == 0) return true;
+        // END or END PROGRAM after statements outside every program unit:
+        // they are a main program without a PROGRAM statement
+        if (ast.inMain()) if (m.group(1) == null or std.ascii.eqlIgnoreCase(m.group(1).?, "PROGRAM")) {
+            ast.endMain(ln);
+            p.dbg("{s} !!! END main program - Ln:{d}", .{ line, ln });
+            return true;
+        };
         if (m.group(1) == null) {
             end_scope_word = "";
             if (cs.reqNamedEnd() and cs != ast.none_scope) {
                 try ast.end_errors.append(ast.allocator(), .{ .end_line = ln, .scope_line = cs.sline });
             }
         } else {
-            if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| end_scope_word = sm.str();
+            if (ast.end_scope_regex.?.match(line[m.start(1)..])) |sm| {
+                end_scope_word = sm.str();
+            } else return p.mismatchedEnd(line, ln, m);
         }
         if (end_scope_word != null) {
             if (cs.getType(false) == C.TypeId.select and cs.isTypeRegion()) try ast.endScope(ln, true);
@@ -535,6 +663,48 @@ pub const Parser = struct {
         return false;
     }
 
+    /// `END word` that does not fit the innermost open scope: an error on
+    /// its line (unless one names that scope already). When the word fits a
+    /// scope further out, the scopes inside it are closed (each not
+    /// closed, an error) and it; otherwise the statement is ignored.
+    fn mismatchedEnd(p: *Parser, line: []const u8, ln: usize, m: regex.Match) !bool {
+        const ast = p.file_ast;
+        const cs = ast.current_scope orelse return false;
+        // statements outside any program unit (an include file's part of
+        // one), and FORALL, which opens no scope
+        if (cs == ast.none_scope) return false;
+        const word = line[m.start(1)..m.end(1)];
+        if (std.ascii.eqlIgnoreCase(word, "forall")) return false;
+        const open = Ast.constructOf(cs);
+        if (!ast.scopeReported(open)) {
+            const pa = ast.allocator();
+            const upper = try std.ascii.allocUpperString(pa, word);
+            const message = try pa.print("END {s} does not match {s}{s} opened at line {d}", .{
+                upper,
+                if (open.kind.isBlock()) "the " else "",
+                try ast.scopeLabel(open),
+                open.sline,
+            });
+            try ast.addScopeError(.{ .code = .mismatched_end, .line = ln, .message = message, .scope = open });
+        }
+        // a scope further out that the word fits
+        var k = @min(ast.scope_stack.items.len, ast.end_stack.items.len);
+        const target = while (k > 0) {
+            k -= 1;
+            const s = ast.scope_stack.items[k];
+            if (s == ast.none_scope) continue;
+            if (ast.end_stack.items[k].match(line[m.start(1)..]) != null) break s;
+        } else return false;
+        while (ast.current_scope) |inner| {
+            if (inner == target) break;
+            try ast.reportUnclosed(inner);
+            try ast.endScope(ln, true);
+        }
+        try ast.endScope(ln, true);
+        p.dbg("{s} !!! END {s} Scope (closing the scopes inside it) - Ln:{d}", .{ line, word, ln });
+        return true;
+    }
+
     fn parseDoFixedFormat(p: *Parser, line: []const u8, ln: usize, line_label: ?[]const u8, block_id_stack: *std.ArrayList([]const u8)) !bool {
         const ast = p.file_ast;
         const cs = ast.current_scope orelse return false;
@@ -545,13 +715,11 @@ pub const Parser = struct {
             try ast.endScope(ln, true);
             _ = block_id_stack.pop();
             did_close = true;
-            p.dbg("{s} !!! END DO-LABELLED - Ln:{d}", .{ line, ln });
+            p.dbg("{s} !!! END DO-LABELED - Ln:{d}", .{ line, ln });
         }
         return did_close;
     }
 
-    /// `PARAMETER (name = value, ...)`: makes variables already declared in
-    /// the current scope constants, with their values (upstream #203)
     /// DEC structures (fortls #171, hansec #230): STRUCTURE defines a
     /// derived type (a nested one with a name list also declares those
     /// fields of the structure around it), RECORD declares variables of one
@@ -561,7 +729,10 @@ pub const Parser = struct {
         const ast = p.file_ast;
         const in_type = if (ast.current_scope) |cs| cs.kind == .type else false;
         if (R().RECORD_STMT.match(line)) |m| {
-            const decl = try a.print("TYPE({s}) :: {s}", .{ m.group(1).?, m.group(2) orelse "" });
+            // `record/point/::from`, as LLVM Flang writes it in a module file
+            var names = str.strip(m.group(2) orelse "");
+            if (std.mem.startsWith(u8, names, "::")) names = str.strip(names[2..]);
+            const decl = try a.print("TYPE({s}) :: {s}", .{ m.group(1).?, names });
             if (try getFortranDefinition(a, decl)) |def| try p.handleDef(a, def, decl, ln, counters, block_id_stack);
             p.dbg("{s} !!! RECORD - Ln:{d}", .{ line, ln });
             return true;
@@ -582,36 +753,33 @@ pub const Parser = struct {
         const o = try Obj.newScope(ast, .type, ln, name, &.{});
         o.typeData().dec_structure = true;
         try ast.addScope(o, &R().END_STRUCTURED, true, true);
+        if (in_type and m.group(1) != null) try hoistStructure(ast, o);
         p.dbg("{s} !!! STRUCTURE - Ln:{d}", .{ line, ln });
         return true;
     }
 
-    fn parseParameterStmt(p: *Parser, a: Allocator, line: []const u8) !bool {
-        const m = R().PARAMETER_STMT.match(line) orelse return false;
-        const ast = p.file_ast;
-        const cs = ast.current_scope orelse return false;
-        const pa = ast.allocator();
-        for (try helpers.splitArgs(a, m.group(1) orelse "")) |item| {
-            const eq = std.mem.findScalar(u8, item, '=') orelse continue;
-            const name = str.strip(item[0..eq]);
-            for (cs.childList()) |child| {
-                if (child.kind != .variable or !std.ascii.eqlIgnoreCase(child.name, name)) continue;
-                if (!child.varData().is_const) {
-                    child.varData().is_const = true;
-                    try child.keywords.append(pa, C.KW.parameter);
-                }
-                const words = try str.splitWhitespace(a, str.strip(item[eq + 1 ..]));
-                child.varData().param_val = try pa.dupe(u8, try std.mem.join(a, " ", words));
-            }
-        }
-        p.dbg("{s} !!! PARAMETER statement - Ln:{d}", .{ str.strip(line), p.cur_line });
-        return true;
+    /// A named STRUCTURE nested in another declares its type in the scope
+    /// around the outermost structure, as compilers do (#557): `record
+    /// /inner/ r` names it there. It stays the current scope until its END
+    /// STRUCTURE.
+    fn hoistStructure(ast: *Ast, o: *Obj) !void {
+        const outer = o.parent orelse return;
+        var host: *Obj = outer;
+        while (host.kind == .type) host = host.parent orelse return;
+        for (outer.childList(), 0..) |c, i| if (c == o) {
+            outer.removeChild(i);
+            break;
+        };
+        try host.addChild(o);
+        try o.updateFqsn(host.fqsn);
+        ast.enc_scope_name = o.fqsn;
     }
 
     fn parseImplicit(p: *Parser, line: []const u8, ln: usize) !bool {
         const m = R().IMPLICIT.match(line) orelse return false;
         const ast = p.file_ast;
         if (ast.current_scope) |cs| {
+            if (ast.inMain()) try ast.addMainImplicitError("IMPLICIT statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
             cs.setImplicit(!std.ascii.eqlIgnoreCase(m.group(1).?, "none"), ln);
             // the types of the letters, for names that are not declared
             var spec = line[m.start(1)..];
@@ -635,6 +803,7 @@ pub const Parser = struct {
         var msg: ?[]const u8 = null;
         var code: C.DiagCode = .statement_without_scope;
         if (ast.current_scope) |cs| {
+            if (ast.inMain()) try ast.addMainError(.statement_without_scope, "CONTAINS statement without enclosing scope", ln, @intCast(m.start(1)), @intCast(m.end(1)));
             cs.markContains(ln) catch {
                 msg = "Multiple CONTAINS statements in scope";
                 code = .multiple_contains;
@@ -647,95 +816,15 @@ pub const Parser = struct {
         return true;
     }
 
-    fn setSingleLineDocstring(p: *Parser, line: []const u8) !void {
-        p.docs = .empty;
-        const mark = helpers.docMark(false, line) orelse return;
-        const doc = str.strip(line[mark + 1 ..]);
-        if (doc.len > 0) try p.docs.append(p.scratch.allocator(), try p.scratch.allocator().dupe(u8, doc));
-    }
-
-    fn formatDocs(p: *Parser, docs: []const []const u8) ![]const u8 {
-        const a = p.scratch.allocator();
-        if (docs.len == 1) return docs[0];
-        var docstr: std.ArrayList(u8) = .empty;
-        var has_args = true;
-        var idx_args: isize = -1;
-        for (docs) |line| {
-            if (std.mem.startsWith(u8, line, "@brief")) {
-                try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@brief", "")));
-                try docstr.append(a, '\n');
-            } else if (std.mem.startsWith(u8, line, "@param")) {
-                if (has_args) {
-                    try docstr.appendSlice(a, "\n**Parameters:**  \n");
-                    has_args = false;
-                    idx_args = @intCast(docstr.items.len);
-                }
-                try docstr.appendSlice(a, try R().DOC_PARAM.sub(a, "  \\n`\\1` - ", try std.mem.concat(a, u8, &.{ line, " " })));
-            } else if (std.mem.startsWith(u8, line, "@return")) {
-                try docstr.appendSlice(a, "\n**Returns:**  \n");
-                try docstr.appendSlice(a, str.strip(try str.replaceFirst(a, line, "@return", "")));
-                try docstr.append(a, '\n');
-            } else {
-                try docstr.appendSlice(a, str.strip(line));
-                try docstr.append(a, '\n');
-            }
-        }
-        if (idx_args > 0) {
-            const ia: usize = @intCast(idx_args);
-            const head = str.slice(docstr.items, 0, idx_args - 3);
-            const tail = try str.replaceFirst(a, docstr.items[ia..], "  \n ", "");
-            return std.mem.concat(a, u8, &.{ head, tail });
-        }
-        return docstr.items;
-    }
-
-    fn addLineComment(p: *Parser) !void {
-        if (p.docs.items.len > 0) {
-            const fd = try p.formatDocs(p.docs.items);
-            try p.file_ast.addDoc(fd, false);
-            p.dbg("{s} !!! Doc string - Line:{d}", .{ fd, p.cur_line });
-            p.docs.clearRetainingCapacity();
-        }
-    }
-
-    /// Parse documentation strings; returns the new line number, or null when the line is no documentation
-    fn parseDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
-        const fixed = p.file.fixed;
-        if (!helpers.isComment(fixed, line)) {
-            try p.addLineComment();
-            return null;
-        }
-        const mark = helpers.docMark(fixed, line) orelse {
-            try p.addLineComment();
-            return null;
-        };
-        const sa = p.scratch.allocator();
-        // get_docstring
-        try p.docs.append(sa, str.strip(line[mark + 1 ..]));
-        const predocmark = line[mark] == '>';
-        var new_ln = ln;
-        const n = p.file.nLines();
-        if (ln < n) {
-            var i = ln;
-            while (i < n) : (i += 1) {
-                const next_line = p.file.getLine(i, true) orelse "";
-                const next_mark = helpers.docMark(fixed, next_line) orelse {
-                    new_ln = i;
-                    break;
-                };
-                try p.docs.append(sa, str.strip(next_line[next_mark + 1 ..]));
-            }
-        }
-        var total: usize = 0;
-        for (p.docs.items) |d| total += d.len;
-        if (total > 0) try p.file_ast.addDoc(try p.formatDocs(p.docs.items), predocmark);
-        for (p.docs.items, 0..) |d, k| p.dbg("{s} !!! Doc string - Line:{d}", .{ d, ln + k });
-        p.docs.clearRetainingCapacity();
-        return new_ln;
-    }
+    // documentation comments (doc_comments.zig)
+    const setSingleLineDocstring = doc_comments.setSingleLineDocstring;
+    pub const formatDocs = doc_comments.formatDocs;
+    pub const addLineComment = doc_comments.addLineComment;
+    const parsePlainDocs = doc_comments.parsePlainDocs;
+    const parseDocs = doc_comments.parseDocs;
 };
 
-pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, case_type: i32) !?*Obj {
+pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, var_desc: []const u8, kind: ?[]const u8, case_type: i32) !?*Obj {
     const parent = self.parent orelse return null;
     if (parent.getType(false) != C.TypeId.select) return null;
     var binding_name: ?[]const u8 = null;
@@ -748,40 +837,11 @@ pub fn createSelectBindingVariable(self: *Obj, ast: *Ast, line_number: usize, va
     // selector
     if (binding_name != null and case_type != 4 and case_type != 5) bound_var = null;
     if (binding_name) |bn| {
-        return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .link_obj = bound_var });
-    } else if (case_type == 5) {
-        // `select rank (a)`: a is the selector itself
-        return null;
+        return try Obj.newVariable(ast, line_number, bn, var_desc, &.{}, .{ .kind = kind, .link_obj = bound_var });
     } else if (bound_var) |bv| {
-        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{});
+        // the selector names itself: in CLASS DEFAULT and a case of SELECT
+        // RANK (`select rank (a)`, #706) it is the selector
+        return try Obj.newVariable(ast, line_number, bv, var_desc, &.{}, .{ .kind = kind, .link_obj = if (case_type == 4 or case_type == 5) bv else null });
     }
     return null;
-}
-
-pub const Split = struct { line: []const u8, extra: ?[]const u8 };
-
-/// Parse the implicit dimension of an array e.g. var(3,4)
-pub fn parseImpDim(a: Allocator, line: []const u8) !Split {
-    const m = R().IMP_DIM.match(line) orelse return .{ .line = line, .extra = null };
-    const i = helpers.findParenMatch(line[m.end(1)..]);
-    if (i < 0) return .{ .line = line, .extra = null };
-    const iu: usize = @intCast(i);
-    const dims = line[m.start(1) .. m.end(1) + iu + 1];
-    const rest = try std.mem.concat(a, u8, &.{ line[0..m.start(1)], line[m.end(1) + iu + 1 ..] });
-    return .{ .line = rest, .extra = try std.mem.concat(a, u8, &.{ "dimension", dims }) };
-}
-
-/// Parse the implicit character length from a variable e.g. var_name*10
-pub fn parseImpChar(a: Allocator, line: []const u8) !Split {
-    const m = R().IMP_CHAR.match(line) orelse return .{ .line = line, .extra = null };
-    const g2 = m.group(2).?;
-    var char_len: []const u8 = undefined;
-    if (std.mem.eql(u8, g2, "(")) {
-        const i = helpers.findParenMatch(line[m.end(2)..]);
-        if (i < 0) return .{ .line = line, .extra = null };
-        char_len = line[m.start(2) .. m.end(2) + @as(usize, @intCast(i)) + 1];
-    } else {
-        char_len = g2;
-    }
-    return .{ .line = m.group(1).?, .extra = try std.mem.concat(a, u8, &.{ "*", char_len }) };
 }

@@ -28,7 +28,7 @@ pub fn serveWorkspaceSymbol(self: *Server, a: Allocator, params: lsp.WorkspaceSy
     var items: std.ArrayList(lsp.SymbolInformation) = .empty;
     const Fuzzy = struct { obj: *Obj, score: u32 };
     var fuzzy_matches: std.ArrayList(Fuzzy) = .empty;
-    for (try objects.findInWorkspace(self.env(a), "", false, false)) |cand| {
+    for (try objects.findSymbolsInWorkspace(a, &self.workspace)) |cand| {
         if (std.ascii.findIgnoreCase(cand.name, params.query) != null) {
             try items.append(a, try workspaceSymbolOf(a, cand));
         } else if (fuzzy.score(cand.name, params.query)) |s| {
@@ -62,7 +62,10 @@ pub fn workspaceSymbolOf(a: Allocator, cand: *const Obj) !lsp.SymbolInformation 
         .method => 6,
         else => 1,
     };
-    const container: ?[]const u8 = if (std.mem.find(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
+    // a file's procedure that an include links into another file's scope
+    // is in no scope of its own file (and maybe in several of others)
+    const linked = if (cand.parent) |p| p.file_ast != cand.file_ast and cand.kind.isSubroutine() else false;
+    const container: ?[]const u8 = if (linked) null else if (std.mem.findLast(u8, cand.fqsn, "::")) |i| (if (i > 0) cand.fqsn[0..i] else null) else null;
     return .{
         .name = cand.name,
         .kind = kind,
@@ -99,21 +102,40 @@ pub fn serveDocumentSymbols(self: *Server, a: Allocator, params: lsp.TextDocumen
     if (self.hierarchical_symbols) return json.from(a, try outline.documentSymbols(a, file, ast, self.s.symbol_skip_mem));
     var out: std.ArrayList(lsp.SymbolInformation) = .empty;
     for (try ast.getScopes(a, null)) |scope| {
+        // a BLOCK DATA unit is a program unit, also without a name
+        if (scope.isBlockData() and scope.parent == null) {
+            const name = if (std.mem.startsWith(u8, scope.name, "#")) "BLOCK DATA" else scope.name;
+            try out.append(a, symbolOf(name, outline.flatKind(C.TypeId.module, false), uri, scope.sline -| 1, scope.eline -| 1, null));
+            continue;
+        }
         if (scope.name.len == 0 or std.mem.startsWith(u8, scope.name, "#") or scope.getType(false) == C.TypeId.select) continue;
         const tree = try str.split(a, scope.fqsn, "::");
         var scope_type: i64 = undefined;
+        var container: ?[]const u8 = if (std.mem.find(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
         if (tree.len > 2) {
-            if (std.mem.startsWith(u8, tree[1], "#gen_int")) scope_type = 11 else continue;
+            // the interface bodies of an interface block of a program unit:
+            // of a named one too (#479), whose name is their container
+            if (std.mem.startsWith(u8, tree[1], "#gen_int")) {
+                scope_type = 11;
+            } else if (tree.len == 3 and scope.parent != null and scope.parent.?.kind == .interface) {
+                scope_type = 11;
+                container = scope.parent.?.name;
+            } else continue;
         } else {
             scope_type = outline.flatKind(scope.getType(false), false);
         }
-        const container: ?[]const u8 = if (std.mem.find(u8, scope.fqsn, "::")) |i| (if (i > 0) tree[0] else null) else null;
         try out.append(a, symbolOf(scope.name, scope_type, uri, scope.sline -| 1, scope.eline -| 1, container));
         if (scope.getType(false) == C.TypeId.class and !self.s.symbol_skip_mem) {
             for (scope.childList()) |child| {
                 try out.append(a, symbolOf(child.name, outline.flatKind(child.getType(false), true), uri, child.sline -| 1, null, scope.name));
             }
         }
+    }
+    // the procedures of ENTRY statements, of a program unit or at the top
+    for (ast.entry_list.items) |e| {
+        const container: ?[]const u8 = if (e.parent) |p| p.name else null;
+        if (e.parent) |p| if (p.parent != null) continue;
+        try out.append(a, symbolOf(e.name, outline.flatKind(e.getType(false), false), uri, e.sline -| 1, e.eline -| 1, container));
     }
     return json.from(a, out.items);
 }
@@ -122,6 +144,14 @@ pub fn serveSemanticTokens(self: *Server, a: Allocator, params: lsp.TextDocument
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;
     return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokens(a, self.env(a), file, ast, self.fixedLimit()) });
+}
+
+/// The semantic tokens of a range of lines (#194): what the editor shows
+/// first of a long file, before it asks for all of it
+pub fn serveSemanticTokensRange(self: *Server, a: Allocator, params: lsp.SemanticTokensRangeParams) !Value {
+    const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
+    const ast = file.ast orelse return .null;
+    return json.from(a, lsp.SemanticTokens{ .data = try semantic.tokensIn(a, self.env(a), file, ast, self.fixedLimit(), params.range.start.line, params.range.end.line) });
 }
 
 pub fn serveFoldingRanges(self: *Server, a: Allocator, params: lsp.TextDocumentParams) !Value {

@@ -14,12 +14,41 @@ fn R() *const patterns.Patterns {
 }
 
 const objects = @import("../objects.zig");
+const implicit = @import("../implicit.zig");
 const Obj = objects.Obj;
 const UseStmt = objects.UseStmt;
 const Env = objects.Env;
 const Diagnostic = objects.Diagnostic;
 const BuiltDiag = objects.BuiltDiag;
 const EndError = objects.EndError;
+
+/// Whether a file has `#if`, `#ifdef` or `#ifndef` directives
+fn hasConditionals(file: *const FortranFile) bool {
+    for (0..file.nLines()) |ln| {
+        const t = std.mem.trimStart(u8, file.getLine(ln, false) orelse continue, " \t");
+        if (t.len < 3 or t[0] != '#') continue;
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, t[1..], " \t"), "if")) return true;
+    }
+    return false;
+}
+
+/// An END statement that does not fit the scope open there
+/// (`mismatched-end`), or a scope still open at the end of the file
+/// (`unclosed-scope`)
+pub const ScopeError = struct {
+    code: C.DiagCode,
+    /// 1-based line of the error
+    line: usize,
+    message: []const u8,
+    /// the scope it is about (opened at its `sline`)
+    scope: *Obj,
+};
+
+/// Per scope, whether it is reported as not closed (rebuilt, not saved)
+pub const ScopeFlags = struct {
+    map: std.AutoHashMapUnmanaged(*const Obj, bool) = .empty,
+    pub const not_saved = {};
+};
 
 pub const IncludeInfo = struct {
     line_number: usize,
@@ -28,6 +57,55 @@ pub const IncludeInfo = struct {
     scope_objs: std.ArrayList(*Obj) = .empty,
     /// Cached `Include` object returned by `find_in_scope`
     inc_obj: ?*Obj = null,
+    /// For an `#include` whose file the preprocessor found nowhere: the
+    /// byte columns of the name in its line (`include-not-found`)
+    missing: ?[2]usize = null,
+    /// The scope the file's USE statements and IMPLICIT state are linked
+    /// into (see `Ast.linkIncludeScope`)
+    parent: ?*Obj = null,
+    /// The copies of the file's USE statements in `parent`'s list
+    uses: std.ArrayList(*UseStmt) = .empty,
+    /// `parent`'s IMPLICIT state before the file's IMPLICIT statement set it
+    implicit_before: ?ImplicitState = null,
+
+    pub const ImplicitState = struct { vars: ?bool, line: ?usize, rules: []const implicit.Rule };
+
+    /// Take the file's USE statements and IMPLICIT state out of the
+    /// including scope again
+    pub fn unlink(inc: *IncludeInfo) void {
+        const ps = inc.parent orelse return;
+        inc.parent = null;
+        const use = &ps.scopeData().use;
+        for (inc.uses.items) |u| {
+            for (use.items, 0..) |x, i| if (x == u) {
+                _ = use.orderedRemove(i);
+                break;
+            };
+        }
+        inc.uses.clearRetainingCapacity();
+        if (inc.implicit_before) |before| {
+            ps.implicit_vars = before.vars;
+            ps.scopeData().implicit_line = before.line;
+            ps.scopeData().implicit_rules = before.rules;
+            inc.implicit_before = null;
+        }
+    }
+};
+
+/// The IMPLICIT statement of an included file (`Ast.inc_implicit`): NONE
+/// (`vars` false) or its rules
+pub const IncludeImplicit = struct { vars: bool, rules: []const implicit.Rule };
+
+/// The innermost scope of each line of a file (`Ast.innerScopes`)
+pub const InnerScopes = struct {
+    lines: []const ?*Obj,
+    none_scope: ?*Obj,
+
+    /// What `Ast.getInnerScope(line_number)` gives
+    pub fn at(self: InnerScopes, line_number: usize) ?*Obj {
+        if (line_number >= 1 and line_number <= self.lines.len) if (self.lines[line_number - 1]) |s| return s;
+        return self.none_scope;
+    }
 };
 
 pub const Ast = struct {
@@ -43,12 +121,29 @@ pub const Ast = struct {
     end_stack: std.ArrayList(*const regex.Regex) = .empty,
     include_statements: std.ArrayList(*IncludeInfo) = .empty,
     end_errors: std.ArrayList(EndError) = .empty,
+    scope_errors: std.ArrayList(ScopeError) = .empty,
+    /// The scopes `scope_errors` names, each with whether it is reported as
+    /// not closed
+    scope_flags: ScopeFlags = .{},
     parse_errors: std.ArrayList(BuiltDiag) = .empty,
     inherit_objs: std.ArrayList(*Obj) = .empty,
     linkable_objs: std.ArrayList(*Obj) = .empty,
     external_objs: std.ArrayList(*Obj) = .empty,
+    /// The procedures of ENTRY statements (parser/entries.zig), which are
+    /// in no scope's lines
+    entry_list: std.ArrayList(*Obj) = .empty,
     none_scope: ?*Obj = null,
+    /// Indices of `parse_errors` that an END of the unnamed scope withdraws
+    /// (`addMainError`)
+    main_errors: std.ArrayList(usize) = .empty,
+    /// The indices of `parse_errors` (in `main_errors`) that are IMPLICIT
+    /// statements' (`addMainImplicitError`)
+    implicit_errors: std.ArrayList(usize) = .empty,
     inc_scope: ?*Obj = null,
+    /// The IMPLICIT statement of the unnamed scope that no END closes (the
+    /// text of an include): `closeFile` takes it out of the scope, and
+    /// `linkIncludeScope` applies it in the scope that includes the file
+    inc_implicit: ?IncludeImplicit = null,
     /// The scope of the including file that this file is included into, so
     /// that names are looked up there after the file's own scopes (cleared
     /// when the workspace is relinked)
@@ -58,6 +153,12 @@ pub const Ast = struct {
     enc_scope_name: ?[]const u8 = null,
     last_obj: ?*Obj = null,
     pending_doc: ?[]const u8 = null,
+    /// Set when the AST is the summary of the file's (objects/summary.zig),
+    /// which is parsed again for what needs the rest
+    summary: ?Summary = null,
+
+    /// `depth`: the deepest nesting of scopes of the full AST
+    pub const Summary = struct { depth: i64 };
 
     pub fn create(gpa: Allocator, file: ?*FortranFile) !*Ast {
         var arena = std.heap.ArenaAllocator.init(gpa);
@@ -78,11 +179,68 @@ pub const Ast = struct {
         return self.arena.allocator();
     }
 
-    fn createNoneScope(self: *Ast) Allocator.Error!void {
-        std.debug.assert(self.none_scope == null);
-        const ns = try Obj.newScope(self, .program, 1, "main", &.{});
+    /// Makes the unnamed scope of the statements outside every program unit
+    /// (`none_scope`) the current scope, created at line `line_number` if
+    /// there is none. It is the main program when an END closes it
+    /// (`endMain`), else the text of an include.
+    pub fn openMain(self: *Ast, line_number: usize) Allocator.Error!void {
+        std.debug.assert(self.current_scope == null);
+        if (self.none_scope) |ns| {
+            self.current_scope = ns;
+            self.end_scope_regex = &R().END_PROGRAM_NONE;
+            self.enc_scope_name = ns.fqsn;
+            return;
+        }
+        const ns = try Obj.newScope(self, .program, line_number, "main", &.{});
         self.none_scope = ns;
         try self.addScope(ns, &R().END_PROGRAM_NONE, false, false);
+    }
+
+    /// Whether the current scope is the unnamed one outside every program
+    /// unit
+    pub fn inMain(self: *const Ast) bool {
+        return self.current_scope != null and self.current_scope == self.none_scope and self.scope_stack.items.len == 0;
+    }
+
+    /// Leaves the unnamed scope for a program unit that starts after its
+    /// statements: one cannot be inside it (an include's text before it)
+    pub fn leaveMain(self: *Ast) void {
+        std.debug.assert(self.inMain());
+        self.current_scope = null;
+        self.end_scope_regex = null;
+        self.enc_scope_name = null;
+    }
+
+    /// An error of a statement in the unnamed scope that is no error in a
+    /// main program: withdrawn when an END makes the scope one
+    pub fn addMainError(self: *Ast, code: C.DiagCode, msg: []const u8, ln: usize, sch: usize, ech: ?usize) !void {
+        try self.main_errors.append(self.allocator(), self.parse_errors.items.len);
+        try self.addError(code, msg, C.Severity.err, ln, sch, ech);
+    }
+
+    /// The error of an IMPLICIT statement in the unnamed scope: also no
+    /// error while the file is included into a scope, where the statement
+    /// applies (`linkIncludeScope`)
+    pub fn addMainImplicitError(self: *Ast, msg: []const u8, ln: usize, sch: usize, ech: ?usize) !void {
+        try self.implicit_errors.append(self.allocator(), self.parse_errors.items.len);
+        try self.addMainError(.statement_without_scope, msg, ln, sch, ech);
+    }
+
+    /// An END at line `line_number` closes the unnamed scope: it is a main
+    /// program without a PROGRAM statement, which stays in the scope list,
+    /// and statements after it open a new unnamed scope
+    pub fn endMain(self: *Ast, line_number: usize) void {
+        std.debug.assert(self.inMain());
+        self.none_scope.?.end(line_number);
+        self.leaveMain();
+        self.none_scope = null;
+        var k = self.main_errors.items.len;
+        while (k > 0) {
+            k -= 1;
+            _ = self.parse_errors.orderedRemove(self.main_errors.items[k]);
+        }
+        self.main_errors.clearRetainingCapacity();
+        self.implicit_errors.clearRetainingCapacity();
     }
 
     fn getEncScopeName(self: *const Ast) ?[]const u8 {
@@ -96,7 +254,7 @@ pub const Ast = struct {
         if (new_scope.requireLink()) try self.linkable_objs.append(a, new_scope);
         if (self.current_scope == null) {
             if (req_container) {
-                try self.createNoneScope();
+                try self.openMain(new_scope.sline);
                 new_scope.fqsn = try std.mem.concat(a, u8, &.{ self.none_scope.?.fqsn, "::", try std.ascii.allocLowerString(a, new_scope.name) });
                 try self.current_scope.?.addChild(new_scope);
                 try self.scope_stack.append(a, self.current_scope.?);
@@ -132,7 +290,7 @@ pub const Ast = struct {
     pub fn addVariable(self: *Ast, new_var: *Obj) !void {
         const a = self.allocator();
         if (self.current_scope == null) {
-            try self.createNoneScope();
+            try self.openMain(new_var.sline);
             new_var.fqsn = try std.mem.concat(a, u8, &.{ self.none_scope.?.fqsn, "::", try std.ascii.allocLowerString(a, new_var.name) });
         }
         try self.current_scope.?.addChild(new_var);
@@ -160,7 +318,7 @@ pub const Ast = struct {
     }
 
     pub fn addUse(self: *Ast, use_mod: *UseStmt) !void {
-        if (self.current_scope == null) try self.createNoneScope();
+        if (self.current_scope == null) try self.openMain(use_mod.line_number);
         try self.current_scope.?.scopeData().use.append(self.allocator(), use_mod);
     }
 
@@ -169,6 +327,12 @@ pub const Ast = struct {
         const inc = try a.create(IncludeInfo);
         inc.* = .{ .line_number = line_number, .path = try a.dupe(u8, path) };
         try self.include_statements.append(a, inc);
+    }
+
+    /// An `#include` whose file is not found: an include zfls cannot read
+    pub fn addMissingInclude(self: *Ast, name: []const u8, line_number: usize, start: usize, end: usize) !void {
+        try self.addInclude(name, line_number);
+        self.include_statements.items[self.include_statements.items.len - 1].missing = .{ start, end };
     }
 
     pub fn addDoc(self: *Ast, doc_string: []const u8, forward: bool) !void {
@@ -234,11 +398,65 @@ pub const Ast = struct {
         return curr;
     }
 
+    /// The scope `getInnerScope` gives each of the first `n_lines` lines, for
+    /// a caller that asks for many lines: `getInnerScope` looks at every
+    /// scope of the file, which for every line of a long file of many
+    /// procedures is quadratic in its length. This finds them in one pass
+    /// over the scopes, by the same rule: of the scopes around the line, the
+    /// last listed of those that open last.
+    pub fn innerScopes(self: *Ast, a: Allocator, n_lines: usize) Allocator.Error!InnerScopes {
+        const scopes = try a.alloc(?*Obj, n_lines);
+        @memset(scopes, null);
+        // paint from the scope that opens last (the last listed of those
+        // that open at one line) to the first, each line once: `next` skips
+        // the painted ones
+        const order = try a.alloc(usize, self.scope_list.items.len);
+        defer a.free(order);
+        for (order, 0..) |*o, i| o.* = i;
+        const items = self.scope_list.items;
+        const Ctx = struct {
+            items: []*Obj,
+            fn later(c: @This(), x: usize, y: usize) bool {
+                const sx = c.items[x].sline;
+                const sy = c.items[y].sline;
+                return if (sx != sy) sx > sy else x > y;
+            }
+        };
+        std.mem.sort(usize, order, Ctx{ .items = items }, Ctx.later);
+        const next = try a.alloc(usize, n_lines + 1);
+        defer a.free(next);
+        for (next, 0..) |*n, i| n.* = i;
+        for (order) |i| {
+            const s = items[i];
+            // scopes count lines from 1
+            var l = findFree(next, @min(@max(s.sline, 1) - 1, n_lines));
+            while (l < n_lines and l + 1 <= s.eline) : (l = findFree(next, l)) {
+                scopes[l] = s;
+                next[l] = l + 1;
+            }
+        }
+        return .{ .lines = scopes, .none_scope = self.none_scope };
+    }
+
+    /// The first line index from `i` on that no scope has painted
+    fn findFree(next: []usize, i: usize) usize {
+        var r = i;
+        while (next[r] != r) r = next[r];
+        var c = i;
+        while (next[c] != r) {
+            const n = next[c];
+            next[c] = r;
+            c = n;
+        }
+        return r;
+    }
+
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
         for (parent.childList()) |child| {
             if (std.mem.eql(u8, child.name, name)) return child;
-            // the enumerators of an ENUM are names of the scope around it
-            if (std.mem.startsWith(u8, child.name, "#GEN_INT") or child.kind == .enum_) {
+            // the enumerators of an ENUM and the interface bodies of an
+            // interface block (#474) are names of the scope around it
+            if (child.kind == .interface or child.kind == .enum_) {
                 for (child.childList()) |ic| if (std.mem.eql(u8, ic.name, name)) return ic;
             }
         }
@@ -264,10 +482,73 @@ pub const Ast = struct {
         return current;
     }
 
+    /// What an error message calls scope `s`: `IF construct`,
+    /// `SUBROUTINE "name"`
+    pub fn scopeLabel(self: *Ast, s: *Obj) ![]const u8 {
+        const a = self.allocator();
+        const kw: []const u8 = switch (s.kind) {
+            .function => "FUNCTION",
+            .scope => "PROCEDURE",
+            else => try s.getDesc(a),
+        };
+        if (s.kind.isBlock()) return a.print("{s} construct", .{kw});
+        if (s.name.len == 0) return kw;
+        if (s.name[0] == '#') return a.print("{s} block", .{kw});
+        return a.print("{s} \"{s}\"", .{ kw, s.name });
+    }
+
+    /// Whether an error names scope `s` already
+    pub fn scopeReported(self: *const Ast, s: *const Obj) bool {
+        return self.scope_flags.map.contains(s);
+    }
+
+    /// Whether scope `s` is reported as not closed: a procedure typed in it
+    /// before its END is no definition before CONTAINS, but half-typed code
+    pub fn isUnclosed(self: *const Ast, s: *const Obj) bool {
+        return self.scope_flags.map.get(s) orelse false;
+    }
+
+    /// A SELECT TYPE or SELECT RANK construct for one of its blocks (the
+    /// parser opens a scope for each), else `s`
+    pub fn constructOf(s: *Obj) *Obj {
+        if (s.kind == .select and s.isTypeRegion()) if (s.parent) |p| return p;
+        return s;
+    }
+
+    /// Records that scope `s` is not closed, unless an error names it
+    /// already
+    pub fn reportUnclosed(self: *Ast, s_in: *Obj) !void {
+        const s = constructOf(s_in);
+        if (s == self.none_scope or self.scopeReported(s)) return;
+        const message = try self.allocator().print("{s} is not closed", .{try self.scopeLabel(s)});
+        try self.addScopeError(.{ .code = .unclosed_scope, .line = s.sline, .message = message, .scope = s });
+    }
+
+    pub fn addScopeError(self: *Ast, e: ScopeError) !void {
+        const a = self.allocator();
+        try self.scope_errors.append(a, e);
+        const g = try self.scope_flags.map.getOrPut(a, e.scope);
+        g.value_ptr.* = (g.found_existing and g.value_ptr.*) or e.code == .unclosed_scope;
+    }
+
     pub fn closeFile(self: *Ast, line_number: usize) !void {
+        // the scopes still open, outermost first
+        for (self.scope_stack.items) |s| try self.reportUnclosed(s);
+        if (self.current_scope) |cs| try self.reportUnclosed(cs);
         while (self.current_scope != null) try self.endScope(line_number, false);
         if (self.none_scope) |ns| {
             ns.end(line_number);
+            // no END closes it: the text of an include, whose IMPLICIT and
+            // CONTAINS belong to the scope that includes it (its errors
+            // stay, but for the IMPLICIT's while the file is included into
+            // a scope: `checkFile`); `linkIncludeScope` applies the
+            // IMPLICIT there
+            const sd = ns.scopeData();
+            if (ns.implicit_vars) |flag| self.inc_implicit = .{ .vars = flag, .rules = sd.implicit_rules };
+            ns.implicit_vars = null;
+            sd.implicit_line = null;
+            sd.implicit_rules = &.{};
+            sd.contains_start = null;
             for (self.scope_list.items, 0..) |s, i| if (s == ns) {
                 _ = self.scope_list.orderedRemove(i);
                 break;
@@ -308,35 +589,87 @@ pub const Ast = struct {
         for (self.include_statements.items) |inc| {
             // a part of a statement's text: no declarations to link
             if (self.file) |f| if (f.continuesInto(inc.line_number -| 1)) continue;
-            const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse continue;
+            const file_path = (try findInclude(workspace, file_dir, include_dirs, inc.path, tmp)) orelse {
+                if (only_path == null) inc.unlink();
+                continue;
+            };
             if (only_path) |p| if (!std.mem.eql(u8, p, file_path)) continue;
+            inc.unlink();
             const parent_scope = self.getInnerScope(inc.line_number);
             const include_file = workspace.get(file_path) orelse continue;
             const include_ast = include_file.ast orelse continue;
             inc.file = include_file;
             inc.inc_obj = null;
             include_ast.included_in = parent_scope;
-            if (include_ast.none_scope == null) continue;
-            if (include_ast.inc_scope == null) include_ast.inc_scope = include_ast.none_scope;
+            // what the file declares: the children of its unnamed scope, or,
+            // for a file of whole procedures (which has none), those
+            // procedures, as the procedures of the including scope
+            const units: []const *Obj = if (include_ast.inc_scope orelse include_ast.none_scope) |ns| blk: {
+                include_ast.inc_scope = ns;
+                break :blk ns.childList();
+            } else try include_ast.topProcedures(tmp);
             // Remove old objects
             if (parent_scope) |ps| {
                 for (inc.scope_objs.items) |obj| {
                     for (ps.childList(), 0..) |c, i| if (c == obj) {
-                        _ = ps.scopeData().children.orderedRemove(i);
+                        ps.removeChild(i);
                         break;
                     };
                 }
             }
             inc.scope_objs.clearRetainingCapacity();
-            for (include_ast.inc_scope.?.childList()) |child| {
+            for (units) |child| {
                 try inc.scope_objs.append(self.allocator(), child);
                 if (parent_scope) |ps| {
                     try ps.addChild(child);
                     try child.updateFqsn(ps.fqsn);
                 }
             }
-            include_ast.none_scope = parent_scope;
+            if (include_ast.inc_scope) |ns| if (parent_scope) |ps| try self.linkIncludeScope(inc, ps, ns, include_ast.inc_implicit);
+            if (include_ast.inc_scope != null) include_ast.none_scope = parent_scope;
         }
+    }
+
+    /// The USE statements of an included file's unnamed scope `ns` are USE
+    /// statements of the including scope `ps` too, at the include line, and
+    /// its IMPLICIT statement `imp` (`inc_implicit`, which is no longer in
+    /// `ns`) sets `ps`'s rule; copied into this file's memory, so that they
+    /// outlive the included file's parse
+    fn linkIncludeScope(self: *Ast, inc: *IncludeInfo, ps: *Obj, ns: *Obj, imp: ?IncludeImplicit) !void {
+        if (ps.data != .scope or ns.data != .scope or ps == ns) return;
+        const a = self.allocator();
+        inc.parent = ps;
+        const sd = ns.scopeDataConst();
+        for (sd.use.items) |u| {
+            if (u.is_import) continue;
+            const copy = try a.create(UseStmt);
+            copy.* = .{ .mod_name = try a.dupe(u8, u.mod_name), .line_number = inc.line_number, .included = true };
+            for (u.only_list.items.items) |name| try copy.only_list.add(a, try a.dupe(u8, name));
+            for (u.rename_map.keys.items, u.rename_map.values.items) |k, v| try copy.rename_map.put(a, try a.dupe(u8, k), try a.dupe(u8, v));
+            try ps.scopeData().use.append(a, copy);
+            try inc.uses.append(a, copy);
+        }
+        const im = imp orelse return;
+        const psd = ps.scopeData();
+        inc.implicit_before = .{ .vars = ps.implicit_vars, .line = psd.implicit_line, .rules = psd.implicit_rules };
+        ps.setImplicit(im.vars, inc.line_number);
+        if (im.rules.len > 0) {
+            const rules = try a.alloc(implicit.Rule, im.rules.len);
+            for (im.rules, rules) |r, *out| out.* = .{ .first = r.first, .last = r.last, .type = try a.dupe(u8, r.type) };
+            psd.implicit_rules = try std.mem.concat(a, implicit.Rule, &.{ psd.implicit_rules, rules });
+        }
+    }
+
+    /// The procedures of the file outside any other scope (those another
+    /// file's include has linked into a scope of its own included)
+    fn topProcedures(self: *Ast, tmp: Allocator) ![]const *Obj {
+        var out: std.ArrayList(*Obj) = .empty;
+        for (self.scope_list.items) |s| {
+            if (!s.kind.isSubroutine()) continue;
+            if (s.parent) |p| if (p.file_ast == self) continue;
+            try out.append(tmp, s);
+        }
+        return out.items;
     }
 
     pub fn checkFile(self: *Ast, env: Env) !struct { errors: []Diagnostic, parse_errors: []BuiltDiag } {
@@ -350,9 +683,27 @@ pub const Ast = struct {
                 try a.print("Unexpected end of scope at line {d}", .{el})
             else
                 "Unexpected end statement: No open scopes";
-            try errors.append(a, Diagnostic.init(.unexpected_end, e.scope_line -| 1, message, 1, null));
+            // at the END statement
+            try errors.append(a, Diagnostic.init(.unexpected_end, (e.end_line orelse e.scope_line) -| 1, message, 1, "end"));
         }
+        // the parser reads every branch of the preprocessor conditionals of
+        // a file that is not preprocessed: each may open the same scope
+        const unpreprocessed = if (self.file) |f| !f.preproc and hasConditionals(f) else false;
+        if (!unpreprocessed) for (self.scope_errors.items) |e| {
+            // an INCLUDE after its first line may close it
+            if (e.code == .unclosed_scope) if (for (self.include_statements.items) |inc| {
+                if (inc.line_number >= e.scope.sline) break true;
+            } else false) continue;
+            var d = Diagnostic.init(e.code, e.line -| 1, e.message, 1, null);
+            if (e.code == .mismatched_end) d.addRelated(self.path, e.scope.sline -| 1, "Opened here");
+            try errors.append(a, d);
+        };
+        // each scope's IMPLICIT rule from its parent's, not by walking all
+        // the scopes around it (#923); scopes are listed after their parents
+        var implicit_of: std.AutoHashMapUnmanaged(*const Obj, ?bool) = .empty;
         for (tmp_list.items) |scope| {
+            const rule: ?bool = scope.implicit_vars orelse if (scope.parent) |p| (implicit_of.get(p) orelse p.getImplicit()) else null;
+            try implicit_of.put(a, scope, rule);
             if (!scope.checkValidParent()) {
                 try errors.append(a, Diagnostic.init(
                     .invalid_parent,
@@ -364,8 +715,84 @@ pub const Ast = struct {
             }
             try errors.appendSlice(a, try scope.checkUse(env));
             try errors.appendSlice(a, try scope.checkDefinitions(env));
-            try errors.appendSlice(a, try scope.getDiagnostics(a));
+            try errors.appendSlice(a, try scope.getDiagnostics(a, rule));
         }
-        return .{ .errors = errors.items, .parse_errors = self.parse_errors.items };
+        // an included file's IMPLICIT applies in the scope it is included
+        // into (`linkIncludeScope`)
+        if (self.included_in == null or self.implicit_errors.items.len == 0)
+            return .{ .errors = errors.items, .parse_errors = self.parse_errors.items };
+        var parse_errors: std.ArrayList(BuiltDiag) = .empty;
+        for (self.parse_errors.items, 0..) |e, i| {
+            if (std.mem.findScalar(usize, self.implicit_errors.items, i) == null) try parse_errors.append(a, e);
+        }
+        return .{ .errors = errors.items, .parse_errors = parse_errors.items };
     }
 };
+
+test "innerScopes gives each line the scope getInnerScope gives it (#209)" {
+    const gpa = std.testing.allocator;
+    @import("../patterns.zig").init();
+    const src =
+        \\module m
+        \\  integer :: x
+        \\contains
+        \\  subroutine s(n)
+        \\    integer :: n, i
+        \\    do i = 1, n; associate (y => x)
+        \\      block
+        \\        x = y
+        \\      end block
+        \\    end associate; end do
+        \\  end subroutine s
+        \\  function f()
+        \\    integer :: f
+        \\    f = 1
+        \\  end function f
+        \\end module m
+        \\program p
+        \\  use m
+        \\  call s(2)
+        \\end program p
+        \\
+    ;
+    const f = try FortranFile.create(gpa, "/w/inner.f90", null);
+    defer f.destroy();
+    _ = try f.setTextOwned(try gpa.dupe(u8, src));
+    const ast = try f.parse(std.testing.io, null, &.{}, .{});
+    defer ast.destroy();
+    const n = f.nLines();
+    const inner = try ast.innerScopes(gpa, n);
+    defer gpa.free(inner.lines);
+    for (0..n + 2) |ln| try std.testing.expectEqual(ast.getInnerScope(ln), inner.at(ln));
+}
+
+test "statements outside every program unit: a main program when END closes them (#229)" {
+    const gpa = std.testing.allocator;
+    @import("../patterns.zig").init();
+    const Case = struct { path: []const u8, text: []const u8, main: ?[2]usize, none: bool };
+    for ([_]Case{
+        .{ .path = "/w/a.f90", .text = "implicit none\ninteger :: i\ni = 1\nend\nsubroutine s\nend subroutine\n", .main = .{ 1, 4 }, .none = false },
+        .{ .path = "/w/b.f90", .text = "subroutine s\nend subroutine\n\n  print *, 1\nend program\n", .main = .{ 4, 5 }, .none = false },
+        // the text of an include: no END
+        .{ .path = "/w/c.inc", .text = "  integer :: n\n  n = 1\n", .main = null, .none = true },
+        // the body of a macro is no statement
+        .{ .path = "/w/d.h", .text = "#define ewrite(p, f) \\\n    if (p <= 3) write(p, f)\n", .main = null, .none = false },
+    }) |c| {
+        const f = try FortranFile.create(gpa, c.path, null);
+        defer f.destroy();
+        _ = try f.setTextOwned(try gpa.dupe(u8, c.text));
+        const ast = try f.parse(std.testing.io, null, &.{}, .{});
+        defer ast.destroy();
+        var main: ?*Obj = null;
+        for (ast.scope_list.items) |s| if (s.kind == .program) {
+            main = s;
+        };
+        if (c.main) |lines| {
+            try std.testing.expectEqual(lines[0], main.?.sline);
+            try std.testing.expectEqual(lines[1], main.?.eline);
+            try std.testing.expect(main.?.parent == null);
+        } else try std.testing.expect(main == null);
+        try std.testing.expectEqual(c.none, ast.none_scope != null);
+        for (ast.scope_list.items) |s| if (s.kind == .subroutine) try std.testing.expect(s.parent == null);
+    }
+}

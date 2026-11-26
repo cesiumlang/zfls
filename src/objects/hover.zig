@@ -9,6 +9,8 @@ const C = @import("../constants.zig");
 const KW = C.KW;
 
 const objects = @import("../objects.zig");
+const unit_kinds = @import("../argcheck/unit_kinds.zig");
+const dimensions = @import("dimensions.zig");
 const Obj = objects.Obj;
 
 pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, drop_arg: ?usize) Allocator.Error!Obj.Snippet {
@@ -65,7 +67,20 @@ pub fn getSnippet(self: *const Obj, a: Allocator, name_replace: ?[]const u8, dro
     }
 }
 
+/// How many hovers may be building one another's text (a procedure that
+/// has an argument declared with its own interface, `procedure(s) :: x`
+/// in `s`, would never end)
+const max_hover_depth = 8;
+threadlocal var hover_depth: u8 = 0;
+
 pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Allocator.Error!Obj.Hover {
+    if (hover_depth >= max_hover_depth) return .{};
+    hover_depth += 1;
+    defer hover_depth -= 1;
+    return hoverOf(self, a, long, drop_arg);
+}
+
+fn hoverOf(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Allocator.Error!Obj.Hover {
     switch (self.kind) {
         .module, .program, .submodule => return .{
             .msg = try std.mem.concat(a, u8, &.{ try self.getDesc(a), " ", self.name }),
@@ -120,9 +135,19 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
             };
         },
         .variable => {
-            const doc_str = self.getDocumentation();
+            var doc_str = self.getDocumentation();
+            const v = self.varDataConst();
+            if (v.cray) |c| {
+                const note = try a.print("Cray {s} `{s}`", .{ if (c.role == .pointer) "pointer to" else "pointee of", c.other });
+                doc_str = if (doc_str) |d| try a.print("{s}  \n{s}", .{ note, d }) else note;
+            }
+            switch (v.group) {
+                .none => {},
+                .common => return .{ .msg = try a.print("COMMON {s} {s}", .{ self.name, v.members }), .docs = doc_str },
+                .namelist => return .{ .msg = try a.print("NAMELIST /{s}/ {s}", .{ self.name, v.members }), .docs = doc_str },
+            }
             var parts: std.ArrayList([]const u8) = .empty;
-            try parts.append(a, try self.getDesc(a));
+            try parts.append(a, try declaredType(self, a));
             try parts.appendSlice(a, try self.getKeywordStrings(a));
             var hover = try std.mem.join(a, ", ", parts.items);
             if (!std.mem.startsWith(u8, hover, "#")) hover = try a.print("{s} :: {s}", .{ hover, self.name });
@@ -156,34 +181,131 @@ pub fn getHover(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) Al
     }
 }
 
+/// The type of variable `self`, with the kind that its file's options give
+/// a type written without one (`REAL(8)` for `REAL` with
+/// `-fdefault-real-8`, #655)
+fn declaredType(self: *const Obj, a: Allocator) ![]const u8 {
+    const desc = try self.getDesc(a);
+    if (self.linkObj() != null) return desc;
+    const kinds = unit_kinds.ofDeclaration(self) orelse return desc;
+    const t = kinds.implied(desc) orelse return desc;
+    return a.print("{s}({d})", .{ t.name, t.kind });
+}
+
+/// The lines inside a type's block that `getTypeBlock` shows at most
+pub const type_block_lines = 20;
+
+/// Derived type `self` as it would be written (#268): its header, its own
+/// components (those it inherits are not repeated), then after CONTAINS
+/// its type-bound procedures and generics, and END TYPE. Components
+/// declared together stay together (`REAL :: x, y`). Private components
+/// and bindings are left out unless `private`. After `type_block_lines`
+/// lines inside, the block ends with `...`.
+pub fn getTypeBlock(self: *const Obj, a: Allocator, private: bool) ![]const u8 {
+    var comps: std.ArrayList([]const u8) = .empty;
+    var binds: std.ArrayList([]const u8) = .empty;
+    // the type and line of the last component, to join the next to it
+    var last_prefix: []const u8 = "";
+    var last_line: usize = 0;
+    for (self.childList()) |child| {
+        const hidden = child.vis == .private or (self.def_vis == .private and child.vis != .public);
+        if (hidden and !private) continue;
+        switch (child.kind) {
+            .variable => {
+                const msg = (try child.getHover(a, false, null)).msg orelse continue;
+                const suffix = try a.print(" :: {s}", .{child.name});
+                const prefix = if (std.mem.endsWith(u8, msg, suffix)) msg[0 .. msg.len - suffix.len] else null;
+                if (prefix) |p| if (comps.items.len > 0 and child.sline == last_line and std.mem.eql(u8, p, last_prefix)) {
+                    const i = comps.items.len - 1;
+                    comps.items[i] = try a.print("{s}, {s}", .{ comps.items[i], child.name });
+                    continue;
+                };
+                try comps.append(a, try a.print("  {s}", .{msg}));
+                last_prefix = prefix orelse "";
+                last_line = child.sline;
+            },
+            .method => {
+                var parts: std.ArrayList([]const u8) = .empty;
+                try parts.append(a, try child.getDescNoLink(a));
+                try parts.appendSlice(a, try helpers.getKeywords(a, child.keywords.items, child.keyword_info.*));
+                var line = try a.print("  {s} :: {s}", .{ try std.mem.join(a, ", ", parts.items), child.name });
+                if (child.varDataConst().link_name) |target| if (!std.ascii.eqlIgnoreCase(target, child.name)) {
+                    line = try a.print("{s} => {s}", .{ line, target });
+                };
+                try binds.append(a, line);
+            },
+            .interface => {
+                const members = child.scopeDataConst().members.items;
+                if (members.len == 0) continue;
+                const vis: []const u8 = switch (child.vis) {
+                    .private => ", PRIVATE",
+                    .public => ", PUBLIC",
+                    .default => "",
+                };
+                try binds.append(a, try a.print("  GENERIC{s} :: {s} => {s}", .{ vis, child.name, try std.mem.join(a, ", ", members) }));
+            },
+            else => {},
+        }
+    }
+    var lines: std.ArrayList([]const u8) = .empty;
+    try lines.append(a, (try self.getHover(a, false, null)).msg orelse self.name);
+    var inner: std.ArrayList([]const u8) = .empty;
+    try inner.appendSlice(a, comps.items);
+    if (binds.items.len > 0) {
+        try inner.append(a, "CONTAINS");
+        try inner.appendSlice(a, binds.items);
+    }
+    if (inner.items.len > type_block_lines) {
+        try lines.appendSlice(a, inner.items[0..type_block_lines]);
+        try lines.append(a, "  ...");
+    } else {
+        try lines.appendSlice(a, inner.items);
+        try lines.append(a, "END TYPE");
+    }
+    return std.mem.join(a, "\n", lines.items);
+}
+
 pub fn getHoverMd(self: *const Obj, a: Allocator, long: bool, drop_arg: ?usize) ![]const u8 {
     const h = try self.getHover(a, long, drop_arg);
     return helpers.fortranMd(a, h.msg, h.docs);
 }
 
 pub fn getKeywordStrings(self: *const Obj, a: Allocator) ![][]const u8 {
-    if (self.linkObj()) |l| {
-        if (self.varDataConst().slice_rank >= 0 and l.kind == .variable) {
-            // a name bound to a section has the rank of the section, not
-            // of the array it is cut from (upstream #108)
-            var ids: std.ArrayList(C.Kw) = .empty;
-            for (l.keywords.items) |id| if (id != KW.dimension) try ids.append(a, id);
-            var info = l.keyword_info.*;
-            info.dimension = null;
-            if (self.varDataConst().slice_rank > 0) {
-                try ids.append(a, KW.dimension);
-                var dims: std.ArrayList(u8) = .empty;
-                for (0..@as(usize, @intCast(self.varDataConst().slice_rank))) |i| {
-                    if (i > 0) try dims.append(a, ',');
-                    try dims.append(a, ':');
-                }
-                info.dimension = dims.items;
-            }
-            return helpers.getKeywords(a, ids.items, info);
-        }
-        return helpers.getKeywords(a, l.keywords.items, l.keyword_info.*);
+    const link = self.linkObj();
+    if (!dimensions.isAssociateName(self)) {
+        const from = link orelse self;
+        return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
     }
-    return helpers.getKeywords(a, self.keywords.items, self.keyword_info.*);
+    const from = link orelse self.varDataConst().selector_obj orelse self;
+    if (from.kind != .variable) return helpers.getKeywords(a, from.keywords.items, from.keyword_info.*);
+    // an associate name has the attributes of its selector that the
+    // standard gives it (TARGET for a POINTER), not ALLOCATABLE, INTENT, ...;
+    // and the rank of what it is bound to: a section of an array, not the
+    // array it is cut from (upstream #108), or an expression (#691)
+    // (of SELECT RANK, also ALLOCATABLE and POINTER, #706)
+    const slice_rank = self.varDataConst().slice_rank;
+    const rank_name = self.isRankName();
+    var ids: std.ArrayList(C.Kw) = .empty;
+    for (from.keywords.items) |id| {
+        const kept: ?C.Kw = switch (id) {
+            .dimension => if (slice_rank < 0) id else null,
+            .codimension, .target, .asynchronous, .@"volatile", .contiguous => id,
+            .pointer => if (rank_name) id else .target,
+            .allocatable => if (rank_name) id else null,
+            else => null,
+        };
+        if (kept) |k| if (std.mem.findScalar(C.Kw, ids.items, k) == null) try ids.append(a, k);
+        // a RANK block's name of a POINTER is a TARGET too, as any
+        // associate name of one is (gfortran, ifx; #715)
+        if (id == .pointer and rank_name and std.mem.findScalar(C.Kw, ids.items, .target) == null) try ids.append(a, .target);
+    }
+    var info = from.keyword_info.*;
+    if (slice_rank >= 0) info.dimension = null;
+    if (slice_rank > 0) {
+        try ids.append(a, KW.dimension);
+        info.dimension = dimensions.of(self);
+    }
+    return helpers.getKeywords(a, ids.items, info);
 }
 
 pub fn getDocsFull(self: *const Obj, a: Allocator, hover_array: *std.ArrayList([]const u8), doc_strs: *std.ArrayList([]const u8), long: bool, drop_arg: ?usize) !void {
@@ -245,14 +367,38 @@ pub fn getSignature(self: *const Obj, a: Allocator, drop_arg: ?usize) Allocator.
             }
             return .{};
         },
-        .intrinsic => {
-            var arg_sigs: std.ArrayList(Obj.ArgSig) = .empty;
-            for (try str.split(a, self.argList(), ",")) |arg| try arg_sigs.append(a, .{ .label = arg });
-            const sig = try self.getSnippet(a, null, null);
-            return .{ .label = sig.call, .doc = self.doc_str, .params = arg_sigs.items };
-        },
+        .intrinsic => return intrinsicSignature(self, a, self.argList()),
         else => return .{},
     }
+}
+
+/// The signature of each form of an object: of each argument list of an
+/// intrinsic with several (`THIS_IMAGE`), else the one of `getSignature`
+pub fn getSignatures(self: *const Obj, a: Allocator) Allocator.Error![]const Obj.Signature {
+    if (self.kind != .intrinsic) {
+        const one = try a.alloc(Obj.Signature, 1);
+        one[0] = try self.getSignature(a, null);
+        return one;
+    }
+    const forms = try self.argForms(a);
+    const out = try a.alloc(Obj.Signature, forms.len);
+    for (forms, out) |form, *sig| sig.* = try intrinsicSignature(self, a, form);
+    return out;
+}
+
+/// The signature of intrinsic `self` with the argument list `args`
+fn intrinsicSignature(self: *const Obj, a: Allocator, args: []const u8) Allocator.Error!Obj.Signature {
+    var arg_sigs: std.ArrayList(Obj.ArgSig) = .empty;
+    // without arguments one empty parameter, as fortls has
+    const list = try str.split(a, args, ",");
+    for (list) |arg| try arg_sigs.append(a, .{ .label = arg });
+    var call: []const u8 = try std.mem.concat(a, u8, &.{ self.name, "()" });
+    if (args.len > 0) {
+        call = try std.mem.concat(a, u8, &.{ self.name, (try helpers.getPlaceholders(a, list))[0] });
+    } else if (self.intrinsicData().itype == C.keyword_itype or self.intrinsicData().itype == C.statement_itype) {
+        return .{ .doc = self.doc_str };
+    }
+    return .{ .label = call, .doc = self.doc_str, .params = arg_sigs.items };
 }
 
 pub fn getInterfaceArray(self: *const Obj, a: Allocator, keywords: []const []const u8, signature: []const u8, drop_arg: ?usize, change_strings: ?[2][]const u8) !?std.ArrayList([]const u8) {

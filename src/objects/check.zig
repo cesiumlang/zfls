@@ -19,9 +19,10 @@ const Variable = objects.Variable;
 const optEql = objects.optEql;
 const Diagnostic = objects.Diagnostic;
 const findInScope = objects.findInScope;
+const importHides = objects.importHides;
 const findInWorkspace = objects.findInWorkspace;
 
-pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
+pub fn getDiagnostics(self: *const Obj, a: Allocator, implicit_flag: ?bool) ![]Diagnostic {
     var errors: std.ArrayList(Diagnostic) = .empty;
     switch (self.kind) {
         .type => {
@@ -38,7 +39,14 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
             // file that zfls does not read: not found, or a part of a
             // statement's text (json-fortran's argument lists)
             for (self.file_ast.include_statements.items) |inc| {
-                if (inc.file == null and inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                if (inc.file != null) continue;
+                if (inc.line_number > self.sline and inc.line_number < self.eline) return errors.items;
+                // the macros of an `#include` not found outside every
+                // procedure may make the declarations of those after it
+                if (inc.missing != null and inc.line_number < self.sline) {
+                    const at = self.file_ast.getInnerScope(inc.line_number);
+                    if (at == null or !at.?.kind.isSubroutine()) return errors.items;
+                }
             }
             for (self.procDataConst().missing_args.items) |m| {
                 try errors.append(a, Diagnostic.init(
@@ -49,19 +57,21 @@ pub fn getDiagnostics(self: *const Obj, a: Allocator) ![]Diagnostic {
                     m.name,
                 ));
             }
-            const implicit_flag = self.getImplicit();
             if (implicit_flag == null or implicit_flag.?) return errors.items;
             const arg_list = try str.split(a, try std.mem.replaceOwned(u8, a, self.argList(), " ", ""), ",");
             for (self.procDataConst().arg_objs.items, 0..) |arg_obj, i| {
                 if (arg_obj == null) {
                     const arg_name = str.strip(if (i < arg_list.len) arg_list[i] else "");
-                    try errors.append(a, Diagnostic.init(
+                    var d = Diagnostic.init(
                         .argument_not_declared,
                         self.sline -| 1,
                         try a.print("No matching declaration found for argument \"{s}\"", .{arg_name}),
                         1,
                         arg_name,
-                    ));
+                    );
+                    // for the quick fix declaring it
+                    d.subject = arg_name;
+                    try errors.append(a, d);
                 }
             }
         },
@@ -111,7 +121,7 @@ pub fn checkDefinition(self: *Obj, env: Env, known_types: *Obj.KnownTypes, inter
 /// Whether names of `scope` may come from a module that is not in the
 /// workspace: one that it or a scope around it uses, or the ancestor of a
 /// submodule
-fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
+pub fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
     var cur = scope;
     var depth: usize = 0;
     while (cur) |s| : (cur = s.parent) {
@@ -125,18 +135,44 @@ fn seesUnknownModule(env: Env, scope: ?*Obj) bool {
     return false;
 }
 
+/// How deep a scope may be nested for its names to be checked against
+/// those of the scopes around it: each check walks them all, so thousands
+/// of nested scopes (half-typed code) would take time in their square
+const max_masking_depth = 256;
+
+/// Whether `scope` is nested in more than `limit` scopes
+fn nestedDeeper(scope: *const Obj, limit: usize) bool {
+    var cur = scope.parent;
+    var n: usize = 0;
+    while (cur) |p| : (cur = p.parent) {
+        n += 1;
+        if (n > limit) return true;
+    }
+    return false;
+}
+
+const Seen = struct { fqsn: []const u8, line: usize };
+
+fn fqsnTail(fqsn: []const u8) []const u8 {
+    const i = std.mem.findLast(u8, fqsn, "::") orelse return fqsn;
+    return fqsn[i + 2 ..];
+}
+
 pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
     const a = env.tmp;
-    var fqsn_dict = std.array_hash_map.String(usize).empty;
+    // keyed by the name after the last `::`: the children of a scope share
+    // the path before it, and hashing a long path for each is quadratic
+    var fqsn_dict = std.array_hash_map.String(Seen).empty;
     var errors: std.ArrayList(Diagnostic) = .empty;
     var known_types = Obj.KnownTypes.empty;
 
     for (self.childList()) |child| {
         if (child.getType(false) == C.TypeId.interface) continue;
-        if (fqsn_dict.get(child.fqsn)) |v| {
-            if (child.sline < v) try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
+        const key = fqsnTail(child.fqsn);
+        if (fqsn_dict.get(key)) |v| {
+            if (child.sline < v.line and std.mem.eql(u8, v.fqsn, child.fqsn)) try fqsn_dict.put(a, key, .{ .fqsn = child.fqsn, .line = child.sline -| 1 });
         } else {
-            try fqsn_dict.put(a, child.fqsn, child.sline -| 1);
+            try fqsn_dict.put(a, key, .{ .fqsn = child.fqsn, .line = child.sline -| 1 });
         }
     }
 
@@ -149,14 +185,19 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
 
     for (self.childList()) |child| {
         if (std.mem.startsWith(u8, child.name, "#")) continue;
+        // a procedure an include links in is checked in its own file, at its
+        // own lines, which are none of this scope's
+        if (child.file_ast != self.file_ast and child.kind.isSubroutine()) continue;
         const line_number = child.sline -| 1;
         if (try child.checkDefinition(env, &known_types, is_interface)) |d| try errors.append(a, d);
         const ct = child.getType(true);
-        if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function)) {
+        const stmt_function = child.kind == .function and child.procDataConst().stmt_function;
+        if (contains_line != null and contains_line.? >= child.sline and (ct == C.TypeId.subroutine or ct == C.TypeId.function) and !stmt_function and !self.file_ast.isUnclosed(self)) {
             try errors.append(a, Diagnostic.init(.procedure_before_contains, line_number, "Subroutine/Function definition before CONTAINS statement", 1, null));
         }
         if (st == C.TypeId.interface or child.getType(false) == C.TypeId.interface) continue;
-        if (fqsn_dict.get(child.fqsn)) |first| if (line_number > first) {
+        if (fqsn_dict.get(fqsnTail(child.fqsn))) |seen| if (std.mem.eql(u8, seen.fqsn, child.fqsn) and line_number > seen.line) {
+            const first = seen.line;
             var d = Diagnostic.init(.declared_twice, line_number, try a.print("Variable \"{s}\" declared twice in scope", .{child.name}), 1, child.name);
             d.addRelated(self.file_ast.path, first, "First declaration");
             try errors.append(a, d);
@@ -164,10 +205,17 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
         };
         // an interface body has no host association, so nothing in it masks
         // a variable of the scope around the interface (hansec #200)
-        if (self.parent != null and !is_interface and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
+        // nor in a statement function, whose dummy arguments are typed as
+        // the variables of their names in the scope around it
+        const in_stmt_function = self.kind == .function and self.procDataConst().stmt_function;
+        // nor does a variable where IMPORT leaves the host's out (#804)
+        const imported = !importHides(self, try std.ascii.allocLowerString(a, child.name));
+        if (self.parent != null and !is_interface and !in_stmt_function and imported and !nestedDeeper(self, max_masking_depth) and (st == C.TypeId.subroutine or st == C.TypeId.function or st == C.TypeId.block)) {
             if (try findInScope(env, self.parent, child.name, .{})) |parent_var| {
                 if (st == C.TypeId.function and std.mem.eql(u8, parent_var.fqsn, self.fqsn)) continue;
-                var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks variable in parent scope", .{child.name}), 2, child.name);
+                // the result variable of an ENTRY of this function
+                if (parent_var.kind == .function and parent_var.procDataConst().entry_of == self) continue;
+                var d = Diagnostic.init(.masks_parent, line_number, try a.print("Variable \"{s}\" masks {s} in parent scope", .{ child.name, maskedNoun(parent_var.kind) }), 2, child.name);
                 d.addRelated(parent_var.file_ast.path, parent_var.sline -| 1, "First declaration");
                 try errors.append(a, d);
             }
@@ -176,16 +224,42 @@ pub fn checkDefinitions(self: *Obj, env: Env) ![]Diagnostic {
     return errors.items;
 }
 
+/// What a name that another masks is, for the message
+fn maskedNoun(kind: objects.Kind) []const u8 {
+    return switch (kind) {
+        .subroutine, .function, .interface, .method => "procedure",
+        .type => "type",
+        .module, .submodule, .program => "module",
+        else => "variable",
+    };
+}
+
+/// The scoping unit `scope` is where no IMPORT statement may be (F2018
+/// C8100): a main program, a module, an external subprogram or a BLOCK DATA
+/// unit, or null. Interface bodies, contained subprograms, BLOCK
+/// constructs and submodules may have one (#724).
+fn importForbidden(scope: *const Obj) ?[]const u8 {
+    return switch (scope.kind) {
+        .program => "a main program",
+        .module => "a module",
+        .subroutine, .function => if (scope.parent == null) "an external subprogram" else null,
+        .block => if (scope.isBlockData()) "a BLOCK DATA unit" else null,
+        else => null,
+    };
+}
+
 pub fn checkUse(self: *const Obj, env: Env) ![]Diagnostic {
     const a = env.tmp;
     var errors: std.ArrayList(Diagnostic) = .empty;
     // lines are 1-based, so 0 is before every USE statement
     var last_use_line: usize = 0;
     for (self.scopeDataConst().use.items) |u| {
+        // the included file reports its own
+        if (u.included) continue;
         last_use_line = @max(last_use_line, u.line_number);
         if (u.is_import) {
-            if (self.parent == null or self.parent.?.getType(false) != C.TypeId.interface) {
-                try errors.append(a, Diagnostic.init(.import_outside_interface, u.line_number -| 1, "IMPORT statement outside of interface", 1, null));
+            if (importForbidden(self)) |unit| {
+                try errors.append(a, Diagnostic.init(.import_outside_interface, u.line_number -| 1, try a.print("IMPORT statement in {s}", .{unit}), 1, null));
             }
             continue;
         }

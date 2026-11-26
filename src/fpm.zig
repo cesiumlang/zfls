@@ -49,7 +49,7 @@ pub fn parseManifest(a: Allocator, text: []const u8) !Manifest {
     var name: ?[]const u8 = null;
     var source_dir: ?[]const u8 = null;
     var main: ?[]const u8 = null;
-    var lines = std.mem.splitScalar(u8, text, '\n');
+    var lines = std.mem.splitScalar(u8, str.withoutBom(text), '\n');
     while (true) {
         const raw = lines.next();
         const line = if (raw) |r| str.strip(project.stripTomlComment(r)) else "";
@@ -135,22 +135,24 @@ pub fn isWord(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
-/// A test target and the file of its main program
-pub const TestTarget = struct { name: []const u8, main: []const u8 };
+/// A target and the file of its main program; `auto`: fpm finds it by
+/// itself, a program of the kind's directory that no table names
+pub const Target = struct { name: []const u8, main: []const u8, auto: bool = false };
 
-/// The test targets of the project in `root`, by name: the `[[test]]`
-/// tables of fpm.toml, and with `auto-tests` (the default) a target for
-/// each of `programs` (the files of `test/` and below that hold a main
+/// The targets of a kind of the project in `root`, by name: the tables of
+/// fpm.toml (`[[executable]]`, `[[test]]`, `[[example]]`), and with its
+/// auto-discovery switch (on by default) a target for each of `programs`
+/// (the files of `app/`, `test/` or `example/` and below that hold a main
 /// program) that is no table's `main`, named after its file, as fpm makes
 /// them
-pub fn testTargets(a: Allocator, m: Manifest, root: []const u8, programs: []const []const u8) ![]TestTarget {
-    var out: std.ArrayList(TestTarget) = .empty;
+pub fn targetsOf(a: Allocator, m: Manifest, kind: TargetKind, root: []const u8, programs: []const []const u8) ![]Target {
+    var out: std.ArrayList(Target) = .empty;
     for (m.targets) |t| {
-        if (t.kind != .@"test" or hasTarget(out.items, t.name)) continue;
+        if (t.kind != kind or hasTarget(out.items, t.name)) continue;
         try out.append(a, .{ .name = t.name, .main = try std.Io.Dir.path.resolveAlloc(a, &.{ root, t.source_dir, t.main }) });
     }
     const explicit = out.items.len;
-    if (m.auto.get(.@"test")) for (programs) |p| {
+    if (m.auto.get(kind)) for (programs) |p| {
         const file = try std.Io.Dir.path.resolveAlloc(a, &.{p});
         const main = for (out.items[0..explicit]) |t| {
             if (samePath(t.main, file)) break true;
@@ -158,17 +160,22 @@ pub fn testTargets(a: Allocator, m: Manifest, root: []const u8, programs: []cons
         if (main) continue;
         const base = std.Io.Dir.path.basename(file);
         const name = base[0 .. base.len - std.Io.Dir.path.extension(base).len];
-        if (!hasTarget(out.items, name)) try out.append(a, .{ .name = name, .main = file });
+        if (!hasTarget(out.items, name)) try out.append(a, .{ .name = name, .main = file, .auto = true });
     };
-    std.mem.sort(TestTarget, out.items, {}, struct {
-        fn lt(_: void, x: TestTarget, y: TestTarget) bool {
+    std.mem.sort(Target, out.items, {}, struct {
+        fn lt(_: void, x: Target, y: Target) bool {
             return std.mem.lessThan(u8, x.name, y.name);
         }
     }.lt);
     return out.items;
 }
 
-fn hasTarget(targets: []const TestTarget, name: []const u8) bool {
+/// The test targets (`targetsOf`), for `zfls/fpmTests`
+pub fn testTargets(a: Allocator, m: Manifest, root: []const u8, programs: []const []const u8) ![]Target {
+    return targetsOf(a, m, .@"test", root, programs);
+}
+
+fn hasTarget(targets: []const Target, name: []const u8) bool {
     for (targets) |t| if (std.mem.eql(u8, t.name, name)) return true;
     return false;
 }
@@ -446,4 +453,14 @@ test "test-drive: a collect procedure that ends with a bare `end`, or is a modul
     try testing.expectEqualStrings("collect_a", tests[0].collect.?);
     try testing.expect(tests[1].collect == null);
     try testing.expect(mainProgram(src.ast) == null);
+}
+
+test "fpm.toml with a UTF-8 byte-order mark (#407)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{ "", str.bom }) |mark| {
+        const text = try arena.allocator().print("{s}[build]\nauto-examples = false\n", .{mark});
+        const m = try parseManifest(arena.allocator(), text);
+        try testing.expect(!m.auto.get(.example) and m.auto.get(.executable));
+    }
 }

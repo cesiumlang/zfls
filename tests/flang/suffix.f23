@@ -1,0 +1,11 @@
+! A free-form file of suffix .f23, which LLVM Flang's driver reads as Fortran
+! only with -x f95 (zfls #401)
+module suffix_f23
+  implicit none
+  integer :: count_f23
+contains
+  subroutine fill_f23(n)
+    integer, intent(in) :: n
+    count_f23 = n
+  end subroutine
+end module suffix_f23

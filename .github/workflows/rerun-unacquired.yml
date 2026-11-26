@@ -2,10 +2,10 @@ name: Re-run unacquired jobs
 
 # GitHub's hosted macOS arm64 runners are sometimes short ("Due to capacity
 # constraints, jobs targeting macOS arm64 runners may experience longer queue
-# times"). A CI job that no runner picks up is cancelled after about 15
+# times"). A CI job that no runner picks up is canceled after about 15
 # minutes with "The job was not acquired by Runner of type hosted even after
 # multiple attempts", and the run fails although nothing was tested. When
-# every job of a failed CI run that failed or was cancelled is such a job
+# every job of a failed CI run that failed or was canceled is such a job
 # (besides the "CI" check, which fails because they did), re-run the failed
 # jobs, up to six times (attempts 2 to 7). A run with any other failure is
 # left alone.
@@ -38,7 +38,7 @@ jobs:
           ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           set -euo pipefail
-          # the jobs that failed or were cancelled, besides the "CI" check
+          # the jobs that failed or were canceled, besides the "CI" check
           bad=$(gh api --paginate "repos/$REPO/actions/runs/$RUN/attempts/$ATTEMPT/jobs?per_page=100"             --jq '.jobs[] | select((.conclusion == "failure" or .conclusion == "cancelled") and .name != "CI") | [.id, .name] | @tsv')
           unacquired=()
           other=()

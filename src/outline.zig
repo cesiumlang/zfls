@@ -6,6 +6,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const helpers = @import("helpers.zig");
+const selection = @import("selection.zig");
 const lsp = @import("lsp.zig");
 const objects = @import("objects.zig");
 const str = @import("str.zig");
@@ -13,6 +14,7 @@ const C = @import("constants.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
 const FortranFile = @import("parser.zig").FortranFile;
+const intel = @import("preprocessor/intel.zig");
 
 /// LSP `SymbolKind`s
 const Kind = struct {
@@ -25,6 +27,8 @@ const Kind = struct {
     const function: i64 = 12;
     const variable: i64 = 13;
     const constant: i64 = 14;
+    const array: i64 = 18;
+    const struct_: i64 = 23;
 };
 
 /// The `SymbolKind` of an object in fortls's flat symbol list
@@ -90,7 +94,16 @@ const Outline = struct {
     fn childrenOf(o: Outline, scope: *Obj) Allocator.Error![]const lsp.DocumentSymbol {
         if (scope.kind == .type and o.skip_members) return &.{};
         var out: std.ArrayList(lsp.DocumentSymbol) = .empty;
-        for (scope.childList()) |child| try o.append(child, scope, &out);
+        for (scope.childList()) |child| {
+            // what an include links in from another file is that file's
+            if (child.file_ast != scope.file_ast) continue;
+            try o.append(child, scope, &out);
+        }
+        // its COMMON blocks, in the order of the lines
+        if (scope.data == .scope and scope.scopeData().commons.items.len > 0) {
+            for (scope.scopeData().commons.items) |c| try out.append(o.a, o.symbol(c, Kind.struct_, c.varData().members, &.{}));
+            std.mem.sort(lsp.DocumentSymbol, out.items, {}, byLine);
+        }
         return out.items;
     }
 
@@ -100,8 +113,15 @@ const Outline = struct {
     /// variables of procedures, nor constructs (DO, IF, BLOCK, ...).
     fn append(o: Outline, obj: *Obj, parent: *Obj, out: *std.ArrayList(lsp.DocumentSymbol)) Allocator.Error!void {
         switch (obj.kind) {
-            .include, .block, .do_, .if_, .where, .select, .associate => {},
+            .block => if (obj.isBlockData()) {
+                var sym = o.symbol(obj, Kind.module, null, try o.childrenOf(obj));
+                // without a name, the parser's `#BLOCKDATA<n>`
+                if (std.mem.startsWith(u8, obj.name, "#")) sym.name = "BLOCK DATA";
+                try out.append(o.a, sym);
+            },
+            .include, .do_, .if_, .where, .select, .associate => {},
             .variable, .method => {
+                if (obj.isGroup()) return out.append(o.a, o.symbol(obj, Kind.array, obj.varData().members, &.{}));
                 const in_type = parent.kind == .type;
                 if (!in_type and !isModuleLike(parent)) return;
                 const kind = if (in_type)
@@ -144,7 +164,19 @@ pub fn documentSymbols(a: Allocator, file: *const FortranFile, ast: *Ast, skip_m
         if (scope.kind == .include) continue;
         try o.append(scope, scope, &out);
     }
+    // an ENTRY of an external procedure, which is in no scope's lines: in
+    // the order of the lines
+    var entry_added = false;
+    for (ast.entry_list.items) |e| if (e.parent == null) {
+        try o.append(e, e, &out);
+        entry_added = true;
+    };
+    if (entry_added) std.mem.sort(lsp.DocumentSymbol, out.items, {}, byLine);
     return out.items;
+}
+
+fn byLine(_: void, x: lsp.DocumentSymbol, y: lsp.DocumentSymbol) bool {
+    return x.range.start.line < y.range.start.line;
 }
 
 // --------------------------------------------------------------------------
@@ -154,11 +186,12 @@ const comment_kind = "comment";
 
 /// The folding ranges of a file: each construct and program unit (up to the
 /// line before its END, which stays in view), each branch of IF, SELECT and
-/// WHERE constructs, each branch of preprocessor conditionals, and runs of
-/// comment lines
+/// WHERE constructs, each branch of preprocessor conditionals, statements
+/// continued over three lines or more, and runs of comment lines
 pub fn foldingRanges(a: Allocator, file: *const FortranFile, ast: *Ast) Allocator.Error![]const lsp.FoldingRange {
     var out: std.ArrayList(lsp.FoldingRange) = .empty;
     for (ast.scope_list.items) |scope| try scopeFolds(a, file, ast, scope, &out);
+    try continuedFolds(a, file, &out);
     try preprocessorFolds(a, file, &out);
     try commentFolds(a, file, &out);
     std.mem.sort(lsp.FoldingRange, out.items, {}, struct {
@@ -182,6 +215,8 @@ fn scopeFolds(a: Allocator, file: *const FortranFile, ast: *Ast, scope: *Obj, ou
     if (scope.kind == .select and !opensSelect(file, scope)) return;
     // 1-based: from the opening line to the line before END
     var start = scope.sline;
+    // a SELECT folds as a whole, and branch by branch
+    if (scope.kind == .select) try fold(a, out, scope.sline - 1, scope.eline -| 2, null);
     switch (scope.kind) {
         .if_, .where, .select => {
             var ln = scope.sline + 1;
@@ -216,7 +251,8 @@ fn eqlAny(word: []const u8, comptime options: []const []const u8) bool {
 /// ...`), not one of the branches the parser opens a scope for
 fn opensSelect(file: *const FortranFile, scope: *const Obj) bool {
     const w = leadingWords(file, scope.sline) orelse return true;
-    return eqlAny(w[0], &.{"select"}) or eqlAny(w[1], &.{"select"});
+    const words = .{ "select", "selectcase", "selecttype", "selectrank" };
+    return eqlAny(w[0], &words) or eqlAny(w[1], &words);
 }
 
 /// Whether 1-based line `ln` starts a new branch of a construct of `kind`
@@ -242,11 +278,74 @@ fn inNested(file: *const FortranFile, ast: *Ast, scope: *const Obj, ln: usize) b
     return false;
 }
 
-/// `#if`/`#ifdef`/`#ifndef` ... `#elif`/`#else` ... `#endif`: each branch
+/// A statement continued over three lines or more (free form `&`, fixed
+/// form column 6), the comment lines between its lines with it; not one
+/// whose first line starts another range already (a procedure, a
+/// construct), as editors keep one range per first line
+fn continuedFolds(a: Allocator, file: *const FortranFile, out: *std.ArrayList(lsp.FoldingRange)) Allocator.Error!void {
+    var starts: std.AutoHashMapUnmanaged(usize, void) = .empty;
+    for (out.items) |r| try starts.put(a, r.startLine, {});
+    const n = file.nLines();
+    var ln: usize = 0;
+    while (ln < n) {
+        const text = file.getLine(ln, false) orelse "";
+        if (!isCode(file, text)) {
+            ln += 1;
+            continue;
+        }
+        const first = ln;
+        var last = ln;
+        while (true) {
+            // the next line of code
+            var next = last + 1;
+            while (next < n and !isCode(file, file.getLine(next, false) orelse "")) next += 1;
+            if (next >= n) break;
+            const goes_on = if (file.fixed)
+                isFixedContinuation(file.getLine(next, false) orelse "")
+            else
+                endsWithAmpersand(file.getLine(last, false) orelse "");
+            if (!goes_on) break;
+            last = next;
+        }
+        if (last - first >= 2 and !starts.contains(first)) try fold(a, out, first, last, null);
+        ln = last + 1;
+    }
+}
+
+/// Whether a line holds code: not a comment, a blank line or a directive
+fn isCode(file: *const FortranFile, text: []const u8) bool {
+    if (helpers.isComment(file.fixed, text)) return false;
+    const t = std.mem.trim(u8, text, " \t\r");
+    return t.len > 0 and t[0] != '#';
+}
+
+/// Whether a fixed-form line continues the statement before it
+fn isFixedContinuation(text: []const u8) bool {
+    return helpers.fixedContMark(text) != null;
+}
+
+/// Whether the code of a free-form line ends with `&`
+fn endsWithAmpersand(text: []const u8) bool {
+    return std.mem.endsWith(u8, std.mem.trimEnd(u8, text[0..selection.codeEnd(text)], " \t\r"), "&");
+}
+
+/// `#if`/`#ifdef`/`#ifndef` ... `#elif`/`#else` ... `#endif`: each branch;
+/// and those of Intel's `!DEC$ IF` ... `!DEC$ ENDIF`
 fn preprocessorFolds(a: Allocator, file: *const FortranFile, out: *std.ArrayList(lsp.FoldingRange)) Allocator.Error!void {
     var open: std.ArrayList(usize) = .empty;
+    var open_intel: std.ArrayList(usize) = .empty;
     for (0..file.nLines()) |ln| {
         const text = file.getLine(ln, false) orelse continue;
+        if (intel.directive(file.fixed, text)) |d| switch (d.kind) {
+            .if_ => try open_intel.append(a, ln),
+            .elseif, .else_ => if (open_intel.items.len > 0) {
+                const top = &open_intel.items[open_intel.items.len - 1];
+                try fold(a, out, top.*, ln -| 1, null);
+                top.* = ln;
+            },
+            .endif => if (open_intel.pop()) |start| try fold(a, out, start, ln -| 1, null),
+            .define, .undefine => {},
+        };
         const t = std.mem.trimStart(u8, text, " \t");
         if (t.len == 0 or t[0] != '#') continue;
         var it = helpers.words(t[1..]);

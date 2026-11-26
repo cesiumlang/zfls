@@ -10,7 +10,10 @@
 //!   at positions sampled across that file;
 //! - incremental edits to that file, each followed by a hover, and saves,
 //!   each followed by a request (a save re-links the workspace);
-//! - peak memory of the server process (Windows and Linux).
+//! - memory of the server process (Windows and Linux): its peak, after
+//!   `initialize`, and at the end of the session;
+//! - a second start on the same workspace, which reads the index cache the
+//!   first wrote (zfls), and its memory after `initialize`.
 //!
 //!     zig build bench -Doptimize=safe -- PATH/TO/json-fortran \
 //!         [--fortls fortls] [--requests 200] [--edits 20] [--saves 5]
@@ -46,11 +49,13 @@ const Args = struct {
     requests: usize = 200,
     edits: usize = 20,
     saves: usize = 5,
+    /// Seconds a request waits for its answer (a server under valgrind is slow)
+    timeout: i64 = 120,
 };
 
 const usage =
     \\usage: zig build bench [-Doptimize=safe] -- WORKSPACE [--fortls CMD]
-    \\       [--requests N (200)] [--edits N (20)] [--saves N (5)]
+    \\       [--requests N (200)] [--edits N (20)] [--saves N (5)] [--timeout SECONDS (120)]
     \\
 ;
 
@@ -83,10 +88,17 @@ pub fn main(init: std.process.Init) !u8 {
             args.edits = try std.fmt.parseInt(usize, v, 10);
         } else if (std.mem.eql(u8, arg, "--saves")) {
             args.saves = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, arg, "--timeout")) {
+            args.timeout = try std.fmt.parseInt(i64, v, 10);
         } else {
             std.debug.print("unknown option {s}\n{s}", .{ arg, usage });
             return 2;
         }
+    }
+    if (args.workspace.len == 0 and argv.len == 3) {
+        // (`zig build bench` gives the server's path)
+        std.debug.print("no workspace given: only the allocation counts were compared\n{s}", .{usage});
+        return 0;
     }
     if (args.workspace.len == 0 or args.zfls.len == 0) {
         std.debug.print("{s}", .{usage});
@@ -113,23 +125,24 @@ pub fn main(init: std.process.Init) !u8 {
     return 0;
 }
 
-/// Peak resident memory of the process, in bytes
-fn peakMemory(server: *lsp.Client, io: Io, a: Allocator) ?u64 {
+/// Resident memory of the process, in bytes: its peak, or what it is now
+fn memory(server: *lsp.Client, io: Io, a: Allocator, peak: bool) ?u64 {
     const id = server.child.id orelse return null;
     switch (builtin.target.os.tag) {
         .windows => {
             var c: ProcessMemoryCounters = undefined;
             c.cb = @sizeOf(ProcessMemoryCounters);
             if (K32GetProcessMemoryInfo(id, &c, c.cb) == .FALSE) return null;
-            return c.PeakWorkingSetSize;
+            return if (peak) c.PeakWorkingSetSize else c.WorkingSetSize;
         },
         .linux => {
             const path = a.print("/proc/{d}/status", .{id}) catch return null;
             const status = Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch return null;
+            const key = if (peak) "VmHWM:" else "VmRSS:";
             var lines = std.mem.splitScalar(u8, status, '\n');
             while (lines.next()) |line| {
-                if (!std.mem.startsWith(u8, line, "VmHWM:")) continue;
-                var words = std.mem.tokenizeAny(u8, line["VmHWM:".len..], " \t");
+                if (!std.mem.startsWith(u8, line, key)) continue;
+                var words = std.mem.tokenizeAny(u8, line[key.len..], " \t");
                 const kb = std.fmt.parseInt(u64, words.next() orelse return null, 10) catch return null;
                 return kb * 1024;
             }
@@ -166,7 +179,13 @@ const Result = struct {
     requests: std.EnumArray(Kind, std.ArrayList(f64)),
     edit: []f64,
     save: []f64,
+    /// peak, after `initialize` and at the end
     memory: ?u64,
+    init_memory: ?u64,
+    end_memory: ?u64,
+    /// `initialize` of a second start on the same workspace
+    restart: f64,
+    restart_memory: ?u64,
 };
 
 fn seconds(io: Io, since: i96) f64 {
@@ -294,12 +313,17 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
         .edit = &.{},
         .save = &.{},
         .memory = null,
+        .init_memory = null,
+        .end_memory = null,
+        .restart = 0,
+        .restart_memory = null,
     };
 
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(a, cmd);
     try argv.append(a, "--incremental_sync");
     const server = try lsp.Client.start(io, gpa, argv.items, null);
+    server.timeout = .fromSeconds(args.timeout);
     defer server.deinit();
     errdefer server.kill();
 
@@ -307,10 +331,12 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
     _ = try server.request("initialize", .{
         .rootUri = try zfls.paths.pathToUri(a, work),
         .rootPath = work,
-        .capabilities = .{},
+        .capabilities = struct {}{},
     });
     result.init = seconds(io, start);
     try server.send("initialized", .{}, null);
+    try server.sync();
+    result.init_memory = memory(server, io, a, false);
 
     start = now(io);
     try server.send("textDocument/didOpen", .{ .textDocument = .{
@@ -378,8 +404,26 @@ fn run(io: Io, gpa: Allocator, a: Allocator, env: *const std.process.Environ.Map
         try saves.append(a, seconds(io, start));
     }
     result.save = saves.items;
-    result.memory = peakMemory(server, io, a);
+    result.memory = memory(server, io, a, true);
+    result.end_memory = memory(server, io, a, false);
     _ = try server.close();
+
+    // a second start, which finds what the first left (zfls's index cache)
+    const again = try lsp.Client.start(io, gpa, argv.items, null);
+    again.timeout = .fromSeconds(args.timeout);
+    defer again.deinit();
+    errdefer again.kill();
+    start = now(io);
+    _ = try again.request("initialize", .{
+        .rootUri = try zfls.paths.pathToUri(a, work),
+        .rootPath = work,
+        .capabilities = struct {}{},
+    });
+    result.restart = seconds(io, start);
+    try again.send("initialized", .{}, null);
+    try again.sync();
+    result.restart_memory = memory(again, io, a, false);
+    _ = try again.close();
     return result;
 }
 
@@ -421,8 +465,17 @@ fn report(w: *Io.Writer, name: []const u8, r: Result) !void {
     try summary(w, r.edit);
     try w.writeAll("\n  save + request   ");
     try summary(w, r.save);
-    try w.writeAll("\n  peak memory      ");
-    if (r.memory) |m| {
+    try w.writeByte('\n');
+    try mib(w, "peak memory", r.memory);
+    try mib(w, "after initialize", r.init_memory);
+    try mib(w, "at the end", r.end_memory);
+    try w.print("  second start     {d:>8.1} ms\n", .{r.restart * 1000});
+    try mib(w, "after it", r.restart_memory);
+}
+
+fn mib(w: *Io.Writer, label: []const u8, bytes: ?u64) !void {
+    try w.print("  {s:<16} ", .{label});
+    if (bytes) |m| {
         try w.print("{d:>8.1} MiB\n", .{@as(f64, @floatFromInt(m)) / (1 << 20)});
     } else try w.writeAll("n/a\n");
 }

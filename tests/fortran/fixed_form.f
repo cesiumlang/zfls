@@ -1,4 +1,4 @@
-C     Fixed-form source with continuation lines and labelled DO loops
+C     Fixed-form source with continuation lines and labeled DO loops
       SUBROUTINE SAXPY(N, A, X, INCX, Y,
      &                 INCY)
       IMPLICIT NONE

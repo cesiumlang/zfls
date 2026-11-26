@@ -818,3 +818,29 @@ test "hansec #135 go to definition on a call of a generic interface goes to the 
     defer w.deinit();
     try h.checkIn(.hansec, 135, .fixed, expectSpecificDefinition(w));
 }
+
+test "gfortran's intrinsics: BESJ0 ... BESYN, AND, OR, IERRNO, DTIME, FLOATI, the -fdec-intrinsic-ints names (#537)" {
+    const w = try h.Workspace.init(&.{.{ .name = "g.f90", .text =
+        \\program gnuintr
+        \\  implicit none
+        \\  real :: x, ta(2), t
+        \\  integer :: i
+        \\  integer(2) :: h
+        \\  integer(8) :: k
+        \\  x = besj0(1.0) + besj1(1.0) + besjn(2, 1.0) + besy0(1.0) + besy1(1.0) + besyn(2, 1.0)
+        \\  x = x + real(dbesj0(1d0) + dbesj1(1d0) + dbesjn(2, 1d0) + dbesy0(1d0) + dbesy1(1d0) + dbesyn(2, 1d0))
+        \\  i = and(5, 3) + or(5, 3) + xor(5, 3) + ierrno()
+        \\  h = iiabs(-2_2) + imod(7_2, 2_2) + inot(1_2) + iiand(h, h) + iior(h, h) + iieor(h, h) + iishft(h, 1)
+        \\  i = jiabs(i) + jmod(i, 2) + jishftc(i, 1)
+        \\  k = kiabs(k) + kibset(k, 1) + kibclr(k, 1) + kibits(k, 0, 2)
+        \\  t = dtime(ta)
+        \\  print *, x, i, h, k, t, floati(h), floatj(i), floatk(k), bitest(h, 1), bjtest(i, 1), bktest(k, 1)
+        \\end program gnuintr
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.expectNoDiagnostics("g.f90");
+    try w.expectHoverContains("g.f90", w.pos("g.f90", "besj0", 0, 0), "BESSEL_J0");
+    try w.expectHoverContains("g.f90", w.pos("g.f90", "iiabs", 0, 0), "ABS");
+    try w.expectHoverContains("g.f90", w.pos("g.f90", "floati", 0, 0), "REAL");
+}

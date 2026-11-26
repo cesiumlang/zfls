@@ -1,86 +1,49 @@
-// The pure parts of running and debugging a single Fortran file: compiler
-// arguments, where the program goes, which debugger to use and its launch
-// configuration. No `vscode` import (see test/unit).
+// The pure parts of running and debugging a single Fortran file: what
+// zfls answers about building it (`zfls/buildCommand`), which debugger to
+// use and its launch configuration. zfls chooses the compiler's
+// arguments, where the program goes and how it links; this module only
+// turns its answer into VS Code's. No `vscode` import (see test/unit).
 
-import * as crypto from "node:crypto";
 import * as path from "node:path";
 
-/** How a compiler takes its options */
-export type ArgStyle = "gnu" | "intel-windows";
-
-export interface CompilerKind {
-  argStyle: ArgStyle;
-  /** Whether its programs use the MSVC ABI and debug info (PDB), which
-   * needs the cppvsdbg debugger rather than gdb */
-  msvc: boolean;
-  /** The arguments when zfls.run.buildArgs is not set: debug info, no
-   * optimization */
-  defaultArgs: string[];
+/** What concerns the compiler, in zfls's answer: also without a file */
+export interface CompilerInfo {
+  /** The compiler's executable */
+  compiler: string;
+  /** The compiler zfls knows it as (`gfortran`, `flang`, ...) */
+  name: string | null;
+  /** The format of its programs' debug information */
+  debugInfo: "dwarf" | "pdb";
+  /** The debugger of `zfls dap` that fits its programs */
+  debugger: "gdb" | "lldb" | "dbgeng";
+  /** The program's environment beyond the editor's (its runtime libraries) */
+  runEnv: Record<string, string>;
 }
 
-/** The compiler's name without directory, extension or version suffix:
- * `C:\x\ifx.exe` -> `ifx`, `gfortran-14` -> `gfortran`. */
-export function compilerName(compiler: string): string {
-  const base = path.basename(compiler.replace(/\\/g, "/")).toLowerCase();
-  return base.replace(/\.exe$/, "").replace(/-\d+(\.\d+)*$/, "");
+/** zfls's answer to `zfls/buildCommand` for a file */
+export interface BuildCommand extends CompilerInfo {
+  args: string[];
+  /** A build in two steps: `args` compiles, then the compiler with these
+   * links (Nix's gfortran on macOS) */
+  linkArgs?: string[];
+  /** Where the build runs and module files go */
+  cwd: string;
+  /** The build's environment beyond the editor's */
+  env: Record<string, string>;
+  program: string;
+  /** Why the build links otherwise than it could */
+  note?: string;
 }
 
-export function compilerKind(compiler: string, platform: NodeJS.Platform): CompilerKind {
-  const name = compilerName(compiler);
-  const windows = platform === "win32";
-  if ((name === "ifx" || name === "ifort") && windows) {
-    return { argStyle: "intel-windows", msvc: true, defaultArgs: ["/Zi", "/Od"] };
-  }
-  if (name === "lfortran") {
-    return { argStyle: "gnu", msvc: windows, defaultArgs: ["-g"] };
-  }
-  // LLVM Flang targets the MSVC ABI on Windows
-  const msvc = windows && (name === "flang" || name === "flang-new");
-  return { argStyle: "gnu", msvc, defaultArgs: ["-g", "-O0"] };
-}
-
-/**
- * The compiler arguments that build `source` into `exe`, run in the output
- * directory (where module and object files then go). The directory of the
- * source is on the include path, for its include files and modules.
- */
-export function buildArgs(
-  kind: CompilerKind,
-  source: string,
-  exe: string,
-  userArgs: readonly string[] | undefined,
-): string[] {
-  const args = userArgs ?? kind.defaultArgs;
-  const dir = path.dirname(source);
-  if (kind.argStyle === "intel-windows") {
-    return ["/nologo", ...args, `/I${dir}`, `/exe:${exe}`, source];
-  }
-  return [...args, `-I${dir}`, "-o", exe, source];
-}
-
-/**
- * The directory for the program built from `source`: under `base` (the
- * extension's storage), a directory per source file, so that files of the
- * same name and their module files do not collide.
- */
-export function outputDirFor(base: string, source: string, platform: NodeJS.Platform = process.platform): string {
-  const key = platform === "win32" ? source.toLowerCase() : source;
-  const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 10);
-  return pathFor(platform).join(base, `${stem(source, platform)}-${hash}`);
-}
-
-/** The program file for `source` in `dir` */
-export function programPath(dir: string, source: string, platform: NodeJS.Platform = process.platform): string {
-  return pathFor(platform).join(dir, stem(source, platform) + (platform === "win32" ? ".exe" : ""));
-}
-
-function pathFor(platform: NodeJS.Platform): path.PlatformPath {
-  return platform === "win32" ? path.win32 : path.posix;
-}
-
-function stem(file: string, platform: NodeJS.Platform): string {
-  const p = pathFor(platform);
-  return p.basename(file, p.extname(file));
+export interface BuildCommandParams {
+  /** Without one, the answer is only the compiler's part */
+  textDocument?: { uri: string };
+  compiler?: string;
+  compilerPath?: string;
+  args?: string[];
+  outputDirectory?: string;
+  /** Values in place of the environment's, for the answer's additions */
+  env?: Record<string, string>;
 }
 
 // Debuggers
@@ -159,6 +122,8 @@ export interface LaunchSpec {
   platform: NodeJS.Platform;
   /** gdb for zfls, cppdbg and CDT GDB; empty: the debugger's default */
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap, not gdb (the default on macOS) */
+  lldb?: boolean;
   preLaunchTask?: string;
   /** Where the program's input and output go: the Debug Console (no
    * input), VS Code's terminal, or a terminal of its own */
@@ -186,6 +151,8 @@ export function launchConfiguration(spec: LaunchSpec): Record<string, unknown> {
       if (spec.msvc) {
         // Windows's Debugger Engine, through zfls dap
         config.dbgeng = true;
+      } else if (spec.lldb) {
+        config.lldb = true;
       } else if (spec.gdbPath) {
         config.gdb = spec.gdbPath;
       }
@@ -261,29 +228,6 @@ function quoteGdbArg(arg: string): string {
   return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `"${arg.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
-/**
- * The environment additions for running a program built by `compiler` on
- * Windows: its directory first on the PATH, for the compiler's runtime
- * libraries (libgfortran-5.dll and the like) when it is not on the PATH.
- */
-export function runtimeEnv(
-  compilerExe: string,
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
-  if (platform !== "win32") {
-    return {};
-  }
-  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "Path";
-  const dir = path.win32.dirname(compilerExe);
-  const current = env[key] ?? "";
-  const entries = current.split(";").map((e) => e.replace(/[\\/]+$/, "").toLowerCase());
-  if (entries.includes(dir.replace(/[\\/]+$/, "").toLowerCase())) {
-    return {};
-  }
-  return { [key]: current ? `${dir};${current}` : dir };
-}
-
 export interface ProcessInfo {
   pid: number;
   name: string;
@@ -338,6 +282,23 @@ export function workspaceRelative(file: string, folder: string | undefined): str
 
 // The `fortran` debug type
 
+/** The debugger's options of `zfls dap`, for a configuration: `--dbgeng`,
+ * `--lldb [PATH]` or `--gdb PATH`; none when it names no debugger: zfls dap
+ * chooses by the program's debug information (Windows's Debugger Engine
+ * for a PDB), else lldb-dap on macOS and gdb elsewhere */
+export function adapterArgs(config: Record<string, unknown>): string[] {
+  if (config.dbgeng === true) {
+    return ["--dbgeng"];
+  }
+  if (config.lldb === true || (typeof config.lldb === "string" && config.lldb)) {
+    return typeof config.lldb === "string" ? ["--lldb", config.lldb] : ["--lldb"];
+  }
+  if (typeof config.gdb === "string" && config.gdb) {
+    return ["--gdb", config.gdb];
+  }
+  return config.lldb === false ? ["--gdb", "gdb"] : [];
+}
+
 /** What a `fortran` launch configuration takes, beyond `name` */
 export const FORTRAN_LAUNCH_KEYS = [
   "type",
@@ -371,6 +332,8 @@ export interface FortranResolution {
   runtimeEnv: Record<string, string>;
   platform: NodeJS.Platform;
   gdbPath?: string;
+  /** zfls's debugger runs lldb-dap */
+  lldb?: boolean;
 }
 
 /**
@@ -391,6 +354,7 @@ export function fortranLaunch(config: Record<string, unknown>, r: FortranResolut
     env,
     platform: r.platform,
     gdbPath: r.gdbPath,
+    lldb: r.lldb,
     preLaunchTask: typeof config.preLaunchTask === "string" ? config.preLaunchTask : undefined,
     console: CONSOLES.find((c) => c === config.console),
     msvc: r.msvc,
@@ -401,7 +365,12 @@ export function fortranLaunch(config: Record<string, unknown>, r: FortranResolut
     out[r.type === "lldb" ? "stopOnEntry" : "stopAtEntry"] = true;
   }
   for (const [k, v] of Object.entries(config)) {
-    if (!(FORTRAN_LAUNCH_KEYS as readonly string[]).includes(k)) {
+    if (k === "setupCommands" && r.type === "cppdbg" && Array.isArray(v)) {
+      // the fortran type's are gdb command strings; C/C++ wants objects, and
+      // keeps its pretty-printing
+      const own = Array.isArray(out.setupCommands) ? out.setupCommands : [];
+      out.setupCommands = [...own, ...v.map((c) => (typeof c === "string" ? { text: c } : c))];
+    } else if (!(FORTRAN_LAUNCH_KEYS as readonly string[]).includes(k)) {
       out[k] = v;
     }
   }

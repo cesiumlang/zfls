@@ -1,6 +1,8 @@
 //! Reading the definition on a line (port of the `read_*_def` functions of
 //! fortls): variables, procedures, modules, types, constructs, USE and IMPORT
-//! statements, and what a line is about for completion.
+//! statements, and what a line is about for completion. Constructs are read
+//! in def_constructs.zig, the CUDA Fortran prefix in cuda_prefix.zig, the
+//! context of a line in line_context.zig.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -16,6 +18,22 @@ fn R() *const patterns.Patterns {
 }
 
 const parser = @import("../parser.zig");
+const def_constructs = @import("def_constructs.zig");
+const cuda_prefix = @import("cuda_prefix.zig");
+const line_context = @import("line_context.zig");
+
+pub const readBlockDef = def_constructs.readBlockDef;
+pub const stripNoComment = def_constructs.stripNoComment;
+pub const readDoDef = def_constructs.readDoDef;
+pub const readWhereDef = def_constructs.readWhereDef;
+pub const readIfDef = def_constructs.readIfDef;
+pub const readAssociateDef = def_constructs.readAssociateDef;
+pub const readChangeTeamDef = def_constructs.readChangeTeamDef;
+pub const readSelectDef = def_constructs.readSelectDef;
+pub const afterCudaAttributes = cuda_prefix.afterCudaAttributes;
+pub const withoutCudaAttributes = cuda_prefix.withoutCudaAttributes;
+pub const LineContext = line_context.LineContext;
+pub const getLineContext = line_context.getLineContext;
 
 pub const ResultSig = struct {
     name: ?[]const u8 = null,
@@ -46,7 +64,9 @@ pub const FunSig = struct {
     result: ResultSig = .{},
 };
 
-pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8 };
+/// `kind`: of a type guard of an intrinsic type, `type is (real(8))`;
+/// `rank`: of a case of SELECT RANK, `2` or `*` (none for RANK DEFAULT)
+pub const SelectInfo = struct { type: i32, binding: ?[]const u8, desc: ?[]const u8, kind: ?[]const u8 = null, rank: ?[]const u8 = null };
 
 pub const ClassInfo = struct { name: []const u8, parent: ?[]const u8, keywords: []const []const u8 };
 
@@ -55,7 +75,9 @@ pub const GenProcDefInfo = struct { bound_name: []const u8, pro_links: []const [
 /// `SUBMODULE (ancestor[:parent]) name`
 pub const SmodInfo = struct { name: []const u8, ancestor: []const u8, parent: []const u8 };
 
-pub const InterInfo = struct { name: ?[]const u8, abstract: bool };
+/// `[ABSTRACT] INTERFACE [name]`; `generic`: named, or `OPERATOR(...)` or
+/// `ASSIGNMENT(=)` (#472)
+pub const InterInfo = struct { name: ?[]const u8, abstract: bool, generic: bool = false };
 
 pub const VisInfo = struct { private: bool, obj_names: []const []const u8 };
 
@@ -80,6 +102,8 @@ pub const DefResult = union(enum) {
     where: bool,
     if_,
     assoc: []const []const u8,
+    /// CHANGE TEAM: its coarray associations, `x => y` (`x[*] => y`)
+    team: []const []const u8,
     select: SelectInfo,
     typ: ClassInfo,
     enum_,
@@ -121,7 +145,7 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
             } else break;
             tmp_str = try std.mem.concat(a, u8, &.{ tmp_str, test_str[0 .. close + 1] });
             test_str = test_str[close + 1 ..];
-        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension")) {
+        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension") or std.ascii.startsWithIgnoreCase(tmp_str, "rank")) {
             const mc = helpers.findParenMatch(test_str);
             if (mc < 0) break;
             const mcu: usize = @intCast(mc);
@@ -135,20 +159,52 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
     return .{ .keywords = keywords.items, .rest = test_str };
 }
 
+/// The RANK clause (F2023) of a declaration's `keywords`, replaced by the
+/// DIMENSION it gives: `(:,:)` of a literal rank (none for 0), else assumed
+/// rank, `(..)`, until linking evaluates it; its expression then, else null
+/// (#729)
+pub fn rankClause(a: Allocator, keywords: *std.ArrayList([]const u8)) E!?[]const u8 {
+    for (keywords.items, 0..) |kw, i| {
+        if (!std.ascii.startsWithIgnoreCase(kw, "rank")) continue;
+        const expr = str.strip(helpers.getParenSubstring(kw) orelse "");
+        const n = std.fmt.parseInt(u8, expr, 10) catch {
+            keywords.items[i] = "DIMENSION(..)";
+            return expr;
+        };
+        if (n == 0 or n > 15) {
+            _ = keywords.orderedRemove(i);
+        } else {
+            var dims: std.ArrayList(u8) = .empty;
+            for (0..n) |k| try dims.appendSlice(a, if (k == 0) ":" else ",:");
+            keywords.items[i] = try a.print("DIMENSION({s})", .{dims.items});
+        }
+        return null;
+    }
+    return null;
+}
+
 pub const KindResult = struct { kind: ?[]const u8, line: []const u8 };
 
 pub fn parseKind(a: Allocator, line: []const u8) E!?KindResult {
     const m = R().KIND_SPEC.match(line) orelse return .{ .kind = null, .line = line };
     var kind_str: []const u8 = try std.mem.replaceOwned(u8, a, m.group(1).?, " ", "");
     var rest = line[m.end(0)..];
-    if (std.mem.findScalar(u8, kind_str, '(') != null) {
-        const mc = helpers.findParenMatch(rest);
+    // `()` is whole; the match of `((4))` ends inside the inner parentheses
+    if (std.mem.findScalar(u8, kind_str, '(') != null and !std.mem.endsWith(u8, kind_str, ")")) {
+        const open = std.mem.findScalar(u8, line, '(').?;
+        const mc = helpers.findParenMatch(line[open + 1 ..]);
         if (mc < 0) return null; // Incomplete kind specification
-        const mcu: usize = @intCast(mc);
-        kind_str = try std.mem.concat(a, u8, &.{ kind_str, str.strip(rest[0 .. mcu + 1]) });
-        rest = rest[mcu + 1 ..];
+        const end = open + 1 + @as(usize, @intCast(mc)) + 1;
+        kind_str = try std.mem.concat(a, u8, &.{ kind_str, str.strip(line[m.end(0)..end]) });
+        rest = line[end..];
     }
     return .{ .kind = kind_str, .line = rest };
+}
+
+/// TYPEOF or CLASSOF (F2023), whose "kind" is the entity whose type a
+/// declaration takes (#728)
+pub fn isTypeOf(var_type: []const u8) bool {
+    return std.mem.eql(u8, var_type, "TYPEOF") or std.mem.eql(u8, var_type, "CLASSOF");
 }
 
 /// Attempt to read variable definition line
@@ -164,14 +220,14 @@ pub fn readVarDef(a: Allocator, line: []const u8, var_type_in: ?[]const u8, fun_
         trailing = line[tm.end(0)..];
     }
     var_type = try std.ascii.allocUpperString(a, var_type);
-    trailing = str.beforeFirst(trailing, "!");
+    trailing = helpers.beforeComment(trailing);
     if (trailing.len == 0) return null;
 
     const kr = (try parseKind(a, trailing)) orelse return null;
     const kind_str = kr.kind;
     trailing = kr.line;
     const has_kind = kind_str != null and kind_str.?.len > 0;
-    if (!has_kind and (std.mem.eql(u8, var_type, "TYPE") or std.mem.eql(u8, var_type, "CLASS"))) return null;
+    if (!has_kind and (std.mem.eql(u8, var_type, "TYPE") or std.mem.eql(u8, var_type, "CLASS") or isTypeOf(var_type))) return null;
     if (!has_kind) {
         if (trailing.len == 0) return null;
         const c0 = trailing[0];
@@ -202,7 +258,7 @@ pub const ProcMods = struct { name: []const u8, args: []const u8, trailing: []co
 pub fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Regex) E!?ProcMods {
     const m = re.match(line) orelse return null;
     const name = m.group(1).?;
-    var trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    var trailing = str.strip(helpers.beforeComment(line[m.end(0)..]));
     var args: []const u8 = "";
     if (R().SUB_PAREN.match(trailing)) |pm| {
         const words = try R().WORD.findall(a, pm.str());
@@ -219,7 +275,7 @@ pub fn getProcedureModifiers(a: Allocator, line: []const u8, re: *const regex.Re
 pub fn splitSubMod(a: Allocator, line: []const u8) E!struct { []const []const u8, []const u8 } {
     // IMPURE contains PURE
     if (!(std.ascii.findIgnoreCase(line, "pure") != null) and !(std.ascii.findIgnoreCase(line, "elemental") != null) and
-        !(std.ascii.findIgnoreCase(line, "recursive") != null)) return .{ &.{}, line };
+        !(std.ascii.findIgnoreCase(line, "recursive") != null) and !(std.ascii.findIgnoreCase(line, "simple") != null)) return .{ &.{}, line };
     return .{ try R().SUB_MOD.findall(a, line), try R().SUB_MOD.sub(a, "", line) };
 }
 
@@ -276,80 +332,9 @@ pub fn readBlockDataDef(a: Allocator, line: []const u8) E!?DefResult {
     return .{ .block_data = m.group(1) };
 }
 
-pub fn readBlockDef(a: Allocator, line: []const u8) E!?DefResult {
-    const m = R().BLOCK.match(line) orelse return null;
-    var name = m.group(1);
-    if (name) |n| if (n.len > 0) {
-        name = str.strip(try std.mem.replaceOwned(u8, a, n, ":", " "));
-    };
-    return .{ .block = name };
-}
-
-pub fn stripNoComment(a: Allocator, line: []const u8) E![]const u8 {
-    const stripped = try helpers.stripStrings(a, line, true);
-    return str.rstrip(str.beforeFirst(stripped, "!"));
-}
-
-pub fn readDoDef(a: Allocator, line: []const u8) E!?DefResult {
-    const nc = try stripNoComment(a, line);
-    const m = R().DO.match(nc) orelse return null;
-    return .{ .do_ = str.strip(m.group(1).?) };
-}
-
-pub fn readWhereDef(a: Allocator, line: []const u8) E!?DefResult {
-    const nc = try stripNoComment(a, line);
-    const m = R().WHERE.match(nc) orelse return null;
-    const trailing = str.from(line, m.end(0));
-    const close_paren = helpers.findParenMatch(trailing);
-    if (close_paren < 0) return .{ .where = true };
-    const after = str.strip(str.from(trailing, @as(usize, @intCast(close_paren)) + 1));
-    if (R().WORD.match(after) != null) return .{ .where = true };
-    return .{ .where = false };
-}
-
-pub fn readIfDef(a: Allocator, line: []const u8) E!?DefResult {
-    const nc = try stripNoComment(a, line);
-    if (R().IF.match(nc) != null and R().THEN.search(nc) != null) return .if_;
-    return null;
-}
-
-pub fn readAssociateDef(a: Allocator, line: []const u8) E!?DefResult {
-    const m = R().ASSOCIATE.match(line) orelse return null;
-    const trailing = line[m.end(0)..];
-    const mc = helpers.findParenMatch(trailing);
-    if (mc < 0) return .{ .assoc = &.{} };
-    const words = try helpers.separateDefList(a, str.strip(trailing[0..@intCast(mc)]));
-    return .{ .assoc = words orelse &.{} };
-}
-
-pub fn readSelectDef(a: Allocator, line: []const u8) E!?DefResult {
-    _ = a;
-    if (R().SELECT.match(line)) |m| {
-        const word = m.group(1).?;
-        var st: i32 = -1;
-        if (std.ascii.startsWithIgnoreCase(word, "case")) {
-            st = 1;
-        } else if (std.ascii.startsWithIgnoreCase(word, "type") or std.ascii.startsWithIgnoreCase(word, "rank")) {
-            st = 2;
-        }
-        return .{ .select = .{ .type = st, .binding = m.group(2), .desc = null } };
-    }
-    if (R().SELECT_TYPE.match(line)) |m| {
-        var buf: [5]u8 = undefined;
-        const d = m.group(1).?;
-        const up = std.ascii.upperString(buf[0..d.len], d);
-        const desc: []const u8 = if (std.mem.eql(u8, up, "TYPE")) "TYPE" else "CLASS";
-        return .{ .select = .{ .type = 3, .binding = m.group(2), .desc = desc } };
-    }
-    if (R().SELECT_DEFAULT.match(line) != null) return .{ .select = .{ .type = 4, .binding = null, .desc = null } };
-    // a case of SELECT RANK: its associate name is the selector
-    if (R().SELECT_RANK.match(line) != null) return .{ .select = .{ .type = 5, .binding = null, .desc = null } };
-    return null;
-}
-
 pub fn readTypeDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().TYPE_DEF.match(line) orelse return null;
-    var trailing = str.strip(str.beforeFirst(line[m.end(1)..], "!"));
+    var trailing = str.strip(helpers.beforeComment(line[m.end(1)..]));
     var keywords: std.ArrayList([]const u8) = .empty;
     var parent: ?[]const u8 = null;
     var km = R().TATTR_LIST.match(trailing);
@@ -384,7 +369,7 @@ pub fn readEnumDef(a: Allocator, line: []const u8) E!?DefResult {
 
 pub fn readGenericDef(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().GENERIC_PRO.match(line) orelse return null;
-    const trailing = str.strip(str.beforeFirst(line[m.end(0) - 1 ..], "!"));
+    const trailing = str.strip(helpers.beforeComment(line[m.end(0) - 1 ..]));
     if (trailing.len == 0) return null;
     var vis_flag: objects.Vis = .default;
     if (m.group(2)) |v| {
@@ -447,7 +432,7 @@ pub fn readSubmodDef(a: Allocator, line: []const u8) E!?DefResult {
     var ancestor_name: []const u8 = "";
     var parent_name: []const u8 = "";
     var name: []const u8 = "";
-    const trailing = str.strip(str.beforeFirst(line[m.end(0)..], "!"));
+    const trailing = str.strip(helpers.beforeComment(line[m.end(0)..]));
     const close = std.mem.findScalar(u8, trailing, ')') orelse trailing.len;
     const parents = trailing[0..close];
     const colon = std.mem.findScalar(u8, parents, ':') orelse parents.len;
@@ -473,13 +458,13 @@ pub fn readIntDef(a: Allocator, line: []const u8) E!?DefResult {
     const int_name = try std.ascii.allocLowerString(a, raw);
     const is_abstract = m.group(1) != null;
     if (int_name.len == 0) return .{ .int = .{ .name = null, .abstract = is_abstract } };
-    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false } };
-    return .{ .int = .{ .name = raw, .abstract = is_abstract } };
+    if (std.mem.eql(u8, int_name, "assignment") or std.mem.eql(u8, int_name, "operator")) return .{ .int = .{ .name = null, .abstract = false, .generic = true } };
+    return .{ .int = .{ .name = raw, .abstract = is_abstract, .generic = !is_abstract } };
 }
 
 pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().USE.match(line) orelse return null;
-    const trailing = str.beforeFirst(try std.ascii.allocLowerString(a, line[m.end(0)..]), "!");
+    const trailing = helpers.beforeComment(try std.ascii.allocLowerString(a, line[m.end(0)..]));
     const use_mod = m.group(2).?;
     var only: std.ArrayList([]const u8) = .empty;
     var renames: std.ArrayList([2][]const u8) = .empty;
@@ -550,7 +535,7 @@ pub fn readIncStmt(a: Allocator, line: []const u8) E!?DefResult {
 pub fn readVisStmnt(a: Allocator, line: []const u8) E!?DefResult {
     const m = R().VIS.match(line) orelse return null;
     const is_private = std.ascii.eqlIgnoreCase(m.group(1).?, "private");
-    const trailing = str.beforeFirst(line[m.end(0)..], "!");
+    const trailing = helpers.beforeComment(line[m.end(0)..]);
     const words = try R().WORD.findall(a, trailing);
     return .{ .vis = .{ .private = is_private, .obj_names = words } };
 }
@@ -562,9 +547,10 @@ pub const DefTest = *const fn (Allocator, []const u8) E!?DefResult;
 /// written together, `DOUBLEPRECISION` or `BLOCKDATA`, still qualify)
 pub const DefTestEntry = struct { read: DefTest, starts: []const []const u8 };
 
-/// PURE, IMPURE, ELEMENTAL and RECURSIVE are removed from a line before it is
-/// tested for a procedure (`splitSubMod`), so they can come first
-pub const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive" };
+/// PURE, IMPURE, ELEMENTAL, RECURSIVE, NON_RECURSIVE and SIMPLE are removed
+/// from a line before it is tested for a procedure (`splitSubMod`), so they
+/// can come first
+pub const proc_prefixes = [_][]const u8{ "pure", "impure", "elemental", "recursive", "non_recursive", "simple" };
 
 /// `ENUMERATOR [::] a = 1, b`: the enumerators of an ENUM, named integer
 /// constants (fortls reads none)
@@ -574,7 +560,7 @@ pub fn readEnumeratorDef(a: Allocator, line: []const u8) E!?DefResult {
     if (t.len <= word.len or !std.ascii.startsWithIgnoreCase(t, word)) return null;
     var rest = t[word.len..];
     if (rest[0] != ' ' and rest[0] != ':') return null;
-    rest = str.strip(str.beforeFirst(rest, "!"));
+    rest = str.strip(helpers.beforeComment(rest));
     if (std.mem.startsWith(u8, rest, "::")) rest = str.strip(rest[2..]);
     const names = (try helpers.separateDefList(a, rest)) orelse return null;
     return .{ .var_ = .{ .var_type = "INTEGER", .keywords = &.{"PARAMETER"}, .var_names = names, .var_kind = null } };
@@ -596,7 +582,7 @@ pub fn readFunDef1(a: Allocator, line: []const u8) E!?DefResult {
 /// anchored at the start of the line, after spaces; the words are those its
 /// pattern (VAR, SUB, FUN, BLOCK_DATA, ...) can begin with.
 pub const def_tests = [_]DefTestEntry{
-    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type" } },
+    .{ .read = readVarDef1, .starts = &.{ "integer", "real", "double", "complex", "character", "logical", "procedure", "external", "class", "type", "byte", "unsigned" } },
     .{ .read = readSubDef1, .starts = &(.{"subroutine"} ++ proc_prefixes) },
     .{ .read = readFunDef1, .starts = &(.{"function"} ++ proc_prefixes) },
     .{ .read = readBlockDataDef, .starts = &.{"block"} },
@@ -605,6 +591,7 @@ pub const def_tests = [_]DefTestEntry{
     .{ .read = readDoDef, .starts = &.{"do"} },
     .{ .read = readIfDef, .starts = &.{"if"} },
     .{ .read = readAssociateDef, .starts = &.{"associate"} },
+    .{ .read = readChangeTeamDef, .starts = &.{"change"} },
     .{ .read = readSelectDef, .starts = &.{ "select", "type", "class", "rank" } },
     .{ .read = readTypeDef, .starts = &.{"type"} },
     .{ .read = readEnumeratorDef, .starts = &.{"enumerator"} },
@@ -647,24 +634,12 @@ pub fn canStart(entry: DefTestEntry, word: []const u8) bool {
 /// Only the tests whose pattern can begin with the line's first word run,
 /// in order; a line without a usable first word runs all of them. Debug builds
 /// also run all of them and check that the result is the same.
-/// A procedure statement after the CUDA Fortran prefix
-/// `attributes(global|device|host|grid_global)`: the rest of the line
-pub fn afterCudaAttributes(line: []const u8) ?[]const u8 {
-    const t = std.mem.trimStart(u8, line, " \t");
-    if (!std.ascii.startsWithIgnoreCase(t, "attributes")) return null;
-    var rest = std.mem.trimStart(u8, t["attributes".len..], " \t");
-    if (rest.len == 0 or rest[0] != '(') return null;
-    const close = std.mem.findScalar(u8, rest, ')') orelse return null;
-    for (rest[1..close]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == ',' or c == ' ')) return null;
-    rest = std.mem.trimStart(u8, rest[close + 1 ..], " \t");
-    if (rest.len == 0 or !std.ascii.isAlphabetic(rest[0])) return null;
-    return rest;
-}
-
 pub fn getFortranDefinition(a: Allocator, line: []const u8) E!?DefResult {
     // CUDA Fortran kernels and device procedures (`attributes(global)
-    // subroutine k(...)`) are procedures
+    // subroutine k(...)`, `pure attributes(device) function f(...)`) are
+    // procedures
     if (afterCudaAttributes(line)) |rest| return getFortranDefinition(a, rest);
+    if (try withoutCudaAttributes(a, line)) |rest| return getFortranDefinition(a, rest);
     var buf: [32]u8 = undefined;
     const word = firstWord(line, &buf) orelse return (try runDefTests(a, line, null)).result;
     const found = try runDefTests(a, line, word);
@@ -683,57 +658,53 @@ pub fn runDefTests(a: Allocator, line: []const u8, word: ?[]const u8) E!struct {
     return .{ .index = null, .result = null };
 }
 
-pub const LineContext = enum {
-    var_key,
-    pro_line,
-    var_only,
-    mod_mems,
-    mod_only,
-    pro_link,
-    skip,
-    import,
-    vis,
-    call,
-    type_only,
-    int_only,
-    first,
-    default,
-};
+test "read definitions" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = (try readVarDef(a, "  integer(kind=8), intent(in) :: x, y(3)", null, false)).?;
+    try std.testing.expectEqualStrings("INTEGER", r.var_.var_type);
+    try std.testing.expectEqualStrings("(kind=8)", r.var_.var_kind.?);
+    try std.testing.expectEqual(@as(usize, 2), r.var_.var_names.?.len);
+    try std.testing.expectEqualStrings("INTENT(IN)", r.var_.keywords[0]);
+    // a kind in parentheses (#690)
+    for ([_]struct { []const u8, []const u8 }{ .{ "INTEGER((4)) INT_KIND_IMP", "((4))" }, .{ "real ((8)+0) :: x", "((8)+0)" } }) |c| {
+        const p = (try readVarDef(a, c[0], null, false)).?;
+        try std.testing.expectEqualStrings(c[1], p.var_.var_kind.?);
+        try std.testing.expectEqual(@as(usize, 1), p.var_.var_names.?.len);
+    }
 
-/// Get context of ending position in line (for completion)
-pub fn getLineContext(a: Allocator, line: []const u8) E!struct { ctx: LineContext, info: ?[]const u8 = null } {
-    const pl = try helpers.getParenLevel(a, line);
-    const last_level = pl.str;
-    const sections = pl.sections;
-    const lev1_end = sections[sections.len - 1].end;
-    const line_len: isize = @intCast(line.len);
-    if (try readVarDef(a, line, null, false)) |tm| {
-        if (tm == .var_) {
-            const v = tm.var_;
-            if (v.var_names == null and lev1_end == line_len) return .{ .ctx = .var_key };
-            if (std.mem.eql(u8, v.var_type, "PROCEDURE") and (std.mem.find(u8, line, "=>") orelse 0) > 0) return .{ .ctx = .pro_link };
-            return .{ .ctx = .var_only };
-        }
+    const f = (try readFunDef(a, "pure real function foo(a, b) result(c)", null, false)).?;
+    try std.testing.expectEqualStrings("foo", f.fun.name);
+    try std.testing.expectEqualStrings("a,b", f.fun.args);
+
+    const s = (try getFortranDefinition(a, "subroutine bar(x)")).?;
+    try std.testing.expectEqualStrings("bar", s.sub.name);
+
+    const ctx = try getLineContext(a, "call foo");
+    try std.testing.expectEqual(LineContext.call, ctx.ctx);
+
+    // MODULE after the type (stdlib): a separate module procedure, not a
+    // variable named `module`
+    for ([_][]const u8{ "real(RTICKS) module function lifetime(p) result(t)", "pure real(dp) module function lifetime(p)" }) |line| {
+        const m = (try getFortranDefinition(a, line)).?;
+        try std.testing.expectEqualStrings("lifetime", m.fun.name);
+        try std.testing.expect(m.fun.mod_flag);
     }
-    if (try readUseStmt(a, line)) |u| {
-        if (u.use.only_list.len > 0) return .{ .ctx = .mod_mems, .info = u.use.mod_name };
-        return .{ .ctx = .mod_only };
-    }
-    if (R().PRO_LINK.match(line) != null) return .{ .ctx = .pro_link };
-    if (R().SCOPE_DEF.match(line) != null or R().END.match(line) != null) return .{ .ctx = .skip };
-    if (R().IMPORT.match(line) != null) return .{ .ctx = .import };
-    if (R().VIS.match(line) != null) return .{ .ctx = .vis };
-    const type_def = R().TYPE_DEF.match(line) != null;
-    if (lev1_end == line_len and R().CALL.match(last_level) != null) return .{ .ctx = .call };
-    if (sections.len == 1 and sections[0].start >= 1) {
-        const up = try helpers.getParenLevel(a, str.slice(line, 0, sections[0].start - 1));
-        const test_str = up.str;
-        if (R().TYPE_STMNT.match(test_str) != null or (type_def and R().EXTENDS.search(test_str) != null)) {
-            return .{ .ctx = .type_only };
-        }
-        if (R().PROCEDURE_STMNT.match(test_str) != null) return .{ .ctx = .int_only };
-    }
-    if (R().INT_STMNT.match(line) != null) return .{ .ctx = .first };
-    if (type_def) return .{ .ctx = .skip };
-    return .{ .ctx = .default };
+    // a variable of that name stays one
+    const v = (try getFortranDefinition(a, "      REAL MODULE")).?;
+    try std.testing.expectEqualStrings("MODULE", v.var_.var_names.?[0]);
+}
+
+test "the definition tests are chosen by the first word, labels fall back to all" {
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("integer", firstWord("  INTEGER :: x", &buf).?);
+    try std.testing.expectEqualStrings("doubleprecision", firstWord("      DOUBLEPRECISION X", &buf).?);
+    try std.testing.expect(firstWord("  outer: do i = 1, n", &buf) == null);
+    // `\w` takes bytes past ASCII, so this is a construct label too
+    try std.testing.expect(firstWord("add\xe2\x88\x911 : BLOCK", &buf) == null);
+    try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
+    try std.testing.expect(firstWord("_x: block", &buf) == null);
+    try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
 }

@@ -30,12 +30,9 @@ const allocator_reports = [_][]const u8{ "panic", "leaked", "double free", "inva
 /// UTF-16 (the emoji), to exercise position conversion
 const unicode_bits = [_][]const u8{ "é", "∑", "😀", "日本", "ß" };
 const typed_bits = [_][]const u8{ "(", ")", ",", " ", "%", "&", "::", "=", "'", "!" };
-/// Error responses that mirror an exception Python fortls raises
-const expected_errors = [_][]const u8{
-    // references/highlight on an intrinsic: fortls's AttributeError on the
-    // intrinsic object's missing FQSN
-    "IntrinsicHasNoFQSN",
-};
+/// Error responses that mirror an exception Python fortls raises (none
+/// now: references on an intrinsic, fortls's AttributeError, are empty)
+const expected_errors = [_][]const u8{};
 
 const Args = struct {
     zfls: []const u8 = "zig-out/bin/zfls",
@@ -476,7 +473,7 @@ const Session = struct {
         _ = try s.server.request("initialize", .{
             .rootUri = try zfls.paths.pathToUri(s.a, s.work),
             .rootPath = s.work,
-            .capabilities = .{},
+            .capabilities = struct {}{},
         });
         try s.server.send("initialized", .{}, null);
         // up to 4 files, chosen at random
@@ -539,7 +536,7 @@ fn freshState(io: Io, gpa: Allocator, a: Allocator, args: Args, tmp: []const u8,
     const s = try Client.start(io, gpa, try serverArgv(a, args), try std.Io.Dir.path.join(a, &.{ tmp, "fresh_stream.bin" }));
     defer s.deinit();
     errdefer s.kill();
-    _ = try s.request("initialize", .{ .rootUri = try zfls.paths.pathToUri(a, work), .rootPath = work, .capabilities = .{} });
+    _ = try s.request("initialize", .{ .rootUri = try zfls.paths.pathToUri(a, work), .rootPath = work, .capabilities = struct {}{} });
     try s.send("initialized", .{}, null);
     for ([_][]const []const u8{ closed, docs }) |list| for (list) |p| {
         try s.send("textDocument/didOpen", .{ .textDocument = .{

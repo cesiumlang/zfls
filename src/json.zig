@@ -5,6 +5,7 @@
 //! Configuration files are JSON5 and have their own parser (`json5.zig`).
 
 const std = @import("std");
+const valgrind = @import("_test/valgrind.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Value = std.json.Value;
@@ -192,12 +193,105 @@ pub fn validUtf8(a: Allocator, s: []const u8) Allocator.Error![]const u8 {
 
 /// Compact text of a message
 pub fn stringify(a: Allocator, v: Value) Allocator.Error![]u8 {
-    return std.json.Stringify.valueAlloc(a, v, .{ .escape_unicode = true });
+    return write(a, v, false);
+}
+
+/// How many items `stringifyAll` converts at once
+const chunk_len = 256;
+
+/// The text of `from(a, items)`, the items converted a few at a time: the
+/// `Value` of an item takes some kilobytes, which with thousands of items
+/// (a diagnostic for each of a file's names) is the memory of the request
+pub fn stringifyAll(a: Allocator, items_in: anytype) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(a, '[');
+    var scratch: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    defer scratch.deinit();
+    var at: usize = 0;
+    while (at < items_in.len) : (at += chunk_len) {
+        _ = scratch.reset(.retain_capacity);
+        const chunk = items_in[at..@min(at + chunk_len, items_in.len)];
+        const text = try stringify(scratch.allocator(), try from(scratch.allocator(), chunk));
+        if (at > 0) try out.append(a, ',');
+        // without its own brackets
+        try out.appendSlice(a, text[1 .. text.len - 1]);
+    }
+    try out.append(a, ']');
+    return out.items;
 }
 
 /// Indented text for logs and the debug CLI (`json.dumps(indent=2)`)
 pub fn pretty(a: Allocator, v: Value) Allocator.Error![]u8 {
-    return std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2, .escape_unicode = true });
+    return write(a, v, true);
+}
+
+/// The text of `v` as `std.json.Stringify` writes it, compact or indented
+/// by two, but with no limit to its nesting (`std.json.Stringify`'s is
+/// 256, past which it writes out of bounds): iterative, its stack as deep
+/// as `v` (#779)
+fn write(a: Allocator, v: Value, indent: bool) Allocator.Error![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(a);
+    defer aw.deinit();
+    writeTo(a, v, indent, &aw.writer) catch return error.OutOfMemory;
+    return aw.toOwnedSlice();
+}
+
+/// An array or object being written, and its next member
+const Frame = struct {
+    values: []const Value,
+    /// an object's
+    keys: ?[]const []const u8,
+    next: usize = 0,
+};
+
+fn writeTo(a: Allocator, root: Value, indent: bool, w: *std.Io.Writer) (Allocator.Error || std.Io.Writer.Error)!void {
+    var stack: std.ArrayList(Frame) = .empty;
+    defer stack.deinit(a);
+    try writeValue(a, root, w, &stack);
+    while (stack.items.len > 0) {
+        const top = &stack.items[stack.items.len - 1];
+        const depth = stack.items.len;
+        if (top.next == top.values.len) {
+            const close: u8 = if (top.keys == null) ']' else '}';
+            _ = stack.pop();
+            if (indent) try newline(w, depth - 1);
+            try w.writeByte(close);
+            continue;
+        }
+        const i = top.next;
+        top.next += 1;
+        if (i > 0) try w.writeByte(',');
+        if (indent) try newline(w, depth);
+        if (top.keys) |keys| {
+            try std.json.Stringify.encodeJsonString(keys[i], .{ .escape_unicode = true }, w);
+            try w.writeAll(if (indent) ": " else ":");
+        }
+        // (may push onto the stack, `top` then no longer valid)
+        try writeValue(a, top.values[i], w, &stack);
+    }
+}
+
+fn newline(w: *std.Io.Writer, depth: usize) std.Io.Writer.Error!void {
+    try w.writeByte('\n');
+    try w.splatByteAll(' ', 2 * depth);
+}
+
+/// A scalar, an empty array or object; or the opening of another, pushed
+/// onto `stack`
+fn writeValue(a: Allocator, v: Value, w: *std.Io.Writer, stack: *std.ArrayList(Frame)) (Allocator.Error || std.Io.Writer.Error)!void {
+    switch (v) {
+        .array => |arr| {
+            if (arr.items.len == 0) return w.writeAll("[]");
+            try w.writeByte('[');
+            try stack.append(a, .{ .values = arr.items, .keys = null });
+        },
+        .object => |obj| {
+            if (obj.count() == 0) return w.writeAll("{}");
+            try w.writeByte('{');
+            try stack.append(a, .{ .values = obj.values(), .keys = obj.keys() });
+        },
+        else => try std.json.Stringify.value(v, .{ .escape_unicode = true }, w),
+    }
 }
 
 test "json round trip" {
@@ -210,6 +304,35 @@ test "json round trip" {
     try std.testing.expect(path(v, &.{ "d", "x" }) == null);
     const s = try from(a, .{ .label = "x\xff\x01", .n = @as(i64, 3), .opt = @as(?i64, null) });
     try std.testing.expectEqualStrings("{\"label\":\"x\\ufffd\\u0001\",\"n\":3,\"opt\":null}", try stringify(a, s));
+}
+
+test "the text of std.json.Stringify, at any depth (#779)" {
+    try valgrind.skip();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const v = try parse(a, "{\"a\": [1, 2.5, \"x\\u00e9\", [], {}, {\"k\": [null, true]}], \"b\": {\"c\": -3, \"d\": \"\\n\"}, \"e\": []}");
+    try std.testing.expectEqualStrings(try std.json.Stringify.valueAlloc(a, v, .{ .escape_unicode = true }), try stringify(a, v));
+    try std.testing.expectEqualStrings(try std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2, .escape_unicode = true }), try pretty(a, v));
+    // 10000 levels of `{"children":[...]}`, as the document symbols of
+    // unclosed procedures nest
+    var deep: Value = .{ .string = "leaf" };
+    // (indented, 10000 levels took 2.5 GB of memory: pretty prints 1000)
+    var shallow: Value = deep;
+    for (0..10000) |i| {
+        if (i == 1000) shallow = deep;
+        var arr: Array = .init(a);
+        try arr.append(deep);
+        var obj: ObjectMap = .empty;
+        try obj.put(a, "children", .{ .array = arr });
+        deep = .{ .object = obj };
+    }
+    const text = try stringify(a, deep);
+    try std.testing.expectEqual(@as(usize, 10000 * "{\"children\":[]}".len + "\"leaf\"".len), text.len);
+    try std.testing.expect(std.mem.startsWith(u8, text, "{\"children\":[{\"children\":["));
+    try std.testing.expect(std.mem.find(u8, text, "[{\"children\":[\"leaf\"]}]}]}") != null);
+    try std.testing.expect(std.mem.endsWith(u8, text, "]}]}"));
+    try std.testing.expect((try pretty(a, shallow)).len > 1000 * "{\"children\":[]}".len);
 }
 
 test "parse replaces unpaired surrogates and invalid UTF-8" {
@@ -245,4 +368,17 @@ test "from omits null defaults; decode decodes" {
     try std.testing.expectError(error.InvalidParams, decode(struct { n: usize }, a, try parse(a, "{\"n\":-1}")));
     const D = struct { x: ?i64 = null };
     try std.testing.expectEqual(@as(?i64, null), (try decode(D, a, .null)).x);
+}
+
+test "stringifyAll is stringify of from, in chunks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const P = struct { n: i64, s: []const u8, o: ?i64 = null };
+    var list: std.ArrayList(P) = .empty;
+    try std.testing.expectEqualStrings("[]", try stringifyAll(a, list.items));
+    for (0..chunk_len * 2 + 3) |i| try list.append(a, .{ .n = @intCast(i), .s = "x\xffé" });
+    for ([_]usize{ 1, chunk_len, chunk_len + 1, list.items.len }) |n| {
+        try std.testing.expectEqualStrings(try stringify(a, try from(a, list.items[0..n])), try stringifyAll(a, list.items[0..n]));
+    }
 }

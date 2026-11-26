@@ -8,6 +8,7 @@ const Io = std.Io;
 const str = @import("str.zig");
 const helpers = @import("helpers.zig");
 const patterns = @import("patterns.zig");
+const suffixes = @import("suffixes.zig");
 const regex = @import("regex.zig");
 const C = @import("constants.zig");
 const objects = @import("objects.zig");
@@ -15,19 +16,24 @@ const pp = @import("preprocessor.zig");
 const Obj = objects.Obj;
 const Ast = objects.Ast;
 const UseStmt = objects.UseStmt;
-const Range = helpers.Range;
 
 fn R() *const patterns.Patterns {
     return patterns.get();
 }
 
-// The line readers and the parser, in parser/
+// The line readers, the parser and the editor's changes, in parser/
 const parser_definitions = @import("parser/definitions.zig");
 const parser_parse = @import("parser/parse.zig");
-
-/// The suffixes of free-form source, in either case (CUDA Fortran's `.cuf`
-/// too)
-const free_form_suffixes = [_][]const u8{ ".f90", ".f95", ".f03", ".f08", ".f18", ".f23", ".cuf" };
+const changes = @import("parser/changes.zig");
+const code_line = @import("parser/code_line.zig");
+const openmp = @import("parser/openmp.zig");
+const form_switch = @import("parser/form_switch.zig");
+const fixed_columns = @import("parser/fixed_columns.zig");
+const implicit = @import("implicit.zig");
+const line_size = @import("parser/line_size.zig");
+const default_kinds = @import("default_kinds.zig");
+const tab_format = @import("parser/tab_format.zig");
+const pp_intel = @import("preprocessor/intel.zig");
 
 pub const ResultSig = parser_definitions.ResultSig;
 pub const VarInfo = parser_definitions.VarInfo;
@@ -51,7 +57,8 @@ pub const LineContext = parser_definitions.LineContext;
 pub const getLineContext = parser_definitions.getLineContext;
 const firstWord = parser_definitions.firstWord;
 const Parser = parser_parse.Parser;
-const Split = parser_parse.Split;
+const Split = @import("parser/entities.zig").Split;
+const fsio = @import("fsio.zig");
 
 /// Receives parser/preprocessor trace lines (debug CLI)
 pub const Trace = struct {
@@ -71,6 +78,12 @@ pub const Trace = struct {
 pub const Options = struct {
     /// Order the keywords of a definition by id (`--sort_keywords`)
     sort_keywords: bool = false,
+    /// Honor Intel's conditional compilation directives (`!DEC$ IF`,
+    /// preprocessor/intel.zig)
+    intel_directives: bool = true,
+    /// Plain comments above or after a declaration are its documentation
+    /// (`--hover_plain_comments`)
+    plain_comments: bool = false,
     trace: ?Trace = null,
 };
 
@@ -131,35 +144,19 @@ pub const Change = struct {
     range: ?struct { sl: usize, sc: usize, el: usize, ec: usize } = null,
 };
 
-pub const CodeLine = struct {
-    pre: []const []const u8,
-    curr: ?[]const u8,
-    post: []const []const u8,
-};
+pub const CodeLine = code_line.CodeLine;
 
-/// Index of the `&` of a free-form line that continues on the next line: the
-/// first one, unless a comment starts before it
-fn continuationAmpersand(line: []const u8) ?usize {
-    const amper = std.mem.findScalar(u8, line, '&') orelse return null;
-    const comment = std.mem.findScalar(u8, line, '!') orelse return amper;
-    return if (amper < comment) amper else null;
-}
+/// The source form of a file
+pub const SourceForm = enum { fixed, free };
 
-/// A fixed-form line without its trailing `!` comment. A `!` inside a
-/// string, also one left open to continue on the next line, is no comment.
-fn fixedNoComment(a: Allocator, line: []const u8) ![]const u8 {
-    _ = a;
-    var quote: u8 = 0;
-    for (line, 0..) |c, i| {
-        if (quote != 0) {
-            if (c == quote) quote = 0;
-        } else if (c == '\'' or c == '"') {
-            quote = c;
-        } else if (c == '!') {
-            return str.rstrip(line[0..i]);
-        }
-    }
-    return line;
+/// The form that an editor's language for a document (`languageId`) names:
+/// the VS Code extension's `FortranFixedForm` and `FortranFreeForm`. Other
+/// editors' (`fortran`, `fortran90`) name none.
+pub fn formOfLanguage(language_id: ?[]const u8) ?SourceForm {
+    const id = language_id orelse return null;
+    if (std.ascii.eqlIgnoreCase(id, "FortranFixedForm")) return .fixed;
+    if (std.ascii.eqlIgnoreCase(id, "FortranFreeForm")) return .free;
+    return null;
 }
 
 pub const FortranFile = struct {
@@ -176,8 +173,33 @@ pub const FortranFile = struct {
     pp_skips: []const pp.Skip = &.{},
     pp_arena: std.heap.ArenaAllocator,
     pp_defs: pp.Defs = .empty,
+    /// What `prepare` gave the last parse (in `pp_arena`) and the `hash` of
+    /// the text then, from which the summary of a file is parsed again
+    /// (server/summary.zig)
+    prepared: ?struct { out: ?pp.Output, hash: ?u64 } = null,
+    /// The form zfls reads `lines` in: free in a file whose `!dir$ fixed`
+    /// or `!dir$ free` switch forms (`form_switched`), whose fixed-form
+    /// lines `lines` has as free-form ones (parser/form_switch.zig)
     fixed: bool = false,
+    /// The file's own form (of its first lines), which compilers are told
+    declared_fixed: bool = false,
+    form_switched: bool = false,
+    /// The form the editor gives the document while it is open (its
+    /// language: `formOfLanguage`), which comes before the form that its
+    /// name and text suggest
+    forced_form: ?SourceForm = null,
+    /// The form the editor's file associations give a `.fpp` file, after
+    /// the editor's language (server/source_form.zig)
+    associated_form: ?SourceForm = null,
+    /// The form of the file's command (`-ffixed-form`), after those
+    command_form: ?SourceForm = null,
+    /// `-fimplicit-none`: IMPLICIT NONE where no IMPLICIT statement is
+    implicit_none: bool = false,
+    /// the kinds of the types without one, of its options (#512)
+    default_kinds: default_kinds.Kinds = .{},
     preproc: bool = false,
+    /// How its compiler's preprocessor reads `#if` (preprocessor/dialect.zig)
+    pp_dialect: pp.Dialect = .any,
     ast: ?*Ast = null,
     hash: ?u64 = null,
     /// Read only because a file of the workspace includes it (INCLUDE,
@@ -188,10 +210,26 @@ pub const FortranFile = struct {
     /// such as `;*`): outside strings, the first byte of one is `!` in
     /// `lines`, the text zfls reads, so that it is a comment there
     comment_markers: []const []const u8 = &.{},
-    /// With `comment_markers`: the lines as the editor has them, slices of
-    /// `raw_text` (owned by `gpa`), to which changes apply
+    /// Read OpenMP conditional compilation lines (`!$ x = 1`) as code: their
+    /// sentinel is two blanks in `lines` (parser/openmp.zig)
+    openmp_conditional: bool = true,
+    /// When `lines` differ from the editor's text (comment markers, OpenMP
+    /// conditional lines): the lines as the editor has them, slices of
+    /// `raw_text` (owned by `gpa`), to which changes apply; else empty
     raw_lines: std.ArrayList([]const u8) = .empty,
     raw_text: []u8 = &.{},
+    /// `d_lines` is `code`: the D or d in column 1 of a fixed-form line (a
+    /// debug line) is a blank in `lines`, not the start of a comment
+    d_lines_code: bool = false,
+    /// `fixed_line_length`: the columns of a fixed-form code line past it
+    /// are blanks in `lines` (parser/fixed_columns.zig); null: no limit
+    fixed_columns: ?usize = null,
+    /// A TAB-format line's TAB stands for the columns up to 6 against
+    /// `fixed_columns` (gfortran's and LLVM Flang's count), not for one
+    fixed_tab_wide: bool = false,
+    /// ifx's `!DEC$ FIXEDFORMLINESIZE:n` lines (parser/line_size.zig), owned
+    /// by `gpa`
+    line_sizes: []line_size.Directive = &.{},
 
     pub fn create(gpa: Allocator, path: []const u8, pp_suffixes: ?[]const []const u8) !*FortranFile {
         const self = try gpa.create(FortranFile);
@@ -207,10 +245,12 @@ pub const FortranFile = struct {
                 self.preproc = true;
             };
         } else {
+            // an upper-case suffix (`.F90`, `.F`), and `.fpp`, which the
+            // compilers preprocess too (gfortran, Flang, ifx)
             var upper_buf: [64]u8 = undefined;
             if (ext.len <= upper_buf.len) {
                 const up = std.ascii.upperString(upper_buf[0..ext.len], ext);
-                self.preproc = std.mem.eql(u8, up, ext);
+                self.preproc = std.mem.eql(u8, up, ext) or std.mem.eql(u8, up, ".FPP");
             }
         }
         return self;
@@ -222,6 +262,7 @@ pub const FortranFile = struct {
         self.lines.deinit(self.gpa);
         self.gpa.free(self.raw_text);
         self.raw_lines.deinit(self.gpa);
+        self.gpa.free(self.line_sizes);
         self.pp_arena.deinit();
         self.gpa.free(self.path);
         self.gpa.destroy(self);
@@ -231,15 +272,41 @@ pub const FortranFile = struct {
         return self.lines.items.len;
     }
 
-    /// Whether the file is in fixed form. A file named as free-form source
+    /// Sets the form the editor gives the document (null: none, as for a
+    /// document that is closed). Returns whether the file's form changed,
+    /// after which it has to be parsed again.
+    pub fn forceForm(self: *FortranFile, form: ?SourceForm) bool {
+        self.forced_form = form;
+        const was = self.declared_fixed;
+        const lines = self.editLines();
+        self.setForm(lines, true);
+        // debug lines are read as code in fixed form only (`d_lines`), the
+        // fixed-form lines of a file that switches forms as free ones, a
+        // TAB-format continuation line as one: the editor's lines read again
+        // in the new form
+        if (was != self.declared_fixed and (self.d_lines_code or self.form_switched or self.raw_lines.items.len > 0)) self.setContents(lines, false) catch {};
+        return was != self.declared_fixed;
+    }
+
+    /// The forms of the file: its own (by `detectFixed` of the lines before
+    /// a `!dir$ fixed` or `!dir$ free`, or as it was), and whether these
+    /// switch it
+    fn setForm(self: *FortranFile, lines: []const []const u8, detect: bool) void {
+        if (detect) self.declared_fixed = self.detectFixed(lines[0 .. form_switch.first(lines) orelse lines.len]);
+        self.form_switched = form_switch.switches(self.declared_fixed, lines);
+        self.fixed = self.declared_fixed and !self.form_switched;
+    }
+
+    /// Whether the file is in fixed form: as the editor says, if it does
+    /// (`forced_form`, `associated_form`). A file named as free-form source
     /// (`.f90`, `.F08`, ...) is not, as compilers decide: its text cannot
     /// tell when no line is indented 1 to 4 columns nor ends with `&` (the
     /// Fortran stdlib's, indented 5). Others by their text, as fortls
     /// decides (`detect_fixed_format`).
-    fn detectFixed(self: *const FortranFile) bool {
-        const ext = std.Io.Dir.path.extension(self.path);
-        for (free_form_suffixes) |s| if (std.ascii.eqlIgnoreCase(ext, s)) return false;
-        return helpers.detectFixedFormat(self.lines.items);
+    fn detectFixed(self: *const FortranFile, lines: []const []const u8) bool {
+        if (self.forced_form orelse self.associated_form orelse self.command_form) |form| return form == .fixed;
+        if (suffixes.formOf(self.path) == .free) return false;
+        return helpers.detectFixedFormat(lines);
     }
 
     fn resetPp(self: *FortranFile) void {
@@ -260,57 +327,105 @@ pub const FortranFile = struct {
         var at: usize = 0;
         for (new_lines) |l| {
             @memcpy(buf[at .. at + l.len], l);
+            tab_format.blankSpaces(buf[at .. at + l.len]);
             fresh.appendAssumeCapacity(buf[at .. at + l.len]);
             at += l.len;
         }
+        // the form first, which the lines zfls reads depend on
+        self.setForm(fresh.items, detect_format);
         self.replaceText(buf, fresh);
-        if (detect_format) self.fixed = self.detectFixed();
     }
 
     /// Take `buf` (owned by `gpa`) and the lines in it as the contents.
-    /// With comment markers, they are the raw lines, and `lines` a copy
-    /// with the markers made comments.
+    /// When zfls reads them otherwise than they are written (`rewrites`),
+    /// they are the raw lines, and `lines` a copy: comment markers made
+    /// comments, the D of debug lines and the sentinel of OpenMP
+    /// conditional lines blanks.
     fn replaceText(self: *FortranFile, buf: []u8, new_lines: std.ArrayList([]const u8)) void {
-        if (self.comment_markers.len > 0) {
-            if (self.markedCopy(buf, new_lines.items)) |marked| {
-                self.gpa.free(self.raw_text);
-                self.raw_lines.deinit(self.gpa);
-                self.raw_text = buf;
-                self.raw_lines = new_lines;
-                self.gpa.free(self.text);
-                self.lines.deinit(self.gpa);
-                self.text = marked.text;
-                self.lines = marked.lines;
-                self.resetPp();
-                return;
-            } else |_| {}
-        }
+        self.gpa.free(self.raw_text);
+        self.raw_lines.deinit(self.gpa);
+        self.raw_text = &.{};
+        self.raw_lines = .empty;
         self.gpa.free(self.text);
         self.lines.deinit(self.gpa);
         self.text = buf;
         self.lines = new_lines;
         self.resetPp();
+        self.gpa.free(self.line_sizes);
+        self.line_sizes = line_size.directives(self.gpa, new_lines.items) catch &.{};
+        if (!self.rewrites()) return;
+        // without memory for the copy, the text is read as it is
+        const code = self.codeCopy(buf, new_lines.items) catch return;
+        self.raw_text = buf;
+        self.raw_lines = new_lines;
+        self.text = code.text;
+        self.lines = code.lines;
     }
 
-    /// A copy of `buf` and its lines with the comment markers made `!`
-    fn markedCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+    /// Whether a line of the text is read otherwise than it is written:
+    /// comment markers, debug lines read as code, OpenMP conditional lines,
+    /// fixed-form lines of a file that switches forms or past
+    /// `fixed_columns`, TAB-format lines
+    fn rewrites(self: *const FortranFile) bool {
+        if (self.form_switched or self.comment_markers.len > 0 or (self.d_lines_code and self.fixed)) return true;
+        if (self.fixed) for (self.lines.items, 0..) |l, i| if (self.fixedLimitAt(i, self.fixed_columns)) |n| if (fixed_columns.isLong(l, n)) return true;
+        if (tab_format.any(self.lines.items)) return true;
+        if (!self.openmp_conditional) return false;
+        for (self.lines.items) |l| if (openmp.isConditional(self.fixed, l)) return true;
+        return false;
+    }
+
+    /// A copy of `buf` and its lines as zfls reads them: the comment
+    /// markers made `!`, the D or d in column 1 a blank with
+    /// `d_lines_code`, the sentinels of OpenMP conditional lines blanks,
+    /// the columns past `fixed_columns` blanks
+    fn codeCopy(self: *FortranFile, buf: []const u8, raw: []const []const u8) !struct { text: []u8, lines: std.ArrayList([]const u8) } {
+        if (self.form_switched) {
+            const limits: line_size.Limits = .{ .default = self.fixed_columns, .directives = self.line_sizes };
+            const out = try form_switch.asFree(self.gpa, self.declared_fixed, self.d_lines_code, limits, raw);
+            for (out.lines.items, 0..) |l, i| self.rewriteLine(@constCast(l), i);
+            return .{ .text = out.text, .lines = out.lines };
+        }
         const text = try self.gpa.dupe(u8, buf);
         errdefer self.gpa.free(text);
         var lines: std.ArrayList([]const u8) = .empty;
         errdefer lines.deinit(self.gpa);
         try lines.ensureTotalCapacity(self.gpa, raw.len);
-        for (raw) |l| {
+        for (raw, 0..) |l, i| {
             const at = @intFromPtr(l.ptr) - @intFromPtr(buf.ptr);
             const line = text[at .. at + l.len];
-            helpers.markComments(line, self.comment_markers);
+            self.rewriteLine(line, i);
             lines.appendAssumeCapacity(line);
         }
         return .{ .text = text, .lines = lines };
     }
 
+    /// The line length of fixed-form line `i` (0-based): `default`
+    /// (`fixed_line_length`) or that of a FIXEDFORMLINESIZE before it
+    pub fn fixedLimitAt(self: *const FortranFile, i: usize, default: ?usize) ?usize {
+        return (line_size.Limits{ .default = default, .directives = self.line_sizes }).at(i);
+    }
+
+    fn rewriteLine(self: *const FortranFile, line: []u8, i: usize) void {
+        // the limit before the TAB becomes a blank
+        const limit = if (self.fixed) if (self.fixedLimitAt(i, self.fixed_columns)) |n| fixed_columns.tabLimit(line, n, self.fixed_tab_wide) else null else null;
+        tab_format.blankLine(self.fixed, line);
+        if (self.d_lines_code and self.fixed and line.len > 0 and (line[0] == 'd' or line[0] == 'D')) line[0] = ' ';
+        if (self.openmp_conditional) _ = openmp.blankSentinel(self.fixed, line);
+        if (limit) |n| fixed_columns.blank(line, n);
+        if (self.comment_markers.len > 0) helpers.markComments(line, self.comment_markers);
+    }
+
     /// The lines that changes apply to: the editor's
     pub fn editLines(self: *const FortranFile) []const []const u8 {
-        return if (self.comment_markers.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
+        return if (self.raw_lines.items.len > 0 and self.raw_lines.items.len == self.lines.items.len) self.raw_lines.items else self.lines.items;
+    }
+
+    /// The `hash` of a file's text, whose tabs and form feeds become
+    /// spaces
+    pub fn textHash(text: []u8) u64 {
+        tab_format.blankSpaces(text);
+        return std.hash.Wyhash.hash(0, text);
     }
 
     /// Set contents from text; returns false if unchanged (same hash)
@@ -322,8 +437,7 @@ pub const FortranFile = struct {
     /// are slices of it, without a copy
     pub fn setTextOwned(self: *FortranFile, text: []u8) !bool {
         errdefer self.gpa.free(text);
-        std.mem.replaceScalar(u8, text, '\t', ' ');
-        const h = std.hash.Wyhash.hash(0, text);
+        const h = textHash(text);
         if (self.hash != null and self.hash.? == h) {
             self.gpa.free(text);
             return false;
@@ -346,8 +460,8 @@ pub const FortranFile = struct {
         }
         try fresh.append(self.gpa, text[start..]);
         self.hash = h;
+        self.setForm(fresh.items, true);
         self.replaceText(text, fresh);
-        self.fixed = self.detectFixed();
         return true;
     }
 
@@ -355,7 +469,7 @@ pub const FortranFile = struct {
 
     /// Read the file from disk; returns whether its contents changed
     pub fn loadFromDisk(self: *FortranFile, io: Io) LoadError!bool {
-        const data = Io.Dir.cwd().readFileAlloc(io, self.path, self.gpa, .limited(1 << 30)) catch |e| return switch (e) {
+        const data = fsio.readFile(io, self.gpa, self.path, .limited(1 << 30)) catch |e| return switch (e) {
             error.OutOfMemory => error.OutOfMemory,
             else => error.ReadFailed,
         };
@@ -368,286 +482,22 @@ pub const FortranFile = struct {
         return self.lines.items[line_no];
     }
 
-    /// Get full code line from file including any adjacent continuations
-    pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: usize, forward: bool, backward: bool, pp_content: bool, strip_comment: bool) !CodeLine {
-        var curr_line = self.getLine(line_no, pp_content) orelse return .{ .pre = &.{}, .curr = null, .post = &.{} };
-        const n = self.nLines();
-        var line_ind = line_no -| 1;
-        var pre_lines: std.ArrayList([]const u8) = .empty;
-        if (backward) {
-            if (self.fixed) {
-                var tmp_line = curr_line;
-                while (line_ind > 0) {
-                    if (helpers.isFixedCont(tmp_line)) {
-                        const prev_line = tmp_line;
-                        tmp_line = self.getLine(line_ind, pp_content) orelse "";
-                        if (line_ind == line_no -| 1) {
-                            curr_line = try std.mem.concat(a, u8, &.{ "      ", str.from(curr_line, 6) });
-                        } else {
-                            pre_lines.items[pre_lines.items.len - 1] = try std.mem.concat(a, u8, &.{ "      ", str.from(prev_line, 6) });
-                        }
-                        try pre_lines.append(a, tmp_line);
-                    } else break;
-                    line_ind -= 1;
-                }
-            } else {
-                if (helpers.freeContEnd(curr_line)) |e| {
-                    curr_line = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), curr_line[e..] });
-                }
-                while (line_ind > 0) {
-                    const tmp_line = try helpers.stripStrings(a, self.getLine(line_ind, pp_content) orelse "", true);
-                    var tmp_no_comm = str.beforeFirst(tmp_line, "!");
-                    const cont_ind = std.mem.findScalarLast(u8, tmp_no_comm, '&');
-                    if (helpers.freeContEnd(tmp_no_comm)) |e| {
-                        if (cont_ind == e - 1) break;
-                        tmp_no_comm = try std.mem.concat(a, u8, &.{ try str.spaces(a, e), tmp_no_comm[e..] });
-                    }
-                    if (cont_ind) |ci| {
-                        try pre_lines.append(a, tmp_no_comm[0..ci]);
-                    } else break;
-                    line_ind -= 1;
-                }
-            }
-        }
-        line_ind = line_no + 1;
-        var post_lines: std.ArrayList([]const u8) = .empty;
-        if (forward) {
-            if (self.fixed) {
-                if (line_ind < n) {
-                    var next_line = self.getLine(line_ind, pp_content) orelse "";
-                    line_ind += 1;
-                    var cont = helpers.isFixedCont(next_line);
-                    // a comment ends its line only: one before a continuation
-                    // must not cut off the rest of the statement (hansec #202)
-                    if (cont) curr_line = try fixedNoComment(a, curr_line);
-                    while (cont and line_ind < n) {
-                        try post_lines.append(a, try std.mem.concat(a, u8, &.{ "      ", str.from(next_line, 6) }));
-                        next_line = self.getLine(line_ind, pp_content) orelse "";
-                        line_ind += 1;
-                        cont = helpers.isFixedCont(next_line);
-                        if (cont) {
-                            const last = &post_lines.items[post_lines.items.len - 1];
-                            last.* = try fixedNoComment(a, last.*);
-                        }
-                    }
-                }
-            } else {
-                var line_stripped = try helpers.stripStrings(a, curr_line, true);
-                var cont_amper = continuationAmpersand(line_stripped);
-                var next_line: []const u8 = "";
-                while (cont_amper) |amper| {
-                    if (line_ind == line_no + 1) {
-                        curr_line = str.upto(curr_line, amper);
-                    } else if (next_line.len > 0) {
-                        post_lines.items[post_lines.items.len - 1] = str.upto(next_line, amper);
-                    }
-                    next_line = self.getLine(line_ind, pp_content) orelse break;
-                    line_ind += 1;
-                    // a line of an inactive conditional branch is not part of
-                    // the statement (hansec #203)
-                    if (helpers.isPpDirective(next_line) or (pp_content and self.ppSkipped(line_ind - 1))) {
-                        next_line = "";
-                        try post_lines.append(a, "");
-                        continue;
-                    }
-                    if (str.rstrip(next_line).len == 0 or helpers.isFreeComment(next_line)) {
-                        next_line = "";
-                        try post_lines.append(a, "");
-                        continue;
-                    }
-                    if (helpers.freeContEnd(next_line)) |e| next_line = next_line[e..];
-                    try post_lines.append(a, next_line);
-                    line_stripped = try helpers.stripStrings(a, next_line, true);
-                    cont_amper = continuationAmpersand(line_stripped);
-                }
-            }
-        }
-        if (strip_comment) curr_line = self.stripComment(curr_line);
-        std.mem.reverse([]const u8, pre_lines.items);
-        return .{ .pre = pre_lines.items, .curr = curr_line, .post = post_lines.items };
-    }
+    pub const getCodeLine = code_line.getCodeLine;
+    pub const stripComment = code_line.stripComment;
+    pub const continuesInto = code_line.continuesInto;
+    pub const findWordInCodeLine = code_line.findWordInCodeLine;
 
-    /// Whether line `line_no` (0-based) is excluded by a preprocessor
-    /// conditional
-    fn ppSkipped(self: *const FortranFile, line_no: usize) bool {
-        for (self.pp_skips) |reg| if (reg.start <= line_no + 1 and line_no + 1 <= reg.end) return true;
-        return false;
-    }
-
-    pub fn stripComment(self: *const FortranFile, line: []const u8) []const u8 {
-        if (self.fixed) {
-            if (helpers.isFixedComment(line) and !helpers.isOpenMp(true, line)) return "";
-        } else {
-            if (!helpers.isOpenMp(false, line)) return str.beforeFirst(line, "!");
-        }
-        return line;
-    }
-
-    /// Whether a statement continues into line `line_no` (0-based): the
-    /// code line before it ends with `&` (free form), or the next one is a
-    /// continuation line (fixed form). An INCLUDE or `#include` there is a
-    /// part of the statement's text (json-fortran's `subroutine s(me, &`
-    /// then an `#include` of the rest of the argument list), not a file of
-    /// declarations.
-    pub fn continuesInto(self: *const FortranFile, line_no: usize) bool {
-        if (self.fixed) {
-            var i = line_no + 1;
-            while (self.getLine(i, false)) |l| : (i += 1) {
-                if (std.mem.trim(u8, l, " \t\r").len == 0 or helpers.isFixedComment(l) or l[0] == '#') continue;
-                return l.len > 5 and l[5] != ' ' and l[5] != '0';
-            }
-            return false;
-        }
-        var i = line_no;
-        while (i > 0) {
-            i -= 1;
-            const l = self.getLine(i, false) orelse return false;
-            const code = std.mem.trim(u8, self.stripComment(l), " \t\r");
-            if (code.len == 0 or code[0] == '#') continue;
-            return code[code.len - 1] == '&';
-        }
-        return false;
-    }
-
-    pub fn findWordInCodeLine(self: *const FortranFile, a: Allocator, line_no_in: usize, word: []const u8, forward: bool, backward: bool, pp_content: bool) !struct { line: usize, range: Range } {
-        var line_no = line_no_in;
-        const cl = try self.getCodeLine(a, line_no, forward, backward, pp_content, false);
-        var word_range: Range = .{ .start = -1, .end = -1 };
-        if (cl.curr) |c| word_range = helpers.findWordInLineIgnoreCase(c, word);
-        if (backward and word_range.start < 0) {
-            var i: usize = cl.pre.len;
-            var k: usize = 0;
-            while (i > 0) : (k += 1) {
-                i -= 1;
-                word_range = helpers.findWordInLineIgnoreCase(cl.pre[i], word);
-                if (word_range.start >= 0) {
-                    line_no -|= k + 1;
-                    return .{ .line = line_no, .range = word_range };
-                }
-            }
-        }
-        if (forward and word_range.start < 0) {
-            for (cl.post, 0..) |l, i| {
-                word_range = helpers.findWordInLineIgnoreCase(l, word);
-                if (word_range.start >= 0) {
-                    line_no += i + 1;
-                    return .{ .line = line_no, .range = word_range };
-                }
-            }
-        }
-        return .{ .line = line_no, .range = word_range };
-    }
-
-    /// Apply a change to the file; returns whether a reparse is required
-    pub fn applyChange(self: *FortranFile, change: Change) !bool {
-        var arena = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena.deinit();
-        const a = arena.allocator();
-        self.hash = null;
-        const text = change.text;
-        const text_split: []const []const u8 = if (text.len == 0) &.{""} else try splitLines(a, text);
-        const rng = change.range orelse {
-            try self.setContents(text_split, true);
-            return true;
-        };
-        const n = self.nLines();
-        const current = self.editLines();
-        if (rng.sl == n) {
-            var all: std.ArrayList([]const u8) = .empty;
-            for (current) |l| try all.append(a, l);
-            try all.appendSlice(a, text_split);
-            try self.setContents(all.items, true);
-            return true;
-        }
-        if (rng.sl > n or rng.el >= n + 1) return error.InvalidRange;
-        const start_line = current[rng.sl];
-        const end_line = if (rng.el < n) current[rng.el] else "";
-        const start_col = @min(str.utf16ToByte(start_line, rng.sc), start_line.len);
-        const end_col = @min(str.utf16ToByte(end_line, rng.ec), end_line.len);
-
-        // Single line edit
-        if (rng.sl == rng.el and text_split.len == 1) {
-            const prev = current[rng.sl];
-            const new_line = try std.mem.concat(a, u8, &.{ prev[0..start_col], text, prev[@max(end_col, start_col)..] });
-            const replaced = try a.dupe([]const u8, current);
-            replaced[rng.sl] = new_line;
-            // The buffer is rebuilt, which the preprocessed lines that are
-            // the raw lines themselves must follow; the others are in pp_arena
-            const old_pp = self.pp_lines;
-            const old_skips = self.pp_skips;
-            var raw: []bool = &.{};
-            if (old_pp) |pl| {
-                raw = try a.alloc(bool, pl.len);
-                const lo = @intFromPtr(self.text.ptr);
-                const hi = lo + self.text.len;
-                for (pl, raw) |l, *r| r.* = @intFromPtr(l.ptr) >= lo and @intFromPtr(l.ptr) < hi;
-            }
-            try self.setContents(replaced, false);
-            if (old_pp) |pl| {
-                for (pl, raw, 0..) |*l, r, i| {
-                    if (r) l.* = self.lines.items[i];
-                }
-                pl[rng.sl] = try self.pp_arena.allocator().dupe(u8, self.lines.items[rng.sl]);
-                self.pp_lines = pl;
-                self.pp_skips = old_skips;
-            }
-            return self.checkChangeReparse(@intCast(rng.sl));
-        }
-
-        var new_contents: std.ArrayList([]const u8) = .empty;
-        for (current, 0..) |line, i| {
-            if (i < rng.sl or i > rng.el) {
-                try new_contents.append(a, line);
-                continue;
-            }
-            if (i == rng.sl) {
-                for (text_split, 0..) |cl, j| {
-                    if (j == 0) {
-                        try new_contents.append(a, try std.mem.concat(a, u8, &.{ line[0..start_col], cl }));
-                    } else {
-                        try new_contents.append(a, cl);
-                    }
-                }
-            }
-            if (i == rng.el) {
-                const last = new_contents.items.len - 1;
-                new_contents.items[last] = try std.mem.concat(a, u8, &.{ new_contents.items[last], line[end_col..] });
-            }
-        }
-        try self.setContents(new_contents.items, true);
-        return true;
-    }
-
-    fn checkChangeReparse(self: *FortranFile, line_no: usize) !bool {
-        if (line_no >= self.nLines()) return true;
-        var arena = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena.deinit();
-        const a = arena.allocator();
-        const cl = try self.getCodeLine(a, line_no, false, true, false, false);
-        const curr_line = cl.curr.?;
-        if (helpers.isComment(self.fixed, curr_line)) return false;
-        var full_line: []const u8 = try std.mem.concat(a, u8, &.{ try std.mem.concat(a, u8, cl.pre), curr_line });
-        const lr = try helpers.stripLineLabel(a, full_line);
-        full_line = lr.line;
-        if (lr.label != null) return true;
-        const line_stripped = try helpers.stripStrings(a, full_line, true);
-        if (std.mem.findScalar(u8, line_stripped, ';') != null) return true;
-        const line_no_comment = if (std.mem.findScalar(u8, line_stripped, '!')) |ci| full_line[0..ci] else full_line;
-        if (R().END_WORD.match(line_no_comment) != null) return true;
-        if (R().IMPLICIT.match(line_no_comment) != null) return true;
-        if (R().CONTAINS.match(line_no_comment) != null) return true;
-        if (R().NON_DEF.match(line_no_comment) != null) return false;
-        return (try getFortranDefinition(a, line_no_comment)) != null;
-    }
+    pub const applyChange = changes.applyChange;
 
     /// Run the preprocessor over the file contents
     pub fn preprocess(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, trace: ?Trace) !pp.Output {
         _ = self.pp_arena.reset(.free_all);
+        self.prepared = null;
         self.pp_lines = null;
         self.pp_skips = &.{};
         self.pp_defs = .empty;
         const a = self.pp_arena.allocator();
-        const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, trace);
+        const out = try pp.preprocessFile(a, io, self.lines.items, self.path, defs, include_dirs, self.pp_dialect, trace);
         self.pp_lines = out.lines;
         self.pp_skips = out.skips;
         self.pp_defs = out.defs;
@@ -681,7 +531,10 @@ pub const FortranFile = struct {
                     // held to max_comment_line_length, not to the code limit
                     // (upstream #489)
                     const stripped = try helpers.stripStrings(a, line, true);
-                    const has_comment = std.mem.findScalar(u8, stripped, '!');
+                    // a `!` in column 6 of a fixed-form line marks a
+                    // continuation, not a comment
+                    const from: usize = if (self.fixed) helpers.fixedContStart(line) orelse 0 else 0;
+                    const has_comment = std.mem.findScalarPos(u8, stripped, from, '!');
                     const code = if (has_comment) |ci| str.rstrip(line[0..ci]) else line;
                     const code_len = str.codepointLen(code);
                     if (0 < max_code and max_code < code_len) {
@@ -712,16 +565,41 @@ pub const FortranFile = struct {
     /// The preprocessor's output for parsing (null when the file is not
     /// preprocessed), which `self` keeps too
     pub fn prepare(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !?pp.Output {
+        self.prepared = null;
+        const out = try self.preparePass(io, defs, include_dirs, opts);
+        self.prepared = .{ .out = out, .hash = self.hash };
+        return out;
+    }
+
+    fn preparePass(self: *FortranFile, io: Io, defs: ?*const pp.Defs, include_dirs: []const []const u8, opts: Options) !?pp.Output {
         if (self.preproc) {
             Trace.print(opts.trace, "=== PreProc Pass ===\n", .{});
-            const out = try self.preprocess(io, defs, include_dirs, opts.trace);
+            var out = try self.preprocess(io, defs, include_dirs, opts.trace);
             Trace.print(opts.trace, "\n=== Parsing Pass ===\n", .{});
+            if (opts.intel_directives) try self.addIntelSkips(&out, defs);
             return out;
         }
         Trace.print(opts.trace, "=== No PreProc ===\n", .{});
         self.pp_lines = null;
         self.pp_skips = &.{};
-        return null;
+        if (!opts.intel_directives) return null;
+        // the Intel conditionals alone: no macros, no includes
+        _ = self.pp_arena.reset(.free_all);
+        self.pp_defs = .empty;
+        var out: pp.Output = .{ .lines = self.lines.items, .skips = &.{}, .defines = &.{}, .includes = &.{}, .missing = &.{}, .defs = .empty };
+        try self.addIntelSkips(&out, defs);
+        return if (out.skips.len > 0) out else null;
+    }
+
+    /// Adds to `out` (and `pp_skips`) the branches that Intel's conditional
+    /// compilation directives (`!DEC$ IF DEFINED (X)`) leave out, after the
+    /// C preprocessor's
+    fn addIntelSkips(self: *FortranFile, out: *pp.Output, defs: ?*const pp.Defs) !void {
+        const a = self.pp_arena.allocator();
+        const extra = (try pp_intel.branchSkips(a, self.lines.items, self.fixed, defs, out.skips)) orelse return;
+        if (extra.len == 0) return;
+        out.skips = try std.mem.concat(a, pp.Skip, &.{ out.skips, extra });
+        self.pp_skips = out.skips;
     }
 
     /// A hash of all that parsing reads, `prepared` and `opts` included,
@@ -729,7 +607,7 @@ pub const FortranFile = struct {
     /// index cache keeps ASTs under it)
     pub fn parseKey(self: *const FortranFile, prepared: ?pp.Output, opts: Options, salt: u64) u64 {
         var h = std.hash.Wyhash.init(salt);
-        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords) };
+        const flags = [_]u8{ @intFromBool(self.fixed), @intFromBool(self.preproc), @intFromBool(opts.sort_keywords), @intFromBool(self.d_lines_code), @intFromBool(opts.plain_comments), @intFromBool(self.implicit_none), @backingInt(self.pp_dialect) };
         h.update(&flags);
         for (self.comment_markers) |m| {
             h.update(m);
@@ -750,6 +628,15 @@ pub const FortranFile = struct {
                 h.update(inc.path);
                 h.update("\x00");
             }
+            for (out.missing) |mi| {
+                h.update(std.mem.asBytes(&mi.line));
+                h.update(mi.name);
+                h.update("\x00");
+            }
+            for (out.rejected) |r| {
+                h.update(std.mem.asBytes(&r.line));
+                h.update(r.message);
+            }
         }
         return h.final();
     }
@@ -769,56 +656,16 @@ pub const FortranFile = struct {
             p.pp_defines = out.defines;
             // an `#include` links the file like an INCLUDE statement would
             for (out.includes) |inc| try p.file_ast.addInclude(inc.path, inc.line);
+            // one whose file is not found, like an INCLUDE that zfls cannot read
+            for (out.missing) |mi| try p.file_ast.addMissingInclude(mi.name, mi.line, mi.start, mi.end);
+            // a condition that the compiler's preprocessor rejects, as it does
+            for (out.rejected) |r| try p.file_ast.addError(.preprocessor_condition, r.message, C.Severity.err, r.line, r.start, r.end);
         }
         try p.run();
+        if (self.implicit_none) implicit.noneByDefault(p.file_ast);
         return p.file_ast;
     }
 };
-
-test "read definitions" {
-    patterns.init();
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const r = (try readVarDef(a, "  integer(kind=8), intent(in) :: x, y(3)", null, false)).?;
-    try std.testing.expectEqualStrings("INTEGER", r.var_.var_type);
-    try std.testing.expectEqualStrings("(kind=8)", r.var_.var_kind.?);
-    try std.testing.expectEqual(@as(usize, 2), r.var_.var_names.?.len);
-    try std.testing.expectEqualStrings("INTENT(IN)", r.var_.keywords[0]);
-
-    const f = (try readFunDef(a, "pure real function foo(a, b) result(c)", null, false)).?;
-    try std.testing.expectEqualStrings("foo", f.fun.name);
-    try std.testing.expectEqualStrings("a,b", f.fun.args);
-
-    const s = (try getFortranDefinition(a, "subroutine bar(x)")).?;
-    try std.testing.expectEqualStrings("bar", s.sub.name);
-
-    const ctx = try getLineContext(a, "call foo");
-    try std.testing.expectEqual(LineContext.call, ctx.ctx);
-
-    // MODULE after the type (stdlib): a separate module procedure, not a
-    // variable named `module`
-    for ([_][]const u8{ "real(RTICKS) module function lifetime(p) result(t)", "pure real(dp) module function lifetime(p)" }) |line| {
-        const m = (try getFortranDefinition(a, line)).?;
-        try std.testing.expectEqualStrings("lifetime", m.fun.name);
-        try std.testing.expect(m.fun.mod_flag);
-    }
-    // a variable of that name stays one
-    const v = (try getFortranDefinition(a, "      REAL MODULE")).?;
-    try std.testing.expectEqualStrings("MODULE", v.var_.var_names.?[0]);
-}
-
-test "the definition tests are chosen by the first word, labels fall back to all" {
-    var buf: [32]u8 = undefined;
-    try std.testing.expectEqualStrings("integer", firstWord("  INTEGER :: x", &buf).?);
-    try std.testing.expectEqualStrings("doubleprecision", firstWord("      DOUBLEPRECISION X", &buf).?);
-    try std.testing.expect(firstWord("  outer: do i = 1, n", &buf) == null);
-    // `\w` takes bytes past ASCII, so this is a construct label too
-    try std.testing.expect(firstWord("add\xe2\x88\x911 : BLOCK", &buf) == null);
-    try std.testing.expectEqualStrings("use", firstWord("use m, only: a", &buf).?);
-    try std.testing.expect(firstWord("_x: block", &buf) == null);
-    try std.testing.expect(firstWord("#include \"a\"", &buf) == null);
-}
 
 test "comment markers: zfls reads comments, changes apply to the editor's text" {
     patterns.init();
@@ -836,4 +683,16 @@ test "comment markers: zfls reads comments, changes apply to the editor's text" 
     try std.testing.expectEqualStrings("  go to 110 !*", f.getLine(1, false).?);
     try std.testing.expectEqualStrings("  x = 1 !* two it's a comment", f.getLine(2, false).?);
     try std.testing.expectEqual(@as(usize, 5), f.nLines());
+}
+
+test "d_lines code: zfls reads the D of a debug line as a blank, changes apply to the editor's text" {
+    const f = try FortranFile.create(std.testing.allocator, "/w/a.f", null);
+    defer f.destroy();
+    f.d_lines_code = true;
+    _ = try f.setText("      I = 1\nD     I = 2\n      END\n");
+    try std.testing.expect(f.fixed);
+    try std.testing.expectEqualStrings("      I = 2", f.getLine(1, false).?);
+    _ = try f.applyChange(.{ .text = "3", .range = .{ .sl = 1, .sc = 10, .el = 1, .ec = 11 } });
+    try std.testing.expectEqualStrings("D     I = 3", f.editLines()[1]);
+    try std.testing.expectEqualStrings("      I = 3", f.getLine(1, false).?);
 }

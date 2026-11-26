@@ -1,27 +1,17 @@
 # Tests of the open issues of upstream fortls
 
-These tests state, for the open bugs of
-[fortran-lang/fortls](https://github.com/fortran-lang/fortls/issues), what a
-user would expect, and record whether zfls gets it right. A bug that zfls
-still has is not hidden: its test is the oracle for the patch.
+These tests state, for the open bugs of [fortran-lang/fortls](https://github.com/fortran-lang/fortls/issues), what a user would expect, and record whether zfls gets it right. A bug that zfls still has is not hidden: its test is the oracle for the patch.
 
-Run them with `zig build test-issues` (they are also part of `zig build
-test`). Each test builds a small workspace from the fixture in the issue,
-starts a `Server` in-process (`harness.zig`) and sends it LSP requests.
+Run them with `zig build test-issues` (they are also part of `zig build test`). Each test builds a small workspace from the fixture in the issue, starts a `Server` in-process (`harness.zig`) and sends it LSP requests.
 
 A test ends in `h.check(issue, status, result)`:
 
 - `.fixed`: zfls behaves correctly. A failure is a regression.
-- `.known_failure`: the bug is still there, so the expectations must fail.
-  When a patch makes them pass the test fails until the marker is changed to
-  `.fixed`, so the table below does not go stale.
+- `.known_failure`: the bug is still there, so the expectations must fail. When a patch makes them pass the test fails until the marker is changed to `.fixed`, so the table below does not go stale.
 
-Every run writes what each test found, with the reason a known failure fails,
-to `.zig-cache/issue-tests.txt`.
+Every run writes what each test found, with the reason a known failure fails, to `.zig-cache/issue-tests.txt`.
 
-`upstream_check.py` runs the same fixtures through Python fortls (a checkout,
-at the commit the issues cite) and through zfls, using their debug command
-line options, to check the "fortls" column:
+`upstream_check.py` runs the same fixtures through Python fortls (a checkout, at the commit the issues cite) and through zfls, using their debug command line options, to check the "fortls" column:
 
 ```sh
 python tests/issues/upstream_check.py --zfls zig-out/bin/zfls --fortls ../fortls 406
@@ -29,8 +19,7 @@ python tests/issues/upstream_check.py --zfls zig-out/bin/zfls --fortls ../fortls
 
 ## Results
 
-The status of fortls is for its commit `0392beb`. "Same" means both servers
-give the same answer, and the test fails for the reason in the issue.
+The status of fortls is for its commit `0392beb`. "Same" means both servers give the same answer, and the test fails for the reason in the issue.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
@@ -54,12 +43,14 @@ give the same answer, and the test fails for the reason in the issue.
 | [#125](https://github.com/fortran-lang/fortls/issues/125) | hover on a literal constant shows its type with its kind (`REAL(dp)`, `INTEGER(8)`, `DOUBLE PRECISION`, BOZ values) | hover | fixed (feature) | the type without its kind; none on `1d0`, `7_8` |
 | [#501](https://github.com/fortran-lang/fortls/issues/501) | `prefer_implementation`: hover shows the documentation of a separate module procedure's body in a submodule | hover | fixed (feature) | the interface only |
 | [#502](https://github.com/fortran-lang/fortls/issues/502) | `prefer_implementation`: go to definition goes to the body in the submodule | hover | fixed (feature) | the interface only |
-| [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | parsing | fixed (patched) | fails, same cause |
+| [#495](https://github.com/fortran-lang/fortls/issues/495) | definition inside a file `#include`d into a module | includes | fixed (patched) | fails, same cause |
 | [#489](https://github.com/fortran-lang/fortls/issues/489) | `!` comment after code held to `max_line_length` | diagnostics | fixed (patched) | fails, same cause |
 | [#483](https://github.com/fortran-lang/fortls/issues/483) | hover on an `external` procedure | hover | fixed (patched) | fails, same cause |
 | [#470](https://github.com/fortran-lang/fortls/issues/470) | definitions after `BLOCK DATA` | diagnostics | fixed (patched) | fails, same cause |
+| [#443](https://github.com/fortran-lang/fortls/issues/443) | a form feed at the start of a line hides its statement | parsing | fixed (patched) | fails (per the issue) |
 | [#411](https://github.com/fortran-lang/fortls/issues/411) | `;` in a fixed-form comment | parsing | fixed (patched) | fails, same cause |
 | [#406](https://github.com/fortran-lang/fortls/issues/406) | `external` declared in two subroutines | diagnostics | fixed (patched) | fails, same cause |
+| [#309](https://github.com/fortran-lang/fortls/issues/309) | Intel's `!DEC$ IF DEFINED` / `!DIR$ IF` branches not taken are skipped: no false "declared twice", hover shows the declaration in effect | intel_directives | fixed (feature) | every branch read |
 | [#322](https://github.com/fortran-lang/fortls/issues/322) | rename a function, result variable not renamed | rename | fixed (patched) | fails, same cause |
 | [#301](https://github.com/fortran-lang/fortls/issues/301) | `INCLUDE` statement searched in `include_dirs`, go to definition on it | workspace | fixed (patched) | fails, same cause |
 | [#292](https://github.com/fortran-lang/fortls/issues/292) | label or variable named `block` | parsing | fixed (patched) | fails, same cause |
@@ -85,34 +76,30 @@ give the same answer, and the test fails for the reason in the issue.
 
 Notes:
 
-- The fixture of #470 is built from its description (the report only has
-  screenshots), and the one of #485 checks the diagnostics only.
-- Where the table says "same" for #489, fortls reports each warning twice;
-  zfls does not (see "Differences from fortls" in the main README).
+- The fixture of #470 is built from its description (the report only has screenshots), and the one of #485 checks the diagnostics only.
+- Where the table says "same" for #489, fortls reports each warning twice; zfls does not (see "Differences from fortls" in the main README).
 
 ### Not tested
 
-- [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own
-  test suite on Python 3.14; it does not apply to zfls.
-- The feature requests and discussions have no behavior to test yet:
-  #563, #423, #417, #348, #309,
-  #209, #171, #126, #125, #96, #85, #56 and #28.
+- [#499](https://github.com/fortran-lang/fortls/issues/499) fails fortls's own test suite on Python 3.14; it does not apply to zfls.
+- The feature requests and discussions have no behavior to test yet: #563, #423, #417, #348, #309, #209, #171, #126, #125, #96, #85, #56 and #28.
 
 ## Issues of hansec/fortran-language-server
 
-fortls was forked from
-[hansec/fortran-language-server](https://github.com/hansec/fortran-language-server);
-some of its bugs were never reported again to fortls. Their tests use
-`h.checkIn(.hansec, ...)`.
+fortls was forked from [hansec/fortran-language-server](https://github.com/hansec/fortran-language-server); some of its bugs were never reported again to fortls. Their tests use `h.checkIn(.hansec, ...)`.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
+| [#115](https://github.com/hansec/fortran-language-server/issues/115) | go to definition of a macro goes to its `#define` (in the file or a header); references list its uses and directives; hover and definition on `#ifdef` names | macros | fixed (feature) | definition answers the use itself |
+| [#123](https://github.com/hansec/fortran-language-server/issues/123) | a document opened with a text that is not its file's (unsaved changes restored, a file not saved yet) is served from the file | documents | fixed (patched) | fails, same cause |
 | [#202](https://github.com/hansec/fortran-language-server/issues/202) | `!` comment inside a continued fixed-form declaration hides the names after it | parsing | fixed (patched) | fails, same cause |
 | [#155](https://github.com/hansec/fortran-language-server/issues/155) | `!` comment inside a continued fixed-form `IF` loses its `THEN` | parsing | fixed (patched) | fails, same cause |
 | [#200](https://github.com/hansec/fortran-language-server/issues/200) | "masks variable" warning for a variable of a dummy procedure's interface body | diagnostics | fixed (patched) | fails, same cause |
 | [#168](https://github.com/hansec/fortran-language-server/issues/168) | references to a separate module procedure miss its implementation in a submodule | hover | fixed (patched) | fails, same cause |
 | [#137](https://github.com/hansec/fortran-language-server/issues/137) | the original name on a USE rename line resolves to a local variable of that name | hover | fixed (patched) | fails, same cause |
 | [#178](https://github.com/hansec/fortran-language-server/issues/178) | signature help counts the commas inside an array constructor or a nested call | hover | fixed | fails, same cause |
+| [#148](https://github.com/hansec/fortran-language-server/issues/148) | signature help for a structure constructor and for a generic interface named like its type | signature | fixed (feature) | no signature help |
+| [#60](https://github.com/hansec/fortran-language-server/issues/60) | signature help inside an array constructor argument (`call s([1, 2, ...`) | signature | fixed (patched) | no signature help |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | "Unexpected end of scope" for `end associate; end do` | diagnostics | fixed | fixed |
 | [#229](https://github.com/hansec/fortran-language-server/issues/229) | names of an `ASSOCIATE` opened on the line of its `DO` (`do ...; associate (...)`) are not found | hover | fixed (patched) | fails, same cause |
 | [#203](https://github.com/hansec/fortran-language-server/issues/203) | preprocessor conditional inside a continued declaration: the inactive branch adds its attributes | hover | fixed (patched) | fails, same cause |
@@ -131,13 +118,13 @@ some of its bugs were never reported again to fortls. Their tests use
 
 ## Issues of fortran-lang/vscode-fortran-support
 
-Feature requests of the Modern Fortran extension that the server answers.
-Their tests use `h.checkIn(.modern_fortran, ...)`.
+Feature requests of the Modern Fortran extension that the server answers. Their tests use `h.checkIn(.modern_fortran, ...)`.
 
 | Issue | Behavior | Test file | zfls | fortls |
 | --- | --- | --- | --- | --- |
 | [#981](https://github.com/fortran-lang/vscode-fortran-support/issues/981) | a `! zfls: disable=masks-parent` comment hides the "masks variable in parent scope" warning | diagnostics | fixed (feature) | cannot be hidden |
 | [#1306](https://github.com/fortran-lang/vscode-fortran-support/issues/1306) | `external_modules` stops `use mpi` (and other library modules) being reported as not found | diagnostics | fixed (feature) | always reported |
+| [#17](https://github.com/fortran-lang/vscode-fortran-support/issues/17) | OpenMP conditional compilation lines (`!$ call omp_set_num_threads(n)`) are code: hover, references and rename see their names | openmp | fixed (feature) | read as comments |
 | [#401](https://github.com/fortran-lang/vscode-fortran-support/issues/401) | variables and functions named like keywords (`if`, `module`, `format`) highlighted as keywords | highlighting | fixed (feature) | no semantic tokens |
 | [#245](https://github.com/fortran-lang/vscode-fortran-support/issues/245) | type-bound procedures not highlighted at their calls | highlighting | fixed (feature) | no semantic tokens |
 | [#471](https://github.com/fortran-lang/vscode-fortran-support/issues/471) | `fpm.toml`: its include directory and preprocessor macros | project | fixed (feature) | not read |
@@ -147,4 +134,6 @@ Their tests use `h.checkIn(.modern_fortran, ...)`.
 | [#617](https://github.com/fortran-lang/vscode-fortran-support/issues/617) | fypp: inline `${...}$`, `$:` and `@:` are no Fortran names (no warnings, no tokens); the extension highlights them | highlighting | fixed (feature) | read as Fortran |
 | [#234](https://github.com/fortran-lang/vscode-fortran-support/issues/234) | keywords in title case (a Source Action) | diagnostics | fixed (feature) | none |
 | [#647](https://github.com/fortran-lang/vscode-fortran-support/issues/647) | an outline tree (breadcrumbs, sticky scroll), for clients with `hierarchicalDocumentSymbolSupport` | outline | fixed (feature) | flat symbol list only |
+| [#200](https://github.com/fortran-lang/vscode-fortran-support/issues/200) | a document opened as `FortranFixedForm` or `FortranFreeForm` is read in that form, whatever its extension (also #222, #460, #904, #1131) | parsing | fixed (patched) | the language id is not read |
+| [#1087](https://github.com/fortran-lang/vscode-fortran-support/issues/1087) | a workspace on a UNC path (`file://host/share/...`; Windows only, through `\\localhost\c$`, skipped where that share cannot be reached) answers hover, definition and workspace symbols | workspace | fixed (patched) | not checked |
 | [#1296](https://github.com/fortran-lang/vscode-fortran-support/issues/1296) | the outline of a namelist file (`.nml`, or a document opened as `FortranNamelist`): its groups and the variables they set, never parsed as Fortran | outline | fixed (feature) | not served |

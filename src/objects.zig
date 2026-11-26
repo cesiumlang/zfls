@@ -2,7 +2,8 @@
 //! object classes: scope, module, subroutine, function, type, variable, ...).
 //!
 //! All Fortran objects share the single `Obj` struct; `kind` selects the
-//! Python class whose behavior is mimicked.
+//! Python class whose behavior is mimicked. What each kind holds is in
+//! objects/data.zig.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -16,7 +17,6 @@ const parser = @import("parser.zig");
 const FortranFile = parser.FortranFile;
 
 const KeywordInfo = helpers.KeywordInfo;
-const implicit = @import("implicit.zig");
 
 fn R() *const patterns.Patterns {
     return patterns.get();
@@ -30,17 +30,54 @@ const objects_check = @import("objects/check.zig");
 const objects_diagnostic = @import("objects/diagnostic.zig");
 const objects_ast = @import("objects/ast.zig");
 const objects_resolve = @import("objects/resolve.zig");
+const objects_index = @import("objects/index.zig");
+const data = @import("objects/data.zig");
+pub const same_name = @import("objects/same_name.zig");
+pub const summary = @import("objects/summary.zig");
 
 pub const Diagnostic = objects_diagnostic.Diagnostic;
 pub const BuiltDiag = objects_diagnostic.BuiltDiag;
 pub const EndError = objects_diagnostic.EndError;
 pub const IncludeInfo = objects_ast.IncludeInfo;
 pub const Ast = objects_ast.Ast;
+pub const InnerScopes = objects_ast.InnerScopes;
 pub const getUseTree = objects_resolve.getUseTree;
 pub const FindOpts = objects_resolve.FindOpts;
 pub const findInScope = objects_resolve.findInScope;
+pub const checkScope = objects_resolve.checkScope;
+pub const importHides = objects_resolve.importHides;
+pub const findThroughUse = objects_resolve.findThroughUse;
+pub const findAllThroughUse = objects_resolve.findAllThroughUse;
+pub const renamingModule = objects_resolve.renamingModule;
+pub const comesThrough = objects_resolve.comesThrough;
 pub const findInWorkspace = objects_resolve.findInWorkspace;
+pub const declaredProcedure = objects_resolve.declaredProcedure;
+pub const findSymbolsInWorkspace = objects_resolve.findSymbolsInWorkspace;
 pub const climbTypeTree = objects_resolve.climbTypeTree;
+
+/// `path` in lowercase: itself when it is, as the path of a scope is, so
+/// that nesting thousands deep does not copy it again at each level
+fn lowerPath(a: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    for (path) |c| if (std.ascii.isUpper(c)) return std.ascii.allocLowerString(a, path);
+    return path;
+}
+
+/// The longest path a scope's `fqsn` holds. A scope nested deeper (thousands
+/// of them, in half-typed code) gets the path of an outer one with its own
+/// name, so that all the paths together stay linear in the nesting.
+const max_fqsn_bytes = 1024;
+
+/// `enc_scope`, `::` and `lname` as one path (kept to `max_fqsn_bytes`)
+fn joinPath(a: Allocator, enc_scope: []const u8, lname: []const u8) Allocator.Error![]const u8 {
+    const enc = try lowerPath(a, enc_scope);
+    var keep = enc;
+    const room = max_fqsn_bytes -| (lname.len + 2);
+    if (enc.len > room) {
+        const head = enc[0..room];
+        keep = head[0 .. std.mem.findLast(u8, head, "::") orelse std.mem.find(u8, enc, "::") orelse enc.len];
+    }
+    return std.mem.concat(a, u8, &.{ keep, "::", lname });
+}
 
 pub const Kind = enum {
     /// plain `Scope` (e.g. MODULE PROCEDURE implementation in a submodule)
@@ -94,100 +131,11 @@ pub const Kind = enum {
 /// Declared visibility of an object, `default` when no PUBLIC or PRIVATE applies
 pub const Vis = enum { private, default, public };
 
-pub const ImportType = enum(i8) { default = -1, none = 0, all = 1, only = 2 };
-
-/// USE or IMPORT statement
-pub const UseStmt = struct {
-    mod_name: []const u8,
-    only_list: StrSet = .{},
-    rename_map: StrMap = .{},
-    line_number: usize = 0,
-    is_import: bool = false,
-    import_type: ImportType = .default,
-    /// Parent scope of IMPORT statement i.e. parent of the interface
-    scope: ?*Obj = null,
-
-    /// Construct (lowercasing names like the Python `Use` initializer)
-    pub fn init(a: Allocator, mod_name: []const u8, only: []const []const u8, renames: []const [2][]const u8) !*UseStmt {
-        const u = try a.create(UseStmt);
-        u.* = .{ .mod_name = try std.ascii.allocLowerString(a, mod_name) };
-        for (only) |o| try u.only_list.add(a, try std.ascii.allocLowerString(a, o));
-        for (renames) |r| try u.rename_map.put(a, try std.ascii.allocLowerString(a, r[0]), try std.ascii.allocLowerString(a, r[1]));
-        return u;
-    }
-
-    /// Rename ONLY:, statements
-    pub fn rename(self: *const UseStmt, a: Allocator) ![][]const u8 {
-        var out: std.ArrayList([]const u8) = .empty;
-        for (self.only_list.items.items) |name| {
-            try out.append(a, self.rename_map.get(name) orelse name);
-        }
-        return out.items;
-    }
-};
-
-/// Ordered string set (stand-in for Python `set[str]`)
-pub const StrSet = struct {
-    items: std.ArrayList([]const u8) = .empty,
-
-    pub fn contains(self: *const StrSet, s: []const u8) bool {
-        for (self.items.items) |it| if (std.mem.eql(u8, it, s)) return true;
-        return false;
-    }
-
-    pub fn add(self: *StrSet, a: Allocator, s: []const u8) !void {
-        if (!self.contains(s)) try self.items.append(a, s);
-    }
-
-    pub fn len(self: *const StrSet) usize {
-        return self.items.items.len;
-    }
-
-    pub fn clone(self: *const StrSet, a: Allocator) !StrSet {
-        return .{ .items = try self.items.clone(a) };
-    }
-};
-
-/// Ordered string map (stand-in for Python `dict[str, str]`)
-pub const StrMap = struct {
-    keys: std.ArrayList([]const u8) = .empty,
-    values: std.ArrayList([]const u8) = .empty,
-
-    pub fn hasValue(self: *const StrMap, v: []const u8) bool {
-        for (self.values.items) |value| if (std.mem.eql(u8, value, v)) return true;
-        return false;
-    }
-
-    pub fn get(self: *const StrMap, k: []const u8) ?[]const u8 {
-        for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) return self.values.items[i];
-        return null;
-    }
-
-    pub fn put(self: *StrMap, a: Allocator, k: []const u8, v: []const u8) !void {
-        for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) {
-            self.values.items[i] = v;
-            return;
-        };
-        try self.keys.append(a, k);
-        try self.values.append(a, v);
-    }
-
-    pub fn remove(self: *StrMap, k: []const u8) void {
-        for (self.keys.items, 0..) |key, i| if (std.mem.eql(u8, key, k)) {
-            _ = self.keys.orderedRemove(i);
-            _ = self.values.orderedRemove(i);
-            return;
-        };
-    }
-
-    pub fn count(self: *const StrMap) usize {
-        return self.keys.items.len;
-    }
-
-    pub fn clone(self: *const StrMap, a: Allocator) !StrMap {
-        return .{ .keys = try self.keys.clone(a), .values = try self.values.clone(a) };
-    }
-};
+const use_stmt = @import("objects/use.zig");
+pub const ImportType = use_stmt.ImportType;
+pub const UseStmt = use_stmt.UseStmt;
+pub const StrSet = use_stmt.StrSet;
+pub const StrMap = use_stmt.StrMap;
 
 pub const AssocLink = struct { var_: *Obj, bind_name: []const u8, link_name: []const u8 };
 
@@ -198,131 +146,36 @@ pub const TreeEntry = struct { obj: *Obj, path: ?[]const u8 };
 pub const Env = struct {
     tree: *ObjTree,
     tmp: Allocator,
+    /// The definitions of the names that several files define, and the
+    /// build's module directories, to choose among them (#187)
+    same_names: ?*const same_name.SameNames = null,
+    module_dirs: ?*const @import("project.zig").ModuleDirsMap = null,
 
     /// The global (module, program, top-level procedure) `name` as seen from
-    /// file `ast`: its own definition before another file's of that name.
+    /// file `ast`: its own definition before another file's of that name,
+    /// and of several files', the one `same_name.pick` chooses.
     pub fn global(env: Env, ast: *const Ast, name: []const u8) ?*Obj {
         if (ast.global_dict.get(name)) |o| return o;
+        if (env.same_names) |s| if (same_name.global(s, env.module_dirs, env.tmp, ast, name)) |o| return o;
         return if (env.tree.get(name)) |e| e.obj else null;
     }
 };
 
-/// What a scope keeps beyond its children, by kind
-pub const ScopeExt = union(enum) {
-    /// plain scopes, modules, programs, blocks, INCLUDE objects
-    none,
-    submodule: Submodule,
-    procedure: Procedure,
-    type: TypeDef,
-    interface: Interface,
-    associate: Associate,
-    select: Select,
-};
-
-/// A program unit or block: anything that has children (`Scope`)
-pub const Scope = struct {
-    children: std.ArrayList(*Obj) = .empty,
-    members: std.ArrayList([]const u8) = .empty,
-    use: std.ArrayList(*UseStmt) = .empty,
-    inherit: ?[]const u8 = null,
-    contains_start: ?usize = null,
-    implicit_line: ?usize = null,
-    /// the letter ranges of its IMPLICIT statements and their types
-    implicit_rules: []const implicit.Rule = &.{},
-    /// Inherited children: of a type from its parent type, of a procedure
-    /// from the submodule prototype it implements
-    in_children: std.ArrayList(*Obj) = .empty,
-    ext: ScopeExt = .none,
-};
-
-pub const Submodule = struct {
-    /// the ancestor module
-    ancestor_name: []const u8 = "",
-    /// the parent submodule, if any: `SUBMODULE (ancestor:parent) name`
-    parent_smod_name: []const u8 = "",
-    /// the parent submodule, or else the ancestor module
-    ancestor_obj: ?*Obj = null,
-};
-
-/// A subroutine or function
-pub const Procedure = struct {
-    args: []const u8 = "",
-    args_snip: []const u8 = "",
-    arg_objs: std.ArrayList(?*Obj) = .empty,
-    missing_args: std.ArrayList(*Obj) = .empty,
-    mod_scope: bool = false,
-    /// The prototype in a submodule's ancestor that this procedure implements
-    link_obj: ?*Obj = null,
-    result_name: ?[]const u8 = null,
-    result_type: ?[]const u8 = null,
-    result_obj: ?*Obj = null,
-    /// Set when `copyInterface` imported data from a submodule prototype
-    linked_from_interface: bool = false,
-};
-
-/// A derived type
-pub const TypeDef = struct {
-    /// a DEC STRUCTURE, which may nest in another
-    dec_structure: bool = false,
-    inherit_var: ?*Obj = null,
-    inherit_tmp: ?[]const u8 = null,
-    inherit_version: i64 = -1,
-    abstract: bool = false,
-};
-
-pub const Interface = struct {
-    mems: std.ArrayList(*Obj) = .empty,
-    external: bool = false,
-    abstract: bool = false,
-};
-
-pub const Associate = struct {
-    links: std.ArrayList(AssocLink) = .empty,
-};
-
-pub const Select = struct {
-    select_type: i32 = 0,
-    binding_name: ?[]const u8 = null,
-    bound_var: ?[]const u8 = null,
-    binding_type: ?[]const u8 = null,
-};
-
-/// A variable, or a method (type-bound procedure or procedure pointer)
-pub const Variable = struct {
-    desc: []const u8 = "",
-    vkind: ?[]const u8 = null,
-    type_obj: ?*Obj = null,
-    is_const: bool = false,
-    is_external: bool = false,
-    param_val: ?[]const u8 = null,
-    /// For an ASSOCIATE name bound to an array element or section, `b(:, 1)`:
-    /// the number of dimensions that remain (the sections), else -1
-    slice_rank: i32 = -1,
-    link_name: ?[]const u8 = null,
-    /// What the variable stands for: the procedure of a procedure pointer or
-    /// type-bound procedure, the selector of an ASSOCIATE name
-    link_obj: ?*Obj = null,
-    callable: bool = false,
-    drop_arg: ?usize = null,
-    pass_name: ?[]const u8 = null,
-};
-
-/// A built-in procedure, keyword or statement
-pub const Intrinsic = struct {
-    itype: C.TypeId = .base,
-    args: []const u8 = "",
-};
-
-/// The data of an object: what fortls's `Scope`, `Variable` and
-/// `Intrinsic` classes hold. `Obj.kind` says which; the accessors
-/// (`scope()`, `variable()`, `procedure()`, ...) check it in safe builds.
-/// A scope's is apart (in its AST's arena), so that variables, most of the
-/// objects, are not the size of a scope.
-pub const Data = union(enum) {
-    scope: *Scope,
-    variable: Variable,
-    intrinsic: Intrinsic,
-};
+// objects/data.zig
+pub const ScopeExt = data.ScopeExt;
+pub const Scope = data.Scope;
+pub const Submodule = data.Submodule;
+pub const Procedure = data.Procedure;
+pub const TypeDef = data.TypeDef;
+pub const Interface = data.Interface;
+pub const Associate = data.Associate;
+pub const TypeOf = data.TypeOf;
+pub const Select = data.Select;
+pub const Variable = data.Variable;
+pub const Group = data.Group;
+pub const Cray = data.Cray;
+pub const Intrinsic = data.Intrinsic;
+pub const Data = data.Data;
 
 pub const Obj = struct {
     kind: Kind,
@@ -489,15 +342,29 @@ pub const Obj = struct {
         };
     }
 
-    /// The argument list of a procedure or intrinsic, "" for others
+    /// The argument list of a procedure or intrinsic, "" for others; of an
+    /// intrinsic with several forms, the first one's
     pub fn argList(self: *const Obj) []const u8 {
         return switch (self.data) {
             .scope => |s| switch (s.ext) {
                 .procedure => |p| p.args,
                 else => "",
             },
-            .intrinsic => |i| i.args,
+            .intrinsic => |i| str.beforeFirst(i.args, "|"),
             .variable => "",
+        };
+    }
+
+    /// The argument lists of the forms of an intrinsic (`THIS_IMAGE` has
+    /// two); the one of `argList` for others
+    pub fn argForms(self: *const Obj, a: Allocator) ![]const []const u8 {
+        return switch (self.data) {
+            .intrinsic => |i| str.split(a, i.args, "|"),
+            else => {
+                const one = try a.alloc([]const u8, 1);
+                one[0] = self.argList();
+                return one;
+            },
         };
     }
 
@@ -515,7 +382,7 @@ pub const Obj = struct {
     pub fn computeFqsn(a: Allocator, file_ast: *Ast, name: []const u8) ![]const u8 {
         const lname = try std.ascii.allocLowerString(a, name);
         if (file_ast.enc_scope_name) |enc| {
-            return std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, enc), "::", lname });
+            return joinPath(a, enc, lname);
         }
         return lname;
     }
@@ -580,12 +447,12 @@ pub const Obj = struct {
             .function => if (self.procDataConst().result_type) |rt| (if (rt.len > 0) try std.mem.concat(a, u8, &.{ rt, " FUNCTION" }) else "FUNCTION") else "FUNCTION",
             .type => "TYPE",
             .interface => "INTERFACE",
-            .block => "BLOCK",
+            .block => if (self.isBlockData()) "BLOCK DATA" else "BLOCK",
             .do_ => "DO",
             .if_ => "IF",
             .where => "WHERE",
             .enum_ => "ENUM",
-            .associate => "ASSOCIATE",
+            .associate => if (self.assocDataConst().change_team) "CHANGE TEAM" else "ASSOCIATE",
             .select => "SELECT",
             .variable, .method => if (self.linkObj()) |l| l.getDesc(a) else self.getDescNoLink(a),
             .intrinsic => switch (self.intrinsicData().itype) {
@@ -662,7 +529,14 @@ pub const Obj = struct {
 
     pub fn addChild(self: *Obj, child: *Obj) !void {
         try self.scopeData().children.append(self.al(), child);
+        objects_index.changed(self);
         child.setParent(self);
+    }
+
+    /// Remove the child at position `i`
+    pub fn removeChild(self: *Obj, i: usize) void {
+        _ = self.scopeData().children.orderedRemove(i);
+        objects_index.changed(self);
     }
 
     pub fn updateFqsn(self: *Obj, enc_scope: ?[]const u8) !void {
@@ -670,7 +544,7 @@ pub const Obj = struct {
         const a = self.al();
         const lname = try std.ascii.allocLowerString(a, self.name);
         if (enc_scope) |e| {
-            self.fqsn = try std.mem.concat(a, u8, &.{ try std.ascii.allocLowerString(a, e), "::", lname });
+            self.fqsn = try joinPath(a, e, lname);
         } else {
             self.fqsn = lname;
         }
@@ -701,6 +575,22 @@ pub const Obj = struct {
         return t == 3 or t == 4 or t == 5;
     }
 
+    /// Whether variable `self` is the associate name of a TYPE IS or CLASS IS
+    /// block, which has its guard's type
+    pub fn isGuardName(self: *const Obj) bool {
+        if (self.kind != .variable or self.varDataConst().link_name != null) return false;
+        const p = self.parent orelse return false;
+        // made by the guard's statement, not declared in its block
+        return p.kind == .select and p.selectDataConst().select_type == 3 and self.sline == p.sline;
+    }
+
+    /// Whether variable `self` is the associate name of a case of SELECT
+    /// RANK, which has the case's rank (#706)
+    pub fn isRankName(self: *const Obj) bool {
+        const p = self.parent orelse return false;
+        return self.kind == .variable and p.kind == .select and p.selectDataConst().select_type == 5 and self.sline == p.sline;
+    }
+
     pub fn isTypeBinding(self: *const Obj) bool {
         return self.kind == .select and self.selectDataConst().select_type == 2;
     }
@@ -712,11 +602,12 @@ pub const Obj = struct {
         return self.doc_str;
     }
 
+    /// The IMPLICIT rule in effect: the scope's own, else that of the
+    /// nearest scope around it that has one
     pub fn getImplicit(self: *const Obj) ?bool {
-        const p = self.parent orelse return self.implicit_vars;
-        const parent_implicit = p.getImplicit();
-        if (self.implicit_vars != null or parent_implicit == null) return self.implicit_vars;
-        return parent_implicit;
+        var s: ?*const Obj = self;
+        while (s) |o| : (s = o.parent) if (o.implicit_vars) |v| return v;
+        return null;
     }
 
     pub fn isOptional(self: *const Obj) bool {
@@ -741,16 +632,35 @@ pub const Obj = struct {
         return self.kind == .interface and self.ifaceDataConst().external;
     }
 
+    /// Whether the interface bodies of this interface block are names of
+    /// the scope around it, as the procedures they declare are: those of
+    /// every interface block, an unnamed (`#GEN_INT`), abstract, OPERATOR or
+    /// ASSIGNMENT one and a named generic one (#474), but for a body that
+    /// has the generic's name, which is the generic's there
+    pub fn bodiesAreNames(self: *const Obj, name: []const u8) bool {
+        return self.kind == .interface and !std.ascii.eqlIgnoreCase(self.name, name);
+    }
+
     pub fn isAbstract(self: *const Obj) bool {
         return self.kind == .interface and self.ifaceDataConst().abstract;
     }
 
+    /// Whether an END alone cannot end it: a construct, not a BLOCK DATA
     pub fn reqNamedEnd(self: *const Obj) bool {
-        return self.kind.isBlock();
+        return self.kind.isBlock() and !self.isBlockData();
+    }
+
+    pub fn isBlockData(self: *const Obj) bool {
+        return self.kind == .block and self.scopeDataConst().block_data;
     }
 
     pub fn isParameter(self: *const Obj) bool {
         return self.varDataConst().is_const;
+    }
+
+    /// A COMMON block or NAMELIST group
+    pub fn isGroup(self: *const Obj) bool {
+        return self.kind == .variable and self.varDataConst().group != .none;
     }
 
     pub fn setExternalAttr(self: *Obj) !void {
@@ -784,7 +694,9 @@ pub const Obj = struct {
 
     pub fn requireLink(self: *const Obj) bool {
         return switch (self.kind) {
-            .variable, .method => self.varDataConst().link_name != null,
+            // (and TYPEOF, a RANK clause not literal: #728, #729)
+            .variable => self.varDataConst().link_name != null or self.isGuardName() or self.varDataConst().type_of != null or self.varDataConst().rank_clause != null,
+            .method => self.varDataConst().link_name != null,
             .interface, .subroutine, .function, .submodule, .associate => true,
             else => false,
         };
@@ -842,6 +754,7 @@ pub const Obj = struct {
     pub const getDocsFull = objects_hover.getDocsFull;
     const endsInListItem = objects_hover.endsInListItem;
     pub const getSignature = objects_hover.getSignature;
+    pub const getSignatures = objects_hover.getSignatures;
     pub const getInterfaceArray = objects_hover.getInterfaceArray;
     pub const getInterface = objects_hover.getInterface;
 
@@ -876,3 +789,17 @@ pub fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 // --------------------------------------------------------------------------
 // Name resolution utilities (port of `utilities.py`)
+
+test "a path of thousands of nested scopes stays within its limit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var path: []const u8 = "p";
+    for (0..5000) |i| {
+        path = try joinPath(a, path, try a.print("#do{d}", .{i}));
+        try std.testing.expect(path.len <= max_fqsn_bytes);
+    }
+    try std.testing.expect(std.mem.startsWith(u8, path, "p::#do0::"));
+    try std.testing.expect(std.mem.endsWith(u8, path, "::#do4999"));
+    try std.testing.expectEqualStrings("a::b", try joinPath(a, "A", "b"));
+}

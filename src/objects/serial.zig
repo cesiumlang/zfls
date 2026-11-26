@@ -36,6 +36,7 @@ fn typeHash(comptime T: type) u64 {
             return h.final();
         }
         h.update(@typeName(T));
+        if (notSaved(T)) return h.final();
         switch (@typeInfo(T)) {
             .@"struct" => |s| for (s.field_names, s.field_types) |name, F| {
                 if (T == Ast and byHand(name)) continue;
@@ -61,6 +62,12 @@ fn typeHash(comptime T: type) u64 {
     }
 }
 
+/// A type that is rebuilt rather than saved (it declares `not_saved`): saved
+/// as nothing, loaded as its default
+fn notSaved(comptime T: type) bool {
+    return @typeInfo(T) == .@"struct" and @hasDecl(T, "not_saved");
+}
+
 /// A `std.ArrayList`: saved as its items, loaded with no spare capacity
 fn isList(comptime T: type) bool {
     return @typeInfo(T) == .@"struct" and @hasField(T, "items") and @hasField(T, "capacity") and @hasDecl(T, "Slice");
@@ -77,10 +84,16 @@ fn isPtrTo(comptime T: type, comptime Child: type) bool {
     };
 }
 
-pub const SaveError = error{ OutOfMemory, Foreign };
+pub const SaveError = error{ OutOfMemory, Foreign, TooDeep };
+
+/// How deep objects met for the first time may nest (scopes in scopes):
+/// saving and loading recurse at each, and a thread's stack is bounded
+/// (#780)
+pub const max_nesting = 400;
 
 /// `ast`, just parsed, as bytes owned by `gpa`; `error.Foreign` when an
-/// object refers to another file's
+/// object refers to another file's, `error.TooDeep` when its objects nest
+/// deeper than `max_nesting`
 pub fn save(gpa: Allocator, ast: *const Ast) SaveError![]u8 {
     var s: Saver = .{ .gpa = gpa, .ast = ast };
     defer s.ids.deinit(gpa);
@@ -103,6 +116,8 @@ const Saver = struct {
     ast: *const Ast,
     out: std.ArrayList(u8) = .empty,
     ids: std.AutoHashMapUnmanaged(*const Obj, u32) = .empty,
+    /// how many objects are being written, each inside the one before
+    depth: usize = 0,
 
     fn byte(s: *Saver, b: u8) !void {
         try s.out.append(s.gpa, b);
@@ -120,6 +135,9 @@ const Saver = struct {
         const obj = o orelse return s.uint(0);
         if (s.ids.get(obj)) |id| return s.uint(@as(u64, id) + 2);
         if (obj.file_ast != s.ast) return error.Foreign;
+        if (s.depth == max_nesting) return error.TooDeep;
+        s.depth += 1;
+        defer s.depth -= 1;
         try s.ids.put(s.gpa, obj, s.ids.count());
         try s.uint(1);
         try s.value(Obj, obj.*);
@@ -164,7 +182,9 @@ const Saver = struct {
                 } else try s.value(p.child, v.*),
                 else => @compileError("not saved: " ++ @typeName(T)),
             },
-            .@"struct" => |st| if (comptime isList(T)) {
+            .@"struct" => |st| if (comptime notSaved(T)) {
+                return;
+            } else if (comptime isList(T)) {
                 try s.value([]const ListItem(T), v.items);
             } else inline for (st.field_names, st.field_types) |name, F| try s.value(F, @field(v, name)),
             .@"union" => |u| {
@@ -180,12 +200,43 @@ const Saver = struct {
     }
 };
 
+fn beyond(lim: usize, v: anytype) bool {
+    switch (@typeInfo(@TypeOf(v))) {
+        .int => return v > lim,
+        .optional => return if (v) |x| beyond(lim, x) else false,
+        .array => {
+            for (v) |x| if (beyond(lim, x)) return true;
+            return false;
+        },
+        else => return false,
+    }
+}
+
 pub const LoadError = error{ OutOfMemory, Format };
+
+/// The fields that hold a line number, and those that hold a column, of the
+/// file the AST is of (a related location in another file is not checked)
+fn isLineField(comptime T: type, comptime name: []const u8) bool {
+    if (@hasField(T, "path") and @hasField(T, "message")) return false;
+    const names = [_][]const u8{ "sline", "eline", "line", "line_number", "sln", "eln", "end_line", "scope_line", "contains_start", "implicit_line" };
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
+fn isColumnField(comptime name: []const u8) bool {
+    const names = [_][]const u8{ "sch", "ech", "missing" };
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
 
 /// Fills `ast`, created for its file (`Ast.create`), with the AST saved in
 /// `data`; `gpa` is for the time of loading
 pub fn load(gpa: Allocator, ast: *Ast, data: []const u8) LoadError!void {
     var l: Loader = .{ .a = ast.allocator(), .gpa = gpa, .ast = ast, .data = data };
+    if (ast.file) |f| {
+        l.max_line = @max(f.lines.items.len, if (f.pp_lines) |p| p.len else 0) + 1;
+        l.max_col = f.text.len + 1;
+    }
     defer l.objs.deinit(gpa);
     const n = try l.len();
     try ast.global_dict.ensureTotalCapacity(l.a, n);
@@ -208,6 +259,17 @@ const Loader = struct {
     data: []const u8,
     at: usize = 0,
     objs: std.ArrayList(*Obj) = .empty,
+    /// as `Saver.depth`
+    depth: usize = 0,
+    /// The largest line number and column the file can have
+    max_line: usize = std.math.maxInt(usize),
+    max_col: usize = std.math.maxInt(usize),
+
+    /// A line or column field of `T` beyond the file's is damage
+    fn checked(l: *Loader, comptime T: type, comptime name: []const u8, v: anytype) !void {
+        const lim = if (comptime isLineField(T, name)) l.max_line else if (comptime isColumnField(name)) l.max_col else return;
+        if (beyond(lim, v)) return error.Format;
+    }
 
     fn byte(l: *Loader) !u8 {
         if (l.at >= l.data.len) return error.Format;
@@ -238,6 +300,10 @@ const Loader = struct {
         switch (id) {
             0 => return null,
             1 => {
+                // (deeper than any save writes)
+                if (l.depth == max_nesting) return error.Format;
+                l.depth += 1;
+                defer l.depth -= 1;
                 const o = try l.a.create(Obj);
                 // numbered before its fields, which may refer to it
                 try l.objs.append(l.gpa, o);
@@ -290,7 +356,11 @@ const Loader = struct {
                 } else if (p.child == Ast) {
                     return l.ast;
                 } else if (p.child == KeywordInfo) {
-                    if (try l.byte() == 0) return &KeywordInfo.empty;
+                    switch (try l.byte()) {
+                        0 => return &KeywordInfo.empty,
+                        1 => {},
+                        else => return error.Format,
+                    }
                     const k = try l.a.create(KeywordInfo);
                     k.* = try l.value(KeywordInfo);
                     return k;
@@ -302,6 +372,7 @@ const Loader = struct {
                 else => @compileError("not saved: " ++ @typeName(T)),
             },
             .@"struct" => |st| {
+                if (comptime notSaved(T)) return .{};
                 if (comptime isList(T)) {
                     const items = try l.value([]ListItem(T));
                     var list: T = .empty;
@@ -310,7 +381,10 @@ const Loader = struct {
                     return list;
                 }
                 var v: T = undefined;
-                inline for (st.field_names, st.field_types) |name, F| @field(v, name) = try l.value(F);
+                inline for (st.field_names, st.field_types) |name, F| {
+                    @field(v, name) = try l.value(F);
+                    try l.checked(T, name, @field(v, name));
+                }
                 return v;
             },
             .@"union" => |u| {
@@ -425,6 +499,13 @@ test "an AST saved, loaded and saved again is the same" {
     for (0..20) |_| try mod.addChild(try Obj.newScope(back, .scope, 1, "extra", &.{}));
     try std.testing.expect(mod.childList()[0] == first);
     try std.testing.expectEqualStrings(ast.global_dict.get("shapes").?.childList()[0].name, first.name);
+    // an AST with lines the file does not have is not loaded
+    const short = try FortranFile.create(gpa, "/w/short.f90", null);
+    defer short.destroy();
+    _ = try short.setTextOwned(try gpa.dupe(u8, "module x\nend module\n"));
+    const odd = try Ast.create(gpa, short);
+    defer odd.destroy();
+    try std.testing.expectError(error.Format, load(gpa, odd, bytes));
     // a truncated or damaged AST is not loaded
     for ([_]usize{ 1, bytes.len / 2, bytes.len - 1 }) |cut| {
         const broken = try Ast.create(gpa, f);

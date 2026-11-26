@@ -15,10 +15,12 @@ const lsp = @import("../lsp.zig");
 const paths = @import("../paths.zig");
 const compilers = @import("../compilers.zig");
 const compile = @import("compile.zig");
+const tools = @import("tools.zig");
 
 const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
+const fsio = @import("../fsio.zig");
 
 const fortitude_timeout_s = 30;
 const codee_timeout_s = 120;
@@ -53,6 +55,8 @@ pub const Worker = struct {
     outputs: std.StringHashMapUnmanaged([]u8) = .empty,
     /// A missing linter is reported once
     reported_missing: [2]bool = .{ false, false },
+    /// The linter running, stopped at a shutdown
+    running: tools.Running = .{},
 
     fn run(w: *Worker) void {
         const io = w.server.io;
@@ -87,10 +91,12 @@ fn freeJob(gpa: Allocator, job: *Job) void {
     gpa.destroy(job);
 }
 
-/// Stops the linters' thread, after the run it is in (server shutdown)
+/// Stops the linters' thread, and the program it is running (server
+/// shutdown)
 pub fn stop(self: *Server) void {
     const w = self.linters orelse return;
     const io = self.io;
+    w.running.stop(io);
     w.mutex.lockUncancelable(io);
     w.stopping = true;
     for (w.queue.items) |job| freeJob(self.gpa, job);
@@ -164,7 +170,8 @@ pub fn check(self: *Server, a: Allocator, uri: []const u8, path: []const u8, tri
         if (trigger == .change) job.not_before = Io.Clock.awake.now(self.io).nanoseconds + @as(i96, @max(0, self.s.fortitude_change_delay)) * std.time.ns_per_ms;
         try enqueue(self, job);
     }
-    if (self.s.codee and trigger != .change) {
+    // Codee reads the file, not the editor's text
+    if (self.s.codee and trigger != .change and trigger != .open_unsaved) {
         const job = try newJob(self, .codee, uri, path);
         errdefer freeJob(self.gpa, job);
         const ja = job.arena.allocator();
@@ -215,36 +222,12 @@ fn enqueue(self: *Server, job: *Job) !void {
 // --------------------------------------------------------------------------
 // Running a program with its input on stdin
 
-pub const Output = struct { term: std.process.Child.Term, stdout: []u8, stderr: []u8 };
+pub const Output = tools.Output;
 
 /// Runs `argv` in `cwd` with `input` on its stdin, to its end or for
-/// `timeout_s` seconds
-pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: []const u8, input: []const u8, timeout_s: i64) !Output {
-    var child = try std.process.spawn(io, .{
-        .argv = argv,
-        .cwd = .{ .path = cwd },
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .pipe,
-        .create_no_window = true,
-    });
-    defer child.kill(io);
-    // the input first: these programs read it all before they write
-    child.stdin.?.writeStreamingAll(io, input) catch {};
-    child.stdin.?.close(io);
-    child.stdin = null;
-    var buffer: Io.File.MultiReader.Buffer(2) = undefined;
-    var reader: Io.File.MultiReader = undefined;
-    reader.init(a, io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
-    defer reader.deinit();
-    const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(timeout_s), .clock = .awake } };
-    while (reader.fill(64, timeout)) |_| {} else |e| switch (e) {
-        error.EndOfStream => {},
-        else => |err| return err,
-    }
-    try reader.checkAnyError();
-    const term = try child.wait(io);
-    return .{ .term = term, .stdout = try reader.toOwnedSlice(0), .stderr = try reader.toOwnedSlice(1) };
+/// `timeout_s` seconds (stopped with `running`)
+pub fn runWithInput(a: Allocator, io: Io, argv: []const []const u8, cwd: []const u8, env: ?*const std.process.Environ.Map, input: []const u8, timeout_s: i64, running: ?*tools.Running) !Output {
+    return tools.run(a, io, .{ .argv = argv, .cwd = cwd, .environ_map = env, .input = input, .timeout = tools.seconds(timeout_s), .running = running });
 }
 
 // --------------------------------------------------------------------------
@@ -260,7 +243,7 @@ fn runJob(w: *Worker, job: *Job) !void {
         .codee => codee_timeout_s,
     };
     self.log.debug("{s}: {s} (in {s})", .{ @tagName(job.tool), try std.mem.join(a, " ", job.argv), job.cwd });
-    const out = runWithInput(a, self.io, job.argv, job.cwd, job.text, timeout) catch |e| switch (e) {
+    const out = runWithInput(a, self.io, job.argv, job.cwd, self.toolEnv(), job.text, timeout, &w.running) catch |e| switch (e) {
         error.FileNotFound => {
             const i = @backingInt(job.tool);
             if (!w.reported_missing[i]) {
@@ -299,7 +282,7 @@ fn runJob(w: *Worker, job: *Job) !void {
                 self.log.warn("codee: no report for {s}: {s}", .{ job.path, std.mem.trim(u8, if (out.stderr.len > 0) out.stderr else out.stdout, " \r\n") });
                 return;
             };
-            const text = Io.Dir.cwd().readFileAlloc(self.io, job.path, a, .limited(64 * 1024 * 1024)) catch "";
+            const text = fsio.readFile(self.io, a, job.path, .limited(64 * 1024 * 1024)) catch "";
             const lines = try compile.splitLines(a, text);
             const here = try compile.comparable(a, job.cwd, job.path);
             var diags: std.ArrayList(lsp.Diagnostic) = .empty;
@@ -494,7 +477,7 @@ fn oneFile(a: Allocator, uri: []const u8, edits: []const lsp.TextEdit) !lsp.Work
 /// thread); null when fortitude failed
 fn fixAll(self: *Server, a: Allocator, path: []const u8, text: []const u8) !?[]const u8 {
     const argv = try fortitudeArgs(a, try executable(self, a, .fortitude), &.{"--fix-only"}, self.s.fortitude_args.slice(), path);
-    const out = runWithInput(a, self.io, argv, self.root_path, text, fortitude_timeout_s) catch |e| {
+    const out = runWithInput(a, self.io, argv, self.root_path, self.toolEnv(), text, fortitude_timeout_s, null) catch |e| {
         self.log.warn("fortitude --fix-only on {s}: {s}", .{ path, @errorName(e) });
         return null;
     };

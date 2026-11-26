@@ -653,69 +653,143 @@ test "hansec #129 names that are not declared under IMPLICIT NONE" {
     try h.checkIn(.hansec, 129, .fixed, expectUndeclared(w));
 }
 
-const unused_names = [_]h.File{
-    .{ .name = "consts.f90", .text =
-    \\module consts
+const macro_names = [_]h.File{.{ .name = "a.F90", .text =
+    \\#define MYPURE pure
+    \\#define MYREAL real(8)
+    \\#define CHECK(A) if (A /= 0) print *, tag, A
+    \\module m
     \\  implicit none
-    \\  integer, parameter :: sp = kind(1.0), dp = kind(1.d0)
-    \\  integer :: shared_count
-    \\end module consts
+    \\contains
+    \\  MYPURE function twice(a) result(x)
+    \\    MYREAL, intent(in) :: a
+    \\    MYREAL :: x
+    \\    x = 2 * a
+    \\  end function
+    \\  subroutine s(status)
+    \\    integer, intent(in) :: status
+    \\    character(len=*), parameter :: tag = "s"
+    \\    integer :: never_used
+    \\    CHECK(status)
+    \\  end subroutine
+    \\  subroutine t(c)
+    \\    MYREAL, intent(in) :: c
+    \\    character(len=*), parameter :: tag = "t"
+    \\    print *, b + c
+    \\    CHECK(nope)
+    \\  end subroutine
+    \\end module
+    \\
+}};
+
+test "the name checks read a line with macros as the compiler does, expanded (#227)" {
+    const w = try h.Workspace.init(&macro_names, .{});
+    defer w.deinit();
+    var got: std.ArrayList(h.Diagnostic) = .empty;
+    defer got.deinit(std.testing.allocator);
+    for (try w.diagnostics("a.F90")) |d| try got.append(std.testing.allocator, d);
+    // `b` and the argument of `CHECK(nope)`, where they are written, and
+    // the variable no macro uses
+    const want = [_]struct { []const u8, h.Pos }{
+        .{ "\"b\" is not declared", w.pos("a.F90", "b + c", 0, 0) },
+        .{ "\"nope\" is not declared", w.pos("a.F90", "nope", 0, 0) },
+        .{ "\"never_used\" is not used", w.pos("a.F90", "never_used", 0, 0) },
+    };
+    try std.testing.expectEqual(want.len, got.items.len);
+    for (want) |wd| {
+        const fragment, const p = wd;
+        for (got.items) |d| {
+            if (std.mem.find(u8, d.message, fragment) != null and d.line == p.line and d.col == p.col) break;
+        } else {
+            for (got.items) |d| std.debug.print("{d}:{d} {s}\n", .{ d.line, d.col, d.message });
+            return error.TestExpectedDiagnostic;
+        }
+    }
+}
+
+const block_data_end = [_]h.File{
+    .{ .name = "a.f90", .text =
+    \\block data bd
+    \\  common /blk/ testing
+    \\  data testing /1.0/
+    \\end
     \\
     },
-    .{ .name = "u.F90", .text =
-    \\module work
-    \\  implicit none
-    \\  integer :: module_level
-    \\contains
-    \\  real function area(r) result(res)
-    \\    use consts, only: sp, dp
-    \\    real(dp), intent(in) :: r
-    \\    real :: scratch
-    \\    integer :: used_inside, only_in_ifdef
-    \\    integer :: n = 2, m
-    \\    m = n * 2
-    \\    used_inside = 1
-    \\#ifdef DEBUG
-    \\    only_in_ifdef = 1
-    \\#endif
-    \\    res = r * r * helper()
-    \\  contains
-    \\    real function helper()
-    \\      helper = real(used_inside)
-    \\    end function helper
-    \\  end function area
-    \\end module work
+    .{ .name = "b.f", .text =
+    \\      BLOCK DATA
+    \\      COMMON /NOTHING/ TESTING
+    \\      DATA TESTING /1.0/
+    \\      END
+    \\      BLOCK DATA BD2
+    \\      COMMON /OTHER/ T2
+    \\      DATA T2 /2.0/
+    \\      END BLOCK DATA BD2
+    \\
+    },
+    // a BLOCK construct still needs END BLOCK
+    .{ .name = "c.f90", .text =
+    \\subroutine s
+    \\  block
+    \\    integer :: i
+    \\    i = 1
+    \\  end
+    \\end subroutine s
     \\
     },
 };
 
-fn expectUnused(w: *h.Workspace) !void {
-    var names: std.ArrayList([]const u8) = .empty;
-    defer names.deinit(std.testing.allocator);
-    for (try w.diagnostics("u.F90")) |d| {
-        if (!std.mem.eql(u8, d.code, "unused-name")) continue;
-        try h.expect(d.severity == 4, "severity {d}", .{d.severity});
-        try names.append(std.testing.allocator, d.message);
-    }
-    // sp (USE ONLY) and scratch only: not the argument, the result, a name
-    // a contained procedure uses, one in an inactive #ifdef branch, n used
-    // in m's declaration, or the module's names
-    try h.expect(names.items.len == 2, "unused: {any}", .{names.items});
-    try h.expect(std.mem.find(u8, names.items[0], "\"scratch\"") != null or std.mem.find(u8, names.items[1], "\"scratch\"") != null, "{any}", .{names.items});
-    try h.expect(std.mem.find(u8, names.items[0], "\"sp\"") != null or std.mem.find(u8, names.items[1], "\"sp\"") != null, "{any}", .{names.items});
-    // the quick fix removes a declaration of that name only
-    const line = w.pos("u.F90", "real :: scratch", 0, 0).line;
-    for (try w.codeActions("u.F90", line)) |act| {
-        if (std.mem.eql(u8, act.title, "Remove unused scratch")) {
-            try h.expect(act.line == line and act.new_text.len == 0, "removes line {d}", .{act.line});
-            return;
-        }
-    }
-    return h.unmet("no quick fix removing scratch", .{});
+fn expectBlockDataEnd(w: *h.Workspace) !void {
+    try w.expectNoDiagnostics("a.f90");
+    try w.expectNoDiagnostics("b.f");
+    // the units, with their COMMON blocks (#556)
+    const paths = try w.symbolPaths("a.f90");
+    try h.expect(paths.len == 2 and std.mem.eql(u8, paths[0], "bd") and std.mem.eql(u8, paths[1], "bd//blk/"), "a.f90 outline: {any}", .{paths});
+    const fixed = try w.symbolPaths("b.f");
+    try h.expect(fixed.len == 4 and std.mem.eql(u8, fixed[0], "BLOCK DATA") and std.mem.eql(u8, fixed[2], "BD2") and
+        std.mem.eql(u8, fixed[3], "BD2//OTHER/"), "b.f outline: {any}", .{fixed});
 }
 
-test "unused local variables and USE ONLY names are shown faded, with a quick fix" {
-    const w = try h.Workspace.init(&unused_names, .{});
+test "hansec #182 a BLOCK DATA unit closed by END alone (#234)" {
+    const w = try h.Workspace.init(&block_data_end, .{ .hierarchical_symbols = true });
     defer w.deinit();
-    try expectUnused(w);
+    try h.checkIn(.hansec, 182, .fixed, expectBlockDataEnd(w));
+    // the error of a BLOCK closed by END alone is at the END
+    const ds = try w.diagnostics("c.f90");
+    try std.testing.expectEqual(@as(usize, 1), ds.len);
+    try std.testing.expectEqualStrings("Unexpected end of scope at line 5", ds[0].message);
+    try std.testing.expectEqual(@as(i64, 4), ds[0].line);
+}
+
+test "the flat outline lists BLOCK DATA units (#234)" {
+    const w = try h.Workspace.init(&block_data_end, .{});
+    defer w.deinit();
+    const names = try w.documentSymbols("b.f");
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try std.testing.expectEqualStrings("BLOCK DATA", names[0]);
+    try std.testing.expectEqualStrings("BD2", names[1]);
+}
+
+test "fixed form: a continuation line with ! in column 6 is held to max_line_length (#239)" {
+    const w = try h.Workspace.init(&.{.{ .name = "a.f", .text =
+        \\      program p
+        \\      implicit none
+        \\      integer :: aaaa,
+        \\     !  bbbbbbbbb1, bbbbbbbbb2, bbbbbbbbb3, bbbbbbbbb4, bbbbbbbbb5, bbbbbbbbb6, bbbb7,
+        \\     &  ccccccccc1, ccccccccc2, ccccccccc3, ccccccccc4, ccccccccc5, ccccccccc6, cccc7,
+        \\     !  dddd1, ! a comment after the code, which runs on and on past the hundredth column of the line
+        \\     !  eeee1
+        \\!     a comment in column 1, longer than eighty columns but within the comment limit
+        \\      ! a comment in column 7, longer than eighty columns but within the comment limit
+        \\      end program p
+        \\
+    }}, .{ .settings = .{ .max_line_length = 80, .max_comment_line_length = 100 } });
+    defer w.deinit();
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(std.testing.allocator);
+    for (try w.diagnostics("a.f")) |d| {
+        const kind: u8 = if (std.mem.startsWith(u8, d.message, "Line length")) 'L' else if (std.mem.startsWith(u8, d.message, "Comment line length")) 'C' else continue;
+        try got.print(std.testing.allocator, "{d}{c} ", .{ d.line, kind });
+    }
+    // the code of lines 4 and 5 is too long, the comment after the code of
+    // line 6; the comment lines are within their limit
+    try std.testing.expectEqualStrings("3L 4L 5C ", got.items);
 }

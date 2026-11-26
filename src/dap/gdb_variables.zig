@@ -4,9 +4,10 @@
 //! each variable (Add to Watch, Copy as Expression, setting values),
 //! previews of arrays and derived types, "not allocated" and "not
 //! associated", pointers as their targets, a polymorphic object (CLASS)
-//! with the components of its dynamic type, gfortran's hidden lengths of
-//! CHARACTER arguments left out, and the module variables that a frame's
-//! line sees (zfls's index of the sources).
+//! with the components of its dynamic type, gfortran's and ifx's hidden lengths of
+//! CHARACTER arguments, LFortran's temporaries and ifx's repeats of module
+//! variables among the locals left out, and the module variables that a
+//! frame's line sees (zfls's index of the sources).
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
 const std = @import("std");
@@ -14,12 +15,17 @@ const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
 const fortran = @import("fortran.zig");
+const lfortran = @import("lfortran.zig");
+const ifx_class = @import("ifx_class.zig");
+const ifx_use = @import("ifx_use.zig");
 const ArrayContext = fortran.ArrayContext;
 const Value = json.Value;
 
 const session = @import("session.zig");
 const Session = session.Session;
 const gdb = @import("gdb.zig");
+const gdb_children = @import("gdb_children.zig");
+const gdb_values = @import("gdb_values.zig");
 
 /// A frame of a stack trace: its file and line
 pub const FrameInfo = struct { file: ?[]const u8, line: i64 };
@@ -46,6 +52,9 @@ pub const Context = struct {
     count: ?u64 = null,
     /// The node is gdb's scope of registers: `$rax`
     registers: bool = false,
+    /// For ifx's locals: the module variables the line sees, which ifx
+    /// repeats among them (ifx_use.zig)
+    used: []const ModuleVariable = &.{},
     /// For a polymorphic object shown as its dynamic type: the components
     /// of its declared type, which the object's expression names
     /// (`t%_data%x`) while the others need gdb's pointer to it
@@ -68,6 +77,9 @@ pub const Node = struct {
         chunks: u64,
         modules: []const ModuleVariable,
         module: []const ModuleVariable,
+        /// Children read otherwise than through gdb (an array of
+        /// CHARACTER of kind 4's elements)
+        values: []const Variable,
     },
     frame: ?i64 = null,
     ctx: Context = .{},
@@ -128,12 +140,14 @@ pub fn add(s: *Session, n: Node) !i64 {
         .section => |e| .{ .section = try na.dupe(u8, e) },
         .modules => |vs| .{ .modules = try dupeVars(na, vs) },
         .module => |vs| .{ .module = try dupeVars(na, vs) },
+        .values => |vs| .{ .values = try dupeValues(na, vs) },
     };
     out.ctx = .{
         .evaluate_name = if (n.ctx.evaluate_name) |e| try na.dupe(u8, e) else null,
         .array = if (n.ctx.array) |c| try c.dupe(na) else null,
         .count = n.ctx.count,
         .registers = n.ctx.registers,
+        .used = try dupeVars(na, n.ctx.used),
         .declared = if (n.ctx.declared) |d| .{ .expr = try na.dupe(u8, d.expr), .names = try dupeStrings(na, d.names) } else null,
     };
     out.names = &.{};
@@ -144,6 +158,18 @@ pub fn add(s: *Session, n: Node) !i64 {
 fn dupeVars(na: Allocator, vs: []const ModuleVariable) ![]const ModuleVariable {
     const out = try na.alloc(ModuleVariable, vs.len);
     for (vs, out) |v, *o| o.* = .{ .module = try na.dupe(u8, v.module), .name = try na.dupe(u8, v.name), .local = try na.dupe(u8, v.local), .type = try na.dupe(u8, v.type) };
+    return out;
+}
+
+/// Variables without children (`Node.values`): their strings copied
+fn dupeValues(na: Allocator, vs: []const Variable) ![]const Variable {
+    const out = try na.alloc(Variable, vs.len);
+    for (vs, out) |v, *o| o.* = .{
+        .name = try na.dupe(u8, v.name),
+        .value = try na.dupe(u8, v.value),
+        .type = if (v.type) |t| try na.dupe(u8, t) else null,
+        .evaluate_name = if (v.evaluate_name) |e| try na.dupe(u8, e) else null,
+    };
     return out;
 }
 
@@ -213,7 +239,7 @@ fn gdbChildren(s: *Session, a: Allocator, ref: i64) ![]Variable {
     const r = try gdb.request(s, a, "variables", .{ .variablesReference = ref });
     if (!gdb.isSuccess(r)) {
         s.g.failure = json.str(json.get(r, "message")) orelse "variables";
-        return error.GdbFailed;
+        return gdb_children.oneByOne(s, a, ref) orelse error.GdbFailed;
     }
     const items = json.items(json.path(r, &.{ "body", "variables" }));
     const out = try a.alloc(Variable, items.len);
@@ -221,11 +247,17 @@ fn gdbChildren(s: *Session, a: Allocator, ref: i64) ![]Variable {
     return out;
 }
 
-fn hiddenFilter(a: Allocator, kids: []const Variable) ![]Variable {
+/// `kids` without the hidden lengths of gfortran and ifx, and without LFortran's
+/// temporaries in an LFortran program
+fn hiddenFilter(a: Allocator, kids: []const Variable, lfortran_program: bool) ![]Variable {
     const named = try a.alloc(fortran.Named, kids.len);
     for (kids, named) |k, *n| n.* = .{ .name = k.name, .type = k.type };
     var out: std.ArrayList(Variable) = .empty;
-    for (kids) |k| if (!fortran.isHiddenLength(k.name, named)) try out.append(a, k);
+    for (kids) |k| {
+        if (fortran.isHiddenLength(k.name, named)) continue;
+        if (lfortran_program and lfortran.isTemporary(k.name)) continue;
+        try out.append(a, k);
+    }
     return out.items;
 }
 
@@ -264,6 +296,7 @@ pub fn children(s: *Session, a: Allocator, ref: i64, node: Node) anyerror![]Vari
             try setNames(s, ref, out, names);
             return out;
         },
+        .values => |vs| return a.dupe(Variable, vs),
         .chunks => |count| {
             const cs = try fortran.chunks(a, count);
             const out = try a.alloc(Variable, cs.len);
@@ -284,13 +317,15 @@ pub fn children(s: *Session, a: Allocator, ref: i64, node: Node) anyerror![]Vari
                 for (cs, out) |c, *o| o.* = try chunk(s, a, array, c, node.frame);
                 return out;
             };
-            return convertAndRecord(s, a, ref, try gdbChildren(s, a, gref), node);
+            var kids = try gdbChildren(s, a, gref);
+            if (node.ctx.used.len > 0) kids = try ifx_use.withoutUsed(s, a, kids, node.ctx.used, node.frame);
+            return convertAndRecord(s, a, ref, kids, node);
         },
     }
 }
 
 fn convertAndRecord(s: *Session, a: Allocator, ref: i64, kids: []const Variable, node: Node) ![]Variable {
-    const shown = try hiddenFilter(a, kids);
+    const shown = try hiddenFilter(a, kids, s.g.lfortran);
     const out = try a.alloc(Variable, shown.len);
     const names = try a.alloc([]const u8, shown.len);
     for (shown, out, names) |k, *o, *n| {
@@ -307,6 +342,12 @@ fn convert(s: *Session, a: Allocator, k: Variable, parent: Context, frame: ?i64)
         const e = try fortran.element(a, array, k.name);
         return present(s, a, k, e.name, e.evaluate_name, frame, e.sub, null);
     }
+    // gdb's Globals: a module's deferred-length CHARACTER (`store::mname`)
+    if (std.mem.find(u8, k.name, "::")) |sep| if (try gdb_values.moduleString(s, a, k.name[0..sep], k.name[sep + 2 ..], k, frame)) |text| {
+        var out = text;
+        out.evaluate_name = k.name;
+        return out;
+    };
     const evaluate_name: []const u8 = blk: {
         if (parent.registers) break :blk try a.print("${s}", .{k.name});
         if (parent.declared) |d| for (d.names) |n| {
@@ -334,13 +375,23 @@ fn moduleVariable(s: *Session, a: Allocator, v: ModuleVariable, frame: ?i64) !Va
     const expr = try a.print("{s}::{s}", .{ try std.ascii.allocLowerString(a, v.module), try std.ascii.allocLowerString(a, v.name) });
     const r = try gdb.request(s, a, "evaluate", try evalArgs(a, expr, frame, "watch"));
     const result = json.str(json.path(r, &.{ "body", "result" }));
-    if (!gdb.isSuccess(r) or result == null) return .{ .name = label, .value = s.text.not_available, .type = v.type };
-    return present(s, a, .{
+    if (!gdb.isSuccess(r) or result == null) {
+        // a variable of the module's COMMON block, which gdb does not know
+        if (try gdb_values.commonMember(s, a, v.module, v.name, frame)) |cv| return present(s, a, cv, label, cv.evaluate_name, frame, null, null);
+        return .{ .name = label, .value = s.text.not_available, .type = v.type };
+    }
+    const got: Variable = .{
         .name = label,
         .value = result.?,
         .type = json.str(json.path(r, &.{ "body", "type" })),
         .ref = json.int(json.path(r, &.{ "body", "variablesReference" })) orelse 0,
-    }, label, expr, frame, null, null);
+    };
+    if (try gdb_values.moduleString(s, a, v.module, v.name, got, frame)) |text| {
+        var out = text;
+        out.evaluate_name = expr;
+        return out;
+    }
+    return present(s, a, got, label, expr, frame, null, null);
 }
 
 // Values
@@ -353,11 +404,19 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
 
     if (fortran.isClassWrapper(v.type) and v.ref != 0) return presentClass(s, a, v, out, frame);
     // a pointer, as its target
-    if (fortran.pointerTarget(v.type) != null) {
+    if (fortran.pointerTarget(v.type)) |target| {
         if (fortran.isNullPointer(v.value)) {
             out.value = s.text.not_associated;
             return out;
         }
+        // LLVM Flang's polymorphic object, of another type than declared
+        if (!s.g.lldb and v.ref != 0) if (evaluate_name) |e| if (fortran.derivedTypeName(target)) |d| {
+            if (try flangClass(s, a, v, out, e, d, frame)) |shown| return shown;
+        };
+        // ifx's polymorphic allocatable array
+        if (s.g.ifx and !s.g.lldb and sub == null) if (evaluate_name) |e| if (isVariableName(e)) if (ifx_class.declaredName(target)) |d| {
+            if (try ifxClass(s, a, v, out, e, d, frame)) |shown| return shown;
+        };
         if (v.ref != 0) {
             const kids = try gdbChildren(s, a, v.ref);
             if (kids.len == 1 and std.mem.eql(u8, kids[0].name, "value")) return present(s, a, kids[0], name, evaluate_name, frame, sub, declared);
@@ -366,6 +425,23 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         return out;
     }
     const at = try fortran.arrayType(a, v.type);
+    // a CHARACTER of kind 4, whose type reads as an array
+    if (at) |t| if (sub == null) if (try gdb_values.wideCharacter(s, a, t, evaluate_name, frame)) |text| {
+        out.value = text;
+        return out;
+    };
+    // an array of them, whose type has the length first
+    if (at) |t| if (sub == null) if (try gdb_values.wideArray(s, a, t, evaluate_name, frame)) |elements| {
+        const dims = t.dims[1..];
+        if (dims.len == 1) {
+            const texts = try a.alloc([]const u8, elements.len);
+            for (elements, texts) |e, *x| x.* = e.value;
+            out.value = try fortran.arrayPreview(a, texts, elements.len);
+        } else out.value = try fortran.shapePreview(a, dims);
+        out.type = try gdb_values.wideArrayType(a, t);
+        out.ref = try add(s, .{ .kind = .{ .values = elements }, .frame = frame });
+        return out;
+    };
     // a string whose type reads as an array of characters (a dummy's of
     // assumed length, in gdb 15): gdb's value is the string
     if (at != null and sub == null and v.value.len > 0 and v.value[0] == '\'') return out;
@@ -374,6 +450,10 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
             out.value = if (t.allocatable) s.text.not_allocated else s.text.not_associated;
             return out;
         };
+        // LLVM Flang's polymorphic array, of another type than declared
+        if (at) |t| if (sub == null and !s.g.lldb and v.ref != 0) if (evaluate_name) |e| if (isVariableName(e)) if (fortran.derivedTypeName(t.element)) |d| {
+            if (try flangClassArray(s, a, out, e, d, frame)) |shown| return shown;
+        };
         const ctx: ArrayContext = sub orelse .{ .expr = evaluate_name, .dims = at.?.dims };
         const count: u64 = if (v.indexed) |n| @intCast(@max(n, 0)) else fortran.extent(fortran.indexedDim(ctx)) orelse 0;
         out.value = try arrayValue(s, a, v, ctx, count, frame);
@@ -381,7 +461,12 @@ pub fn present(s: *Session, a: Allocator, gv: Variable, name: []const u8, evalua
         return out;
     }
     if (fortran.derivedTypeName(v.type)) |type_name| if (v.ref != 0) {
-        const shown = try hiddenFilter(a, try gdbChildren(s, a, v.ref));
+        // ifx's polymorphic object or array, which gdb shows as one of
+        // the declared type
+        if (s.g.ifx and !s.g.lldb and sub == null) if (evaluate_name) |e| if (isVariableName(e)) {
+            if (try ifxClass(s, a, v, out, e, type_name, frame)) |shown| return shown;
+        };
+        const shown = try hiddenFilter(a, try gdbChildren(s, a, v.ref), s.g.lfortran);
         const comps = try a.alloc(fortran.Component, shown.len);
         for (shown, comps) |k, *c| c.* = .{ .name = k.name, .value = try short(a, k) };
         out.value = try fortran.structPreview(a, type_name, comps);
@@ -445,27 +530,89 @@ fn presentClass(s: *Session, a: Allocator, v: Variable, out_in: Variable, frame:
         const variable = try a.print("zfls_{d}", .{s.g.convenience});
         const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try fortran.castCommand(a, variable, address.?, dynamic.?), frame, "repl"));
         if (gdb.isSuccess(set)) {
-            const pointer = try a.print("${s}", .{variable});
-            const r = try gdb.request(s, a, "evaluate", try evalArgs(a, pointer, frame, "watch"));
-            const ref = json.int(json.path(r, &.{ "body", "variablesReference" })) orelse 0;
-            if (gdb.isSuccess(r) and ref != 0) {
-                const declared: ?Declared = if (data_expr) |e| .{ .expr = e, .names = try componentNames(s, a, data) } else null;
-                var shown = try present(s, a, .{
-                    .name = out.name,
-                    .value = json.str(json.path(r, &.{ "body", "result" })) orelse "",
-                    .type = json.str(json.path(r, &.{ "body", "type" })),
-                    .ref = ref,
-                }, out.name, pointer, frame, null, declared);
-                shown.type = type_name;
-                shown.evaluate_name = out.evaluate_name;
-                return shown;
-            }
+            const declared: ?Declared = if (data_expr) |e| .{ .expr = e, .names = try componentNames(s, a, data) } else null;
+            if (try presentAs(s, a, out, variable, frame, declared, type_name)) |shown| return shown;
         }
     }
     var shown = try present(s, a, data, out.name, data_expr, frame, null, null);
     shown.type = type_name;
     shown.evaluate_name = out.evaluate_name;
     return shown;
+}
+
+/// The object that gdb's pointer `$variable` points to, as `out` with the
+/// type `type_name`: the components of its dynamic type, those of the
+/// declared type with the object's expressions (`declared`)
+fn presentAs(s: *Session, a: Allocator, out: Variable, variable: []const u8, frame: ?i64, declared: ?Declared, type_name: ?[]const u8) !?Variable {
+    const pointer = try a.print("${s}", .{variable});
+    const r = try gdb.request(s, a, "evaluate", try evalArgs(a, pointer, frame, "watch"));
+    const ref = json.int(json.path(r, &.{ "body", "variablesReference" })) orelse 0;
+    if (!gdb.isSuccess(r) or ref == 0) return null;
+    var shown = try present(s, a, .{
+        .name = out.name,
+        .value = json.str(json.path(r, &.{ "body", "result" })) orelse "",
+        .type = json.str(json.path(r, &.{ "body", "type" })),
+        .ref = ref,
+    }, out.name, pointer, frame, null, declared);
+    shown.type = type_name;
+    shown.evaluate_name = out.evaluate_name;
+    return shown;
+}
+
+/// LLVM Flang's polymorphic object `v` (`expr`), which its DWARF gives as
+/// a pointer to its declared type (`declared_name`): when its descriptor
+/// names another type, that type's components, through a pointer of
+/// gdb's to it (fortran.flangClassCommand); else null
+fn flangClass(s: *Session, a: Allocator, v: Variable, out: Variable, expr: []const u8, declared_name: []const u8, frame: ?i64) !?Variable {
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try fortran.flangClassCommand(a, expr, variable, declared_name), frame, "repl"));
+    if (!gdb.isSuccess(set) or fortran.flangClassResult(json.str(json.path(set, &.{ "body", "result" })) orelse "") == null) return null;
+    const declared: Declared = .{ .expr = expr, .names = try componentNames(s, a, v) };
+    return presentAs(s, a, out, variable, frame, declared, try a.print("class({s})", .{declared_name}));
+}
+
+/// LLVM Flang's polymorphic array `expr` (a variable), which its DWARF
+/// gives as an array of its declared type (`declared_name`): when its
+/// descriptor names another type, the array as one of that type, with the
+/// same bounds (fortran.flangClassArrayCommand); else null
+fn flangClassArray(s: *Session, a: Allocator, out: Variable, expr: []const u8, declared_name: []const u8, frame: ?i64) !?Variable {
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try fortran.flangClassArrayCommand(a, expr, variable, declared_name), frame, "repl"));
+    if (!gdb.isSuccess(set) or fortran.flangClassResult(json.str(json.path(set, &.{ "body", "result" })) orelse "") == null) return null;
+    // class(point) and the bounds of gdb's type: `Type point (2:4)`
+    const t = out.type orelse "";
+    const bounds = if (std.mem.findScalarLast(u8, t, '(')) |i| t[i..] else "";
+    return presentAs(s, a, out, variable, frame, null, try a.print("class({s}) {s}", .{ declared_name, bounds }));
+}
+
+/// Intel ifx's polymorphic object or array `v` (`expr`), which its DWARF
+/// gives as one of its declared type (`declared_name`): the dynamic type's
+/// components, or the array (ifx_class.zig); else null
+fn ifxClass(s: *Session, a: Allocator, v: Variable, out: Variable, expr: []const u8, declared_name: []const u8, frame: ?i64) !?Variable {
+    s.g.convenience += 1;
+    const variable = try a.print("zfls_{d}", .{s.g.convenience});
+    const set = try gdb.request(s, a, "evaluate", try evalArgs(a, try ifx_class.command(a, expr, variable, declared_name), frame, "repl"));
+    if (!gdb.isSuccess(set)) return null;
+    const found = ifx_class.result(json.str(json.path(set, &.{ "body", "result" })) orelse "") orelse return null;
+    if (found.bounds) |b| return presentAs(s, a, out, variable, frame, null, try a.print("class({s}) {s}", .{ declared_name, b }));
+    var declared: ?Declared = null;
+    if (fortran.derivedTypeName(v.type) != null) {
+        const comps = try gdbChildren(s, a, v.ref);
+        const names = try a.alloc([]const u8, comps.len);
+        for (comps, names) |c, *n| n.* = try std.ascii.allocLowerString(a, c.name);
+        declared = .{ .expr = expr, .names = names };
+    }
+    return presentAs(s, a, out, variable, frame, declared, try a.print("class({s})", .{declared_name}));
+}
+
+/// Whether `e` names a variable (of a module, `m::v`), which `info
+/// address` locates, rather than being a part of one
+fn isVariableName(e: []const u8) bool {
+    if (e.len == 0 or e[0] == '$') return false;
+    for (e) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != ':') return false;
+    return true;
 }
 
 fn find(vs: []const Variable, name: []const u8) ?Variable {
@@ -617,4 +764,78 @@ test "a derived type's preview and components, hidden lengths left out" {
     try std.testing.expect(get(&s, scope) == null);
     try std.testing.expect(try add(&s, .{ .kind = .{ .gdb = 2 } }) > args[1].ref);
     freeRetired(&s);
+}
+
+test "LLVM Flang's polymorphic object: its dynamic type's components" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    const point = "[{\"name\":\"x\",\"value\":\"1.5\",\"type\":\"real(kind=4)\",\"variablesReference\":0},{\"name\":\"id\",\"value\":\"7\",\"type\":\"integer(kind=4)\",\"variablesReference\":0}]";
+    const answers = [_]struct { []const u8, []const u8 }{
+        .{ try fortran.flangClassCommand(a, "t", "zfls_1", "point"), "{\"result\":\"zfls-class tagged\\n\"}" },
+        .{ "$zfls_1", "{\"result\":\"(PTR TO -> ( Type tagged )) 0x7ff6\",\"type\":\"PTR TO -> ( Type tagged )\",\"variablesReference\":9}" },
+    };
+    var fake: FakeGdb = .{
+        .evaluate = &answers,
+        .variables = &.{
+            .{ 3, "[{\"name\":\"value\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":4}]" },
+            .{ 4, point },
+            .{ 9, "[{\"name\":\"value\",\"value\":\"\",\"type\":\"Type tagged\",\"variablesReference\":10}]" },
+            .{ 10, "[{\"name\":\"point\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":11},{\"name\":\"tag\",\"value\":\"'hello   '\",\"type\":\"character*8\",\"variablesReference\":0}]" },
+            .{ 11, point },
+        },
+    };
+    var s = testSession(&env, &fake);
+    defer testDeinit(&s);
+    const t = try present(&s, a, .{ .name = "t", .value = "0x7ff6 <_QFEtg>", .type = "PTR TO -> ( Type point )", .ref = 3 }, "t", "t", 1, null, null);
+    try std.testing.expectEqualStrings("tagged(point=point(…), tag='hello   ')", t.value);
+    try std.testing.expectEqualStrings("class(point)", t.type.?);
+    try std.testing.expectEqualStrings("t", t.evaluate_name.?);
+    const comps = try children(&s, a, t.ref, get(&s, t.ref).?);
+    try std.testing.expectEqual(@as(usize, 2), comps.len);
+    try std.testing.expectEqualStrings("$zfls_1%point", comps[0].evaluate_name.?);
+    try std.testing.expectEqualStrings("$zfls_1%tag", comps[1].evaluate_name.?);
+    // of its declared type, or not Flang's: the target, as before
+    var plain: FakeGdb = .{ .variables = &.{ .{ 3, "[{\"name\":\"value\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":4}]" }, .{ 4, point } } };
+    var s2 = testSession(&env, &plain);
+    defer testDeinit(&s2);
+    const p = try present(&s2, a, .{ .name = "p", .value = "0x7ff6 <_QMgridEorigin>", .type = "PTR TO -> ( Type point )", .ref = 3 }, "p", "p", 1, null, null);
+    try std.testing.expectEqualStrings("point(x=1.5, id=7)", p.value);
+    try std.testing.expectEqualStrings("Type point", p.type.?);
+}
+
+test "LLVM Flang's polymorphic array: its elements of the dynamic type, with its bounds" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var env: std.process.Environ.Map = .init(a);
+    const tagged = "[{\"name\":\"point\",\"value\":\"\",\"type\":\"Type point\",\"variablesReference\":0},{\"name\":\"tag\",\"value\":\"'hello   '\",\"type\":\"character*8\",\"variablesReference\":0}]";
+    const answers = [_]struct { []const u8, []const u8 }{
+        .{ try fortran.flangClassArrayCommand(a, "ts", "zfls_1", "point"), "{\"result\":\"zfls-class tagged\\n\"}" },
+        .{ "$zfls_1", "{\"result\":\"\",\"type\":\"Type tagged (2:3)\",\"variablesReference\":9}" },
+    };
+    var fake: FakeGdb = .{
+        .evaluate = &answers,
+        .variables = &.{
+            .{ 9, "[{\"name\":\"2\",\"value\":\"\",\"type\":\"Type tagged\",\"variablesReference\":10},{\"name\":\"3\",\"value\":\"\",\"type\":\"Type tagged\",\"variablesReference\":11}]" },
+            .{ 10, tagged },
+            .{ 11, tagged },
+        },
+    };
+    var s = testSession(&env, &fake);
+    defer testDeinit(&s);
+    const ts = try present(&s, a, .{ .name = "ts", .value = "", .type = "Type point, allocatable (2:3)", .ref = 3 }, "ts", "ts", 1, null, null);
+    try std.testing.expectEqualStrings("class(point) (2:3)", ts.type.?);
+    try std.testing.expectEqualStrings("ts", ts.evaluate_name.?);
+    try std.testing.expectEqualStrings("[tagged(…), tagged(…)]", ts.value);
+    const elements = try children(&s, a, ts.ref, get(&s, ts.ref).?);
+    try std.testing.expectEqual(@as(usize, 2), elements.len);
+    try std.testing.expectEqualStrings("(2)", elements[0].name);
+    try std.testing.expectEqualStrings("$zfls_1(2)", elements[0].evaluate_name.?);
+    try std.testing.expectEqualStrings("tagged(point=point(…), tag='hello   ')", elements[1].value);
+    // a component's array, or the expression of one: not asked
+    try std.testing.expect(!isVariableName("t%ts"));
+    try std.testing.expect(!isVariableName("$zfls_1"));
+    try std.testing.expect(isVariableName("shapes::mts"));
 }

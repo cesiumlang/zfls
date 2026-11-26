@@ -47,6 +47,31 @@
     "virtualWorkspaces": {
       "supported": false,
       "description": "zfls reads the project's Fortran files from disk."
+    },
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted workspace the settings that choose which programs zfls runs or what flags they get are not read from the workspace.",
+      "restrictedConfigurations": [
+        "zfls.run.buildArgs",
+        "zfls.fpm.args",
+        "zfls.pfunit.args",
+        "zfls.formatting.findentArgs",
+        "zfls.formatting.fprettifyArgs",
+        "zfls.formatting.codeeArgs",
+        "zfls.formatting.forformatArgs",
+        "zfls.formatting.customArgs",
+        "zfls.linter.extraArgs",
+        "zfls.linter.fixedExtraArgs",
+        "zfls.fortitude.args",
+        "zfls.codee.args",
+        "zfls.linter.fypp.extraArgs",
+        "zfls.linter.fypp.enabled",
+        "zfls.compileCommands",
+        "zfls.linter.compiler",
+        "zfls.linter.fixedCompiler",
+        "zfls.fpm.compiler",
+        "zfls.run.compiler"
+      ]
     }
   },
   "contributes": {
@@ -64,10 +89,14 @@
           ".F95",
           ".f03",
           ".F03",
+          ".f05",
+          ".F05",
           ".f08",
           ".F08",
           ".f18",
           ".F18",
+          ".f23",
+          ".F23",
           ".fpp",
           ".FPP",
           ".cuf",
@@ -94,7 +123,9 @@
           ".f77",
           ".F77",
           ".for",
-          ".FOR"
+          ".FOR",
+          ".ftn",
+          ".FTN"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
@@ -126,6 +157,12 @@
           ".fortls.json",
           ".fortls"
         ]
+      },
+      {
+        "id": "toml",
+        "filenames": [
+          ".zflsrc"
+        ]
       }
     ],
     "breakpoints": [
@@ -141,12 +178,17 @@
         "fileMatch": [
           ".fortlsrc",
           ".fortls.json",
-          ".fortls"
+          ".fortls",
+          "**/zfls/config.json"
         ],
         "url": "./schemas/fortls.schema.json"
       }
     ],
     "tomlValidation": [
+      {
+        "fileMatch": ".zflsrc",
+        "url": "./schemas/fortls.schema.json"
+      },
       {
         "fileMatch": "fpm.toml",
         "url": "https://github.com/fortran-lang/fpm-metadata/releases/download/v0.2.2/fpm-metadata-0.2.2.json"
@@ -228,7 +270,7 @@
         "zfls.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.path.markdownDescription%"
         },
         "zfls.incrementalSync": {
@@ -255,6 +297,17 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.hoverSignature.markdownDescription%"
         },
+        "zfls.docMath": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "dollar",
+            "keep"
+          ],
+          "default": "plain",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.docMath.markdownDescription%"
+        },
         "zfls.preferImplementation": {
           "type": "boolean",
           "default": false,
@@ -266,6 +319,18 @@
           "default": false,
           "scope": "resource",
           "markdownDescription": "%config.zfls.lowercaseHover.markdownDescription%"
+        },
+        "zfls.hoverNoTypeComponents": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverNoTypeComponents.markdownDescription%"
+        },
+        "zfls.hoverPlainComments": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.hoverPlainComments.markdownDescription%"
         },
         "zfls.lowercaseIntrinsics": {
           "type": "boolean",
@@ -303,6 +368,48 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.symbolSkipMembers.markdownDescription%"
         },
+        "zfls.codeLensNoReferences": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.codeLensNoReferences.markdownDescription%"
+        },
+        "zfls.codeLensNoRun": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.codeLensNoRun.markdownDescription%"
+        },
+        "zfls.debugLog": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.debugLog.markdownDescription%"
+        },
+        "zfls.disableIndexCache": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableIndexCache.markdownDescription%"
+        },
+        "zfls.disableCompileCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableCompileCommands.markdownDescription%"
+        },
+        "zfls.disableBindCSearch": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableBindCSearch.markdownDescription%"
+        },
+        "zfls.bindCClangd": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "%config.zfls.bindCClangd.markdownDescription%"
+        },
         "zfls.disableDiagnostics": {
           "type": "boolean",
           "default": false,
@@ -315,6 +422,13 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.workspaceDiagnostics.markdownDescription%"
         },
+        "zfls.diagnosticsChangeDelay": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.diagnosticsChangeDelay.markdownDescription%"
+        },
         "zfls.diagnosticSeverity": {
           "type": "object",
           "propertyNames": {
@@ -324,11 +438,14 @@
               "statement-without-scope",
               "multiple-contains",
               "unexpected-end",
+              "mismatched-end",
+              "unclosed-scope",
               "invalid-parent",
               "procedure-before-contains",
               "declared-twice",
               "masks-parent",
               "import-outside-interface",
+              "import-excludes-name",
               "module-not-found",
               "use-after-implicit",
               "deferred-not-implemented",
@@ -341,7 +458,36 @@
               "circular-use",
               "argument-mismatch",
               "argument-kind",
-              "intent-in-assigned"
+              "intent-in-assigned",
+              "include-not-found",
+              "preprocessor-condition",
+              "use-name-not-found",
+              "argument-not-definable",
+              "argument-too-short",
+              "argument-storage-short",
+              "constant-assigned",
+              "label-defined-twice",
+              "label-not-found",
+              "case-value-overlap",
+              "exit-outside-loop",
+              "cycle-outside-loop",
+              "parameter-without-value",
+              "duplicate-dummy",
+              "bad-kind",
+              "subscript-count",
+              "unknown-component",
+              "allocate-object",
+              "allocate-duplicate",
+              "allocate-shape",
+              "assignment-type",
+              "condition-type",
+              "intrinsic-arguments",
+              "unbalanced-parentheses",
+              "dangling-operator",
+              "abstract-type-declared",
+              "extends-unknown-type",
+              "pure-function-argument",
+              "unknown-io-specifier"
             ]
           },
           "additionalProperties": {
@@ -413,6 +559,16 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.fixedFormCommentCharacter.markdownDescription%"
         },
+        "zfls.fixedFormDLines": {
+          "type": "string",
+          "enum": [
+            "comment",
+            "code"
+          ],
+          "default": "comment",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.fixedFormDLines.markdownDescription%"
+        },
         "zfls.configFile": {
           "type": "string",
           "default": "",
@@ -458,8 +614,14 @@
             "type": "string"
           },
           "default": [],
-          "scope": "window",
+          "scope": "resource",
           "markdownDescription": "%config.zfls.commentMarkers.markdownDescription%"
+        },
+        "zfls.disableOpenmpConditional": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableOpenmpConditional.markdownDescription%"
         },
         "zfls.includeSuffixes": {
           "type": "array",
@@ -497,6 +659,12 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.ppDefs.markdownDescription%"
         },
+        "zfls.disableIntelDirectives": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.disableIntelDirectives.markdownDescription%"
+        },
         "zfls.arguments": {
           "type": "array",
           "items": {
@@ -530,7 +698,7 @@
         "zfls.run.compilerPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.run.compilerPath.markdownDescription%"
         },
         "zfls.run.buildArgs": {
@@ -591,13 +759,13 @@
         "zfls.run.gdbPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.run.gdbPath.markdownDescription%"
         },
         "zfls.fpm.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.fpm.path.markdownDescription%"
         },
         "zfls.fpm.profile": {
@@ -671,12 +839,18 @@
           "enum": [
             "Disabled",
             "findent",
-            "fprettify"
+            "fprettify",
+            "codee",
+            "forformat",
+            "custom"
           ],
           "enumDescriptions": [
             "%config.zfls.formatting.formatter.enumDescriptions.0%",
             "%config.zfls.formatting.formatter.enumDescriptions.1%",
-            "%config.zfls.formatting.formatter.enumDescriptions.2%"
+            "%config.zfls.formatting.formatter.enumDescriptions.2%",
+            "%config.zfls.formatting.formatter.enumDescriptions.3%",
+            "%config.zfls.formatting.formatter.enumDescriptions.4%",
+            "%config.zfls.formatting.formatter.enumDescriptions.5%"
           ],
           "default": "Disabled",
           "scope": "language-overridable",
@@ -685,7 +859,7 @@
         "zfls.formatting.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.formatting.path.markdownDescription%"
         },
         "zfls.formatting.findentArgs": {
@@ -705,6 +879,33 @@
           "default": [],
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.fprettifyArgs.markdownDescription%"
+        },
+        "zfls.formatting.codeeArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.codeeArgs.markdownDescription%"
+        },
+        "zfls.formatting.forformatArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.forformatArgs.markdownDescription%"
+        },
+        "zfls.formatting.customArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.customArgs.markdownDescription%"
         },
         "zfls.linter.compiler": {
           "type": "string",
@@ -732,10 +933,30 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.compiler.markdownDescription%"
         },
+        "zfls.linter.dialect": {
+          "type": "string",
+          "enum": [
+            "",
+            "neutral",
+            "gfortran",
+            "ifx",
+            "flang"
+          ],
+          "enumDescriptions": [
+            "%config.zfls.linter.dialect.enumDescriptions.0%",
+            "%config.zfls.linter.dialect.enumDescriptions.1%",
+            "%config.zfls.linter.dialect.enumDescriptions.2%",
+            "%config.zfls.linter.dialect.enumDescriptions.3%",
+            "%config.zfls.linter.dialect.enumDescriptions.4%"
+          ],
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.dialect.markdownDescription%"
+        },
         "zfls.linter.compilerPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.linter.compilerPath.markdownDescription%"
         },
         "zfls.linter.extraArgs": {
@@ -746,6 +967,52 @@
           "default": [],
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.extraArgs.markdownDescription%"
+        },
+        "zfls.linter.fixedCompiler": {
+          "type": "string",
+          "enum": [
+            "",
+            "gfortran",
+            "ifx",
+            "ifort",
+            "nagfor",
+            "lfortran",
+            "nvfortran",
+            "flang",
+            "Disabled"
+          ],
+          "enumDescriptions": [
+            "%config.zfls.linter.fixedCompiler.enumDescriptions.0%",
+            "%config.zfls.linter.compiler.enumDescriptions.0%",
+            "%config.zfls.linter.compiler.enumDescriptions.1%",
+            "%config.zfls.linter.compiler.enumDescriptions.2%",
+            "%config.zfls.linter.compiler.enumDescriptions.3%",
+            "%config.zfls.linter.compiler.enumDescriptions.4%",
+            "%config.zfls.linter.compiler.enumDescriptions.5%",
+            "%config.zfls.linter.compiler.enumDescriptions.6%",
+            "%config.zfls.linter.fixedCompiler.enumDescriptions.8%"
+          ],
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.fixedCompiler.markdownDescription%"
+        },
+        "zfls.linter.fixedCompilerPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "%config.zfls.linter.fixedCompilerPath.markdownDescription%"
+        },
+        "zfls.linter.fixedExtraArgs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.fixedExtraArgs.markdownDescription%"
         },
         "zfls.linter.includePaths": {
           "type": "array",
@@ -775,7 +1042,7 @@
           "markdownDescription": "%config.zfls.linter.lintOnType.markdownDescription%"
         },
         "zfls.linter.lintOnTypeDelay": {
-          "type": "number",
+          "type": "integer",
           "default": 1000,
           "minimum": 0,
           "scope": "resource",
@@ -787,6 +1054,12 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.linter.resolveModules.markdownDescription%"
         },
+        "zfls.linter.noCompileCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.linter.noCompileCommands.markdownDescription%"
+        },
         "zfls.fortitude.enabled": {
           "type": "boolean",
           "default": false,
@@ -796,7 +1069,7 @@
         "zfls.fortitude.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.fortitude.path.markdownDescription%"
         },
         "zfls.fortitude.args": {
@@ -830,7 +1103,7 @@
         "zfls.codee.path": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.codee.path.markdownDescription%"
         },
         "zfls.codee.args": {
@@ -851,7 +1124,7 @@
         "zfls.linter.fypp.path": {
           "type": "string",
           "default": "fypp",
-          "scope": "machine-overridable",
+          "scope": "machine",
           "markdownDescription": "%config.zfls.linter.fypp.path.markdownDescription%"
         },
         "zfls.linter.fypp.definitions": {
@@ -942,6 +1215,16 @@
         "category": "%command.category%"
       },
       {
+        "command": "zfls.convertToFreeForm",
+        "title": "%command.zfls.convertToFreeForm.title%",
+        "category": "%command.category.fortran%"
+      },
+      {
+        "command": "zfls.convertToFixedForm",
+        "title": "%command.zfls.convertToFixedForm.title%",
+        "category": "%command.category.fortran%"
+      },
+      {
         "command": "zfls.linter.clear",
         "title": "%command.zfls.linter.clear.title%",
         "category": "%command.category%"
@@ -982,6 +1265,14 @@
         {
           "command": "zfls.setUpIfx",
           "when": "isWindows"
+        },
+        {
+          "command": "zfls.convertToFreeForm",
+          "when": "editorLangId == FortranFixedForm && resourceScheme == file"
+        },
+        {
+          "command": "zfls.convertToFixedForm",
+          "when": "editorLangId == FortranFreeForm && resourceScheme == file"
         },
         {
           "command": "zfls.runFile",
@@ -1082,6 +1373,11 @@
     ],
     "configurationDefaults": {
       "[FortranFixedForm]": {
+        "editor.rulers": [
+          5,
+          6,
+          72
+        ],
         "editor.semanticHighlighting.enabled": true,
         "editor.autoIndentOnPaste": false,
         "editor.formatOnType": true
@@ -1235,6 +1531,26 @@
                 "type": "string",
                 "description": "%debugger.fortran.launch.gdb.description%"
               },
+              "lldb": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "%debugger.fortran.launch.lldb.description%"
+              },
+              "dbgeng": {
+                "type": "boolean",
+                "description": "%debugger.fortran.launch.dbgeng.description%"
+              },
+              "cppExceptionFilters": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.launch.cppExceptionFilters.description%"
+              },
+              "sourceRoot": {
+                "type": "string",
+                "description": "%debugger.fortran.launch.sourceRoot.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
@@ -1267,6 +1583,32 @@
                 "type": "string",
                 "description": "%debugger.fortran.attach.gdb.description%"
               },
+              "lldb": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "%debugger.fortran.attach.lldb.description%"
+              },
+              "cppExceptionFilters": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.cppExceptionFilters.description%"
+              },
+              "dbgeng": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.dbgeng.description%"
+              },
+              "sourceRoot": {
+                "type": "string",
+                "description": "%debugger.fortran.attach.sourceRoot.description%"
+              },
+              "waitFor": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.waitFor.description%"
+              },
               "setupCommands": {
                 "type": "array",
                 "items": {
@@ -1278,16 +1620,6 @@
             }
           }
         },
-        "initialConfigurations": [
-          {
-            "type": "fortran",
-            "request": "launch",
-            "name": "Debug Fortran program",
-            "program": "${workspaceFolder}/a.out",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-          }
-        ],
         "configurationSnippets": [
           {
             "label": "%debugger.fortran.snippet.0.label%",
@@ -1309,6 +1641,18 @@
               "name": "Debug ${1:target}",
               "fpmTarget": "${1:target}",
               "fpmTargetKind": "executable"
+            }
+          },
+          {
+            "label": "%debugger.fortran.snippet.3.label%",
+            "description": "%debugger.fortran.snippet.3.description%",
+            "body": {
+              "type": "fortran",
+              "request": "launch",
+              "name": "Debug ${1:program} with lldb-dap",
+              "program": "^\"\\${workspaceFolder}/${1:a.out}\"",
+              "args": [],
+              "lldb": true
             }
           },
           {
@@ -1404,22 +1748,27 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --minify --sourcemap",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node22 --minify --sourcemap",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p test",
     "package": "vsce package --no-dependencies",
-    "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node20 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node20",
+    "build-test": "esbuild test/runTest.ts --bundle --outfile=out/runTest.js --platform=node --target=node22 && esbuild test/suite.ts --bundle --outfile=out/suite.js --external:vscode --format=cjs --platform=node --target=node22",
     "test": "npm run build && npm run build-test && node out/runTest.js",
-    "unit": "esbuild test/unit/*.test.ts --bundle --outdir=out/unit --platform=node --target=node20 --format=cjs && node --test out/unit/*.test.js"
+    "unit": "esbuild test/unit/*.test.ts --bundle --alias:vscode=./test/unit/vscode.ts --outdir=out/unit --platform=node --target=node22 --format=cjs && node --test out/unit/*.test.js"
+  },
+  "overrides": {
+    "minimatch": "11.0.9"
   },
   "dependencies": {
-    "vscode-languageclient": "10.1.2"
+    "vscode-languageclient": "11.0.0"
   },
   "devDependencies": {
-    "@types/node": "20.19.0",
+    "@types/node": "22.20.5",
     "@types/vscode": "1.102.0",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "4.0.0",
+    "@vscode/vsce": "4.1.1",
     "esbuild": "0.28.2",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
   }
 }

@@ -19,7 +19,7 @@ const srv = @import("../server.zig");
 const Server = srv.Server;
 
 /// A module variable as a line sees it
-const Item = struct {
+pub const Item = struct {
     /// The module that declares it
     module: []const u8,
     /// Its name there
@@ -45,17 +45,22 @@ const Found = struct {
 
 /// A module's variables (not its named constants)
 fn isModuleVariable(o: *const Obj) bool {
-    return o.kind == .variable and !o.varDataConst().is_const;
+    return o.kind == .variable and !o.varDataConst().is_const and !o.isGroup();
 }
 
 pub fn serveModuleVariables(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const ast = file.ast orelse return .null;
+    return json.from(a, try visibleModuleVariables(self, a, ast, params.position.line));
+}
+
+/// The module variables that `line` (0-based) of `ast`'s file sees
+pub fn visibleModuleVariables(self: *Server, a: Allocator, ast: *objects.Ast, line: usize) ![]const Item {
     const env = self.env(a);
     var found: Found = .{};
     var uses: std.array_hash_map.String(*UseStmt) = .empty;
     // the scopes around the line, the innermost first
-    var scope = ast.getInnerScope(params.position.line + 1);
+    var scope = ast.getInnerScope(line + 1);
     while (scope) |s| : (scope = s.parent) {
         try objects.getUseTree(env, s, &uses, null, null, &.{});
         if (s.kind != .module and s.kind != .submodule) continue;
@@ -93,5 +98,5 @@ pub fn serveModuleVariables(self: *Server, a: Allocator, params: lsp.PositionPar
             }
         }
     }
-    return json.from(a, found.items.items);
+    return found.items.items;
 }

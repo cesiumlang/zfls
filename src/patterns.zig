@@ -2,6 +2,8 @@
 
 const std = @import("std");
 const regex = @import("regex.zig");
+const suffixes = @import("suffixes.zig");
+const valgrind = @import("_test/valgrind.zig");
 const Regex = regex.Regex;
 const I = regex.I;
 
@@ -9,7 +11,7 @@ const Def = struct { []const u8, []const u8, bool };
 
 /// (field name, pattern, ignore case)
 const defs = [_]Def{
-    .{ "USE", "[ ]*USE([, ]+(?:INTRINSIC|NON_INTRINSIC))?[ :]+(\\w*)([, ]+ONLY[ :]+)?", true },
+    .{ "USE", "[ ]*USE([, ]+(?:INTRINSIC|NON_INTRINSIC))?[ :]+([\\w$]*)([, ]+ONLY[ :]+)?", true },
     .{ "IMPORT", "[ ]*IMPORT" ++
         "(?:" ++
         "[ ]*,[ ]*(?P<spec>ALL|NONE)" ++
@@ -21,32 +23,36 @@ const defs = [_]Def{
     .{ "INCLUDE", "[ ]*INCLUDE[ :]*[\\'\\\"]([^\\'\\\"]*)", true },
     .{ "CONTAINS", "[ ]*(CONTAINS)[ ]*$", true },
     .{ "IMPLICIT", "[ ]*IMPLICIT[ ]+([a-z]*)", true },
-    .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE)\\b(?![,\\)][ ]*)", true },
-    .{ "SUB", "[ ]*SUBROUTINE[ ]+(\\w+)", true },
+    .{ "SUB_MOD", "[ ]*(?!<[,\\()][ ]*)\\b(PURE|IMPURE|ELEMENTAL|RECURSIVE|NON_RECURSIVE|SIMPLE)\\b(?![,\\)][ ]*)", true },
+    .{ "SUB", "[ ]*SUBROUTINE[ ]+([\\w$]+)", true },
     .{ "END_SUB", "SUBROUTINE", true },
-    .{ "FUN", "[ ]*FUNCTION[ ]+(\\w+)", true },
-    .{ "RESULT", "RESULT[ ]*\\((\\w*)\\)", true },
+    .{ "FUN", "[ ]*FUNCTION[ ]+([\\w$]+)", true },
+    .{ "RESULT", "RESULT[ ]*\\(([\\w$]*)\\)", true },
     .{ "END_FUN", "FUNCTION", true },
-    .{ "MOD", "[ ]*MODULE[ ]+(\\w+)", true },
+    .{ "MOD", "[ ]*MODULE[ ]+([\\w$]+)", true },
     .{ "END_MOD", "MODULE", true },
     .{ "SUBMOD", "[ ]*SUBMODULE[ ]*\\(", true },
     .{ "END_SMOD", "SUBMODULE", true },
     .{ "END_PRO", "(MODULE)?[ ]*PROCEDURE", true },
     // the keyword is the whole statement: not the start of a longer name, nor
     // the name of a construct (#532, #292)
-    .{ "BLOCK", "[ ]*([a-z_]\\w*[ ]*:[ ]*)?(?:BLOCK|CRITICAL)[ ]*(?:!.*)?$", true },
+    // (CRITICAL with a sync-stat list too, `critical (stat=st)`: #722)
+    .{ "BLOCK", "[ ]*([a-z_]\\w*[ ]*:[ ]*)?(?:BLOCK|CRITICAL(?:[ ]*\\([ ]*(?:STAT|ERRMSG)[ ]*=.*\\))?)[ ]*(?:!.*)?$", true },
     .{ "END_BLOCK", "BLOCK|CRITICAL", true },
+    // CHANGE TEAM, a construct ended by END TEAM (#720)
+    .{ "CHANGE_TEAM", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?CHANGE[ ]*TEAM[ ]*\\(", true },
+    .{ "END_TEAM", "TEAM", true },
     // BLOCK DATA is a program unit of its own (#264, #470)
     .{ "BLOCK_DATA", "[ ]*BLOCK[ ]*DATA(?:[ ]+([a-z_]\\w*))?[ ]*(?:!.*)?$", true },
     .{ "END_BLOCK_DATA", "BLOCK[ ]*DATA", true },
     .{ "DO", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?DO([ ]+[0-9]*|$)", true },
     .{ "END_DO", "DO", true },
-    .{ "WHERE", "[ ]*WHERE[ ]*\\(", true },
+    .{ "WHERE", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?WHERE[ ]*\\(", true },
     .{ "END_WHERE", "WHERE", true },
     .{ "IF", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?IF[ ]*\\(", true },
     .{ "THEN", "\\)[ ]*THEN$", true },
     .{ "END_IF", "IF", true },
-    .{ "ASSOCIATE", "[ ]*ASSOCIATE[ ]*\\(", true },
+    .{ "ASSOCIATE", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?ASSOCIATE[ ]*\\(", true },
     .{ "END_ASSOCIATE", "ASSOCIATE", true },
     .{ "END_FIXED", "[ ]*([0-9]*)[ ]*CONTINUE", true },
     .{ "SELECT", "[ ]*(?:[a-z_]\\w*[ ]*:[ ]*)?SELECT[ ]*(CASE|TYPE|RANK)[ ]*\\(([\\w=> ]*)", true },
@@ -54,15 +60,17 @@ const defs = [_]Def{
     .{ "SELECT_DEFAULT", "[ ]*CLASS[ ]+DEFAULT", true },
     // a case of SELECT RANK, `rank (1)`, `rank (*)`, `rank default` (not
     // an assignment to an element of an array named rank)
-    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([ ]*[\\w*]*[ ]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
+    // (`=` only in a rank's keyword arguments, not in the assignment
+    // `rank(1) = 2`, #763)
+    .{ "SELECT_RANK", "[ ]*RANK[ ]*(?:\\([^=]*\\)|DEFAULT)[ ]*(?:!.*)?$", true },
     .{ "END_SELECT", "SELECT", true },
-    .{ "PROG", "[ ]*PROGRAM[ ]+(\\w+)", true },
+    .{ "PROG", "[ ]*PROGRAM[ ]+([\\w$]+)", true },
     .{ "END_PROG", "PROGRAM", true },
-    .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*(\\w*)", true },
+    .{ "INT", "[ ]*(ABSTRACT)?[ ]*INTERFACE[ ]*([\\w$]*)", true },
     .{ "END_INT", "INTERFACE", true },
     .{ "END_WORD", "[ ]*END[ ]*(DO|WHERE|IF|BLOCK[ ]*DATA|BLOCK|CRITICAL|ASSOCIATE|SELECT" ++
         "|TYPE|STRUCTURE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
-        "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL)?([ ]+(?!\\W)|$)", true },
+        "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL|TEAM)?([ ]+(?![^\\w$])|$|(?<=TEAM)[ ]*\\()", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
     .{ "EXTENDS", "EXTENDS[ ]*\\((\\w*)\\)", true },
     .{ "GENERIC_PRO", "[ ]*(GENERIC)[, ]*(PRIVATE|PUBLIC)?[ ]*::[ ]*[a-z]", true },
@@ -78,20 +86,23 @@ const defs = [_]Def{
     .{ "END_ENUMD", "ENUM", true },
     .{ "VAR", "[ ]*(INTEGER|REAL|DOUBLE[ ]*PRECISION|COMPLEX" ++
         "|DOUBLE[ ]*COMPLEX|CHARACTER|LOGICAL|PROCEDURE" ++
-        "|EXTERNAL|CLASS|TYPE)", true },
-    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:]|\\*[ ]*[0-9:]*)", true },
+        "|EXTERNAL|TYPEOF|CLASSOF|CLASS|TYPE|BYTE|UNSIGNED)", true },
+    // `()`: PROCEDURE() of no interface; `((4))`: a kind in parentheses
+    .{ "KIND_SPEC", "[ ]*([*]?\\([ ]*[\\w*:(]|\\([ ]*\\)|\\*[ ]*[0-9:]*)", true },
+    // CUDA Fortran's data attributes too, which hover does not show (#715)
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
-        "POINTER|TARGET|DIMENSION[ ]*\\(|" ++
+        "POINTER|TARGET|DIMENSION[ ]*\\(|RANK[ ]*\\(|" ++
         "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
-        "PASS[ ]*\\(\\w*\\)|SAVE|PARAMETER|EXTERNAL|" ++
-        "CONTIGUOUS|CODIMENSION[ ]*\\[)", true },
+        "PASS[ ]*\\([ ]*\\w*[ ]*\\)|SAVE|PARAMETER|EXTERNAL|" ++
+        "CONTIGUOUS|VOLATILE|ASYNCHRONOUS|PROTECTED|VALUE|AUTOMATIC|STATIC|CODIMENSION[ ]*\\[|" ++
+        "DEVICE|MANAGED|CONSTANT|SHARED|PINNED|TEXTURE|UNIFIED)", true },
     .{ "PARAMETER_VAL", "\\w*[\\s\\&]*=(([\\s\\&]*[\\w\\.\\-\\+\\*\\/\\'\\\"])*)", true },
     .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS\\(\\w*\\))", true },
     .{ "VIS", "[ ]*\\b(PUBLIC|PRIVATE)\\b", true },
-    .{ "WORD", "[a-z_][\\w\\$]*", true },
+    .{ "WORD", "\\$*[a-z_][\\w\\$]*", true },
     .{ "NUMBER", "[\\+\\-]?(\\b\\d+\\.?\\d*|\\.\\d+)(_\\w+|d[\\+\\-]?\\d+|e[\\+\\-]?\\d+(_\\w+)?)?(?!\\w)", true },
     .{ "LOGICAL", ".true.|.false.", true },
-    .{ "SUB_PAREN", "\\([\\w, ]*\\)", true },
+    .{ "SUB_PAREN", "\\([\\w$, ]*\\)", true },
     .{ "SQ_STRING", "\\'[^\\']*\\'", true },
     .{ "DQ_STRING", "\\\"[^\\\"]*\\\"", true },
     // a preprocessor `#include "file"` or `#include <file>`, and its file name
@@ -107,7 +118,7 @@ const defs = [_]Def{
     .{ "PP_REGEX", "[ ]*#[ ]*(if |ifdef|ifndef|else|elif|endif)", true },
     .{ "PP_DEF", "[ ]*#[ ]*(define|undef|undefined)[ ]*(\\w+)(\\([ ]*([ \\w,]*?)[ ]*\\))?", true },
     .{ "PP_DEF_TEST", "(![ ]*)?defined[ ]*\\([ ]*(\\w*)[ ]*\\)$", true },
-    .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"\\w\\./\\\\]*)", true },
+    .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"<>\\w\\./\\\\-]*)", true },
     .{ "CALL", "[ ]*CALL[ ]+[\\w%]*$", true },
     .{ "INT_STMNT", "^[ ]*[a-z]*$", true },
     .{ "TYPE_STMNT", "[ ]*(TYPE|CLASS)[ ]*(IS)?[ ]*$", true },
@@ -166,10 +177,10 @@ pub fn init() void {
 }
 
 /// Port of `create_src_file_exts_regex`: build a regex matching the default
-/// Fortran file extensions plus `input_exts` (already escaped regex snippets).
+/// Fortran file extensions (suffixes.zig) plus `input_exts` (already escaped
+/// regex snippets).
 pub fn createSrcFileExtsRegex(a: std.mem.Allocator, input_exts: []const []const u8) !Regex {
-    // and CUDA Fortran's .cuf
-    const default = "\\.([fF](77|90|95|03|05|08|18|[oO][rR]|[pP]{2})?|[cC][uU][fF])";
+    const default = suffixes.pattern;
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(a);
     try buf.appendSlice(a, "((");
@@ -213,6 +224,14 @@ test "src file exts regex" {
     try std.testing.expect(re.search("test.F90") != null);
     try std.testing.expect(re.search("kernels.cuf") != null);
     try std.testing.expect(re.search("test.c") == null);
+    // and in either case (#250)
+    for ([_][]const u8{ "f", "f77", "for", "ftn", "fpp", "f90", "f95", "f03", "f05", "f08", "f18", "f23", "cuf", "pf", "fypp" }) |ext| {
+        var lower: [8]u8 = undefined;
+        var upper: [8]u8 = undefined;
+        try std.testing.expect(re.search(try std.mem.print(&lower, "x.{s}", .{ext})) != null);
+        try std.testing.expect(re.search(std.ascii.upperString(&upper, try std.mem.print(&lower, "x.{s}", .{ext}))) != null);
+    }
+    for ([_][]const u8{ "x.f2", "x.ft", "x.f233", "x.F233", "x.pff", "x.fyp", "x.f90.bak" }) |name| try std.testing.expect(re.search(name) == null);
 
     const bad = [_][]const u8{"*.inc"};
     var re2 = try createSrcFileExtsRegex(a, &bad);
@@ -221,6 +240,7 @@ test "src file exts regex" {
 }
 
 test "the prefilter never rejects a line that matches" {
+    try valgrind.skip();
     init();
     const words = [_][]const u8{
         "subroutine", "end", "module", "program", "integer",  "real",     "type",     "class", "use",       "only",

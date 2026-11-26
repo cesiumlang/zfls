@@ -1,6 +1,6 @@
 //! Values in a program's memory for `zfls dap`: a variable's, as its
-//! declaration says (scalars, derived types, arrays through Intel's
-//! descriptors or of explicit shape), a derived type's components, a
+//! declaration says (scalars, derived types, arrays through Intel's or
+//! LLVM Flang's descriptors or of explicit shape), a derived type's components, a
 //! module's variables, and the expressions of `evaluate`.
 //! Part of `Session` (session.zig): each function takes it as `s`.
 
@@ -34,7 +34,9 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         type_index = s.engine.typeInfo(u32, v.mod_base, type_index, .type) orelse type_index;
     }
     // a scalar of a derived type: to the structure (a CLASS dummy is a
-    // pointer to a pointer to it)
+    // pointer to a pointer to it; LLVM Flang's is its descriptor, whose
+    // first word is the pointer)
+    const box = v.address;
     if (decl != null and decl.?.t.kind == .derived and decl.?.dims.len == 0) {
         for (0..2) |_| {
             if (s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) != @backingInt(dbgeng.SymTag.pointer)) break;
@@ -44,14 +46,46 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
             type_index = s.engine.typeInfo(u32, v.mod_base, type_index, .type) orelse break;
         }
     }
-    const d = decl orelse return .{ .address = address, .t = rawType(s, v.mod_base, type_index), .expr = expr, .type_index = type_index, .mod_base = v.mod_base };
-    var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj };
-    if (d.t.kind == .derived) val.type_index = elementType(s, v.mod_base, type_index);
+    const d = decl orelse return .{ .address = address, .t = rawType(s, v.mod_base, type_index), .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .frame = frame };
+    var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj, .frame = frame };
+    if (d.t.kind == .derived) val.type_index = try structure(s, a, v.mod_base, elementType(s, v.mod_base, type_index), d.t.name);
+    if (d.t.kind == .derived and d.t.polymorphic and d.dims.len == 0) {
+        if (try classTypeInfo(s, box, v.parameter, address)) |info| try toDynamic(s, a, &val, info, d);
+    }
     if (d.dims.len == 0) {
-        if (d.t.kind == .character and d.t.size == 0) val.t.size = s.engine.typeInfo(u32, v.mod_base, type_index, .length) orelse 0;
+        // a deferred-length CHARACTER of Intel's (`character(len=:),
+        // allocatable`): a descriptor of rank 0, CodeView's `LF_OEM`, of its
+        // address and length; LLVM Flang's is a pointer, followed below
+        if (d.t.kind == .character and d.t.size == 0 and (d.pointer or d.allocatable) and s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) != @backingInt(dbgeng.SymTag.pointer)) {
+            var words: [values.Descriptor.header_words]u64 = undefined;
+            if (s.engine.read(address, std.mem.sliceAsBytes(&words)) != @sizeOf(@TypeOf(words))) return error.Unreadable;
+            const desc = values.Descriptor.parse(&words) orelse return error.Unreadable;
+            if (desc.rank != 0) return error.Unreadable;
+            if (desc.empty()) {
+                val.empty = true;
+                return val;
+            }
+            val.address = desc.base;
+            val.t.size = @intCast(@min(desc.elem_len, 1 << 20));
+            return val;
+        }
+        // a POINTER or ALLOCATABLE scalar of LLVM Flang's: a pointer to it
+        // (a derived type's is followed above)
+        if ((d.pointer or d.allocatable) and d.t.kind != .derived and s.engine.typeInfo(u32, v.mod_base, type_index, .symtag) == @backingInt(dbgeng.SymTag.pointer)) {
+            var p: [8]u8 = undefined;
+            if (s.engine.read(address, &p) != 8) return error.Unreadable;
+            val.address = std.mem.readInt(u64, &p, .little);
+            val.type_index = s.engine.typeInfo(u32, v.mod_base, type_index, .type) orelse type_index;
+        }
+        if ((d.pointer or d.allocatable) and val.address == 0) {
+            val.empty = true;
+            return val;
+        }
+        if (d.t.kind == .character and d.t.size == 0) val.t.size = s.engine.typeInfo(u32, v.mod_base, val.type_index, .length) orelse 0;
         return val;
     }
-    // arrays: Intel's descriptor for those of deferred or assumed shape
+    // arrays: Intel's or LLVM Flang's descriptor for those of deferred or
+    // assumed shape
     if (d.allocatable or d.pointer or (!values.constantShape(d.dims) and dimsDeferred(d.dims))) {
         var words: [6 + 3 * 7]u64 = undefined;
         const got = s.engine.read(address, std.mem.sliceAsBytes(words[0..]));
@@ -63,7 +97,18 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         }
         val.address = desc.base;
         if (val.t.kind == .character) val.t.size = @intCast(desc.elem_len);
-        val.extents = try a.dupe(values.Extent, desc.dims[0..desc.rank]);
+        if (d.t.kind == .derived and d.t.polymorphic) {
+            const info = if (desc.type_info != 0) desc.type_info else values.Descriptor.intelTypeInfo(words[0 .. got / 8], desc.rank) orelse 0;
+            try toDynamic(s, a, &val, info, d);
+        }
+        const extents = try a.dupe(values.Extent, desc.dims[0..desc.rank]);
+        // an assumed-shape array's lower bounds are its declaration's (1
+        // unless `a(0:)`), not those of the actual argument, which LLVM
+        // Flang's descriptor keeps
+        if (!d.allocatable and !d.pointer) for (extents, 0..) |*e, i| {
+            if (i < d.dims.len) e.lo = d.dims[i].lo orelse 1;
+        };
+        val.extents = extents;
         val.rank = desc.rank;
         val.count = val.extents[val.rank - 1].count;
         return val;
@@ -83,6 +128,58 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     return val;
 }
 
+/// The address of the dynamic type's description of a CLASS scalar whose
+/// data is at `data`, from its descriptor at `box`: LLVM Flang's (the box
+/// itself, its addendum), or Intel's (at the address in `box` for a dummy
+/// argument, else the box), told by its rank 0 and its data's address;
+/// null when neither
+fn classTypeInfo(s: *Session, box: u64, parameter: bool, data: u64) !?u64 {
+    var words: [values.Descriptor.header_words + 1]u64 = undefined;
+    if (s.engine.read(box, std.mem.sliceAsBytes(words[0..4])) == 32) if (values.Descriptor.parse(words[0..4])) |desc| {
+        if (desc.rank == 0 and desc.type_info != 0) return desc.type_info;
+    };
+    var at = box;
+    if (parameter) {
+        var p: [8]u8 = undefined;
+        if (s.engine.read(box, &p) != 8) return null;
+        at = std.mem.readInt(u64, &p, .little);
+    }
+    if (s.engine.read(at, std.mem.sliceAsBytes(&words)) != @sizeOf(@TypeOf(words))) return null;
+    const desc = values.Descriptor.parse(&words) orelse return null;
+    if (desc.rank != 0 or desc.base != data) return null;
+    return values.Descriptor.intelTypeInfo(&words, 0);
+}
+
+/// A CLASS object as its dynamic type, whose description its descriptor
+/// points at: LLVM Flang's symbol (`_QMgridEXdtXtagged`), or Intel's,
+/// whose first word points to its name (`GRID#TAGGED`). dbghelp's
+/// structure of that name, and zfls's definition, for its components
+fn toDynamic(s: *Session, a: Allocator, val: *Val, type_info: u64, d: Decl) !void {
+    if (type_info == 0) return;
+    const name = (if (s.engine.symbolAt(a, type_info)) |symbol| values.Descriptor.flangTypeName(symbol) else null) orelse
+        (try intelTypeName(s, a, type_info)) orelse return;
+    if (std.ascii.eqlIgnoreCase(name, val.t.name)) return;
+    val.type_index = (try s.engine.typeNamed(a, val.mod_base, name)) orelse return;
+    val.t.name = name;
+    if (d.obj) |o| if (o.parent) |scope| {
+        val.dynamic = typeDefinition(s, scope, name);
+        // as the source spells it (Intel's names are upper case)
+        if (val.dynamic) |def| val.t.name = def.name;
+    };
+}
+
+/// The name of the derived type that Intel's description at `info`
+/// describes: its first word points to `MODULE#TYPE`
+fn intelTypeName(s: *Session, a: Allocator, info: u64) !?[]const u8 {
+    var p: [8]u8 = undefined;
+    if (s.engine.read(info, &p) != 8) return null;
+    var text: [128]u8 = undefined;
+    const got = s.engine.read(std.mem.readInt(u64, &p, .little), &text);
+    const end = std.mem.findScalar(u8, text[0..got], 0) orelse return null;
+    const name = values.Descriptor.intelTypeName(text[0..end]) orelse return null;
+    return try a.dupe(u8, name);
+}
+
 fn dimsDeferred(dims: []const values.Dim) bool {
     for (dims) |d| if (d.lo == null and d.hi == null) return true;
     return false;
@@ -96,6 +193,16 @@ fn boundOf(s: *Session, a: Allocator, frame: Frame, d: values.Dim, hi: bool) !?i
     _ = a;
     _ = frame;
     return null;
+}
+
+/// dbghelp's structure with members of a derived type `name`, from the
+/// type dbghelp gives a variable: itself, the definition of a forward
+/// reference (Intel's descriptors' elements), or else the structure of
+/// that name
+fn structure(s: *Session, a: Allocator, mod_base: u64, type_index: u32, name: []const u8) !u32 {
+    const t = try s.engine.definition(a, mod_base, type_index);
+    if ((s.engine.typeInfo(u32, mod_base, t, .childrencount) orelse 0) > 0 or name.len == 0) return t;
+    return (try s.engine.typeNamed(a, mod_base, name)) orelse t;
 }
 
 /// The type of an element (an array's) or the pointee
@@ -127,7 +234,7 @@ pub fn rawType(s: *Session, mod_base: u64, type_index: u32) values.Type {
 /// type's declaration (their Fortran types)
 pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
     const members = try s.engine.members(a, v.mod_base, v.type_index);
-    const def: ?*const Obj = blk: {
+    const def: ?*const Obj = v.dynamic orelse blk: {
         const d = v.decl orelse break :blk null;
         if (d.kind == .variable) if (d.varDataConst().type_obj) |t| break :blk t;
         break :blk if (d.parent) |scope| typeDefinition(s, scope, v.t.name) else null;
@@ -140,7 +247,7 @@ pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
             break :blk null;
         } else null;
         const mv: dbgeng.Variable = .{ .name = m.name, .address = v.address + m.offset, .size = 0, .type_index = m.type_index, .mod_base = v.mod_base, .parameter = false };
-        const cv = valueOf(s, a, mv, comp_decl, .{ .thread = 0, .index = 0 }, expr) catch continue;
+        const cv = valueOf(s, a, mv, comp_decl, v.frame, expr) catch continue;
         var c = cv;
         if (comp_decl == null) {
             c.t = rawType(s, v.mod_base, m.type_index);
@@ -158,12 +265,36 @@ pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
     return out.items;
 }
 
-/// A module variable's place: by the names Intel and LLVM Flang give it
+/// A module variable's place: by the names Intel and LLVM Flang give it.
+/// LLVM Flang's (`_QMgridEncells`) is a public symbol, without a type: the
+/// variable's type is that of the variable of its own name (`ncells`) at
+/// its address
 pub fn moduleGlobal(s: *Session, a: Allocator, module: []const u8, name: []const u8) !?dbgeng.Variable {
     const intel = try a.print("{s}_mp_{s}", .{ try std.ascii.allocUpperString(a, module), try std.ascii.allocUpperString(a, name) });
     if (try s.engine.global(a, intel)) |v| return v;
-    const flang = try a.print("_QM{s}E{s}", .{ try std.ascii.allocLowerString(a, module), try std.ascii.allocLowerString(a, name) });
-    return s.engine.global(a, flang);
+    const lower = try std.ascii.allocLowerString(a, name);
+    const flang = try a.print("_QM{s}E{s}", .{ try std.ascii.allocLowerString(a, module), lower });
+    const v = (try s.engine.global(a, flang)) orelse return commonMember(s, a, module, name);
+    if (v.type_index == 0) if (try s.engine.dataAt(a, v.mod_base, lower, v.address)) |typed| return typed;
+    return v;
+}
+
+/// A module's variable in its COMMON block (`common /blk/ cx`): at the
+/// block's symbol (Intel's `BLK`, else gfortran's and Flang's `blk_`) plus
+/// its offset there, without a type of dbghelp's (the declaration gives it)
+fn commonMember(s: *Session, a: Allocator, module: []const u8, name: []const u8) !?dbgeng.Variable {
+    const mod = declarations.moduleNamed(s, module) orelse return null;
+    const place = declarations.commonPlace(a, mod, name) orelse return null;
+    if (place.block.len == 0) return null;
+    const lower = try std.ascii.allocLowerString(a, place.block);
+    for ([_][]const u8{ try std.ascii.allocUpperString(a, place.block), try a.print("{s}_", .{lower}) }) |symbol| {
+        var v = (try s.engine.global(a, symbol)) orelse continue;
+        v.name = name;
+        v.address += place.offset;
+        v.type_index = 0;
+        return v;
+    }
+    return null;
 }
 
 /// An expression of a frame: a variable, its components and elements
@@ -176,13 +307,19 @@ pub fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val
     const name = std.mem.trim(u8, head[0..name_end], " ");
     var v: Val = undefined;
     if (std.mem.find(u8, name, "::")) |sep| {
-        const g = (try moduleGlobal(s, a, name[0..sep], name[sep + 2 ..])) orelse return null;
-        v = try valueOf(s, a, g, null, frame, try std.ascii.allocLowerString(a, name));
-    } else {
-        const found = for (try frameVariables(s, a, frame)) |x| {
-            if (std.ascii.eqlIgnoreCase(x.v.name, name)) break x;
-        } else return null;
+        const module = name[0..sep];
+        const g = (try moduleGlobal(s, a, module, name[sep + 2 ..])) orelse return null;
+        v = try valueOf(s, a, g, declarations.moduleDecl(s, a, module, name[sep + 2 ..]), frame, try std.ascii.allocLowerString(a, name));
+    } else if (for (try frameVariables(s, a, frame)) |x| {
+        if (std.ascii.eqlIgnoreCase(x.v.name, name)) break x;
+    } else null) |found| {
         v = try valueOf(s, a, found.v, found.decl, frame, try std.ascii.allocLowerString(a, name));
+    } else {
+        // a module's variable that the line sees by this name (host or use
+        // association), which the frame does not have
+        const seen = declarations.seenModuleVariable(s, a, frame, name) orelse return null;
+        const g = (try moduleGlobal(s, a, seen.module, seen.name)) orelse return null;
+        v = try valueOf(s, a, g, declarations.moduleDecl(s, a, seen.module, seen.name), frame, try std.ascii.allocLowerString(a, name));
     }
     v = (try subscript(a, v, head[name_end..])) orelse return null;
     while (parts.next()) |p| {
@@ -198,11 +335,28 @@ pub fn evaluate(s: *Session, a: Allocator, frame: Frame, expr: []const u8) !?Val
     return v;
 }
 
+/// A substring of a CHARACTER scalar (`s(2:4)`, `s(3:)`, `s(:2)`), its
+/// bounds integers within the string; null for anything else
+fn substring(v: Val, range: []const u8) ?Val {
+    if (v.t.kind != .character or v.empty) return null;
+    const colon = std.mem.findScalar(u8, range, ':') orelse return null;
+    const lo_text = std.mem.trim(u8, range[0..colon], " ");
+    const hi_text = std.mem.trim(u8, range[colon + 1 ..], " ");
+    const lo: i64 = if (lo_text.len == 0) 1 else std.fmt.parseInt(i64, lo_text, 10) catch return null;
+    const hi: i64 = if (hi_text.len == 0) v.t.size else std.fmt.parseInt(i64, hi_text, 10) catch return null;
+    if (lo < 1 or hi > v.t.size or hi < lo) return null;
+    var out = v;
+    out.address = v.address + @as(u64, @intCast(lo - 1));
+    out.t.size = @intCast(hi - lo + 1);
+    return out;
+}
+
 /// An element by its subscripts (`(2,-1)`), all of them integers
 fn subscript(a: Allocator, v: Val, text: []const u8) !?Val {
     const t = std.mem.trim(u8, text, " ");
     if (t.len == 0) return v;
-    if (t[0] != '(' or t[t.len - 1] != ')' or v.rank == 0) return null;
+    if (t[0] != '(' or t[t.len - 1] != ')') return null;
+    if (v.rank == 0) return substring(v, t[1 .. t.len - 1]);
     var subs: std.ArrayList(i64) = .empty;
     var it = std.mem.splitScalar(u8, t[1 .. t.len - 1], ',');
     while (it.next()) |x| try subs.append(a, std.fmt.parseInt(i64, std.mem.trim(u8, x, " "), 10) catch return null);

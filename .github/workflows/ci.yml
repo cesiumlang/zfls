@@ -1,14 +1,22 @@
 name: CI
 
-# Every pull request and every push to main is built and tested on all
-# supported platforms, and the tests run on the release binaries themselves.
-# Pushes to dev are not run: what reaches dev is tested by its pull request,
-# and dev as a whole by the pull request that releases it (to main), so
-# running pushes to dev too would test the same trees twice (start the
-# workflow by hand on dev to test it in between). A pull request that only
-# changes the files listed in no-ci.txt (documentation, editor settings)
-# skips the build and the tests; the "CI" job, the check the rulesets
-# require, passes then too.
+# Every pull request into main and every push to main is built and tested on
+# all supported platforms, and the tests run on the release binaries
+# themselves. macOS arm64 is tested then only: by pull requests into main,
+# which is where releases come from, by a push to main that releases
+# binaries it built itself (see `test`), and by runs started by hand.
+# A run needs a single macOS arm64 runner, for Test (aarch64-macos): the
+# conda package for osx-arm64 is cross-built on the Intel runner, and the
+# install script's macOS arm64 check is a step of that test job.
+# Pull requests into dev and pushes to dev are not run: their authors run
+# the checks before merging, and dev as a whole is tested by the pull
+# request that releases it (to main), which runs again with each change of
+# dev. To test another branch or pull request, start the workflow by hand
+# on its branch (`gh workflow run ci.yml --ref BRANCH`): the run's checks
+# show on the pull request. A pull request that only changes the files
+# listed in no-ci.txt (documentation, editor settings) skips the build and
+# the tests; the "CI" job, the check the ruleset of main requires, passes
+# then too.
 #
 # Versions: build.zig.zon holds the version the next release will have. The
 # release binaries are built once and packaged without the
@@ -28,14 +36,35 @@ name: CI
 # from main publishes the archives of a passed pull request run that built
 # exactly the same tree, with the same version, instead of building and
 # testing them again; without one (main moved on after the pull request ran,
-# a direct push, expired artifacts) it builds and tests them itself.
+# a direct push, expired artifacts, a pull request whose CI was started by
+# hand as m-intrinsics.yml does) it builds and tests them itself, macOS
+# arm64 included.
+#
+# Signing: only a release (and a run started by hand with the `sign` input)
+# signs the Windows binaries and signs and notarizes the macOS ones, so a
+# pull request run is never signed. A release that reuses the archives of a
+# pull request run signs them in place: it unpacks them (reused-packages),
+# signs the binaries, and packs them again (build), without rebuilding or
+# testing them again; one that builds its own signs what compile built. Each
+# signing job is also skipped while its configuration is unset (the SIGN_*
+# and APPLE_* variables).
 
 on:
   push:
     # (not dev: see the top)
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize the binaries, as a release does
+        type: boolean
+        default: false
+      reuse_run:
+        description: With sign, the id of a passed run whose archives to sign in place, as a release does with a pull request's (nothing is published)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -45,12 +74,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  ZIG_VERSION: 0.17.0
+  ZIG_VERSION: 0.17.1
   # The fortls commit the parity, differential and stress tests run against
   FORTLS_REPO: fortran-lang/fortls
   FORTLS_REF: a94898dd852f06aa2eb72ff34e00caad3142efd0
   PYTHON_VERSION: "3.12"
-  NODE_VERSION: "22"
+  # The external tools the unit tests run for real on Linux x64 (PyPI's,
+  # and Ubuntu's clangd)
+  FORTITUDE_VERSION: 0.10.1
+  FYPP_VERSION: "3.3"
+  FINDENT_VERSION: 4.3.6
+  FPRETTIFY_VERSION: 0.3.7
+  CLANGD_VERSION: "18"
 
 defaults:
   run:
@@ -68,8 +103,9 @@ jobs:
       sha: ${{ steps.ver.outputs.sha }}
       tree: ${{ steps.ver.outputs.tree }}
       ci: ${{ steps.ver.outputs.ci }}
+      sign: ${{ steps.ver.outputs.sign }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -79,6 +115,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          INPUT_SIGN: ${{ inputs.sign }}
+          SIGN_WINDOWS: ${{ vars.SIGN_AZURE_CLIENT_ID }}
+          SIGN_MACOS: ${{ vars.APPLE_SIGNING }}
         run: |
           # matches, no_ci, keeps_binaries
           source .github/workflows/changes.sh
@@ -157,11 +196,18 @@ jobs:
             fi
             version=$next
           fi
+          # signing and notarization: for a release, or a run started by hand
+          # that asks, when a platform's signing is configured
+          sign=false
+          if [ "$release" = true ] || { [ "$EVENT" = workflow_dispatch ] && [ "$INPUT_SIGN" = true ]; }; then
+            if [ -n "$SIGN_WINDOWS" ] || [ "$SIGN_MACOS" = true ]; then sign=true; fi
+          fi
           sha=$(git rev-parse HEAD)
           tree=$(git rev-parse "HEAD^{tree}")
           {
             echo "version=$version"
             echo "release=$release"
+            echo "sign=$sign"
             echo "sha=$sha"
             echo "tree=$tree"
           } >> "$GITHUB_OUTPUT"
@@ -173,7 +219,7 @@ jobs:
 
       # What this run builds, for a release to find (see the top); only kept
       # from runs that pass
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-tree
           path: tested-tree.txt
@@ -182,7 +228,7 @@ jobs:
   reuse:
     name: Find tested release binaries
     needs: version
-    if: needs.version.outputs.release == 'true'
+    if: needs.version.outputs.release == 'true' || inputs.reuse_run != ''
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -194,15 +240,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ needs.version.outputs.tree }} ${{ needs.version.outputs.version }}
-          # the test matrix (6) and the conda package matrix (5)
+          NAMED: ${{ inputs.reuse_run }}
+          # the test matrix (6, macOS arm64 included: only runs of pull
+          # requests into main have it, see test, so only they count) and
+          # the conda package matrix (5)
           JOBS: 11
         run: |
+          if [ -n "$NAMED" ]; then
+            echo "run_id=$NAMED" >> "$GITHUB_OUTPUT"
+            echo "Using the archives of run $NAMED, as named." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
           for id in $runs; do
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
-            # all six test jobs must have run and passed, not been skipped
             # all test and conda package jobs must have run and passed, not
             # been skipped
             passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.name | startswith("Test (") or startswith("Conda package (")) | select(.conclusion == "success")] | length')
@@ -230,7 +283,7 @@ jobs:
       || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -270,8 +323,10 @@ jobs:
           fi
           echo "v$version is newer than the latest release v$latest." | tee -a "$GITHUB_STEP_SUMMARY"
 
-  build:
-    name: Build release binaries
+  # Compiles every target and stages each package folder (pkg/), unsigned.
+  # The sign-* jobs sign the executables in it; build then archives them.
+  compile:
+    name: Compile release binaries
     needs: [version, reuse]
     # reuse is skipped unless releasing, and its failure only means building;
     # skipped (with the tests and packages after it) when only files of
@@ -281,12 +336,12 @@ jobs:
       && needs.version.outputs.ci == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -299,16 +354,17 @@ jobs:
       - name: Source is formatted (zig fmt)
         run: zig fmt --check build build.zig build.zig.zon src tests tools
 
-      # Downloads (lazy ones too) are retried: a dropped connection to a
-      # package host should not fail the run
+      # Downloads are retried: a dropped connection to a
+      # package host should not fail the run. Only what zfls's build needs
+      # is fetched, not rstd's lazy QEMU test images
       - name: Fetch dependencies
         run: |
           for wait in 15 30 60 120; do
-            zig build --fetch=all && exit 0
+            zig build --fetch && exit 0
             echo "::warning::fetching dependencies failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          zig build --fetch=all
+          zig build --fetch
 
       # Only differs from the checkout when the version is already released
       # (such a run is tested but not released)
@@ -317,11 +373,10 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$VERSION\2/" build.zig.zon
 
-      - name: Cross-compile and package
+      - name: Cross-compile
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          mkdir -p dist
           for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
             # macOS 11 and later, rather than Zig's default minimum (15)
             case "$target" in
@@ -345,6 +400,425 @@ jobs:
               zig build ifx-kit --prefix "out/$target"
               cp -r "out/$target/lib/ifx" "$pkg/ifx-kit"
             fi
+          done
+          # tar keeps the executables' modes for the other jobs
+          tar -C pkg -cf unsigned.tar .
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned
+          path: unsigned.tar
+          if-no-files-found: error
+
+  # The archives of the pull request run a release reuses, unpacked as
+  # compile stages its own, for the signing jobs and build
+  reused-packages:
+    name: Unpack the tested archives for signing
+    needs: [version, reuse]
+    if: ${{ !cancelled() && needs.version.outputs.sign == 'true' && needs.reuse.outputs.run_id != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+          run-id: ${{ needs.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Unpack the archives
+        run: |
+          mkdir pkg
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            name="zfls-v$VERSION-$target"
+            case "$target" in
+              *windows) unzip -q "dist/$name.zip" -d pkg ;;
+              *) tar -C pkg -xzf "dist/$name.tar.gz" ;;
+            esac
+            test -d "pkg/$name"
+          done
+          tar -C pkg -cf unsigned.tar .
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned
+          path: unsigned.tar
+          if-no-files-found: error
+
+  # Signing needs the Artifact Signing account (#766): skipped, and the
+  # binaries stay unsigned, while the SIGN_AZURE_CLIENT_ID repository variable
+  # is unset. Its Entra identity is separate from the Marketplace one
+  # (AZURE_*), and its federated credential must trust the refs that run this.
+  sign-windows:
+    name: Sign the Windows binaries
+    needs: [version, compile, reused-packages]
+    if: ${{ !cancelled() && (needs.compile.result == 'success' || needs.reused-packages.result == 'success') && needs.version.outputs.sign == 'true' && vars.SIGN_AZURE_CLIENT_ID != '' }}
+    runs-on: windows-2025
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+
+      - name: Unpack the Windows packages
+        run: |
+          mkdir pkg
+          tar -C pkg -xf unsigned/unsigned.tar --wildcards "./zfls-v*-windows/*"
+          ls pkg
+
+      - name: Sign in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.SIGN_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.SIGN_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.SIGN_AZURE_SUBSCRIPTION_ID }}
+
+      # SHA-256 and a trusted timestamp: the certificates last 3 days, the
+      # signature must stay valid after
+      - name: Sign zfls.exe
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.SIGN_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGN_PROFILE }}
+          files-folder: ${{ github.workspace }}\pkg
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the signatures
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem pkg -Recurse -Filter zfls.exe
+          if ($exes.Count -ne 2) { throw "expected 2 zfls.exe, found $($exes.Count)" }
+          foreach ($exe in $exes) {
+            $sig = Get-AuthenticodeSignature $exe.FullName
+            "$($exe.FullName): $($sig.Status) $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "$($exe.FullName) is not validly signed: $($sig.Status)" }
+            if ($null -eq $sig.TimeStamperCertificate) { throw "$($exe.FullName) has no timestamp" }
+          }
+
+      - name: The signed zfls.exe runs (x86_64)
+        run: |
+          exe=$(ls pkg/*-x86_64-windows/zfls.exe)
+          "$exe" --version
+
+      - name: Stage the signed packages
+        run: tar -C pkg -cf signed-windows.tar .
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-windows
+          path: signed-windows.tar
+          if-no-files-found: error
+
+  # Signing needs an Apple Developer ID (#767): skipped, and the binaries
+  # stay unsigned, while the APPLE_SIGNING repository variable is not true
+  sign-macos:
+    name: Sign and notarize the macOS binaries
+    needs: [version, compile, reused-packages]
+    if: ${{ !cancelled() && (needs.compile.result == 'success' || needs.reused-packages.result == 'success') && needs.version.outputs.sign == 'true' && vars.APPLE_SIGNING == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          sparse-checkout: packaging
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+
+      - name: Unpack the macOS packages
+        run: |
+          mkdir pkg
+          tar -C pkg -xf unsigned/unsigned.tar --include "./zfls-v*-macos/*"
+          ls pkg
+
+      - name: Import the Developer ID certificate
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(uuidgen)
+          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$keychain"
+
+      # Hardened runtime and a secure timestamp, as notarization requires.
+      # No entitlements: zfls dap's debuggers (lldb-dap, gdb) are processes of
+      # their own, with their own signatures (#933)
+      - name: Sign
+        run: |
+          identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)
+          [ -n "$identity" ] || { echo "::error::no Developer ID Application identity"; exit 1; }
+          for exe in pkg/*/zfls; do
+            codesign --force --options runtime --timestamp \
+              --sign "$identity" "$exe"
+            codesign --verify --strict --verbose=2 "$exe"
+          done
+
+      # A bare executable cannot be stapled: Gatekeeper looks the ticket up
+      # online. notarytool takes a zip.
+      - name: Notarize
+        run: |
+          echo "$APPLE_NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID")
+          # submit every file first, then wait for each verdict (a team's
+          # first submissions can take a long while on Apple's side)
+          ids=()
+          for dir in pkg/*/; do
+            name=$(basename "$dir")
+            ditto -c -k --keepParent "$dir/zfls" "$RUNNER_TEMP/$name.zip"
+            id=$(xcrun notarytool submit "$RUNNER_TEMP/$name.zip" --no-wait --output-format json "${auth[@]}" | jq -r .id)
+            echo "$name: submission $id"
+            ids+=("$id")
+          done
+          failed=0
+          for id in "${ids[@]}"; do
+            xcrun notarytool wait "$id" --timeout 90m --output-format json "${auth[@]}" > "$RUNNER_TEMP/result.json" || true
+            status=$(jq -r '.status // "no answer"' "$RUNNER_TEMP/result.json")
+            echo "submission $id: $status"
+            if [ "$status" != Accepted ]; then
+              xcrun notarytool log "$id" "${auth[@]}" || true
+              failed=1
+            fi
+          done
+          rm "$RUNNER_TEMP/notary.p8"
+          exit "$failed"
+
+      - name: Verify the signatures
+        run: |
+          for exe in pkg/*/zfls; do
+            codesign --verify --strict "$exe"
+            codesign -dv --verbose=2 "$exe" 2>&1 | grep -E "Authority|flags|Timestamp"
+          done
+
+      - name: The signed zfls runs
+        run: |
+          pkg/*-aarch64-macos/zfls --version
+          arch -x86_64 pkg/*-x86_64-macos/zfls --version || echo "::warning::the x86_64 zfls did not run here (Rosetta?)"
+
+      - name: Stage the signed packages
+        run: tar -C pkg -cf signed-macos.tar .
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-macos
+          path: signed-macos.tar
+          if-no-files-found: error
+
+  # A universal zfls in a signed, notarized and stapled installer package
+  # (Developer ID Installer), for those who want one besides the archives:
+  # skipped while the repository variable APPLE_PKG is not true
+  pkg-macos:
+    name: macOS installer package
+    needs: [version, sign-macos]
+    if: ${{ !cancelled() && needs.sign-macos.result == 'success' && vars.APPLE_PKG == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_INSTALLER_P12: ${{ secrets.APPLE_INSTALLER_P12 }}
+      APPLE_INSTALLER_P12_PASSWORD: ${{ secrets.APPLE_INSTALLER_P12_PASSWORD }}
+      APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          sparse-checkout: |
+            packaging
+            LICENSE
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-macos
+          path: signed
+
+      - name: Import the certificates
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(uuidgen)
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          for kind in DEVELOPER_ID INSTALLER; do
+            p12="APPLE_${kind}_P12"
+            pw="APPLE_${kind}_P12_PASSWORD"
+            echo "${!p12}" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -P "${!pw}" -A -t cert -f pkcs12 -k "$keychain"
+            rm "$RUNNER_TEMP/cert.p12"
+          done
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security find-identity -v
+
+      # One universal zfls (lipo of the two signed binaries, signed again)
+      - name: Build the universal binary and the installer
+        run: |
+          app=$(security find-identity -v | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)
+          inst=$(security find-identity -v | sed -n 's/.*"\(Developer ID Installer:.*\)"/\1/p' | head -1)
+          [ -n "$app" ] && [ -n "$inst" ] || { echo "::error::an identity is missing"; exit 1; }
+          mkdir pkg
+          tar -C pkg -xf signed/signed-macos.tar
+          root="$RUNNER_TEMP/root"
+          mkdir -p "$root/usr/local/bin" "$root/usr/local/share/doc/zfls"
+          lipo -create pkg/*-x86_64-macos/zfls pkg/*-aarch64-macos/zfls -output "$root/usr/local/bin/zfls"
+          lipo -info "$root/usr/local/bin/zfls"
+          codesign --force --options runtime --timestamp \
+            --sign "$app" "$root/usr/local/bin/zfls"
+          cp LICENSE "$root/usr/local/share/doc/zfls/"
+          pkgbuild --root "$root" --identifier com.github.cesiumlang.zfls --version "$VERSION" \
+            --install-location / "$RUNNER_TEMP/zfls-component.pkg"
+          mkdir out
+          productbuild --package "$RUNNER_TEMP/zfls-component.pkg" --sign "$inst" --timestamp \
+            "out/zfls-v$VERSION-macos.pkg"
+          pkgutil --check-signature "out/zfls-v$VERSION-macos.pkg"
+
+      - name: Notarize and staple the installer
+        run: |
+          echo "$APPLE_NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID")
+          pkg="out/zfls-v$VERSION-macos.pkg"
+          xcrun notarytool submit "$pkg" --wait --timeout 90m --output-format json "${auth[@]}" > "$RUNNER_TEMP/result.json" || true
+          status=$(jq -r '.status // "no answer"' "$RUNNER_TEMP/result.json")
+          echo "notarization: $status"
+          if [ "$status" != Accepted ]; then
+            xcrun notarytool log "$(jq -r .id "$RUNNER_TEMP/result.json")" "${auth[@]}" || true
+            exit 1
+          fi
+          rm "$RUNNER_TEMP/notary.p8"
+          xcrun stapler staple "$pkg"
+          xcrun stapler validate "$pkg"
+
+      - name: The installer is accepted and its zfls runs
+        run: |
+          pkg="out/zfls-v$VERSION-macos.pkg"
+          spctl --assess --type install -vv "$pkg"
+          pkgutil --expand-full "$pkg" "$RUNNER_TEMP/expanded"
+          exe=$(find "$RUNNER_TEMP/expanded" -path '*usr/local/bin/zfls' | head -1)
+          "$exe" --version
+          arch -x86_64 "$exe" --version || echo "::warning::the x86_64 slice did not run here (Rosetta?)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-pkg
+          path: out/*.pkg
+          if-no-files-found: error
+
+  build:
+    name: Build release binaries
+    needs: [version, compile, reused-packages, sign-windows, sign-macos, pkg-macos]
+    # a signing job that was skipped (no credentials yet) leaves the
+    # binaries unsigned; one that failed fails the build. Not for a release
+    # that reuses archives, unless it signs them
+    if: >-
+      ${{ !cancelled()
+      && (needs.compile.result == 'success' || needs.reused-packages.result == 'success')
+      && contains(fromJSON('["success","skipped"]'), needs.sign-windows.result)
+      && contains(fromJSON('["success","skipped"]'), needs.sign-macos.result)
+      && contains(fromJSON('["success","skipped"]'), needs.pkg-macos.result) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          submodules: recursive
+
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: unsigned
+
+      # the signed packages replace the unsigned ones, when there are any
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: signed-*
+          path: signed
+
+      # (a single matching artifact is extracted into signed/ itself, several
+      # into a folder each: find covers both). A signing job that succeeded
+      # must have its packages used, or the release would ship unsigned
+      # the macOS installer, when it was built
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: macos-pkg
+          path: pkgs
+
+      - name: Unpack the packages
+        env:
+          WINDOWS: ${{ needs.sign-windows.result }}
+          MACOS: ${{ needs.sign-macos.result }}
+        run: |
+          mkdir pkg
+          tar -C pkg -xf unsigned/unsigned.tar
+          used=" "
+          while read -r t; do
+            tar -C pkg -xf "$t"
+            echo "using $t"
+            used="$used$(basename "$t") "
+          done < <(find signed -name 'signed-*.tar' 2>/dev/null)
+          if [ "$WINDOWS" = success ]; then
+            case "$used" in *" signed-windows.tar "*) ;; *) echo "::error::the Windows signing job succeeded but its packages were not found"; exit 1 ;; esac
+          fi
+          if [ "$MACOS" = success ]; then
+            case "$used" in *" signed-macos.tar "*) ;; *) echo "::error::the macOS signing job succeeded but its packages were not found"; exit 1 ;; esac
+          fi
+
+      # The extension's version comes from build.zig.zon, as in compile
+      - name: Fetch dependencies
+        run: |
+          for wait in 15 30 60 120; do
+            zig build --fetch && exit 0
+            echo "::warning::fetching dependencies failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          zig build --fetch
+
+      - name: Set version ${{ needs.version.outputs.version }}
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: sed -i -E "s/^(\s*\.version = \")[^\"]+(\",)/\1$VERSION\2/" build.zig.zon
+
+      - name: Archive
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          find pkgs -name '*.pkg' -exec cp {} dist/ \; 2>/dev/null || true
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            name="zfls-v$VERSION-$target"
             case "$target" in
               *windows) (cd pkg && zip -qr "../dist/$name.zip" "$name") ;;
               *) tar -C pkg -czf "dist/$name.tar.gz" "$name" ;;
@@ -354,16 +828,16 @@ jobs:
           zig build source-archive -- dist
           ls -l dist
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
 
       # The VS Code extension, once per VS Code platform with the matching
       # zfls from dist/ in it, and once without one
       - name: Package the VS Code extension
         run: zig build package-vscode -- dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
@@ -371,71 +845,127 @@ jobs:
 
   test:
     name: Test (${{ matrix.target }})
-    needs: [version, build]
+    needs: [version, reuse, build]
     # explicit: a skipped job anywhere upstream (reuse, on pull requests)
-    # would otherwise skip the tests too
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
-    runs-on: ${{ matrix.os }}
+    # would otherwise skip the tests too; not for archives signed in place
+    # (a pull request run tested them)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.reuse.outputs.run_id == '' }}
+    # The macOS arm64 leg runs on a self-hosted runner instead when the
+    # repository variable MACOS_ARM64_RUNNER names one (a label of it, such
+    # as `self-hosted`): a switch for the hours when GitHub's own runners
+    # are not handed out. Never for a pull request from a fork, whose
+    # workflow could run anything on that machine.
+    runs-on: >-
+      ${{ (matrix.target == 'aarch64-macos' && vars.MACOS_ARM64_RUNNER != ''
+      && (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository))
+      && vars.MACOS_ARM64_RUNNER || matrix.os }}
     strategy:
       fail-fast: false
+      # The macOS arm64 (macos-15) job, the only one of a run, runs only for a
+      # pull request into main, for a run started by hand (which tests a
+      # branch as fully as the release will be), and for a run that releases
+      # (a push to main that found no pull request run to reuse, see reuse,
+      # so builds and tests the release itself): GitHub's hosted macOS arm64
+      # runners can stay unavailable for hours, holding up every merge, and
+      # the organization's plan runs at most five macOS jobs at a time. A
+      # release thus always has its macOS arm64 binaries tested: by the pull
+      # request run whose archives it publishes (reuse requires all 11 test
+      # and conda jobs of it to have passed) or by its own run. The job is
+      # left out of the matrix, not skipped, since even a skipped leg waits
+      # for its runner; and as an include list cannot be filtered with
+      # exclude, the list is JSON, with the macOS arm64 entry appended when
+      # it runs.
       matrix:
-        include:
-          - { os: ubuntu-24.04, target: x86_64-linux, vscode: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-linux, vscode: linux-arm64 }
-          - { os: windows-2025, target: x86_64-windows, vscode: win32-x64 }
-          - { os: windows-11-arm, target: aarch64-windows, vscode: win32-arm64 }
-          - { os: macos-15-intel, target: x86_64-macos, vscode: darwin-x64 }
-          - { os: macos-15, target: aarch64-macos, vscode: darwin-arm64 }
+        include: >-
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"os": "ubuntu-24.04", "target": "x86_64-linux", "vscode": "linux-x64"},
+          {"os": "ubuntu-24.04-arm", "target": "aarch64-linux", "vscode": "linux-arm64"},
+          {"os": "windows-2025", "target": "x86_64-windows", "vscode": "win32-x64"},
+          {"os": "windows-11-arm", "target": "aarch64-windows", "vscode": "win32-arm64"},
+          {"os": "macos-15-intel", "target": "x86_64-macos", "vscode": "darwin-x64"}',
+          ((github.event_name == 'pull_request' && github.base_ref == 'main')
+          || github.event_name == 'workflow_dispatch'
+          || needs.version.outputs.release == 'true')
+          && ', {"os": "macos-15", "target": "aarch64-macos", "vscode": "darwin-arm64"}'
+          || '')) }}
     env:
       FORTLS: ${{ github.workspace }}/_fortls
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v7
+      # On a self-hosted runner (see runs-on) the caches go to the job's
+      # temporary directory, which the runner empties after each job, so
+      # that runs do not fill the machine
+      - name: Caches in the job's temporary directory (self-hosted)
+        if: runner.environment == 'self-hosted'
+        run: |
+          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-global-cache" >> "$GITHUB_ENV"
+          echo "ZIG_LOCAL_CACHE_DIR=$RUNNER_TEMP/zig-local-cache" >> "$GITHUB_ENV"
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
       - name: Check out fortls (reference implementation and test corpus)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.FORTLS_REPO }}
           ref: ${{ env.FORTLS_REF }}
           path: _fortls
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      # Downloads (lazy ones too) are retried: a dropped connection to a
-      # package host should not fail the run
+      # Downloads are retried: a dropped connection to a
+      # package host should not fail the run. Only what zfls's build needs
+      # is fetched, not rstd's lazy QEMU test images
       - name: Fetch dependencies
         run: |
           for wait in 15 30 60 120; do
-            zig build --fetch=all && exit 0
+            zig build --fetch && exit 0
             echo "::warning::fetching dependencies failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          zig build --fetch=all
+          zig build --fetch
 
       # gfortran is the oracle for symbol extraction; the oracle test is
       # skipped where none is available (Windows on Arm). gdb is the
       # debugger of the test of zfls dap with gdb, run where both are
-      # (Linux, Windows x64)
+      # (Linux, Windows x64), and gdbserver its attach to a target; gdb
+      # attaches by process id to a program it did not start when Yama's
+      # ptrace_scope is 0
       - name: gfortran and gdb (Linux)
         if: runner.os == 'Linux'
         run: |
-          if ! command -v gfortran || ! command -v gdb; then
-            sudo apt-get update && sudo apt-get install -y gfortran gdb
+          if ! command -v gfortran || ! command -v gdb || ! command -v gdbserver; then
+            sudo apt-get update && sudo apt-get install -y gfortran gdb gdbserver
+          fi
+          # (a hosted runner's machine; a self-hosted one's is left alone)
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo sysctl -w kernel.yama.ptrace_scope=0
           fi
 
+      # (a self-hosted runner: Nix's, which installs nothing on the machine
+      # outside the Nix store)
       - name: gfortran (macOS)
         if: runner.os == 'macOS'
         run: |
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+            export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+            gf="$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths nixpkgs#gfortran)/bin/gfortran"
+            mkdir -p "$RUNNER_TEMP/bin"
+            ln -sf "$gf" "$RUNNER_TEMP/bin/gfortran"
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
           gf=$(ls "$(brew --prefix)"/bin/gfortran-* 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$gf" ]; then
             brew install gcc
@@ -448,7 +978,7 @@ jobs:
       - name: gfortran and gdb (Windows x64)
         if: matrix.target == 'x86_64-windows'
         id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         with:
           msystem: UCRT64
           update: false
@@ -465,10 +995,87 @@ jobs:
           echo "GFORTRAN=$MSYS2_LOCATION\\ucrt64\\bin\\gfortran.exe" >> "$GITHUB_ENV"
           echo "GDB=$MSYS2_LOCATION\\ucrt64\\bin\\gdb.exe" >> "$GITHUB_ENV"
 
+      # LFortran from conda-forge, for the tests of the compiler check with a
+      # real compiler: tests/issues/compiler_lfortran.zig (in the unit
+      # tests) and tests/compiler_check.zig, and for tests/dap_gdb.zig. Only
+      # `lfortran` goes on the PATH, not its environment's other programs.
+      # `lfortran -g` runs llvm-dwarfdump, which the package does not bring
+      # on Linux (llvm-tools has it), and Python (the environment's own: the
+      # gdb steps run without setup-python's library path):
+      # tests/dap_gdb.zig puts the environment's directory first on the
+      # PATH of its builds
+      - name: LFortran (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          mkdir -p "$mm" "$RUNNER_TEMP/lfortran-bin"
+          for wait in 15 30 60 0; do
+            sh .github/workflows/get_micromamba.sh linux-64 "$mm" &&
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools python && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          ln -s "$RUNNER_TEMP/lfortran/bin/lfortran" "$RUNNER_TEMP/lfortran-bin/lfortran"
+          "$RUNNER_TEMP/lfortran-bin/lfortran" --version
+          echo "$RUNNER_TEMP/lfortran-bin" >> "$GITHUB_PATH"
+
+      # LLVM Flang from conda-forge (on Windows x64, the ifx kit's step below
+      # installs it), for tests/compiler_check.zig, tests/dap_gdb.zig and
+      # tests/flang_oracle.zig; FLANG names it, and the PATH does not have it
+      - name: LLVM Flang (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          for wait in 15 30 60 0; do
+            MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/flang" -c conda-forge flang_linux-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/flang/bin/flang" --version
+          echo "FLANG=$RUNNER_TEMP/flang/bin/flang" >> "$GITHUB_ENV"
+
+      # Intel's ifx from conda-forge, without the compilers its package
+      # links with (the runner's gcc and ld do): for
+      # tests/compiler_check.zig (IFX)
+      - name: Intel ifx (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          for wait in 15 30 60 0; do
+            MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/ifx" -c conda-forge ifx_impl_linux-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing ifx failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/ifx/bin/ifx" --version
+          echo "IFX=$RUNNER_TEMP/ifx/bin/ifx" >> "$GITHUB_ENV"
+
+      # fortitude, fypp, findent, fprettify and clangd, which zfls runs, for
+      # the unit tests that run them for real (tests/issues/real_tools.zig,
+      # bind_c_clangd.zig; skipped where a tool is missing): on the PATH
+      - name: fortitude, fypp, findent, fprettify and clangd (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          for wait in 15 30 60 0; do
+            python -m pip install -q "fortitude-lint==$FORTITUDE_VERSION" "fypp==$FYPP_VERSION" "findent==$FINDENT_VERSION" "fprettify==$FPRETTIFY_VERSION" &&
+              sudo apt-get update -q && sudo apt-get install -y -q "clangd-$CLANGD_VERSION" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing the tools failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          mkdir -p "$RUNNER_TEMP/tools-bin"
+          ln -sf "/usr/bin/clangd-$CLANGD_VERSION" "$RUNNER_TEMP/tools-bin/clangd"
+          echo "$RUNNER_TEMP/tools-bin" >> "$GITHUB_PATH"
+          # the tests of the tools fail, not skip, when one is missing
+          echo "ZFLS_TEST_TOOLS=1" >> "$GITHUB_ENV"
+          fortitude --version && fypp --version && findent -v && fprettify --version && "$RUNNER_TEMP/tools-bin/clangd" --version
+
       - name: Unit tests
         run: zig build test --summary failures
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -490,11 +1097,27 @@ jobs:
           case "$TARGET" in *windows) exe=zfls.exe ;; esac
           echo "ZFLS=$PWD/shipped/$name/$exe" >> "$GITHUB_ENV"
 
+      # What users download must be the signed binary
+      - name: The shipped zfls.exe is signed (Windows)
+        if: runner.os == 'Windows' && needs.version.outputs.sign == 'true' && vars.SIGN_AZURE_CLIENT_ID != ''
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem shipped -Recurse -Filter zfls.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          "$($exe.FullName): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "the shipped zfls.exe is not validly signed: $($sig.Status)" }
+
+      - name: The shipped zfls is signed (macOS)
+        if: runner.os == 'macOS' && needs.version.outputs.sign == 'true' && vars.APPLE_SIGNING == 'true'
+        run: |
+          exe=$(ls shipped/*/zfls)
+          codesign --verify --strict --verbose=2 "$exe"
+
       - name: The ifx kit in the package (Windows x64)
         if: matrix.target == 'x86_64-windows'
         run: |
           kit="$(dirname "$ZFLS")/ifx-kit"
-          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib; do
+          for f in zfls_ifx_shim.obj msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib oldnames.lib msvcprt.lib; do
             if [ ! -s "$kit/$f" ]; then
               echo "::error::the Windows x64 package has no ifx-kit/$f"
               exit 1
@@ -502,13 +1125,108 @@ jobs:
           done
           "$ZFLS" setup-ifx --help | head -1
 
-      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig,
-      # tests/gfortran_oracle.zig, tests/stress_edit.zig)
+      # LFortran's programs link with lld-link and the package's ifx kit, as
+      # Run Fortran File has them link without Visual Studio: LFortran and
+      # lld from conda-forge, `link` a script that runs lld-link, and a PATH
+      # without Visual Studio's or Git's `link`
+      - name: LFortran links with the ifx kit (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          # a POSIX path: tar takes the "D:" of a Windows one for a host
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          bin="$tmp/lfortran/Library/bin"
+          kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
+          mkdir -p "$tmp/lfortran-link"
+          printf '@"%s" %%*\r\n' "$(cygpath -w "$bin/lld-link.exe")" > "$tmp/lfortran-link/link.cmd"
+          cd "$tmp"
+          printf "program p\n  real :: x(3)\n  x = 2\n  open(10, file='p.txt')\n  write(10, *) sum(x)\n  close(10)\n  print *, 'linked', sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
+          PATH="$tmp/lfortran-link:/c/Windows/System32:/c/Windows" LIB="$kit" \
+            LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" \
+            MSYS2_ARG_CONV_EXCL='*' "$bin/lfortran.exe" p.f90 -o p.exe
+          set +e
+          ./p.exe > p.out 2>&1
+          code=$?
+          set -e
+          cat p.out p.txt
+          grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+
+      # LLVM Flang's programs link with lld-link and the package's ifx kit,
+      # with the environment Run Fortran File gives the build (LIB, LINK,
+      # -fms-runtime-lib=dll -fuse-ld=lld). The runner has Visual Studio:
+      # lld-link's list of what it read shows that no library of Visual
+      # Studio's or of the Windows SDK's was
+      - name: LLVM Flang links with the ifx kit (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            [ -x "$mm/Library/bin/micromamba.exe" ] || sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/flang")" -c conda-forge flang_win-64 lld && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LLVM Flang failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          bin="$tmp/flang/Library/bin"
+          "$bin/flang.exe" --version
+          echo "FLANG=$(cygpath -w "$bin/flang.exe")" >> "$GITHUB_ENV"
+          kit="$(cygpath -w "$(dirname "$ZFLS")/ifx-kit")"
+          cd "$tmp"
+          printf "program p\n  real :: x(3)\n  integer :: u\n  character(:), allocatable :: s\n  x = 2\n  s = 'linked'\n  open(newunit=u, file='p.txt')\n  write(u, '(f4.1)') sum(x)\n  close(u)\n  print *, s, sqrt(x(1))\n  error stop 3\nend program p\n" > p.f90
+          export LIB="$kit" LINK="\"$kit\\zfls_ifx_shim.obj\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib" MSYS2_ARG_CONV_EXCL='*'
+          unset VCToolsInstallDir VCINSTALLDIR VSINSTALLDIR WindowsSdkDir UniversalCRTSdkDir
+          PATH="/c/Windows/System32:/c/Windows" "$bin/flang.exe" -fms-runtime-lib=dll -fuse-ld=lld p.f90 -o p.exe -Wl,-verbose > link.log 2>&1 || { cat link.log; exit 1; }
+          grep "Reading [A-Za-z]:" link.log | sed 's/.*Reading //' | sort -u
+          if grep -i -E "Microsoft Visual Studio|Windows Kits" link.log; then
+            echo "::error::lld-link read Visual Studio's or the Windows SDK's files"
+            exit 1
+          fi
+          set +e
+          ./p.exe > p.out 2>&1
+          code=$?
+          set -e
+          cat p.out p.txt
+          grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+
+      # Intel's ifx from conda-forge (no Intel installer), for
+      # tests/dap_windows.zig (IFX): it links its programs with the
+      # package's ifx kit, the runner's Visual Studio hidden
+      - name: Intel ifx (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          mm="$tmp/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            [ -x "$mm/Library/bin/micromamba.exe" ] || sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/ifx")" -c conda-forge ifx_win-64 && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing ifx failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          echo "IFX=$(cygpath -w "$tmp/ifx/Library/bin/ifx.exe")" >> "$GITHUB_ENV"
+
+      # the Zig test drivers (tests/dap_windows.zig, tests/dap_gdb.zig, tests/dap_lldb.zig,
+      # tests/build_command.zig, tests/gfortran_oracle.zig, tests/flang_oracle.zig,
+      # tests/ifx_oracle.zig, tests/stress_edit.zig)
       - name: Build the test drivers
         run: zig build test-tools
 
       # zfls dap on a program of the MSVC ABI with a PDB, built by zig cc
-      # (with the runner's Visual Studio libraries): Fortran's need ifx
+      # and linked with the package's ifx kit (the runner's Visual Studio
+      # hidden). And on LLVM Flang's, built with -g and the package's ifx kit
+      # (FLANG), and on ifx's, built with /Zi (IFX): their breakpoints,
+      # stack, variables, stepping, runtime errors and ERROR STOP
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
         run: zig-out/bin/dap_windows --zfls "$ZFLS"
@@ -524,6 +1242,126 @@ jobs:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS"
 
+      # and on an LLVM Flang program (FLANG): on Windows x64 with DWARF,
+      # linked with the package's ifx kit
+      - name: zfls dap with gdb on an LLVM Flang program (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler flang
+
+      # A Fortran file built with the command zfls answers (zfls
+      # build-command, Run Fortran File's build) and its program run: with
+      # gfortran (GFORTRAN names MSYS2's on Windows x64; skipped where there
+      # is none), and with LLVM Flang (FLANG), on Windows x64 linked with
+      # the package's ifx kit
+      - name: Run Fortran File's build with gfortran
+        run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "${GFORTRAN:-gfortran}"
+
+      - name: Run Fortran File's build with LLVM Flang (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "$FLANG"
+
+      # and with conda-forge's ifx (IFX), its modules found and its programs
+      # linked with its lld-link and the package's ifx kit
+      - name: Run Fortran File's build with ifx (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: zig-out/bin/build_command --zfls "$ZFLS" --compiler "$IFX"
+
+      # and on Intel ifx's (IFX, conda-forge's), built with -g -check bounds:
+      # Intel's DWARF in gdb, the stop at a bound exceeded
+      # (for__issue_diagnostic) and at ERROR STOP (for_error_stop_quiet)
+      - name: zfls dap with gdb on an ifx program (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler ifx
+
+      # and on LFortran's (-g, which LFortran for Windows refuses): its
+      # integer variables, the runtime error of a bound exceeded, ERROR STOP
+      - name: zfls dap with gdb on an LFortran program (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        env:
+          LD_LIBRARY_PATH: ""
+        run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler lfortran
+
+      # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
+      # a step, the stack, a runtime error, attaching, a terminal. A debugger
+      # starts a program only with Developer Mode on, which a runner's
+      # session without a desktop does not have (a self-hosted runner's
+      # machine has it on, and its user in _developer, set up once by hand)
+      - name: zfls dap with lldb-dap (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo DevToolsSecurity -enable
+            sudo dscl . append /Groups/_developer GroupMembership "$(id -un)"
+          fi
+          xcrun --find lldb-dap
+          zig-out/bin/dap_lldb --zfls "$ZFLS"
+
+      # LFortran from conda-forge (LFORTRAN names it; the PATH does not have
+      # it), for zfls dap with lldb-dap on its program
+      - name: LFortran (macOS x64)
+        if: matrix.target == 'x86_64-macos'
+        run: |
+          mm="$RUNNER_TEMP/micromamba"
+          mkdir -p "$mm"
+          for wait in 15 30 60 0; do
+            sh .github/workflows/get_micromamba.sh osx-64 "$mm" &&
+              MAMBA_ROOT_PREFIX="$mm/root" "$mm/bin/micromamba" create -y -q -p "$RUNNER_TEMP/lfortran" -c conda-forge lfortran llvm-tools && break
+            [ "$wait" = 0 ] && exit 1
+            echo "::warning::installing LFortran failed; retrying in ${wait}s"
+            sleep "$wait"
+          done
+          "$RUNNER_TEMP/lfortran/bin/lfortran" --version
+          echo "LFORTRAN=$RUNNER_TEMP/lfortran/bin/lfortran" >> "$GITHUB_ENV"
+
+      # zfls dap with lldb-dap on LFortran's program (-g): breakpoints, the
+      # stack, its integer variables, the runtime error of a bound exceeded
+      - name: zfls dap with lldb-dap on an LFortran program (macOS x64)
+        if: matrix.target == 'x86_64-macos'
+        run: zig-out/bin/dap_lldb --zfls "$ZFLS" --compiler lfortran
+
+      # the compiler check of the release binary with LFortran, on files of
+      # tests/compiler
+      - name: The compiler check with LFortran (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS"
+
+      # and with LLVM Flang (FLANG), also on a .f77 file, a debug line and
+      # an error in an included file
+      - name: The compiler check with LLVM Flang (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler flang
+
+      # and with gfortran on every platform that has one (GFORTRAN on
+      # Windows x64, MSYS2's; Homebrew's on macOS; none on Windows on Arm,
+      # where it is skipped), also on a .f77 file, a lower-case .fpp file, a
+      # message about two places and a missing #include
+      - name: The compiler check with gfortran
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler gfortran
+
+      # and with the image's other gfortrans (Ubuntu 24.04 has some beside
+      # its default), installed already: their messages' formats
+      - name: The compiler check with the image's other gfortrans (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        run: |
+          ran=0
+          for v in 9 10 11 12 13 14 15; do
+            gf=$(command -v "gfortran-$v") || continue
+            echo "-- $gf"
+            zig-out/bin/compiler_check --zfls "$ZFLS" --compiler gfortran --path "$gf"
+            ran=$((ran + 1))
+          done
+          echo "$ran other gfortrans checked" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # and with ifx (IFX, conda-forge's), also on a .f08 file, a TAB-format
+      # line and fpp's #error
+      - name: The compiler check with ifx (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/compiler_check --zfls "$ZFLS" --compiler ifx
+
       - name: Version under test
         run: |
           got=$("$ZFLS" --version | tr -d '\r')
@@ -537,7 +1375,25 @@ jobs:
         run: python tests/fortls_parity.py --zfls "$ZFLS" --fortls "$FORTLS"
 
       - name: gfortran oracle
-        run: zig-out/bin/gfortran_oracle --zfls "$ZFLS"
+        run: |
+          zig-out/bin/gfortran_oracle --zfls "$ZFLS"
+          # and fortls's corpus, its known differences in
+          # tests/gfortran_oracle/known.zig
+          zig-out/bin/gfortran_oracle --zfls "$ZFLS" _fortls/test/test_source
+
+      # LLVM Flang is the oracle of the corpus, of its own dialect and quirks
+      # (tests/flang), of the module files it writes and of its intrinsic
+      # modules (FLANG, installed above for the compiler check)
+      - name: Flang oracle (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/flang_oracle --zfls "$ZFLS" --flang "$FLANG"
+
+      # ifx's listings are the oracle of the corpus and of Intel's dialect
+      # (tests/ifx), with the options a fixture gives (IFX, conda-forge's,
+      # installed above for the compiler check)
+      - name: ifx oracle (Linux x64, Windows x64)
+        if: matrix.target == 'x86_64-linux' || matrix.target == 'x86_64-windows'
+        run: zig-out/bin/ifx_oracle --zfls "$ZFLS" --ifx "$IFX"
 
       - name: Stress sessions
         run: |
@@ -557,9 +1413,20 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
+
+      # packaging/install.sh on macOS arm64 (the install-script job's two
+      # installs, here so that a run needs one macOS arm64 runner): it
+      # installs published releases, not this run's binaries
+      - name: Install script, latest and a given release (macOS arm64)
+        if: matrix.target == 'aarch64-macos'
+        run: |
+          mkdir "$RUNNER_TEMP/here"
+          (cd "$RUNNER_TEMP/here" && sh -s < "$GITHUB_WORKSPACE/packaging/install.sh" && ./zfls-v*/zfls --version)
+          sh -s -- --dir "$RUNNER_TEMP/there/zfls" --version 0.4.0 < packaging/install.sh
+          "$RUNNER_TEMP"/there/zfls/zfls-v0.4.0-*/zfls --version
 
       - name: VS Code's libraries and a display (Linux)
         if: runner.os == 'Linux'
@@ -597,34 +1464,46 @@ jobs:
             run_vscode
           fi
 
+      # a self-hosted runner keeps its working directory between jobs: the
+      # downloaded VS Code, the archives and the build outputs go
+      - name: Clean the working directory (self-hosted)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: git clean -ffdxq && git submodule foreach --recursive git clean -ffdxq
+
   conda:
     name: Conda package (${{ matrix.platform }})
-    needs: [version, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    needs: [version, reuse, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.reuse.outputs.run_id == '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # osx-arm64 is cross-built on the Intel runner, as conda-forge builds
+      # it (the recipe's build.sh builds for target_platform): GitHub's
+      # macOS arm64 runners are few, and a run should need as few of them
+      # as it can (see test). Its tests, which would run the arm64 zfls,
+      # are skipped there; the macOS arm64 test job runs the binaries
       matrix:
         include:
-          - { os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl }
-          - { os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe }
-          - { os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin }
-          - { os: macos-15, platform: osx-arm64, rattler: aarch64-apple-darwin }
+          - {os: ubuntu-24.04, platform: linux-64, rattler: x86_64-unknown-linux-musl, rattler_sha: 38359a75f4a880442432923d6e984d349bb4134d330edd712eb1cfb2fa80581a}
+          - {os: ubuntu-24.04-arm, platform: linux-aarch64, rattler: aarch64-unknown-linux-musl, rattler_sha: 8f5ae1c3faf08c50007bbfe896cee84dcf5f4b8e8cc3a5fa400695c82abed2ae}
+          - {os: windows-2025, platform: win-64, rattler: x86_64-pc-windows-msvc.exe, rattler_sha: 131e3d9e6d67e7b5e873627567e74708e1722a40e78bcd3619dc4b20906fbb64}
+          - {os: macos-15-intel, platform: osx-64, rattler: x86_64-apple-darwin, rattler_sha: 4b0183a60e8d2a93ddaf34d0def0f3a27effcf973d097c016250dfbdb7f15c1b}
+          - {os: macos-15-intel, platform: osx-arm64, rattler: x86_64-apple-darwin, rattler_sha: 4b0183a60e8d2a93ddaf34d0def0f3a27effcf973d097c016250dfbdb7f15c1b}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PLATFORM: ${{ matrix.platform }}
       RATTLER_BUILD_VERSION: v0.76.1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           submodules: recursive
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
@@ -632,18 +1511,22 @@ jobs:
       - name: Install rattler-build
         env:
           ASSET: rattler-build-${{ matrix.rattler }}
+          ASSET_SHA256: ${{ matrix.rattler_sha }}
         run: |
           dir="$RUNNER_TEMP/rattler-build"
           mkdir -p "$dir"
           exe="$dir/rattler-build"
           case "$ASSET" in *.exe) exe="$exe.exe" ;; esac
-          curl -fsSL --retry 5 -o "$exe" "https://github.com/prefix-dev/rattler-build/releases/download/$RATTLER_BUILD_VERSION/$ASSET"
-          chmod +x "$exe"
+          # pinned by version (RATTLER_BUILD_VERSION) and by the checksum of each asset
+          sh .github/workflows/download_pinned.sh "https://github.com/prefix-dev/rattler-build/releases/download/$RATTLER_BUILD_VERSION/$ASSET" "$ASSET_SHA256" "$exe"
           echo "$dir" >> "$GITHUB_PATH"
 
       # The conda-forge recipe, built from this run's source archive with
-      # conda-forge's zig; its tests check the installed zfls. Writing it
-      # downloads the packages it pins (retried, like the fetches)
+      # conda-forge's zig; its tests check the installed zfls where the
+      # package's platform is the runner's own (`--test native`: not for
+      # osx-arm64, cross-built on the Intel runner, whose arm64 zfls it
+      # cannot run). Writing it downloads the packages it pins (retried,
+      # like the fetches)
       - name: Build and test the conda package
         run: |
           for wait in 15 30 60 0; do
@@ -652,7 +1535,7 @@ jobs:
             echo "::warning::writing the recipe failed; retrying in ${wait}s"
             sleep "$wait"
           done
-          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out"
+          rattler-build build --recipe "$RUNNER_TEMP/recipe" -c conda-forge --output-dir "$RUNNER_TEMP/conda-out" --target-platform "$PLATFORM" --test native
 
   # packaging/install.sh and install.ps1 install published releases (not
   # this run's binaries), the way their users run them: piped from curl
@@ -666,16 +1549,36 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # macOS: on the Intel runner here; on macOS arm64 the same two
+      # installs are steps of the test job (Test (aarch64-macos)), so that a
+      # run needs one macOS arm64 runner, not two
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, macos-15-intel, windows-2025]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: packaging
+          sparse-checkout: |
+            /packaging/
+            /tests/install_*
+          sparse-checkout-cone-mode: false
 
       - name: ShellCheck
         if: runner.os == 'Linux'
         run: shellcheck --shell=sh packaging/install.sh
+
+      # install.sh and install.ps1 stop, and unpack nothing, without a
+      # SHA256SUMS or when the archive does not match it (a fake release)
+      - name: Failure paths of install.sh
+        run: sh tests/install_sh_test.sh
+
+      - name: Failure paths of install.ps1 (PowerShell 7 and Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tests/install_ps1_test.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/install_ps1_test.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Install the latest release into the current directory
         run: |
@@ -713,13 +1616,13 @@ jobs:
           & "$env:RUNNER_TEMP\ps5\zfls\zfls-v0.4.0-x86_64-windows\zfls.exe" --version
 
   # The check the rulesets of main and dev require: passes when no job
-  # before it failed or was cancelled, so also when the build and the tests
+  # before it failed or was canceled, so also when the build and the tests
   # were skipped (only files of no-ci.txt changed, or a release reuses a
   # pull request's tested archives). A matrix job that is skipped reports
   # no check under its legs' names, so those cannot be required themselves.
   ci-result:
     name: CI
-    needs: [version, version-check, reuse, build, test, conda, install-script]
+    needs: [version, version-check, reuse, compile, reused-packages, sign-windows, sign-macos, pkg-macos, build, test, conda, install-script]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -730,42 +1633,46 @@ jobs:
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "$GITHUB_STEP_SUMMARY"
           bad=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")')
           if [ -n "$bad" ]; then
-            echo "::error::failed or cancelled: $bad"
+            echo "::error::failed or canceled: $bad"
             exit 1
           fi
 
   release:
     name: Release v${{ needs.version.outputs.version }}
     needs: [version, reuse, build, test, conda]
-    # with archives a pull request run tested, or ones this run built and
-    # tested on every platform
+    # with archives a pull request run tested (signed in place by this run,
+    # when it signs), or ones this run built and tested on every platform
     if: >-
       ${{ !cancelled() && needs.version.outputs.release == 'true'
-      && (needs.reuse.outputs.run_id != ''
+      && ((needs.reuse.outputs.run_id != ''
+      && (needs.version.outputs.sign != 'true' || needs.build.result == 'success'))
       || (needs.build.result == 'success' && needs.test.result == 'success'
       && needs.conda.result == 'success')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
+      # the attestations of the release files
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
-          run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
+          run-id: ${{ (needs.version.outputs.sign == 'true' && github.run_id) || needs.reuse.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
 
-      - uses: randyos-org/setup-zig@node24  # v2.2.1 on Node.js 24, until upstream releases it
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -809,8 +1716,19 @@ jobs:
           git push origin "v$VERSION"
           (cd dist && sha256sum -- * > SHA256SUMS)
 
+      # A detached GPG signature of SHA256SUMS (the public key is
+      # SIGNING-KEY.asc) and build attestations of the files: each skipped
+      # while its repository variable is not true
+      - name: Sign and attest the release files
+        uses: ./.github/actions/release-integrity
+        with:
+          sign: ${{ vars.RELEASE_GPG_SIGNING }}
+          attest: ${{ vars.RELEASE_ATTESTATIONS }}
+          gpg-key: ${{ secrets.RELEASE_GPG_KEY }}
+          gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: zfls v${{ needs.version.outputs.version }}
@@ -834,7 +1752,7 @@ jobs:
       # cannot be a bypass actor); without the secret the token is used
       DEPLOY_KEY: ${{ secrets.DEV_DEPLOY_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
@@ -944,7 +1862,7 @@ jobs:
       FEEDSTOCK: conda-forge/zfls-feedstock
       FORK: emanspeaks/zfls-feedstock
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0

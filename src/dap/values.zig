@@ -115,23 +115,68 @@ pub fn constantShape(dims: []const Dim) bool {
 /// elements
 pub const Extent = struct { lo: i64, count: u64, stride: i64 };
 
-/// Intel's array descriptor (ifx, ifort): the data's address, an element's
-/// length, an offset, flags, the rank, a reserved word, then for each
-/// dimension its extent, its stride in bytes and its lower bound
+/// An array descriptor: Intel's (ifx, ifort), or LLVM Flang's (that of
+/// ISO_Fortran_binding.h, `CFI_cdesc_t`)
 pub const Descriptor = struct {
     base: u64,
     elem_len: u64,
-    flags: u64,
+    flags: u64 = 0,
     dims: [7]Extent = undefined,
     rank: u32,
+    /// LLVM Flang's, of a derived type: the address of its type's
+    /// description (`_QMgridEXdtXtagged`), a CLASS object's dynamic type
+    type_info: u64 = 0,
 
     pub const header_words = 6;
 
+    /// The bytes to read for a descriptor of `rank`, of either layout
     pub fn bytes(rank: u32) usize {
         return (header_words + 3 * @as(usize, rank)) * 8;
     }
 
     pub fn parse(words: []const u64) ?Descriptor {
+        return parseFlang(words) orelse parseIntel(words);
+    }
+
+    /// The versions of `CFI_cdesc_t` (`CFI_VERSION`) of LLVM Flang
+    const cfi_versions = [_]u32{ 20240719, 20180515 };
+
+    /// LLVM Flang's: the data's address, an element's length, then a word
+    /// of the version (`CFI_VERSION`, by which it is told from Intel's), the
+    /// rank, the type, the attribute and an extra byte; then for each
+    /// dimension its lower bound, its extent and its stride in bytes; then,
+    /// when the extra byte says so, an addendum, of which the first word is
+    /// the derived type's description
+    fn parseFlang(words: []const u64) ?Descriptor {
+        if (words.len < 3) return null;
+        const version: u32 = @truncate(words[2]);
+        if (std.mem.findScalar(u32, &cfi_versions, version) == null) return null;
+        const rank: u32 = @intCast((words[2] >> 32) & 0xff);
+        if (rank > 7 or words.len < 3 + 3 * @as(usize, rank)) return null;
+        var d: Descriptor = .{ .base = words[0], .elem_len = words[1], .rank = rank };
+        for (0..d.rank) |i| d.dims[i] = .{
+            .lo = @bitCast(words[3 + 3 * i]),
+            .count = words[3 + 3 * i + 1],
+            .stride = @bitCast(words[3 + 3 * i + 2]),
+        };
+        const addendum = 3 + 3 * @as(usize, rank);
+        if ((words[2] >> 56) & 1 != 0 and words.len > addendum) d.type_info = words[addendum];
+        return d;
+    }
+
+    /// A derived type's name of its description's symbol (LLVM Flang's
+    /// `_QMgridEXdtXtagged`, maybe after its module's name, `grid!`):
+    /// `tagged`
+    pub fn flangTypeName(symbol: []const u8) ?[]const u8 {
+        const at = std.mem.findLast(u8, symbol, "XdtX") orelse return null;
+        const name = symbol[at + 4 ..];
+        return if (name.len > 0) name else null;
+    }
+
+    /// Intel's: the data's address, an element's length, an offset, flags,
+    /// the rank, a reserved word, then for each dimension its extent, its
+    /// stride in bytes and its lower bound
+    fn parseIntel(words: []const u64) ?Descriptor {
         if (words.len < header_words) return null;
         const rank = words[4];
         if (rank > 7 or words.len < header_words + 3 * rank) return null;
@@ -142,6 +187,24 @@ pub const Descriptor = struct {
             .lo = @bitCast(words[header_words + 3 * i + 2]),
         };
         return d;
+    }
+
+    /// Intel's descriptor of a CLASS object or array: after the
+    /// dimensions, the address of the dynamic type's description (word
+    /// 6 + 3·rank), whose first word points to its name (`GRID#TAGGED`)
+    pub fn intelTypeInfo(words: []const u64, rank: u32) ?u64 {
+        const at = header_words + 3 * @as(usize, rank);
+        return if (at < words.len and words[at] != 0) words[at] else null;
+    }
+
+    /// A derived type's name of Intel's description of it (`GRID#TAGGED`,
+    /// a module's; `MAIN#T`): `TAGGED`
+    pub fn intelTypeName(text: []const u8) ?[]const u8 {
+        const at = std.mem.findScalarLast(u8, text, '#') orelse return null;
+        const name = text[at + 1 ..];
+        if (name.len == 0 or at == 0) return null;
+        for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '$') return null;
+        return name;
     }
 
     /// Not allocated, not associated
@@ -185,10 +248,16 @@ pub fn scalar(a: Allocator, t: Type, b: []const u8) ![]const u8 {
     }
 }
 
+/// A real of 4, 8 or 16 bytes (IEEE binary32, binary64, binary128: ifx's
+/// and Flang's REAL(16), gfortran's on aarch64), or of 10 (x87's extended
+/// precision: gfortran's REAL(10) on x86, whose 16 bytes of memory hold 10
+/// of it), as the shortest decimal that reads back the same
 fn real(a: Allocator, b: []const u8) ![]const u8 {
     const text = switch (b.len) {
         4 => try a.print("{d}", .{@as(f32, @bitCast(std.mem.readInt(u32, b[0..4], .little)))}),
         8 => try a.print("{d}", .{@as(f64, @bitCast(std.mem.readInt(u64, b[0..8], .little)))}),
+        10 => try a.print("{d}", .{@as(f80, @bitCast(std.mem.readInt(u80, b[0..10], .little)))}),
+        16 => try a.print("{d}", .{@as(f128, @bitCast(std.mem.readInt(u128, b[0..16], .little)))}),
         else => return hex(a, b),
     };
     // `6` -> `6.0`, as Fortran writes a real
@@ -296,6 +365,54 @@ test "Intel's descriptor" {
     try std.testing.expectEqual(@as(usize, 96), Descriptor.bytes(2));
 }
 
+test "Intel's descriptor of a CLASS object or array" {
+    // ifx 2026's, as cdb dumped them: t (rank 0, elem_len 0x60, the size of
+    // a tagged), ts (rank 1, two labeled of 0x10)
+    const t = [_]u64{ 0x7ff7190c4058, 0x60, 0, 3, 0, 0, 0x7ff7190c4298 };
+    const dt = Descriptor.parse(&t).?;
+    try std.testing.expectEqual(@as(u32, 0), dt.rank);
+    try std.testing.expectEqual(@as(u64, 0x60), dt.elem_len);
+    try std.testing.expectEqual(@as(?u64, 0x7ff7190c4298), Descriptor.intelTypeInfo(&t, 0));
+    const ts = [_]u64{ 0x2924df41430, 0x10, 0, 0x81, 1, 0, 2, 0x10, 1, 0x7ff7190c4268 };
+    const dts = Descriptor.parse(&ts).?;
+    try std.testing.expectEqual(Extent{ .lo = 1, .count = 2, .stride = 0x10 }, dts.dims[0]);
+    try std.testing.expectEqual(@as(?u64, 0x7ff7190c4268), Descriptor.intelTypeInfo(&ts, 1));
+    try std.testing.expect(Descriptor.intelTypeInfo(ts[0..9], 1) == null);
+    try std.testing.expectEqualStrings("TAGGED", Descriptor.intelTypeName("GRID#TAGGED").?);
+    try std.testing.expectEqualStrings("LABELED", Descriptor.intelTypeName("GRID#LABELED").?);
+    try std.testing.expect(Descriptor.intelTypeName("TAGGED") == null);
+    try std.testing.expect(Descriptor.intelTypeName("GRID#") == null);
+    try std.testing.expect(Descriptor.intelTypeName("GRID#A B") == null);
+}
+
+test "LLVM Flang's descriptor" {
+    // Flang 23's of a(3), real, an assumed-shape dummy (gdb's x/6gx):
+    // version 20240719, rank 1, type 27 (float), lower bound 1, extent 3,
+    // stride 4
+    const a = Descriptor.parse(&[_]u64{ 0x7ff6cfe14380, 4, 0x00001b010134d94f, 1, 3, 4 }).?;
+    try std.testing.expectEqual(@as(u32, 1), a.rank);
+    try std.testing.expectEqual(@as(u64, 4), a.elem_len);
+    try std.testing.expectEqual(Extent{ .lo = 1, .count = 3, .stride = 4 }, a.dims[0]);
+    // b(2:3,-1:1), integer; and the older version, 20180515
+    const b = Descriptor.parse(&[_]u64{ 0x1000, 4, 0x000009020133ee23, 2, 2, 4, @bitCast(@as(i64, -1)), 3, 8 }).?;
+    try std.testing.expectEqual(@as(u32, 2), b.rank);
+    try std.testing.expectEqual(Extent{ .lo = 2, .count = 2, .stride = 4 }, b.dims[0]);
+    try std.testing.expectEqual(Extent{ .lo = -1, .count = 3, .stride = 8 }, b.dims[1]);
+    // not associated
+    try std.testing.expect(Descriptor.parse(&[_]u64{ 0, 4, 0x00001b010134d94f, 1, 0, 4 }).?.empty());
+    // CLASS(point) of a tagged (gdb's x/4gx of the box): rank 0, type 42,
+    // extra 1, the addendum's type description after the header
+    const t = Descriptor.parse(&[_]u64{ 0x7ff6a000, 0x48, 0x01002a000134d94f, 0x7ff6b150 }).?;
+    try std.testing.expectEqual(@as(u32, 0), t.rank);
+    try std.testing.expectEqual(@as(u64, 0x7ff6b150), t.type_info);
+    try std.testing.expectEqual(@as(u64, 0), a.type_info);
+    try std.testing.expectEqualStrings("tagged", Descriptor.flangTypeName("grid!QMgridEXdtXtagged").?);
+    try std.testing.expectEqualStrings("point", Descriptor.flangTypeName("_QMgridEXdtXpoint").?);
+    try std.testing.expect(Descriptor.flangTypeName("QQmain") == null);
+    // Intel's is not taken for Flang's
+    try std.testing.expectEqual(@as(u32, 2), Descriptor.parse(&[_]u64{ 0x7ff6cfe14380, 4, 0, 1, 2, 0, 2, 4, 1, 3, 8, 1 }).?.rank);
+}
+
 test "values as Fortran writes them" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -310,6 +427,17 @@ test "values as Fortran writes them" {
     std.mem.writeInt(u32, b[0..4], @bitCast(@as(f32, 1.0)), .little);
     std.mem.writeInt(u32, b[4..8], @bitCast(@as(f32, -2.0)), .little);
     try std.testing.expectEqualStrings("(1.0, -2.0)", try scalar(a, .{ .kind = .complex, .size = 8 }, &b));
+    // REAL(16): ifx's 3.5_16 as the audit read it (0x4000c000…); REAL(10),
+    // x87's; COMPLEX(16) of two REAL(16)
+    var q: [32]u8 = undefined;
+    std.mem.writeInt(u128, q[0..16], 0x4000c000000000000000000000000000, .little);
+    try std.testing.expectEqualStrings("3.5", try scalar(a, .{ .kind = .real, .size = 16 }, q[0..16]));
+    std.mem.writeInt(u128, q[16..32], @bitCast(@as(f128, -0.1)), .little);
+    try std.testing.expectEqualStrings("-0.1", try scalar(a, .{ .kind = .real, .size = 16 }, q[16..32]));
+    try std.testing.expectEqualStrings("(3.5, -0.1)", try scalar(a, .{ .kind = .complex, .size = 32 }, &q));
+    var x: [10]u8 = undefined;
+    std.mem.writeInt(u80, &x, @bitCast(@as(f80, 1.25)), .little);
+    try std.testing.expectEqualStrings("1.25", try scalar(a, .{ .kind = .real, .size = 10 }, &x));
     try std.testing.expectEqualStrings(".TRUE.", try scalar(a, .{ .kind = .logical, .size = 4 }, &[_]u8{ 0xff, 0xff, 0xff, 0xff }));
     try std.testing.expectEqualStrings(".FALSE.", try scalar(a, .{ .kind = .logical, .size = 4 }, &[_]u8{ 0, 0, 0, 0 }));
     try std.testing.expectEqualStrings("'abc'", try scalar(a, .{ .kind = .character, .size = 3 }, "abc"));

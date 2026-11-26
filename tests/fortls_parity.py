@@ -104,11 +104,113 @@ def substring_symbols_replacement(mod):
     return test
 
 
+def sync_options_replacement(mod):
+    """`test_server::test_init` expects `textDocumentSync` to be the change
+    kind (2); zfls announces it as options, `openClose` and `save` with
+    that kind as `change` (#269), which is checked and turned back into
+    the number here."""
+    original = getattr(mod, "test_init")
+
+    def test():
+        run = mod.run_request
+
+        def sync_number(request, fortls_args=None):
+            errcode, results = run(request, fortls_args)
+            for r in results:
+                caps = r.get("capabilities") if isinstance(r, dict) else None
+                if caps is not None and isinstance(caps.get("textDocumentSync"), dict):
+                    sync = caps["textDocumentSync"]
+                    assert sync["openClose"] is True
+                    assert sync["save"] == {"includeText": False}
+                    caps["textDocumentSync"] = sync["change"]
+            return errcode, results
+
+        mod.run_request = sync_number
+        try:
+            original()
+        finally:
+            mod.run_request = run
+
+    return test
+
+
+def include_file_definition_replacement(mod):
+    """`test_server_definitions::test_def_include_file` expects the included
+    file at line 2, the line of the INCLUDE statement in the including file;
+    zfls goes to the included file's first line (#224), which a file shorter
+    than the including one's INCLUDE line also has."""
+
+    def test():
+        test_dir = mod.test_dir
+        string = mod.write_rpc_request(1, "initialize", {"rootPath": str(test_dir)})
+        file_path = test_dir / "test_inc.f90"
+        string += mod.def_request(file_path, 3, 16)
+        errcode, results = mod.run_request(string)
+        assert errcode == 0
+        ref_res = [[0, 0, str(test_dir / "subdir" / "test_inc2.f90")]]
+        assert len(ref_res) == len(results) - 1
+        for i, res in enumerate(ref_res):
+            mod.validate_def(results[i + 1], res)
+
+    return test
+
+
+def associate_function_replacement(mod):
+    """`test_server_hover::test_associate_block_func_result` expects an
+    associate name bound to a function call to be shown as the function
+    (`LOGICAL FUNCTION :: hi`); zfls shows the variable it is, of the
+    result's type (#721)."""
+
+    def test():
+        test_dir = mod.test_dir
+        string = mod.write_rpc_request(
+            1, "initialize", {"rootPath": str(test_dir / "hover")}
+        )
+        file_path = test_dir / "hover" / "associate_block_2.f90"
+        string += mod.hover_req(file_path, 2, 14)
+        string += mod.hover_req(file_path, 3, 9)
+        errorcode, results = mod.run_request(string, fortls_args=["--sort_keywords", "-n", "1"])
+        assert errorcode == 0
+        ref_results = [
+            "```fortran90\nLOGICAL :: hi\n```",
+            "```fortran90\nLOGICAL :: hi\n```",
+        ]
+        mod.validate_hover(results, ref_results)
+
+    return test
+
+
+def function_diagnostics_replacement(mod):
+    """`test_server_diagnostics::test_function` expects an INTENT outside
+    the argument list to be reported: gfortran and ifx do, Flang does not,
+    so zfls does it only for them (#879); the test runs in gfortran's
+    dialect."""
+
+    def test():
+        test_dir = mod.test_dir
+        string = mod.write_rpc_request(1, "initialize", {"rootPath": str(test_dir)})
+        file_path = str(test_dir / "diag" / "test_function.f90")
+        string += mod.write_rpc_notification(
+            "textDocument/didOpen", {"textDocument": {"uri": file_path}}
+        )
+        errcode, results = mod.run_request(string, fortls_args=["--lint_dialect", "gfortran"])
+        assert errcode == 0
+        assert [d["message"] for d in results[1]["diagnostics"]] == [
+            'Variable "bar" with INTENT keyword not found in argument list'
+        ]
+
+    return test
+
+
 # Tests whose expectations zfls deliberately does not match verbatim, with a
 # replacement test implementing the zfls expectation.
 KNOWN_DEVIATIONS = {
     "test_server_hover::test_intrinsics": intrinsic_hover_replacement,
+    "test_server_hover::test_associate_block_func_result": associate_function_replacement,
     "test_server::test_workspace_symbols": substring_symbols_replacement,
+    "test_server::test_init": sync_options_replacement,
+    "test_server_diagnostics::test_function": function_diagnostics_replacement,
+    "test_server_definitions::test_def_include_file": include_file_definition_replacement,
 }
 
 
@@ -131,7 +233,8 @@ def zfls_only_item(x) -> bool:
     one that adds a USE statement, or an intrinsic fortls does not know."""
     if not isinstance(x, dict):
         return False
-    if str(x.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS:
+    # (not a variable of the same name: `int1`, Intel's INT1)
+    if str(x.get("label", "")).upper() in ZFLS_ONLY_INTRINSICS and x.get("kind") != 6:
         return True
     # the parent components of an extended type (hansec #121)
     if "labelDetails" in x:
@@ -256,6 +359,26 @@ def run_function(mod, fn):
 
 
 def main() -> int:
+    # an empty temp folder of our own, so that fortls's tests that index
+    # the system temp directory do not depend on the machine's contents (#822)
+    root = tempfile.mkdtemp(prefix="zfls_parity_")
+    saved = {k: os.environ.get(k) for k in ("TEMP", "TMP", "TMPDIR")}
+    for k in saved:
+        os.environ[k] = root
+    tempfile.tempdir = root
+    try:
+        return run()
+    finally:
+        tempfile.tempdir = None
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     exe = "zfls.exe" if os.name == "nt" else "zfls"
     ap.add_argument(
@@ -288,7 +411,12 @@ def main() -> int:
         import subprocess
         from io import StringIO
 
-        command = [zfls, "--incremental_sync", "--disable_index_cache"]
+        # hover on a derived type lists its components (#268); fortls's
+        # tests expect its declaration alone
+        command = [
+            zfls, "--incremental_sync", "--disable_index_cache",
+            "--hover_no_type_components",
+        ]
         if fortls_args:
             for i in fortls_args:
                 command.extend(shlex.split(i, posix=False))
@@ -328,6 +456,9 @@ def main() -> int:
                     if "diagnostics" in params:
                         params["diagnostics"] = [d for d in params["diagnostics"] if d.get("code") not in ("undeclared-name", "unused-name", "circular-use", "argument-mismatch", "argument-kind", "intent-in-assigned")]
                     for d in params.get("diagnostics", []):
+                        # zfls names the unit an IMPORT may not be in (#724)
+                        if d.get("code") == "import-outside-interface":
+                            d["message"] = "IMPORT statement outside of interface"
                         d.pop("code", None)
                         d.pop("source", None)
                 parsed.append(params)

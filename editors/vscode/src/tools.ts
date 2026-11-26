@@ -9,7 +9,23 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 /** Every Fortran extension of package.json, both cases */
-export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f08,F08,f18,F18,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR}";
+export const FORTRAN_FILES = "*.{f90,F90,f95,F95,f03,F03,f05,F05,f08,F08,f18,F18,f23,F23,fpp,FPP,cuf,CUF,pf,PF,fypp,FYPP,f,F,f77,F77,for,FOR,ftn,FTN}";
+
+/** FORTRAN_FILES plus the extra suffixes (zfls.includeSuffixes and
+ * ppSuffixes, with or without the dot), in both cases */
+export function fortranFiles(extra: readonly string[]): string {
+  const names = new Set<string>();
+  for (const suffix of extra) {
+    const name = suffix.trim().replace(/^\*?\./, "").replace(/[^A-Za-z0-9_+-]/g, "");
+    if (name) {
+      names.add(name).add(name.toLowerCase()).add(name.toUpperCase());
+    }
+  }
+  if (names.size === 0) {
+    return FORTRAN_FILES;
+  }
+  return FORTRAN_FILES.replace(/\}$/, `,${[...names].join(",")}}`);
+}
 
 /** What `${...}` variables in a setting stand for. */
 export interface VariableContext {
@@ -130,7 +146,7 @@ export function findExecutable(
       return tryFile(pathMod.join(full, name));
     }
     const found = tryFile(full);
-    if (found || /[\/]/.test(configured)) {
+    if (found || /[\\/]/.test(configured)) {
       return found;
     }
     name = configured;
@@ -140,7 +156,8 @@ export function findExecutable(
   }
   const dirs = (lookupEnv(env, "PATH") ?? "").split(platform === "win32" ? ";" : ":");
   for (const dir of dirs) {
-    if (dir) {
+    // a relative entry is the working directory in disguise
+    if (dir && pathMod.isAbsolute(dir)) {
       const found = tryFile(pathMod.join(dir, name));
       if (found) {
         return found;
@@ -148,6 +165,46 @@ export function findExecutable(
     }
   }
   return undefined;
+}
+
+/**
+ * What to spawn for `command`: a bare name is looked up on the PATH only,
+ * never in the working directory, where Windows looks first; a name with a
+ * directory is left as it is. Undefined when a bare name is on no PATH
+ * directory.
+ */
+export function programPath(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  if (command === "" || /[\\/]/.test(command) || (platform === "win32" && command.includes(":"))) {
+    return command;
+  }
+  return findExecutable(command, "", undefined, env, platform);
+}
+
+/**
+ * The zfls that the `zfls.path` setting names: its variables expanded (as
+ * `expandVariables`), a relative path taken relative to the workspace
+ * folder, a directory for the `zfls` in it, a bare name not found in the
+ * folder looked up on the PATH. `tried`, when there is no such file: the
+ * path looked for.
+ */
+export function serverExecutable(
+  configured: string,
+  ctx: VariableContext,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { command?: string; tried?: string } {
+  const pathMod = platform === "win32" ? path.win32 : path.posix;
+  const expanded = expandVariables(configured.trim(), { ...ctx, env });
+  const command = findExecutable("zfls", expanded, ctx.workspaceFolder, env, platform);
+  if (command) {
+    return { command: pathMod.normalize(command) };
+  }
+  const base = ctx.workspaceFolder;
+  return { tried: pathMod.isAbsolute(expanded) || !base ? pathMod.normalize(expanded) : pathMod.resolve(base, expanded) };
 }
 
 function isFile(file: string): boolean {
@@ -171,7 +228,7 @@ export interface ProcessResult {
   code: number | null;
   stdout: string;
   stderr: string;
-  /** Set when the process could not be started, or was cancelled or timed out */
+  /** Set when the process could not be started, or was canceled or timed out */
   error?: Error;
 }
 
@@ -193,8 +250,13 @@ export interface RunOptions {
 export function runProcess(command: string, args: string[], opts: RunOptions = {}): Promise<ProcessResult> {
   return new Promise((resolve) => {
     let child: cp.ChildProcess;
+    const program = programPath(command, opts.env ?? process.env);
+    if (program === undefined) {
+      resolve({ code: null, stdout: "", stderr: "", error: Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT" }) });
+      return;
+    }
     try {
-      child = cp.spawn(command, args, {
+      child = cp.spawn(program, args, {
         cwd: opts.cwd,
         env: opts.env,
         signal: opts.signal,

@@ -28,6 +28,9 @@ import { expandVariables, findExecutable, runProcess } from "./tools";
 import { folderVariables } from "./variables";
 
 const PROBLEM_MATCHERS = ["$zfls-gfortran", "$zfls-intel"];
+/** The environment of a build whose messages the problem matchers read:
+ * the C locale, so that the compiler writes "Error" and "Warning" in English */
+const MATCHER_ENV = { LC_ALL: "C" };
 
 interface Program {
   folder: vscode.WorkspaceFolder;
@@ -200,7 +203,7 @@ class PfunitTests implements vscode.Disposable {
   private async run(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
     const run = this.controller.createTestRun(request);
     const abort = new AbortController();
-    const cancelled = token.onCancellationRequested(() => abort.abort());
+    const canceled = token.onCancellationRequested(() => abort.abort());
     try {
       const excluded = new Set(request.exclude ?? []);
       for (const [top, picked] of this.byProgram(request)) {
@@ -210,7 +213,7 @@ class PfunitTests implements vscode.Disposable {
         await this.runProgram(run, top, picked, excluded, abort.signal);
       }
     } finally {
-      cancelled.dispose();
+      canceled.dispose();
       run.end();
     }
   }
@@ -408,7 +411,7 @@ class PfunitTests implements vscode.Disposable {
         program.folder,
         `build ${program.name}`,
         "zfls",
-        new vscode.ProcessExecution(cmake, ["--build", dir, "--target", program.name]),
+        new vscode.ProcessExecution(cmake, ["--build", dir, "--target", program.name], { env: MATCHER_ENV }),
         PROBLEM_MATCHERS,
       );
       run.appendOutput(`> cmake --build ${dir} --target ${program.name}\r\n`);
@@ -435,7 +438,7 @@ class PfunitTests implements vscode.Disposable {
   private async debug(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
     const run = this.controller.createTestRun(request);
     const abort = new AbortController();
-    const cancelled = token.onCancellationRequested(() => abort.abort());
+    const canceled = token.onCancellationRequested(() => abort.abort());
     try {
       for (const [top, picked] of this.byProgram(request)) {
         if (token.isCancellationRequested) {
@@ -471,7 +474,7 @@ class PfunitTests implements vscode.Disposable {
         }
       }
     } finally {
-      cancelled.dispose();
+      canceled.dispose();
       run.end();
     }
   }

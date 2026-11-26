@@ -61,12 +61,24 @@ export async function run(): Promise<void> {
   const names = symbols.map((s) => s.name);
   assert.ok(names.includes("shapes"), `symbols ${names}`);
 
-  console.log("zfls answered hover, definition, completion and symbols");
+  // code lenses, resolved: the reference count above the type circle, which
+  // runs the extension's zfls.showReferences
+  const circleLine = at("type, extends(shape) :: circle").line;
+  const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>(
+    "vscode.executeCodeLensProvider", doc.uri, 100);
+  const counted = lenses.find((l) => l.range.start.line === circleLine);
+  const titles = lenses.map((l) => `${l.range.start.line}: ${l.command?.title}`);
+  assert.match(counted?.command?.title ?? "", /^\d+ references?$/, `lenses ${titles}`);
+  assert.strictEqual(counted?.command?.command, "zfls.showReferences");
+
+  console.log("zfls answered hover, definition, completion, symbols and code lenses");
 
   checkSnippets();
   checkLanguageContributions();
   await checkConfigSchema();
+  await checkPulledDiagnostics();
   await checkCompilerDiagnostics();
+  await checkConvertForm();
 }
 
 // The snippets are packaged for both languages. (VS Code's snippet service in
@@ -81,7 +93,9 @@ function checkSnippets(): void {
     const text = fs.readFileSync(path.join(ext.extensionPath, file.path), "utf8");
     const snippets: Record<string, { prefix: string; body: string[] }> = JSON.parse(text);
     const prefixes = Object.values(snippets).map((x) => x.prefix);
-    assert.ok(prefixes.includes("selt"), `${file.language} snippet prefixes ${prefixes}`);
+    // the constructs (select type and others) are the server's completion
+    // snippets (#264); the extension keeps the others
+    assert.ok(prefixes.includes("typc"), `${file.language} snippet prefixes ${prefixes}`);
     if (file.language === "FortranFixedForm") {
       // typed at column 7, no tabs and nothing past column 72 with the
       // placeholders' default text
@@ -128,6 +142,25 @@ async function checkConfigSchema(): Promise<void> {
   console.log(`.fortlsrc checked against the schema: ${messages}`);
 }
 
+// VS Code's client pulls diagnostics (textDocument/diagnostic): zfls's own
+// show once, not published as well.
+async function checkPulledDiagnostics(): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-pull-"));
+  const file = path.join(dir, "pull_me.f90");
+  fs.writeFileSync(file, "program pull_me\n  implicit none\n  i = 1\nend program pull_me\n");
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  const undeclared = () =>
+    vscode.languages.getDiagnostics(doc.uri).filter((d) => d.source === "zfls" && /not declared/.test(d.message));
+  const found = await poll("zfls's diagnostics", async () => (undeclared().length > 0 ? undeclared() : undefined));
+  // a second copy would come with the next publication
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  assert.strictEqual(undeclared().length, 1, `diagnostics ${undeclared().map((d) => d.message)}`);
+  assert.strictEqual(found[0].range.start.line, 2);
+  await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  console.log(`zfls's diagnostics pulled: ${found[0].message}`);
+}
+
 // A file with an error opened: gfortran's message shows in it (where the
 // runner has gfortran).
 async function checkCompilerDiagnostics(): Promise<void> {
@@ -152,6 +185,31 @@ async function checkCompilerDiagnostics(): Promise<void> {
   assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith(".mod") || f.endsWith(".o")), "files written beside the source");
   await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
   console.log(`gfortran diagnostics shown: ${found[0].message}`);
+}
+
+// Fortran: Convert to Free Form writes name.f90 beside a fixed-form file
+// and opens it (where the runner has findent).
+async function checkConvertForm(): Promise<void> {
+  const commands = await vscode.commands.getCommands(true);
+  assert.ok(commands.includes("zfls.convertToFreeForm") && commands.includes("zfls.convertToFixedForm"), "conversion commands");
+  if (!findExecutable("findent")) {
+    console.log("no findent on the PATH: the conversion not checked");
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zfls-convert-"));
+  const file = path.join(dir, "old.f");
+  fs.writeFileSync(file, ["C     a comment", "      program old", "      x = 1 +", "     &    2", "      end", ""].join("\n"));
+  const doc = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(doc);
+  assert.strictEqual(doc.languageId, "FortranFixedForm");
+  await vscode.commands.executeCommand("zfls.convertToFreeForm");
+  const converted = path.join(dir, "old.f90");
+  await poll("old.f90", async () => (fs.existsSync(converted) ? true : undefined));
+  const text = fs.readFileSync(converted, "utf8");
+  assert.match(text, /program old/i);
+  assert.match(text, /&/);
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  console.log("findent converted old.f to old.f90");
 }
 
 async function poll<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {

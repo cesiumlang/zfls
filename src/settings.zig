@@ -1,12 +1,20 @@
-//! Command line interface and configuration options (port of
-//! `fortls.interface`). Long options may be abbreviated to any unique prefix,
-//! like Python's argparse.
+//! Configuration options (port of `fortls.interface`): `Settings`, read
+//! from configuration files and from the command line (settings/cli.zig).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const str = @import("str.zig");
 const json = @import("json.zig");
 const json5 = @import("json5.zig");
+/// The extensions of Fortran sources (also for build/generated.zig)
+pub const suffixes = @import("suffixes.zig");
+
+// The command line (settings/cli.zig)
+const cli = @import("settings/cli.zig");
+pub const opts = cli.opts;
+pub const Opt = cli.Opt;
+pub const CliResult = cli.CliResult;
+pub const parseArgs = cli.parseArgs;
 
 /// Ordered list of unique strings (stand-in for Python `set[str]`)
 pub const StrList = struct {
@@ -37,9 +45,13 @@ pub const PpDef = struct { name: []const u8, value: []const u8 };
 /// `warning`, `information` or `hint`
 pub const DiagLevel = struct { code: []const u8, level: []const u8 };
 
+/// A glob pattern of `file_associations` and the editor language of the
+/// files it matches (VS Code's `files.associations`)
+pub const Association = struct { pattern: []const u8, language: []const u8 };
+
 pub const Settings = struct {
     // General options
-    config: []const u8 = ".fortlsrc",
+    config: []const u8 = ".zflsrc",
     nthreads: i64 = 4,
     notify_init: bool = false,
     incremental_sync: bool = false,
@@ -57,6 +69,16 @@ pub const Settings = struct {
     excl_paths: StrList = .{},
     /// Further markers that start a comment as `!` does, such as `;*`
     comment_markers: StrList = .{},
+    /// Read OpenMP conditional compilation lines (`!$ x = 1`) as comments,
+    /// as a build without OpenMP does, not as code
+    disable_openmp_conditional: bool = false,
+    /// How a fixed-form line with D or d in column 1 (a debug line) is
+    /// read: `comment` (null: the default) or `code`
+    d_lines: ?[]const u8 = null,
+    /// The editor's languages of files by glob pattern (VS Code's
+    /// `files.associations`): a `.fpp` file given `FortranFreeForm` or
+    /// `FortranFixedForm` is read in that form (server/source_form.zig)
+    file_associations: std.ArrayList(Association) = .empty,
     // Autocomplete options
     autocomplete_no_prefix: bool = false,
     /// Do not offer names of modules that are not used yet (with the USE
@@ -70,12 +92,21 @@ pub const Settings = struct {
     variable_hover: bool = false,
     hover_signature: bool = false,
     hover_language: []const u8 = "fortran90",
+    /// How the formulas of documentation comments (`\f$ x \f$`) reach the
+    /// client: `keep`, `dollar` (`$x$`) or `plain` (in backticks)
+    doc_math: []const u8 = "keep",
     /// Hover and go to definition use the implementation of a procedure
     /// declared in an interface (a separate module procedure's body in a
     /// submodule) rather than the interface
     prefer_implementation: bool = false,
     /// Keywords in hover in lowercase (`real, intent(in) :: x`)
     lowercase_hover: bool = false,
+    /// Hover on a derived type, or a variable of one, does not list the
+    /// type's components and bindings
+    hover_no_type_components: bool = false,
+    /// Plain `!` comments above or after a declaration that has no `!>`,
+    /// `!<` or `!!` documentation are its documentation
+    hover_plain_comments: bool = false,
     // Diagnostic options
     max_line_length: i64 = -1,
     max_comment_line_length: i64 = -1,
@@ -83,6 +114,10 @@ pub const Settings = struct {
     /// -ffixed-line-length-n); the rest is a comment. -1: no limit
     fixed_line_length: i64 = -1,
     disable_diagnostics: bool = false,
+    /// The milliseconds a document's text stays unchanged before zfls's
+    /// diagnostics of it are published again (0: with each change;
+    /// negative: not before it is saved)
+    diagnostics_change_delay: i64 = 300,
     /// Publish the diagnostics of every workspace file, not only of the
     /// open ones
     workspace_diagnostics: bool = false,
@@ -106,6 +141,16 @@ pub const Settings = struct {
     compiler_path: ?[]const u8 = null,
     /// The compiler's arguments; null: its defaults (gfortran's -Wall)
     compiler_args: ?StrList = null,
+    /// The compiler, its executable and its arguments for fixed-form
+    /// files; null: those of free form (`compiler_diagnostics`,
+    /// `compiler_path`, `compiler_args`)
+    compiler_diagnostics_fixed: ?[]const u8 = null,
+    compiler_path_fixed: ?[]const u8 = null,
+    compiler_args_fixed: ?StrList = null,
+    /// The dialect zfls's own checks lint against (`neutral`, `gfortran`,
+    /// `ifx` or `flang`); null: that of the compiler (`compiler_diagnostics`)
+    /// of the file's form, else neutral
+    lint_dialect: ?[]const u8 = null,
     /// Where the compiler's .mod files go, relative to the root; null: in
     /// zfls's cache directory
     compiler_mod_dir: ?[]const u8 = null,
@@ -119,6 +164,9 @@ pub const Settings = struct {
     compiler_change_delay: i64 = 1000,
     /// Do not compile the workspace modules a file uses first
     compiler_no_dependencies: bool = false,
+    /// Do not check a file with its command from compile_commands.json
+    /// (when `compiler_args` is not set)
+    compiler_no_compile_commands: bool = false,
     /// fypp, run on each file before the compiler checks it; null: none
     compiler_fypp: ?[]const u8 = null,
     /// fypp's further arguments (-I, -D, ...)
@@ -140,7 +188,7 @@ pub const Settings = struct {
     codee_args: StrList = .{},
     // Formatting
     /// The formatter of `textDocument/formatting` and `rangeFormatting`:
-    /// findent or fprettify; null or `none`: none
+    /// findent, fprettify, codee, forformat or custom; null or `none`: none
     formatter: ?[]const u8 = null,
     /// The formatter executable, or the directory that holds it; null: the
     /// one on the PATH
@@ -162,9 +210,18 @@ pub const Settings = struct {
     /// read no compilation database (the name of fortls's option, its
     /// upstream PR #504)
     disable_compile_commands: bool = false,
+    /// Read Intel's conditional compilation directives (`!DEC$ IF DEFINED
+    /// (X)`, `!DIR$ IF (expr)`) as comments, all branches included
+    disable_intel_directives: bool = false,
     // Symbols / code actions
     symbol_skip_mem: bool = false,
     enable_code_actions: bool = false,
+    // Code lenses
+    /// No lens with the number of references above modules, procedures
+    /// and derived types
+    code_lens_no_references: bool = false,
+    /// No Run and Debug lenses above a program
+    code_lens_no_run: bool = false,
     // Debug options
     debug_filepath: ?[]const u8 = null,
     debug_rootpath: ?[]const u8 = null,
@@ -199,291 +256,27 @@ pub const Settings = struct {
             self.debug_implementation or self.debug_references or self.debug_rename != null or
             self.debug_actions or self.debug_rootpath != null or self.debug_workspace_symbols != null;
     }
-};
 
-const Kind = enum { flag, int, string, list, json, help, debug_help, version };
-
-const Opt = struct {
-    long: []const u8,
-    short: ?[]const u8 = null,
-    kind: Kind,
-    metavar: []const u8 = "",
-    help: []const u8,
-    debug: bool = false,
-    group: []const u8 = "",
-};
-
-pub const opts = [_]Opt{
-    .{ .long = "help", .short = "-h", .kind = .help, .help = "show this help message and exit" },
-    .{ .long = "version", .short = "-v", .kind = .version, .help = "Print server version number and exit" },
-    .{ .long = "config", .short = "-c", .kind = .string, .metavar = "CONFIG", .help = "Configuration options file (default file name: .fortlsrc, other default supported names: .fortls.json, .fortls)" },
-    .{ .long = "nthreads", .short = "-n", .kind = .int, .metavar = "INTEGER", .help = "Number of threads to use during workspace initialization (default: 4)" },
-    .{ .long = "notify_init", .kind = .flag, .help = "Send notification message when workspace initialization is complete" },
-    .{ .long = "incremental_sync", .kind = .flag, .help = "Use incremental document synchronization (beta)" },
-    .{ .long = "recursion_limit", .kind = .int, .metavar = "INTEGER", .help = "Set the maximum recursion depth for the parser (default: 1000)" },
-    .{ .long = "sort_keywords", .kind = .flag, .help = "Display variable keywords information, function/subroutine definitions, etc. in a consistent (sorted) manner default: no sorting, display code as is)" },
-    .{ .long = "disable_autoupdate", .kind = .flag, .help = "Accepted for compatibility with fortls and ignored: zfls does not update itself." },
-    .{ .long = "preserve_keyword_order", .kind = .flag, .help = "DEPRECATED, this is now the default. To sort use sort_keywords" },
-    .{ .long = "debug_log", .kind = .flag, .help = "Generate debug log in project root folder" },
-    .{ .long = "disable_index_cache", .kind = .flag, .help = "Do not keep the workspace's files, and what zfls parsed from them, in one file of zfls's cache, from which a start reads those that have not changed instead of reading and parsing each file" },
-    .{ .long = "debug_help", .kind = .debug_help, .help = "Display options for debugging zfls" },
-
-    .{ .long = "source_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing source files (default: set())", .group = "Sources file parsing options" },
-    .{ .long = "incl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Consider additional file extensions to the default (default: .F, .F77, .F90, .F95, .F03, .F08, .FOR, .FPP, .CUF (lower & upper casing))", .group = "Sources file parsing options" },
-    .{ .long = "excl_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "Source file extensions to be excluded (default: set())", .group = "Sources file parsing options" },
-    .{ .long = "excl_paths", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders to exclude from parsing", .group = "Sources file parsing options" },
-    .{ .long = "comment_markers", .kind = .list, .metavar = "[MARKERS ...]", .help = "Further markers that start a comment as ! does, outside strings, such as ;* of a dialect that a preprocessor turns into Fortran", .group = "Sources file parsing options" },
-
-    .{ .long = "autocomplete_no_prefix", .kind = .flag, .help = "Do not filter autocomplete results by variable prefix", .group = "Autocomplete options" },
-    .{ .long = "autocomplete_no_auto_use", .kind = .flag, .help = "Do not offer the public names of modules that are not used yet (completing one adds its USE statement)", .group = "Autocomplete options" },
-    .{ .long = "autocomplete_no_snippets", .kind = .flag, .help = "Do not use snippets with place holders in autocomplete results", .group = "Autocomplete options" },
-    .{ .long = "autocomplete_name_only", .kind = .flag, .help = "Complete only the name of procedures and not the parameters", .group = "Autocomplete options" },
-    .{ .long = "lowercase_intrinsics", .kind = .flag, .help = "Use lowercase for intrinsics and keywords in autocomplete requests", .group = "Autocomplete options" },
-    .{ .long = "use_signature_help", .kind = .flag, .help = "Use signature help instead of subroutine/function snippets. This effectively sets --autocomplete_no_snippets", .group = "Autocomplete options" },
-
-    .{ .long = "variable_hover", .kind = .flag, .help = "DEPRECATED: This option is always on. Show hover information for variables", .group = "Hover options" },
-    .{ .long = "hover_signature", .kind = .flag, .help = "Show signature information in hover for arguments ", .group = "Hover options" },
-    .{ .long = "hover_language", .kind = .string, .metavar = "HOVER_LANGUAGE", .help = "Language used for responses to hover requests a VSCode language id (default: fortran90)", .group = "Hover options" },
-    .{ .long = "lowercase_hover", .kind = .flag, .help = "Show the keywords of hover in lowercase (real, intent(in) :: x)", .group = "Hover options" },
-    .{ .long = "prefer_implementation", .kind = .flag, .help = "Hover and go to definition use the implementation of a procedure declared in an interface (e.g. a separate module procedure in a submodule) instead of the interface", .group = "Hover options" },
-
-    .{ .long = "max_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum line length (default: -1)", .group = "Diagnostic options (error swigles)" },
-    .{ .long = "max_comment_line_length", .kind = .int, .metavar = "INTEGER", .help = "Maximum comment line length (default: -1)", .group = "Diagnostic options (error swigles)" },
-    .{ .long = "fixed_line_length", .kind = .int, .metavar = "INTEGER", .help = "Columns of code in a fixed-form line, as gfortran's -ffixed-line-length-n (72, 80, 132): the rest is highlighted as a comment and is not read for names (default: -1, no limit)", .group = "Sources file parsing options" },
-    .{ .long = "disable_diagnostics", .kind = .flag, .help = "Disable diagnostics", .group = "Diagnostic options (error swigles)" },
-    .{ .long = "workspace_diagnostics", .kind = .flag, .help = "Publish the diagnostics of every file of the workspace, not only of the open ones (after initialization, and again when files change)", .group = "Diagnostic options (error swigles)" },
-    .{ .long = "diagnostic_severity", .kind = .json, .metavar = "JSON", .help = "Severity of the diagnostics of each code, e.g. {\"masks-parent\": \"off\"}: off, error, warning, information or hint", .group = "Diagnostic options (error swigles)" },
-    .{ .long = "disable_bind_c_search", .kind = .flag, .help = "Go to definition of a BIND(C) procedure does not search the workspace's C files for its C declaration (an editor with a C language server can ask that instead)", .group = "Symbols options" },
-    .{ .long = "bind_c_clangd", .kind = .string, .metavar = "PATH", .help = "Start this clangd (its path, or clangd for the one on the PATH) and ask it for the C declarations and calls of BIND(C) procedures too, besides zfls's search of the C files: its index of the project's compile_commands.json has those of headers outside the source directories and of names a macro makes", .group = "Symbols options" },
-    .{ .long = "external_modules", .kind = .list, .metavar = "[MODULES ...]", .help = "Modules from outside the project (glob patterns, e.g. mpi petsc*) that USE statements name without a diagnostic", .group = "Diagnostic options (error swigles)" },
-
-    .{ .long = "compiler_diagnostics", .kind = .string, .metavar = "COMPILER", .help = "Check each file with a compiler when it is opened and saved, and publish its errors and warnings with zfls's diagnostics: gfortran, ifx, ifort, flang, nvfortran, nagfor or lfortran (default: none). The modules a file uses are compiled first", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_path", .kind = .string, .metavar = "PATH", .help = "The compiler executable, or the directory that holds it (default: the one on the PATH)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_args", .kind = .string, .metavar = "ARGS", .help = "The compiler's arguments, separated by spaces on the command line and a list in a configuration file (default: the compiler's warnings, e.g. -Wall for gfortran). Include directories and preprocessor definitions are added", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_mod_dir", .kind = .string, .metavar = "DIR", .help = "Where the compiler writes .mod files, relative to the root (default: a directory in zfls's cache)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Further include directories for the compiler, relative to the root (zfls's include_dirs are passed too)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_no_save", .kind = .flag, .help = "Do not check a file with the compiler when it is saved, only when it is opened (and while it is edited, with compiler_on_change)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_on_change", .kind = .flag, .help = "Also check a file while it is edited: its unsaved text, after compiler_change_delay milliseconds without a change", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_change_delay", .kind = .int, .metavar = "MS", .help = "With compiler_on_change, the milliseconds without a change before a check (default: 1000)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_no_dependencies", .kind = .flag, .help = "Do not compile the workspace modules a file uses before checking it, nor check again the open files that use a module when its file is saved", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_fypp", .kind = .string, .metavar = "FYPP", .help = "Run fypp (this executable) on each file before the compiler checks it, with line markers naming the file (default: none)", .group = "Compiler diagnostics options" },
-    .{ .long = "compiler_fypp_args", .kind = .string, .metavar = "ARGS", .help = "fypp's further arguments (-I, -D, ...), separated by spaces on the command line and a list in a configuration file", .group = "Compiler diagnostics options" },
-
-    .{ .long = "fortitude", .kind = .flag, .help = "Lint files with fortitude (pip install fortitude-lint) when they are opened and saved: its problems are warnings, its fixes quick fixes, and source.fixAll.fortitude applies the safe ones", .group = "Linter options" },
-    .{ .long = "fortitude_path", .kind = .string, .metavar = "PATH", .help = "fortitude's executable (default: the one on the PATH)", .group = "Linter options" },
-    .{ .long = "fortitude_args", .kind = .string, .metavar = "ARGS", .help = "fortitude check's further arguments, such as --select; separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
-    .{ .long = "fortitude_on_change", .kind = .flag, .help = "Also lint a file with fortitude while it is edited, after fortitude_change_delay milliseconds without a change", .group = "Linter options" },
-    .{ .long = "fortitude_change_delay", .kind = .int, .metavar = "MS", .help = "With fortitude_on_change, the milliseconds without a change before linting (default: 500)", .group = "Linter options" },
-    .{ .long = "codee", .kind = .flag, .help = "Check files with Codee (codee checks, a commercial tool) when they are opened and saved", .group = "Linter options" },
-    .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
-    .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces on the command line and a list in a configuration file", .group = "Linter options" },
-
-    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent or fprettify, installed separately (pip install findent or fprettify), which zfls gives the text on stdin (default: none)", .group = "Formatting options" },
-    .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH)", .group = "Formatting options" },
-    .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up", .group = "Formatting options" },
-    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
-    .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
-
-    .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes)", .group = "Preprocessor options" },
-    .{ .long = "include_dirs", .kind = .list, .metavar = "[DIRS ...]", .help = "Folders containing preprocessor files with extensions PP_SUFFIXES.", .group = "Preprocessor options" },
-    .{ .long = "compile_commands", .kind = .string, .metavar = "PATH", .help = "compile_commands.json (or its directory) whose Fortran entries add include directories and preprocessor definitions; empty for none (default: compile_commands.json in the root, root/build or root/builddir)", .group = "Preprocessor options" },
-    .{ .long = "disable_compile_commands", .kind = .flag, .help = "Do not read a compile_commands.json", .group = "Preprocessor options" },
-    .{ .long = "pp_defs", .kind = .json, .metavar = "JSON", .help = "A dictionary with additional preprocessor definitions. Preprocessor definitions are normally included via INCLUDE_DIRS", .group = "Preprocessor options" },
-
-    .{ .long = "symbol_skip_mem", .kind = .flag, .help = "Do not include type members in document symbol results", .group = "Symbols options" },
-    .{ .long = "enable_code_actions", .kind = .flag, .help = "Enable experimental code actions (default: false)", .group = "CodeActions options [limited]" },
-
-    .{ .long = "debug_filepath", .kind = .string, .metavar = "DEBUG_FILEPATH", .help = "File path for language server tests", .debug = true },
-    .{ .long = "debug_rootpath", .kind = .string, .metavar = "DEBUG_ROOTPATH", .help = "Root path for language server tests", .debug = true },
-    .{ .long = "debug_parser", .kind = .flag, .help = "Test source code parser on specified file", .debug = true },
-    .{ .long = "debug_preproc", .kind = .flag, .help = "Test source code preprocessor parser on specified file", .debug = true },
-    .{ .long = "debug_hover", .kind = .flag, .help = "Test `textDocument/hover` request for specified file and position", .debug = true },
-    .{ .long = "debug_rename", .kind = .string, .metavar = "RENAME_STRING", .help = "Test `textDocument/rename` request for specified file and position", .debug = true },
-    .{ .long = "debug_actions", .kind = .flag, .help = "Test `textDocument/codeAction` request for specified file and position", .debug = true },
-    .{ .long = "debug_symbols", .kind = .flag, .help = "Test `textDocument/documentSymbol` request for specified file", .debug = true },
-    .{ .long = "debug_completion", .kind = .flag, .help = "Test `textDocument/completion` request for specified file and position", .debug = true },
-    .{ .long = "debug_signature", .kind = .flag, .help = "Test `textDocument/signatureHelp` request for specified file and position", .debug = true },
-    .{ .long = "debug_definition", .kind = .flag, .help = "Test `textDocument/definition` request for specified file and position", .debug = true },
-    .{ .long = "debug_references", .kind = .flag, .help = "Test `textDocument/references` request for specified file and position", .debug = true },
-    .{ .long = "debug_diagnostics", .kind = .flag, .help = "Test diagnostic notifications for specified file", .debug = true },
-    .{ .long = "debug_implementation", .kind = .flag, .help = "Test `textDocument/implementation` request for specified file and position", .debug = true },
-    .{ .long = "debug_workspace_symbols", .kind = .string, .metavar = "QUERY_STRING", .help = "Test `workspace/symbol` request", .debug = true },
-    .{ .long = "debug_line", .kind = .int, .metavar = "INTEGER", .help = "Line position for language server tests (1-indexed)", .debug = true },
-    .{ .long = "debug_char", .kind = .int, .metavar = "INTEGER", .help = "Character position for language server tests (1-indexed)", .debug = true },
-    .{ .long = "debug_full_result", .kind = .flag, .help = "Print full result object instead of condensed version", .debug = true },
-};
-
-pub const CliResult = union(enum) {
-    run: Settings,
-    /// Text to print to stdout before exiting with code 0
-    exit_ok: []const u8,
-    /// Text to print to stderr before exiting with code 2
-    exit_err: []const u8,
-};
-
-const usage = "usage: zfls [options] [debug options]\n";
-
-fn helpText(a: Allocator, prog_version: []const u8, show_debug: bool) ![]const u8 {
-    _ = prog_version;
-    var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(a, usage);
-    try out.appendSlice(a, "\nfortls - Fortran Language Server\n");
-    var group: []const u8 = "";
-    try out.appendSlice(a, "\noptions:\n");
-    for (opts) |o| {
-        if (o.debug and !show_debug) continue;
-        const g = if (o.debug) "DEBUG" else o.group;
-        if (!std.mem.eql(u8, g, group)) {
-            group = g;
-            try out.print(a, "\n{s}:\n", .{g});
-            if (o.debug) try out.appendSlice(a, "  Options for debugging language server\n\n");
-        }
-        var left: std.ArrayList(u8) = .empty;
-        try left.appendSlice(a, "  ");
-        if (o.short) |s| {
-            try left.appendSlice(a, s);
-            if (o.metavar.len > 0) try left.print(a, " {s}", .{o.metavar});
-            try left.appendSlice(a, ", ");
-        }
-        try left.print(a, "--{s}", .{o.long});
-        if (o.metavar.len > 0) try left.print(a, " {s}", .{o.metavar});
-        try out.appendSlice(a, left.items);
-        if (left.items.len < 60) {
-            try out.appendNTimes(a, ' ', 62 - left.items.len);
-        } else {
-            try out.append(a, '\n');
-            try out.appendNTimes(a, ' ', 62);
-        }
-        try out.appendSlice(a, o.help);
-        try out.append(a, '\n');
+    /// Whether `d_lines` reads debug lines as code
+    pub fn dLinesCode(self: *const Settings) bool {
+        return if (self.d_lines) |v| std.ascii.eqlIgnoreCase(std.mem.trim(u8, v, " "), "code") else false;
     }
-    try out.appendSlice(a, "\nAll options starting with '--' can also be set in a configuration file, by " ++
-        "default named '.fortlsrc', '.fortls.json' or '.fortls' (other names/paths can specified " ++
-        "via -c or --config). For more details see our documentation: " ++
-        "https://fortls.fortran-lang.org/options.html#available-options\n");
-    return out.items;
-}
 
-fn findOpt(arg: []const u8) union(enum) { found: *const Opt, ambiguous, none } {
-    if (std.mem.startsWith(u8, arg, "--")) {
-        const name = arg[2..];
-        for (&opts) |*o| if (std.mem.eql(u8, o.long, name)) return .{ .found = o };
-        var match: ?*const Opt = null;
-        for (&opts) |*o| if (std.mem.startsWith(u8, o.long, name)) {
-            if (match != null) return .ambiguous;
-            match = o;
-        };
-        if (match) |m| return .{ .found = m };
-        return .none;
+    /// `fixed_line_length` when it limits fixed-form lines
+    pub fn fixedColumns(self: *const Settings) ?usize {
+        return if (self.fixed_line_length > 0) @intCast(self.fixed_line_length) else null;
     }
-    for (&opts) |*o| if (o.short) |s| if (std.mem.eql(u8, s, arg)) return .{ .found = o };
-    return .none;
-}
 
-fn setValue(a: Allocator, s: *Settings, comptime field: []const u8, v: anytype) void {
-    _ = a;
-    @field(s, field) = v;
-}
-
-/// Parse command line arguments (excluding the program name)
-pub fn parseArgs(a: Allocator, args: []const []const u8, version: []const u8) !CliResult {
-    var s: Settings = .{};
-    var any_debug_arg = false;
-    for (args) |arg| if (std.mem.find(u8, arg, "--debug_") != null) {
-        any_debug_arg = true;
-    };
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        var arg = args[i];
-        var inline_val: ?[]const u8 = null;
-        if (std.mem.startsWith(u8, arg, "--")) {
-            if (std.mem.findScalar(u8, arg, '=')) |eq| {
-                inline_val = arg[eq + 1 ..];
-                arg = arg[0..eq];
-            }
-        } else if (std.mem.startsWith(u8, arg, "-") and arg.len > 2) {
-            // short option with attached value, e.g. -n1
-            inline_val = arg[2..];
-            arg = arg[0..2];
-        }
-        const res = findOpt(arg);
-        const o = switch (res) {
-            .found => |o| o,
-            .ambiguous => return .{ .exit_err = try a.print("{s}zfls: error: ambiguous option: {s}\n", .{ usage, arg }) },
-            .none => return .{ .exit_err = try a.print("{s}zfls: error: unrecognized arguments: {s}\n", .{ usage, args[i] }) },
-        };
-        switch (o.kind) {
-            .help => return .{ .exit_ok = try helpText(a, version, any_debug_arg) },
-            .debug_help => return .{ .exit_ok = try helpText(a, version, true) },
-            .version => return .{ .exit_ok = try a.print("{s}\n", .{version}) },
-            .flag => {
-                if (inline_val != null) return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: ignored explicit argument '{s}'\n", .{ usage, o.long, inline_val.? }) };
-                inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
-                    if (std.mem.eql(u8, fname, o.long)) {
-                        if (@TypeOf(@field(s, fname)) == bool) @field(s, fname) = true;
-                    }
-                }
-            },
-            .int, .string, .json => {
-                const val = inline_val orelse blk: {
-                    if (i + 1 >= args.len) return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: expected one argument\n", .{ usage, o.long }) };
-                    i += 1;
-                    break :blk args[i];
-                };
-                if (o.kind == .json) {
-                    const v = json5.parse(a, val) catch {
-                        return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: invalid loads value: '{s}'\n", .{ usage, o.long, val }) };
-                    };
-                    if (std.mem.eql(u8, o.long, "pp_defs")) try applyPpDefs(a, &s, v);
-                    if (std.mem.eql(u8, o.long, "diagnostic_severity")) try applyDiagnosticSeverity(a, &s, v);
-                    continue;
-                }
-                if (isArgList(o.long)) {
-                    var list: StrList = .{};
-                    var words = std.mem.tokenizeAny(u8, val, " \t");
-                    while (words.next()) |w| try list.items.append(a, w);
-                    inline for (arg_lists) |name| if (std.mem.eql(u8, o.long, name)) {
-                        @field(s, name) = if (@FieldType(Settings, name) == StrList) list else @as(?StrList, list);
-                    };
-                    continue;
-                }
-                var handled = false;
-                inline for (@typeInfo(Settings).@"struct".field_names) |fname| {
-                    if (!handled and std.mem.eql(u8, fname, o.long)) {
-                        const FT = @TypeOf(@field(s, fname));
-                        if (FT == i64 or FT == ?i64) {
-                            @field(s, fname) = std.fmt.parseInt(i64, str.strip(val), 10) catch {
-                                return .{ .exit_err = try a.print("{s}zfls: error: argument --{s}: invalid int value: '{s}'\n", .{ usage, o.long, val }) };
-                            };
-                            handled = true;
-                        } else if (FT == []const u8 or FT == ?[]const u8) {
-                            @field(s, fname) = val;
-                            handled = true;
-                        }
-                    }
-                }
-            },
-            .list => {
-                var list: StrList = .{};
-                if (inline_val) |v| try list.add(a, v);
-                while (i + 1 < args.len and !(std.mem.startsWith(u8, args[i + 1], "-") and args[i + 1].len > 1)) {
-                    i += 1;
-                    try list.add(a, args[i]);
-                }
-                if (std.mem.eql(u8, o.long, "source_dirs")) s.source_dirs = list;
-                if (std.mem.eql(u8, o.long, "incl_suffixes")) s.incl_suffixes = list;
-                if (std.mem.eql(u8, o.long, "excl_suffixes")) s.excl_suffixes = list;
-                if (std.mem.eql(u8, o.long, "excl_paths")) s.excl_paths = list;
-                if (std.mem.eql(u8, o.long, "comment_markers")) s.comment_markers = list;
-                if (std.mem.eql(u8, o.long, "include_dirs")) s.include_dirs = list;
-                if (std.mem.eql(u8, o.long, "pp_suffixes")) s.pp_suffixes = list;
-                if (std.mem.eql(u8, o.long, "external_modules")) s.external_modules = list;
-                if (std.mem.eql(u8, o.long, "compiler_include_dirs")) s.compiler_include_dirs = list;
-            },
-        }
+    /// Whether the compiler of fixed-form files (`compiler_diagnostics_fixed`,
+    /// else `compiler_diagnostics`) counts a TAB-format line's TAB as the
+    /// columns up to 6 for `fixed_line_length`, as gfortran and LLVM Flang
+    /// do; ifx and ifort count it as one, as zfls does without a compiler
+    pub fn fixedTabWide(self: *const Settings) bool {
+        const name = self.compiler_diagnostics_fixed orelse self.compiler_diagnostics orelse return false;
+        const n = std.mem.trim(u8, name, " ");
+        return std.ascii.eqlIgnoreCase(n, "gfortran") or std.ascii.eqlIgnoreCase(n, "flang");
     }
-    return .{ .run = s };
-}
+};
 
 /// Store a JSON `pp_defs` value (object, or list of names) into settings
 pub fn applyPpDefs(a: Allocator, s: *Settings, v: json.Value) !void {
@@ -505,6 +298,16 @@ pub fn applyDiagnosticSeverity(a: Allocator, s: *Settings, v: json.Value) !void 
     if (v != .object) return;
     for (v.object.keys(), v.object.values()) |k, x| {
         try s.diagnostic_severity.append(a, .{ .code = k, .level = try jsonScalarString(a, x) });
+    }
+}
+
+/// Store a JSON `file_associations` value, `{"pattern": "language"}`; a
+/// language that is not a string is left out, as VS Code does
+pub fn applyFileAssociations(a: Allocator, s: *Settings, v: json.Value) !void {
+    s.file_associations = .empty;
+    if (v != .object) return;
+    for (v.object.keys(), v.object.values()) |k, x| {
+        if (x == .string) try s.file_associations.append(a, .{ .pattern = k, .language = x.string });
     }
 }
 
@@ -546,18 +349,18 @@ fn jsonBool(v: ?json.Value, default: bool) bool {
 }
 
 /// The options that are arguments of another program: one string, split at
-/// spaces, on the command line, and a list or a string in a configuration
-/// file
-const arg_lists = .{ "compiler_args", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
+/// spaces, or a JSON list, on the command line, and a list or a string in a
+/// configuration file
+pub const arg_lists = .{ "compiler_args", "compiler_args_fixed", "compiler_fypp_args", "fortitude_args", "codee_args", "formatter_args", "formatter_fixed_args" };
 
-fn isArgList(name: []const u8) bool {
+pub fn isArgList(name: []const u8) bool {
     inline for (arg_lists) |n| if (std.mem.eql(u8, name, n)) return true;
     return false;
 }
 
 /// Arguments: a string split at spaces, or a list, which keeps repeated
 /// ones (-I a -I b); null for anything else
-fn argList(a: Allocator, v: json.Value) !?StrList {
+pub fn argList(a: Allocator, v: json.Value) !?StrList {
     var list: StrList = .{};
     switch (v) {
         .string => |x| {
@@ -586,6 +389,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "incl_suffixes")) |v| s.incl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "excl_suffixes")) |v| s.excl_suffixes = try jsonList(a, v);
     if (json.get(cfg, "comment_markers")) |v| s.comment_markers = try jsonList(a, v);
+    s.disable_openmp_conditional = jsonBool(json.get(cfg, "disable_openmp_conditional"), s.disable_openmp_conditional);
+    if (json.get(cfg, "d_lines")) |v| s.d_lines = json.str(v);
+    if (json.get(cfg, "file_associations")) |v| try applyFileAssociations(a, s, v);
     // General options
     s.nthreads = jsonInt(json.get(cfg, "nthreads"), s.nthreads);
     s.notify_init = jsonBool(json.get(cfg, "notify_init"), s.notify_init);
@@ -604,13 +410,17 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Hover options
     s.hover_signature = jsonBool(json.get(cfg, "hover_signature"), s.hover_signature);
     if (json.str(json.get(cfg, "hover_language"))) |hl| s.hover_language = hl;
+    if (json.str(json.get(cfg, "doc_math"))) |dm| s.doc_math = dm;
     s.prefer_implementation = jsonBool(json.get(cfg, "prefer_implementation"), s.prefer_implementation);
     s.lowercase_hover = jsonBool(json.get(cfg, "lowercase_hover"), s.lowercase_hover);
+    s.hover_no_type_components = jsonBool(json.get(cfg, "hover_no_type_components"), s.hover_no_type_components);
+    s.hover_plain_comments = jsonBool(json.get(cfg, "hover_plain_comments"), s.hover_plain_comments);
     // Diagnostic options
     s.max_line_length = jsonInt(json.get(cfg, "max_line_length"), s.max_line_length);
     s.max_comment_line_length = jsonInt(json.get(cfg, "max_comment_line_length"), s.max_comment_line_length);
     s.fixed_line_length = jsonInt(json.get(cfg, "fixed_line_length"), s.fixed_line_length);
     s.disable_diagnostics = jsonBool(json.get(cfg, "disable_diagnostics"), s.disable_diagnostics);
+    s.diagnostics_change_delay = jsonInt(json.get(cfg, "diagnostics_change_delay"), s.diagnostics_change_delay);
     s.workspace_diagnostics = jsonBool(json.get(cfg, "workspace_diagnostics"), s.workspace_diagnostics);
     if (json.get(cfg, "diagnostic_severity")) |v| try applyDiagnosticSeverity(a, s, v);
     if (json.get(cfg, "external_modules")) |v| s.external_modules = try jsonList(a, v);
@@ -618,12 +428,17 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "compiler_diagnostics")) |v| s.compiler_diagnostics = json.str(v);
     if (json.get(cfg, "compiler_path")) |v| s.compiler_path = json.str(v);
     if (json.get(cfg, "compiler_args")) |v| s.compiler_args = if (v == .null) null else try argList(a, v) orelse s.compiler_args;
+    if (json.get(cfg, "compiler_diagnostics_fixed")) |v| s.compiler_diagnostics_fixed = json.str(v);
+    if (json.get(cfg, "compiler_path_fixed")) |v| s.compiler_path_fixed = json.str(v);
+    if (json.get(cfg, "compiler_args_fixed")) |v| s.compiler_args_fixed = if (v == .null) null else try argList(a, v) orelse s.compiler_args_fixed;
+    if (json.get(cfg, "lint_dialect")) |v| s.lint_dialect = json.str(v);
     if (json.get(cfg, "compiler_mod_dir")) |v| s.compiler_mod_dir = json.str(v);
     if (json.get(cfg, "compiler_include_dirs")) |v| s.compiler_include_dirs = try jsonList(a, v);
     s.compiler_no_save = jsonBool(json.get(cfg, "compiler_no_save"), s.compiler_no_save);
     s.compiler_on_change = jsonBool(json.get(cfg, "compiler_on_change"), s.compiler_on_change);
     s.compiler_change_delay = jsonInt(json.get(cfg, "compiler_change_delay"), s.compiler_change_delay);
     s.compiler_no_dependencies = jsonBool(json.get(cfg, "compiler_no_dependencies"), s.compiler_no_dependencies);
+    s.compiler_no_compile_commands = jsonBool(json.get(cfg, "compiler_no_compile_commands"), s.compiler_no_compile_commands);
     if (json.get(cfg, "compiler_fypp")) |v| s.compiler_fypp = json.str(v);
     if (json.get(cfg, "compiler_fypp_args")) |v| if (try argList(a, v)) |l| {
         s.compiler_fypp_args = l;
@@ -657,6 +472,9 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "bind_c_clangd")) |v| s.bind_c_clangd = json.str(v);
     // Code Actions options
     s.enable_code_actions = jsonBool(json.get(cfg, "enable_code_actions"), s.enable_code_actions);
+    // Code lens options
+    s.code_lens_no_references = jsonBool(json.get(cfg, "code_lens_no_references"), s.code_lens_no_references);
+    s.code_lens_no_run = jsonBool(json.get(cfg, "code_lens_no_run"), s.code_lens_no_run);
     // Preprocessor options
     // like every other option, a value in the file replaces the one from the
     // command line, and no value leaves it alone (upstream #536)
@@ -665,8 +483,92 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     if (json.get(cfg, "include_dirs")) |v| s.include_dirs = try jsonList(a, v);
     if (json.get(cfg, "compile_commands")) |v| s.compile_commands = json.str(v);
     s.disable_compile_commands = jsonBool(json.get(cfg, "disable_compile_commands"), s.disable_compile_commands);
+    s.disable_intel_directives = jsonBool(json.get(cfg, "disable_intel_directives"), s.disable_intel_directives);
     // Debug options
     if (jsonBool(json.get(cfg, "debug_log"), s.debug_log) and !s.debug_log) s.debug_log = true;
+}
+
+/// A copy of `s` whose lists are its own, so that adding to them leaves
+/// `s` alone. The strings are shared: settings never change one in place.
+pub fn clone(a: Allocator, s: Settings) Allocator.Error!Settings {
+    var out = s;
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| {
+        const v = @field(s, name);
+        switch (@FieldType(Settings, name)) {
+            StrList => @field(out, name) = .{ .items = try v.items.clone(a) },
+            ?StrList => if (v) |l| {
+                @field(out, name) = StrList{ .items = try l.items.clone(a) };
+            },
+            std.ArrayList(PpDef), std.ArrayList(DiagLevel), std.ArrayList(Association) => @field(out, name) = try v.clone(a),
+            else => {},
+        }
+    }
+    return out;
+}
+
+/// The names of the configuration file looked for in the root, after the
+/// one `config` names (`-c`), the first found being read: zfls's own, then
+/// fortls's
+pub const default_config_files = [_][]const u8{ ".zflsrc", ".fortlsrc", ".fortls.json", ".fortls" };
+
+pub fn configFileNames(config: []const u8) [1 + default_config_files.len][]const u8 {
+    return .{config} ++ default_config_files;
+}
+
+/// The options as a JSON object, under the configuration file's names,
+/// for the log; without the debug requests' options
+pub fn toJson(a: Allocator, s: *const Settings) Allocator.Error!json.Value {
+    var obj: json.ObjectMap = .empty;
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| {
+        if (comptime !std.mem.startsWith(u8, name, "debug_") or std.mem.eql(u8, name, "debug_log")) {
+            const v = @field(s, name);
+            const out: json.Value = switch (@FieldType(Settings, name)) {
+                StrList => try json.from(a, v.slice()),
+                ?StrList => if (v) |l| try json.from(a, l.slice()) else .null,
+                std.ArrayList(PpDef), std.ArrayList(DiagLevel), std.ArrayList(Association) => blk: {
+                    var m: json.ObjectMap = .empty;
+                    for (v.items) |x| {
+                        const kv = switch (@TypeOf(x)) {
+                            PpDef => .{ x.name, x.value },
+                            DiagLevel => .{ x.code, x.level },
+                            else => .{ x.pattern, x.language },
+                        };
+                        try m.put(a, kv[0], .{ .string = kv[1] });
+                    }
+                    break :blk .{ .object = m };
+                },
+                else => try json.from(a, v),
+            };
+            try obj.put(a, name, out);
+        }
+    }
+    return .{ .object = obj };
+}
+
+/// Whether option `name` has the same value in `x` and `y`
+pub fn sameValue(x: *const Settings, y: *const Settings, comptime name: []const u8) bool {
+    return eqlValue(@FieldType(Settings, name), @field(x, name), @field(y, name));
+}
+
+fn eqlValue(comptime T: type, x: T, y: T) bool {
+    switch (@typeInfo(T)) {
+        .optional => |o| return if (x) |xv| (if (y) |yv| eqlValue(o.child, xv, yv) else false) else y == null,
+        .bool, .int => return x == y,
+        .pointer => |p| {
+            if (p.child == u8) return std.mem.eql(u8, x, y);
+            if (x.len != y.len) return false;
+            for (x, y) |xi, yi| if (!eqlValue(p.child, xi, yi)) return false;
+            return true;
+        },
+        .@"struct" => |st| {
+            if (T == StrList) return eqlValue([]const []const u8, x.slice(), y.slice());
+            // an ArrayList: its items, whatever its capacity
+            if (@hasField(T, "capacity")) return eqlValue(@FieldType(T, "items"), x.items, y.items);
+            inline for (st.field_names) |name| if (!eqlValue(@FieldType(T, name), @field(x, name), @field(y, name))) return false;
+            return true;
+        },
+        else => @compileError("no comparison of " ++ @typeName(T)),
+    }
 }
 
 /// Format a JSON5 parse error like the Python json5 library
@@ -700,6 +602,25 @@ test "a config file only replaces the preprocessor options it sets" {
     try std.testing.expectEqual(@as(usize, 2), s.pp_suffixes.?.len());
 }
 
+test "a clone's lists are its own, and compare equal until changed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{};
+    try s.source_dirs.add(a, "src");
+    try s.setPpDef(a, "A", "1");
+    var c = try clone(a, s);
+    inline for (@typeInfo(Settings).@"struct".field_names) |name| try std.testing.expect(sameValue(&s, &c, name));
+    try c.source_dirs.add(a, "lib");
+    try c.setPpDef(a, "A", "2");
+    try std.testing.expectEqual(@as(usize, 1), s.source_dirs.len());
+    try std.testing.expectEqualStrings("1", s.pp_defs.items[0].value);
+    try std.testing.expect(!sameValue(&s, &c, "source_dirs"));
+    try std.testing.expect(!sameValue(&s, &c, "pp_defs"));
+    c.compiler_args = .{};
+    try std.testing.expect(!sameValue(&s, &c, "compiler_args"));
+}
+
 test "formatter arguments: a string split at spaces, or a list" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -716,16 +637,27 @@ test "formatter arguments: a string split at spaces, or a list" {
     try std.testing.expectEqual(@as(usize, 2), s.formatter_fixed_args.len());
 }
 
-test "cli parsing" {
+test "lint_dialect: on the command line and in a configuration file" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const r = try parseArgs(a, &.{ "--incremental_sync", "--sort_keywords", "-n1", "--source_dirs", "a", "b", "--hover_lang", "x" }, "0.1.0");
-    const s = r.run;
-    try std.testing.expect(s.incremental_sync);
-    try std.testing.expectEqual(@as(i64, 1), s.nthreads);
-    try std.testing.expectEqual(@as(usize, 2), s.source_dirs.len());
-    try std.testing.expectEqualStrings("x", s.hover_language);
-    const e = try json5ErrorMessage(a, "{\n    \"source_dirs\", \"s\"\n}\n", 19);
-    try std.testing.expectEqualStrings("<string>:2 Unexpected \",\" at column 18", e);
+    var s = (try parseArgs(a, &.{ "--lint_dialect", "flang" }, "0.1.0")).run;
+    try std.testing.expectEqualStrings("flang", s.lint_dialect.?);
+    try applyConfig(a, &s, try json5.parse(a, "{\"lint_dialect\": \"gfortran\"}"));
+    try std.testing.expectEqualStrings("gfortran", s.lint_dialect.?);
+}
+
+test "the options as JSON" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var s: Settings = .{ .debug_filepath = "x.f90" };
+    try s.setPpDef(a, "A", "1");
+    try s.include_dirs.add(a, "inc");
+    const text = try json.stringify(a, try toJson(a, &s));
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_defs\":{\"A\":\"1\"}") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"include_dirs\":[\"inc\"]") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"pp_suffixes\":null") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"debug_log\":false") != null);
+    try std.testing.expect(std.mem.find(u8, text, "debug_filepath") == null);
 }

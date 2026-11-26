@@ -1,8 +1,10 @@
 //! The ifx kit: what Intel's ifx needs from Visual Studio to link a `/MD`
 //! program, made from Zig's own files, so that the VS Code extension can
 //! build with ifx where Visual Studio is not installed (`ifx /MD
-//! /fuse-ld=lld`, with `LIB` on `lib/ifx`). It installs to `lib/ifx`:
-//! - `zfls_ifx_shim.obj`: the startup code (src/ifxkit/shim.zig)
+//! /fuse-ld=lld`, with `LIB` on `lib/ifx`), LFortran too (with lld-link
+//! standing for `link`), and LLVM Flang (`-fms-runtime-lib=dll
+//! -fuse-ld=lld`). It installs to `lib/ifx`:
+//! - `zfls_ifx_shim.obj`: the startup code (src/ifxkit/shim.zig, cxx.zig)
 //! - import libraries under the names Intel's objects and libraries ask
 //!   for (`msvcrt`, `ucrt`, `vcruntime`, `kernel32`, ...), made with
 //!   `zig dlltool` from the MinGW-w64 `.def` files that come with Zig
@@ -13,7 +15,9 @@ const std = @import("std");
 /// Import libraries: the name ifx's objects and libraries ask for, and
 /// the MinGW-w64 definition file of its DLL (`lib/libc/mingw/...`).
 /// `msvcrt` and `oldnames` are the UCRT too (with the aliases of the old
-/// names); `uuid` has nothing to import (Intel's COM modules only).
+/// names); `uuid` has nothing to import (Intel's COM modules only), nor
+/// `msvcprt` (LLVM Flang's runtime asks for it; what it uses of it is in
+/// the startup object).
 const libs = [_]struct { []const u8, ?[]const u8 }{
     .{ "msvcrt", "lib-common/ucrtbase.def.in" },
     .{ "ucrt", "lib-common/ucrtbase.def.in" },
@@ -29,12 +33,17 @@ const libs = [_]struct { []const u8, ?[]const u8 }{
     .{ "ws2_32", "lib-common/ws2_32.def.in" },
     .{ "version", "lib-common/version.def" },
     .{ "uuid", null },
+    .{ "msvcprt", null },
 };
 
-/// The step that installs the kit
-pub fn add(b: *std.Build) *std.Build.Step {
+/// The kit: the step that installs it, and its files gathered in a
+/// directory of the cache (for the tests that link with it)
+pub const Kit = struct { step: *std.Build.Step, dir: std.Build.LazyPath };
+
+pub fn add(b: *std.Build) Kit {
     const step = b.step("ifx-kit", "Install what ifx needs to link without Visual Studio (lib/ifx)");
     const dir: std.Build.InstallDir = .{ .custom = "lib/ifx" };
+    const gathered = b.addWriteFiles();
 
     const shim = b.addObject(.{
         .name = "zfls_ifx_shim",
@@ -50,6 +59,7 @@ pub fn add(b: *std.Build) *std.Build.Step {
     });
     shim.bundle_compiler_rt = false;
     step.dependOn(&b.addInstallFileWithDir(shim.getEmittedBin(), dir, "zfls_ifx_shim.obj").step);
+    _ = gathered.addCopyFile(shim.getEmittedBin(), "zfls_ifx_shim.obj");
 
     const mingw = std.Build.LazyPath.zig_lib.path(b, "libc/mingw");
     const empty = b.addWriteFiles().add("empty.def", "LIBRARY \"ucrtbase.dll\"\nEXPORTS\n");
@@ -73,6 +83,7 @@ pub fn add(b: *std.Build) *std.Build.Step {
         tool.addArg("-l");
         const out = tool.addOutputFileArg2(b.fmt("{s}.lib", .{name}), .{});
         step.dependOn(&b.addInstallFileWithDir(out, dir, b.fmt("{s}.lib", .{name})).step);
+        _ = gathered.addCopyFile(out, b.fmt("{s}.lib", .{name}));
     }
-    return step;
+    return .{ .step = step, .dir = gathered.getDirectory() };
 }
