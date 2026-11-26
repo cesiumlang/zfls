@@ -1,0 +1,60 @@
+# A rehearsal of the release's checksums, GPG signature and attestations on
+# the archives of an earlier CI run, publishing nothing: no tag, no release.
+# Runs when this file is pushed on the signing branch; deleted before the
+# branch merges.
+name: Release rehearsal
+
+on:
+  push:
+    branches: [issue-766-767-signing]
+    paths: [.github/workflows/release-rehearsal.yml]
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+env:
+  # a finished CI run with a dist artifact
+  DIST_RUN: "45730185340"
+
+jobs:
+  rehearse:
+    name: Rehearse the release's signing and attestations
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+          run-id: ${{ env.DIST_RUN }}
+          github-token: ${{ github.token }}
+
+      - name: Checksums
+        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          wc -l dist/SHA256SUMS
+
+      - uses: ./.github/actions/release-integrity
+        with:
+          sign: ${{ vars.RELEASE_GPG_SIGNING }}
+          attest: ${{ vars.RELEASE_ATTESTATIONS }}
+          gpg-key: ${{ secrets.RELEASE_GPG_KEY }}
+          gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+
+      - name: Verify an attestation, as a user would
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify dist/zfls-v0.5.0-x86_64-windows.zip --repo "$GITHUB_REPOSITORY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rehearsal
+          path: |
+            dist/SHA256SUMS
+            dist/SHA256SUMS.asc
+          if-no-files-found: error

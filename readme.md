@@ -139,6 +139,8 @@ irm https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.ps1
 
 zfls is not signed. On macOS, an archive downloaded in a web browser is quarantined, and since zfls is not notarized by Apple, macOS then refuses to run it (*Apple could not verify "zfls" is free of malware*); Windows can likewise question an unsigned program downloaded in a browser (SmartScreen, Smart App Control). What the scripts download is not marked like that. For an archive downloaded in a browser on macOS, remove the quarantine before unpacking it (`xattr -d com.apple.quarantine zfls-v<version>-<target>.tar.gz`), or from `zfls` itself if it is already unpacked, or allow it once in System Settings, Privacy & Security, "Open Anyway". On Windows, unblock the zip before unpacking it (`Unblock-File`, or "Unblock" in its Properties).
 
+A release can be verified: `SHA256SUMS` has a detached GPG signature, `SHA256SUMS.asc`, made with the release signing key in [`SIGNING-KEY.asc`](SIGNING-KEY.asc) (fingerprint `29BF D79E 9318 DEFE 5391 28D2 6C55 4C37 2B9A 23AC`). Import the key, check the signature, then the archive: `gpg --import SIGNING-KEY.asc`, `gpg --verify SHA256SUMS.asc SHA256SUMS`, `sha256sum -c --ignore-missing SHA256SUMS`. Every release file also has a GitHub build attestation: `gh attestation verify zfls-v<version>-<target>.tar.gz --repo cesiumlang/zfls`.
+
 The [VS Code extension](#vs-code-extension) includes `zfls`, and is not affected.
 
 ## Building

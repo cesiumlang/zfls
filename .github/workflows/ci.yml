@@ -449,6 +449,7 @@ jobs:
     needs: [version, compile]
     if: ${{ !cancelled() && needs.compile.result == 'success' && vars.APPLE_SIGNING == 'true' }}
     runs-on: macos-15
+    timeout-minutes: 120
     env:
       APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
       APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -507,14 +508,29 @@ jobs:
       - name: Notarize
         run: |
           echo "$APPLE_NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID")
+          # submit every file first, then wait for each verdict (a team's
+          # first submissions can take a long while on Apple's side)
+          ids=()
           for dir in pkg/*/; do
             name=$(basename "$dir")
             ditto -c -k --keepParent "$dir/zfls" "$RUNNER_TEMP/$name.zip"
-            xcrun notarytool submit "$RUNNER_TEMP/$name.zip" --wait \
-              --key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" \
-              --issuer "$APPLE_NOTARY_ISSUER_ID"
+            id=$(xcrun notarytool submit "$RUNNER_TEMP/$name.zip" --no-wait --output-format json "${auth[@]}" | jq -r .id)
+            echo "$name: submission $id"
+            ids+=("$id")
+          done
+          failed=0
+          for id in "${ids[@]}"; do
+            xcrun notarytool wait "$id" --timeout 90m --output-format json "${auth[@]}" > "$RUNNER_TEMP/result.json" || true
+            status=$(jq -r '.status // "no answer"' "$RUNNER_TEMP/result.json")
+            echo "submission $id: $status"
+            if [ "$status" != Accepted ]; then
+              xcrun notarytool log "$id" "${auth[@]}" || true
+              failed=1
+            fi
           done
           rm "$RUNNER_TEMP/notary.p8"
+          exit "$failed"
 
       - name: Verify the signatures
         run: |
@@ -1421,6 +1437,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # the attestations of the release files
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
@@ -1481,6 +1500,17 @@ jobs:
           git tag -a "v$VERSION" -m "zfls v$VERSION" "$SHA"
           git push origin "v$VERSION"
           (cd dist && sha256sum -- * > SHA256SUMS)
+
+      # A detached GPG signature of SHA256SUMS (the public key is
+      # SIGNING-KEY.asc) and build attestations of the files: each skipped
+      # while its repository variable is not true
+      - name: Sign and attest the release files
+        uses: ./.github/actions/release-integrity
+        with:
+          sign: ${{ vars.RELEASE_GPG_SIGNING }}
+          attest: ${{ vars.RELEASE_ATTESTATIONS }}
+          gpg-key: ${{ secrets.RELEASE_GPG_KEY }}
+          gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
