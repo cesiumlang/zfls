@@ -144,8 +144,10 @@ verify_release() {
         export GNUPGHOME
         mkdir "$GNUPGHOME"
         chmod 700 "$GNUPGHOME" 2>/dev/null || true
-        gpg --batch --quiet --import "$tmp/key.asc" >/dev/null 2>&1 || die "cannot import the release signing key"
-        gpg --batch --status-fd 1 --verify "$tmp/SHA256SUMS.asc" "$tmp/SHA256SUMS" > "$tmp/gpg.status" 2>/dev/null ||
+        # no gpg-agent: checking a signature needs none, and it could not
+        # start where the keyring's socket paths are over 108 bytes
+        gpg --batch --quiet --no-autostart --import "$tmp/key.asc" >/dev/null 2>&1 || die "cannot import the release signing key"
+        gpg --batch --no-autostart --status-fd 1 --verify "$tmp/SHA256SUMS.asc" "$tmp/SHA256SUMS" > "$tmp/gpg.status" 2>/dev/null ||
             die "SHA256SUMS of v$version does not match its signature"
         # (fixed strings: BSD grep reads \] in a pattern differently)
         grep VALIDSIG "$tmp/gpg.status" | grep -q -F "$key_fpr" ||
