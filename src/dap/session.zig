@@ -76,6 +76,7 @@ const gdb_requests = @import("gdb_requests.zig");
 const choice = @import("choice.zig");
 const capabilities = @import("capabilities.zig");
 const engine_conditions = @import("engine_conditions.zig");
+const process_id = @import("process_id.zig");
 const engine_data = @import("engine_data.zig");
 const engine_completions = @import("engine_completions.zig");
 const engine_set = @import("engine_set.zig");
@@ -574,8 +575,8 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
             initialized(s, a);
         },
         .attach => {
-            const pid = json.int(json.get(args, "processId")) orelse return s.fail(a, req, "no processId");
-            s.engine.attach(@intCast(pid)) catch return s.fail(a, req, "could not attach");
+            const pid = (process_id.parse(json.get(args, "processId")) catch return s.fail(a, req, "processId is not a process id")) orelse return s.fail(a, req, "no processId");
+            s.engine.attach(pid) catch return s.fail(a, req, "could not attach");
             s.launched = true;
             s.attached = true;
             if (json.str(json.get(args, "sourceRoot"))) |root| index(s, a, root);

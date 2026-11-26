@@ -1595,6 +1595,11 @@
                 "default": false,
                 "description": "%debugger.fortran.attach.cppExceptionFilters.description%"
               },
+              "dbgeng": {
+                "type": "boolean",
+                "default": false,
+                "description": "%debugger.fortran.attach.dbgeng.description%"
+              },
               "sourceRoot": {
                 "type": "string",
                 "description": "%debugger.fortran.attach.sourceRoot.description%"

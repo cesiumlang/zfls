@@ -29,6 +29,7 @@ const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
 const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
+const process_id = @import("process_id.zig");
 const gdb_pending = @import("gdb_pending.zig");
 const gdb_io = @import("gdb_io.zig");
 const gdb_exit = @import("gdb_exit.zig");
@@ -171,11 +172,8 @@ pub fn launch(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         const own = wanted and gdb_entry.atLaunch(s, a, program, cwd);
         try o.put(a, "stopAtBeginningOfMainSubprogram", .{ .bool = wanted and !own });
     } else {
-        if (json.get(args, "processId")) |p| switch (p) {
-            .integer => |n| try o.put(a, "pid", .{ .integer = n }),
-            .string => |t| if (t.len > 0) try o.put(a, "pid", .{ .integer = std.fmt.parseInt(i64, std.mem.trim(u8, t, " "), 10) catch return s.fail(a, req, "processId is not a number") }),
-            else => {},
-        };
+        const pid = process_id.parse(json.get(args, "processId")) catch return s.fail(a, req, "processId is not a process id");
+        if (pid) |n| try o.put(a, "pid", .{ .integer = n });
         if (program) |p| if (p.len > 0) try o.put(a, "program", .{ .string = p });
         if (json.get(args, "target")) |t| if (t != .null) try o.put(a, "target", .{ .string = try text(a, t) });
     }

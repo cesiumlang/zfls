@@ -41,7 +41,9 @@ pub fn run(io: Io, gpa: Allocator, zfls: []const u8, exe: []const u8, src: []con
 
 fn session(c: *Client, child: *std.process.Child, pid: u32, src: []const u8) !void {
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
-    _ = try c.request("attach", .{ .processId = pid, .dbgeng = true });
+    // as text, as `${command:pickProcess}` gives it (#784)
+    var buf: [16]u8 = undefined;
+    _ = try c.request("attach", .{ .processId = try std.mem.print(&buf, "{d}", .{pid}), .dbgeng = true });
     _ = try c.event("initialized");
     const bps = items(try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = 8 }} }), "breakpoints");
     try check(bps.len == 1 and get(bps[0], "verified").?.bool, "the engine's attach: a verified breakpoint", .{});
