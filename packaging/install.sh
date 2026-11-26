@@ -142,11 +142,13 @@ verify_release() {
         # a keyring of its own: the user's is not touched
         GNUPGHOME="$tmp/gnupg"
         export GNUPGHOME
-        mkdir "$GNUPGHOME" && chmod 700 "$GNUPGHOME" 2>/dev/null || true
+        mkdir "$GNUPGHOME"
+        chmod 700 "$GNUPGHOME" 2>/dev/null || true
         gpg --batch --quiet --import "$tmp/key.asc" >/dev/null 2>&1 || die "cannot import the release signing key"
         gpg --batch --status-fd 1 --verify "$tmp/SHA256SUMS.asc" "$tmp/SHA256SUMS" > "$tmp/gpg.status" 2>/dev/null ||
             die "SHA256SUMS of v$version does not match its signature"
-        grep -q "^\[GNUPG:\] VALIDSIG .*$key_fpr" "$tmp/gpg.status" ||
+        # (fixed strings: BSD grep reads \] in a pattern differently)
+        grep VALIDSIG "$tmp/gpg.status" | grep -q -F "$key_fpr" ||
             die "SHA256SUMS of v$version is not signed by the release key ($key_fpr)"
         echo "Verified the signature of SHA256SUMS (release key $key_fpr)"
     elif have gh && gh auth status >/dev/null 2>&1; then
