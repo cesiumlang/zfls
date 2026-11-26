@@ -2,7 +2,7 @@
 # place.sh NUMBER AFTER
 # Adds zfls issue NUMBER to the Roadmap if it is not on it (Status Todo,
 # "Next action: agent"), and puts its row after the row of issue AFTER, or
-# first when AFTER is `top`. Run rank.sh after a batch.
+# first when AFTER is `top`.
 set -euo pipefail
 number=$1 after=$2
 export GH_TOKEN="${GH_TOKEN:-$(bash /c/scratch/github-apps/app-token.sh cesiumlang)}"

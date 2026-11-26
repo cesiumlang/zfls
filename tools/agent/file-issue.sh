@@ -4,7 +4,7 @@
 # the milestone MILESTONE (environment; default: the next version, the open
 # `v...` milestone created first), puts it in the Roadmap after the row of
 # issue AFTER (or first: `top`) with "Next action: agent", and records its
-# blockers. Prints the number. After a batch, run rank.sh once.
+# blockers. Prints the number.
 set -euo pipefail
 title=$1 body=$2 labels=$3 after=$4
 shift 4
