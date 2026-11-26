@@ -117,6 +117,9 @@ pub const dap_completions = @import("dap/completions.zig");
 pub const dap_cpp_filters = @import("dap/cpp_filters.zig");
 pub const dap_data_ids = @import("dap/data_ids.zig");
 pub const dap_gdb_data = @import("dap/gdb_data.zig");
+pub const profile = @import("profile.zig");
+pub const profile_ranking_test = @import("profile/_test/ranking_test.zig");
+pub const profile_symbols_test = @import("profile/_test/symbols_test.zig");
 
 test {
     std.testing.refAllDecls(@This());
