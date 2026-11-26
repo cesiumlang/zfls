@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # file-issue.sh TITLE BODY_FILE LABELS AFTER [BLOCKER...]
 # Files a zfls issue as the app with LABELS (comma-separated) and `agent`, in
-# the next version's milestone (the open one due first, else the lowest),
-# puts it in the Roadmap after the row of issue AFTER (or first: `top`) with
-# "Next action: agent", and records its blockers. Prints the number. After a
-# batch, run rank.sh once.
+# the milestone MILESTONE (environment; default: the next version, the open
+# `v...` milestone created first), puts it in the Roadmap after the row of
+# issue AFTER (or first: `top`) with "Next action: agent", and records its
+# blockers. Prints the number. After a batch, run rank.sh once.
 set -euo pipefail
 title=$1 body=$2 labels=$3 after=$4
 shift 4
 export GH_TOKEN="${GH_TOKEN:-$(bash /c/scratch/github-apps/app-token.sh cesiumlang)}"
 R=cesiumlang/zfls
 
-milestone=$(gh api "repos/$R/milestones?state=open&sort=due_on&direction=asc" --jq '.[0].title // empty' < /dev/null)
+milestone=${MILESTONE:-$(gh api "repos/$R/milestones?state=open&per_page=100" --jq '[.[] | select(.title | startswith("v"))] | sort_by(.number) | .[0].title // empty' < /dev/null)}
 [ -n "$milestone" ] || { echo "no open milestone" >&2; exit 1; }
 args=(--repo "$R" --title "$title" --label agent --milestone "$milestone" --body-file "$body")
 IFS=, read -ra list <<< "$labels"

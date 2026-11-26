@@ -22,5 +22,5 @@ while IFS=$'\t' read -r item number who; do
     gh issue edit "$number" --repo "$R" --add-label agent < /dev/null > /dev/null
   fi
   gh project item-edit --id "$item" --project-id "$project" --field-id "$fid" --single-select-option-id "$opt" < /dev/null > /dev/null
-done <<< "$(gh project item-list 2 --owner cesiumlang --limit 500 --format json --jq '.items[] | select(.status != "Done" and .content.type == "Issue") | [.id, (.content.number | tostring), (if (.assignees // []) | index("emanspeaks") then "emanspeaks" else "agent" end)] | @tsv' < /dev/null)"
+done <<< "$(gh project item-list 2 --owner cesiumlang --limit 200 --format json --jq '.items[] | select(.status != "Done" and .content.type == "Issue") | [.id, (.content.number | tostring), (if (.assignees // []) | index("emanspeaks") then "emanspeaks" else "agent" end)] | @tsv' < /dev/null)"
 echo "next action emanspeaks on $owners, agent on $agents"

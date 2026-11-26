@@ -6,7 +6,7 @@ set -euo pipefail
 export GH_TOKEN="${GH_TOKEN:-$(bash /c/scratch/github-apps/app-token.sh cesiumlang)}"
 project=$(gh project view 2 --owner cesiumlang --format json --jq .id < /dev/null)
 rank=$(gh project field-list 2 --owner cesiumlang --format json --jq '.fields[] | select(.name == "Rank") | .id' < /dev/null)
-changes=$(gh project item-list 2 --owner cesiumlang --limit 500 --format json --jq '.items | to_entries[] | select((.value.rank // 0) != (.key + 1)) | "\(.value.id) \(.key + 1)"' < /dev/null)
+changes=$(gh project item-list 2 --owner cesiumlang --limit 200 --format json --jq '.items | to_entries[] | select((.value.rank // 0) != (.key + 1)) | "\(.value.id) \(.key + 1)"' < /dev/null)
 [ -z "$changes" ] && { echo "ranks already in order"; exit 0; }
 body="" i=0
 while read -r id n; do
