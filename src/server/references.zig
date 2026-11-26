@@ -33,6 +33,7 @@ const Server = srv.Server;
 const definition = @import("definition.zig");
 const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
+const name_places = @import("name_places.zig");
 const groups = @import("groups.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
@@ -251,32 +252,25 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
     // the entity's own name, and for references the local names USE
     // statements give it (#233): a rename changes only the name it starts on
     const names = if (for_rename) &[_][]const u8{def_name} else try useAliases(self, a, def_obj, def_name);
-    const name_res = try a.alloc(regex.Regex, names.len);
-    var n_res: usize = 0;
-    defer for (name_res[0..n_res]) |*re| re.deinit();
-    for (names) |name| {
-        name_res[n_res] = regex.Regex.compile(a, try a.print("(?:\\W|^)({s})(?=\\W|$)", .{name}), regex.I) catch return &.{};
-        n_res += 1;
-    }
     var files: std.ArrayList(*FortranFile) = .empty;
     if (restrict) |f| try files.append(a, f) else try files.appendSlice(a, self.workspace.values());
     var override_cache: std.ArrayList([]const u8) = .empty;
+    var called_memo: definition.CalledMemo = .empty;
     var out: std.ArrayList(Server.FileRefs) = .empty;
     for (files.items) |file| {
         var file_refs: std.ArrayList(Server.Ref) = .empty;
         const filename = file.path;
-        for (names, name_res) |name, *name_re| for (file.lines.items, 0..) |raw_line, i| {
+        for (names) |name| for (file.lines.items, 0..) |raw_line, i| {
             if (raw_line.len == 0) continue;
             const line = file.stripComment(raw_line);
             if (line.len == 0 or line[0] == '#') continue;
-            if (std.ascii.findIgnoreCase(line, name) == null) continue;
-            var it = name_re.iterator(line);
+            var it = name_places.places(line, name);
             while (it.next()) |m| {
-                if (for_rename and isRenamedOriginal(line, m.start(1), def_obj)) {
-                    try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+                if (for_rename and isRenamedOriginal(line, m.start, def_obj)) {
+                    try file_refs.append(a, .{ .line = i, .start = m.start, .end = m.end });
                     continue;
                 }
-                const var_def = (try definition.getDefinition(self, a, file, i, m.start(1) + 1, false)) orelse continue;
+                const var_def = (try definition.getDefinition(self, a, file, i, m.start + 1, false)) orelse continue;
                 if (var_def.kind == .intrinsic) continue;
                 var ref_match = false;
                 var in_cache = false;
@@ -289,7 +283,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                     isSeparateProcedurePair(def_obj, var_def) or isSelfNamedSpecificPair(def_obj, var_def) or
                     isExtendedGenericPair(def_obj, var_def) or
                     // a caller's own declaration of the procedure (#232)
-                    (var_def.kind == .variable and try definition.callerTarget(self, a, file, i, m.start(1), var_def) == def_obj))
+                    (var_def.kind == .variable and try definition.callerTargetMemo(self, a, file, i, m.start, var_def, &called_memo) == def_obj))
                 {
                     ref_match = true;
                 } else if (var_def.parent != null and var_def.parent.?.getType(false) == C.TypeId.class) {
@@ -319,7 +313,7 @@ pub fn getAllReferences(self: *Server, a: Allocator, def_obj: *Obj, type_mem: bo
                         }
                     };
                 }
-                if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start(1), .end = m.end(1) });
+                if (ref_match) try file_refs.append(a, .{ .line = i, .start = m.start, .end = m.end });
             }
         };
         if (file_refs.items.len > 0) try out.append(a, .{ .path = filename, .file = file, .refs = file_refs });

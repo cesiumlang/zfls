@@ -31,6 +31,7 @@ from differential_known import (
     ZFLS_ONLY_INTRINSICS,
     adjacent_references,
     after_non_code_line,
+    dollar_name_references,
     in_string_with_bang,
     on_keyword_or_operator,
     associate_bound,
@@ -543,6 +544,9 @@ def main() -> int:
             if kind == "references" and adjacent_references(a, b, src_lines):
                 # names right behind a name, `i*i` (zfls #844), which fortls
                 # misses
+                continue
+            if kind == "references" and dollar_name_references(a, b, src_lines, pos.get("line", -1), pos.get("character", 0)):
+                # a name with a `$`, which fortls cannot search for
                 continue
             if (
                 kind == "completion"

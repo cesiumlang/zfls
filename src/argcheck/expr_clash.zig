@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const typing = @import("typing.zig");
+const str = @import("../str.zig");
 const argcheck = @import("../argcheck.zig");
 const objects = @import("../objects.zig");
 
@@ -34,7 +35,7 @@ fn definedOperators(c: *Checker) Defined {
 /// Adds the operators of the `operator(...)` interfaces of `line` to `d`
 pub fn note(d: *Defined, line: []const u8) void {
     var rest = line;
-    while (std.ascii.findIgnoreCase(rest, "operator")) |i| {
+    while (str.findIgnoreCase(rest, "operator")) |i| {
         rest = rest[i + "operator".len ..];
         const open = std.mem.trimStart(u8, rest, " ");
         if (open.len == 0 or open[0] != '(') continue;
