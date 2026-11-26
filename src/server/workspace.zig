@@ -359,7 +359,7 @@ pub fn loadFile(self: *Server, filepath: []const u8, rest: bool) parser.FileErro
     // or its AST from the index cache
     const ast = cache.parseFile(self, f, prepared, opts, rest) catch return error.ParseFailed;
     // Emulate Python's recursion limit (deeply nested scopes)
-    const depth = if (ast.summary) |sm| sm.depth else objects.summary.maxScopeDepth(ast);
+    const depth = if (ast.summary) |sm| sm.depth else try objects.summary.maxScopeDepth(self.gpa, ast);
     if (depth > self.s.recursion_limit) {
         ast.destroy();
         return error.RecursionLimit;

@@ -698,7 +698,12 @@ pub const Ast = struct {
             if (e.code == .mismatched_end) d.addRelated(self.path, e.scope.sline -| 1, "Opened here");
             try errors.append(a, d);
         };
+        // each scope's IMPLICIT rule from its parent's, not by walking all
+        // the scopes around it (#923); scopes are listed after their parents
+        var implicit_of: std.AutoHashMapUnmanaged(*const Obj, ?bool) = .empty;
         for (tmp_list.items) |scope| {
+            const rule: ?bool = scope.implicit_vars orelse if (scope.parent) |p| (implicit_of.get(p) orelse p.getImplicit()) else null;
+            try implicit_of.put(a, scope, rule);
             if (!scope.checkValidParent()) {
                 try errors.append(a, Diagnostic.init(
                     .invalid_parent,
@@ -710,7 +715,7 @@ pub const Ast = struct {
             }
             try errors.appendSlice(a, try scope.checkUse(env));
             try errors.appendSlice(a, try scope.checkDefinitions(env));
-            try errors.appendSlice(a, try scope.getDiagnostics(a));
+            try errors.appendSlice(a, try scope.getDiagnostics(a, rule));
         }
         // an included file's IMPLICIT applies in the scope it is included
         // into (`linkIncludeScope`)
