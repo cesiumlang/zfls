@@ -42,6 +42,7 @@ const dap_engine_attach = @import("dap_engine_attach.zig");
 const dap_completions = @import("dap_completions.zig");
 const dap_engine_conditions = @import("dap_engine_conditions.zig");
 const dap_engine_set = @import("dap_engine_set.zig");
+const dap_engine_functions = @import("dap_engine_functions.zig");
 const Client = dap.Client;
 const get = dap.get;
 const str = dap.str;
@@ -210,6 +211,10 @@ fn withFlang(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.E
     };
     dap_engine_set.run(io, gpa, .{ .argv = &.{ exe_zfls, "dap" }, .program = grid.exe, .src = grid.src, .dir = tmp, .work_line = lineOf(grid.text, "stop here: work") }) catch |e| {
         std.debug.print("zfls dap, LLVM Flang's program, setting values: {s}\n", .{@errorName(e)});
+        return 1;
+    };
+    dap_engine_functions.run(io, gpa, .{ .argv = &.{ exe_zfls, "dap" }, .program = grid.exe, .dir = tmp }) catch |e| {
+        std.debug.print("zfls dap, LLVM Flang's program, function breakpoints: {s}\n", .{@errorName(e)});
         return 1;
     };
     // ERROR STOP and STOP: one function of Flang's runtime, told apart by
@@ -504,7 +509,8 @@ fn run(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, src_dir: [
     try check(dap.isArray(unknown, "variables", 0), "an unknown reference: no variables ({f})", .{std.json.fmt(unknown, .{})});
     const functions = try c.request("setFunctionBreakpoints", .{ .breakpoints = .{.{ .name = "twice" }} });
     const none = items(functions, "breakpoints");
-    try check(dap.isArray(functions, "breakpoints", 1) and get(none[0], "verified").?.bool == false, "a function breakpoint: unverified ({f})", .{std.json.fmt(functions, .{})});
+    try check(dap.isArray(functions, "breakpoints", 1) and get(none[0], "verified").?.bool, "a function breakpoint on twice: verified ({f})", .{std.json.fmt(functions, .{})});
+    _ = try c.request("setFunctionBreakpoints", .{ .breakpoints = .{} });
 
     _ = try c.request("next", .{ .threadId = thread });
     stopped = get(try c.event("stopped"), "body").?;

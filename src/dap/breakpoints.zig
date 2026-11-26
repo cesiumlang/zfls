@@ -91,6 +91,7 @@ pub fn isPlainStop(s: *Session, f: runtime_errors.Function) bool {
 }
 
 pub fn isUserBreakpoint(s: *Session, id: u32) bool {
+    if (std.mem.findScalar(u32, s.function_breakpoints.items, id) != null) return true;
     var it = s.breakpoints.valueIterator();
     while (it.next()) |ids| for (ids.items) |x| if (x == id) return true;
     return false;

@@ -25,6 +25,7 @@ pub fn engine(s: *Session) struct {
     supportsDelayedStackTraceLoading: bool = false,
     supportsExceptionInfoRequest: bool = true,
     supportsSetVariable: bool = true,
+    supportsFunctionBreakpoints: bool = true,
     supportsSetExpression: bool = true,
     supportsConditionalBreakpoints: bool = true,
     supportsHitConditionalBreakpoints: bool = true,
