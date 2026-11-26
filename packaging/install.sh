@@ -8,9 +8,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/cesiumlang/zfls/main/packaging/install.sh | sh -s -- --dir ~/tools --version 0.4.0
 #
-# On macOS, a release archive downloaded in a web browser is quarantined,
-# and Gatekeeper refuses to run the zfls unpacked from it, since the binary
-# is not notarized. Files downloaded with curl or wget are not quarantined
+# On macOS, a release archive downloaded in a web browser is quarantined, and
+# Finder warns when the zfls unpacked from it by Archive Utility is
+# double-clicked, as for any downloaded command-line program (run it from a
+# terminal instead). Files downloaded with curl or wget are not quarantined
 # (nor, on Windows, marked as downloaded from the internet).
 
 set -eu

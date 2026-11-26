@@ -7,6 +7,7 @@ const json = @import("json.zig");
 const patterns = @import("patterns.zig");
 const paths = @import("paths.zig");
 const executables = @import("executables.zig");
+const allocator_choice = @import("allocator_choice.zig");
 const settings = @import("settings.zig");
 const jsonrpc = @import("jsonrpc.zig");
 const server_mod = @import("server.zig");
@@ -222,7 +223,9 @@ fn sameId(x: json.Value, y: json.Value) bool {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.gpa;
+    // The safe build's allocator maps and unmaps memory for every
+    // allocation: half the time of an index on macOS. ZFLS_SAFE_ALLOC=1 keeps it.
+    const gpa = allocator_choice.pick(init);
     const io = init.io;
     patterns.init();
     paths.init(io);

@@ -421,10 +421,26 @@ pub fn calledFunction(self: *Server, a: Allocator, ast: *Ast, d: anytype) !?*Obj
 /// for (`objects.declaredProcedure`, #232), `v` being found at byte
 /// column `col` of 0-based line `line` of `file`, where it may be called
 pub fn callerTarget(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj) !?*Obj {
+    return callerTargetMemo(self, a, file, line, col, v, null);
+}
+
+/// What `isCalledIn` found per variable, for a search over many uses of a name
+pub const CalledMemo = std.AutoHashMapUnmanaged(*const Obj, bool);
+
+/// `callerTarget`, remembering in `memo` what the scope scan found
+pub fn callerTargetMemo(self: *Server, a: Allocator, file: *const FortranFile, line: usize, col: usize, v: *const Obj, memo: ?*CalledMemo) !?*Obj {
     if (v.kind != .variable) return null;
     const ast = file.ast orelse return null;
-    const called = v.varDataConst().is_external or isCalledAt(file, line, col) or isCalledIn(v);
+    const called = v.varDataConst().is_external or isCalledAt(file, line, col) or try calledIn(a, v, memo);
     return objects.declaredProcedure(self.env(a), ast, self.workspace.values(), v, called);
+}
+
+fn calledIn(a: Allocator, v: *const Obj, memo: ?*CalledMemo) !bool {
+    const m = memo orelse return isCalledIn(v);
+    if (m.get(v)) |r| return r;
+    const r = isCalledIn(v);
+    try m.put(a, v, r);
+    return r;
 }
 
 /// Whether the name at byte column `col` of 0-based line `line` is

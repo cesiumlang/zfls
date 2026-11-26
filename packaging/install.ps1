@@ -9,8 +9,8 @@
 #
 # Works in Windows PowerShell 5.1 and PowerShell 7. Unlike an archive
 # downloaded in a web browser, what Invoke-WebRequest downloads is not marked
-# as downloaded from the internet, so SmartScreen does not question the
-# unsigned zfls.exe.
+# as downloaded from the internet, so SmartScreen does not question
+# zfls.exe.
 
 param(
     # Where to unpack the release, as DIR\zfls-v<version>-<target>\zfls.exe
