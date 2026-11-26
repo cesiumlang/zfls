@@ -38,14 +38,24 @@ jobs:
           (cd dist && sha256sum -- * > SHA256SUMS)
           wc -l dist/SHA256SUMS
 
-      # temporary: the shape of the passphrase secret, not its value
-      - name: Shape of the passphrase secret
+      # temporary: why the signing fails on the runner (never the secrets)
+      - name: Diagnose GnuPG
         env:
           P: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          K: ${{ secrets.RELEASE_GPG_KEY }}
         run: |
-          printf '%s' "$P" | wc -c
-          printf '%s' "$P" | tail -c 1 | od -An -tx1
-          printf '%s' "$P" | tr -d 'A-Za-z0-9' | wc -c
+          export GNUPGHOME="$RUNNER_TEMP/diag"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --version | head -1
+          echo "$K" | base64 --decode | gpg --batch --import 2>&1 | tail -2
+          gpg -K --keyid-format long 2>&1 | head -8
+          printf '%s' "$P" > "$RUNNER_TEMP/p"
+          echo x > "$RUNNER_TEMP/x"
+          gpg --batch --pinentry-mode loopback --passphrase-file "$RUNNER_TEMP/p" -vv --detach-sign -o "$RUNNER_TEMP/x.sig" "$RUNNER_TEMP/x" 2>&1 | tail -15 || true
+          echo "--- with a trailing newline:"
+          printf '%s\n' "$P" > "$RUNNER_TEMP/p2"
+          gpg --batch --pinentry-mode loopback --passphrase-file "$RUNNER_TEMP/p2" --detach-sign -o "$RUNNER_TEMP/x2.sig" "$RUNNER_TEMP/x" 2>&1 | tail -3 || true
+          ls "$RUNNER_TEMP"/x*.sig 2>&1 | head
 
       - uses: ./.github/actions/release-integrity
         with:
