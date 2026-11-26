@@ -14,6 +14,8 @@ const helpers = @import("../helpers.zig");
 /// `text` spaces, as compilers read them (fortls #443); every column stays
 /// where it is. The TAB of a TAB-format line stays.
 pub fn blankSpaces(text: []u8) void {
+    // most files have neither (the common case is a scan with vectors)
+    if (std.mem.findScalar(u8, text, '\t') == null and std.mem.findScalar(u8, text, '\x0c') == null) return;
     var it = std.mem.tokenizeAny(u8, text, "\r\n");
     while (it.next()) |l| {
         const line: []u8 = @constCast(l);
