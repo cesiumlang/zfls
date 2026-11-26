@@ -568,15 +568,14 @@ jobs:
           security find-identity -v -p codesigning "$keychain"
 
       # Hardened runtime and a secure timestamp, as notarization requires.
-      # packaging/zfls.entitlements: what zfls dap needs to debug other
-      # processes
+      # No entitlements: zfls dap's debuggers (lldb-dap, gdb) are processes of
+      # their own, with their own signatures (#933)
       - name: Sign
         run: |
           identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)
           [ -n "$identity" ] || { echo "::error::no Developer ID Application identity"; exit 1; }
           for exe in pkg/*/zfls; do
             codesign --force --options runtime --timestamp \
-              --entitlements packaging/zfls.entitlements \
               --sign "$identity" "$exe"
             codesign --verify --strict --verbose=2 "$exe"
           done
@@ -694,7 +693,7 @@ jobs:
           lipo -create pkg/*-x86_64-macos/zfls pkg/*-aarch64-macos/zfls -output "$root/usr/local/bin/zfls"
           lipo -info "$root/usr/local/bin/zfls"
           codesign --force --options runtime --timestamp \
-            --entitlements packaging/zfls.entitlements --sign "$app" "$root/usr/local/bin/zfls"
+            --sign "$app" "$root/usr/local/bin/zfls"
           cp LICENSE "$root/usr/local/share/doc/zfls/"
           pkgbuild --root "$root" --identifier com.github.cesiumlang.zfls --version "$VERSION" \
             --install-location / "$RUNNER_TEMP/zfls-component.pkg"
