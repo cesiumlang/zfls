@@ -33,7 +33,7 @@ pub fn run(io: Io, gpa: Allocator, p: Program) !void {
     try stopsIn(io, gpa, p, &.{.{ .name = "main" }}, "MAIN", &.{true});
 }
 
-/// The program stops first in `frame`, at a function breakpoint
+/// The program stops first in `frame` (in any case: ifx names it `GRID::WORK`), at a function breakpoint
 fn stopsIn(io: Io, gpa: Allocator, p: Program, functions: []const Function, frame: []const u8, verified: []const bool) !void {
     const c = try Client.startEnv(io, gpa, p.argv, p.env);
     defer c.deinit();
@@ -51,5 +51,5 @@ fn stopsIn(io: Io, gpa: Allocator, p: Program, functions: []const Function, fram
     _ = try c.request("configurationDone", .{});
     const stopped = get(try c.event("stopped"), "body").?;
     const frames = items(try c.request("stackTrace", .{ .threadId = int(stopped, "threadId").? }), "stackFrames");
-    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint") and contains(str(frames[0], "name"), frame), "{s}: stopped in {s} ({s}, {s})", .{ functions[0].name, frame, str(stopped, "reason") orelse "?", str(frames[0], "name") orelse "?" });
+    try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint") and std.ascii.findIgnoreCase(str(frames[0], "name") orelse "", frame) != null, "{s}: stopped in {s} ({s}, {s})", .{ functions[0].name, frame, str(stopped, "reason") orelse "?", str(frames[0], "name") orelse "?" });
 }
