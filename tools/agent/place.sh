@@ -6,7 +6,7 @@
 set -euo pipefail
 number=$1 after=$2
 export GH_TOKEN="${GH_TOKEN:-$(bash /c/scratch/github-apps/app-token.sh cesiumlang)}"
-items() { gh project item-list 2 --owner cesiumlang --limit 500 --format json --jq "$1" < /dev/null; }
+items() { gh project item-list 2 --owner cesiumlang --limit 200 --format json --jq "$1" < /dev/null; }
 field() { gh project field-list 2 --owner cesiumlang --format json --jq "$1" < /dev/null; }
 project=$(gh project view 2 --owner cesiumlang --format json --jq .id < /dev/null)
 
