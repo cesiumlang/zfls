@@ -13,6 +13,7 @@ const root = path.join(__dirname, "..", "..", "..", "..");
 const NOT_ATTRIBUTES = [
   "preRunCommands", "request", "breakpoints", "column", "context", "expression", "filterOptions", "filters",
   "frameId", "line", "name", "text", "threadId", "value", "variablesReference",
+  "memoryReference", "offset", "count", "instructionOffset", "instructionCount",
 ];
 
 test("the schema lists every attribute the adapter reads", () => {

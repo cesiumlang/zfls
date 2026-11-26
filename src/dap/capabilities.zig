@@ -31,6 +31,7 @@ pub fn engine(s: *Session) struct {
     supportsLoadedSourcesRequest: bool = true,
     supportsFunctionBreakpoints: bool = true,
     supportsSetExpression: bool = true,
+    supportsDataBreakpoints: bool = true,
     supportsConditionalBreakpoints: bool = true,
     supportsHitConditionalBreakpoints: bool = true,
     supportsLogPoints: bool = true,
