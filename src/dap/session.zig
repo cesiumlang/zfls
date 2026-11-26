@@ -79,6 +79,7 @@ const engine_conditions = @import("engine_conditions.zig");
 const engine_completions = @import("engine_completions.zig");
 const engine_set = @import("engine_set.zig");
 const engine_functions = @import("engine_functions.zig");
+const engine_inspect = @import("engine_inspect.zig");
 const coarrays = @import("coarrays.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
@@ -546,7 +547,7 @@ fn initialize(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
 fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
     const command = json.str(json.get(req, "command")) orelse return;
     const args = json.get(req, "arguments");
-    const Cmd = enum { launch, attach, setBreakpoints, setExceptionBreakpoints, setFunctionBreakpoints, exceptionInfo, configurationDone, threads, stackTrace, scopes, variables, evaluate, completions, setVariable, setExpression, @"continue", next, stepIn, stepOut, pause, disconnect, terminate };
+    const Cmd = enum { launch, attach, setBreakpoints, setExceptionBreakpoints, setFunctionBreakpoints, exceptionInfo, configurationDone, threads, stackTrace, scopes, variables, evaluate, completions, setVariable, setExpression, readMemory, disassemble, modules, loadedSources, @"continue", next, stepIn, stepOut, pause, disconnect, terminate };
     const cmd = std.meta.stringToEnum(Cmd, command) orelse return s.fail(a, req, "not supported");
     switch (cmd) {
         .launch => {
@@ -616,9 +617,10 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
                         .line = f.line,
                         .column = 1,
                         .presentationHint = if (exists) "normal" else "subtle",
+                        .instructionPointerReference = try engine_inspect.reference(a, f.instruction),
                     }));
                 } else {
-                    try out.append(a, try json.from(a, .{ .id = id, .name = name, .line = 0, .column = 0, .presentationHint = "subtle" }));
+                    try out.append(a, try json.from(a, .{ .id = id, .name = name, .line = 0, .column = 0, .presentationHint = "subtle", .instructionPointerReference = try engine_inspect.reference(a, f.instruction) }));
                 }
             }
             s.respond(a, req, .{ .stackFrames = out.items, .totalFrames = out.items.len });
@@ -660,6 +662,10 @@ fn handleEngine(s: *Session, a: Allocator, req: Value) !void {
         .pause => s.respond(a, req, null),
         .completions => try engine_completions.complete(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
         .setVariable => try engine_set.setVariable(s, a, req, args),
+        .readMemory => try engine_inspect.readMemory(s, a, req, args),
+        .disassemble => try engine_inspect.disassemble(s, a, req, args),
+        .modules => try engine_inspect.modules(s, a, req),
+        .loadedSources => try engine_inspect.loadedSources(s, a, req),
         .setExpression => try engine_set.setExpression(s, a, req, args, frameOf(json.int(json.get(args, "frameId")) orelse 0)),
         .disconnect, .terminate => {
             const keep = s.attached and !flag(args, "terminateDebuggee");
