@@ -24,6 +24,8 @@ pub fn engine(s: *Session) struct {
     supportsEvaluateForHovers: bool = true,
     supportsDelayedStackTraceLoading: bool = false,
     supportsExceptionInfoRequest: bool = true,
+    supportsSetVariable: bool = true,
+    supportsSetExpression: bool = true,
     supportsConditionalBreakpoints: bool = true,
     supportsHitConditionalBreakpoints: bool = true,
     supportsLogPoints: bool = true,
