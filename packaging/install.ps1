@@ -56,6 +56,13 @@ param(
         try { & $Exe @Arguments 2>$null } finally { $ErrorActionPreference = $saved }
     }
 
+    # The same, with what the program wrote to stderr as text, for messages
+    function Invoke-Captured([string]$Exe, [string[]]$Arguments) {
+        $saved = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & $Exe @Arguments 2>&1 | ForEach-Object { "$_" } } finally { $ErrorActionPreference = $saved }
+    }
+
     # C:\a\b as /c/a/b, the form an MSYS2 program (Git for Windows' gpg) reads
     function ConvertTo-MsysPath([string]$Path) {
         $p = $Path -replace '\\', '/'
@@ -151,8 +158,10 @@ param(
             try {
                 # no gpg-agent (checking a signature needs none): MSYS2's could
                 # not start in a keyring whose socket paths are over 108 bytes
-                Invoke-Quiet gpg @('--batch', '--quiet', '--no-autostart', '--import', $key) | Out-Null
-                if ($LASTEXITCODE -ne 0) { throw "install.ps1: cannot import the release signing key" }
+                $said = Invoke-Captured gpg @('--batch', '--quiet', '--no-autostart', '--import', $key)
+                if ($LASTEXITCODE -ne 0) {
+                    throw "install.ps1: cannot import the release signing key with $((Get-Command gpg).Source) (GNUPGHOME $env:GNUPGHOME): $(($said | Select-Object -Last 4) -join ' | ')"
+                }
                 $status = Invoke-Quiet gpg @('--batch', '--no-autostart', '--status-fd', '1', '--verify', $asc, $sums)
                 if ($LASTEXITCODE -ne 0) { throw "install.ps1: SHA256SUMS of v$ver does not match its signature" }
                 if (-not ($status | Where-Object { $_ -match "^\[GNUPG:\] VALIDSIG .*$keyFpr" })) {
