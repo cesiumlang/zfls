@@ -232,6 +232,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       actions: read
+      contents: read
+      pull-requests: read
     outputs:
       run_id: ${{ steps.find.outputs.run_id }}
     steps:
@@ -251,8 +253,20 @@ jobs:
             echo "Using the archives of run $NAMED, as named." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
-          for id in $runs; do
+          # only runs of this repository's own branches (a fork's pull
+          # request runs its own copy of this workflow, which can upload
+          # anything), of a pull request this commit merged; GitHub's
+          # records say so, not the run's artifacts
+          # (by the head commit each merged pull request ended on: a run's
+          # pull_requests are its branch's open ones, not the run's)
+          heads=" $(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null) | .head.sha] | join(" ")') "
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq ".workflow_runs[] | select(.head_repository.full_name == \"$GITHUB_REPOSITORY\") | \"\(.id) \(.head_sha)\"")
+          while read -r id head; do
+            [ -n "$id" ] || continue
+            if [ "${heads#* "$head" }" = "$heads" ]; then
+              echo "run $id: not of a pull request this commit merged; not reusing it"
+              continue
+            fi
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
@@ -270,7 +284,7 @@ jobs:
               echo "Releasing the archives of run $id, which built and tested this tree." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-          done
+          done <<< "$runs"
           echo "No passed pull request run built this tree; building and testing it here." | tee -a "$GITHUB_STEP_SUMMARY"
 
   version-check:
