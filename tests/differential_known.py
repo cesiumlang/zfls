@@ -589,6 +589,20 @@ def adjacent_references(a, b, lines: list) -> bool:
     return True
 
 
+def dollar_name_references(a, b, lines: list, line: int, char: int) -> bool:
+    """Whether fortls finds no references to a name with a `$` in it, which
+    it puts in a regular expression unescaped (an end of line): zfls finds
+    them."""
+    if not isinstance(a, list) or a or not isinstance(b, list) or not b:
+        return False
+    if not 0 <= line < len(lines):
+        return False
+    for m in re.finditer(r"[A-Za-z0-9_$]+", lines[line]):
+        if m.start() <= char <= m.end():
+            return "$" in m.group(0)
+    return False
+
+
 def in_string_with_bang(lines: list, line: int, char: int) -> bool:
     """Whether a string literal before (line, char) holds a `!`: fortls
     reads that `!` as a comment and offers nothing (null), zfls knows it is

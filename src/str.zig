@@ -162,3 +162,31 @@ test "slicing helpers" {
     try std.testing.expectEqual(@as(usize, 3), utf16ToByte("é1", 2));
     try std.testing.expectEqual(@as(usize, 2), byteToUtf16("é1", 3));
 }
+
+/// `std.ascii.findIgnoreCasePos`, which builds a 256-entry skip table at
+/// every call: for the short lines of a workspace scan, a loop on the first
+/// byte is cheaper
+pub fn findIgnoreCasePos(haystack: []const u8, start: usize, needle: []const u8) ?usize {
+    if (needle.len == 0) return if (start <= haystack.len) start else null;
+    if (needle.len > haystack.len) return null;
+    const lo = std.ascii.toLower(needle[0]);
+    const up = std.ascii.toUpper(needle[0]);
+    const last = haystack.len - needle.len;
+    var i = start;
+    while (i <= last) : (i += 1) {
+        const c = haystack[i];
+        if ((c == lo or c == up) and std.ascii.eqlIgnoreCase(haystack[i + 1 .. i + needle.len], needle[1..])) return i;
+    }
+    return null;
+}
+
+pub fn findIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    return findIgnoreCasePos(haystack, 0, needle);
+}
+
+test "case-insensitive search" {
+    try std.testing.expectEqual(@as(?usize, 3), findIgnoreCase("an OperATOR (+)", "operator"));
+    try std.testing.expectEqual(@as(?usize, null), findIgnoreCase("oper", "operator"));
+    try std.testing.expectEqual(@as(?usize, 4), findIgnoreCasePos("foo foo", 1, "FOO"));
+    try std.testing.expectEqual(@as(?usize, null), findIgnoreCasePos("foo", 5, "o"));
+}
