@@ -350,12 +350,22 @@ pub fn writesToWorkDir(id: Id) bool {
     return id == .ifx or id == .ifort;
 }
 
+/// Whether the compiler runs in a directory of zfls's: those of
+/// `writesToWorkDir`, and every one on Windows, where a program loads a DLL
+/// from its working directory before the PATH's, so a workspace could put
+/// its own beside the sources for MinGW's f951, which finds its DLLs on the
+/// PATH (#528)
+pub fn runsInWorkDir(id: Id, windows: bool) bool {
+    return windows or writesToWorkDir(id);
+}
+
 /// `args` with the relative directories of its include and module options
 /// made absolute against `base`, for a compiler run in another directory
-/// (`writesToWorkDir`): `-Idir`, `-I dir`, `-module dir` and, on Windows,
-/// `/Idir`, `/I dir`, `/module:dir`
+/// (`runsInWorkDir`): `-Idir`, `-I dir`, `-Jdir`, `-J dir`, `-module dir`,
+/// `-module-dir dir`, `-isystem dir` (and `-iquote`, `-idirafter`) and, on
+/// Windows, `/Idir`, `/I dir`, `/module:dir`
 pub fn absoluteDirs(a: Allocator, id: Id, args: []const []const u8, base: []const u8, o: Options) ![]const []const u8 {
-    if (!writesToWorkDir(id)) return args;
+    if (!runsInWorkDir(id, o.windows)) return args;
     const out = try a.dupe([]const u8, args);
     const joined = struct {
         fn f(al: Allocator, b: []const u8, prefix: []const u8, dir: []const u8) ![]const u8 {
@@ -365,8 +375,11 @@ pub fn absoluteDirs(a: Allocator, id: Id, args: []const []const u8, base: []cons
     }.f;
     // the options whose value is the next argument, and those with it
     // attached
-    const separate: []const []const u8 = if (o.windows) &.{ "-I", "/I", "-module", "/module" } else &.{ "-I", "-module" };
-    const attached: []const []const u8 = if (o.windows) &.{ "/module:", "-I", "/I" } else &.{"-I"};
+    const separate: []const []const u8 = if (o.windows)
+        &.{ "-I", "/I", "-J", "-module", "/module", "-module-dir", "-isystem", "-iquote", "-idirafter" }
+    else
+        &.{ "-I", "-J", "-module", "-module-dir", "-isystem", "-iquote", "-idirafter" };
+    const attached: []const []const u8 = if (o.windows) &.{ "/module:", "-I", "/I", "-J" } else &.{ "-I", "-J" };
     var i: usize = 0;
     while (i < out.len) : (i += 1) {
         const x = out[i];
@@ -782,4 +795,10 @@ test "Intel's relative include and module directories, made absolute for a run e
     }
     // the other compilers run beside the file: unchanged
     try expectAbsoluteDirs(.gfortran, false, &.{"-Iinc"}, &.{"-Iinc"});
+}
+
+test "on Windows every compiler runs in zfls's directory, with its directories absolute" {
+    if (@import("builtin").target.os.tag != .windows) return error.SkipZigTest;
+    try expectAbsoluteDirs(.gfortran, true, &.{ "-Iinc", "-J", "mods", "-Jm2", "-isystem", "sys", "-Wall" }, &.{ "-IC:\\src\\inc", "-J", "C:\\src\\mods", "-JC:\\src\\m2", "-isystem", "C:\\src\\sys", "-Wall" });
+    try expectAbsoluteDirs(.flang, true, &.{ "-module-dir", "mods", "-I", "C:\\abs" }, &.{ "-module-dir", "C:\\src\\mods", "-I", "C:\\abs" });
 }

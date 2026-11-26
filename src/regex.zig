@@ -259,6 +259,14 @@ pub const Regex = struct {
 
     /// Python `pattern.search(s, pos)`
     pub fn searchAt(self: *const Regex, input: []const u8, pos: usize) ?Match {
+        const outer = !searching;
+        if (outer) {
+            searching = true;
+            steps_left = step_budget;
+        }
+        defer if (outer) {
+            searching = false;
+        };
         var i = pos;
         while (i <= input.len) : (i += 1) {
             // only positions where a match can start
@@ -365,6 +373,15 @@ pub const Regex = struct {
     // filled with 0xaa at every run, in the safe build
     threadlocal var scratch: [1024]Frame = undefined;
 
+    /// The backtracking steps a match, or a search over all its starting
+    /// positions, may take: a pattern such as `F\((.*),(.*),...\)` on a
+    /// line of commas without `)` would otherwise backtrack for ever. Past
+    /// it there is no match; ordinary patterns on long lines take far fewer
+    const step_budget: usize = 1 << 22;
+    threadlocal var steps_left: usize = 0;
+    /// A search is running, whose budget its matches share
+    threadlocal var searching: bool = false;
+
     /// `base`: where in `scratch` this run's stack starts
     fn run(
         self: *const Regex,
@@ -382,6 +399,7 @@ pub const Regex = struct {
         // search, which runs this at every position
         @memset(regs[0..self.nloop_regs], std.math.maxInt(usize));
         if (!is_sub) @memset(slots[0 .. @as(usize, self.ngroups) * 2], null);
+        if (!is_sub and !searching) steps_left = step_budget;
 
         var stack: std.ArrayList(Frame) = .initBuffer(if (base < scratch.len) scratch[base..] else scratch[0..0]);
         var heap_stack: std.ArrayList(Frame) = .empty;
@@ -485,6 +503,8 @@ pub const Regex = struct {
             };
             if (ok) continue;
             // backtrack
+            if (steps_left == 0) return false;
+            steps_left -= 1;
             while (true) {
                 const fr = pop(&stack, &heap_stack, &using_heap) orelse return false;
                 switch (fr) {
@@ -801,4 +821,16 @@ test "a lookahead backtracks deeper than the shared stack" {
     var neg = try Regex.compile(a, "x?(?!(a|b)*d)", .{});
     defer neg.deinit();
     try testing.expect(neg.match(input) != null);
+}
+
+test "a pattern that backtracks without end gives up: no match" {
+    const a = std.testing.allocator;
+    var re = try Regex.compile(a, "\\bF\\s*\\((.*),(.*),(.*),(.*),(.*),(.*),(.*),(.*),(.*),(.*),(.*),(.*)\\)", .{});
+    defer re.deinit();
+    var line: [302]u8 = undefined;
+    @memcpy(line[0..2], "F(");
+    @memset(line[2..], ',');
+    try std.testing.expect(re.search(&line) == null);
+    // and the budget is the search's: the next one has its own
+    try std.testing.expect(re.search("F(1,2,3,4,5,6,7,8,9,10,11,12)") != null);
 }

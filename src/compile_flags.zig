@@ -56,6 +56,9 @@ fn isIn(set: []const []const u8, x: []const u8) bool {
 
 /// Whether `x` is a flag that runs or loads something, or names a tool
 pub fn isDenied(x: []const u8) bool {
+    // a response file, which the compilers' drivers expand wherever it is,
+    // as the value of a flag too, into flags this list never sees
+    if (x.len > 0 and x[0] == '@') return true;
     // -B<dir>: where the driver looks for its programs
     if (std.mem.startsWith(u8, x, "-B")) return true;
     for (denied_prefixes) |p| if (startsWithNoCase(x, p)) return true;
@@ -113,6 +116,16 @@ test "flags that run or load code are dropped" {
         "a.d",      "-MD",         "-fopenmp",   "-O2",
     });
     const want = [_][]const u8{ "gfortran", "-I", "inc", "-DX=1", "-std=f2018", "-Wall", "-cpp", "-ffree-form", "-x", "f95-cpp-input", "-J", "mod", "-fopenmp", "-O2" };
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "a response file is dropped, also as the value of a flag" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const got = try safeArgs(a, &.{ "gfortran", "-D", "@pwn", "-I", "@inc", "/D", "@x", "@all.rsp", "-I", "inc", "-DA@B" });
+    const want = [_][]const u8{ "gfortran", "-I", "inc", "-DA@B" };
     try std.testing.expectEqual(want.len, got.len);
     for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
 }

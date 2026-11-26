@@ -6,6 +6,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const json = @import("json.zig");
+const json5 = @import("json5.zig");
 
 pub const ParseError = error{ SyntaxError, OutOfMemory };
 
@@ -16,6 +17,8 @@ pub const Parser = struct {
     /// Where and what, after a `SyntaxError`
     err_pos: usize = 0,
     err_msg: []const u8 = "",
+    /// Arrays and inline tables open around the value being read
+    depth: usize = 0,
 
     fn fail(p: *Parser, msg: []const u8) ParseError {
         p.err_pos = p.pos;
@@ -129,6 +132,13 @@ pub const Parser = struct {
         return p.src[start..p.pos];
     }
 
+    /// One level deeper, at most `json5.max_depth`, as a configuration file
+    /// in JSON is (#895): deeper ones would overflow the stack
+    fn enter(p: *Parser) ParseError!void {
+        if (p.depth >= json5.max_depth) return p.fail("nested too deeply");
+        p.depth += 1;
+    }
+
     fn value(p: *Parser) ParseError!json.Value {
         const c = p.peek() orelse return p.fail("expected a value");
         switch (c) {
@@ -159,6 +169,8 @@ pub const Parser = struct {
     }
 
     fn array(p: *Parser) ParseError!json.Value {
+        try p.enter();
+        defer p.depth -= 1;
         p.pos += 1;
         var items: json.Array = .init(p.a);
         while (true) {
@@ -178,6 +190,8 @@ pub const Parser = struct {
     }
 
     fn inlineTable(p: *Parser) ParseError!json.Value {
+        try p.enter();
+        defer p.depth -= 1;
         p.pos += 1;
         var t: json.ObjectMap = .empty;
         while (true) {
@@ -334,4 +348,21 @@ test "TOML errors say where" {
         try std.testing.expectEqual(b[1], at.line);
         try std.testing.expectEqual(b[2], at.col);
     }
+}
+
+test "arrays nested too deeply are an error, not a stack overflow" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const n = json5.max_depth + 1;
+    const deep = try a.alloc(u8, 4 + 2 * n);
+    @memcpy(deep[0..4], "x = ");
+    @memset(deep[4 .. 4 + n], '[');
+    @memset(deep[4 + n ..], ']');
+    try std.testing.expectError(error.SyntaxError, parse(a, deep));
+    const ok = try a.alloc(u8, 4 + 2 * (n - 1));
+    @memcpy(ok[0..4], "x = ");
+    @memset(ok[4 .. 4 + n - 1], '[');
+    @memset(ok[4 + n - 1 ..], ']');
+    _ = try parse(a, ok);
 }

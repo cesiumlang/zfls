@@ -9,6 +9,7 @@ export const settings: Record<string, unknown> = {};
 
 export const workspace = {
   workspaceFolders: [] as { name: string; uri: { fsPath: string } }[],
+  isTrusted: true,
   getConfiguration(section: string) {
     return {
       get<T>(key: string, fallback?: T): T | undefined {

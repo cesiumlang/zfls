@@ -90,6 +90,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     }),
     vscode.workspace.onDidOpenTextDocument((doc) => void ensureClient(doc)),
+    // the workspace's own settings, and fypp, once it is trusted
+    vscode.workspace.onDidGrantWorkspaceTrust(() => void restartAll()),
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
       for (const folder of e.removed) {
         void stopClient(folder.uri.toString());

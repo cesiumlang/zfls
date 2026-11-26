@@ -96,6 +96,10 @@ A `.zflsrc` file (TOML) in the workspace root configures source directories, pre
 
 With a TOML extension that supports `tomlValidation`, such as [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml), `fpm.toml` files are checked against the [fpm manifest schema](https://github.com/fortran-lang/fpm-metadata) too.
 
+## Untrusted workspaces
+
+In a workspace you have not trusted (Restricted Mode), the workspace's own values of the settings that choose a program, its arguments or where it writes (`zfls.arguments`, the compilers and their arguments, `zfls.compileCommands`, `zfls.linter.modOutput`, the fypp settings and the like) are not read, and fypp, which runs the Python of the files it reads, does not run even when your own settings turn it on. Trusting the workspace restarts zfls with them.
+
 ## Workspaces with several folders
 
 Each top-level folder of a multi-root workspace gets its own zfls, rooted at that folder and configured by that folder's settings and `.zflsrc`; a folder inside another one is part of the outer one. A Fortran file outside every folder gets a zfls rooted at its own directory.

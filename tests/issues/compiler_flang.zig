@@ -11,12 +11,13 @@ const h = @import("harness.zig");
 const is_windows = builtin.target.os.tag == .windows;
 const io = std.testing.io;
 
-/// A stand-in compiler that appends its arguments to `flang.log` in its
-/// working directory and gives a driver message, `flang: error: logged`
+/// A stand-in compiler that appends its arguments to `flang.log` beside
+/// itself (not in its working directory, zfls's on Windows) and gives a
+/// driver message, `flang: error: logged`
 const fake: h.File = if (is_windows)
-    .{ .name = "flang.cmd", .text = "@echo off\r\necho %* >> flang.log\r\necho flang: error: logged 1>&2\r\n" }
+    .{ .name = "flang.cmd", .text = "@echo off\r\necho %* >> \"%~dp0flang.log\"\r\necho flang: error: logged 1>&2\r\n" }
 else
-    .{ .name = "flang.sh", .text = "#!/bin/sh\necho \"$@\" >> flang.log\necho 'flang: error: logged' >&2\n" };
+    .{ .name = "flang.sh", .text = "#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/flang.log\"\necho 'flang: error: logged' >&2\n" };
 
 const module = h.File{ .name = "k.cuf", .text = "module k\n  integer :: n\nend module k\n" };
 const user = h.File{ .name = "u.f90", .text = "program p\n  use k\n  n = 1\nend program p\n" };
@@ -50,9 +51,9 @@ test "Flang: the file and the modules it uses with -x f95 right before them, for
 /// and gives a driver message naming its version, `flang: error: <version>`
 fn versioned(comptime version: []const u8) h.File {
     return if (is_windows)
-        .{ .name = "flang.cmd", .text = "@echo off\r\nif \"%1\"==\"--version\" (echo flang version " ++ version ++ "& exit /b 0)\r\necho %* >> flang.log\r\necho flang: error: " ++ version ++ " 1>&2\r\n" }
+        .{ .name = "flang.cmd", .text = "@echo off\r\nif \"%1\"==\"--version\" (echo flang version " ++ version ++ "& exit /b 0)\r\necho %* >> \"%~dp0flang.log\"\r\necho flang: error: " ++ version ++ " 1>&2\r\n" }
     else
-        .{ .name = "flang.sh", .text = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'flang version " ++ version ++ "'; exit 0; fi\necho \"$@\" >> flang.log\necho 'flang: error: " ++ version ++ "' >&2\n" };
+        .{ .name = "flang.sh", .text = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'flang version " ++ version ++ "'; exit 0; fi\necho \"$@\" >> \"$(dirname \"$0\")/flang.log\"\necho 'flang: error: " ++ version ++ "' >&2\n" };
 }
 
 test "Flang: a compiler upgraded at the same path is asked its version again (#427)" {
@@ -82,9 +83,9 @@ test "Flang: a compiler upgraded at the same path is asked its version again (#4
 /// A stand-in Flang at `flang/bin` whose driver's triple
 /// (`x86_64-conda-linux-gnu`, conda-forge's) has no intrinsic modules
 const conda_flang: h.File = if (is_windows)
-    .{ .name = "flang/bin/flang.cmd", .text = "@echo off\r\nif \"%1\"==\"--version\" (echo flang version 23.1.5& echo Target: x86_64-conda-linux-gnu& echo InstalledDir: %~dp0& exit /b 0)\r\necho %* >> flang.log\r\necho flang: error: logged 1>&2\r\n" }
+    .{ .name = "flang/bin/flang.cmd", .text = "@echo off\r\nif \"%1\"==\"--version\" (echo flang version 23.1.5& echo Target: x86_64-conda-linux-gnu& echo InstalledDir: %~dp0& exit /b 0)\r\necho %* >> \"%~dp0flang.log\"\r\necho flang: error: logged 1>&2\r\n" }
 else
-    .{ .name = "flang/bin/flang.sh", .text = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'flang version 23.1.5'; echo 'Target: x86_64-conda-linux-gnu'; echo \"InstalledDir: $(cd \"$(dirname \"$0\")\" && pwd)\"; exit 0; fi\necho \"$@\" >> flang.log\necho 'flang: error: logged' >&2\n" };
+    .{ .name = "flang/bin/flang.sh", .text = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'flang version 23.1.5'; echo 'Target: x86_64-conda-linux-gnu'; echo \"InstalledDir: $(cd \"$(dirname \"$0\")\" && pwd)\"; exit 0; fi\necho \"$@\" >> \"$(dirname \"$0\")/flang.log\"\necho 'flang: error: logged' >&2\n" };
 
 test "Flang: its intrinsic modules where its driver does not look for them (#438)" {
     const modules = h.File{ .name = "flang/lib/clang/23/finclude/flang/x86_64-unknown-linux-gnu/iso_fortran_env.mod", .text = "" };
@@ -93,7 +94,7 @@ test "Flang: its intrinsic modules where its driver does not look for them (#438
     if (!is_windows) try w.tmp.dir.setFilePermissions(io, conda_flang.name, .executable_file, .{});
     try w.open("u.f90", "fortran");
     _ = (try w.waitForSent("textDocument/publishDiagnostics", "\"message\":\"flang: logged\"", 60)) orelse return error.NoCompilerDiagnostics;
-    const calls = try w.tmp.dir.readFileAlloc(io, "flang.log", std.testing.allocator, .limited(1 << 20));
+    const calls = try w.tmp.dir.readFileAlloc(io, "flang/bin/flang.log", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(calls);
     const at = std.mem.find(u8, calls, "-fintrinsic-modules-path ") orelse {
         std.debug.print("\nno -fintrinsic-modules-path: {s}\n", .{calls});

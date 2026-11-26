@@ -52,6 +52,10 @@
       "supported": "limited",
       "description": "In an untrusted workspace the settings that choose which programs zfls runs or what flags they get are not read from the workspace.",
       "restrictedConfigurations": [
+        "zfls.arguments",
+        "zfls.linter.modOutput",
+        "zfls.linter.fypp.definitions",
+        "zfls.linter.fypp.path",
         "zfls.run.buildArgs",
         "zfls.fpm.args",
         "zfls.pfunit.args",

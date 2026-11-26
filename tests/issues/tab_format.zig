@@ -48,12 +48,13 @@ test "#491 an undeclared name in a TAB-format continuation line" {
     try h.expect(found, "no diagnostic for JUNDEF at 5:4", .{});
 }
 
-/// A stand-in gfortran that appends its arguments to `gf.log` in its
-/// working directory and gives a driver message, `gfortran: error: logged`
+/// A stand-in gfortran that appends its arguments to `gf.log` beside
+/// itself (not in its working directory, zfls's on Windows) and gives a
+/// driver message, `gfortran: error: logged`
 const fake: h.File = if (is_windows)
-    .{ .name = "gf.cmd", .text = "@echo off\r\necho %* >> gf.log\r\necho gfortran: error: logged 1>&2\r\n" }
+    .{ .name = "gf.cmd", .text = "@echo off\r\necho %* >> \"%~dp0gf.log\"\r\necho gfortran: error: logged 1>&2\r\n" }
 else
-    .{ .name = "gf.sh", .text = "#!/bin/sh\necho \"$@\" >> gf.log\necho 'gfortran: error: logged' >&2\n" };
+    .{ .name = "gf.sh", .text = "#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/gf.log\"\necho 'gfortran: error: logged' >&2\n" };
 
 test "#491 the compiler checks a file with TAB-format lines as fixed form" {
     const w = try h.Workspace.init(&.{ tabs, fake }, .{ .init_options = "{\"compiler_diagnostics\": \"gfortran\", \"compiler_path\": \"" ++ fake.name ++ "\"}" });

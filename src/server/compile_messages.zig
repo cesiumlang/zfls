@@ -58,7 +58,7 @@ fn isNameChar(c: u8) bool {
 pub fn isHere(a: Allocator, job: *const Job, here: []const []const u8, file: ?[]const u8) !bool {
     const named = try comparable(a, job.cwd, file orelse return true);
     for (here) |h| if (std.mem.eql(u8, named, h)) return true;
-    if (compilers.writesToWorkDir(job.id) and std.mem.findAny(u8, file.?, "/\\") == null) {
+    if (compilers.runsInWorkDir(job.id, is_windows) and std.mem.findAny(u8, file.?, "/\\") == null) {
         const base = std.Io.Dir.path.basename(named);
         for (here) |h| if (std.mem.eql(u8, std.Io.Dir.path.basename(h), base)) return true;
     }
