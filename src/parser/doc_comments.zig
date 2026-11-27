@@ -91,8 +91,9 @@ pub fn parseDocs(p: *Parser, line: []const u8, ln: usize) !?usize {
     // get_docstring
     try p.docs.append(sa, str.strip(line[mark + 1 ..]));
     const predocmark = line[mark] == '>';
-    var new_ln = ln;
     const n = p.file.nLines();
+    // a block that ends the file ends at its end, read once (#965)
+    var new_ln = @max(ln, n);
     if (ln < n) {
         var i = ln;
         while (i < n) : (i += 1) {

@@ -290,7 +290,7 @@ class FpmTests implements vscode.Disposable {
     run.appendOutput(`> fpm ${args.join(" ")}\r\n`);
     this.log.info(`[fpm] ${fpm} ${args.join(" ")} (in ${d.project.root})`);
     const start = Date.now();
-    const result = await runProcess(fpm, args, { cwd: d.project.root, signal });
+    const result = await runProcess(fpm, args, { cwd: d.project.root, signal, tree: true });
     const duration = Date.now() - start;
     const output = result.stdout + (result.stderr ? `\n${result.stderr}` : "");
     run.appendOutput(output.replace(/\r?\n/g, "\r\n") + "\r\n", undefined, target);

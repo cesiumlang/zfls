@@ -10,7 +10,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-/// A function of a runtime's errors, or of its `STOP` and `ERROR STOP`
+/// A function of a runtime's errors, or of its `STOP` and `ERROR STOP`.
+/// None returns: `lldb_windows.repeatsStop` takes a second stop at one on
+/// the same thread for lldb's repeat of the first (#974).
 pub const Function = struct {
     name: []const u8,
     /// Of `ERROR STOP` (else of an error at run time)

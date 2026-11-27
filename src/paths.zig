@@ -107,12 +107,18 @@ pub fn join(a: Allocator, parts: []const []const u8) ![]u8 {
     return std.Io.Dir.path.join(a, parts[start..]);
 }
 
-/// `pathlib.Path(p).resolve()`: absolute path with symlinks resolved when
-/// the path exists
+/// `pathlib.Path(p).resolve()`: absolute path with symlinks resolved; of a
+/// path that does not exist (yet), its nearest directory that does, so
+/// that it is the same path once it exists (#957)
 pub fn realpath(io: Io, a: Allocator, p: []const u8) ![]u8 {
     const abs = try abspath(a, p);
     if (!fsio.fits(abs)) return abs;
-    const rp = Io.Dir.realPathFileAbsoluteAlloc(io, abs, a) catch return abs;
+    const rp = Io.Dir.realPathFileAbsoluteAlloc(io, abs, a) catch {
+        const dir = std.Io.Dir.path.dirname(abs) orelse return abs;
+        if (dir.len >= abs.len) return abs;
+        const real_dir = try realpath(io, a, dir);
+        return std.Io.Dir.path.join(a, &.{ real_dir, std.Io.Dir.path.basename(abs) });
+    };
     return rp[0..rp.len];
 }
 

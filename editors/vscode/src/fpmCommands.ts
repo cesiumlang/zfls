@@ -23,7 +23,7 @@ import {
 } from "./fpm";
 import type { Servers } from "./fpmTests";
 import { CompilerInfo, launchConfiguration } from "./run";
-import { addFileRunner, chooseInstalledDebugger, compilerInfo, gdbFor, runTask } from "./runFile";
+import { addFileRunner, compilerInfo, debuggerFor, runTask } from "./runFile";
 import { expandVariables, findExecutable, runProcess } from "./tools";
 import { folderVariables } from "./variables";
 
@@ -108,7 +108,11 @@ export function projectAt(root: string): FpmProject {
 export async function findProjects(): Promise<FpmProject[]> {
   const byRoot = new Map<string, FpmProject>();
   for (const client of await servers()) {
-    const found = (await client.sendRequest<FoundProject[] | null>("zfls/fpmTargets", {})) ?? [];
+    // one folder's server down: the others' projects all the same
+    if (!client.isRunning()) {
+      continue;
+    }
+    const found = (await client.sendRequest<FoundProject[] | null>("zfls/fpmTargets", {}).catch(() => null)) ?? [];
     for (const p of found) {
       const root = vscode.Uri.parse(p.uri).fsPath;
       byRoot.set(root, {
@@ -417,14 +421,12 @@ export async function debugTarget(
     return false;
   }
   const build = await debugBuild(project);
-  const scope = vscode.Uri.file(project.root);
-  const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
-  const gdbPath = gdbFor(scope, build.compiler?.compiler);
   // choose the debugger first: no point building for a debugger that is not there
-  const debugType = await chooseInstalledDebugger(preference, build.msvc, gdbPath);
-  if (!debugType) {
+  const debuggerChoice = await debuggerFor(vscode.Uri.file(project.root), build.compiler?.compiler, build.msvc);
+  if (!debuggerChoice) {
     return false;
   }
+  const { type: debugType, gdbPath, lldb } = debuggerChoice;
   const program = await buildTarget(project, target, build.options, log);
   if (!program) {
     return false;
@@ -438,6 +440,7 @@ export async function debugTarget(
     env: build.compiler?.runEnv ?? {},
     platform: process.platform,
     gdbPath,
+    lldb,
     msvc: build.msvc,
     sourceRoot: project.root,
   }) as vscode.DebugConfiguration;

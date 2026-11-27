@@ -72,7 +72,7 @@ const defs = [_]Def{
         "|TYPE|STRUCTURE|ENUM|MODULE|SUBMODULE|PROGRAM|INTERFACE" ++
         "|SUBROUTINE|FUNCTION|PROCEDURE|FORALL|TEAM)?([ ]+(?![^\\w$])|$|(?<=TEAM)[ ]*\\()", true },
     .{ "TYPE_DEF", "[ ]*(TYPE)[, :]+", true },
-    .{ "EXTENDS", "EXTENDS[ ]*\\((\\w*)\\)", true },
+    .{ "EXTENDS", "EXTENDS[ ]*\\([ ]*(\\w*)[ ]*\\)", true },
     .{ "GENERIC_PRO", "[ ]*(GENERIC)[, ]*(PRIVATE|PUBLIC)?[ ]*::[ ]*[a-z]", true },
     .{ "GEN_ASSIGN", "(ASSIGNMENT|OPERATOR)\\(", true },
     .{ "END_TYPED", "TYPE", true },
@@ -92,12 +92,13 @@ const defs = [_]Def{
     // CUDA Fortran's data attributes too, which hover does not show (#715)
     .{ "KEYWORD_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ALLOCATABLE|" ++
         "POINTER|TARGET|DIMENSION[ ]*\\(|RANK[ ]*\\(|" ++
-        "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|" ++
-        "PASS[ ]*\\([ ]*\\w*[ ]*\\)|SAVE|PARAMETER|EXTERNAL|" ++
+        "OPTIONAL|INTENT[ ]*\\([ ]*(?:IN|OUT|IN[ ]*OUT)[ ]*\\)|DEFERRED|NOPASS|NON_OVERRIDABLE|" ++
+        "PASS[ ]*\\([ ]*\\w*[ ]*\\)|PASS\\b|BIND[ ]*\\(|SAVE|PARAMETER|EXTERNAL|" ++
         "CONTIGUOUS|VOLATILE|ASYNCHRONOUS|PROTECTED|VALUE|AUTOMATIC|STATIC|CODIMENSION[ ]*\\[|" ++
         "DEVICE|MANAGED|CONSTANT|SHARED|PINNED|TEXTURE|UNIFIED)", true },
     .{ "PARAMETER_VAL", "\\w*[\\s\\&]*=(([\\s\\&]*[\\w\\.\\-\\+\\*\\/\\'\\\"])*)", true },
-    .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS\\(\\w*\\))", true },
+    // `extends ( base )` and `bind(c)` too (#964)
+    .{ "TATTR_LIST", "[ ]*,[ ]*(PUBLIC|PRIVATE|ABSTRACT|EXTENDS[ ]*\\([ ]*\\w*[ ]*\\)|BIND[ ]*\\([ ]*C[ ]*\\))", true },
     .{ "VIS", "[ ]*\\b(PUBLIC|PRIVATE)\\b", true },
     .{ "WORD", "\\$*[a-z_][\\w\\$]*", true },
     .{ "NUMBER", "[\\+\\-]?(\\b\\d+\\.?\\d*|\\.\\d+)(_\\w+|d[\\+\\-]?\\d+|e[\\+\\-]?\\d+(_\\w+)?)?(?!\\w)", true },
@@ -115,7 +116,8 @@ const defs = [_]Def{
     .{ "FREE_COMMENT", "([ ]*!)", false },
     .{ "FREE_DOC", "[ ]*!([<>!])", false },
     .{ "DEFINED", "defined[ ]*\\(?[ ]*([a-z_]\\w*)[ ]*\\)?", true },
-    .{ "PP_REGEX", "[ ]*#[ ]*(if |ifdef|ifndef|else|elif|endif)", true },
+    // `#if(` and `#if!` too (#961)
+    .{ "PP_REGEX", "[ ]*#[ ]*(ifdef|ifndef|if\\b|elif\\b|else|endif)", true },
     .{ "PP_DEF", "[ ]*#[ ]*(define|undef|undefined)[ ]*(\\w+)(\\([ ]*([ \\w,]*?)[ ]*\\))?", true },
     .{ "PP_DEF_TEST", "(![ ]*)?defined[ ]*\\([ ]*(\\w*)[ ]*\\)$", true },
     .{ "PP_INCLUDE", "[ ]*#[ ]*include[ ]*([\\\"<>\\w\\./\\\\-]*)", true },

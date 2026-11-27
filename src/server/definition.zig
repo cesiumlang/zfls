@@ -103,6 +103,8 @@ pub fn getDefinition(self: *Server, a: Allocator, def_file: *FortranFile, def_li
     if (def_name.len == 0) return null;
     // On a USE statement, both names of a rename are the module's entity
     if (try useRenameTarget(self, a, ast, curr_line, def_char, def_name)) |o| return o;
+    // the keyword of a keyword argument is the called procedure's dummy (#952)
+    if (try argument_hover.keywordDummy(self, a, def_file, def_line, def_char)) |d| return d;
     // Search in Preprocessor defined variables
     if (def_file.pp_defs.get(def_name)) |d| {
         return try tempVariable(a, ast, def_line + 1, def_name, try macros.describe(a, def_name, d), &.{});

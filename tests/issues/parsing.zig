@@ -697,3 +697,72 @@ test "an undeclared name after strings holding both quote characters is reported
     for (try w.diagnostics("p.f90")) |d| found = found or (d.line == 2 and std.mem.find(u8, d.message, "x") != null);
     try std.testing.expect(found);
 }
+
+test "a file saved with a byte order mark defines what its first line declares (#962)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "m.f90", .text = "\xEF\xBB\xBFmodule bom_mod\n  implicit none\n  integer :: bval\nend module bom_mod\n" },
+        .{ .name = "p.f90", .text = "program p\n  use bom_mod\n  implicit none\n  print *, bval\nend program p\n" },
+    }, .{});
+    defer w.deinit();
+    try w.open("p.f90", "fortran");
+    try w.expectHoverContains("p.f90", w.pos("p.f90", "bval", 0, 0), "INTEGER :: bval");
+}
+
+test "MODULE PROCEDURE and IMPORT lists with a comment after them (#963)" {
+    const w = try h.Workspace.init(&.{.{ .name = "g.f90", .text =
+        \\module g
+        \\  implicit none
+        \\  interface f
+        \\    module procedure f_r4, f_r8 ! kinds
+        \\  end interface
+        \\contains
+        \\  subroutine f_r4(x)
+        \\    real(4), intent(in) :: x
+        \\  end subroutine
+        \\  subroutine f_r8(x)
+        \\    real(8), intent(in) :: x
+        \\  end subroutine
+        \\end module g
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.open("g.f90", "fortran");
+    const d = (try w.definition("g.f90", w.pos("g.f90", "f_r8 !", 0, 0))) orelse return error.NoDefinition;
+    try std.testing.expectEqual(@as(i64, 9), d.line);
+}
+
+test "EXTENDS with blanks, and bindings with PASS, NON_OVERRIDABLE (#964)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module t
+        \\  implicit none
+        \\  type :: base
+        \\    integer :: bv
+        \\  contains
+        \\    procedure, pass, private :: hidden => base_hidden
+        \\    procedure, non_overridable, public :: shown => base_hidden
+        \\  end type
+        \\  type, extends ( base ) :: child
+        \\  end type
+        \\contains
+        \\  subroutine base_hidden(self)
+        \\    class(base), intent(in) :: self
+        \\  end subroutine
+        \\  subroutine use_it(c)
+        \\    type(child), intent(in) :: c
+        \\    print *, c%bv
+        \\    call c%hidden()
+        \\    call c%shown()
+        \\  end subroutine
+        \\end module t
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.open("t.f90", "fortran");
+    // the parent's component through the child
+    try w.expectHoverContains("t.f90", w.pos("t.f90", "bv\n", 1, 0), "INTEGER :: bv");
+    // the bindings after PASS and NON_OVERRIDABLE
+    for ([_][]const u8{ "hidden()", "shown()" }) |call| {
+        const d = (try w.definition("t.f90", w.pos("t.f90", call, 0, 0))) orelse return h.unmet("no definition of {s}", .{call});
+        try h.expect(d.line == 5 or d.line == 6 or d.line == 11, "{s} goes to line {d}", .{ call, d.line + 1 });
+    }
+}

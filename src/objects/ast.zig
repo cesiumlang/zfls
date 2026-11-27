@@ -453,11 +453,11 @@ pub const Ast = struct {
 
     fn findChildByName(parent: *Obj, name: []const u8) ?*Obj {
         for (parent.childList()) |child| {
-            if (std.mem.eql(u8, child.name, name)) return child;
+            if (std.ascii.eqlIgnoreCase(child.name, name)) return child;
             // the enumerators of an ENUM and the interface bodies of an
             // interface block (#474) are names of the scope around it
             if (child.kind == .interface or child.kind == .enum_) {
-                for (child.childList()) |ic| if (std.mem.eql(u8, ic.name, name)) return ic;
+                for (child.childList()) |ic| if (std.ascii.eqlIgnoreCase(ic.name, name)) return ic;
             }
         }
         return null;
@@ -598,6 +598,8 @@ pub const Ast = struct {
             const parent_scope = self.getInnerScope(inc.line_number);
             const include_file = workspace.get(file_path) orelse continue;
             const include_ast = include_file.ast orelse continue;
+            // a file that includes itself (#954)
+            if (include_ast == self) continue;
             inc.file = include_file;
             inc.inc_obj = null;
             include_ast.included_in = parent_scope;
@@ -619,6 +621,8 @@ pub const Ast = struct {
             }
             inc.scope_objs.clearRetainingCapacity();
             for (units) |child| {
+                // files that include each other: no scope into itself (#954)
+                if (parent_scope) |ps| if (encloses(child, ps)) continue;
                 try inc.scope_objs.append(self.allocator(), child);
                 if (parent_scope) |ps| {
                     try ps.addChild(child);
@@ -628,6 +632,17 @@ pub const Ast = struct {
             if (include_ast.inc_scope) |ns| if (parent_scope) |ps| try self.linkIncludeScope(inc, ps, ns, include_ast.inc_implicit);
             if (include_ast.inc_scope != null) include_ast.none_scope = parent_scope;
         }
+    }
+
+    /// Whether `outer` is `scope` or one of the scopes around it
+    fn encloses(outer: *const Obj, scope: *const Obj) bool {
+        var cur: ?*const Obj = scope;
+        var depth: usize = 0;
+        while (cur) |c| : (cur = c.parent) {
+            if (c == outer or depth == 1 << 16) return true;
+            depth += 1;
+        }
+        return false;
     }
 
     /// The USE statements of an included file's unnamed scope `ns` are USE

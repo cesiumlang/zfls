@@ -139,6 +139,8 @@ pub const Options = struct {
     client_commands: []const []const u8 = &.{},
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
+    /// no initialize request: the test sends its own
+    uninitialized: bool = false,
     /// the client pulls diagnostics (`textDocument/diagnostic`) and takes
     /// `workspace/diagnostic/refresh`
     pull_diagnostics: bool = false,
@@ -266,6 +268,8 @@ pub const Workspace = struct {
         // every file a request read rests at the next save
         w.server.keep_awake = 0;
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
+        // a test that sends its own (#368); the server takes one only (#965)
+        if (opts.uninitialized) return w;
         w.init_result = try w.server.dispatchPublic(w.a(), "initialize", try json.from(aa, .{
             .rootPath = if (opts.unc_root) null else w.root,
             .rootUri = if (opts.unc_root) try paths.pathToUri(aa, w.root) else null,

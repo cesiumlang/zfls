@@ -128,6 +128,7 @@
   "command.zfls.toggleFixedFormComment.title": "Toggle Fixed-Form Line Comment",
   "command.zfls.fortitude.fixAll.title": "Fix All Safe fortitude Problems",
   "taskDefinition.zfls.task.description": "Building or running the file of zfls.runFile and zfls.debugFile",
+  "taskDefinition.zfls.file.description": "The file built or run",
   "taskDefinition.fpm.command.description": "The fpm command",
   "taskDefinition.fpm.target.description": "The executable, example or test to run (all of them when not set)",
   "taskDefinition.fpm.example.description": "Run an example (`fpm run --example`)",

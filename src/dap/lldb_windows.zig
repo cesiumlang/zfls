@@ -30,12 +30,28 @@ pub fn parseVersion(text: []const u8) ?std.SemanticVersion {
     return .{ .major = parts[0], .minor = parts[1], .patch = parts[2] };
 }
 
-/// Whether lldb-dap `exe` is new enough: false when it says no version
-pub fn isRecent(a: Allocator, io: Io, environ: *const std.process.Environ.Map, exe: []const u8) bool {
+/// Why lldb-dap `exe` cannot debug here, or null: it does not start, or
+/// runs and fails (LLVM's needs a `python3.dll` on the PATH, #974), or is
+/// before LLVM 23.1.6
+pub fn refusal(a: Allocator, io: Io, environ: *const std.process.Environ.Map, exe: []const u8) !?[]const u8 {
     const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(10), .clock = .awake } };
-    const r = std.process.run(a, io, .{ .argv = &.{ exe, "--version" }, .environ_map = environ, .timeout = timeout }) catch return false;
-    const v = parseVersion(r.stdout) orelse return false;
-    return v.order(oldest) != .lt;
+    const r = std.process.run(a, io, .{ .argv = &.{ exe, "--version" }, .environ_map = environ, .timeout = timeout }) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return try a.print("zfls dap: lldb-dap ({s}) did not start: {s}", .{ exe, @errorName(e) }),
+    };
+    if (parseVersion(r.stdout)) |v| return if (v.order(oldest) == .lt) too_old else null;
+    const said = std.mem.trim(u8, if (r.stderr.len > 0) r.stderr else r.stdout, " \t\r\n");
+    const ran = switch (r.term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (ran and said.len > 0) return too_old;
+    const status = switch (r.term) {
+        .exited => |code| try a.print("exit code {d}", .{code}),
+        .unknown => |code| try a.print("status 0x{x}", .{code}),
+        else => "stopped by a signal",
+    };
+    return try a.print("zfls dap: lldb-dap ({s}) did not run ({s}{s}{s}); LLVM's lldb-dap on Windows needs a python3.dll on the PATH (Python 3's)", .{ exe, status, if (said.len > 0) ": " else "", said[0..@min(said.len, 400)] });
 }
 
 /// Whether a stop at the runtime's function `hit` on `thread` is lldb's

@@ -447,8 +447,9 @@ pub const FortranFile = struct {
         // as many as there are lines, not more (a workspace has millions)
         const breaks = std.mem.count(u8, text, "\n");
         try fresh.ensureTotalCapacityPrecise(self.gpa, (if (breaks > 0) breaks else std.mem.count(u8, text, "\r")) + 1);
-        var start: usize = 0;
-        var i: usize = 0;
+        // a file saved with a byte order mark (#962): its first line after it
+        var start: usize = if (std.mem.startsWith(u8, text, str.bom)) str.bom.len else 0;
+        var i: usize = start;
         while (i < text.len) {
             const c = text[i];
             if (c == '\n' or c == '\r') {
