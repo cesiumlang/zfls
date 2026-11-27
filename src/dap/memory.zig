@@ -11,6 +11,7 @@ const objects = @import("../objects.zig");
 const Obj = objects.Obj;
 const values = @import("values.zig");
 const dbgeng = @import("dbgeng.zig");
+const engine_lfortran = @import("engine_lfortran.zig");
 
 const session = @import("session.zig");
 const Session = session.Session;
@@ -50,9 +51,16 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
     var val: Val = .{ .address = address, .t = d.t, .expr = expr, .type_index = type_index, .mod_base = v.mod_base, .decl = d.obj, .frame = frame };
     if (d.t.kind == .derived) val.type_index = try structure(s, a, v.mod_base, elementType(s, v.mod_base, type_index), d.t.name);
     if (d.t.kind == .derived and d.t.polymorphic and d.dims.len == 0) {
-        if (try classTypeInfo(s, box, v.parameter, address)) |info| try toDynamic(s, a, &val, info, d);
+        if (engine_lfortran.isProgram(s, a)) {
+            if (try engine_lfortran.classBox(s, a, address)) |b| {
+                val.address = b.data;
+                if (b.name) |n| try toDynamicNamed(s, a, &val, n, d.obj);
+            }
+        } else if (try classTypeInfo(s, box, v.parameter, address)) |info| try toDynamic(s, a, &val, info, d);
     }
     if (d.dims.len == 0) {
+        // LFortran's: its string, or a dummy's hidden length
+        if (d.t.kind == .character and engine_lfortran.isProgram(s, a)) if (try engine_lfortran.string(s, a, &val, v, type_index, frame)) return val;
         // a deferred-length CHARACTER of Intel's (`character(len=:),
         // allocatable`): a descriptor of rank 0, CodeView's `LF_OEM`, of its
         // address and length; LLVM Flang's is a pointer, followed below
@@ -84,12 +92,26 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
         if (d.t.kind == .character and d.t.size == 0) val.t.size = s.engine.typeInfo(u32, v.mod_base, val.type_index, .length) orelse 0;
         return val;
     }
+    // LFortran's: its descriptor, or a dummy's data and hidden extents
+    if (engine_lfortran.isProgram(s, a)) {
+        // a derived type's elements: its structure, not the descriptor's;
+        // a CLASS array's: boxes
+        if (d.t.kind == .derived) val.type_index = (try s.engine.typeNamed(a, v.mod_base, d.t.name)) orelse val.type_index;
+        const elem: u64 = if (val.t.kind == .derived) (s.engine.typeInfo(u64, v.mod_base, val.type_index, .length) orelse 0) else val.t.size;
+        var dynamic: ?[]const u8 = null;
+        if (try engine_lfortran.array(s, a, &val, d, v, type_index, elem, frame, &dynamic)) {
+            if (dynamic) |n| try toDynamicNamed(s, a, &val, n, d.obj);
+            return val;
+        }
+    }
     // arrays: Intel's or LLVM Flang's descriptor for those of deferred or
     // assumed shape
     if (d.allocatable or d.pointer or (!values.constantShape(d.dims) and dimsDeferred(d.dims))) {
         var words: [6 + 3 * 7]u64 = undefined;
         const got = s.engine.read(address, std.mem.sliceAsBytes(words[0..]));
         const desc = values.Descriptor.parse(words[0 .. got / 8]) orelse return error.Unreadable;
+        // garbage read as a descriptor (another compiler's): no array's
+        if (desc.rank != d.dims.len) return error.Unreadable;
         if (desc.empty()) {
             val.empty = true;
             val.rank = d.dims.len;
@@ -158,10 +180,15 @@ fn toDynamic(s: *Session, a: Allocator, val: *Val, type_info: u64, d: Decl) !voi
     if (type_info == 0) return;
     const name = (if (s.engine.symbolAt(a, type_info)) |symbol| values.Descriptor.flangTypeName(symbol) else null) orelse
         (try intelTypeName(s, a, type_info)) orelse return;
+    return toDynamicNamed(s, a, val, name, d.obj);
+}
+
+/// A CLASS object as its dynamic type `name`, `obj` its declaration
+fn toDynamicNamed(s: *Session, a: Allocator, val: *Val, name: []const u8, obj: ?*const Obj) !void {
     if (std.ascii.eqlIgnoreCase(name, val.t.name)) return;
     val.type_index = (try s.engine.typeNamed(a, val.mod_base, name)) orelse return;
     val.t.name = name;
-    if (d.obj) |o| if (o.parent) |scope| {
+    if (obj) |o| if (o.parent) |scope| {
         val.dynamic = typeDefinition(s, scope, name);
         // as the source spells it (Intel's names are upper case)
         if (val.dynamic) |def| val.t.name = def.name;
@@ -265,29 +292,33 @@ pub fn components(s: *Session, a: Allocator, v: Val) ![]Val {
     return out.items;
 }
 
-/// A module variable's place: by the names Intel and LLVM Flang give it.
-/// LLVM Flang's (`_QMgridEncells`) is a public symbol, without a type: the
+/// A module variable's place: by the names Intel, LLVM Flang and LFortran
+/// give it. LLVM Flang's (`_QMgridEncells`) and LFortran's
+/// (`__module_grid_ncells`) are public symbols, without a type: the
 /// variable's type is that of the variable of its own name (`ncells`) at
 /// its address
 pub fn moduleGlobal(s: *Session, a: Allocator, module: []const u8, name: []const u8) !?dbgeng.Variable {
     const intel = try a.print("{s}_mp_{s}", .{ try std.ascii.allocUpperString(a, module), try std.ascii.allocUpperString(a, name) });
     if (try s.engine.global(a, intel)) |v| return v;
     const lower = try std.ascii.allocLowerString(a, name);
-    const flang = try a.print("_QM{s}E{s}", .{ try std.ascii.allocLowerString(a, module), lower });
-    const v = (try s.engine.global(a, flang)) orelse return commonMember(s, a, module, name);
+    const lower_module = try std.ascii.allocLowerString(a, module);
+    const flang = try a.print("_QM{s}E{s}", .{ lower_module, lower });
+    const lfortran = try a.print("__module_{s}_{s}", .{ lower_module, lower });
+    const v = (try s.engine.global(a, flang)) orelse (try s.engine.global(a, lfortran)) orelse return commonMember(s, a, module, name);
     if (v.type_index == 0) if (try s.engine.dataAt(a, v.mod_base, lower, v.address)) |typed| return typed;
     return v;
 }
 
 /// A module's variable in its COMMON block (`common /blk/ cx`): at the
-/// block's symbol (Intel's `BLK`, else gfortran's and Flang's `blk_`) plus
+/// block's symbol (Intel's `BLK`, else gfortran's and Flang's `blk_`,
+/// LFortran's `__module_file_common_block_blk_struct_instance_blk`) plus
 /// its offset there, without a type of dbghelp's (the declaration gives it)
 fn commonMember(s: *Session, a: Allocator, module: []const u8, name: []const u8) !?dbgeng.Variable {
     const mod = declarations.moduleNamed(s, module) orelse return null;
     const place = declarations.commonPlace(a, mod, name) orelse return null;
     if (place.block.len == 0) return null;
     const lower = try std.ascii.allocLowerString(a, place.block);
-    for ([_][]const u8{ try std.ascii.allocUpperString(a, place.block), try a.print("{s}_", .{lower}) }) |symbol| {
+    for ([_][]const u8{ try std.ascii.allocUpperString(a, place.block), try a.print("{s}_", .{lower}), try a.print("__module_file_common_block_{s}_struct_instance_{s}", .{ lower, lower }) }) |symbol| {
         var v = (try s.engine.global(a, symbol)) orelse continue;
         v.name = name;
         v.address += place.offset;
