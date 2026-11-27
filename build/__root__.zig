@@ -171,7 +171,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .root_source_file = b.path("tests/lsp_client.zig"),
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran, Flang and ifx oracles, stress test, zfls dap with the engine, gdb and lldb-dap, the compiler check)");
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran, Flang and ifx oracles, stress test, zfls dap with the engine, gdb and lldb-dap and on MPI programs, the compiler check)");
     const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false, windows_only: bool = false, needs_kit: bool = false };
     const tools = [_]Tool{
         .{
@@ -224,6 +224,13 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .root = "tests/dap_lldb.zig",
             .step = "test-dap-lldb",
             .desc = "Debug a gfortran program (or LFortran's, with -- --compiler lfortran) with zfls dap and lldb-dap (skipped without the compiler or lldb-dap)",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "dap_mpi",
+            .root = "tests/dap_mpi.zig",
+            .step = "test-dap-mpi",
+            .desc = "Debug an MPI program with zfls dap, a session per rank under gdbserver (Linux only; skipped without MPI's mpif90 and mpiexec, or gdbserver)",
             .needs_fortls = false,
         },
         .{
