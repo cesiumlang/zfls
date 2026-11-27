@@ -246,6 +246,68 @@ The configuration file, `fpm.toml` and `compile_commands.json` are read again wh
 
 The fortls debug options work as well, for instance `zfls --debug_parser --debug_filepath file.f90` prints the parser trace and the resulting object tree, and `--debug_hover --debug_filepath file.f90 --debug_line 10 --debug_char 5` runs a single hover request. Their output is meant for testing zfls and may differ from fortls's. They take the options as the server does: the command line's, with the configuration file's (`.zflsrc`, `.fortlsrc`, `.fortls.json`, `.fortls` or `-c`) in `--debug_rootpath` over them. With `--debug_log`, `fortls_debug.log` has a `Final options` line with the options in effect, after the command line, the editor's settings, the configuration file and the build files, at start-up and after each change of the settings.
 
+### Editors
+
+VS Code has the extension (`editors/vscode`). Other editors start `zfls` as any language server; its options go in a `.zflsrc` in the project (above), or after `zfls` on its command line.
+
+Neovim 0.11 or later, in `init.lua`:
+
+```lua
+vim.lsp.config("zfls", {
+  cmd = { "zfls" },
+  filetypes = { "fortran" },
+  root_markers = { ".zflsrc", ".fortlsrc", ".fortls.json", "fpm.toml", ".git" },
+})
+vim.lsp.enable("zfls")
+```
+
+Helix, in `languages.toml` (with the `debugger` of [A debugger](#a-debugger-zfls-dap) for `zfls dap`):
+
+```toml
+[language-server.zfls]
+command = "zfls"
+
+[[language]]
+name = "fortran"
+language-servers = ["zfls"]
+```
+
+Emacs with eglot:
+
+```elisp
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs '((f90-mode fortran-mode) . ("zfls"))))
+```
+
+Emacs with lsp-mode (the priority puts it before lsp-mode's own client of fortls):
+
+```elisp
+(with-eval-after-load 'lsp-mode
+  (lsp-register-client
+   (make-lsp-client :new-connection (lsp-stdio-connection '("zfls"))
+                    :activation-fn (lsp-activate-on "fortran")
+                    :priority 1
+                    :server-id 'zfls)))
+```
+
+Sublime Text with the LSP package, in `LSP.sublime-settings`:
+
+```json
+{ "clients": { "zfls": { "enabled": true, "command": ["zfls"], "selector": "source.fortran | source.modern-fortran" } } }
+```
+
+Kate, in the LSP Client's User Server Settings:
+
+```json
+{ "servers": { "fortran": { "command": ["zfls"], "url": "https://github.com/cesiumlang/zfls", "highlightingModeRegex": "^Fortran.*$" } } }
+```
+
+Zed, with its Fortran extension, whose server is fortls (zfls takes fortls's options), in `settings.json`:
+
+```json
+{ "lsp": { "fortls": { "binary": { "path": "zfls", "arguments": [] } } } }
+```
+
 ### ifx without Visual Studio (Windows x64)
 
 `zfls setup-ifx` sets up Intel's Fortran compiler, ifx, from Intel's offline installer for Windows, without running the installer (no administrator rights, nothing registered) and without Visual Studio:
