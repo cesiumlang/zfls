@@ -220,5 +220,11 @@
   "config.zfls.linter.dialect.enumDescriptions.2": "gfortran's rules and quirks, reported as you type",
   "config.zfls.linter.dialect.enumDescriptions.3": "ifx's (and ifort's) rules and quirks, reported as you type",
   "config.zfls.linter.dialect.enumDescriptions.4": "LLVM Flang's rules and quirks, reported as you type",
-  "debugger.fortran.attach.dbgeng.description": "Windows only: attach with Windows's Debugger Engine instead of gdb, to a program with Microsoft's debug information (LLVM Flang's built with -g, ifx's and ifort's). It needs a processId; no gdb is needed."
+  "debugger.fortran.attach.dbgeng.description": "Windows only: attach with Windows's Debugger Engine instead of gdb, to a program with Microsoft's debug information (LLVM Flang's built with -g, ifx's and ifort's). It needs a processId; no gdb is needed.",
+  "debugger.fortran.launch.mpi.description": "An MPI program, debugged on Linux with zfls's debugger: the launcher runs in a terminal with each rank under gdbserver, and each rank gets a debug session of its own.",
+  "debugger.fortran.launch.mpi.ranks.description": "How many ranks to run (the launcher's -n).",
+  "debugger.fortran.launch.mpi.launcher.description": "The MPI launcher.",
+  "debugger.fortran.launch.mpi.launcherArgs.description": "The launcher's arguments before its -n.",
+  "debugger.fortran.launch.mpi.gdbserver.description": "The gdbserver each rank runs under.",
+  "debugger.fortran.launch.mpi.port.description": "The port of rank 0's gdbserver; each rank's is this plus the rank."
 }

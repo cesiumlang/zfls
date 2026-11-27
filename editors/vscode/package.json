@@ -1586,6 +1586,43 @@
                 },
                 "default": [],
                 "description": "%debugger.fortran.launch.setupCommands.description%"
+              },
+              "mpi": {
+                "type": "object",
+                "description": "%debugger.fortran.launch.mpi.description%",
+                "required": [
+                  "ranks"
+                ],
+                "properties": {
+                  "ranks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "%debugger.fortran.launch.mpi.ranks.description%"
+                  },
+                  "launcher": {
+                    "type": "string",
+                    "default": "mpiexec",
+                    "description": "%debugger.fortran.launch.mpi.launcher.description%"
+                  },
+                  "launcherArgs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": [],
+                    "description": "%debugger.fortran.launch.mpi.launcherArgs.description%"
+                  },
+                  "gdbserver": {
+                    "type": "string",
+                    "default": "gdbserver",
+                    "description": "%debugger.fortran.launch.mpi.gdbserver.description%"
+                  },
+                  "port": {
+                    "type": "integer",
+                    "default": 20000,
+                    "description": "%debugger.fortran.launch.mpi.port.description%"
+                  }
+                }
               }
             }
           },

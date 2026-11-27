@@ -72,6 +72,7 @@ const capabilities = @import("capabilities.zig");
 const engine_conditions = @import("engine_conditions.zig");
 const engine_set = @import("engine_set.zig");
 const coarrays = @import("coarrays.zig");
+const mpi = @import("mpi.zig");
 const gdb_variables = @import("gdb_variables.zig");
 const lldb = @import("lldb.zig");
 const engine_requests = @import("engine_requests.zig");
@@ -135,7 +136,7 @@ const Queue = struct {
     gdb: std.ArrayList(gdb.Item) = .empty,
 };
 
-pub const Backend = enum { none, dbgeng, gdb, lldb };
+pub const Backend = enum { none, dbgeng, gdb, lldb, mpi };
 
 /// The debugger unless the configuration names one: lldb-dap on macOS,
 /// where gdb does not run on Apple silicon and must be code-signed on
@@ -206,6 +207,8 @@ pub const Session = struct {
     /// What variable references stand for, until the program goes on
     nodes: std.ArrayList(Node) = .empty,
     nodes_arena: std.heap.ArenaAllocator,
+    /// An MPI program's coordinator (mpi.zig)
+    mpi: ?mpi.State = null,
 
     pub fn send(s: *Session, a: Allocator, msg: anytype) void {
         _ = s.sendSeq(a, msg);
@@ -362,6 +365,8 @@ pub fn run(gpa: Allocator, io: Io, environ: *const std.process.Environ.Map, args
     defer s.nodes_arena.deinit();
     defer if (s.server) |srv| srv.destroy();
     defer {
+        mpi.end(&s);
+        mpi.deinit(&s);
         gdb_requests.deinit(&s);
         gdb.deinit(&s);
         if (s.client_init.len > 0) gpa.free(s.client_init);
@@ -500,6 +505,11 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
             try capabilities.toEngine(s, a);
             return engine_requests.handle(s, a, req);
         }
+        // an MPI program: a session per rank (#988)
+        if (std.mem.eql(u8, command, "launch")) if (try mpi.options(a, args)) |o| {
+            gdb.stop(s);
+            return mpi.launch(s, a, req, args, o);
+        };
         // the configuration's debugger, when another than the one started
         const want = chosen(s, args);
         const lldb_wanted = want.backend == .lldb;
@@ -518,6 +528,7 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
     switch (s.backend) {
         .gdb, .lldb => return gdb_requests.handle(s, a, req),
         .dbgeng => if (is_windows) return engine_requests.handle(s, a, req),
+        .mpi => return mpi.handle(s, a, req),
         .none => {},
     }
     if (std.mem.eql(u8, command, "disconnect")) {
