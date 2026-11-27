@@ -1,6 +1,6 @@
 //! zfls dap over Windows's Debugger Engine on LFortran's programs, for
 //! tests/dap_windows.zig (`--lfortran LFORTRAN`): tests/dap/count.f90 built
-//! as `zfls build-command` answers, with `zfls lfortran-codeview` (CodeView
+//! as `zfls build-command` answers, with `zfls lfortran-ir` (CodeView
 //! through LFortran's IR, clang and lld-link with the ifx kit, #176), and a
 //! session on it (#185): a breakpoint on a line, the stack, the program's
 //! integer scalars. clang and lld-link are the PATH's.
@@ -61,7 +61,7 @@ fn build(io: Io, a: Allocator, environ: *const std.process.Environ.Map, exe_zfls
         return error.Build;
     };
     const args = items(answer, "args");
-    if (args.len == 0 or !std.mem.eql(u8, args[0].string, "lfortran-codeview")) {
+    if (args.len == 0 or !std.mem.eql(u8, args[0].string, "lfortran-ir")) {
         std.debug.print("skipped: LFortran's CodeView build ({s})\n", .{str(answer, "note") orelse "no note"});
         return null;
     }

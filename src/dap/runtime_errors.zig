@@ -41,11 +41,11 @@ pub const IoFlags = struct { argument: u2, handled: u32 };
 pub const gfortran_io_handled: u32 = 0x4 | 0x8 | 0x20;
 
 /// An argument (from 0) that points to a C string beginning with `text`;
-/// `variadic` when it is among the `...` of a variadic function
+/// `variadic` its place (from 0) among the `...` of a variadic function
 pub const StringArgument = struct {
     argument: u2,
     text: []const u8,
-    variadic: bool = false,
+    variadic: ?u2 = null,
 };
 
 /// LLVM Flang's `STOP` and `ERROR STOP`:
@@ -67,7 +67,7 @@ const lfortran_functions = [_]Function{
     .{ .name = "_lcompilers_runtime_error_exit" },
     .{ .name = "_lcompilers_print_error", .error_stop = true, .error_stop_strings = &.{
         .{ .argument = 0, .text = "%s" },
-        .{ .argument = 1, .text = "ERROR STOP\x00", .variadic = true },
+        .{ .argument = 1, .text = "ERROR STOP\x00", .variadic = 0 },
     } },
 };
 
@@ -188,17 +188,20 @@ pub fn argumentRegister(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag, index:
 }
 
 /// The register of a pointer argument (from 0) at a function's entry, as
-/// gdb and lldb name it in an expression (all of it); null where the
-/// argument is not in a register: for a target whose convention zfls does
-/// not know, and for a variadic one on Apple's arm64, which passes those
-/// on the stack
-pub fn pointerRegister(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag, index: u2, variadic: bool) ?[]const u8 {
+/// gdb and lldb name it in an expression (all of it); null for a target
+/// whose convention zfls does not know. A variadic one (`variadic` its
+/// place among the `...`) on Apple's arm64 is on the stack, in 8 bytes
+/// each from the stack pointer: there the expression reads it.
+pub fn pointerRegister(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag, index: u2, variadic: ?u2) ?[]const u8 {
     return switch (arch) {
         .x86_64 => if (os == .windows)
             ([_][]const u8{ "$rcx", "$rdx", "$r8", "$r9" })[index]
         else
             ([_][]const u8{ "$rdi", "$rsi", "$rdx", "$rcx" })[index],
-        .aarch64 => if (variadic and os.isDarwin()) null else ([_][]const u8{ "$x0", "$x1", "$x2", "$x3" })[index],
+        .aarch64 => if (variadic != null and os.isDarwin())
+            ([_][]const u8{ "(*(unsigned long long *)$sp)", "(*(unsigned long long *)($sp + 8))", "(*(unsigned long long *)($sp + 16))", "(*(unsigned long long *)($sp + 24))" })[variadic.?]
+        else
+            ([_][]const u8{ "$x0", "$x1", "$x2", "$x3" })[index],
         else => null,
     };
 }
@@ -248,7 +251,7 @@ pub const Register = struct {
 /// have none of `handled`: in C (gdb's and lldb's for a function without
 /// debug information); null when the argument has no register
 pub fn ioCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag, comptime f: IoFlags) ?[]const u8 {
-    const reg = comptime pointerRegister(arch, os, f.argument, false) orelse return null;
+    const reg = comptime pointerRegister(arch, os, f.argument, null) orelse return null;
     return comptime std.fmt.comptimePrint("(*(int *){s} & 0x{x}) == 0", .{ reg, f.handled });
 }
 
@@ -256,7 +259,7 @@ pub fn ioCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.O
 /// (gdb_io.zig), which gdb's C and Fortran both parse. In Fortran, C's
 /// `int` is there only in a program with C's debug information (#776)
 pub fn gdbIoCondition(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag, comptime f: IoFlags) ?[]const u8 {
-    const reg = comptime pointerRegister(arch, os, f.argument, false) orelse return null;
+    const reg = comptime pointerRegister(arch, os, f.argument, null) orelse return null;
     return comptime std.fmt.comptimePrint("$_zfls_io_unhandled({s}, {d})", .{ reg, f.handled });
 }
 
@@ -439,9 +442,9 @@ test "LFortran's ERROR STOP: the strings of _lcompilers_print_error" {
     );
     try std.testing.expectEqualStrings(linux, comptime stringCondition(.x86_64, .macos, strings).?);
     try std.testing.expect(std.mem.startsWith(u8, comptime stringCondition(.aarch64, .linux, strings).?, "*(unsigned short *)$x0 == 0x7325 && *(unsigned long long *)$x1 == "));
-    // Apple's arm64 passes the string on the stack: no breakpoint there
-    try std.testing.expect(comptime stringCondition(.aarch64, .macos, strings) == null);
-    for (comptime gdbBreakpoints(.aarch64, .macos)) |b| try std.testing.expect(!std.mem.eql(u8, b.name, "_lcompilers_print_error"));
+    // Apple's arm64 passes the string on the stack: as lldb 1700 read it
+    // at the function's first instruction (LFortran 0.69.0, #470)
+    try std.testing.expect(std.mem.endsWith(u8, comptime stringCondition(.aarch64, .macos, strings).?, "*(unsigned long long *)(*(unsigned long long *)$sp) == 0x545320524f525245 && *(unsigned short *)((*(unsigned long long *)$sp) + 8) == 0x504f && *(unsigned char *)((*(unsigned long long *)$sp) + 10) == 0x0"));
     // no ' in it: lldb's command quotes the condition so (lldb.zig)
     try std.testing.expect(std.mem.findScalar(u8, linux, '\'') == null);
 }
