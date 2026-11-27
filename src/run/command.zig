@@ -136,6 +136,18 @@ pub fn plan(a: Allocator, ctx: Context, r: Request) !?Answer {
         build_ctx.base_env = &build_base;
     }
     const link = try kitLink(a, build_ctx, id, exe, lld, r.args, &note);
+    // LFortran on Windows: CodeView through its IR, clang and lld-link (#176)
+    if (os == .windows and id == .lfortran and link.env.len > 0) if (lld) |lld_link| {
+        if (try lfortranCodeView(a, ctx, exe, lld_link, source, program, r.args, &note)) |args| {
+            ans.compiler = try std.process.executablePathAlloc(ctx.io, a);
+            ans.args = args;
+            ans.cwd = out_dir;
+            ans.env = .{ .items = try buildEnv(a, ans.runEnv.items, link.env) };
+            ans.program = program;
+            ans.note = note;
+            return ans;
+        }
+    };
     const extra = try std.mem.concat(a, []const u8, &.{ try modules(a, ctx, id, exe), link.args });
     if (twoSteps(os, id, try paths.realpath(ctx.io, a, exe))) {
         const object = try a.print("{s}.o", .{program});
@@ -166,6 +178,27 @@ fn buildEnv(a: Allocator, path: []const Var, link: []const Var) ![]const Var {
     if (path.len == 0) return link;
     for (link) |v| if (std.ascii.eqlIgnoreCase(v.name, path[0].name)) return link;
     return std.mem.concat(a, Var, &.{ path, link });
+}
+
+/// The build of LFortran's program with CodeView (`zfls lfortran-codeview`,
+/// run/lfortran_codeview.zig): the arguments of zfls's subcommand, or null
+/// with a `note` when clang or LFortran's static runtime is not there
+fn lfortranCodeView(a: Allocator, ctx: Context, exe: []const u8, lld_link: []const u8, source: []const u8, program: []const u8, user_args: ?[]const []const u8, note: *?[]const u8) !?[]const []const u8 {
+    const clang = try executables.inDir(a, ctx.io, ctx.env, paths.dirname(exe), "clang") orelse
+        try executables.onPath(a, ctx.io, ctx.env, "clang") orelse {
+        note.* = "LFortran's program has no debug information: zfls builds it with CodeView through clang, which is neither next to LFortran nor on the PATH (conda install clang)";
+        return null;
+    };
+    const runtime = try std.Io.Dir.path.join(a, &.{ paths.dirname(paths.dirname(exe)), "lib", "lfortran_runtime_static.lib" });
+    if (!paths.isFile(ctx.io, runtime)) {
+        note.* = try a.print("LFortran's program has no debug information: no {s}", .{runtime});
+        return null;
+    }
+    return try std.mem.concat(a, []const u8, &.{
+        &.{ "lfortran-codeview", "--lfortran", exe, "--clang", clang, "--lld-link", lld_link, "--runtime", runtime, "-o", program },
+        user_args orelse &.{},
+        &.{source},
+    });
 }
 
 /// The lld-link next to `exe` (conda-forge's `lld`), else on the `PATH`

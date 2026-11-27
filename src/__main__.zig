@@ -252,6 +252,13 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    // an LFortran program built with CodeView on Windows (#176)
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "lfortran-codeview")) {
+        const code = try @import("run/lfortran_codeview.zig").main(arena, io, init.environ_map, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
     // the options in effect, and where each came from
     if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "config")) {
         const code = try @import("config_command.zig").run(gpa, io, args.items[1..]);
