@@ -1693,6 +1693,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # the release notes' pull requests and issues
+      issues: read
+      pull-requests: read
       # the attestations of the release files
       id-token: write
       attestations: write
@@ -1768,13 +1771,20 @@ jobs:
           gpg-key: ${{ secrets.RELEASE_GPG_KEY }}
           gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
 
+      # the pull requests since the last release and the milestone's issues
+      # none of them closes (#979)
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zig build release-notes -- "$RUNNER_TEMP/release-notes.md"
+
       - name: Publish release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: zfls v${{ needs.version.outputs.version }}
           files: dist/*
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
 
   # The next version is begun on dev: main keeps the version it released. A
   # separate job, so that a push dev refuses does not stop the publishing.

@@ -1,6 +1,5 @@
-# Sections of the release notes GitHub generates for each release (the
-# release job sets generate_release_notes). A pull request goes in the first
-# section whose label it has.
+# Sections of each release's notes (build/release_notes.zig, #979): a pull
+# request or an issue goes in the first section whose label it has.
 changelog:
   exclude:
     labels:
@@ -23,6 +22,7 @@ changelog:
     - title: Internal changes
       labels:
         - refactor
+        - housekeeping
     - title: CI and packaging
       labels:
         - ci
