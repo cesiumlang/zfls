@@ -83,6 +83,14 @@ pub const State = struct {
     held_launch: ?[]u8 = null,
     /// The session is ending (`disconnect`): gdb's exit is not news
     ended: bool = false,
+    /// The program was attached to, not launched: a session that ends
+    /// without `disconnect` leaves it running (#970)
+    attached: bool = false,
+    /// The seqs of this adapter's requests that wait for gdb's answer,
+    /// innermost last, and the answers that came for outer ones while an
+    /// inner one waited (#968): in the waiting request's memory
+    awaited: std.ArrayList(i64) = .empty,
+    early: std.ArrayList(struct { seq: i64, msg: Value }) = .empty,
     /// The adapter is ending the program (`disconnect`, `terminate`): the
     /// signal that ends it is not news (gdb_exit.zig)
     stopping: bool = false,
@@ -305,9 +313,12 @@ pub fn stop(s: *Session) void {
     s.g.held_launch = null;
 }
 
-/// After `disconnect`: gdb's own end, for a moment, then its stop
+/// After `disconnect`: gdb's own end, for a moment, then its stop. A
+/// client gone without one: the debugger is told to disconnect first,
+/// ending a program it launched and leaving one it attached to (#970)
 pub fn finish(s: *Session, a: Allocator) void {
     if (s.g.child == null) return stop(s);
+    if (!s.g.ended and s.g.exit_message == null) requestUnanswered(s, a, "disconnect", .{ .terminateDebuggee = !s.g.attached });
     const deadline = Io.Clock.awake.now(s.io).addDuration(.fromSeconds(2));
     while (s.g.exit_message == null) {
         const item = takeGdb(s, deadline) orelse break;
@@ -394,6 +405,46 @@ fn takeGdb(s: *Session, deadline: ?Io.Timestamp) ?Item {
             s.queue.cond.waitTimeout(s.io, &s.queue.mutex, .{ .deadline = .{ .raw = d, .clock = .awake } }) catch return null;
         } else s.queue.cond.waitUncancelable(s.io, &s.queue.mutex);
     }
+}
+
+/// What a request's wait for gdb's answer ends with (#969): gdb's next
+/// message, the deadline, a client's `pause` (its body, `gpa`'s, out of
+/// the queue), or a client gone or disconnecting (its `disconnect` left
+/// for the session's loop)
+const Waited = union(enum) { item: Item, timeout, pause: []u8, client_gone };
+
+fn takeGdbOrClient(s: *Session, deadline: ?Io.Timestamp, watch_client: bool) Waited {
+    s.queue.mutex.lockUncancelable(s.io);
+    defer s.queue.mutex.unlock(s.io);
+    while (true) {
+        while (s.queue.gdb.items.len > 0) {
+            const item = s.queue.gdb.orderedRemove(0);
+            if (item.gen == s.g.gen) return .{ .item = item };
+            if (item.body) |b| s.gpa.free(b);
+        }
+        if (watch_client and s.queue.closed) return .client_gone;
+        if (watch_client) for (s.queue.items.items, 0..) |body, i| switch (clientCommand(body)) {
+            .pause => return .{ .pause = s.queue.items.orderedRemove(i) },
+            .disconnect => return .client_gone,
+            .other => {},
+        };
+        if (deadline) |d| {
+            s.queue.cond.waitTimeout(s.io, &s.queue.mutex, .{ .deadline = .{ .raw = d, .clock = .awake } }) catch return .timeout;
+        } else s.queue.cond.waitUncancelable(s.io, &s.queue.mutex);
+    }
+}
+
+/// Whether a client's message is a `pause` or `disconnect` request
+fn clientCommand(body: []const u8) enum { pause, disconnect, other } {
+    if (std.mem.find(u8, body, "\"pause\"") == null and std.mem.find(u8, body, "\"disconnect\"") == null) return .other;
+    var buf: [16 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const msg = json.parse(fba.allocator(), body) catch return .other;
+    if (!std.mem.eql(u8, json.str(json.get(msg, "type")) orelse "", "request")) return .other;
+    const command = json.str(json.get(msg, "command")) orelse return .other;
+    if (std.mem.eql(u8, command, "pause")) return .pause;
+    if (std.mem.eql(u8, command, "disconnect")) return .disconnect;
+    return .other;
 }
 
 /// A message of gdb that no request waits for: an event, an answer to
@@ -538,17 +589,56 @@ pub fn request(s: *Session, a: Allocator, command: []const u8, args: anytype) !V
     const seq = s.g.seq;
     s.g.seq += 1;
     if (!write(s, a, seq, command, v)) return failure(a, command, exitedText(s));
+    // an event's handler may ask gdb something while this waits: an answer
+    // to this that comes meanwhile is kept for it (#968)
+    // the session's own end is waited for whatever the client does
+    const watch = !std.mem.eql(u8, command, "disconnect") and !std.mem.eql(u8, command, "terminate");
+    try s.g.awaited.append(s.gpa, seq);
+    defer {
+        _ = s.g.awaited.pop();
+        // one kept for this after it gave up would outlive its memory
+        _ = takeEarly(s, seq);
+    }
     while (true) {
+        if (takeEarly(s, seq)) |msg| return msg;
         const deadline: ?Io.Timestamp = if (isTimed(command)) Io.Clock.awake.now(s.io).addDuration(answerTimeout(s)) else null;
-        const item = takeGdb(s, deadline) orelse return failure(a, command, noAnswer(s, a, command));
+        const item = switch (takeGdbOrClient(s, deadline, watch)) {
+            .item => |it| it,
+            .timeout => return failure(a, command, noAnswer(s, a, command)),
+            // the client went away, or disconnects: no more waiting (#969)
+            .client_gone => return failure(a, command, "the client ended the session"),
+            .pause => |body| {
+                defer s.gpa.free(body);
+                const req = json.parse(a, a.dupe(u8, body) catch continue) catch continue;
+                s.g.pausing = true;
+                try relayed(s, a, req, "pause", json.get(req, "arguments"));
+                continue;
+            },
+        };
         const body = item.body orelse {
             exited(s, a);
             return failure(a, command, s.g.exit_message orelse exitedText(s));
         };
         const msg = parseOwned(s, a, body) orelse continue;
-        if (std.mem.eql(u8, json.str(json.get(msg, "type")) orelse "", "response") and json.int(json.get(msg, "request_seq")) == seq) return msg;
+        if (std.mem.eql(u8, json.str(json.get(msg, "type")) orelse "", "response")) {
+            const answered = json.int(json.get(msg, "request_seq")) orelse 0;
+            if (answered == seq) return msg;
+            if (std.mem.findScalar(i64, s.g.awaited.items, answered) != null) {
+                try s.g.early.append(s.gpa, .{ .seq = answered, .msg = msg });
+                continue;
+            }
+        }
         handleMessage(s, a, msg);
     }
+}
+
+/// The answer to request `seq` that came while another waited (#968)
+fn takeEarly(s: *Session, seq: i64) ?Value {
+    for (s.g.early.items, 0..) |e, i| if (e.seq == seq) {
+        _ = s.g.early.swapRemove(i);
+        return e.msg;
+    };
+    return null;
 }
 
 /// Sends a request of the adapter's own to gdb, whose answer is dropped
@@ -573,6 +663,11 @@ pub fn forward(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
         const r = try request(s, a, command, args orelse Value{ .object = .empty });
         return respondWith(s, a, req, r);
     }
+    try relayed(s, a, req, command, args);
+}
+
+/// `forward` to a gdb that runs: its answer goes to the client when it comes
+fn relayed(s: *Session, a: Allocator, req: Value, command: []const u8, args: ?Value) Allocator.Error!void {
     const seq = s.g.seq;
     s.g.seq += 1;
     try s.g.relays.put(s.gpa, seq, .{
@@ -611,6 +706,8 @@ pub fn deinit(s: *Session) void {
     const deadline = Io.Clock.awake.now(s.io).addDuration(.fromSeconds(2));
     while (s.g.readers.load(.acquire) > 0 and Io.Clock.awake.now(s.io).nanoseconds < deadline.nanoseconds) s.io.sleep(.fromMilliseconds(5), .awake) catch {};
     s.g.relays.deinit(s.gpa);
+    s.g.awaited.deinit(s.gpa);
+    s.g.early.deinit(s.gpa);
     s.g.stderr.deinit(s.gpa);
     if (s.g.exit_message) |m| s.gpa.free(m);
     if (s.g.user_functions.len > 0) s.gpa.free(s.g.user_functions);

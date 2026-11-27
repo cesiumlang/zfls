@@ -32,7 +32,7 @@ pub fn set(s: *Session, a: Allocator, req: Value, args: ?Value) !void {
     } else gop.value_ptr.* = .empty;
     var out: std.ArrayList(Value) = .empty;
     for (json.items(json.get(args, "breakpoints"))) |b| {
-        const line: u32 = @intCast(json.int(json.get(b, "line")) orelse continue);
+        const line = std.math.cast(u32, json.int(json.get(b, "line")) orelse continue) orelse continue;
         const bp = s.engine.addBreakpoint(a, file, line) catch {
             try out.append(a, try json.from(a, .{ .verified = false, .line = line }));
             continue;

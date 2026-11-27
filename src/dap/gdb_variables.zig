@@ -175,13 +175,14 @@ fn dupeValues(na: Allocator, vs: []const Variable) ![]const Variable {
 }
 
 pub fn get(s: *Session, ref: i64) ?Node {
-    const i = ref - s.g.node_base - 1;
+    // a client's number: none overflows (#972)
+    const i = std.math.sub(i64, ref, s.g.node_base + 1) catch return null;
     if (i < 0 or i >= s.g.nodes.items.len) return null;
     return s.g.nodes.items[@intCast(i)];
 }
 
 fn setNames(s: *Session, ref: i64, vs: []const Variable, gdb_names: []const []const u8) !void {
-    const i = ref - s.g.node_base - 1;
+    const i = std.math.sub(i64, ref, s.g.node_base + 1) catch return;
     if (i < 0 or i >= s.g.nodes.items.len) return;
     const na = arena(s);
     const names = try na.alloc(Named, vs.len);

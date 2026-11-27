@@ -135,7 +135,20 @@ pub const Descriptor = struct {
     }
 
     pub fn parse(words: []const u64) ?Descriptor {
-        return parseFlang(words) orelse parseIntel(words);
+        const d = parseFlang(words) orelse parseIntel(words) orelse return null;
+        return if (plausible(d)) d else null;
+    }
+
+    /// Whether `d` can be a real array's: an undefined pointer's garbage
+    /// has an element length or extents no memory holds (#967)
+    fn plausible(d: Descriptor) bool {
+        if (d.elem_len > 1 << 31) return false;
+        var total: u64 = 1;
+        for (d.dims[0..d.rank]) |e| {
+            if (e.count > 1 << 40) return false;
+            total = std.math.mul(u64, total, e.count) catch return false;
+        }
+        return total <= 1 << 48;
     }
 
     /// The versions of `CFI_cdesc_t` (`CFI_VERSION`) of LLVM Flang
@@ -447,4 +460,15 @@ test "values as Fortran writes them" {
     try std.testing.expectEqualStrings("[1.0, 2.0]", try preview(a, &.{ "1.0", "2.0" }, 2));
     try std.testing.expectEqualStrings("[1, 2, 3, 4, 5, 6, …]", try preview(a, &.{ "1", "2", "3", "4", "5", "6", "7" }, 100));
     try std.testing.expectEqualStrings("[2×3]", try shape(a, &.{ .{ .lo = 1, .count = 2, .stride = 4 }, .{ .lo = 1, .count = 3, .stride = 8 } }));
+}
+
+test "a descriptor of garbage extents or element length is none (#967)" {
+    // Intel's layout: base, element length, offset, flags, rank, reserved,
+    // then extent, stride and lower bound
+    const fine = [_]u64{ 0x1000, 4, 0, 1, 1, 0, 10, 4, 1 };
+    try std.testing.expect(Descriptor.parse(&fine) != null);
+    const huge = [_]u64{ 0x1000, 4, 0, 1, 1, 0, 0xffff_ffff_ffff_fff0, 4, 1 };
+    try std.testing.expectEqual(null, Descriptor.parse(&huge));
+    const long = [_]u64{ 0x1000, 1 << 40, 0, 1, 1, 0, 10, 4, 1 };
+    try std.testing.expectEqual(null, Descriptor.parse(&long));
 }
