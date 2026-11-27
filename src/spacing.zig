@@ -128,7 +128,9 @@ pub fn alignColons(a: Allocator, lines: []const []const u8, eligible: []const bo
         }
         var end = i;
         var column: usize = 0;
-        while (end < lines.len and eligible[end]) : (end += 1) {
+        // a run at one indentation: not a type's statement and its components
+        const lead = leadingBlanks(lines[i]);
+        while (end < lines.len and eligible[end] and leadingBlanks(lines[end]) == lead) : (end += 1) {
             const at = doubleColon(lines[end]) orelse break;
             column = @max(column, std.mem.trimEnd(u8, lines[end][0..at], " \t").len + 1);
         }
@@ -144,6 +146,10 @@ pub fn alignColons(a: Allocator, lines: []const []const u8, eligible: []const bo
         i = end;
     }
     return out;
+}
+
+fn leadingBlanks(line: []const u8) usize {
+    return std.mem.findNone(u8, line, " \t") orelse line.len;
 }
 
 fn skipBlanks(text: []const u8, from: usize) usize {
@@ -193,6 +199,12 @@ test "the :: of a run of declarations in one column (#986)" {
     try testing.expectEqualStrings("  character(len=*)     :: s ! a::b", got[2]);
     try testing.expectEqualStrings("  n = 1", got[3]);
     try testing.expectEqualStrings("  logical :: ok", got[4]);
+    // a type's statement and its components: each at its own indentation
+    const typed = [_][]const u8{ "  type :: point", "    real :: x", "    integer :: id" };
+    const t = try alignColons(arena.allocator(), &typed, &.{ true, true, true });
+    try testing.expectEqualStrings("  type :: point", t[0]);
+    try testing.expectEqualStrings("    real    :: x", t[1]);
+    try testing.expectEqualStrings("    integer :: id", t[2]);
 }
 
 test "operators without operands, array constructors and concatenation stay (#986)" {
