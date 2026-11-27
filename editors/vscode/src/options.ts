@@ -279,7 +279,7 @@ function codeeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
 /** The zfls options of the formatter (zfls.formatting.*), which zfls runs
  * for Format Document and Format Selection. The formatter and its
  * arguments can differ by language: free form's are zfls's `formatter`,
- * fixed form's its `formatter_fixed`. None when neither has one. */
+ * fixed form's its `formatter_fixed`; `none` for a form whose is Disabled. */
 export function formattingArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   const forms = [
     { languageId: "FortranFreeForm", flag: "--formatter", argsFlag: "--formatter_args" },
@@ -290,7 +290,7 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   let codee = false;
   for (const { languageId, flag, argsFlag } of forms) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
-    const formatter = config.get<string>("formatter", "Disabled");
+    const formatter = config.get<string>("formatter", "zfls");
     if (!FORMATTERS.includes(formatter)) {
       args.push(flag, "none");
       continue;
@@ -303,8 +303,9 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
       args.push(argOption(argsFlag, extra.map((a) => resolvePath(a, folder))));
     }
   }
+  // both `none`: the server formats with its own by default
   if (!any) {
-    return [];
+    return args;
   }
   const exe = formatterPath(folder, codee);
   if (exe) {
@@ -480,7 +481,7 @@ function formattingSettings(folder: vscode.WorkspaceFolder | undefined): ServerS
     ["FortranFixedForm", "formatter_fixed"],
   ]) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
-    const formatter = config.get<string>("formatter", "Disabled");
+    const formatter = config.get<string>("formatter", "zfls");
     const on = FORMATTERS.includes(formatter);
     any ||= on;
     codee ||= formatter === "codee";

@@ -188,8 +188,9 @@ pub const Settings = struct {
     codee_args: StrList = .{},
     // Formatting
     /// The formatter of `textDocument/formatting` and `rangeFormatting`:
-    /// findent, fprettify, codee, forformat or custom; null or `none`: none
-    formatter: ?[]const u8 = null,
+    /// zfls (its own, the default), findent, fprettify, codee, forformat or
+    /// custom; null or `none`: none
+    formatter: ?[]const u8 = "zfls",
     /// The formatter executable, or the directory that holds it; null: the
     /// one on the PATH
     formatter_path: ?[]const u8 = null,

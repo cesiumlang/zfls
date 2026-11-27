@@ -14,7 +14,7 @@ Fortran language support powered by [zfls](https://github.com/cesiumlang/zfls), 
 - namelist files (`.nml`, `.namelist`): highlighting, folding of each group, and an outline of the groups and the variables they set (from zfls, which does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
 - indentation as you type: a line after the start of a program unit, procedure (with its prefixes: `pure`, `integer`, ...), derived type, interface or construct (named or not) is indented, and an END, ELSE, CASE, CONTAINS, TYPE IS, ... is outdented as you type it; keywords in comments and strings are ignored. A `module procedure` line does not indent the next one (in an interface block it has no body)
-- formatting of documents and selections with findent or fprettify (see [Formatting](#formatting))
+- formatting of documents and selections with zfls's own formatter, which needs no tool, or with findent, fprettify and others (see [Formatting](#formatting))
 - Fortran and C: go to definition of a `BIND(C)` procedure gives its C declarations too, and find references its C calls (from clangd or Microsoft's C/C++, when one is installed, and from zfls's own search of the workspace's C files); on a name in a C or C++ file, go to definition gives the Fortran procedures that bind it and find references their Fortran calls, even before a Fortran file is opened
 - a debugger of its own, for programs that gdb debugs: arrays by their subscripts, derived types and polymorphic objects as Fortran shows them, module variables, stopping on Fortran runtime errors (see [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
 - code lenses: the number of references above each module, procedure and derived type (click it for the references), and **Run** and **Debug** above a program
@@ -81,7 +81,8 @@ It replaces the Modern Fortran extension rather than working alongside it: disab
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
-| `zfls.formatting.formatter` | `Disabled` | `findent`, `fprettify`, `codee`, `forformat` or `custom` to format Fortran files (see [Formatting](#formatting)) |
+| `zfls.formatting.formatter` | `zfls` | The formatter of Fortran files: `zfls` (its own), `findent`, `fprettify`, `codee`, `forformat`, `custom`, or `Disabled` (see [Formatting](#formatting)) |
+| `zfls.formatting.zflsArgs` | `[]` | Options of zfls's own formatter (`--indent N`, `--case`, `--spacing`, `--align`, `--indent-directives`) |
 | `zfls.formatting.path` | empty | The formatter, or its directory, when it is not on the `PATH` |
 | `zfls.formatting.findentArgs` | `[]` | Extra arguments for findent |
 | `zfls.formatting.fprettifyArgs` | `[]` | Extra arguments for fprettify |
@@ -193,17 +194,18 @@ The zfls language server runs it (its `codee` options, which other editors use t
 
 ## Formatting
 
-**Format Document**, **Format Selection** and format on save (`editor.formatOnSave`) use an external formatter, which must be installed separately:
+**Format Document**, **Format Selection** and format on save (`editor.formatOnSave`) use zfls's own formatter by default, or an external one, installed separately:
 
 | Formatter | Install | Formats |
 | --- | --- | --- |
+| `zfls` (the default) | nothing: part of zfls | Indentation by scope, free and fixed form; with `zfls.formatting.zflsArgs`, the keywords' case (`--case`), blanks around operators (`--spacing`) and the `::` of declarations in a column (`--align`), free form; with `editor.formatOnType`, the line Enter ends |
 | [findent](https://pypi.org/project/findent/) | `pip install findent` or `conda install -c conda-forge findent` | Indentation of free-form and fixed-form files |
 | [fprettify](https://github.com/fortran-lang/fprettify) | `pip install fprettify` or `conda install -c conda-forge fprettify` | Indentation, whitespace and more, free-form files only |
 | [Codee](https://www.codee.com) (`codee`) | Codee's installer; the `codee` of `zfls.codee.path` is used unless `zfls.formatting.path` is set | Its formatter, `codee format`, on whole files |
 | forformat | as its project says | Whole files |
 | `custom` | your own: `zfls.formatting.path` with `zfls.formatting.customArgs` | What your command does with the source on its standard input |
 
-Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so that no formatter runs, and VS Code offers formatters of other extensions, until one is chosen. The setting can differ per language, for example fprettify for free form and findent for fixed form:
+Choose one with `zfls.formatting.formatter`; `Disabled` turns formatting off, so that VS Code offers formatters of other extensions. The setting can differ per language, for example fprettify for free form and findent for fixed form:
 
 ```jsonc
 "zfls.formatting.formatter": "fprettify",
@@ -212,7 +214,7 @@ Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so tha
 }
 ```
 
-The zfls server runs the formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see the [zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
+The zfls server formats, or runs the external formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see the [zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
 
 **Format Selection** formats the whole lines the selection touches. The formatter sees only those lines, not the surrounding code: findent starts at the indentation of the first selected line (`-Ia`), and fprettify keeps it too, but select whole constructs (a complete `do` loop, `if` block or procedure) for the indentation inside them to come out right.
 
