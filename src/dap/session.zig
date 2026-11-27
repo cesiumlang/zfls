@@ -507,7 +507,9 @@ fn handle(s: *Session, a: Allocator, req: Value) !void {
         }
         // an MPI program: a session per rank (#988)
         if (std.mem.eql(u8, command, "launch")) if (try mpi.options(a, args)) |o| {
-            gdb.stop(s);
+            // the gdb of `initialize` asked to end (a gdb told to stop
+            // alone may not)
+            gdb.finish(s, a);
             return mpi.launch(s, a, req, args, o);
         };
         // the configuration's debugger, when another than the one started

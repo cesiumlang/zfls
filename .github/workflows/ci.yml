@@ -1307,6 +1307,7 @@ jobs:
       # under gdbserver, a session per rank (#988)
       - name: zfls dap on an MPI program (Linux x64)
         if: matrix.target == 'x86_64-linux'
+        timeout-minutes: 10
         env:
           LD_LIBRARY_PATH: ""
         run: |

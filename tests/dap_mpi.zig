@@ -82,7 +82,11 @@ fn session(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Env
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .pathFormat = "path", .supportsRunInTerminalRequest = true, .supportsStartDebuggingRequest = true });
     const launched = try c.send("launch", .{ .program = program, .cwd = std.Io.Dir.path.dirname(program).?, .mpi = .{ .ranks = ranks, .launcher = mpiexec, .port = 23000 } });
     // the launcher, as the client's terminal would run it
-    const rit = try c.adapterRequest();
+    const rit = c.adapterRequest() catch |e| {
+        c.timeout = .fromSeconds(1);
+        if (c.response(launched, "launch")) |r| std.debug.print("the launch's answer: {s}\n", .{str(r, "message") orelse "(no message)"}) else |_| {}
+        return e;
+    };
     try check(std.mem.eql(u8, str(rit, "command") orelse "", "runInTerminal"), "the adapter's request: {s}", .{str(rit, "command") orelse "?"});
     const rargs = get(rit, "arguments").?;
     var cmd: std.ArrayList([]const u8) = .empty;
@@ -92,8 +96,19 @@ fn session(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Env
         var it = e.object.iterator();
         while (it.next()) |kv| if (kv.value_ptr.* == .string) try env.put(kv.key_ptr.*, kv.value_ptr.string);
     };
-    var launcher = try std.process.spawn(io, .{ .argv = cmd.items, .cwd = .{ .path = str(rargs, "cwd") orelse "." }, .environ_map = &env, .stdin = .ignore, .create_no_window = true });
-    defer launcher.kill(io);
+    // its output in a file, and in a process group of its own, which ends
+    // with the test: no rank left holding the test's output open
+    const log = try std.Io.Dir.path.join(a, &.{ std.Io.Dir.path.dirname(program).?, "launcher.log" });
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(a, &.{ "/bin/sh", "-c", "exec \"$@\" > \"$0\" 2>&1", log });
+    try argv.appendSlice(a, cmd.items);
+    var launcher = try std.process.spawn(io, .{ .argv = argv.items, .cwd = .{ .path = str(rargs, "cwd") orelse "." }, .environ_map = &env, .stdin = .ignore, .stdout = .ignore, .stderr = .ignore, .pgid = 0 });
+    defer {
+        std.posix.kill(-launcher.id.?, .KILL) catch {};
+        _ = launcher.wait(io) catch {};
+        const said = Io.Dir.cwd().readFileAlloc(io, log, a, .limited(1 << 20)) catch "";
+        std.debug.print("the launcher said:\n{s}\n", .{said});
+    }
     try c.answer(rit, true, .{ .processId = dap.processId(launcher) });
     _ = try Client.bodyOf(try c.response(launched, "launch"), "launch");
     _ = try c.event("initialized");
