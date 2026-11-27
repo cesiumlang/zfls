@@ -97,6 +97,7 @@ test {
     _ = @import("outline.zig");
     _ = @import("outside_sources.zig");
     _ = @import("own_format.zig");
+    _ = @import("findent_compare.zig");
     _ = @import("refactor.zig");
     _ = @import("rename.zig");
     _ = @import("same_name_modules.zig");
