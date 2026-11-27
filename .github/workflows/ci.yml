@@ -1303,22 +1303,11 @@ jobs:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler lfortran
 
-      # and on an MPI program (MPICH's): the launcher run with each rank
-      # under gdbserver, a session per rank (#988)
+      # and on an MPI program (Open MPI's; Ubuntu 24.04's MPICH runs each
+      # rank as a job of its own): the launcher run with each rank under
+      # gdbserver, a session per rank (#988)
       - name: zfls dap on an MPI program (Linux x64)
         if: matrix.target == 'x86_64-linux'
-        timeout-minutes: 10
-        env:
-          LD_LIBRARY_PATH: ""
-        run: |
-          if ! command -v mpif90.mpich && [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
-            sudo apt-get install -y mpich libmpich-dev || { sudo apt-get update && sudo apt-get install -y mpich libmpich-dev; }
-          fi
-          zig-out/bin/dap_mpi --zfls "$ZFLS" --mpif90 mpif90.mpich --mpiexec mpiexec.mpich
-
-      # and Open MPI's (PMIx)
-      - name: zfls dap on an Open MPI program (Linux x64)
-        if: matrix.target == 'x86_64-linux' && !cancelled()
         timeout-minutes: 10
         env:
           LD_LIBRARY_PATH: ""

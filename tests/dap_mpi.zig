@@ -3,7 +3,7 @@
 //! driver runs it) and then to start a session per rank (this driver
 //! starts each, a `zfls dap` attaching to its rank's gdbserver); each rank
 //! stops at its breakpoint with its own rank (tests/dap/mpi.f90). Linux
-//! only (gdbserver); skipped without MPICH's mpif90 and mpiexec, or
+//! only (gdbserver); skipped without an MPI's mpif90 and mpiexec (Open MPI's in CI), or
 //! gdbserver.
 
 const std = @import("std");
@@ -66,9 +66,13 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("{s} failed: {s}{s}\n", .{ mpif90, built.stdout, built.stderr });
         return 1;
     }
-    // the program without a debugger: what the launcher makes of it
+    // the program without a debugger: an MPI that runs each rank as a job
+    // of its own (Ubuntu 24.04's MPICH) is no test of the debugger
     const plain = try std.process.run(a, io, .{ .argv = &.{ mpiexec, "-n", "2", program }, .cwd = .{ .path = tmp } });
-    std.debug.print("{s} -n 2, no debugger:\n{s}{s}\n", .{ mpiexec, plain.stdout, plain.stderr });
+    if (std.mem.find(u8, plain.stdout, " of 2 ") == null) {
+        std.debug.print("skipped: {s} -n 2 runs no job of 2 ranks:\n{s}{s}\n", .{ mpiexec, plain.stdout, plain.stderr });
+        return 0;
+    }
     const zfls_path = try cwd.realPathFileAlloc(io, zfls_exe.?, a);
     session(io, init.gpa, a, init.environ_map, zfls_path, mpiexec, program, src, lineOf(text, "stop here")) catch |e| {
         std.debug.print("an MPI program: {s}\n", .{@errorName(e)});
