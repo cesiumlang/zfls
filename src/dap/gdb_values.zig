@@ -46,7 +46,7 @@ pub fn wideArray(s: *Session, a: Allocator, t: fortran.ArrayType, expr: ?[]const
     const len = fortran.extent(t.dims[0]) orelse return null;
     const dims = t.dims[1..];
     var count: u64 = 1;
-    for (dims) |d| count *= fortran.extent(d) orelse return null;
+    for (dims) |d| count = std.math.mul(u64, count, fortran.extent(d) orelse return null) catch return null;
     if (len > max_len or count > max_elements or len * count > max_len * 16) return null;
     const e = expr orelse return null;
     const bytes = try readMemory(s, a, e, len * count * 4, frame) orelse return null;

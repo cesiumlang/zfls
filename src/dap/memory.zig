@@ -96,7 +96,7 @@ pub fn valueOf(s: *Session, a: Allocator, v: dbgeng.Variable, decl: ?Decl, frame
             return val;
         }
         val.address = desc.base;
-        if (val.t.kind == .character) val.t.size = @intCast(desc.elem_len);
+        if (val.t.kind == .character) val.t.size = std.math.cast(@TypeOf(val.t.size), desc.elem_len) orelse return error.Unreadable;
         if (d.t.kind == .derived and d.t.polymorphic) {
             const info = if (desc.type_info != 0) desc.type_info else values.Descriptor.intelTypeInfo(words[0 .. got / 8], desc.rank) orelse 0;
             try toDynamic(s, a, &val, info, d);

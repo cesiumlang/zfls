@@ -75,11 +75,13 @@ pub fn isUnallocated(t: ArrayType) bool {
     return true;
 }
 
-/// The extent of a dimension, when known
+/// The extent of a dimension, when known; null for garbage bounds (an
+/// undefined pointer's) whose extent overflows (#967)
 pub fn extent(d: Dim) ?u64 {
     const lo = d.lo orelse return null;
     const hi = d.hi orelse return null;
-    return @intCast(@max(0, hi - lo + 1));
+    const n = std.math.add(i64, std.math.sub(i64, hi, lo) catch return null, 1) catch return null;
+    return @intCast(@max(0, n));
 }
 
 /// Where a node is in an array: its expression, the array's dimensions,
@@ -191,10 +193,11 @@ pub const chunk_size = 100;
 pub fn chunks(a: Allocator, count: u64) ![]Chunk {
     if (count <= chunk_size) return &.{};
     var per: u64 = chunk_size;
-    while (count > per * chunk_size) per *= chunk_size;
+    // garbage counts near 2^64 too (#967)
+    while (count > std.math.mul(u64, per, chunk_size) catch std.math.maxInt(u64)) per = std.math.mul(u64, per, chunk_size) catch break;
     var out: std.ArrayList(Chunk) = .empty;
     var start: u64 = 0;
-    while (start < count) : (start += per) try out.append(a, .{ .start = start, .count = @min(per, count - start) });
+    while (start < count) : (start = std.math.add(u64, start, per) catch break) try out.append(a, .{ .start = start, .count = @min(per, count - start) });
     return out.items;
 }
 
@@ -759,4 +762,13 @@ test "LLVM Flang's polymorphic objects: the command and its output" {
     try std.testing.expectEqualStrings("tagged", flangClassResult("warning: x\r\nzfls-class tagged\r\n").?);
     try std.testing.expect(flangClassResult("") == null);
     try std.testing.expect(flangClassResult("zfls-class \n") == null);
+}
+
+test "the extent of garbage bounds is none, not an overflow (#967)" {
+    try std.testing.expectEqual(@as(?u64, 10), extent(.{ .lo = 1, .hi = 10 }));
+    try std.testing.expectEqual(@as(?u64, 0), extent(.{ .lo = 5, .hi = 1 }));
+    try std.testing.expectEqual(@as(?u64, null), extent(.{ .lo = std.math.minInt(i64), .hi = std.math.maxInt(i64) }));
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expect((try chunks(arena.allocator(), std.math.maxInt(u64))).len <= 100);
 }
