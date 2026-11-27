@@ -440,7 +440,7 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
         .uri = try ja.dupe(u8, uri),
         .path = try ja.dupe(u8, file.path),
         .id = id,
-        .exes = try dupeAll(ja, exes),
+        .exes = try str.dupeAll(ja, exes),
         .compiler_path = if (compilerPath(self, file.declared_fixed)) |p| try ja.dupe(u8, p) else null,
         .cwd = try ja.dupe(u8, run_dir orelse if (cmd) |c| c.dir else paths.dirname(file.path)),
         .deps = dep_args.items,
@@ -459,12 +459,6 @@ fn makeJob(self: *Server, a: Allocator, id: compilers.Id, uri: []const u8, file:
 /// The text as the editor has it
 pub fn editorText(a: Allocator, file: *const FortranFile) ![]const u8 {
     return std.mem.join(a, "\n", file.editLines());
-}
-
-fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
-    const out = try a.alloc([]const u8, xs.len);
-    for (xs, out) |x, *o| o.* = try a.dupe(u8, x);
-    return out;
 }
 
 /// The workspace files that define the modules `file` uses, and those they

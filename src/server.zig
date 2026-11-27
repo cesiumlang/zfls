@@ -29,6 +29,8 @@ const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
 const workspace = @import("server/workspace.zig");
+const watched_files = @import("server/watched_files.zig");
+const code_actions = @import("server/code_actions.zig");
 const initialization = @import("server/initialization.zig");
 const symbols = @import("server/symbols.zig");
 const completion = @import("server/completion.zig");
@@ -424,6 +426,11 @@ pub const Server = struct {
             if (id) |i| self.writeError(a, i, -32002, "server not initialized", null) catch |e| self.logSendFailure(e);
             return;
         }
+        // once only: a second one would index the workspace again (#965)
+        if (self.init_state == .done and std.mem.eql(u8, method, "initialize")) {
+            if (id) |i| self.writeError(a, i, -32600, "server already initialized", null) catch |e| self.logSendFailure(e);
+            return;
+        }
         const result = self.dispatch(a, method, params);
         if (id == null) {
             if (result) |_| {} else |e| self.log.err("error handling request: {s} ({s})", .{ method, @errorName(e) });
@@ -636,11 +643,11 @@ pub const Server = struct {
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
             .did_change => workspace.serveOnChange(self, a, try json.decode(lsp.DidChangeParams, a, params)),
-            .code_action => if (configuration.withdrawn(self, .code_actions)) .null else diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
+            .code_action => if (configuration.withdrawn(self, .code_actions)) .null else code_actions.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
             .document_diagnostic => pull.serveDocument(self, a, try json.decode(lsp.DocumentDiagnosticParams, a, params)),
             .workspace_diagnostic => pull.serveWorkspace(self, a, try json.decode(lsp.WorkspaceDiagnosticParams, a, params)),
             .workspace_symbol => symbols.serveWorkspaceSymbol(self, a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
-            .watched_files => workspace.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
+            .watched_files => watched_files.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
             .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
             .did_change_configuration => configuration.serveDidChange(self, a, params),
             .ignored => .null,

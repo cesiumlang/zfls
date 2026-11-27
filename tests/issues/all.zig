@@ -53,11 +53,13 @@ test {
     _ = @import("extensions.zig");
     _ = @import("cuda_attributes.zig");
     _ = @import("cuda_prefix.zig");
+    _ = @import("cycles.zig");
     _ = @import("external.zig");
     _ = @import("formatting.zig");
     _ = @import("form_switch.zig");
     _ = @import("generics.zig");
     _ = @import("generics_use.zig");
+    _ = @import("keyword_arguments.zig");
     _ = @import("initialization.zig");
     _ = @import("genmod.zig");
     _ = @import("highlighting.zig");
@@ -94,6 +96,7 @@ test {
     _ = @import("rename.zig");
     _ = @import("same_name_modules.zig");
     _ = @import("settings.zig");
+    _ = @import("stale_index.zig");
     _ = @import("short_paths.zig");
     _ = @import("signature.zig");
     _ = @import("source_form.zig");

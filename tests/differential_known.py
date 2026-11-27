@@ -155,6 +155,51 @@ def on_use_rename_original(lines: list, line: int, char: int) -> bool:
     return text[:start].rstrip().endswith("=>")
 
 
+def on_keyword_argument(lines: list, line: int, char: int) -> bool:
+    """Whether (line, char) is on the keyword of a keyword argument, `X` of
+    `call f(X=1)`, which zfls takes for the procedure's dummy argument (zfls
+    #952) and fortls for a name of the caller, or none."""
+    if not 0 <= line < len(lines):
+        return False
+    text = lines[line]
+    start = char
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
+        start -= 1
+    end = char
+    while end < len(text) and (text[end].isalnum() or text[end] == "_"):
+        end += 1
+    after = text[end:].lstrip()
+    before = text[:start].rstrip()
+    return end > start and after.startswith("=") and not after.startswith(("==", "=>")) and before.endswith(("(", ",", "&"))
+
+
+MODULE_PROCEDURE_COLONS = re.compile(r"^\s*module\s+procedure\s*::", re.I | re.M)
+INTERFACE_NAME = re.compile(r"^\s*interface\s+(\w+)", re.I | re.M)
+
+
+def colon_generics(source: str) -> set:
+    """The generic interfaces of `source` whose MODULE PROCEDURE lists start
+    with `::`, which fortls reads as no names (zfls #963): their names, in
+    lowercase."""
+    names = set()
+    for m in INTERFACE_NAME.finditer(source):
+        rest = source[m.end():]
+        end = re.search(r"^\s*end\s*interface", rest, re.I | re.M)
+        if MODULE_PROCEDURE_COLONS.search(rest[: end.start() if end else len(rest)]):
+            names.add(m.group(1).lower())
+    return names
+
+
+def on_name_in(lines: list, names: set, line: int, char: int) -> bool:
+    """Whether (line, char) is on one of `names` (lowercase)."""
+    if not names or not 0 <= line < len(lines):
+        return False
+    for m in WORD.finditer(lines[line]):
+        if m.start() <= char <= m.end():
+            return m.group(0).lower() in names
+    return False
+
+
 def use_rename_extras(lines: list, a, b) -> bool:
     """Whether references `b` are `a` plus locations on the original names
     of USE renames only."""

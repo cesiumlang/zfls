@@ -188,9 +188,16 @@ fn runServer(ctx: *Ctx) void {
         }
         const body = queue.orderedRemove(0);
         defer gpa.free(body);
-        const request = json.parse(a, body) catch {
-            server.postMessage(a, "Unexpected error: invalid JSON message", 1);
-            break;
+        // a message that is no JSON: answered, and the next read (#965)
+        const request = json.parse(a, body) catch |e| switch (e) {
+            error.OutOfMemory => {
+                server.postMessage(a, "Unexpected error: out of memory", 1);
+                break;
+            },
+            else => {
+                server.writeError(a, .null, -32700, "parse error: invalid JSON message", null) catch |we| server.logSendFailure(we);
+                continue;
+            },
         };
         if (log.enabled(.debug)) log.debug("RECV {s}", .{json.pretty(a, request) catch ""});
         if (json.get(request, "id")) |id| if (canceledLater(a, queue.items, id)) {

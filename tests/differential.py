@@ -59,6 +59,9 @@ from differential_known import (
     on_enumerator_statement,
     on_import_statement,
     on_include_directive,
+    on_keyword_argument,
+    on_name_in,
+    colon_generics,
     on_include_line,
     on_macro,
     on_parenthesized_kind,
@@ -391,6 +394,7 @@ def main() -> int:
         macros = macro_names(path, source)
         entity_lengths = bool(ENTITY_LENGTH.search(source))
         semicolon_strings = bool(SEMICOLON_STRINGS.search(source))
+        generics_colons = colon_generics(source)
         for rid, kind, params in reqs:
             a = normalize(ref["responses"].get(rid, "<missing>"))
             b = normalize(got["responses"].get(rid, "<missing>"))
@@ -594,6 +598,14 @@ def main() -> int:
             ):
                 # the intrinsics fortls's table lacks: specific names
                 # (`DSQRT`) and newer generic ones (`REDUCE`)
+                continue
+            if kind in ("hover", "definition", "references") and on_keyword_argument(src_lines, pos.get("line", -1), pos.get("character", 0)):
+                # the keyword of a keyword argument is the dummy argument
+                # (zfls #952); fortls takes a name of the caller, or none
+                continue
+            if kind == "hover" and a is None and on_name_in(src_lines, generics_colons, pos.get("line", -1), pos.get("character", 0)):
+                # a generic whose MODULE PROCEDURE list starts with `::`,
+                # which fortls reads as no specifics (zfls #963)
                 continue
             if (
                 kind == "signature"

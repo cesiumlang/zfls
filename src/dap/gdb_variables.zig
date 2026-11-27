@@ -14,6 +14,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
+const str = @import("../str.zig");
 const fortran = @import("fortran.zig");
 const lfortran = @import("lfortran.zig");
 const ifx_class = @import("ifx_class.zig");
@@ -148,7 +149,7 @@ pub fn add(s: *Session, n: Node) !i64 {
         .count = n.ctx.count,
         .registers = n.ctx.registers,
         .used = try dupeVars(na, n.ctx.used),
-        .declared = if (n.ctx.declared) |d| .{ .expr = try na.dupe(u8, d.expr), .names = try dupeStrings(na, d.names) } else null,
+        .declared = if (n.ctx.declared) |d| .{ .expr = try na.dupe(u8, d.expr), .names = try str.dupeAll(na, d.names) } else null,
     };
     out.names = &.{};
     try s.g.nodes.append(s.gpa, out);
@@ -170,12 +171,6 @@ fn dupeValues(na: Allocator, vs: []const Variable) ![]const Variable {
         .type = if (v.type) |t| try na.dupe(u8, t) else null,
         .evaluate_name = if (v.evaluate_name) |e| try na.dupe(u8, e) else null,
     };
-    return out;
-}
-
-fn dupeStrings(na: Allocator, xs: []const []const u8) ![]const []const u8 {
-    const out = try na.alloc([]const u8, xs.len);
-    for (xs, out) |x, *o| o.* = try na.dupe(u8, x);
     return out;
 }
 

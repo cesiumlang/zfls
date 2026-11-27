@@ -437,7 +437,7 @@ pub const Regex = struct {
                 },
                 .split => |targets| {
                     const fr: Frame = .{ .branch = .{ .pc = targets[1], .pos = pos } };
-                    push(&stack, &heap_stack, &using_heap, fr);
+                    if (!push(&stack, &heap_stack, &using_heap, fr)) return false;
                     pc = targets[0];
                     break :blk true;
                 },
@@ -446,7 +446,7 @@ pub const Regex = struct {
                     break :blk true;
                 },
                 .save => |s| {
-                    push(&stack, &heap_stack, &using_heap, .{ .restore = .{ .slot = s, .val = slots[s] } });
+                    if (!push(&stack, &heap_stack, &using_heap, .{ .restore = .{ .slot = s, .val = slots[s] } })) return false;
                     slots[s] = pos;
                     pc += 1;
                     break :blk true;
@@ -480,7 +480,7 @@ pub const Regex = struct {
                     break :blk true;
                 },
                 .loop_mark => |r| {
-                    push(&stack, &heap_stack, &using_heap, .{ .restore_reg = .{ .reg = r, .val = regs[r] } });
+                    if (!push(&stack, &heap_stack, &using_heap, .{ .restore_reg = .{ .reg = r, .val = regs[r] } })) return false;
                     regs[r] = pos;
                     pc += 1;
                     break :blk true;
@@ -520,16 +520,19 @@ pub const Regex = struct {
         }
     }
 
-    fn push(stack: *std.ArrayList(Frame), heap: *std.ArrayList(Frame), using_heap: *bool, fr: Frame) void {
+    /// Whether `fr` is kept; false when memory runs out, and the match gives
+    /// up as when its step budget does (#966)
+    fn push(stack: *std.ArrayList(Frame), heap: *std.ArrayList(Frame), using_heap: *bool, fr: Frame) bool {
         if (!using_heap.*) {
             if (stack.items.len < stack.capacity) {
                 stack.appendAssumeCapacity(fr);
-                return;
+                return true;
             }
-            heap.appendSlice(std.heap.page_allocator, stack.items) catch @panic("regex: out of memory");
+            heap.appendSlice(std.heap.page_allocator, stack.items) catch return false;
             using_heap.* = true;
         }
-        heap.append(std.heap.page_allocator, fr) catch @panic("regex: out of memory");
+        heap.append(std.heap.page_allocator, fr) catch return false;
+        return true;
     }
 
     fn pop(stack: *std.ArrayList(Frame), heap: *std.ArrayList(Frame), using_heap: *bool) ?Frame {

@@ -129,11 +129,15 @@ pub fn section(v: ?Value) ?Value {
     return x;
 }
 
-/// A copy of `v` in the server's arena, for the settings that point into it
-fn keep(self: *Server, a: Allocator, v: Value) !Value {
+/// A copy of `v` in the server's arena, for the settings that point into it;
+/// null, with a warning, for settings nested deeper than JSON5 reads (#965)
+fn keep(self: *Server, a: Allocator, v: Value) !?Value {
     return json5.parse(self.arena.allocator(), try json.stringify(a, v)) catch |e| switch (e) {
         error.OutOfMemory => error.OutOfMemory,
-        else => unreachable, // JSON that json.stringify wrote
+        else => {
+            self.postMessage(a, "zfls: settings ignored: nested too deeply", C.Severity.warn);
+            return null;
+        },
     };
 }
 
@@ -144,10 +148,10 @@ pub fn load(self: *Server, a: Allocator, init_options: ?Value) !void {
     self.config.cli = try settings_mod.clone(sa, self.s);
     self.config.user = try readUserConfigFile(self, a);
     if (self.config.user) |u| try settings_mod.applyConfig(sa, &self.s, u);
-    if (section(init_options)) |v| {
-        self.config.editor = try keep(self, a, v);
-        try settings_mod.applyConfig(sa, &self.s, self.config.editor.?);
-    }
+    if (section(init_options)) |v| if (try keep(self, a, v)) |kept| {
+        self.config.editor = kept;
+        try settings_mod.applyConfig(sa, &self.s, kept);
+    };
     self.config.file = try workspace.readConfigFile(self, a);
     if (self.config.file) |f| try applyFile(self, sa, &self.s, f);
     self.config.configured = try settings_mod.clone(sa, self.s);
@@ -197,7 +201,7 @@ pub fn withdrawn(self: *const Server, comptime p: std.meta.FieldEnum(Providers))
 
 pub fn serveDidChange(self: *Server, a: Allocator, params: Value) !Value {
     const v = section(json.get(params, "settings")) orelse return .null;
-    self.config.editor = try keep(self, a, v);
+    self.config.editor = (try keep(self, a, v)) orelse return .null;
     try apply(self, a, try configured(self), false);
     return .null;
 }
