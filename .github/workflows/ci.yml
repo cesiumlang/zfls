@@ -867,10 +867,11 @@ jobs:
     # The macOS arm64 leg runs on a self-hosted runner instead when the
     # repository variable MACOS_ARM64_RUNNER names one (a label of it, such
     # as `self-hosted`): a switch for the hours when GitHub's own runners
-    # are not handed out. Never for a pull request from a fork, whose
-    # workflow could run anything on that machine.
+    # are not handed out; `false` (or unset) is off. Never for a pull
+    # request from a fork, whose workflow could run anything on that machine.
     runs-on: >-
       ${{ (matrix.target == 'aarch64-macos' && vars.MACOS_ARM64_RUNNER != ''
+      && vars.MACOS_ARM64_RUNNER != 'false'
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository))
       && vars.MACOS_ARM64_RUNNER || matrix.os }}
