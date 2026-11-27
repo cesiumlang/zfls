@@ -141,7 +141,7 @@ pub fn keywordDummy(self: *Server, a: Allocator, file: *FortranFile, line: usize
 /// The dummy argument `name` of procedure `p`, through a type-bound
 /// procedure's or a procedure pointer's interface; of a derived type, its
 /// component `name`
-fn dummyNamed(p: *const Obj, name: []const u8) ?*Obj {
+pub fn dummyNamed(p: *const Obj, name: []const u8) ?*Obj {
     var proc = p;
     var hops: usize = 0;
     while (proc.kind == .method or proc.kind == .variable) : (hops += 1) {

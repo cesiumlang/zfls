@@ -384,6 +384,13 @@
           "scope": "resource",
           "markdownDescription": "%config.zfls.codeLensNoRun.markdownDescription%"
         },
+        "zfls.closingHintLines": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.closingHintLines.markdownDescription%"
+        },
         "zfls.debugLog": {
           "type": "boolean",
           "default": false,

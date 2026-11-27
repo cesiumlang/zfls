@@ -54,6 +54,7 @@ const format = @import("format.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
 const clangd = @import("clangd.zig");
+const refresh = @import("refresh.zig");
 const source_form = @import("source_form.zig");
 const project = @import("../project.zig");
 const fsio = @import("../fsio.zig");
@@ -380,7 +381,8 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
     try workspace.resolveGlobsInPaths(self, a);
     try workspace.loadIntrinsics(self);
     try workspace.addSourceDirs(self, a);
-    try workspace.workspaceInit(self, a, null);
+    // its progress shown as at initialize, where the client takes it (#980)
+    try workspace.workspaceInit(self, a, refresh.token(self, a));
     for (docs.items) |d| {
         // one outside the source directories, read as when it was opened
         if (!self.workspace.contains(d.path)) _ = workspace.updateWorkspaceFile(self, d.path, true, true, false) catch {};
@@ -396,6 +398,7 @@ fn reindexWorkspace(self: *Server, a: Allocator, next: Settings) !void {
         try linking.fullRelink(self, a);
     }
     clangd.start(self, a);
+    refresh.views(self, a);
 }
 
 /// Runs the compiler check of the open documents again, of their editors'
@@ -425,7 +428,7 @@ fn announce(self: *Server, a: Allocator) !void {
     }
     if (on.code_actions and !known.code_actions) {
         if (td.codeAction.dynamicRegistration) {
-            try regs.append(a, .{ .id = "zfls-codeAction", .method = "textDocument/codeAction", .registerOptions = try json.from(a, selector) });
+            try regs.append(a, .{ .id = "zfls-codeAction", .method = "textDocument/codeAction", .registerOptions = try json.from(a, .{ .documentSelector = null, .resolveProvider = self.code_action_resolve }) });
             self.config.announced.code_actions = true;
         } else try restart.append(a, "enable_code_actions");
     }

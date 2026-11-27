@@ -136,6 +136,7 @@ pub const opts = [_]Opt{
 
     .{ .long = "code_lens_no_references", .kind = .flag, .help = "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)", .group = "Code lens options" },
     .{ .long = "code_lens_no_run", .kind = .flag, .help = "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)", .group = "Code lens options" },
+    .{ .long = "closing_hint_lines", .kind = .int, .metavar = "INTEGER", .help = "An inlay hint after the END of a construct or procedure of this many lines or more, with its opening statement (default: 25; 0: none)", .group = "Inlay hint options" },
 
     .{ .long = "debug_filepath", .kind = .string, .metavar = "DEBUG_FILEPATH", .help = "File path for language server tests", .debug = true },
     .{ .long = "debug_rootpath", .kind = .string, .metavar = "DEBUG_ROOTPATH", .help = "Root path for language server tests", .debug = true },

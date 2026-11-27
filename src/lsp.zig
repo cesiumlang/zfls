@@ -147,8 +147,12 @@ pub const SignatureHelp = struct {
 pub const CodeAction = struct {
     title: []const u8,
     kind: []const u8,
-    edit: WorkspaceEdit,
-    diagnostics: []const Diagnostic,
+    /// none until `codeAction/resolve`, for an action whose edit is costly
+    /// (#984)
+    edit: ?WorkspaceEdit = null,
+    /// what `codeAction/resolve` makes the edit from
+    data: ?json.Value = null,
+    diagnostics: []const Diagnostic = &.{},
     isPreferred: ?bool = null,
     /// why the action cannot be taken (its edit then changes nothing)
     disabled: ?struct { reason: []const u8 } = null,
@@ -208,7 +212,10 @@ pub const ServerCapabilities = struct {
     workspace: WorkspaceCapabilities = .{},
     textDocumentSync: TextDocumentSyncOptions,
     signatureHelpProvider: ?SignatureHelpOptions = null,
-    codeActionProvider: ?bool = null,
+    /// `true`, or `{ "resolveProvider": true }` (#984)
+    codeActionProvider: ?json.Value = null,
+    /// the commands the server carries out (`workspace/executeCommand`)
+    executeCommandProvider: ?struct { commands: []const []const u8 } = null,
     semanticTokensProvider: ?SemanticTokensOptions = null,
     /// with a formatter (`formatter`)
     documentFormattingProvider: ?bool = null,
@@ -387,6 +394,9 @@ pub const ClientCapabilities = struct {
             dynamicRegistration: bool = false,
             /// it shows actions that cannot be taken, with why
             disabledSupport: bool = false,
+            /// the properties `codeAction/resolve` may fill in (read at
+            /// `initialize` only: not kept, #984)
+            resolveSupport: struct { properties: []const []const u8 = &.{} } = .{},
         } = .{},
         formatting: Dynamic = .{},
         rangeFormatting: Dynamic = .{},
@@ -406,6 +416,17 @@ pub const ClientCapabilities = struct {
         /// the client takes `workspace/diagnostic/refresh`
         diagnostics: struct { refreshSupport: bool = false } = .{},
         codeLens: struct { refreshSupport: bool = false } = .{},
+        /// the client takes `workspace/semanticTokens/refresh` and
+        /// `workspace/inlayHint/refresh` (#980)
+        semanticTokens: struct { refreshSupport: bool = false } = .{},
+        inlayHint: struct { refreshSupport: bool = false } = .{},
+    } = .{},
+    /// the client shows progress the server starts
+    /// (`window/workDoneProgress/create`)
+    window: struct {
+        workDoneProgress: bool = false,
+        /// the client takes `window/showDocument` (#984)
+        showDocument: struct { support: bool = false } = .{},
     } = .{},
     /// `commands.commands`: the commands the client runs itself (as
     /// rust-analyzer's clients announce them), which code lenses may name;
@@ -477,8 +498,11 @@ pub const InlayHintParams = struct {
 /// `kind`: 1 type, 2 parameter
 pub const InlayHint = struct {
     position: Position,
-    label: []const u8,
-    kind: i64,
+    /// A string, or parts of it (`InlayHintLabelPart`) with the location of
+    /// what they name (#981)
+    label: json.Value,
+    /// 1, a type; 2, a parameter; none, another (a closing hint)
+    kind: ?i64 = null,
     paddingLeft: ?bool = null,
     paddingRight: ?bool = null,
 };

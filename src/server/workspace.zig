@@ -35,6 +35,7 @@ const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
 const format = @import("format.zig");
 const linters = @import("linters.zig");
+const refresh = @import("refresh.zig");
 const pending = @import("pending.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
@@ -68,6 +69,10 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.config.client = params.capabilities;
     self.completion_resolve = completion_resolve.wanted(params.capabilities);
     self.config.client.textDocument.completion.completionItem.resolveSupport = .{};
+    for (params.capabilities.textDocument.codeAction.resolveSupport.properties) |p| {
+        if (std.mem.eql(u8, p, "edit")) self.code_action_resolve = true;
+    }
+    self.config.client.textDocument.codeAction.resolveSupport = .{};
     // the request's memory is reused after it (#948)
     const ops = &self.config.client.workspace.workspaceEdit.resourceOperations;
     ops.* = try str.dupeAll(sa, ops.*);
@@ -94,17 +99,22 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     const on = configuration.wanted(self);
     self.config.announced = on;
     self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
-    return json.from(a, lsp.InitializeResult{ .capabilities = .{
-        .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
-        .textDocumentSync = .{ .change = self.sync_type },
-        .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
-        .codeActionProvider = if (on.code_actions) true else null,
-        .semanticTokensProvider = .{ .legend = semantic.legend },
-        .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
-        .documentFormattingProvider = if (on.formatting) true else null,
-        .documentRangeFormattingProvider = if (on.formatting) true else null,
-        .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
-    }, .serverInfo = .{ .name = "zfls", .version = version.reported } });
+    return json.from(a, lsp.InitializeResult{
+        .capabilities = .{
+            .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
+            .textDocumentSync = .{ .change = self.sync_type },
+            .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
+            .codeActionProvider = if (!on.code_actions) null else if (self.code_action_resolve) try json.from(a, .{ .resolveProvider = true }) else Value{ .bool = true },
+            // the server's own lens command, for a client without its own (#984)
+            .executeCommandProvider = if (self.lens_commands.show_references) null else .{ .commands = &.{lenses.server_show_references} },
+            .semanticTokensProvider = .{ .legend = semantic.legend },
+            .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
+            .documentFormattingProvider = if (on.formatting) true else null,
+            .documentRangeFormattingProvider = if (on.formatting) true else null,
+            .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
+        },
+        .serverInfo = .{ .name = "zfls", .version = version.reported },
+    });
 }
 
 /// The names of the configuration file, the first found being read
@@ -613,6 +623,8 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         if (changed) _ = try addNeededFiles(self, a, self.workspace.get(filepath));
         try linking.fullRelink(self, a);
         try summary.wakeIncluded(self, a);
+        // a saved change may change what the other open documents show
+        if (changed and !did_open) refresh.views(self, a);
     }
     // the compiler checks the file as saved, on its own thread
     if (!did_close and !self.s.disable_diagnostics) {
