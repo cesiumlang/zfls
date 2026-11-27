@@ -15,6 +15,7 @@ const Allocator = std.mem.Allocator;
 const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const indent_text = @import("../indent.zig");
+const spacing = @import("../spacing.zig");
 const rewrite = @import("../rewrite.zig");
 const semantic = @import("../semantic.zig");
 
@@ -65,11 +66,38 @@ pub fn formatLines(self: *Server, a: Allocator, file: *FortranFile, args: []cons
         }
         lines = cased;
     }
-    return try indent_text.indent(a, lines, try depths(a, ast, lines), width(args));
+    const layout = try depths(a, ast, lines);
+    if (has(args, "--spacing")) {
+        const spaced = try a.dupe([]const u8, lines);
+        for (spaced, layout.depth, layout.start_quote) |*l, d, q| {
+            if (d == null) continue;
+            const text = std.mem.trim(u8, l.*, " \t\r");
+            if (text.len == 0 or (q == 0 and text[0] == '!')) continue;
+            l.* = try spacing.space(a, text, q);
+        }
+        lines = spaced;
+    }
+    const indented = try indent_text.indent(a, lines, layout.depth, width(args));
+    return if (has(args, "--align")) try spacing.alignColons(a, indented, layout.single) else indented;
 }
 
-/// Each line's depth, or null for a line to leave as it is
-fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) ![]const ?usize {
+fn has(args: []const []const u8, flag: []const u8) bool {
+    for (args) |arg| if (std.mem.eql(u8, arg, flag)) return true;
+    return false;
+}
+
+const Layout = struct {
+    /// Each line's depth, or null for a line to leave as it is
+    depth: []const ?usize,
+    /// The quote each line starts in (0: none)
+    start_quote: []const u8,
+    /// Whether a line is a statement of its own, not continued
+    single: []const bool,
+};
+
+/// Each line's depth, the quote it starts in, and whether it is a whole
+/// statement
+fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) !Layout {
     const n = lines.len;
     const inside = try a.alloc(usize, n);
     @memset(inside, 0);
@@ -80,15 +108,20 @@ fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) ![]const ?
         while (l + 1 < sc.eline and l < n) : (l += 1) inside[l] += 1;
     }
     const out = try a.alloc(?usize, n);
+    const start_quote = try a.alloc(u8, n);
+    const single = try a.alloc(bool, n);
+    @memset(single, false);
     var quote: u8 = 0;
     var continues = false;
     var start_depth: usize = 0;
     for (lines, 0..) |line, i| {
         const text = std.mem.trim(u8, line, " \t\r");
+        start_quote[i] = if (continues) quote else 0;
         if (text.len > 0 and text[0] == '#') {
             out[i] = null;
             continue;
         }
+        const first = !continues;
         if (continues) {
             // the rest of a character literal: its blanks are its own
             const lead = std.mem.trimStart(u8, line, " \t");
@@ -102,8 +135,9 @@ fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) ![]const ?
         if (text.len == 0 or text[0] == '!') continue;
         quote = indent_text.endQuote(line, if (continues) quote else 0);
         continues = endsWithAmpersand(line, quote);
+        single[i] = first and !continues;
     }
-    return out;
+    return .{ .depth = out, .start_quote = start_quote, .single = single };
 }
 
 /// Whether a free-form line goes on to the next: an `&` that ends its code

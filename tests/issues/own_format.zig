@@ -96,6 +96,36 @@ test "--case writes the keywords in a case, not the names (#986)" {
     try std.testing.expectEqualStrings("program Main\n   integer :: Do_It\n   Do_It = 1\n   if (Do_It > 0) print *, 'If'\nend program Main\n", try formatted(w, "c.f90"));
 }
 
+test "--spacing and --align: blanks around operators, the :: of declarations in a column (#986)" {
+    const w = try h.Workspace.init(&.{.{ .name = "s.f90", .text = "subroutine s(x,n)\nreal(8),intent(inout)::x(:)\ninteger::n\ninteger::k\ndo k=1,n\nif(x(k)>=0)x(k)=f(x(k),key=2)\nend do\nend subroutine\n" }}, .{ .init_options = "{\"formatter\": \"zfls\", \"formatter_args\": [\"--spacing\", \"--align\"]}" });
+    defer w.deinit();
+    try std.testing.expectEqualStrings(
+        "subroutine s(x, n)\n   real(8), intent(inout) :: x(:)\n   integer                :: n\n   integer                :: k\n   do k = 1, n\n      if(x(k) >= 0)x(k) = f(x(k), key=2)\n   end do\nend subroutine\n",
+        try formatted(w, "s.f90"),
+    );
+}
+
+test "Enter indents the line it ends: an END at its construct's depth (#986)" {
+    const old = "      end do";
+    const w = try h.Workspace.init(&.{.{ .name = "e.f90", .text = "program p\n   integer :: k\n   do k = 1, 2\n      k = k\n" ++ old ++ "\n\nend program p\n" }}, .{ .init_options = "{\"formatter\": \"zfls\"}" });
+    defer w.deinit();
+    try w.open("e.f90", "fortran");
+    const edits = try w.onTypeFormatting("e.f90", .{ .line = 5, .col = 0 }, "\n");
+    var line: []const u8 = old;
+    var i = edits.len;
+    while (i > 0) {
+        i -= 1;
+        const e = edits[i];
+        line = try std.mem.concat(w.a(), u8, &.{ line[0..@intCast(e.start)], e.new_text, line[@intCast(e.end)..] });
+    }
+    try std.testing.expectEqualStrings("   end do", line);
+    // another formatter's: nothing
+    const other = try h.Workspace.init(&.{.{ .name = "e.f90", .text = "program p\n      end program p\n\n" }}, .{});
+    defer other.deinit();
+    try other.open("e.f90", "fortran");
+    try std.testing.expectEqual(@as(usize, 0), (try other.onTypeFormatting("e.f90", .{ .line = 2, .col = 0 }, "\n")).len);
+}
+
 test "a fixed-form file is left to another formatter (#986)" {
     const fixed = h.File{ .name = "f.f", .text = "      program p\n      x = 1\n      end\n" };
     const w = try h.Workspace.init(&.{fixed}, .{ .init_options = "{\"formatter\": \"zfls\"}" });
@@ -111,10 +141,10 @@ test "the corpus formatted keeps its tokens, and formatting it again changes not
     defer dir.close(io);
     var it = dir.iterate();
     var checked: usize = 0;
-    while (try it.next(io)) |e| {
+    while (try it.next(io)) |e| for ([_][]const u8{ "{\"formatter\": \"zfls\"}", "{\"formatter\": \"zfls\", \"formatter_args\": [\"--spacing\", \"--align\"]}" }) |options| {
         if (e.kind != .file or !(std.mem.endsWith(u8, e.name, ".f90") or std.mem.endsWith(u8, e.name, ".F90"))) continue;
         const text = try dir.readFileAlloc(io, e.name, a, .limited(1 << 22));
-        const w = try h.Workspace.init(&.{.{ .name = e.name, .text = text }}, .{ .init_options = "{\"formatter\": \"zfls\"}" });
+        const w = try h.Workspace.init(&.{.{ .name = e.name, .text = text }}, .{ .init_options = options });
         defer w.deinit();
         const once = try formatted(w, e.name);
         const before = try zfls.indent.tokens(a, try lines(a, text));
@@ -124,8 +154,8 @@ test "the corpus formatted keeps its tokens, and formatting it again changes not
         const twice = try formatted(w, e.name);
         try h.expect(std.mem.eql(u8, once, twice), "{s}: formatting again changed it", .{e.name});
         checked += 1;
-    }
-    try h.expect(checked >= 5, "{d} files of the corpus", .{checked});
+    };
+    try h.expect(checked >= 10, "{d} files of the corpus", .{checked});
 }
 
 fn lines(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {

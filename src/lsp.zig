@@ -203,7 +203,8 @@ pub const ServerCapabilities = struct {
     documentLinkProvider: struct { resolveProvider: bool = false } = .{},
     /// the reference counts of lenses are counted on resolve
     codeLensProvider: struct { resolveProvider: bool = true } = .{},
-    documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#" } = .{},
+    /// `#` to column 1; with `formatter = "zfls"`, a line indented once it ends (#986)
+    documentOnTypeFormattingProvider: struct { firstTriggerCharacter: []const u8 = "#", moreTriggerCharacter: []const []const u8 = &.{"\n"} } = .{},
     inlayHintProvider: bool = true,
     callHierarchyProvider: bool = true,
     typeHierarchyProvider: bool = true,
