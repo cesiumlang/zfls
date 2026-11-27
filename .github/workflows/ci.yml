@@ -1316,6 +1316,18 @@ jobs:
           fi
           zig-out/bin/dap_mpi --zfls "$ZFLS" --mpif90 mpif90.mpich --mpiexec mpiexec.mpich
 
+      # and Open MPI's (PMIx)
+      - name: zfls dap on an Open MPI program (Linux x64)
+        if: matrix.target == 'x86_64-linux' && !cancelled()
+        timeout-minutes: 10
+        env:
+          LD_LIBRARY_PATH: ""
+        run: |
+          if ! command -v mpif90.openmpi && [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo apt-get install -y openmpi-bin libopenmpi-dev || { sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev; }
+          fi
+          zig-out/bin/dap_mpi --zfls "$ZFLS" --mpif90 mpif90.openmpi --mpiexec mpiexec.openmpi
+
       # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
       # a step, the stack, a runtime error, attaching, a terminal. A debugger
       # starts a program only with Developer Mode on, which a runner's

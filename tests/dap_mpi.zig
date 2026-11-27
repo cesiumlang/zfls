@@ -66,6 +66,9 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("{s} failed: {s}{s}\n", .{ mpif90, built.stdout, built.stderr });
         return 1;
     }
+    // the program without a debugger: what the launcher makes of it
+    const plain = try std.process.run(a, io, .{ .argv = &.{ mpiexec, "-n", "2", program }, .cwd = .{ .path = tmp } });
+    std.debug.print("{s} -n 2, no debugger:\n{s}{s}\n", .{ mpiexec, plain.stdout, plain.stderr });
     const zfls_path = try cwd.realPathFileAlloc(io, zfls_exe.?, a);
     session(io, init.gpa, a, init.environ_map, zfls_path, mpiexec, program, src, lineOf(text, "stop here")) catch |e| {
         std.debug.print("an MPI program: {s}\n", .{@errorName(e)});
