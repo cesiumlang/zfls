@@ -56,6 +56,7 @@ test {
     _ = @import("cuda_prefix.zig");
     _ = @import("closing_hints.zig");
     _ = @import("cycles.zig");
+    _ = @import("expr_types.zig");
     _ = @import("external.zig");
     _ = @import("formatting.zig");
     _ = @import("form_switch.zig");

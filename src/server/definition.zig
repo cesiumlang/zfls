@@ -24,6 +24,7 @@ const directives = @import("../data/directives.zig");
 const operators = @import("operators.zig");
 const keyword_token = @import("keyword_token.zig");
 const assignment = @import("assignment.zig");
+const expression_hover = @import("expression_hover.zig");
 const literals = @import("../literals.zig");
 const docmath = @import("../docmath.zig");
 
@@ -628,6 +629,10 @@ pub fn lowercaseKeywords(a: Allocator, md: []const u8) ![]const u8 {
 fn hoverAt(self: *Server, a: Allocator, params: lsp.PositionParams) !Value {
     if (try operatorAt(self, a, params)) |op| return operators.hover(self, a, op);
     if (try assignmentAt(self, a, params)) |b| return assignment.hover(self, a, b);
+    // a parenthesis: the type of what it encloses (#987)
+    if (try self.fileFromUri(a, params.textDocument.uri)) |f| {
+        if (try expression_hover.hover(self, a, f, params.position.line, Server.toByteCol(f, params.position.line, params.position.character))) |v| return v;
+    }
     if (try includeHover(self, a, params)) |v| return v;
     // the strings and numbers of preprocessor lines are no Fortran literals
     const pp_line = if (try self.fileFromUri(a, params.textDocument.uri)) |f|
