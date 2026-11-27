@@ -257,11 +257,14 @@ fn reportOnce(self: *Server, a: Allocator, key: []const u8, message: []const u8,
 
 /// Enter typed with `formatter = "zfls"`: the line it ends (0-based
 /// `line`) formatted, an END at its construct's depth (#986); null for
-/// another formatter or a fixed-form file
+/// another formatter
 pub fn onEnter(self: *Server, a: Allocator, file: *FortranFile, line: usize) !Value {
-    if (configuration.withdrawn(self, .formatting) or isFixedForm(file)) return .null;
-    if (Formatter.fromName(self.s.formatter) != .zfls or line >= file.nLines()) return .null;
-    const all = (try indent_format.formatLines(self, a, file, self.s.formatter_args.slice())) orelse return .null;
+    if (configuration.withdrawn(self, .formatting) or line >= file.nLines()) return .null;
+    const fixed = isFixedForm(file) and self.s.formatter_fixed != null;
+    const option = if (fixed) self.s.formatter_fixed else self.s.formatter;
+    if (Formatter.fromName(option) != .zfls) return .null;
+    const user = if (fixed) self.s.formatter_fixed_args.slice() else self.s.formatter_args.slice();
+    const all = (try indent_format.formatLines(self, a, file, user)) orelse return .null;
     return json.from(a, try lineEdits(a, file.editLines()[line .. line + 1], all[line .. line + 1], line));
 }
 
@@ -287,7 +290,7 @@ fn format(self: *Server, a: Allocator, file: *FortranFile, first: usize, last: u
     const option = if (fixed and self.s.formatter_fixed != null) self.s.formatter_fixed else self.s.formatter;
     const user = if (fixed and self.s.formatter_fixed != null) self.s.formatter_fixed_args.slice() else self.s.formatter_args.slice();
     const formatter = Formatter.fromName(option) orelse return none;
-    if ((formatter == .fprettify or formatter == .zfls) and fixed) {
+    if (formatter == .fprettify and fixed) {
         reportOnce(self, a, "unsupported", try a.print("formatter: {s} formats free-form Fortran only; set formatter_fixed to findent for fixed-form files", .{@tagName(formatter)}), C.Severity.warn);
         return none;
     }

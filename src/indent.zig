@@ -30,6 +30,29 @@ pub fn indent(a: Allocator, lines: []const []const u8, depths: []const ?usize, w
     return out;
 }
 
+/// `lines` with each preprocessor directive nested by its `#if`s: `width`
+/// blanks per level after its `#`, which stays in column 1
+/// (`--indent-directives`); `#else`, `#elif` and `#endif` at their `#if`'s
+pub fn directives(a: Allocator, lines: []const []const u8, width: usize) ![]const []const u8 {
+    const out = try a.dupe([]const u8, lines);
+    var depth: usize = 0;
+    for (out) |*l| {
+        if (l.len == 0 or l.*[0] != '#') continue;
+        const rest = std.mem.trimStart(u8, l.*[1..], " \t");
+        const word = rest[0 .. std.mem.findAny(u8, rest, " \t(\r") orelse rest.len];
+        const opens = std.mem.startsWith(u8, word, "if");
+        const middle = std.mem.eql(u8, word, "else") or std.mem.eql(u8, word, "elif");
+        if (std.mem.eql(u8, word, "endif") or middle) depth -|= 1;
+        const buf = try a.alloc(u8, 1 + depth * width + rest.len);
+        buf[0] = '#';
+        @memset(buf[1 .. 1 + depth * width], ' ');
+        @memcpy(buf[1 + depth * width ..], rest);
+        l.* = buf;
+        if (opens or middle) depth += 1;
+    }
+    return out;
+}
+
 /// Whether a free-form line's code ends inside a character literal that
 /// the next line goes on with (`'abc&`), from the quote it starts in
 /// (`quote`, 0: none); the quote it ends in
@@ -81,6 +104,16 @@ test "lines indented by their depths, their text as it was (#986)" {
     try testing.expectEqualStrings("#ifdef X", got[3]);
     try testing.expectEqualStrings("contains", got[4]);
     try testing.expectEqualStrings(try tokens(a, &lines), try tokens(a, got));
+}
+
+test "directives nested by their #ifs, the # in column 1 (#986)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const lines = [_][]const u8{ "#ifdef A", "#if B", "#define C 1", "#else", "x = 1", "#endif", "#  endif", "#include \"f.h\"" };
+    const got = try directives(a, &lines, 2);
+    const want = [_][]const u8{ "#ifdef A", "#  if B", "#    define C 1", "#  else", "x = 1", "#  endif", "#endif", "#include \"f.h\"" };
+    for (want, got) |w, g| try testing.expectEqualStrings(w, g);
 }
 
 test "a character literal that goes on to the next line (#986)" {
