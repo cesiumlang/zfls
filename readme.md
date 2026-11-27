@@ -671,7 +671,7 @@ Two requests act on the checks: `zfls/compilerCheck` (`{textDocument: {uri}}`) c
 
 ### Formatting
 
-With `formatter` set to `zfls`, `findent`, `fprettify`, `codee`, `forformat` or `custom`, zfls answers `textDocument/formatting` and `textDocument/rangeFormatting` (format document, format selection, format on save) with its own formatter, or by running that one, which is installed separately (`pip install findent`, `pip install fprettify`, or the same from conda-forge; [Codee](https://www.codee.com); forformat). This works in every editor, not only VS Code; zfls offers formatting only when a formatter is set.
+zfls answers `textDocument/formatting` and `textDocument/rangeFormatting` (format document, format selection, format on save) with its own formatter by default (`formatter` is `zfls`), or, with `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or `custom`, by running that one, which is installed separately (`pip install findent`, `pip install fprettify`, or the same from conda-forge; [Codee](https://www.codee.com); forformat). This works in every editor, not only VS Code. With `formatter` set to `none` (and `formatter_fixed` unset or `none`), zfls offers no formatting, so an editor can use another formatter.
 
 | `formatter` | Command line |
 | --- | --- |

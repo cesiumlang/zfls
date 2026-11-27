@@ -866,7 +866,7 @@
             "%config.zfls.formatting.formatter.enumDescriptions.5%",
             "%config.zfls.formatting.formatter.enumDescriptions.6%"
           ],
-          "default": "Disabled",
+          "default": "zfls",
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.formatter.markdownDescription%"
         },

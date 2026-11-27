@@ -84,6 +84,12 @@ const want =
     \\
 ;
 
+test "zfls's own formatter is the default (#986)" {
+    const w = try h.Workspace.init(&.{.{ .name = "d.f90", .text = "program p\nx = 1\nend program p\n" }}, .{});
+    defer w.deinit();
+    try std.testing.expectEqualStrings("program p\n   x = 1\nend program p\n", try formatted(w, "d.f90"));
+}
+
 test "a free-form file indented by its scopes (#986)" {
     const w = try h.Workspace.init(&.{messy}, .{ .init_options = "{\"formatter\": \"zfls\", \"formatter_args\": [\"--indent\", \"2\"]}" });
     defer w.deinit();
@@ -134,8 +140,8 @@ test "Enter indents the line it ends: an END at its construct's depth (#986)" {
         line = try std.mem.concat(w.a(), u8, &.{ line[0..@intCast(e.start)], e.new_text, line[@intCast(e.end)..] });
     }
     try std.testing.expectEqualStrings("   end do", line);
-    // another formatter's: nothing
-    const other = try h.Workspace.init(&.{.{ .name = "e.f90", .text = "program p\n      end program p\n\n" }}, .{});
+    // no formatter: nothing
+    const other = try h.Workspace.init(&.{.{ .name = "e.f90", .text = "program p\n      end program p\n\n" }}, .{ .init_options = "{\"formatter\": \"none\"}" });
     defer other.deinit();
     try other.open("e.f90", "fortran");
     try std.testing.expectEqual(@as(usize, 0), (try other.onTypeFormatting("e.f90", .{ .line = 2, .col = 0 }, "\n")).len);

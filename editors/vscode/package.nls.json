@@ -174,7 +174,7 @@
   "walkthrough.gettingStarted.tests.title": "fpm projects and tests",
   "walkthrough.gettingStarted.tests.description": "fpm builds, runs and tests projects with an fpm.toml; the Testing view lists their tests, and pFUnit's.\n[Open the Testing View](command:workbench.view.testing.focus)",
   "walkthrough.gettingStarted.format.title": "Format your code",
-  "walkthrough.gettingStarted.format.description": "Format with findent, fprettify, Codee, forformat or a command of your own, once you have installed one and chosen it.\n[Choose a Formatter](command:workbench.action.openSettings?%5B%22zfls.formatting.formatter%22%5D)",
+  "walkthrough.gettingStarted.format.description": "Format with zfls's own formatter, which needs no tool, or with findent, fprettify, Codee, forformat or a command of your own, once you have installed one and chosen it.\n[Choose a Formatter](command:workbench.action.openSettings?%5B%22zfls.formatting.formatter%22%5D)",
   "walkthrough.gettingStarted.help.title": "When something goes wrong",
   "walkthrough.gettingStarted.help.description": "The output of zfls says what it did and why something failed.\n[Show Output](command:zfls.showOutput)",
   "view.zfls.moduleVariables.name": "Fortran Module Variables",
