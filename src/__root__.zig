@@ -75,6 +75,7 @@ pub const docmath = @import("docmath.zig");
 pub const rewrite = @import("rewrite.zig");
 pub const modernize = @import("modernize.zig");
 pub const organize_use = @import("organize_use.zig");
+pub const indent = @import("indent.zig");
 pub const outline = @import("outline.zig");
 pub const namelist = @import("namelist.zig");
 pub const project = @import("project.zig");

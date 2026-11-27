@@ -6,7 +6,7 @@
 export type ServerSettings = Record<string, unknown>;
 
 /** The values of zfls.formatting.formatter that name a formatter */
-export const FORMATTERS = ["findent", "fprettify", "codee", "forformat", "custom"];
+export const FORMATTERS = ["findent", "fprettify", "codee", "forformat", "custom", "zfls"];
 
 /** The features that the server announces when it starts, or registers when
  * a setting turns them on */
