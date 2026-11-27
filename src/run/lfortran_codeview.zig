@@ -16,6 +16,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const stdio = @import("../stdio.zig");
 const paths = @import("../paths.zig");
+const lfortran_lines = @import("lfortran_lines.zig");
 
 /// The IR for x86-64 Windows, MSVC's ABI
 pub const triple = "x86_64-pc-windows-msvc";
@@ -103,10 +104,16 @@ pub fn main(a: Allocator, io: Io, environ: *const std.process.Environ.Map, args:
     var ir: []u8 = &.{};
     const show = try std.mem.concat(a, []const u8, &.{ &.{ o.lfortran, "-g", "--show-llvm" }, o.rest });
     if (!try step(a, io, environ, show, &ir)) return 1;
-    // 2. marked for CodeView, with the sources' absolute directory
+    // 2. the lines of its PRINT and WRITE statements (#470), marked for
+    // CodeView, with the sources' absolute directory
+    const source = o.rest[o.rest.len - 1];
+    const lined = if (Io.Dir.cwd().readFileAlloc(io, source, a, .limited(1 << 26))) |text|
+        try lfortran_lines.patch(a, ir, try lfortran_lines.ofSource(a, io, source, text))
+    else |_|
+        ir;
     const cwd = try a.dupe(u8, paths.getCwd());
     std.mem.replaceScalar(u8, cwd, '\\', '/');
-    const patched = (try patch(a, ir, cwd)) orelse {
+    const patched = (try patch(a, lined, cwd)) orelse {
         say(io, "zfls lfortran-codeview: {s}'s IR has module flags already; zfls does not know it\n", .{o.lfortran});
         return 1;
     };
