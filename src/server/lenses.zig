@@ -7,8 +7,9 @@
 //! `zfls.showReferences` (uri, position, locations), `zfls.runFile` and
 //! `zfls.debugFile` (uri) itself says so in its capabilities, under
 //! `experimental.commands.commands` as rust-analyzer's clients do (the VS
-//! Code extension does). Without them a reference lens only shows the count,
-//! and a program has no lenses.
+//! Code extension does). Without them a reference lens runs the server's
+//! own command (`workspace/executeCommand`, #984), and a program has no
+//! lenses.
 //! Part of `Server` (server.zig): each function takes it as `self`.
 
 const std = @import("std");
@@ -86,22 +87,44 @@ pub fn serveCodeLens(self: *Server, a: Allocator, params: lsp.TextDocumentParams
     return json.from(a, out.items);
 }
 
+/// The server's own command of a reference lens, for a client that has no
+/// `zfls.showReferences` (#984): `workspace/executeCommand` answers the
+/// references and shows the first where the client takes `showDocument`
+pub const server_show_references = "zfls.server.showReferences";
+
 /// `codeLens/resolve`: a reference lens with its count, and the command
-/// that shows them where the client has it
+/// that shows them: the client's where it has it, else the server's
 pub fn serveResolve(self: *Server, a: Allocator, params: Value) !Value {
     const lens = json.decode(lsp.CodeLens, a, params) catch return params;
     const data = lens.data orelse return params;
     const locations = try referencesOf(self, a, data, lens.range.start);
     const title = if (locations.len == 1) "1 reference" else try a.print("{d} references", .{locations.len});
-    var command: lsp.Command = .{ .title = title, .command = "" };
-    if (self.lens_commands.show_references) {
-        const args = try a.alloc(Value, 3);
-        args[0] = .{ .string = data.uri };
-        args[1] = try json.from(a, lens.range.start);
-        args[2] = try json.from(a, locations);
-        command = .{ .title = title, .command = show_references, .arguments = args };
-    }
+    const args = try a.alloc(Value, 3);
+    args[0] = .{ .string = data.uri };
+    args[1] = try json.from(a, lens.range.start);
+    args[2] = try json.from(a, locations);
+    const name = if (self.lens_commands.show_references) show_references else server_show_references;
+    const command: lsp.Command = .{ .title = title, .command = name, .arguments = args };
     return json.from(a, lsp.CodeLens{ .range = lens.range, .command = command, .data = data });
+}
+
+/// `workspace/executeCommand` of `server_show_references` (uri, position,
+/// locations): the locations, the first shown in the editor
+pub fn serveExecuteCommand(self: *Server, a: Allocator, params: Value) !Value {
+    const command = json.str(json.get(params, "command")) orelse return error.InvalidParams;
+    if (!std.mem.eql(u8, command, server_show_references)) return error.InvalidParams;
+    const args = json.items(json.get(params, "arguments"));
+    if (args.len < 3) return error.InvalidParams;
+    const locations = json.items(args[2]);
+    if (locations.len > 0 and self.config.client.window.showDocument.support) {
+        const first = locations[0];
+        self.sendRequest(a, "window/showDocument", try json.from(a, .{
+            .uri = json.get(first, "uri") orelse return error.InvalidParams,
+            .selection = json.get(first, "range") orelse Value.null,
+            .takeFocus = true,
+        })) catch |e| self.logSendFailure(e);
+    }
+    return args[2];
 }
 
 /// The references of the unit named at `at`, what `textDocument/references`

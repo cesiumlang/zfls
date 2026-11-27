@@ -21,6 +21,7 @@ const bindc = @import("bindc.zig");
 const linking = @import("linking.zig");
 const summary = @import("summary.zig");
 const diagnostics = @import("diagnostics.zig");
+const refresh = @import("refresh.zig");
 
 const isSourceFile = workspace.isSourceFile;
 const updateWorkspaceFile = workspace.updateWorkspaceFile;
@@ -76,6 +77,7 @@ pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatch
         _ = try addNeededFiles(self, a, null);
         try linking.fullRelink(self, a);
         try summary.wakeIncluded(self, a);
+        if (changed) refresh.views(self, a);
     }
     if (settings_file) |kind| {
         // which publishes the diagnostics again

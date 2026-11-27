@@ -1152,7 +1152,7 @@ jobs:
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
             sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
-              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld && break
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld clang && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
             sleep "$wait"
@@ -1172,6 +1172,9 @@ jobs:
           set -e
           cat p.out p.txt
           grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+          # for tests/dap_windows.zig: the CodeView build (#176), with the
+          # clang beside LFortran
+          echo "ZFLS_LFORTRAN_WINDOWS=$(cygpath -w "$bin/lfortran.exe")" >> "$GITHUB_ENV"
 
       # LLVM Flang's programs link with lld-link and the package's ifx kit,
       # with the environment Run Fortran File gives the build (LIB, LINK,
@@ -1240,10 +1243,11 @@ jobs:
       # and linked with the package's ifx kit (the runner's Visual Studio
       # hidden). And on LLVM Flang's, built with -g and the package's ifx kit
       # (FLANG), and on ifx's, built with /Zi (IFX): their breakpoints,
-      # stack, variables, stepping, runtime errors and ERROR STOP
+      # stack, variables, stepping, runtime errors and ERROR STOP; and on
+      # LFortran's, built with CodeView by zfls (#176, #185)
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
-        run: zig-out/bin/dap_windows --zfls "$ZFLS"
+        run: zig-out/bin/dap_windows --zfls "$ZFLS" ${ZFLS_LFORTRAN_WINDOWS:+--lfortran "$ZFLS_LFORTRAN_WINDOWS"}
 
       # zfls dap with gdb on a gfortran program: the variables as Fortran,
       # the module variables, a runtime error (GFORTRAN and GDB name

@@ -554,6 +554,11 @@
       "type": "boolean",
       "default": false
     },
+    "closing_hint_lines": {
+      "description": "An inlay hint after the END of a construct or procedure of this many lines or more, with its opening statement (default: 25; 0: none)",
+      "type": "integer",
+      "default": 25
+    },
     "pp_suffixes": {
       "description": "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes, and .fpp)",
       "type": [

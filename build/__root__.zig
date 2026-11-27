@@ -205,7 +205,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_windows",
             .root = "tests/dap_windows.zig",
             .step = "test-dap",
-            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it, linked with the ifx kit), LLVM Flang's with -- --flang FLANG and ifx's with -- --ifx IFX",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it, linked with the ifx kit), LLVM Flang's with -- --flang FLANG, ifx's with -- --ifx IFX and LFortran's with -- --lfortran LFORTRAN (clang and lld-link on the PATH)",
             .needs_fortls = false,
             .needs_zig = true,
             .needs_kit = true,

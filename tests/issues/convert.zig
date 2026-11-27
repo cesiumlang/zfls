@@ -144,3 +144,29 @@ test "with findent: the converted file has the same outline as free form (#279)"
     try std.testing.expectEqual(before.len, after.len);
     for (before, after) |x, y| try std.testing.expectEqualStrings(x, y);
 }
+
+test "for a client that resolves actions, the conversion's findent runs on resolve (#984)" {
+    const opts = "{\"enable_code_actions\": true, \"formatter\": \"findent\", \"formatter_path\": \"" ++ stub.name ++ "\"}";
+    const w = try h.Workspace.init(&.{ fixed_source, stub }, .{ .init_options = opts, .create_files = true, .resolve_actions = true });
+    defer w.deinit();
+    if (!is_windows) try w.tmp.dir.setFilePermissions(std.testing.io, stub.name, .executable_file, .{});
+    try w.open("old.f", "fortran");
+    try std.testing.expectEqual(true, h.json.path(w.init_result, &.{ "capabilities", "codeActionProvider", "resolveProvider" }).?.bool);
+    const v = try w.zflsRequest("textDocument/codeAction", .{
+        .textDocument = .{ .uri = try w.uri("old.f") },
+        .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } },
+        .context = .{ .only = &[_][]const u8{"source"} },
+    });
+    var listed: ?h.json.Value = null;
+    for (h.json.items(v)) |act| if (std.mem.startsWith(u8, h.json.str(h.json.get(act, "title")) orelse "", "Convert to free form")) {
+        listed = act;
+    };
+    const act = listed orelse return error.NoAction;
+    const unresolved_edit = h.json.get(act, "edit");
+    try std.testing.expect(unresolved_edit == null or unresolved_edit.? == .null);
+    const resolved = try w.zflsRequest("codeAction/resolve", act);
+    const changes = h.json.items(h.json.path(resolved, &.{ "edit", "documentChanges" }) orelse return error.NoEdit);
+    try std.testing.expectEqual(2, changes.len);
+    const edit = h.json.items(h.json.get(changes[1], "edits"))[0];
+    try std.testing.expect(std.mem.find(u8, h.json.str(h.json.get(edit, "newText")) orelse "", "-ifixed -ofree") != null);
+}

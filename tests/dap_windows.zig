@@ -23,7 +23,7 @@
 //! built with `/Zi /Od /check:bounds` and linked with the kit
 //! (tests/dap_ifx.zig).
 //!
-//!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--ifx IFX] [--kit DIR]
+//!     dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--ifx IFX] [--lfortran LFORTRAN] [--kit DIR]
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -37,6 +37,7 @@ const source = "tests/dap/hello.c";
 
 const dap = @import("dap_client.zig");
 const dap_ifx = @import("dap_ifx.zig");
+const dap_lfortran_windows = @import("dap_lfortran_windows.zig");
 const dap_engine_capabilities = @import("dap_engine_capabilities.zig");
 const dap_engine_attach = @import("dap_engine_attach.zig");
 const dap_completions = @import("dap_completions.zig");
@@ -61,6 +62,7 @@ pub fn main(init: std.process.Init) !u8 {
     var zig: []const u8 = "zig";
     var flang: ?[]const u8 = init.environ_map.get("FLANG");
     var ifx: ?[]const u8 = init.environ_map.get("IFX");
+    var lfortran: ?[]const u8 = init.environ_map.get("LFORTRAN");
     var kit: ?[]const u8 = null;
     var i: usize = 1;
     while (i + 1 < argv.len) : (i += 2) {
@@ -72,12 +74,14 @@ pub fn main(init: std.process.Init) !u8 {
             flang = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--ifx")) {
             ifx = argv[i + 1];
+        } else if (std.mem.eql(u8, argv[i], "--lfortran")) {
+            lfortran = argv[i + 1];
         } else if (std.mem.eql(u8, argv[i], "--kit")) {
             kit = argv[i + 1];
         } else break;
     }
     if (i != argv.len or zfls_exe == null) {
-        std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--ifx IFX] [--kit DIR]\n", .{});
+        std.debug.print("usage: dap_windows --zfls ZFLS.EXE [--zig ZIG] [--flang FLANG] [--ifx IFX] [--lfortran LFORTRAN] [--kit DIR]\n", .{});
         return 2;
     }
     if (builtin.target.os.tag != .windows) {
@@ -140,6 +144,7 @@ pub fn main(init: std.process.Init) !u8 {
     var status: u8 = 0;
     if (flang) |fc| status |= try withFlang(io, init.gpa, a, init.environ_map, exe_zfls, fc, tmp, kit);
     if (ifx) |fx| status |= try dap_ifx.run(io, init.gpa, a, init.environ_map, exe_zfls, fx, tmp, kit_dir);
+    if (lfortran) |lf| status |= try dap_lfortran_windows.run(io, init.gpa, a, init.environ_map, exe_zfls, lf, tmp, kit_dir);
     return status;
 }
 

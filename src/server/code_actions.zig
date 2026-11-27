@@ -34,6 +34,8 @@ const completion = @import("completion.zig");
 const linters = @import("linters.zig");
 const convert = @import("convert.zig");
 const diagnostics = @import("diagnostics.zig");
+const doc_stub = @import("doc_stub.zig");
+const modernize_actions = @import("modernize_actions.zig");
 
 pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParams) !Value {
     var out: std.ArrayList(lsp.CodeAction) = .empty;
@@ -51,10 +53,12 @@ pub fn serveCodeActions(self: *Server, a: Allocator, params: lsp.CodeActionParam
     try addRemoveUnusedActions(self, a, file, ast, sline, eline, params.context.only, &out);
     try addRewriteActions(self, a, file, ast, sline, eline, &out);
     try addStubActions(self, a, file, ast, sline, eline, &out);
+    try doc_stub.addDocStubActions(self, a, file, ast, sline, eline, &out);
+    try modernize_actions.addActions(self, a, file, ast, sline, eline, params.context.only, &out);
     try addExtractAction(self, a, file, ast, params.range, params.context.only, &out);
     if (wants(params.context.only, "source")) try addKeywordCaseActions(self, a, file, ast, &out);
     // findent runs only when source actions are asked for
-    if (wants(params.context.only, "source")) if (try convert.freeFormAction(self, a, file)) |act| try out.append(a, act);
+    if (wants(params.context.only, "source")) if (try convert.freeFormAction(self, a, file, false)) |act| try out.append(a, act);
     const curr_scope = ast.getInnerScope(sline) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     const actions = (try curr_scope.getActions(a, sline, eline)) orelse return if (out.items.len > 0) json.from(a, out.items) else .null;
     for (actions) |act| {
@@ -79,7 +83,7 @@ fn wants(only: ?[]const []const u8, kind: []const u8) bool {
     return false;
 }
 
-fn action(a: Allocator, uri: []const u8, title: []const u8, kind: []const u8, edits: []const lsp.TextEdit) !lsp.CodeAction {
+pub fn action(a: Allocator, uri: []const u8, title: []const u8, kind: []const u8, edits: []const lsp.TextEdit) !lsp.CodeAction {
     const files = try a.alloc(lsp.Changes.File, 1);
     files[0] = .{ .uri = uri, .edits = edits };
     return .{ .title = title, .kind = kind, .edit = .{ .changes = .{ .files = files } }, .diagnostics = &.{} };
@@ -518,4 +522,15 @@ pub fn addUseActions(self: *Server, a: Allocator, file: *FortranFile, ast: *Ast,
             });
         }
     }
+}
+
+/// `codeAction/resolve` (#984): the edit of an action listed without it
+/// (the conversion to free form, whose findent runs now); any other action
+/// as it is
+pub fn serveResolve(self: *Server, a: Allocator, params: Value) !Value {
+    const data = json.get(params, "data") orelse return params;
+    if (!std.mem.eql(u8, json.str(json.get(data, "resolve")) orelse "", convert.resolve_kind)) return params;
+    const file = (try self.fileFromUri(a, json.str(json.get(data, "uri")) orelse return params)) orelse return params;
+    const act = (try convert.freeFormAction(self, a, file, true)) orelse return params;
+    return json.from(a, act);
 }

@@ -21,6 +21,7 @@ test {
     _ = @import("declarations_f2023.zig");
     _ = @import("statements_f2023.zig");
     _ = @import("directives.zig");
+    _ = @import("doc_stubs.zig");
     _ = @import("select_blocks.zig");
     _ = @import("command_options.zig");
     _ = @import("compile_commands.zig");
@@ -53,6 +54,7 @@ test {
     _ = @import("extensions.zig");
     _ = @import("cuda_attributes.zig");
     _ = @import("cuda_prefix.zig");
+    _ = @import("closing_hints.zig");
     _ = @import("cycles.zig");
     _ = @import("external.zig");
     _ = @import("formatting.zig");
@@ -88,6 +90,7 @@ test {
     _ = @import("import_hides.zig");
     _ = @import("lenses.zig");
     _ = @import("macros.zig");
+    _ = @import("modernize.zig");
     _ = @import("navigation.zig");
     _ = @import("openmp.zig");
     _ = @import("outline.zig");
@@ -95,6 +98,7 @@ test {
     _ = @import("refactor.zig");
     _ = @import("rename.zig");
     _ = @import("same_name_modules.zig");
+    _ = @import("refresh.zig");
     _ = @import("settings.zig");
     _ = @import("stale_index.zig");
     _ = @import("short_paths.zig");

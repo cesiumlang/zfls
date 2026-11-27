@@ -39,6 +39,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
   { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
   { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
+  { setting: "closingHintLines", flag: "--closing_hint_lines", kind: "int", fallback: 25 },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "debugLog", flag: "--debug_log", kind: "flag", restart: true },
   { setting: "disableIndexCache", flag: "--disable_index_cache", kind: "flag" },
