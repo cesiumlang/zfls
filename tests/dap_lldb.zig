@@ -113,8 +113,7 @@ pub fn main(init: std.process.Init) !u8 {
         .dir = tmp,
         .src = src,
         .program = "",
-        // LFortran's PRINT has no line: its stop in work is a line before
-        .work_line = lineOf(text, if (compiler.? == .lfortran) "LFortran stops here" else "stop here: work"),
+        .work_line = lineOf(text, "stop here: work"),
         .call_line = lineOf(text, "call work("),
         .main_line = lineOf(text, "stop here: main"),
     };
@@ -161,7 +160,7 @@ fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8, lldb_dap: []co
 /// compiled, then linked (a compiler of Nix's finds no dsymutil when it
 /// links), then on macOS the debug information gathered into `name.dSYM`
 /// (lldb also reads it from the object file, which stays). LFortran's:
-/// `lfortran -g`, which writes the `.dSYM` itself. The program, or null
+/// as `zfls build-command` answers (dap_lfortran.zig). The program, or null
 fn build(io: Io, a: Allocator, setup: Setup, name: []const u8, flags: []const []const u8) !?[]const u8 {
     const dir = setup.dir;
     const gfortran = setup.fc;
@@ -169,7 +168,7 @@ fn build(io: Io, a: Allocator, setup: Setup, name: []const u8, flags: []const []
     const obj = try std.Io.Dir.path.join(a, &.{ dir, try a.print("{s}.o", .{name}) });
     const exe = try std.Io.Dir.path.join(a, &.{ dir, if (builtin.target.os.tag == .windows) try a.print("{s}.exe", .{name}) else name });
     if (setup.compiler == .lfortran) {
-        dap_lfortran.build(io, a, setup.fc, setup.build_env.?, dir, src, exe) catch return null;
+        dap_lfortran.build(io, a, setup.zfls, setup.fc, setup.build_env.?, dir, src, exe) catch return null;
         return exe;
     }
     var compile: std.ArrayList([]const u8) = .empty;
@@ -332,7 +331,6 @@ fn gfortranRuntime(io: Io, gpa: Allocator, setup: Setup) !void {
 }
 
 fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
-    if (setup.compiler == .lfortran and builtin.target.os.tag == .macos) return std.debug.print("skipped: LFortran's ERROR STOP aborts in a -g program on macOS\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const a = arena.allocator();

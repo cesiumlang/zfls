@@ -1,12 +1,12 @@
 //! The parts of the tests of `zfls dap` (tests/dap_gdb.zig with gdb,
 //! tests/dap_lldb.zig with lldb-dap) that are LFortran's, as far as its
-//! debug information goes (DWARF of language C, integer and real scalars
-//! only: arrays, derived types, CHARACTER and module variables are #366):
-//! building with `lfortran -g`, a session on tests/dap/grid.f90 (line
-//! breakpoints, the stack, a step, its integer variables without the
-//! compiler's temporaries, no module variables scope, the runtime error of
-//! a bound exceeded), and the stop at ERROR STOP, not at STOP, which both
-//! tests run for every compiler.
+//! debug information goes (DWARF of language C): building as `zfls
+//! build-command` answers, through LFortran's IR (#992), a session on
+//! tests/dap/grid.f90 (line breakpoints, one on a PRINT, the stack, a
+//! step, its integer variables without the compiler's temporaries, no
+//! module variables scope, the runtime error of a bound exceeded), and the
+//! stop at ERROR STOP, not at STOP, which both tests run for every
+//! compiler.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -50,13 +50,36 @@ fn onPath(io: Io, a: Allocator, environ: *const std.process.Environ.Map, name: [
     return name;
 }
 
-/// Builds `src` into `out` with `lfortran -g` (its checks of bounds are
-/// on by default), in `dir`, where LFortran also writes the files of its
-/// stack traces (`out_lines.dat`, ...)
-pub fn build(io: Io, a: Allocator, fc: []const u8, env: *const std.process.Environ.Map, dir: []const u8, src: []const u8, out: []const u8) !void {
-    const built = try std.process.run(a, io, .{ .argv = &.{ fc, "-g", "-o", out, src }, .cwd = .{ .path = dir }, .environ_map = env });
+/// Builds `src` into `out` as `zfls build-command` answers: through
+/// LFortran's IR (`zfls lfortran-ir`, #992), in `dir`, with LFortran's
+/// checks of bounds (on by default). Fails when zfls answers another build
+/// (no clang or llc next to LFortran or on the PATH).
+pub fn build(io: Io, a: Allocator, zfls: []const u8, fc: []const u8, env: *const std.process.Environ.Map, dir: []const u8, src: []const u8, out: []const u8) !void {
+    const asked = try std.process.run(a, io, .{ .argv = &.{ zfls, "build-command", src, "--compiler", fc, "--output-dir", dir }, .environ_map = env });
+    const answer = std.json.parseFromSliceLeaky(Value, a, asked.stdout, .{}) catch {
+        std.debug.print("FAIL: zfls build-command: {s}{s}\n", .{ asked.stdout, asked.stderr });
+        return error.BuildFailed;
+    };
+    const args = items(answer, "args");
+    if (args.len == 0 or !eql(args[0].string, "lfortran-ir")) {
+        std.debug.print("FAIL: zfls build-command answers no build through LFortran's IR ({s})\n", .{str(answer, "note") orelse "no note"});
+        return error.BuildFailed;
+    }
+    if (!std.mem.endsWith(u8, str(answer, "program") orelse "", std.Io.Dir.path.basename(out))) {
+        std.debug.print("FAIL: zfls build-command builds {s}, not {s}\n", .{ str(answer, "program") orelse "?", out });
+        return error.BuildFailed;
+    }
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(a, str(answer, "compiler").?);
+    for (args) |x| try argv.append(a, x.string);
+    var build_env = try env.clone(a);
+    if (get(answer, "env")) |e| {
+        var it = e.object.iterator();
+        while (it.next()) |kv| try build_env.put(kv.key_ptr.*, kv.value_ptr.string);
+    }
+    const built = try std.process.run(a, io, .{ .argv = argv.items, .cwd = .{ .path = str(answer, "cwd") orelse dir }, .environ_map = &build_env });
     if (!built.term.success()) {
-        std.debug.print("{s} failed:\n{s}{s}\n", .{ fc, built.stdout, built.stderr });
+        std.debug.print("{s} failed:\n{s}{s}\n", .{ argv.items[0], built.stdout, built.stderr });
         return error.BuildFailed;
     }
 }
@@ -68,7 +91,8 @@ pub const Session = struct {
     program: []const u8,
     src: []const u8,
     dir: []const u8,
-    /// The line in `work` (LFortran's PRINT has no line of its own)
+    /// The line of a PRINT in `work`, which LFortran gives no line of its
+    /// own (zfls's build does, #992)
     work_line: i64,
     /// The call of `work` in the main program
     call_line: i64,
