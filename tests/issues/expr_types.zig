@@ -63,3 +63,39 @@ test "completion after % on an element and on a function's result (#987)" {
         try h.expect(x, "no component x after {s} ({d} items)", .{ at, items.len });
     }
 }
+
+const kinds = h.File{ .name = "k.f90", .text =
+    \\module m
+    \\  implicit none
+    \\  integer, parameter :: dp = kind(1.0d0)
+    \\contains
+    \\  subroutine take(x)
+    \\    real, intent(in) :: x
+    \\  end subroutine
+    \\end module m
+    \\program p
+    \\  use m
+    \\  implicit none
+    \\  real(dp) :: d
+    \\  integer :: n
+    \\  d = 1.0_dp
+    \\  n = 2
+    \\  call take(d * n)
+    \\  call take(2 * 1.5)
+    \\  d = (d * n) + (n + 1)
+    \\end program p
+    \\
+};
+
+test "the kinds of expressions: in hover, and an argument's against its dummy's (#987)" {
+    const w = try h.Workspace.init(&.{kinds}, .{});
+    defer w.deinit();
+    try w.open("k.f90", "fortran");
+    const real8 = (try w.hover("k.f90", w.pos("k.f90", "(d * n) +", 0, 0))) orelse return h.unmet("no hover on (d * n)", .{});
+    try h.expect(std.mem.find(u8, real8, "REAL(8)") != null, "(d * n): {s}", .{real8});
+    const int4 = (try w.hover("k.f90", w.pos("k.f90", "(n + 1)", 0, 0))) orelse return h.unmet("no hover on (n + 1)", .{});
+    try h.expect(std.mem.find(u8, int4, "INTEGER(4)") != null, "(n + 1): {s}", .{int4});
+    var got: std.ArrayList([]const u8) = .empty;
+    for (try w.diagnostics("k.f90")) |d| if (std.mem.eql(u8, d.code, "argument-kind")) try got.append(w.a(), d.message);
+    try h.expect(got.items.len == 1 and std.mem.eql(u8, got.items[0], "Argument x of take: REAL(4) expected, REAL(8) given"), "kinds: {any}", .{got.items});
+}

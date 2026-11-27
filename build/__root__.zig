@@ -85,6 +85,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(addGenerated(b)).step);
     test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "source_archive", "source-archive", "Write the source archive zfls-v<version>-src.tar.gz, submodules included (-- [OUT_DIR], default dist)")).step);
     test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "package_vscode", "package-vscode", "Package the VS Code extension per platform from the release archives (-- DIST)")).step);
+    test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "release_notes", "release-notes", "Write the notes of this version's release: the pull requests since the last tag and the milestone's issues none of them closes (-- OUT; gh and GH_TOKEN)")).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)

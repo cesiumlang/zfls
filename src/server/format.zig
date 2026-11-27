@@ -17,6 +17,7 @@ const parser = @import("../parser.zig");
 const C = @import("../constants.zig");
 const tools = @import("tools.zig");
 const indent_format = @import("indent_format.zig");
+const configuration = @import("configuration.zig");
 
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
@@ -252,6 +253,16 @@ fn reportOnce(self: *Server, a: Allocator, key: []const u8, message: []const u8,
         self.format_reported.append(self.gpa, h) catch {};
         self.postMessage(a, message, severity);
     } else self.log.warn("{s}", .{message});
+}
+
+/// Enter typed with `formatter = "zfls"`: the line it ends (0-based
+/// `line`) formatted, an END at its construct's depth (#986); null for
+/// another formatter or a fixed-form file
+pub fn onEnter(self: *Server, a: Allocator, file: *FortranFile, line: usize) !Value {
+    if (configuration.withdrawn(self, .formatting) or isFixedForm(file)) return .null;
+    if (Formatter.fromName(self.s.formatter) != .zfls or line >= file.nLines()) return .null;
+    const all = (try indent_format.formatLines(self, a, file, self.s.formatter_args.slice())) orelse return .null;
+    return json.from(a, try lineEdits(a, file.editLines()[line .. line + 1], all[line .. line + 1], line));
 }
 
 pub fn serveFormatting(self: *Server, a: Allocator, params: lsp.DocumentFormattingParams) !Value {

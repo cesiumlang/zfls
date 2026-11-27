@@ -27,7 +27,19 @@ pub const Typed = struct {
     rank_known: bool = true,
     /// the variable or component it ends in
     obj: ?*Obj = null,
+    /// of a number or a logical, its kind when it can be told (#987)
+    kind: ?i64 = null,
 };
+
+/// The kind of an operation's result from its operands' (`x` of type `xc`
+/// and `y` of `yc`): the larger of two of a type, else the real's or
+/// complex's; null when one is not known
+pub fn combinedKind(xc: Category, x: ?i64, yc: Category, y: ?i64) ?i64 {
+    const a = x orelse return null;
+    const b = y orelse return null;
+    if (xc == yc or (xc != .integer and yc != .integer)) return @max(a, b);
+    return if (xc == .integer) b else a;
+}
 
 pub fn numeric(cat: Category) bool {
     return cat == .integer or cat == .real or cat == .complex;
