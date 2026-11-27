@@ -90,7 +90,7 @@ pub fn main(init: std.process.Init) !u8 {
     };
     // an older lldb-dap on Windows is refused, with a word of gdb and the
     // Debugger Engine, and no session waits (#374)
-    if (builtin.target.os.tag == .windows and !zfls.dap_lldb_windows.isRecent(a, io, init.environ_map, lldb_dap))
+    if (builtin.target.os.tag == .windows and try zfls.dap_lldb_windows.refusal(a, io, init.environ_map, lldb_dap) != null)
         return refusedOnWindows(io, init.gpa, try Io.Dir.cwd().realPathFileAlloc(io, zfls_exe.?, a), lldb_dap);
     const fc_version = std.process.run(a, io, .{ .argv = &.{ fc, "--version" } }) catch {
         std.debug.print("skipped: no {s}\n", .{fc});

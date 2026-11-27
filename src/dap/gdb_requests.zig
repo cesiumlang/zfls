@@ -296,7 +296,9 @@ pub fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8
             .kind = kind,
             .title = "Fortran",
             .cwd = cwd orelse s.environ.get("HOME") orelse "/",
-            .args = &[_][]const u8{ "/bin/sh", "-c", try a.print("tty > '{s}'; trap 'exit 0' HUP INT TERM; while :; do sleep 3600; done", .{file}) },
+            // `wait` lets the shell take a signal at once, not after the
+            // sleep, which it ends too (#973)
+            .args = &[_][]const u8{ "/bin/sh", "-c", try a.print("tty > '{s}'; trap 'kill $! 2>/dev/null; exit 0' HUP INT TERM; while :; do sleep 3600 & wait $!; done", .{file}) },
         },
     });
     const r = s.clientResponse(a, seq, .fromSeconds(60)) orelse return null;
@@ -332,7 +334,9 @@ test "a terminal's path is a device path" {
 fn killTerminal(s: *Session) void {
     const pid = s.g.terminal_pid orelse return;
     s.g.terminal_pid = null;
-    if (builtin.target.os.tag != .windows) std.posix.kill(@intCast(pid), .TERM) catch {};
+    // the client's number: 0 or -1 would signal a process group (#972)
+    if (builtin.target.os.tag == .windows or pid <= 0) return;
+    std.posix.kill(std.math.cast(std.posix.pid_t, pid) orelse return, .TERM) catch {};
 }
 
 /// The client's other requests

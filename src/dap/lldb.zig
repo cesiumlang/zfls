@@ -78,7 +78,7 @@ pub fn start(s: *Session, a: Allocator, configured: ?[]const u8) !?[]const u8 {
         "zfls dap: no lldb-dap; Xcode's command line tools have it (xcode-select --install). Or name one: `lldb` in the launch configuration (--lldb PATH), or debug with gdb: `gdb` in the launch configuration (--gdb PATH)"
     else
         "zfls dap: no lldb-dap or lldb-vscode (LLVM's) on the PATH; name one with `lldb` in the launch configuration (--lldb PATH)";
-    if (builtin.target.os.tag == .windows and !lldb_windows.isRecent(a, s.io, s.environ, exe)) return lldb_windows.too_old;
+    if (builtin.target.os.tag == .windows) if (try lldb_windows.refusal(a, s.io, s.environ, exe)) |why| return why;
     const env = try a.create(std.process.Environ.Map);
     env.* = try s.environ.clone(a);
     return gdb.spawn(s, a, &.{exe}, env, true);
