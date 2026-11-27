@@ -90,6 +90,21 @@ test "a free-form file indented by its scopes (#986)" {
     try std.testing.expectEqualStrings(want, try formatted(w, "m.F90"));
 }
 
+test "SELECT TYPE and SELECT RANK: a guard's block one level in, as a CASE's (#986)" {
+    const w = try h.Workspace.init(&.{.{ .name = "g.f90", .text = "subroutine g(x, r)\nclass(*) :: x\nreal :: r(..)\nselect type (x)\ntype is (integer)\nprint *, x\nclass default\nprint *, 0\nend select\nselect rank (r)\nrank (0)\nprint *, r\nrank default\nprint *, 1\nend select\nend subroutine\n" }}, .{ .init_options = "{\"formatter\": \"zfls\", \"formatter_args\": [\"--indent\", \"2\"]}" });
+    defer w.deinit();
+    try std.testing.expectEqualStrings(
+        "subroutine g(x, r)\n  class(*) :: x\n  real :: r(..)\n  select type (x)\n  type is (integer)\n    print *, x\n  class default\n    print *, 0\n  end select\n  select rank (r)\n  rank (0)\n    print *, r\n  rank default\n    print *, 1\n  end select\nend subroutine\n",
+        try formatted(w, "g.f90"),
+    );
+}
+
+test "a continuation line indented further than its statement keeps that offset (#986)" {
+    const w = try h.Workspace.init(&.{.{ .name = "k.f90", .text = "program p\ncall f(a, &\n       b)\nx = 1 + &\n2\nend program p\n" }}, .{ .init_options = "{\"formatter\": \"zfls\"}" });
+    defer w.deinit();
+    try std.testing.expectEqualStrings("program p\n   call f(a, &\n          b)\n   x = 1 + &\n      2\nend program p\n", try formatted(w, "k.f90"));
+}
+
 test "--case writes the keywords in a case, not the names (#986)" {
     const w = try h.Workspace.init(&.{.{ .name = "c.f90", .text = "PROGRAM Main\nINTEGER :: Do_It\nDo_It = 1\nIF (Do_It > 0) PRINT *, 'If'\nEND PROGRAM Main\n" }}, .{ .init_options = "{\"formatter\": \"zfls\", \"formatter_args\": [\"--case\", \"lower\"]}" });
     defer w.deinit();
@@ -131,7 +146,7 @@ test "fixed form: the code after column 6 indented, labels, comments and continu
     const w = try h.Workspace.init(&.{fixed}, .{ .init_options = "{\"formatter\": \"zfls\"}" });
     defer w.deinit();
     try std.testing.expectEqualStrings(
-        "      program p\nc     a comment\n         integer i\n         do 10 i = 1, 2\n            if (i .gt. 1) then\n      print *, 'it''s a long\n     &literal'\n            else\n               print *, i,\n     &            i\n            end if\n   10    continue\n      end\n",
+        "      program p\nc     a comment\n         integer i\n         do 10 i = 1, 2\n            if (i .gt. 1) then\n      print *, 'it''s a long\n     &literal'\n            else\n               print *, i,\n     &           i\n            end if\n   10    continue\n      end\n",
         try formatted(w, "f.f"),
     );
 }

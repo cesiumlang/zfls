@@ -60,20 +60,19 @@ pub fn endQuote(code: []const u8, start_quote: u8) u8 {
     return quote;
 }
 
-/// `line` with its code at `depth` levels of `width` blanks after column 6,
-/// or null to leave it as it is: it or the result does not fit in `limit`
-/// columns, or it has no code
-pub fn reindent(a: Allocator, line: []const u8, depth: usize, width: usize, limit: usize) !?[]const u8 {
+/// `line` with its code `blanks` after column 6, or null to leave it as it
+/// is: it or the result does not fit in `limit` columns, or it has no code
+pub fn reindent(a: Allocator, line: []const u8, blanks: usize, limit: usize) !?[]const u8 {
     const trimmed = std.mem.trimEnd(u8, line, " \r");
     if (trimmed.len > limit or trimmed.len <= 6) return null;
     const text = std.mem.trimStart(u8, trimmed[6..], " ");
     if (text.len == 0) return null;
-    const n = 6 + depth * width + text.len;
+    const n = 6 + blanks + text.len;
     if (n > limit) return null;
     const out = try a.alloc(u8, n);
     @memcpy(out[0..6], trimmed[0..6]);
-    @memset(out[6 .. 6 + depth * width], ' ');
-    @memcpy(out[6 + depth * width ..], text);
+    @memset(out[6 .. 6 + blanks], ' ');
+    @memcpy(out[6 + blanks ..], text);
     return out;
 }
 
@@ -95,13 +94,13 @@ test "fixed-form code moved within the line length (#986)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try testing.expectEqualStrings("   10    CONTINUE", (try reindent(a, "   10 CONTINUE", 1, 3, 72)).?);
-    try testing.expectEqualStrings("     &      Y", (try reindent(a, "     &  Y", 2, 3, 72)).?);
+    try testing.expectEqualStrings("   10    CONTINUE", (try reindent(a, "   10 CONTINUE", 3, 72)).?);
+    try testing.expectEqualStrings("     &      Y", (try reindent(a, "     &  Y", 6, 72)).?);
     // past column 72, or with sequence numbers: as it is
     const pad: [61]u8 = @splat(' ');
     const name: [60]u8 = @splat('A');
-    try testing.expectEqual(null, try reindent(a, "      X = 1" ++ pad ++ "SEQ00010", 1, 3, 72));
-    try testing.expectEqual(null, try reindent(a, "      X = " ++ name, 1, 3, 72));
+    try testing.expectEqual(null, try reindent(a, "      X = 1" ++ pad ++ "SEQ00010", 3, 72));
+    try testing.expectEqual(null, try reindent(a, "      X = " ++ name, 3, 72));
     try testing.expectEqual('\'', endQuote("PRINT *, 'A LONG", 0));
     try testing.expectEqual(0, endQuote("TEXT'", '\''));
 }

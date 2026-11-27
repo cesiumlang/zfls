@@ -68,10 +68,10 @@ pub fn formatLines(self: *Server, a: Allocator, file: *FortranFile, args: []cons
         lines = cased;
     }
     if (file.fixed) return try withDirectives(a, try fixedLines(a, ast, lines, width(args), self.s.fixedColumns() orelse 72), args);
-    const layout = try depths(a, ast, lines);
+    const layout = try depths(a, ast, lines, width(args));
     if (has(args, "--spacing")) {
         const spaced = try a.dupe([]const u8, lines);
-        for (spaced, layout.depth, layout.start_quote) |*l, d, q| {
+        for (spaced, layout.column, layout.start_quote) |*l, d, q| {
             if (d == null) continue;
             const text = std.mem.trim(u8, l.*, " \t\r");
             if (text.len == 0 or (q == 0 and text[0] == '!')) continue;
@@ -79,7 +79,7 @@ pub fn formatLines(self: *Server, a: Allocator, file: *FortranFile, args: []cons
         }
         lines = spaced;
     }
-    const indented = try indent_text.indent(a, lines, layout.depth, width(args));
+    const indented = try indent_text.indent(a, lines, layout.column);
     return try withDirectives(a, if (has(args, "--align")) try spacing.alignColons(a, indented, layout.single) else indented, args);
 }
 
@@ -89,7 +89,9 @@ fn scopeDepths(a: Allocator, ast: *objects.Ast, n: usize) ![]usize {
     const inside = try a.alloc(usize, n);
     @memset(inside, 0);
     for (ast.scope_list.items) |sc| {
-        if (sc == ast.none_scope or sc.file_ast != ast or sc.kind == .include or sc.sline == 0 or sc.eline <= sc.sline) continue;
+        // a guard of SELECT TYPE or RANK is a scope of its own, inside the
+        // SELECT's: its block one level in, as a CASE's
+        if (sc == ast.none_scope or sc.file_ast != ast or sc.kind == .include or sc.isTypeRegion() or sc.sline == 0 or sc.eline <= sc.sline) continue;
         var l = sc.sline;
         while (l + 1 < sc.eline and l < n) : (l += 1) inside[l] += 1;
     }
@@ -103,17 +105,24 @@ fn fixedLines(a: Allocator, ast: *objects.Ast, lines: []const []const u8, w: usi
     const out = try a.dupe([]const u8, lines);
     var quote: u8 = 0;
     var start_depth: usize = 0;
+    // the statement's code's blanks, as they were
+    var start_lead: usize = 0;
     for (lines, 0..) |line, i| {
         const kind = fixed_indent.kindOf(line);
         if (kind == .other) continue;
         const code = fixed_indent.codeOf(line, limit);
+        const lead = std.mem.findNone(u8, code, " ") orelse code.len;
         const start_quote: u8 = if (kind == .continuation) quote else 0;
-        if (kind == .statement) start_depth = inside[i] -| @intFromBool(middle(ast, std.mem.trim(u8, code, " "), i));
+        if (kind == .statement) {
+            start_depth = inside[i] -| @intFromBool(middle(ast, std.mem.trim(u8, code, " "), i));
+            start_lead = lead;
+        }
         quote = fixed_indent.endQuote(code, start_quote);
         // in a continued character literal: as it is
         if (start_quote != 0 or quote != 0) continue;
-        const depth = if (kind == .statement) start_depth else start_depth + 1;
-        if (try fixed_indent.reindent(a, line, depth, w, limit)) |l| out[i] = l;
+        // a continuation one level further, or as far further as it was
+        const blanks = if (kind == .statement) start_depth * w else if (lead > start_lead) start_depth * w + (lead - start_lead) else (start_depth + 1) * w;
+        if (try fixed_indent.reindent(a, line, blanks, limit)) |l| out[i] = l;
     }
     return out;
 }
@@ -129,17 +138,19 @@ fn has(args: []const []const u8, flag: []const u8) bool {
 }
 
 const Layout = struct {
-    /// Each line's depth, or null for a line to leave as it is
-    depth: []const ?usize,
+    /// Each line's column, or null for a line to leave as it is
+    column: []const ?usize,
     /// The quote each line starts in (0: none)
     start_quote: []const u8,
     /// Whether a line is a statement of its own, not continued
     single: []const bool,
 };
 
-/// Each line's depth, the quote it starts in, and whether it is a whole
-/// statement
-fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) !Layout {
+/// Each line's column (`w` blanks a level), the quote it starts in, and
+/// whether it is a whole statement. A continuation line one level further
+/// than its statement, but one indented further than its statement was
+/// keeps that offset (aligned with a parenthesis, say)
+fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8, w: usize) !Layout {
     const n = lines.len;
     const inside = try scopeDepths(a, ast, n);
     const out = try a.alloc(?usize, n);
@@ -149,8 +160,11 @@ fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) !Layout {
     var quote: u8 = 0;
     var continues = false;
     var start_depth: usize = 0;
+    // the statement's first line's blanks, as they were
+    var start_lead: usize = 0;
     for (lines, 0..) |line, i| {
         const text = std.mem.trim(u8, line, " \t\r");
+        const lead_n = std.mem.findNone(u8, line, " \t") orelse line.len;
         start_quote[i] = if (continues) quote else 0;
         if (text.len > 0 and text[0] == '#') {
             out[i] = null;
@@ -160,19 +174,20 @@ fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) !Layout {
         if (continues) {
             // the rest of a character literal: its blanks are its own
             const lead = std.mem.trimStart(u8, line, " \t");
-            out[i] = if (quote != 0 and (lead.len == 0 or lead[0] != '&')) null else start_depth + 1;
+            out[i] = if (quote != 0 and (lead.len == 0 or lead[0] != '&')) null else if (lead_n > start_lead and text.len > 0 and text[0] != '!') start_depth * w + (lead_n - start_lead) else (start_depth + 1) * w;
         } else if (text.len > 0 and text[0] == '!') {
-            out[i] = inside[i];
+            out[i] = inside[i] * w;
         } else {
             start_depth = inside[i] -| @intFromBool(middle(ast, text, i));
-            out[i] = start_depth;
+            start_lead = lead_n;
+            out[i] = start_depth * w;
         }
         if (text.len == 0 or text[0] == '!') continue;
         quote = indent_text.endQuote(line, if (continues) quote else 0);
         continues = endsWithAmpersand(line, quote);
         single[i] = first and !continues;
     }
-    return .{ .depth = out, .start_quote = start_quote, .single = single };
+    return .{ .column = out, .start_quote = start_quote, .single = single };
 }
 
 /// Whether a free-form line goes on to the next: an `&` that ends its code

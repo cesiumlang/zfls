@@ -6,14 +6,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-/// `lines` with each line's text at `width` blanks per level of its depth;
-/// a line of null depth as it is (a preprocessor's line, or one that goes
-/// on in a character literal); blank lines empty; blanks after the text
-/// removed but in a line whose text is null-depth
-pub fn indent(a: Allocator, lines: []const []const u8, depths: []const ?usize, width: usize) ![]const []const u8 {
+/// `lines` with each line's text at its column; a line of null column as it
+/// is (a preprocessor's line, or one that goes on in a character literal);
+/// blank lines empty; blanks after the text removed
+pub fn indent(a: Allocator, lines: []const []const u8, columns: []const ?usize) ![]const []const u8 {
     const out = try a.alloc([]const u8, lines.len);
-    for (lines, depths, out) |line, depth, *o| {
-        const d = depth orelse {
+    for (lines, columns, out) |line, column, *o| {
+        const d = column orelse {
             o.* = line;
             continue;
         };
@@ -22,9 +21,9 @@ pub fn indent(a: Allocator, lines: []const []const u8, depths: []const ?usize, w
             o.* = "";
             continue;
         }
-        const buf = try a.alloc(u8, d * width + text.len);
-        @memset(buf[0 .. d * width], ' ');
-        @memcpy(buf[d * width ..], text);
+        const buf = try a.alloc(u8, d + text.len);
+        @memset(buf[0..d], ' ');
+        @memcpy(buf[d..], text);
         o.* = buf;
     }
     return out;
@@ -97,7 +96,7 @@ test "lines indented by their depths, their text as it was (#986)" {
     defer arena.deinit();
     const a = arena.allocator();
     const lines = [_][]const u8{ "module m", "integer :: k   ", "", "#ifdef X", "      contains" };
-    const got = try indent(a, &lines, &.{ 0, 1, 1, null, 0 }, 3);
+    const got = try indent(a, &lines, &.{ 0, 3, 3, null, 0 });
     try testing.expectEqualStrings("module m", got[0]);
     try testing.expectEqualStrings("   integer :: k", got[1]);
     try testing.expectEqualStrings("", got[2]);
