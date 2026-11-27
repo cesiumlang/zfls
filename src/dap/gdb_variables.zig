@@ -14,6 +14,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const json = @import("../json.zig");
+const str = @import("../str.zig");
 const fortran = @import("fortran.zig");
 const lfortran = @import("lfortran.zig");
 const ifx_class = @import("ifx_class.zig");
@@ -148,7 +149,7 @@ pub fn add(s: *Session, n: Node) !i64 {
         .count = n.ctx.count,
         .registers = n.ctx.registers,
         .used = try dupeVars(na, n.ctx.used),
-        .declared = if (n.ctx.declared) |d| .{ .expr = try na.dupe(u8, d.expr), .names = try dupeStrings(na, d.names) } else null,
+        .declared = if (n.ctx.declared) |d| .{ .expr = try na.dupe(u8, d.expr), .names = try str.dupeAll(na, d.names) } else null,
     };
     out.names = &.{};
     try s.g.nodes.append(s.gpa, out);
@@ -173,20 +174,15 @@ fn dupeValues(na: Allocator, vs: []const Variable) ![]const Variable {
     return out;
 }
 
-fn dupeStrings(na: Allocator, xs: []const []const u8) ![]const []const u8 {
-    const out = try na.alloc([]const u8, xs.len);
-    for (xs, out) |x, *o| o.* = try na.dupe(u8, x);
-    return out;
-}
-
 pub fn get(s: *Session, ref: i64) ?Node {
-    const i = ref - s.g.node_base - 1;
+    // a client's number: none overflows (#972)
+    const i = std.math.sub(i64, ref, s.g.node_base + 1) catch return null;
     if (i < 0 or i >= s.g.nodes.items.len) return null;
     return s.g.nodes.items[@intCast(i)];
 }
 
 fn setNames(s: *Session, ref: i64, vs: []const Variable, gdb_names: []const []const u8) !void {
-    const i = ref - s.g.node_base - 1;
+    const i = std.math.sub(i64, ref, s.g.node_base + 1) catch return;
     if (i < 0 or i >= s.g.nodes.items.len) return;
     const na = arena(s);
     const names = try na.alloc(Named, vs.len);

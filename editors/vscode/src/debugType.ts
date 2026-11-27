@@ -29,7 +29,7 @@ const LANGUAGES = ["FortranFreeForm", "FortranFixedForm"];
 export function registerDebugType(
   context: vscode.ExtensionContext,
   log: vscode.LogOutputChannel,
-  zfls: () => string | undefined,
+  zfls: (folder: vscode.WorkspaceFolder | undefined) => string | undefined,
 ): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, {
@@ -38,7 +38,8 @@ export function registerDebugType(
       // and the platform (lldb-dap on macOS, gdb elsewhere); the words it
       // shows, in VS Code's language
       createDebugAdapterDescriptor: (session) => {
-        const exe = zfls();
+        // the zfls.path of the session's folder
+        const exe = zfls(session.workspaceFolder);
         if (!exe) {
           throw new Error(vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."));
         }
@@ -317,7 +318,8 @@ function pick(
   gdb: string | undefined,
   lldb: boolean | string,
 ): ReturnType<typeof chooseInstalledDebugger> {
-  const preference = typeof config.debugger === "string" ? config.debugger : run.get<string>("debugger", "auto");
+  // an MPI program: only zfls's debugger runs its ranks (#988)
+  const preference = config.mpi ? "zfls" : typeof config.debugger === "string" ? config.debugger : run.get<string>("debugger", "auto");
   const configured = typeof config.gdb === "string" && config.gdb ? config.gdb : undefined;
   return chooseInstalledDebugger(preference, msvc, configured ?? gdb, lldb);
 }

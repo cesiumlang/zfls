@@ -155,8 +155,7 @@ pub fn main(init: std.process.Init) !u8 {
         .dir = tmp,
         .src = src,
         .program = program,
-        // LFortran's PRINT has no line: its stop in work is a line before
-        .work_line = lineOf(text, if (compiler.? == .lfortran) "LFortran stops here" else "stop here: work"),
+        .work_line = lineOf(text, "stop here: work"),
         .main_line = lineOf(text, "stop here: main"),
         .call_line = lineOf(text, "call work("),
         .gdb_version = v[0],
@@ -183,6 +182,7 @@ pub fn main(init: std.process.Init) !u8 {
 /// there is `build_env`), and elsewhere with its runtime's directory as the
 /// program's run path (conda-forge's libflang-rt is a shared library)
 fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, gfortran_args: []const []const u8) !void {
+    if (setup.compiler == .lfortran) return dap_lfortran.build(io, a, setup.zfls, setup.fc, setup.build_env.?, setup.dir, src, out);
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(a, setup.fc);
     switch (setup.compiler) {
@@ -190,8 +190,7 @@ fn build(io: Io, a: Allocator, setup: Setup, src: []const u8, out: []const u8, g
             try argv.appendSlice(a, &.{ "-g", "-O0" });
             try argv.appendSlice(a, gfortran_args);
         },
-        // its checks of bounds are on by default
-        .lfortran => try argv.append(a, "-g"),
+        .lfortran => unreachable,
         // conda-forge's: its runtime's directory the program's run path
         .ifx => {
             try argv.appendSlice(a, &.{ "-g", "-O0", "-check", "bounds" });

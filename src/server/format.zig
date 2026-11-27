@@ -16,6 +16,8 @@ const paths = @import("../paths.zig");
 const parser = @import("../parser.zig");
 const C = @import("../constants.zig");
 const tools = @import("tools.zig");
+const indent_format = @import("indent_format.zig");
+const configuration = @import("configuration.zig");
 
 const FortranFile = parser.FortranFile;
 const Value = json.Value;
@@ -38,6 +40,8 @@ pub const Formatter = enum {
     forformat,
     /// `formatter_path` with `formatter_args`
     custom,
+    /// zfls's own (indent_format.zig, #986): free form, no tool to run
+    zfls,
 
     /// The formatter of an option's value; null for none, `none` and
     /// names zfls does not know
@@ -53,6 +57,7 @@ pub const Formatter = enum {
             .codee => "Codee (https://www.codee.com), whose `codee` zfls also runs for `codee_path`",
             .forformat => "forformat (see its project for how)",
             .custom => "the command of your formatter",
+            .zfls => "nothing: zfls has it",
         };
     }
 
@@ -65,7 +70,7 @@ pub const Formatter = enum {
 };
 
 /// The names of the formatters, for messages
-const formatter_names = "findent, fprettify, codee, forformat or custom";
+const formatter_names = "findent, fprettify, codee, forformat, custom or zfls";
 
 /// Whether a formatter is configured, for the server's capabilities
 pub fn enabled(self: *const Server) bool {
@@ -110,7 +115,8 @@ pub fn formatterArgs(a: Allocator, formatter: Formatter, fixed: bool, user: []co
             if (!anyOf(user, isFindentInputFormat)) try args.append(a, if (fixed) "-ifixed" else "-ifree");
             if (selection and !anyOf(user, isFindentStartIndent)) try args.append(a, "-Ia");
         },
-        .fprettify => {},
+        // zfls's own runs nothing: its arguments are its options
+        .fprettify, .zfls => {},
         .codee => try args.appendSlice(a, &.{ "format", "-", "-o", "-" }),
         .forformat => {
             try args.append(a, try a.print("--stdin-filename={s}", .{path}));
@@ -249,6 +255,19 @@ fn reportOnce(self: *Server, a: Allocator, key: []const u8, message: []const u8,
     } else self.log.warn("{s}", .{message});
 }
 
+/// Enter typed with `formatter = "zfls"`: the line it ends (0-based
+/// `line`) formatted, an END at its construct's depth (#986); null for
+/// another formatter
+pub fn onEnter(self: *Server, a: Allocator, file: *FortranFile, line: usize) !Value {
+    if (configuration.withdrawn(self, .formatting) or line >= file.nLines()) return .null;
+    const fixed = isFixedForm(file) and self.s.formatter_fixed != null;
+    const option = if (fixed) self.s.formatter_fixed else self.s.formatter;
+    if (Formatter.fromName(option) != .zfls) return .null;
+    const user = if (fixed) self.s.formatter_fixed_args.slice() else self.s.formatter_args.slice();
+    const all = (try indent_format.formatLines(self, a, file, user)) orelse return .null;
+    return json.from(a, try lineEdits(a, file.editLines()[line .. line + 1], all[line .. line + 1], line));
+}
+
 pub fn serveFormatting(self: *Server, a: Allocator, params: lsp.DocumentFormattingParams) !Value {
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     if (file.nLines() == 0) return json.from(a, [_]lsp.TextEdit{});
@@ -272,8 +291,13 @@ fn format(self: *Server, a: Allocator, file: *FortranFile, first: usize, last: u
     const user = if (fixed and self.s.formatter_fixed != null) self.s.formatter_fixed_args.slice() else self.s.formatter_args.slice();
     const formatter = Formatter.fromName(option) orelse return none;
     if (formatter == .fprettify and fixed) {
-        reportOnce(self, a, "unsupported", "formatter: fprettify formats free-form Fortran only; set formatter_fixed to findent for fixed-form files", C.Severity.warn);
+        reportOnce(self, a, "unsupported", try a.print("formatter: {s} formats free-form Fortran only; set formatter_fixed to findent for fixed-form files", .{@tagName(formatter)}), C.Severity.warn);
         return none;
+    }
+    // zfls's own: the lines of the range of the whole file indented (#986)
+    if (formatter == .zfls) {
+        const all = (try indent_format.formatLines(self, a, file, user)) orelse return none;
+        return json.from(a, try lineEdits(a, file.editLines()[first .. last + 1], all[first .. last + 1], first));
     }
     const name = @tagName(formatter);
     // a tool that formats whole files only: the whole file, then the edits

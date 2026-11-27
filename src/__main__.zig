@@ -188,9 +188,16 @@ fn runServer(ctx: *Ctx) void {
         }
         const body = queue.orderedRemove(0);
         defer gpa.free(body);
-        const request = json.parse(a, body) catch {
-            server.postMessage(a, "Unexpected error: invalid JSON message", 1);
-            break;
+        // a message that is no JSON: answered, and the next read (#965)
+        const request = json.parse(a, body) catch |e| switch (e) {
+            error.OutOfMemory => {
+                server.postMessage(a, "Unexpected error: out of memory", 1);
+                break;
+            },
+            else => {
+                server.writeError(a, .null, -32700, "parse error: invalid JSON message", null) catch |we| server.logSendFailure(we);
+                continue;
+            },
         };
         if (log.enabled(.debug)) log.debug("RECV {s}", .{json.pretty(a, request) catch ""});
         if (json.get(request, "id")) |id| if (canceledLater(a, queue.items, id)) {
@@ -241,6 +248,13 @@ pub fn main(init: std.process.Init) !void {
     // ifx without Intel's installer or Visual Studio (Windows)
     if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "setup-ifx")) {
         const code = try @import("ifxsetup.zig").run(gpa, io, init.environ_map, args.items[1..]);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
+    // an LFortran program built through its IR (#176, #992)
+    if (args.items.len > 0 and std.mem.eql(u8, args.items[0], "lfortran-ir")) {
+        const code = try @import("run/lfortran_ir.zig").main(arena, io, init.environ_map, args.items[1..]);
         if (code != 0) std.process.exit(code);
         return;
     }

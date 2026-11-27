@@ -145,7 +145,7 @@ fn signatureHelp(w: *h.Workspace) !h.json.Value {
 }
 
 test "a provider turned on after initialization is registered with a client that allows it (#196)" {
-    const w = try h.Workspace.init(&call, .{ .dynamic_registration = true });
+    const w = try h.Workspace.init(&call, .{ .dynamic_registration = true, .init_options = "{\"formatter\": \"none\"}" });
     defer w.deinit();
     try std.testing.expectEqual(@as(usize, 0), (try w.sentWith("client/registerCapability")).len);
     try w.changeConfiguration("{\"use_signature_help\": true, \"formatter\": \"findent\"}");

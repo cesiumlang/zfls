@@ -188,8 +188,9 @@ pub const Settings = struct {
     codee_args: StrList = .{},
     // Formatting
     /// The formatter of `textDocument/formatting` and `rangeFormatting`:
-    /// findent, fprettify, codee, forformat or custom; null or `none`: none
-    formatter: ?[]const u8 = null,
+    /// zfls (its own, the default), findent, fprettify, codee, forformat or
+    /// custom; null or `none`: none
+    formatter: ?[]const u8 = "zfls",
     /// The formatter executable, or the directory that holds it; null: the
     /// one on the PATH
     formatter_path: ?[]const u8 = null,
@@ -222,6 +223,10 @@ pub const Settings = struct {
     code_lens_no_references: bool = false,
     /// No Run and Debug lenses above a program
     code_lens_no_run: bool = false,
+    // Inlay hints
+    /// The lines from a construct's or procedure's first to its END from
+    /// which the END has a hint of the first (#981); 0: none
+    closing_hint_lines: i64 = 25,
     // Debug options
     debug_filepath: ?[]const u8 = null,
     debug_rootpath: ?[]const u8 = null,
@@ -475,6 +480,7 @@ pub fn applyConfig(a: Allocator, s: *Settings, cfg: json.Value) !void {
     // Code lens options
     s.code_lens_no_references = jsonBool(json.get(cfg, "code_lens_no_references"), s.code_lens_no_references);
     s.code_lens_no_run = jsonBool(json.get(cfg, "code_lens_no_run"), s.code_lens_no_run);
+    s.closing_hint_lines = jsonInt(json.get(cfg, "closing_hint_lines"), s.closing_hint_lines);
     // Preprocessor options
     // like every other option, a value in the file replaces the one from the
     // command line, and no value leaves it alone (upstream #536)

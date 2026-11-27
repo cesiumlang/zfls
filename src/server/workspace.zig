@@ -9,6 +9,7 @@ const Io = std.Io;
 const json = @import("../json.zig");
 const config_file = @import("../settings/config_file.zig");
 const lsp = @import("../lsp.zig");
+const str = @import("../str.zig");
 const patterns = @import("../patterns.zig");
 const paths = @import("../paths.zig");
 const C = @import("../constants.zig");
@@ -34,6 +35,7 @@ const diagnostics = @import("diagnostics.zig");
 const compile = @import("compile.zig");
 const format = @import("format.zig");
 const linters = @import("linters.zig");
+const refresh = @import("refresh.zig");
 const pending = @import("pending.zig");
 const bindc = @import("bindc.zig");
 const cache = @import("cache.zig");
@@ -67,6 +69,13 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     self.config.client = params.capabilities;
     self.completion_resolve = completion_resolve.wanted(params.capabilities);
     self.config.client.textDocument.completion.completionItem.resolveSupport = .{};
+    for (params.capabilities.textDocument.codeAction.resolveSupport.properties) |p| {
+        if (std.mem.eql(u8, p, "edit")) self.code_action_resolve = true;
+    }
+    self.config.client.textDocument.codeAction.resolveSupport = .{};
+    // the request's memory is reused after it (#948)
+    const ops = &self.config.client.workspace.workspaceEdit.resourceOperations;
+    ops.* = try str.dupeAll(sa, ops.*);
     self.pull_diagnostics = pull.wanted(params.capabilities);
 
     try configuration.load(self, a, params.initializationOptions);
@@ -90,17 +99,22 @@ pub fn serveInitialize(self: *Server, a: Allocator, params: lsp.InitializeParams
     const on = configuration.wanted(self);
     self.config.announced = on;
     self.pull_workspace = self.pull_diagnostics and self.s.workspace_diagnostics;
-    return json.from(a, lsp.InitializeResult{ .capabilities = .{
-        .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
-        .textDocumentSync = .{ .change = self.sync_type },
-        .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
-        .codeActionProvider = if (on.code_actions) true else null,
-        .semanticTokensProvider = .{ .legend = semantic.legend },
-        .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
-        .documentFormattingProvider = if (on.formatting) true else null,
-        .documentRangeFormattingProvider = if (on.formatting) true else null,
-        .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
-    }, .serverInfo = .{ .name = "zfls", .version = version.reported } });
+    return json.from(a, lsp.InitializeResult{
+        .capabilities = .{
+            .completionProvider = .{ .resolveProvider = self.completion_resolve, .triggerCharacters = &.{ "%", "." } },
+            .textDocumentSync = .{ .change = self.sync_type },
+            .signatureHelpProvider = if (on.signature_help) .{ .triggerCharacters = configuration.signature_triggers } else null,
+            .codeActionProvider = if (!on.code_actions) null else if (self.code_action_resolve) try json.from(a, .{ .resolveProvider = true }) else Value{ .bool = true },
+            // the server's own lens command, for a client without its own (#984)
+            .executeCommandProvider = if (self.lens_commands.show_references) null else .{ .commands = &.{lenses.server_show_references} },
+            .semanticTokensProvider = .{ .legend = semantic.legend },
+            .renameProvider = if (self.prepare_rename) try json.from(a, .{ .prepareProvider = true }) else .{ .bool = true },
+            .documentFormattingProvider = if (on.formatting) true else null,
+            .documentRangeFormattingProvider = if (on.formatting) true else null,
+            .diagnosticProvider = if (self.pull_diagnostics) .{ .workspaceDiagnostics = self.pull_workspace } else null,
+        },
+        .serverInfo = .{ .name = "zfls", .version = version.reported },
+    });
 }
 
 /// The names of the configuration file, the first found being read
@@ -158,7 +172,12 @@ pub fn loadProjectFiles(self: *Server, a: Allocator) Allocator.Error!void {
                 self.module_dirs = found.module_dirs;
                 self.compile_commands = found.commands;
                 // those under the root are the scan's
-                for (found.files.items) |f| if (!paths.isUnder(f, self.root_path)) try self.outside_sources.append(sa, f);
+                // once each: CMake lists a source of two targets twice (#949)
+                var seen: std.StringHashMapUnmanaged(void) = .empty;
+                for (found.files.items) |f| {
+                    if (paths.isUnder(f, self.root_path) or (try seen.getOrPut(a, f)).found_existing) continue;
+                    try self.outside_sources.append(sa, f);
+                }
                 self.log.info("{s}: {d} include directories, {d} definitions, {d} files outside the root", .{ p, found.include_dirs.items.len, found.defs.items.len, self.outside_sources.items.len });
             } else |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -453,13 +472,10 @@ pub fn workspaceInit(self: *Server, a: Allocator, progress: ?Value) !void {
             .none => {},
             .err => |e| self.postMessage(a, try a.print("Initialization failed for file {s}: {s}", .{ path, parser.describeFileError(e) }), C.Severity.err),
             .ok => |f| {
-                if (self.workspace.get(f.path)) |old| {
-                    // Duplicate path (overlapping source dirs): keep the newest
-                    try linking.retireFileAst(self, old);
-                    old.ast = f.ast;
-                    f.ast = null;
+                if (self.workspace.contains(f.path)) {
+                    // listed twice, so parsed twice: keep the first (#949)
+                    if (f.ast) |ast| ast.destroy();
                     f.destroy();
-                    try linking.addToTree(self, old);
                 } else {
                     try self.workspace.put(self.gpa, f.path, f);
                     try linking.addToTree(self, f);
@@ -565,10 +581,9 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
     // (for a `.fpp`, zfls's detection, unless the user chose, #632, #686)
     const language: ?parser.SourceForm = if (did_open) parser.formOfLanguage(params.textDocument.languageId) else null;
     const form = try source_form.opened(self, a, filepath, language);
-    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open, did_close);
-    if (did_close and !paths.isFile(self.io, filepath)) {
-        // a document that was never saved, or whose file is gone: it leaves
-        // the workspace, and its problems with it
+    if (did_close and (paths.isVirtualUri(filepath) or !paths.isFile(self.io, filepath))) {
+        // a document that was never saved (an untitled one too, #958), or
+        // whose file is gone: it leaves the workspace, and its problems with it
         const f = self.workspace.get(filepath) orelse return .null;
         if (f.ast == null) return .null;
         try linking.retireFileAst(self, f);
@@ -581,6 +596,7 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         if (!self.s.disable_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
         return .null;
     }
+    if (paths.isVirtualUri(filepath)) return serveVirtualDocument(self, a, uri, filepath, params.textDocument.text, form, did_open);
     // an opened document's text is the editor's, which need not be the
     // file's: unsaved changes restored, or a new file not saved yet. Only a
     // didOpen without a text (and a save or a close) reads the file.
@@ -607,6 +623,8 @@ pub fn serveOnSave(self: *Server, a: Allocator, params: lsp.TextDocumentParams, 
         if (changed) _ = try addNeededFiles(self, a, self.workspace.get(filepath));
         try linking.fullRelink(self, a);
         try summary.wakeIncluded(self, a);
+        // a saved change may change what the other open documents show
+        if (changed and !did_open) refresh.views(self, a);
     }
     // the compiler checks the file as saved, on its own thread
     if (!did_close and !self.s.disable_diagnostics) {
@@ -689,57 +707,6 @@ fn textDocument(self: *Server, docs: *std.StringHashMapUnmanaged(*FortranFile), 
     return .null;
 }
 
-/// Files created, changed or deleted outside the editor (a checkout, a
-/// generator): the workspace follows them. Documents open in the editor
-/// are left alone, their text being the editor's.
-pub fn serveWatchedFiles(self: *Server, a: Allocator, params: lsp.DidChangeWatchedFilesParams) !Value {
-    var changed = false;
-    // a file the settings are read from, which are read again after
-    var settings_file: ?configuration.Watched = null;
-    for (params.changes) |ev| {
-        const path = try self.pathFromUri(a, ev.uri);
-        if (try configuration.watched(self, a, path)) |kind| {
-            if (settings_file != .project) settings_file = kind;
-            continue;
-        }
-        // the C search again; a `.h` may be a Fortran include too, which
-        // the rest follows
-        if (bindc.isCFile(path)) bindc.deinitIndex(self);
-        if (self.open_docs.contains(path) or paths.isVirtualUri(path)) continue;
-        if (ev.type == 3) {
-            const f = self.workspace.get(path) orelse continue;
-            if (f.ast == null) continue;
-            try linking.retireFileAst(self, f);
-            f.ast = null;
-            // so that the same text, restored, is parsed again
-            f.hash = null;
-            changed = true;
-            // its problems are gone with it
-            if (self.s.workspace_diagnostics) self.sendNotification(a, "textDocument/publishDiagnostics", try json.from(a, lsp.PublishDiagnosticsParams{ .uri = ev.uri, .diagnostics = &.{} })) catch |e| self.logSendFailure(e);
-            continue;
-        }
-        const included = if (self.workspace.get(path)) |f| f.included else false;
-        if (!isSourceFile(self, path) and !included) continue;
-        const updated = updateWorkspaceFile(self, path, true, false, false) catch |e| {
-            self.log.err("{s} : {s}", .{ parser.describeFileError(e), path });
-            continue;
-        };
-        changed = changed or updated;
-    }
-    if (try summary.sleepAll(self, a) or changed) {
-        _ = try addNeededFiles(self, a, null);
-        try linking.fullRelink(self, a);
-        try summary.wakeIncluded(self, a);
-    }
-    if (settings_file) |kind| {
-        // which publishes the diagnostics again
-        try configuration.reload(self, a, kind == .project);
-        return .null;
-    }
-    if (changed and self.s.workspace_diagnostics) diagnostics.publishWorkspace(self, a);
-    return .null;
-}
-
 /// Whether `path` is a file the workspace indexes: a Fortran file of a
 /// source directory (any directory under the root, without
 /// `source_dirs`) or of the compilation database outside the root, that no
@@ -757,14 +724,10 @@ pub fn isSourceFile(self: *const Server, path: []const u8) bool {
     return in_sources and !project.isIfortInterface(self.io, path);
 }
 
-/// `didOpen`, `didSave` and `didClose` of a document that is not a file
-/// (an untitled one): its text comes with `didOpen` and its changes,
-/// and it leaves the workspace when it is closed
-pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool, did_close: bool) !Value {
-    if (did_close) {
-        if (self.workspace.get(path)) |f| if (f.ast) |ast| try linking.removeFromTree(self, ast);
-        return .null;
-    }
+/// `didOpen` and `didSave` of a document that is not a file (an untitled
+/// one): its text comes with `didOpen` and its changes (its `didClose` is
+/// `serveOnSave`'s, as of a file that is gone)
+pub fn serveVirtualDocument(self: *Server, a: Allocator, uri: []const u8, path: []const u8, text: ?[]const u8, form: ?parser.SourceForm, did_open: bool) !Value {
     if (did_open) {
         const file = self.workspace.get(path) orelse blk: {
             const nf = try FortranFile.create(self.gpa, path, ppSuffixes(self));
@@ -846,8 +809,11 @@ pub fn updateWorkspaceFile(self: *Server, filepath: []const u8, read_file: bool,
         }
         if (f.ast) |old| try self.retired.append(self.gpa, old);
     }
-    if (f.ast) |old| try linking.removeFromTree(self, old);
+    // the new AST in place first: a failure after leaves the file none that
+    // is retired, and the new one not lost (#965)
+    const old_ast = f.ast;
     f.ast = ast_new;
+    if (old_ast) |old| try linking.removeFromTree(self, old);
     pull.changed(self);
     try linking.addToTree(self, f);
     if (update_links) {

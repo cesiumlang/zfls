@@ -130,10 +130,22 @@ pub fn clientCreatesFiles(self: *const Server) bool {
     return false;
 }
 
+/// What `codeAction/resolve` knows the conversion's action by (#984)
+pub const resolve_kind = "convertToFreeForm";
+
 /// The action that creates the free-form version of a fixed-form `file`,
-/// for a client that creates files; null otherwise, or when findent fails
-pub fn freeFormAction(self: *Server, a: Allocator, file: *const FortranFile) !?lsp.CodeAction {
+/// for a client that creates files; null otherwise, or when findent fails.
+/// For a client that resolves actions (#984), and unless `resolved`, without
+/// its edit: findent runs when the action is chosen.
+pub fn freeFormAction(self: *Server, a: Allocator, file: *const FortranFile, resolved: bool) !?lsp.CodeAction {
     if (!file.fixed or !clientCreatesFiles(self)) return null;
+    const new_name = std.Io.Dir.path.basename(try convertedPath(a, file.path, .free));
+    const title = try a.print("Convert to free form (new file {s})", .{new_name});
+    if (self.code_action_resolve and !resolved) return .{
+        .title = title,
+        .kind = "source.convertToFreeForm",
+        .data = try json.from(a, .{ .resolve = resolve_kind, .uri = try paths.pathToUri(a, file.path) }),
+    };
     const text = switch (try convert(self, a, file, .free)) {
         .text => |t| t,
         .err => |e| {
@@ -152,10 +164,9 @@ pub fn freeFormAction(self: *Server, a: Allocator, file: *const FortranFile) !?l
         }),
     });
     return .{
-        .title = try a.print("Convert to free form (new file {s})", .{std.Io.Dir.path.basename(new_path)}),
+        .title = title,
         .kind = "source.convertToFreeForm",
         .edit = .{ .documentChanges = changes },
-        .diagnostics = &.{},
     };
 }
 

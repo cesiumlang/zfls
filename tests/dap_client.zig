@@ -8,6 +8,7 @@
 //! with zfls's ifx kit (`kitDir`, `flangKitEnv`).
 
 const std = @import("std");
+const sysinfo = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -275,6 +276,13 @@ pub fn check(ok: bool, comptime what: []const u8, args: anytype) !void {
         return error.CheckFailed;
     }
     std.debug.print("ok: " ++ what ++ "\n", args);
+}
+
+extern "kernel32" fn GetProcessId(process: std.os.windows.HANDLE) callconv(.winapi) u32;
+
+/// The process id of `child` (on Windows, `id` is its handle)
+pub fn processId(child: std.process.Child) i64 {
+    return if (sysinfo.target.os.tag == .windows) GetProcessId(child.id.?) else child.id.?;
 }
 
 /// Flang's build environment on Windows that links with lld-link and

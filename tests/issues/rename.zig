@@ -304,3 +304,52 @@ test "rename of a USE-renamed name from a further user changes the local name, n
     try h.expect(p.len == 3 and editsIn(p, "a.f90") == 2 and editsIn(p, "b.f90") == 1, "rename of p1: {d} edits, {d} in a.f90, {d} in b.f90", .{ p.len, editsIn(p, "a.f90"), editsIn(p, "b.f90") });
     for ([_][]const u8{ "a.f90", "b.f90", "c.f90", "d.f90" }) |name| try w.expectNoDiagnostics(name);
 }
+
+test "a rename to a name already taken is refused (#953)" {
+    const w = try h.Workspace.init(&.{
+        .{ .name = "m.f90", .text = "module m\n  implicit none\ncontains\n  subroutine f()\n  end subroutine\n  subroutine base_run()\n  end subroutine\nend module m\n" },
+        .{ .name = "p.f90", .text = "program p\n  use m\n  implicit none\n  integer :: total\n  call f()\nend program p\n" },
+    }, .{});
+    defer w.deinit();
+    try w.open("m.f90", "fortran");
+    try std.testing.expectEqual(@as(usize, 0), (try w.rename("m.f90", w.pos("m.f90", "f()", 0, 0), "base_run")).len);
+    // a name of a scope that uses it
+    try std.testing.expectEqual(@as(usize, 0), (try w.rename("m.f90", w.pos("m.f90", "f()", 0, 0), "total")).len);
+    // a free name, or a change of case
+    try std.testing.expect((try w.rename("m.f90", w.pos("m.f90", "f()", 0, 0), "solve")).len > 0);
+    try std.testing.expect((try w.rename("m.f90", w.pos("m.f90", "f()", 0, 0), "F")).len > 0);
+}
+
+test "renaming an override from its call renames the bindings it overrides (#953)" {
+    const w = try h.Workspace.init(&.{.{ .name = "t.f90", .text =
+        \\module shapes
+        \\  implicit none
+        \\  type :: base
+        \\  contains
+        \\    procedure :: run => base_run
+        \\  end type
+        \\  type, extends(base) :: child
+        \\  contains
+        \\    procedure :: run => child_run
+        \\  end type
+        \\contains
+        \\  subroutine base_run(self)
+        \\    class(base), intent(in) :: self
+        \\  end subroutine
+        \\  subroutine child_run(self)
+        \\    class(child), intent(in) :: self
+        \\  end subroutine
+        \\  subroutine use_it(c)
+        \\    type(child), intent(in) :: c
+        \\    call c%run()
+        \\  end subroutine
+        \\end module shapes
+        \\
+    }}, .{});
+    defer w.deinit();
+    try w.open("t.f90", "fortran");
+    const edits = try w.rename("t.f90", w.pos("t.f90", "run()", 0, 0), "go");
+    try std.testing.expect(hasEdit(edits, 4, 17));
+    try std.testing.expect(hasEdit(edits, 8, 17));
+    try std.testing.expect(hasEdit(edits, 19, 11));
+}

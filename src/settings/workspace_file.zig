@@ -11,10 +11,11 @@ const json = @import("../json.zig");
 const settings = @import("../settings.zig");
 const compile_flags = @import("../compile_flags.zig");
 
-/// The settings that name a program (or a directory that holds it), and
-/// the one that makes zfls write a file in the workspace
+/// The settings that name a program (or a directory that holds it), the
+/// one that makes zfls write a file in the workspace, and the directory the
+/// compiler writes its module files into (which could be anywhere)
 pub const ignored_keys = [_][]const u8{
-    "compiler_path", "compiler_path_fixed", "compiler_fypp", "bind_c_clangd", "formatter_path", "fortitude_path", "codee_path", "debug_log",
+    "compiler_path", "compiler_path_fixed", "compiler_fypp", "bind_c_clangd", "formatter_path", "fortitude_path", "codee_path", "debug_log", "compiler_mod_dir",
 };
 
 /// Flags of fypp that stay: the include directories and definitions

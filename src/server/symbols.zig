@@ -21,6 +21,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const workspace = @import("workspace.zig");
+const format = @import("format.zig");
 
 /// The symbols whose names contain the query, by name (as fortls), then
 /// those it matches fuzzily, best first (hansec #195)
@@ -164,9 +165,11 @@ pub fn serveFoldingRanges(self: *Server, a: Allocator, params: lsp.TextDocumentP
 /// directives start there, whatever the indentation of the code (Modern
 /// Fortran #177)
 pub fn serveOnTypeFormatting(self: *Server, a: Allocator, params: lsp.OnTypeFormattingParams) !Value {
-    if (!std.mem.eql(u8, params.ch, "#")) return .null;
     const file = (try self.fileFromUri(a, params.textDocument.uri)) orelse return .null;
     const line = params.position.line;
+    // Enter: the line it ends (#986)
+    if (std.mem.eql(u8, params.ch, "\n")) return if (line > 0) format.onEnter(self, a, file, line - 1) else .null;
+    if (!std.mem.eql(u8, params.ch, "#")) return .null;
     const text = file.getLine(line, false) orelse return .null;
     var n: usize = 0;
     while (n < text.len and (text[n] == ' ' or text[n] == '\t')) n += 1;

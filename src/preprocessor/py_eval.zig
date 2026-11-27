@@ -230,27 +230,37 @@ pub const PyEval = struct {
         return left;
     }
 
+    /// Python's `x % y`, with the sign of `y` (`@mod` takes no negative
+    /// `y`); `y` is not zero
+    fn pyMod(comptime T: type, x: T, y: T) T {
+        if (T == i128 and y == -1) return 0;
+        const m = @rem(x, y);
+        return if (m != 0 and (m < 0) != (y < 0)) m + y else m;
+    }
+
     fn arith(op: u8, l: Value, r: Value) Err!Value {
         if (op == '+' and l == .string and r == .string) return error.Type;
         if (!l.isNumeric() or !r.isNumeric()) return error.Type;
         const both_int = l.asInt() != null and r.asInt() != null;
+        // an integer out of i128's range is not evaluated (Python's has no
+        // bound), rather than overflowing
         switch (op) {
-            '+' => return if (both_int) .{ .int = l.asInt().? + r.asInt().? } else .{ .float = l.asFloat() + r.asFloat() },
-            '-' => return if (both_int) .{ .int = l.asInt().? - r.asInt().? } else .{ .float = l.asFloat() - r.asFloat() },
-            '*' => return if (both_int) .{ .int = l.asInt().? * r.asInt().? } else .{ .float = l.asFloat() * r.asFloat() },
+            '+' => return if (both_int) .{ .int = std.math.add(i128, l.asInt().?, r.asInt().?) catch return error.Type } else .{ .float = l.asFloat() + r.asFloat() },
+            '-' => return if (both_int) .{ .int = std.math.sub(i128, l.asInt().?, r.asInt().?) catch return error.Type } else .{ .float = l.asFloat() - r.asFloat() },
+            '*' => return if (both_int) .{ .int = std.math.mul(i128, l.asInt().?, r.asInt().?) catch return error.Type } else .{ .float = l.asFloat() * r.asFloat() },
             '/' => {
                 if (r.asFloat() == 0) return error.ZeroDivision;
                 return .{ .float = l.asFloat() / r.asFloat() };
             },
             'f' => { // floor division
                 if (r.asFloat() == 0) return error.ZeroDivision;
-                if (both_int) return .{ .int = @divFloor(l.asInt().?, r.asInt().?) };
+                if (both_int) return .{ .int = std.math.divFloor(i128, l.asInt().?, r.asInt().?) catch return error.Type };
                 return .{ .float = @floor(l.asFloat() / r.asFloat()) };
             },
             '%' => {
                 if (r.asFloat() == 0) return error.ZeroDivision;
-                if (both_int) return .{ .int = @mod(l.asInt().?, r.asInt().?) };
-                return .{ .float = @mod(l.asFloat(), r.asFloat()) };
+                if (both_int) return .{ .int = pyMod(i128, l.asInt().?, r.asInt().?) };
+                return .{ .float = pyMod(f64, l.asFloat(), r.asFloat()) };
             },
             else => return error.Syntax,
         }
@@ -296,7 +306,7 @@ pub const PyEval = struct {
                 const v = try e.parseUnary();
                 if (!v.isNumeric()) return error.Type;
                 if (c == '+') return if (v.asInt()) |i| .{ .int = i } else v;
-                if (c == '-') return if (v.asInt()) |i| .{ .int = -i } else .{ .float = -v.asFloat() };
+                if (c == '-') return if (v.asInt()) |i| .{ .int = std.math.negate(i) catch return error.Type } else .{ .float = -v.asFloat() };
                 const i = v.asInt() orelse return error.Type;
                 return .{ .int = ~i };
             }
@@ -312,9 +322,18 @@ pub const PyEval = struct {
             if (!base.isNumeric() or !exp.isNumeric()) return error.Type;
             if (base.asInt() != null and exp.asInt() != null and exp.asInt().? >= 0) {
                 const b = base.asInt().?;
+                const n = exp.asInt().?;
+                // 0, 1 and -1 never overflow: their powers without a loop of
+                // up to 2^127 steps
+                switch (b) {
+                    0 => return .{ .int = if (n == 0) 1 else 0 },
+                    1 => return .{ .int = 1 },
+                    -1 => return .{ .int = if (@rem(n, 2) == 0) 1 else -1 },
+                    else => {},
+                }
                 var result: i128 = 1;
                 var k: i128 = 0;
-                while (k < exp.asInt().?) : (k += 1) {
+                while (k < n) : (k += 1) {
                     result = std.math.mul(i128, result, b) catch return error.Type;
                 }
                 return .{ .int = result };
@@ -402,3 +421,32 @@ pub const PyEval = struct {
         return .{ .int = std.fmt.parseInt(i128, text, 10) catch return error.Syntax };
     }
 };
+
+fn evalInt(src: []const u8) PyEval.Err!i128 {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var ev: PyEval = .{ .a = arena.allocator(), .src = src };
+    return switch (try ev.evaluate()) {
+        .int => |i| i,
+        else => error.Type,
+    };
+}
+
+test "integers out of range are errors, not overflows; Python's % and //" {
+    try std.testing.expectError(error.Type, evalInt("2**126 + 2**126"));
+    try std.testing.expectError(error.Type, evalInt("-(2**126) - 2**126 - 2**126"));
+    try std.testing.expectError(error.Type, evalInt("2**100 * 2**100"));
+    try std.testing.expectError(error.Type, evalInt("(-(2**126) - 2**126) // -1"));
+    try std.testing.expectEqual(@as(i128, -1), try evalInt("7 % -4"));
+    try std.testing.expectEqual(@as(i128, 1), try evalInt("-7 % 4"));
+    try std.testing.expectEqual(@as(i128, 0), try evalInt("5 % -1"));
+    try std.testing.expectEqual(@as(i128, -2), try evalInt("-7 // 4"));
+}
+
+test "powers of 0, 1 and -1 with huge exponents end at once" {
+    try std.testing.expectEqual(@as(i128, 1), try evalInt("1 ** 170141183460469231731687303715884105727"));
+    try std.testing.expectEqual(@as(i128, -1), try evalInt("(-1) ** 170141183460469231731687303715884105727"));
+    try std.testing.expectEqual(@as(i128, 0), try evalInt("0 ** 170141183460469231731687303715884105727"));
+    try std.testing.expectEqual(@as(i128, 1), try evalInt("0 ** 0"));
+    try std.testing.expectError(error.Type, evalInt("2 ** 170141183460469231731687303715884105727"));
+}

@@ -118,10 +118,10 @@ pub const opts = [_]Opt{
     .{ .long = "codee_path", .kind = .string, .metavar = "PATH", .help = "Codee's executable (default: the one on the PATH)", .group = "Linter options" },
     .{ .long = "codee_args", .kind = .string, .metavar = "ARGS", .help = "codee checks's further arguments; ${file} stands for the file (else it comes last). Separated by spaces (or a JSON list) on the command line and a list in a configuration file", .group = "Linter options" },
 
-    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout (default: none)", .group = "Formatting options" },
+    .{ .long = "formatter", .kind = .string, .metavar = "FORMATTER", .help = "Format documents and selections with zfls, its own formatter, which needs no tool; or with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout; none: no formatting (default: zfls)", .group = "Formatting options" },
     .{ .long = "formatter_path", .kind = .string, .metavar = "PATH", .help = "The formatter executable, or the directory that holds it (default: the one on the PATH; for codee, codee_path's); the command of the custom formatter", .group = "Formatting options" },
     .{ .long = "formatter_args", .kind = .string, .metavar = "ARGS", .help = "The formatter's further arguments, separated by spaces (or a JSON list) on the command line and a list in a configuration file. findent gets -ifree or -ifixed from the file's form unless these set the input format, and -Ia (keep the indentation) for a selection; fprettify also reads .fprettify.rc files from the file's directory up; codee gets format - -o -, forformat --stdin-filename=FILE and -ifree or -ifixed; for custom they are the whole command line, in which ${file} is the document's path and ${form} free or fixed", .group = "Formatting options" },
-    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
+    .{ .long = "formatter_fixed", .kind = .string, .metavar = "FORMATTER", .help = "The formatter of fixed-form files: zfls, findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)", .group = "Formatting options" },
     .{ .long = "formatter_fixed_args", .kind = .string, .metavar = "ARGS", .help = "The further arguments of formatter_fixed, as formatter_args", .group = "Formatting options" },
 
     .{ .long = "pp_suffixes", .kind = .list, .metavar = "[SUFFIXES ...]", .help = "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes, and .fpp)", .group = "Preprocessor options" },
@@ -136,6 +136,7 @@ pub const opts = [_]Opt{
 
     .{ .long = "code_lens_no_references", .kind = .flag, .help = "Do not show the number of references above each module, procedure and derived type (a code lens, counted when the editor shows it)", .group = "Code lens options" },
     .{ .long = "code_lens_no_run", .kind = .flag, .help = "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)", .group = "Code lens options" },
+    .{ .long = "closing_hint_lines", .kind = .int, .metavar = "INTEGER", .help = "An inlay hint after the END of a construct or procedure of this many lines or more, with its opening statement (default: 25; 0: none)", .group = "Inlay hint options" },
 
     .{ .long = "debug_filepath", .kind = .string, .metavar = "DEBUG_FILEPATH", .help = "File path for language server tests", .debug = true },
     .{ .long = "debug_rootpath", .kind = .string, .metavar = "DEBUG_ROOTPATH", .help = "Root path for language server tests", .debug = true },

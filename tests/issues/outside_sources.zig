@@ -138,3 +138,24 @@ test "a C file of the database, an excluded one, or no database: not read (#267)
         try std.testing.expect(try notFound(w));
     }
 }
+
+test "a source the database lists twice is indexed once, and relinks (#949)" {
+    const o = try Outside.init();
+    defer o.deinit();
+    const ext = try o.absolute("extmod.f90");
+    // CMake's entries for a source of two targets
+    const db = try o.arena.allocator().print(
+        \\[{{"directory": "{s}", "file": "{s}", "arguments": ["gfortran", "-c", "{s}"]}},
+        \\ {{"directory": "{s}", "file": "{s}", "arguments": ["gfortran", "-fPIC", "-c", "{s}"]}},
+        \\ {{"directory": ".", "file": "main.f90", "arguments": ["gfortran", "-c", "main.f90"]}}]
+    , .{ o.json_dir, ext, ext, o.json_dir, ext, ext });
+    const files = [_]h.File{ .{ .name = "main.f90", .text = main_text }, .{ .name = "compile_commands.json", .text = db } };
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    try w.open("main.f90", "fortran");
+    try std.testing.expect(!try notFound(w));
+    try std.testing.expectEqual(@as(usize, 1), (try w.workspaceSymbols("extmod")).len);
+    // a change relinks the workspace, and with it the outside file
+    try w.replaceText("main.f90", main_text ++ "\n");
+    try w.expectHoverContains("main.f90", w.pos("main.f90", "extval\n", 0, 0), "INTEGER :: extval");
+}

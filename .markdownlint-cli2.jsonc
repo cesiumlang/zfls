@@ -6,6 +6,7 @@
     // "vendor/**",
     "node_modules/**",
     ".pixi/**",
+    ".toolchains/**",
     // toolchain caches, not repository content
     "zig-pkg/**",
     ".zig-cache/**",

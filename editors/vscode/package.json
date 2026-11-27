@@ -52,11 +52,16 @@
       "supported": "limited",
       "description": "In an untrusted workspace the settings that choose which programs zfls runs or what flags they get are not read from the workspace.",
       "restrictedConfigurations": [
+        "zfls.arguments",
+        "zfls.linter.modOutput",
+        "zfls.linter.fypp.definitions",
+        "zfls.linter.fypp.path",
         "zfls.run.buildArgs",
         "zfls.fpm.args",
         "zfls.pfunit.args",
         "zfls.formatting.findentArgs",
         "zfls.formatting.fprettifyArgs",
+        "zfls.formatting.zflsArgs",
         "zfls.formatting.codeeArgs",
         "zfls.formatting.forformatArgs",
         "zfls.formatting.customArgs",
@@ -379,6 +384,13 @@
           "default": false,
           "scope": "resource",
           "markdownDescription": "%config.zfls.codeLensNoRun.markdownDescription%"
+        },
+        "zfls.closingHintLines": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.zfls.closingHintLines.markdownDescription%"
         },
         "zfls.debugLog": {
           "type": "boolean",
@@ -842,7 +854,8 @@
             "fprettify",
             "codee",
             "forformat",
-            "custom"
+            "custom",
+            "zfls"
           ],
           "enumDescriptions": [
             "%config.zfls.formatting.formatter.enumDescriptions.0%",
@@ -850,9 +863,10 @@
             "%config.zfls.formatting.formatter.enumDescriptions.2%",
             "%config.zfls.formatting.formatter.enumDescriptions.3%",
             "%config.zfls.formatting.formatter.enumDescriptions.4%",
-            "%config.zfls.formatting.formatter.enumDescriptions.5%"
+            "%config.zfls.formatting.formatter.enumDescriptions.5%",
+            "%config.zfls.formatting.formatter.enumDescriptions.6%"
           ],
-          "default": "Disabled",
+          "default": "zfls",
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.formatter.markdownDescription%"
         },
@@ -879,6 +893,15 @@
           "default": [],
           "scope": "language-overridable",
           "markdownDescription": "%config.zfls.formatting.fprettifyArgs.markdownDescription%"
+        },
+        "zfls.formatting.zflsArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "markdownDescription": "%config.zfls.formatting.zflsArgs.markdownDescription%"
         },
         "zfls.formatting.codeeArgs": {
           "type": "array",
@@ -1307,9 +1330,14 @@
             "type": "string",
             "enum": [
               "build",
+              "link",
               "run"
             ],
             "description": "%taskDefinition.zfls.task.description%"
+          },
+          "file": {
+            "type": "string",
+            "description": "%taskDefinition.zfls.file.description%"
           }
         }
       },
@@ -1558,6 +1586,43 @@
                 },
                 "default": [],
                 "description": "%debugger.fortran.launch.setupCommands.description%"
+              },
+              "mpi": {
+                "type": "object",
+                "description": "%debugger.fortran.launch.mpi.description%",
+                "required": [
+                  "ranks"
+                ],
+                "properties": {
+                  "ranks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "%debugger.fortran.launch.mpi.ranks.description%"
+                  },
+                  "launcher": {
+                    "type": "string",
+                    "default": "mpiexec",
+                    "description": "%debugger.fortran.launch.mpi.launcher.description%"
+                  },
+                  "launcherArgs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": [],
+                    "description": "%debugger.fortran.launch.mpi.launcherArgs.description%"
+                  },
+                  "gdbserver": {
+                    "type": "string",
+                    "default": "gdbserver",
+                    "description": "%debugger.fortran.launch.mpi.gdbserver.description%"
+                  },
+                  "port": {
+                    "type": "integer",
+                    "default": 20000,
+                    "description": "%debugger.fortran.launch.mpi.port.description%"
+                  }
+                }
               }
             }
           },

@@ -89,7 +89,8 @@ fn scalarText(s: *Session, a: Allocator, v: Val) ![]const u8 {
 fn elementOf(v: Val, i: u64) Val {
     const e = v.extents[v.rank - v.chosen.len - 1];
     var out = v;
-    out.address = @bitCast(@as(i64, @bitCast(v.address)) + @as(i64, @intCast(i)) * e.stride);
+    // wrapping: a garbage stride or index reads garbage, not panics (#967)
+    out.address = @bitCast(@as(i64, @bitCast(v.address)) +% @as(i64, @bitCast(i)) *% e.stride);
     return out;
 }
 
@@ -197,7 +198,9 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
             const left = v.rank - v.chosen.len;
             const e = v.extents[left - 1];
             const base = if (v.base.len > 0) v.base else v.expr;
-            const total = if (v.count > 0) v.count else e.count;
+            // a garbage count (an undefined pointer's) as at most 2^40, a
+            // garbage lower bound wrapping: no overflow (#967)
+            const total = @min(if (v.count > 0) v.count else e.count, 1 << 40);
             if (total > chunk) {
                 // in sections of 100 (of 10000, ...)
                 var per: u64 = chunk;
@@ -208,8 +211,8 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
                     sec.base = base;
                     sec.first = v.first + start;
                     sec.count = @min(per, total - start);
-                    const lo = e.lo + @as(i64, @intCast(sec.first));
-                    const label = try sectionLabel(a, left, v.chosen, lo, lo + @as(i64, @intCast(sec.count)) - 1);
+                    const lo = e.lo +% @as(i64, @intCast(sec.first));
+                    const label = try sectionLabel(a, left, v.chosen, lo, lo +% @as(i64, @intCast(sec.count)) -% 1);
                     try out.append(a, try json.from(a, .{ .name = label, .value = "", .variablesReference = try addNode(s, .{ .value = try persist(s, sec) }), .evaluateName = try a.print("{s}{s}", .{ base, label }) }));
                 }
                 return out.items;
@@ -217,7 +220,7 @@ pub fn children(s: *Session, a: Allocator, node: Node) ![]Value {
             var i: u64 = 0;
             while (i < total) : (i += 1) {
                 const at = v.first + i;
-                const sub = e.lo + @as(i64, @intCast(at));
+                const sub = e.lo +% @as(i64, @intCast(at));
                 var el = elementOf(v, at);
                 const chosen = try a.alloc(i64, v.chosen.len + 1);
                 chosen[0] = sub;

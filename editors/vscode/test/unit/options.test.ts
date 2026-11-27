@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import type * as vscode from "vscode";
 import { argOption, restartsServer, serverArguments, serverSettings, startSettings } from "../../src/options";
-import { settings } from "./vscode";
+import { settings, workspace } from "./vscode";
 
 const root = path.join("/", "my proj");
 const folder = { name: "my proj", index: 0, uri: { fsPath: root } } as unknown as vscode.WorkspaceFolder;
@@ -32,6 +32,18 @@ test("an argument with a space stays one, on the command line and over LSP", () 
   settings["zfls.linter.fypp.enabled"] = true;
   settings["zfls.linter.fypp.definitions"] = { NAME: "a b" };
   assert.deepEqual(serverSettings(folder).compiler_fypp_args, ["-DNAME=a b"]);
+});
+
+test("fypp does not run in an untrusted workspace, even when the user's settings turn it on", () => {
+  settings["zfls.linter.fypp.enabled"] = true;
+  workspace.isTrusted = false;
+  try {
+    assert.equal(serverSettings(folder).compiler_fypp, null);
+    assert.ok(!serverArguments(folder).some((a) => a.startsWith("--compiler_fypp")));
+  } finally {
+    workspace.isTrusted = true;
+  }
+  assert.notEqual(serverSettings(folder).compiler_fypp, null);
 });
 
 test("arguments without a space are one string on the command line", () => {

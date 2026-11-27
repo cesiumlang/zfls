@@ -1,8 +1,10 @@
 //! LFortran's programs in `zfls dap` (gdb and lldb-dap), as far as its
 //! debug information goes: LFortran 0.69's DWARF says the language is C,
-//! and has integer and real scalars only (arrays, derived types, CHARACTER
-//! lengths and module variables are #366). Here which programs are
-//! LFortran's, and its temporaries, which the Variables view leaves out.
+//! and has integer and real scalars only; zfls's build through its IR
+//! (run/lfortran_ir.zig) adds the other variables' types, as C's
+//! (run/lfortran_types.zig; on Windows engine_lfortran.zig reads them).
+//! Here which programs are LFortran's, and its temporaries, which the
+//! Variables view leaves out.
 //! Its runtime's functions of errors and ERROR STOP are runtime_errors.zig's.
 
 const std = @import("std");

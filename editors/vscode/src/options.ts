@@ -39,6 +39,7 @@ export const OPTIONS: readonly Option[] = [
   { setting: "symbolSkipMembers", flag: "--symbol_skip_mem", kind: "flag" },
   { setting: "codeLensNoReferences", flag: "--code_lens_no_references", kind: "flag" },
   { setting: "codeLensNoRun", flag: "--code_lens_no_run", kind: "flag" },
+  { setting: "closingHintLines", flag: "--closing_hint_lines", kind: "int", fallback: 25 },
   { setting: "disableDiagnostics", flag: "--disable_diagnostics", kind: "flag" },
   { setting: "debugLog", flag: "--debug_log", kind: "flag", restart: true },
   { setting: "disableIndexCache", flag: "--disable_index_cache", kind: "flag" },
@@ -129,6 +130,11 @@ export function serverArguments(folder: vscode.WorkspaceFolder | undefined): str
   return args;
 }
 
+/** Whether fypp runs: on, and in a trusted workspace */
+function fyppAllowed(config: vscode.WorkspaceConfiguration): boolean {
+  return vscode.workspace.isTrusted && config.get<boolean>("fypp.enabled", false);
+}
+
 /** `zfls.arguments`; the settings editor's "Add Item" leaves empty items
  * easily */
 function extraArguments(config: vscode.WorkspaceConfiguration): string[] {
@@ -204,7 +210,10 @@ export function linterArguments(folder: vscode.WorkspaceFolder | undefined): str
   if (config.get<boolean>("noCompileCommands", false)) {
     args.push("--compiler_no_compile_commands");
   }
-  if (config.get<boolean>("fypp.enabled", false)) {
+  // fypp runs the Python of the files it reads: not in a workspace the user
+  // has not trusted (its own value of the setting is restricted, a user's
+  // is not)
+  if (fyppAllowed(config)) {
     const fypp = config.get<string>("fypp.path", "fypp").trim() || "fypp";
     // a name is looked for on the PATH; a path is resolved
     args.push("--compiler_fypp", programPath(fypp, folder));
@@ -270,7 +279,7 @@ function codeeArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
 /** The zfls options of the formatter (zfls.formatting.*), which zfls runs
  * for Format Document and Format Selection. The formatter and its
  * arguments can differ by language: free form's are zfls's `formatter`,
- * fixed form's its `formatter_fixed`. None when neither has one. */
+ * fixed form's its `formatter_fixed`; `none` for a form whose is Disabled. */
 export function formattingArguments(folder: vscode.WorkspaceFolder | undefined): string[] {
   const forms = [
     { languageId: "FortranFreeForm", flag: "--formatter", argsFlag: "--formatter_args" },
@@ -281,7 +290,7 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
   let codee = false;
   for (const { languageId, flag, argsFlag } of forms) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
-    const formatter = config.get<string>("formatter", "Disabled");
+    const formatter = config.get<string>("formatter", "zfls");
     if (!FORMATTERS.includes(formatter)) {
       args.push(flag, "none");
       continue;
@@ -294,8 +303,9 @@ export function formattingArguments(folder: vscode.WorkspaceFolder | undefined):
       args.push(argOption(argsFlag, extra.map((a) => resolvePath(a, folder))));
     }
   }
+  // both `none`: the server formats with its own by default
   if (!any) {
-    return [];
+    return args;
   }
   const exe = formatterPath(folder, codee);
   if (exe) {
@@ -401,7 +411,7 @@ function linterSettings(folder: vscode.WorkspaceFolder | undefined): ServerSetti
   const exe = config.get<string>("compilerPath", "").trim();
   const extra = config.get<string[]>("extraArgs", []).filter((a) => a !== "");
   const modDir = config.get<string>("modOutput", "").trim();
-  const fypp = on && config.get<boolean>("fypp.enabled", false);
+  const fypp = on && fyppAllowed(config);
   return {
     compiler_diagnostics: compiler !== "Disabled" ? compiler : null,
     ...fixed,
@@ -471,7 +481,7 @@ function formattingSettings(folder: vscode.WorkspaceFolder | undefined): ServerS
     ["FortranFixedForm", "formatter_fixed"],
   ]) {
     const config = vscode.workspace.getConfiguration("zfls.formatting", { uri: folder?.uri, languageId });
-    const formatter = config.get<string>("formatter", "Disabled");
+    const formatter = config.get<string>("formatter", "zfls");
     const on = FORMATTERS.includes(formatter);
     any ||= on;
     codee ||= formatter === "codee";

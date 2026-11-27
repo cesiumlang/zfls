@@ -488,6 +488,16 @@ fn collectSymbols(a: Allocator, obj: *Obj, out: *std.ArrayList(*Obj), seen: *std
     for (obj.childList()) |child| try collectSymbols(a, child, out, seen);
 }
 
+/// The result variable of function `obj` (or of the function a binding or a
+/// procedure pointer names), whose type a `%` after its call continues
+/// with; `obj` itself for anything else
+fn resultOf(obj: *Obj) *Obj {
+    var o = obj;
+    if (o.kind == .method or (o.kind == .variable and o.linkObj() != null and o.linkObj().?.kind == .function)) o = o.linkObj() orelse return obj;
+    if (o.kind != .function) return obj;
+    return o.procDataConst().result_obj orelse obj;
+}
+
 /// Walk up user-defined type sequence to determine final field type
 pub fn climbTypeTree(env: Env, var_stack: []const []const u8, curr_scope: ?*Obj) !?*Obj {
     var i_var: usize = 0;
@@ -495,6 +505,8 @@ pub fn climbTypeTree(env: Env, var_stack: []const []const u8, curr_scope: ?*Obj)
     var var_obj = (try findInScope(env, curr_scope, first, .{})) orelse return null;
     var n: usize = 0;
     while (n < 30) : (n += 1) {
+        // a function's result, `f(x)%`, and a binding's (#987)
+        var_obj = resultOf(var_obj);
         const type_obj = (try var_obj.getTypeObj(env)) orelse return null;
         // a variable named like the type, while code is being edited
         if (type_obj.data != .scope) return null;

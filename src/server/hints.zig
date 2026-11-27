@@ -22,6 +22,7 @@ const Value = json.Value;
 const srv = @import("../server.zig");
 const Server = srv.Server;
 const definition = @import("definition.zig");
+const argument_hover = @import("argument_hover.zig");
 const signature = @import("signature.zig");
 const semantic = @import("../semantic.zig");
 const implicit = @import("../implicit.zig");
@@ -39,6 +40,7 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
         if (sc.kind != .associate or sc.sline == 0 or sc.sline - 1 < first or sc.sline - 1 > last) continue;
         try associateHints(a, file, sc, &out);
     }
+    try closingHints(self, a, file, ast, first, last, &out);
     // the values of named constants, once per line and name
     var shown: std.StringHashMapUnmanaged(void) = .empty;
     for (try semantic.constantUses(a, self.env(a), file, ast, first, last)) |c| {
@@ -49,7 +51,7 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
         const short = if (value.len > 24) try a.print("{s}...", .{value[0..21]}) else value;
         try out.append(a, .{
             .position = .{ .line = c.line, .character = Server.toLspCol(file, c.line, c.end) },
-            .label = try a.print("= {s}", .{short}),
+            .label = try linked(self, a, try a.print("= {s}", .{short}), c.obj),
             .kind = 1,
             .paddingLeft = true,
         });
@@ -62,7 +64,7 @@ pub fn serveInlayHints(self: *Server, a: Allocator, params: lsp.InlayHintParams)
         if ((try seen.getOrPut(a, key)).found_existing) continue;
         try out.append(a, .{
             .position = .{ .line = u.line, .character = Server.toLspCol(file, u.line, u.end) },
-            .label = try a.print(": {s}", .{t}),
+            .label = .{ .string = try a.print(": {s}", .{t}) },
             .kind = 1,
         });
     }
@@ -124,7 +126,7 @@ fn argumentHints(self: *Server, a: Allocator, file: *FortranFile, ln: usize, out
             const at = @intFromPtr(text.ptr) - @intFromPtr(code.ptr);
             try out.append(a, .{
                 .position = .{ .line = ln, .character = Server.toLspCol(file, ln, at) },
-                .label = try a.print("{s}:", .{name}),
+                .label = if (argument_hover.dummyNamed(target, name)) |d| try linked(self, a, try a.print("{s}:", .{name}), d) else .{ .string = try a.print("{s}:", .{name}) },
                 .kind = 2,
                 .paddingRight = true,
             });
@@ -154,7 +156,7 @@ fn associateHints(a: Allocator, file: *FortranFile, sc: *Obj, out: *std.ArrayLis
             if (end) |e| {
                 try out.append(a, .{
                     .position = .{ .line = ln, .character = Server.toLspCol(file, ln, e) },
-                    .label = try a.print(": {s}", .{type_text}),
+                    .label = .{ .string = try a.print(": {s}", .{type_text}) },
                     .kind = 1,
                 });
                 break;
@@ -188,4 +190,57 @@ fn matchingParen(code: []const u8, open: usize) ?usize {
         }
     }
     return null;
+}
+
+/// `text` as a hint's label of one part that links to `obj`'s declaration
+/// (Ctrl+click goes there, #981); plain text for an object of no file
+fn linked(self: *Server, a: Allocator, text: []const u8, obj: *Obj) !Value {
+    if (obj.file_ast.file == null) return .{ .string = text };
+    const location = try definition.createRefLink(self, a, obj);
+    return json.from(a, &[_]struct { value: []const u8, location: Value }{.{ .value = text, .location = location }});
+}
+
+/// The name before a construct's statement, `outer` of `outer: do i = 1, n`
+fn constructName(statement: []const u8) ?[]const u8 {
+    var e: usize = 0;
+    while (e < statement.len and (std.ascii.isAlphanumeric(statement[e]) or statement[e] == '_')) e += 1;
+    if (e == 0) return null;
+    const rest = std.mem.trimStart(u8, statement[e..], " \t");
+    if (rest.len == 0 or rest[0] != ':' or (rest.len > 1 and rest[1] == ':')) return null;
+    return statement[0..e];
+}
+
+/// The kinds of scope whose END has a closing hint
+fn closes(k: objects.Kind) bool {
+    return switch (k) {
+        .module, .program, .submodule, .subroutine, .function, .type, .interface, .block, .do_, .if_, .where, .associate, .select, .enum_ => true,
+        .scope, .include, .variable, .method, .intrinsic => false,
+    };
+}
+
+/// After the END of each construct or procedure of `closing_hint_lines`
+/// lines or more whose END is in lines `first` to `last` (0-based), its
+/// opening statement (#981): `! do i = 1, n`. None where the END names it.
+fn closingHints(self: *Server, a: Allocator, file: *FortranFile, ast: *objects.Ast, first: usize, last: usize, out: *std.ArrayList(lsp.InlayHint)) !void {
+    const min = self.s.closing_hint_lines;
+    if (min <= 0) return;
+    for (ast.scope_list.items) |sc| {
+        if (!closes(sc.kind) or sc.sline == 0 or sc.eline <= sc.sline) continue;
+        const end_ln = sc.eline - 1;
+        if (end_ln < first or end_ln > last or sc.eline - sc.sline + 1 < min) continue;
+        const end_text = file.getLine(end_ln, false) orelse continue;
+        const end_code = str.rstrip(helpers.beforeComment(end_text));
+        if (!std.ascii.startsWithIgnoreCase(str.lstrip(end_code), "end")) continue;
+        if (sc.name.len > 0 and helpers.findWordInLineIgnoreCase(end_code, sc.name).start >= 0) continue;
+        const open = str.strip(helpers.beforeComment(file.getLine(sc.sline - 1, false) orelse continue));
+        if (open.len == 0) continue;
+        // a construct's name, `outer: do`, which its END names
+        if (constructName(open)) |n| if (helpers.findWordInLineIgnoreCase(end_code, n).start >= 0) continue;
+        const shown = if (open.len > 40) try a.print("{s}...", .{std.mem.trimEnd(u8, open[0..37], " &")}) else std.mem.trimEnd(u8, open, " &");
+        try out.append(a, .{
+            .position = .{ .line = end_ln, .character = Server.toLspCol(file, end_ln, end_code.len) },
+            .label = .{ .string = try a.print("! {s}", .{shown}) },
+            .paddingLeft = true,
+        });
+    }
 }

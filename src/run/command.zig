@@ -136,6 +136,20 @@ pub fn plan(a: Allocator, ctx: Context, r: Request) !?Answer {
         build_ctx.base_env = &build_base;
     }
     const link = try kitLink(a, build_ctx, id, exe, lld, r.args, &note);
+    // LFortran through its IR: CodeView on Windows, with lld-link and the
+    // kit (#176); DWARF elsewhere (#992)
+    const ir_link: ?[]const u8 = if (os != .windows) null else if (link.env.len > 0) lld else null;
+    if (id == .lfortran and (os != .windows or ir_link != null)) {
+        if (try lfortranIr(a, ctx, exe, ir_link, source, program, r.args, &note)) |args| {
+            ans.compiler = try std.process.executablePathAlloc(ctx.io, a);
+            ans.args = args;
+            ans.cwd = out_dir;
+            ans.env = .{ .items = try buildEnv(a, ans.runEnv.items, link.env) };
+            ans.program = program;
+            ans.note = note;
+            return ans;
+        }
+    }
     const extra = try std.mem.concat(a, []const u8, &.{ try modules(a, ctx, id, exe), link.args });
     if (twoSteps(os, id, try paths.realpath(ctx.io, a, exe))) {
         const object = try a.print("{s}.o", .{program});
@@ -166,6 +180,40 @@ fn buildEnv(a: Allocator, path: []const Var, link: []const Var) ![]const Var {
     if (path.len == 0) return link;
     for (link) |v| if (std.ascii.eqlIgnoreCase(v.name, path[0].name)) return link;
     return std.mem.concat(a, Var, &.{ path, link });
+}
+
+/// The build of LFortran's program through its IR (`zfls lfortran-ir`,
+/// run/lfortran_ir.zig): the arguments of zfls's subcommand, or null with a
+/// `note` when neither clang nor llc is there, or on Windows (`lld_link`)
+/// LFortran's static runtime. Clang or llc next to LFortran (its LLVM's
+/// version or near it) comes before clang on the `PATH`.
+fn lfortranIr(a: Allocator, ctx: Context, exe: []const u8, lld_link: ?[]const u8, source: []const u8, program: []const u8, user_args: ?[]const []const u8, note: *?[]const u8) !?[]const []const u8 {
+    // its absolute path: the build runs in the program's directory
+    const real = paths.realpath(ctx.io, a, exe) catch exe;
+    const dir = paths.dirname(real);
+    const tool: [2][]const u8 = if (try executables.inDir(a, ctx.io, ctx.env, dir, "clang")) |c|
+        .{ "--clang", c }
+    else if (try executables.inDir(a, ctx.io, ctx.env, dir, "llc")) |c|
+        .{ "--llc", c }
+    else if (try executables.onPath(a, ctx.io, ctx.env, "clang")) |c|
+        .{ "--clang", c }
+    else {
+        note.* = if (lld_link != null)
+            "LFortran's program has no debug information: zfls builds it with CodeView through clang, which is neither next to LFortran nor on the PATH (conda install clang)"
+        else
+            "LFortran's program has no lines for PRINT and WRITE and no types for arrays, derived types and CHARACTER: zfls adds them through clang or llc, which are neither next to LFortran nor on the PATH (conda install clang)";
+        return null;
+    };
+    const head = [_][]const u8{ "lfortran-ir", "--lfortran", real, tool[0], tool[1] };
+    const windows: []const []const u8 = if (lld_link) |l| blk: {
+        const runtime = try std.Io.Dir.path.join(a, &.{ paths.dirname(dir), "lib", "lfortran_runtime_static.lib" });
+        if (!paths.isFile(ctx.io, runtime)) {
+            note.* = try a.print("LFortran's program has no debug information: no {s}", .{runtime});
+            return null;
+        }
+        break :blk try a.dupe([]const u8, &.{ "--lld-link", l, "--runtime", runtime });
+    } else &.{};
+    return try std.mem.concat(a, []const u8, &.{ &head, windows, &.{ "-o", program }, user_args orelse &.{}, &.{source} });
 }
 
 /// The lld-link next to `exe` (conda-forge's `lld`), else on the `PATH`

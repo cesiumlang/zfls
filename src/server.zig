@@ -29,6 +29,9 @@ const project = @import("project.zig");
 const semantic = @import("semantic.zig");
 const suppress = @import("suppress.zig");
 const workspace = @import("server/workspace.zig");
+const watched_files = @import("server/watched_files.zig");
+const code_actions = @import("server/code_actions.zig");
+const methods_mod = @import("server/methods.zig");
 const initialization = @import("server/initialization.zig");
 const symbols = @import("server/symbols.zig");
 const completion = @import("server/completion.zig");
@@ -117,6 +120,10 @@ pub const Server = struct {
     sync_type: i32 = 1,
     /// Whether `initialize` has succeeded, or failed (initialization.zig)
     init_state: initialization.State = .none,
+    /// The progress tokens of the server's own made so far (refresh.zig)
+    progress_tokens: u32 = 0,
+    /// The client resolves code actions' edits (`codeAction/resolve`, #984)
+    code_action_resolve: bool = false,
     /// The client takes `DocumentSymbol` trees, not fortls's flat list
     hierarchical_symbols: bool = false,
     /// the client asks whether a position can be renamed first
@@ -424,6 +431,11 @@ pub const Server = struct {
             if (id) |i| self.writeError(a, i, -32002, "server not initialized", null) catch |e| self.logSendFailure(e);
             return;
         }
+        // once only: a second one would index the workspace again (#965)
+        if (self.init_state == .done and std.mem.eql(u8, method, "initialize")) {
+            if (id) |i| self.writeError(a, i, -32600, "server already initialized", null) catch |e| self.logSendFailure(e);
+            return;
+        }
         const result = self.dispatch(a, method, params);
         if (id == null) {
             if (result) |_| {} else |e| self.log.err("error handling request: {s} ({s})", .{ method, @errorName(e) });
@@ -446,134 +458,8 @@ pub const Server = struct {
         return self.dispatch(a, method, params);
     }
 
-    /// The requests and notifications the server answers
-    const Method = enum {
-        initialize,
-        document_symbol,
-        folding_range,
-        semantic_tokens,
-        semantic_tokens_range,
-        completion,
-        completion_resolve,
-        signature_help,
-        definition,
-        references,
-        document_highlight,
-        hover,
-        implementation,
-        type_definition,
-        declaration,
-        rename,
-        prepare_rename,
-        linked_editing,
-        selection_range,
-        document_link,
-        code_lens,
-        code_lens_resolve,
-        on_type_formatting,
-        formatting,
-        range_formatting,
-        inlay_hint,
-        inline_value,
-        prepare_call_hierarchy,
-        incoming_calls,
-        outgoing_calls,
-        prepare_type_hierarchy,
-        supertypes,
-        subtypes,
-        compile_order,
-        compiler_check,
-        compiler_clear,
-        convert_form,
-        build_command,
-        bind_c,
-        bind_c_targets,
-        bind_c_references,
-        module_variables,
-        fpm_tests,
-        fpm_targets,
-        pfunit_tests,
-        initialized,
-        did_open,
-        did_save,
-        did_close,
-        did_change,
-        code_action,
-        document_diagnostic,
-        workspace_diagnostic,
-        did_change_configuration,
-        workspace_symbol,
-        watched_files,
-        will_rename_files,
-        /// accepted and ignored
-        ignored,
-        shutdown,
-        exit,
-    };
-
-    const methods = std.StaticStringMap(Method).initComptime(.{
-        .{ "initialize", .initialize },
-        .{ "textDocument/documentSymbol", .document_symbol },
-        .{ "textDocument/foldingRange", .folding_range },
-        .{ "textDocument/semanticTokens/full", .semantic_tokens },
-        .{ "textDocument/semanticTokens/range", .semantic_tokens_range },
-        .{ "textDocument/completion", .completion },
-        .{ "completionItem/resolve", .completion_resolve },
-        .{ "textDocument/signatureHelp", .signature_help },
-        .{ "textDocument/definition", .definition },
-        .{ "textDocument/references", .references },
-        .{ "textDocument/documentHighlight", .document_highlight },
-        .{ "textDocument/hover", .hover },
-        .{ "textDocument/implementation", .implementation },
-        .{ "textDocument/typeDefinition", .type_definition },
-        .{ "textDocument/declaration", .declaration },
-        .{ "textDocument/rename", .rename },
-        .{ "textDocument/prepareRename", .prepare_rename },
-        .{ "textDocument/linkedEditingRange", .linked_editing },
-        .{ "textDocument/selectionRange", .selection_range },
-        .{ "textDocument/documentLink", .document_link },
-        .{ "textDocument/codeLens", .code_lens },
-        .{ "codeLens/resolve", .code_lens_resolve },
-        .{ "textDocument/onTypeFormatting", .on_type_formatting },
-        .{ "textDocument/formatting", .formatting },
-        .{ "textDocument/rangeFormatting", .range_formatting },
-        .{ "textDocument/inlayHint", .inlay_hint },
-        .{ "textDocument/inlineValue", .inline_value },
-        .{ "textDocument/prepareCallHierarchy", .prepare_call_hierarchy },
-        .{ "callHierarchy/incomingCalls", .incoming_calls },
-        .{ "callHierarchy/outgoingCalls", .outgoing_calls },
-        .{ "textDocument/prepareTypeHierarchy", .prepare_type_hierarchy },
-        .{ "typeHierarchy/supertypes", .supertypes },
-        .{ "typeHierarchy/subtypes", .subtypes },
-        .{ "zfls/compileOrder", .compile_order },
-        .{ "zfls/bindC", .bind_c },
-        .{ "zfls/bindCTargets", .bind_c_targets },
-        .{ "zfls/bindCReferences", .bind_c_references },
-        .{ "zfls/moduleVariables", .module_variables },
-        .{ "zfls/fpmTests", .fpm_tests },
-        .{ "zfls/fpmTargets", .fpm_targets },
-        .{ "zfls/pfunitTests", .pfunit_tests },
-        .{ "zfls/compilerCheck", .compiler_check },
-        .{ "zfls/compilerClear", .compiler_clear },
-        .{ "zfls/convertForm", .convert_form },
-        .{ "zfls/buildCommand", .build_command },
-        .{ "textDocument/didOpen", .did_open },
-        .{ "textDocument/didSave", .did_save },
-        .{ "textDocument/didClose", .did_close },
-        .{ "textDocument/didChange", .did_change },
-        .{ "textDocument/codeAction", .code_action },
-        .{ "textDocument/diagnostic", .document_diagnostic },
-        .{ "workspace/diagnostic", .workspace_diagnostic },
-        .{ "workspace/symbol", .workspace_symbol },
-        .{ "initialized", .initialized },
-        .{ "workspace/didChangeWatchedFiles", .watched_files },
-        .{ "workspace/willRenameFiles", .will_rename_files },
-        .{ "workspace/didChangeConfiguration", .did_change_configuration },
-        .{ "$/cancelRequest", .ignored },
-        .{ "$/setTrace", .ignored },
-        .{ "shutdown", .shutdown },
-        .{ "exit", .exit },
-    });
+    const Method = methods_mod.Method;
+    const methods = methods_mod.methods;
 
     fn dispatch(self: *Server, a: Allocator, method: []const u8, params: Value) !Value {
         const m = methods.get(method) orelse return error.MethodNotFound;
@@ -604,6 +490,8 @@ pub const Server = struct {
             .document_link => definition.serveDocumentLinks(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .code_lens => lenses.serveCodeLens(self, a, try json.decode(lsp.TextDocumentParams, a, params)),
             .code_lens_resolve => lenses.serveResolve(self, a, params),
+            .code_action_resolve => code_actions.serveResolve(self, a, params),
+            .execute_command => lenses.serveExecuteCommand(self, a, params),
             .on_type_formatting => symbols.serveOnTypeFormatting(self, a, try json.decode(lsp.OnTypeFormattingParams, a, params)),
             .formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveFormatting(self, a, try json.decode(lsp.DocumentFormattingParams, a, params)),
             .range_formatting => if (configuration.withdrawn(self, .formatting)) .null else format.serveRangeFormatting(self, a, try json.decode(lsp.DocumentRangeFormattingParams, a, params)),
@@ -636,11 +524,11 @@ pub const Server = struct {
             .did_save => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, false),
             .did_close => workspace.serveOnSave(self, a, try json.decode(lsp.TextDocumentParams, a, params), false, true),
             .did_change => workspace.serveOnChange(self, a, try json.decode(lsp.DidChangeParams, a, params)),
-            .code_action => if (configuration.withdrawn(self, .code_actions)) .null else diagnostics.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
+            .code_action => if (configuration.withdrawn(self, .code_actions)) .null else code_actions.serveCodeActions(self, a, try json.decode(lsp.CodeActionParams, a, params)),
             .document_diagnostic => pull.serveDocument(self, a, try json.decode(lsp.DocumentDiagnosticParams, a, params)),
             .workspace_diagnostic => pull.serveWorkspace(self, a, try json.decode(lsp.WorkspaceDiagnosticParams, a, params)),
             .workspace_symbol => symbols.serveWorkspaceSymbol(self, a, try json.decode(lsp.WorkspaceSymbolParams, a, params)),
-            .watched_files => workspace.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
+            .watched_files => watched_files.serveWatchedFiles(self, a, try json.decode(lsp.DidChangeWatchedFilesParams, a, params)),
             .will_rename_files => renames.serveWillRenameFiles(self, a, try json.decode(lsp.RenameFilesParams, a, params)),
             .did_change_configuration => configuration.serveDidChange(self, a, params),
             .ignored => .null,

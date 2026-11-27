@@ -13,6 +13,8 @@ const Obj = objects.Obj;
 const paths = @import("../paths.zig");
 const values = @import("values.zig");
 const dbgeng = @import("dbgeng.zig");
+const lfortran = @import("lfortran.zig");
+const engine_lfortran = @import("engine_lfortran.zig");
 
 const session = @import("session.zig");
 const Session = session.Session;
@@ -58,6 +60,7 @@ pub fn frameVariables(s: *Session, a: Allocator, frame: Frame) ![]FrameVariable 
     var out: std.ArrayList(FrameVariable) = .empty;
     for (vars) |v| {
         if (std.mem.findScalar(u8, v.name, '.') != null or std.mem.startsWith(u8, v.name, "_")) continue;
+        if (lfortran.isTemporary(v.name) and engine_lfortran.isProgram(s, a)) continue;
         var decl: ?Decl = if (where) |w| if (declaration(w.scope, v.name)) |o| declOf(a, o) else null else null;
         // a module's variable seen by a USE statement
         if (decl == null and !v.parameter) if (where) |w| if (useDeclaration(s, a, w.file, w.line, v.name)) |o| {

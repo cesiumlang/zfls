@@ -27,6 +27,7 @@ const runtime_errors_filter = @import("breakpoints.zig").runtime_errors_filter;
 const declarations = @import("declarations.zig");
 const gdb = @import("gdb.zig");
 const lldb = @import("lldb.zig");
+const lldb_windows = @import("lldb_windows.zig");
 const lfortran = @import("lfortran.zig");
 const gdb_entry = @import("gdb_entry.zig");
 const process_id = @import("process_id.zig");
@@ -295,7 +296,9 @@ pub fn terminalTty(s: *Session, a: Allocator, kind: []const u8, cwd: ?[]const u8
             .kind = kind,
             .title = "Fortran",
             .cwd = cwd orelse s.environ.get("HOME") orelse "/",
-            .args = &[_][]const u8{ "/bin/sh", "-c", try a.print("tty > '{s}'; trap 'exit 0' HUP INT TERM; while :; do sleep 3600; done", .{file}) },
+            // `wait` lets the shell take a signal at once, not after the
+            // sleep, which it ends too (#973)
+            .args = &[_][]const u8{ "/bin/sh", "-c", try a.print("tty > '{s}'; trap 'kill $! 2>/dev/null; exit 0' HUP INT TERM; while :; do sleep 3600 & wait $!; done", .{file}) },
         },
     });
     const r = s.clientResponse(a, seq, .fromSeconds(60)) orelse return null;
@@ -331,7 +334,9 @@ test "a terminal's path is a device path" {
 fn killTerminal(s: *Session) void {
     const pid = s.g.terminal_pid orelse return;
     s.g.terminal_pid = null;
-    if (builtin.target.os.tag != .windows) std.posix.kill(@intCast(pid), .TERM) catch {};
+    // the client's number: 0 or -1 would signal a process group (#972)
+    if (builtin.target.os.tag == .windows or pid <= 0) return;
+    std.posix.kill(std.math.cast(std.posix.pid_t, pid) orelse return, .TERM) catch {};
 }
 
 /// The client's other requests
@@ -757,7 +762,14 @@ pub fn event(s: *Session, a: Allocator, msg: Value) void {
                 break;
             }
         }
+        const thread = json.int(json.get(body, "threadId"));
+        // LLVM 23's lldb on Windows reports such a stop twice (#452, #947)
+        if (builtin.target.os.tag == .windows and s.g.lldb and lldb_windows.repeatsStop(hit, thread, s.g.last_error, s.g.last_error_thread)) {
+            s.g.last_error_thread = null;
+            return gdb.requestUnanswered(s, a, "continue", .{ .threadId = thread.? });
+        }
         s.g.last_error = hit;
+        s.g.last_error_thread = thread;
         // the breakpoint of the stop at the start (lldb's, or gdb's on
         // Flang's main program), and lldb's stop of a pause
         if (s.g.entry_breakpoint) |entry| for (json.items(json.get(body, "hitBreakpointIds"))) |id| {

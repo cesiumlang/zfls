@@ -8,8 +8,8 @@
 //! reads no Fortran: the test shows what lldb gives as variables and checks
 //! nothing of them. Or on LFortran's (`--compiler lfortran`), whose
 //! session is tests/dap_lfortran.zig's, with its integer variables. Skipped
-//! without the compiler or lldb-dap. On Windows, where lldb-dap tells no
-//! stop (#374), only that zfls refuses it.
+//! without the compiler or lldb-dap. On Windows, lldb-dap before LLVM
+//! 23.1.6, which tells no stop (#374, #452), only that zfls refuses it.
 //!
 //!     dap_lldb --zfls ZFLS [--compiler gfortran|lfortran] [--fc FC] [--lldb LLDB_DAP]
 //!
@@ -84,13 +84,14 @@ pub fn main(init: std.process.Init) !u8 {
         .gfortran => init.environ_map.get("GFORTRAN") orelse "gfortran",
         .lfortran => init.environ_map.get("LFORTRAN") orelse "lfortran",
     };
-    // Windows's programs are gdb's or the Debugger Engine's: lldb-dap is
-    // refused there, with a word of them, and no session waits (#374)
-    if (builtin.target.os.tag == .windows) return refusedOnWindows(io, init.gpa, try Io.Dir.cwd().realPathFileAlloc(io, zfls_exe.?, a));
     const lldb_dap = try zfls.dap_lldb.find(a, io, init.environ_map, lldb) orelse {
         std.debug.print("skipped: no lldb-dap (xcrun --find lldb-dap, or lldb-dap or lldb-vscode on the PATH)\n", .{});
         return 0;
     };
+    // an older lldb-dap on Windows is refused, with a word of gdb and the
+    // Debugger Engine, and no session waits (#374)
+    if (builtin.target.os.tag == .windows and try zfls.dap_lldb_windows.refusal(a, io, init.environ_map, lldb_dap) != null)
+        return refusedOnWindows(io, init.gpa, try Io.Dir.cwd().realPathFileAlloc(io, zfls_exe.?, a), lldb_dap);
     const fc_version = std.process.run(a, io, .{ .argv = &.{ fc, "--version" } }) catch {
         std.debug.print("skipped: no {s}\n", .{fc});
         return 0;
@@ -112,8 +113,7 @@ pub fn main(init: std.process.Init) !u8 {
         .dir = tmp,
         .src = src,
         .program = "",
-        // LFortran's PRINT has no line: its stop in work is a line before
-        .work_line = lineOf(text, if (compiler.? == .lfortran) "LFortran stops here" else "stop here: work"),
+        .work_line = lineOf(text, "stop here: work"),
         .call_line = lineOf(text, "call work("),
         .main_line = lineOf(text, "stop here: main"),
     };
@@ -133,10 +133,10 @@ pub fn main(init: std.process.Init) !u8 {
     return 0;
 }
 
-/// On Windows, a launch with `lldb: true` fails at once, naming gdb and
-/// the Debugger Engine: lldb-dap there tells no stop until it is asked
-/// something else (#374)
-fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8) !u8 {
+/// On Windows, a launch with lldb-dap before LLVM 23.1.6 fails at once,
+/// naming gdb and the Debugger Engine: that lldb-dap tells no stop until it
+/// is asked something else (#374)
+fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8, lldb_dap: []const u8) !u8 {
     const c = try Client.start(io, gpa, &.{ zfls_exe, "dap" });
     defer c.deinit();
     defer {
@@ -148,11 +148,11 @@ fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8) !u8 {
         _ = c.child.wait(io) catch {};
     }
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path" });
-    const r = try c.response(try c.send("launch", .{ .program = "C:\\no\\such.exe", .lldb = true }), "launch");
+    const r = try c.response(try c.send("launch", .{ .program = "C:\\no\\such.exe", .lldb = lldb_dap }), "launch");
     const ok = if (get(r, "success")) |v| v == .bool and v.bool else false;
     const message = str(r, "message") orelse "";
-    check(!ok and contains(message, "gdb") and contains(message, "dbgeng"), "lldb refused on Windows: {s}", .{message}) catch return 1;
-    std.debug.print("zfls dap with lldb-dap: refused on Windows, as it should be\n", .{});
+    check(!ok and contains(message, "23.1.6") and contains(message, "gdb") and contains(message, "dbgeng"), "an older lldb-dap refused on Windows: {s}", .{message}) catch return 1;
+    std.debug.print("zfls dap with lldb-dap: one before LLVM 23.1.6 refused on Windows, as it should be\n", .{});
     return 0;
 }
 
@@ -160,7 +160,7 @@ fn refusedOnWindows(io: Io, gpa: Allocator, zfls_exe: []const u8) !u8 {
 /// compiled, then linked (a compiler of Nix's finds no dsymutil when it
 /// links), then on macOS the debug information gathered into `name.dSYM`
 /// (lldb also reads it from the object file, which stays). LFortran's:
-/// `lfortran -g`, which writes the `.dSYM` itself. The program, or null
+/// as `zfls build-command` answers (dap_lfortran.zig). The program, or null
 fn build(io: Io, a: Allocator, setup: Setup, name: []const u8, flags: []const []const u8) !?[]const u8 {
     const dir = setup.dir;
     const gfortran = setup.fc;
@@ -168,7 +168,7 @@ fn build(io: Io, a: Allocator, setup: Setup, name: []const u8, flags: []const []
     const obj = try std.Io.Dir.path.join(a, &.{ dir, try a.print("{s}.o", .{name}) });
     const exe = try std.Io.Dir.path.join(a, &.{ dir, if (builtin.target.os.tag == .windows) try a.print("{s}.exe", .{name}) else name });
     if (setup.compiler == .lfortran) {
-        dap_lfortran.build(io, a, setup.fc, setup.build_env.?, dir, src, exe) catch return null;
+        dap_lfortran.build(io, a, setup.zfls, setup.fc, setup.build_env.?, dir, src, exe) catch return null;
         return exe;
     }
     var compile: std.ArrayList([]const u8) = .empty;
@@ -331,7 +331,6 @@ fn gfortranRuntime(io: Io, gpa: Allocator, setup: Setup) !void {
 }
 
 fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
-    if (setup.compiler == .lfortran and builtin.target.os.tag == .macos) return std.debug.print("skipped: LFortran's ERROR STOP aborts in a -g program on macOS\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -343,7 +342,6 @@ fn errorStop(io: Io, gpa: Allocator, setup: Setup) !void {
 /// Attaching to a running program, pausing it and ending it (gfortran's:
 /// the debugger's part, which LFortran's would not change)
 fn attach(io: Io, gpa: Allocator, setup: Setup) !void {
-    if (builtin.target.os.tag == .windows) return std.debug.print("skipped: not on Windows\n", .{});
     if (setup.compiler != .gfortran) return std.debug.print("skipped: gfortran's only\n", .{});
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -359,7 +357,7 @@ fn attach(io: Io, gpa: Allocator, setup: Setup) !void {
     var ended = false;
     defer if (!ended) c.end(true);
     _ = try c.request("initialize", .{ .adapterID = "fortran", .linesStartAt1 = true, .columnsStartAt1 = true, .pathFormat = "path" });
-    const attached = try c.send("attach", .{ .processId = child.id.?, .program = exe });
+    const attached = try c.send("attach", .{ .processId = dap.processId(child), .program = exe });
     _ = try c.event("initialized");
     _ = try c.request("configurationDone", .{});
     _ = try Client.bodyOf(try c.response(attached, "attach"), "attach");
@@ -368,16 +366,34 @@ fn attach(io: Io, gpa: Allocator, setup: Setup) !void {
     const thread = int(threads[0], "id").?;
     _ = try c.request("pause", .{ .threadId = thread });
     const stopped = get(try c.event("stopped"), "body").?;
-    const stack = items(try c.request("stackTrace", .{ .threadId = int(stopped, "threadId") orelse thread }), "stackFrames");
-    const ours = for (stack) |f| {
-        if (inSource(f, "sleeper.f90")) break f;
-    } else Value.null;
+    var stack = items(try c.request("stackTrace", .{ .threadId = int(stopped, "threadId") orelse thread }), "stackFrames");
+    var ours = programFrame(stack);
+    // on Windows the thread that stops is the debugger's, made for the
+    // pause: the program's frame is in one of the others
+    if (ours == .null and builtin.target.os.tag == .windows) for (threads) |t| {
+        const other = items(try c.request("stackTrace", .{ .threadId = int(t, "id").? }), "stackFrames");
+        ours = programFrame(other);
+        if (ours != .null) {
+            stack = other;
+            break;
+        }
+    };
     try check(eql(str(stopped, "reason"), "pause"), "paused ({s})", .{str(stopped, "reason") orelse "?"});
     try check(ours != .null, "in the program, the runtime's frames de-emphasized: {s}", .{str(stack[0], "presentationHint") orelse "-"});
+    const t0 = Io.Clock.awake.now(io);
     c.end(true);
     ended = true;
-    const term = try child.wait(io);
-    try check(term != .exited or term.exited != 0, "the program ended with the session", .{});
+    _ = try child.wait(io);
+    // it sleeps two minutes: ended sooner, it was ended (on Windows with
+    // exit code 0, by TerminateProcess)
+    const ms = t0.durationTo(Io.Clock.awake.now(io)).toMilliseconds();
+    try check(ms < 60_000, "the program ended with the session ({d} ms)", .{ms});
+}
+
+fn programFrame(stack: []const Value) Value {
+    return for (stack) |f| {
+        if (inSource(f, "sleeper.f90")) break f;
+    } else Value.null;
 }
 
 /// The program's input and output in a terminal, which script(1) gives a

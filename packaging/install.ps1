@@ -56,6 +56,19 @@ param(
         try { & $Exe @Arguments 2>$null } finally { $ErrorActionPreference = $saved }
     }
 
+    # The same, with what the program wrote to stderr as text, for messages
+    function Invoke-Captured([string]$Exe, [string[]]$Arguments) {
+        $saved = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & $Exe @Arguments 2>&1 | ForEach-Object { "$_" } } finally { $ErrorActionPreference = $saved }
+    }
+
+    # C:\a\b as /c/a/b, the form an MSYS2 program (Git for Windows' gpg) reads
+    function ConvertTo-MsysPath([string]$Path) {
+        $p = $Path -replace '\\', '/'
+        if ($p -match '^([A-Za-z]):/(.*)$') { '/' + $matches[1].ToLower() + '/' + $matches[2] } else { $p }
+    }
+
     # The architecture of Windows itself, also when this PowerShell runs
     # emulated (x64 on Arm)
     $arch = $null
@@ -132,20 +145,32 @@ param(
             }
             $key = Join-Path $tmp 'key.asc'
             try { Get-Https $keyUrl $key } catch { throw "install.ps1: cannot download the release signing key ${keyUrl}: $_" }
-            # a keyring of its own: the user's is not touched
+            # a keyring of its own: the user's is not touched; a short path, as
+            # MSYS2's gpg fails on agent socket paths over 108 bytes, even
+            # when it only looks for an agent
             $savedHome = $env:GNUPGHOME
-            $env:GNUPGHOME = Join-Path $tmp 'gnupg'
-            New-Item -ItemType Directory -Path $env:GNUPGHOME | Out-Null
+            $gpgHome = Join-Path ([IO.Path]::GetTempPath()) ('zg' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Path $gpgHome | Out-Null
+            $env:GNUPGHOME = $gpgHome
+            # Git for Windows' gpg, an MSYS2 program (its home is /c/...), takes
+            # a Windows path in GNUPGHOME as relative to the current directory
+            if (Invoke-Quiet gpg @('--version') | Where-Object { $_ -match '^Home: /' }) {
+                $env:GNUPGHOME = ConvertTo-MsysPath $gpgHome
+            }
             try {
-                Invoke-Quiet gpg @('--batch', '--quiet', '--import', $key) | Out-Null
-                if ($LASTEXITCODE -ne 0) { throw "install.ps1: cannot import the release signing key" }
-                $status = Invoke-Quiet gpg @('--batch', '--status-fd', '1', '--verify', $asc, $sums)
+                # no gpg-agent: checking a signature needs none
+                $said = Invoke-Captured gpg @('--batch', '--quiet', '--no-autostart', '--import', $key)
+                if ($LASTEXITCODE -ne 0) {
+                    throw "install.ps1: cannot import the release signing key with $((Get-Command gpg).Source) (GNUPGHOME $env:GNUPGHOME): $(($said | Select-Object -Last 4) -join ' | ')"
+                }
+                $status = Invoke-Quiet gpg @('--batch', '--no-autostart', '--status-fd', '1', '--verify', $asc, $sums)
                 if ($LASTEXITCODE -ne 0) { throw "install.ps1: SHA256SUMS of v$ver does not match its signature" }
                 if (-not ($status | Where-Object { $_ -match "^\[GNUPG:\] VALIDSIG .*$keyFpr" })) {
                     throw "install.ps1: SHA256SUMS of v$ver is not signed by the release key ($keyFpr)"
                 }
             } finally {
                 $env:GNUPGHOME = $savedHome
+                Remove-Item -Recurse -Force $gpgHome -ErrorAction SilentlyContinue
             }
             Write-Host "Verified the signature of SHA256SUMS (release key $keyFpr)"
         } elseif ((Get-Command gh -ErrorAction SilentlyContinue) -and (& { Invoke-Quiet gh @('auth', 'status') | Out-Null; $LASTEXITCODE -eq 0 })) {

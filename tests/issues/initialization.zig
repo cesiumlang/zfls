@@ -36,7 +36,7 @@ test "after a refused initialize: ServerNotInitialized (#368)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const w = try h.Workspace.init(&files, .{});
+    const w = try h.Workspace.init(&files, .{ .uninitialized = true });
     defer w.deinit();
     // invalid params: a number for the root's URI
     const refused = (try send(w, a, 101, "initialize", .{ .rootUri = 5, .capabilities = .{} })).?;
@@ -54,7 +54,7 @@ test "capabilities that is not an object: none, and the server initialized (#368
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const w = try h.Workspace.init(&files, .{});
+    const w = try h.Workspace.init(&files, .{ .uninitialized = true });
     defer w.deinit();
     // as Zig's std.json writes an empty `.{}`: an array
     const init = (try send(w, a, 201, "initialize", .{ .rootUri = try w.uri(""), .capabilities = [_]u8{} })).?;

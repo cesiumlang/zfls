@@ -35,6 +35,7 @@ const macros = @import("macros.zig");
 const bindc = @import("bindc.zig");
 const name_places = @import("name_places.zig");
 const groups = @import("groups.zig");
+const rename_checks = @import("rename_checks.zig");
 
 pub fn hasLinkAttr(o: *const Obj) bool {
     return switch (o.kind) {
@@ -454,9 +455,15 @@ pub fn serveRename(self: *Server, a: Allocator, params: lsp.RenameParams) !Value
     const all = if (try renamedImport(self, a, d.file, d.line, d.col, d.obj)) |ri|
         try aliasReferences(self, a, renameFile(ri, d.file), d.obj, ri)
     else blk: {
-        const obj = functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj);
+        // a binding from the root of its overrides, which renames them all (#953)
+        const obj = rename_checks.rootBinding(functionOfResult((try definition.callerTarget(self, a, d.file, d.line, d.col, d.obj)) orelse d.obj));
         const rs = referenceScope(self, obj) orelse return .null;
-        break :blk try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, true);
+        const refs = try getAllReferences(self, a, obj, rs.type_mem, rs.restrict, true);
+        if (try rename_checks.clash(self, a, obj, refs, params.newName)) |other| {
+            self.postMessage(a, try a.print("Rename failed: \"{s}\" is already the name of \"{s}\" (line {d})", .{ params.newName, other.name, other.sline }), C.Severity.warn);
+            return .null;
+        }
+        break :blk refs;
     };
     if (all.len == 0) {
         self.postMessage(a, "Rename failed: No usages found to rename", C.Severity.warn);

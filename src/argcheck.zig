@@ -53,6 +53,7 @@ const isName = typing.isName;
 const splitArgs = typing.splitArgs;
 const keywordOf = typing.keywordOf;
 const matching = typing.matching;
+const expr_type = @import("argcheck/expr_type.zig");
 
 pub const Kind = enum { arguments, kinds, intent_in, not_definable, too_short, storage_short, constant_assigned, parameter_without_value, duplicate_dummy, bad_kind, subscript_count, unknown_component, allocate_object, allocate_duplicate, allocate_shape, assignment_type, condition_type, intrinsic_arguments, unbalanced_parentheses, dangling_operator, abstract_type_declared, extends_unknown_type, pure_function_argument, unknown_io_specifier };
 
@@ -92,7 +93,7 @@ pub fn rankOf(dims: ?[]const u8) ?usize {
 
 /// What variable `v` takes its type from: what an associate name is
 /// linked to, else `v`; null when that is no variable
-fn typeSource(v: *Obj) ?*Obj {
+pub fn typeSource(v: *Obj) ?*Obj {
     var o = v;
     // (a chain of links is free of loops)
     for (0..64) |_| {
@@ -225,7 +226,7 @@ pub const Checker = struct {
     }
 
     /// The kinds of a literal in `scope` of the file checked
-    fn kindsIn(c: *const Checker, scope: ?*Obj) default_kinds.Kinds {
+    pub fn kindsIn(c: *const Checker, scope: ?*Obj) default_kinds.Kinds {
         var unit: *const Obj = scope orelse return c.kinds;
         while (unit.parent) |p| unit = p;
         const f = c.ast.file orelse return c.kinds;
@@ -467,12 +468,8 @@ pub const Checker = struct {
         // the kinds, when both are known
         if (known and want != .character and want != .derived) {
             const want_kind = try c.kindOfVar(dummy);
-            const have_kind = if (typed.literal)
-                try c.literalKind(actual, scope, line_no)
-            else if (typed.obj) |v|
-                try c.kindOfVar(v)
-            else
-                null;
+            // a literal's, a variable's, an expression's (#987)
+            const have_kind = typed.kind;
             if (want_kind != null and have_kind != null) {
                 if (want_kind.? != have_kind.?) return .{ .kind = .{ .cat = want, .want = want_kind.?, .have = have_kind.? } };
             } else known = false;
@@ -522,177 +519,15 @@ pub const Checker = struct {
         return if (known) .fits else .unknown;
     }
 
-    /// The type of an argument: a literal, a variable or a part of one
-    /// (`a(i)%b(:)`), or an expression of these with intrinsic operators;
-    /// null when it cannot be told (a function, a user-defined operator, a
-    /// derived type in an expression)
+    /// The type of an argument or an expression; null when it cannot be
+    /// told (expr_type.zig)
     pub fn exprType(c: *Checker, expr_in: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
-        if (depth > 16) return null;
-        const e = std.mem.trim(u8, expr_in, " ");
-        if (e.len == 0) return null;
-        if (literalCategory(e)) |lc| return .{ .cat = lc, .literal = true };
-        if (std.ascii.isAlphabetic(e[0])) if (try c.designator(e, scope, line_no, depth)) |t| return t;
-        // a conditional expression (F2023): the type of its values (#733)
-        if (typing.conditionalValue(e)) |value| {
-            const t = (try c.exprType(value, scope, line_no, depth + 1)) orelse return null;
-            return .{ .cat = t.cat, .array = t.array, .rank = t.rank, .rank_known = t.rank_known, .obj = t.obj };
-        }
-        // a whole expression in parentheses, or a complex literal
-        if (e[0] == '(' and matching(e, 0) == e.len - 1) {
-            const inner = e[1 .. e.len - 1];
-            if (topLevel(inner, ',')) |comma| {
-                const re = (try c.exprType(inner[0..comma], scope, line_no, depth + 1)) orelse return null;
-                const im = (try c.exprType(inner[comma + 1 ..], scope, line_no, depth + 1)) orelse return null;
-                if (re.literal and im.literal and numeric(re.cat) and numeric(im.cat)) return .{ .cat = .complex };
-                return null;
-            }
-            const t = (try c.exprType(inner, scope, line_no, depth + 1)) orelse return null;
-            return .{ .cat = t.cat, .array = t.array, .rank = t.rank, .rank_known = t.rank_known };
-        }
-        // an array constructor: the type of its first element
-        if ((e[0] == '[' and e[e.len - 1] == ']') or (e.len >= 4 and std.mem.startsWith(u8, e, "(/") and std.mem.endsWith(u8, e, "/)"))) {
-            const inner = if (e[0] == '[') e[1 .. e.len - 1] else e[2 .. e.len - 2];
-            // a type spec (`[real :: ...]`) or an implied DO
-            if (std.mem.find(u8, inner, "::") != null or std.mem.findScalar(u8, inner, '=') != null) return null;
-            const first = inner[0 .. topLevel(inner, ',') orelse inner.len];
-            const t = (try c.exprType(first, scope, line_no, depth + 1)) orelse return null;
-            return .{ .cat = t.cat, .array = true, .rank = 1 };
-        }
-        // operands and the operators between them
-        var cat: Category = .unknown;
-        var array = false;
-        var rank: usize = 0;
-        var rank_known = true;
-        var relational = false;
-        var logical_op = false;
-        var concat = false;
-        var operands: usize = 0;
-        var i: usize = 0;
-        var want_operand = true;
-        while (true) {
-            while (i < e.len and e[i] == ' ') i += 1;
-            if (i >= e.len) break;
-            if (want_operand) {
-                if (e[i] == '+' or e[i] == '-') {
-                    i += 1;
-                    continue;
-                }
-                if (std.ascii.startsWithIgnoreCase(e[i..], ".not.")) {
-                    logical_op = true;
-                    i += 5;
-                    continue;
-                }
-                const end = operandEnd(e, i) orelse return null;
-                const t = (try c.exprType(e[i..end], scope, line_no, depth + 1)) orelse return null;
-                operands += 1;
-                array = array or t.array;
-                rank = @max(rank, t.rank);
-                rank_known = rank_known and t.rank_known;
-                cat = if (operands == 1) t.cat else promote(cat, t.cat);
-                i = end;
-                want_operand = false;
-                continue;
-            }
-            // an operator
-            const rest = e[i..];
-            if (rest[0] == '.') {
-                const close = std.mem.findScalarPos(u8, e, i + 1, '.') orelse return null;
-                const word = e[i + 1 .. close];
-                if (oneOf(word, &.{ "eq", "ne", "lt", "le", "gt", "ge" })) {
-                    relational = true;
-                } else if (oneOf(word, &.{ "and", "or", "eqv", "neqv" })) {
-                    logical_op = true;
-                } else return null;
-                i = close + 1;
-            } else if (std.mem.startsWith(u8, rest, "//")) {
-                concat = true;
-                i += 2;
-            } else if (std.mem.startsWith(u8, rest, "**")) {
-                i += 2;
-            } else if (std.mem.startsWith(u8, rest, "==") or std.mem.startsWith(u8, rest, "/=") or std.mem.startsWith(u8, rest, "<=") or std.mem.startsWith(u8, rest, ">=")) {
-                relational = true;
-                i += 2;
-            } else if (rest[0] == '<' or rest[0] == '>') {
-                relational = true;
-                i += 1;
-            } else if (std.mem.findScalar(u8, "+-*/", rest[0]) != null) {
-                i += 1;
-            } else return null;
-            want_operand = true;
-        }
-        if (want_operand or operands < 2) return null;
-        if (cat == .unknown) return null;
-        if (relational or logical_op) return .{ .cat = .logical, .array = array, .rank = rank, .rank_known = rank_known };
-        if (concat) return if (cat == .character) .{ .cat = .character, .array = array, .rank = rank, .rank_known = rank_known } else null;
-        if (!numeric(cat)) return null;
-        return .{ .cat = cat, .array = array, .rank = rank, .rank_known = rank_known };
-    }
-
-    /// The type of a variable or a part of one: `x`, `a(i)` (a scalar),
-    /// `a(:)` or `a(v)` with an array `v` (an array), `p%c`, `s(1:3)` (a
-    /// substring); null when it is no variable (a function, an intrinsic)
-    fn designator(c: *Checker, e: []const u8, scope: ?*Obj, line_no: usize, depth: usize) Allocator.Error!?Typed {
-        var v: ?*Obj = null;
-        var v_type: *Obj = undefined;
-        var array = false;
-        var subscripted_last = false;
-        var rank_known = true;
-        // the rank of the part that has one
-        var rank: usize = 0;
-        var i: usize = 0;
-        while (true) {
-            const ns = i;
-            while (i < e.len and (std.ascii.isAlphanumeric(e[i]) or e[i] == '_')) i += 1;
-            if (i == ns or !std.ascii.isAlphabetic(e[ns])) return null;
-            const name = e[ns..i];
-            const obj = if (v) |parent|
-                (try c.component(parent, name)) orelse return null
-            else
-                (try c.lookup(scope, name, line_no)) orelse return null;
-            if (obj.kind != .variable) return null;
-            // an associate name: the type of what it is linked to, the rank
-            // its selector or section gives it (#707, #714)
-            const typ = typeSource(obj) orelse return null;
-            if (!dimensions.known(obj)) rank_known = false;
-            const obj_dims = dimensions.of(obj);
-            const is_array = dimensions.isArray(obj);
-            while (i < e.len and e[i] == ' ') i += 1;
-            var subscripted = false;
-            // subscripts, then a substring
-            var groups: usize = 0;
-            while (i < e.len and e[i] == '(') : (groups += 1) {
-                const close = matching(e, i) orelse return null;
-                if (groups == 0 and is_array) {
-                    subscripted = true;
-                    const sec = (try c.sectionRank(e[i + 1 .. close], scope, line_no, depth)) orelse return null;
-                    if (sec > 0) array = true;
-                    rank = @max(rank, sec);
-                } else if (varCategory(typ) != .character) return null;
-                i = close + 1;
-                while (i < e.len and e[i] == ' ') i += 1;
-            }
-            if (is_array and !subscripted) {
-                array = true;
-                rank = @max(rank, rankOf(obj_dims) orelse 0);
-            }
-            v = obj;
-            v_type = typ;
-            subscripted_last = groups > 0;
-            if (i < e.len and e[i] == '%') {
-                i += 1;
-                while (i < e.len and e[i] == ' ') i += 1;
-                continue;
-            }
-            break;
-        }
-        if (i != e.len) return null;
-        const obj = v.?;
-        return .{ .cat = varCategory(v_type), .array = array, .rank = rank, .designator = true, .subscripted = subscripted_last, .rank_known = rank_known, .obj = obj };
+        return expr_type.of(c, expr_in, scope, line_no, depth);
     }
 
     /// A component of a variable of derived type, in its type or a type
     /// that type extends
-    fn component(c: *Checker, v: *Obj, name: []const u8) !?*Obj {
+    pub fn component(c: *Checker, v: *Obj, name: []const u8) !?*Obj {
         var t = (try v.getTypeObj(c.env)) orelse return null;
         const lower = try std.ascii.allocLowerString(c.a, name);
         var n: usize = 0;
@@ -707,7 +542,7 @@ pub const Checker = struct {
     /// The rank of the section that subscripts select: the number of `:`
     /// and of arrays (vector subscripts) among them, 0 for an element; null
     /// when a subscript's type cannot be told
-    fn sectionRank(c: *Checker, subs: []const u8, scope: ?*Obj, line_no: usize, depth: usize) !?usize {
+    pub fn sectionRank(c: *Checker, subs: []const u8, scope: ?*Obj, line_no: usize, depth: usize) !?usize {
         var rank: usize = 0;
         var start: usize = 0;
         while (start <= subs.len) {
@@ -727,7 +562,7 @@ pub const Checker = struct {
 
     /// The kind of a variable's type, as gfortran numbers kinds (4 for a
     /// default REAL, 8 for DOUBLE PRECISION), or null when it cannot be told
-    fn kindOfVar(c: *Checker, v_in: *Obj) !?i64 {
+    pub fn kindOfVar(c: *Checker, v_in: *Obj) !?i64 {
         if (v_in.kind != .variable) return null;
         const v = typeSource(v_in) orelse return null;
         const desc = std.mem.trim(u8, v.descOf(), " ");
@@ -754,7 +589,7 @@ pub const Checker = struct {
 
     /// The kind of a literal argument (`1.0` 4, `1d0` 8, `1.0_dp` that of
     /// `dp`)
-    fn literalKind(c: *Checker, lit: []const u8, scope: ?*Obj, line_no: usize) !?i64 {
+    pub fn literalKind(c: *Checker, lit: []const u8, scope: ?*Obj, line_no: usize) !?i64 {
         const k = c.kindsIn(scope);
         if (lit[0] == '.') if (std.ascii.startsWithIgnoreCase(lit, ".true.") or std.ascii.startsWithIgnoreCase(lit, ".false.")) return k.integer;
         const real = literalCategory(lit) == .real;

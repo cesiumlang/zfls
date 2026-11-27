@@ -52,6 +52,10 @@ pub const Loaded = struct {
 pub const Result = union(enum) { ok: Loaded, err: []const u8 };
 
 pub fn parse(a: Allocator, scratch: Allocator, text: []const u8, name: []const u8) Allocator.Error!Result {
+    // an empty `.zflsrc` is a TOML file of no options (#990); fortls's
+    // JSON files say they are empty
+    if (std.mem.eql(u8, std.Io.Dir.path.basename(name), ".zflsrc") and std.mem.trim(u8, text, " \t\r\n\xEF\xBB\xBF").len == 0)
+        return .{ .ok = .{ .cfg = .{ .object = .empty }, .format = .toml } };
     const format = formatOf(text);
     var cfg: json.Value = undefined;
     switch (format) {
@@ -159,4 +163,15 @@ test "errors name the file and the place" {
     try std.testing.expect(std.mem.startsWith(u8, j.err, "Error: \"<string>:1 Unexpected"));
     const w = try parse(a, a, "[1, 2]", ".fortlsrc");
     try std.testing.expect(w == .err);
+}
+
+test "an empty .zflsrc is no options; an empty .fortlsrc an error (#990)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "", "\n\n", "\xEF\xBB\xBF" }) |text| {
+        const r = try parse(a, a, text, "/w/.zflsrc");
+        try std.testing.expectEqual(@as(usize, 0), r.ok.cfg.object.count());
+    }
+    try std.testing.expect((try parse(a, a, "", "/w/.fortlsrc")) == .err);
 }

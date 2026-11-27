@@ -57,7 +57,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFpmTests(context, output, folderClients);
   registerPfunitTests(context, output, folderClients);
   registerIfxSetup(context, output, () => findServer(context, vscode.workspace.workspaceFolders?.[0]).command);
-  registerDebugType(context, output, () => findServer(context, vscode.workspace.workspaceFolders?.[0]).command);
+  registerDebugType(context, output, (folder) => findServer(context, folder ?? vscode.workspace.workspaceFolders?.[0]).command);
   registerModuleVariables(context, clientForUri);
   registerConvertCommands(context, clientForUri);
   context.subscriptions.push(
@@ -90,6 +90,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     }),
     vscode.workspace.onDidOpenTextDocument((doc) => void ensureClient(doc)),
+    // the workspace's own settings, and fypp, once it is trusted
+    vscode.workspace.onDidGrantWorkspaceTrust(() => void restartAll()),
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
       for (const folder of e.removed) {
         void stopClient(folder.uri.toString());
@@ -221,8 +223,7 @@ async function clientsForC(document: vscode.TextDocument): Promise<LanguageClien
         const client = startClient(where.root, folder, folder.uri.toString() === untitledFolder()?.uri.toString());
         clients.set(key, client);
         if (!(await client)) {
-          clients.delete(key);
-          disposeWatchers(key);
+          forgetFailedStart(key, client);
         }
       }
     }
@@ -368,7 +369,7 @@ async function toggleFixedFormComment(): Promise<void> {
 }
 
 export async function deactivate(): Promise<void> {
-  await Promise.all([...clients.keys()].map((key) => stopClient(key)));
+  await Promise.allSettled([...clients.keys()].map((key) => stopClient(key)));
 }
 
 async function stopClient(key: string): Promise<void> {
@@ -376,7 +377,14 @@ async function stopClient(key: string): Promise<void> {
   clients.delete(key);
   serverState.delete(key);
   disposeWatchers(key);
-  await (await client)?.stop();
+  const running = await client?.catch(() => undefined);
+  try {
+    await running?.stop();
+  } catch (e) {
+    // a stop that times out, or one while the client starts
+    output?.warn(`zfls did not stop: ${String(e)}`);
+    await running?.dispose().catch(() => undefined);
+  }
 }
 
 /** After a change of the zfls settings (or of `files.associations`): each
@@ -384,6 +392,11 @@ async function stopClient(key: string): Promise<void> {
  * (workspace/didChangeConfiguration), which it applies at once, or, when it
  * cannot take them so, every server is restarted */
 async function updateServers(e: vscode.ConfigurationChangeEvent): Promise<void> {
+  // a zfls.path set after "no zfls executable found" starts the servers
+  if (clients.size === 0 && e.affectsConfiguration("zfls.path")) {
+    await restartAll();
+    return;
+  }
   const sends: { client: LanguageClient; settings: ServerSettings }[] = [];
   for (const [key, pending] of clients) {
     const client = await pending;
@@ -547,6 +560,14 @@ async function startOnce(root: vscode.Uri, folder: vscode.WorkspaceFolder | unde
   const client = startClient(root, folder, untitled);
   clients.set(key, client);
   if (!(await client)) {
+    forgetFailedStart(key, client);
+  }
+}
+
+/** After a start of `key`'s server that failed: its entry, unless a newer
+ * start has replaced it */
+function forgetFailedStart(key: string, client: Promise<LanguageClient | undefined>): void {
+  if (clients.get(key) === client) {
     clients.delete(key);
     disposeWatchers(key);
   }
@@ -632,15 +653,19 @@ async function startClient(
 ): Promise<LanguageClient | undefined> {
   const { command, tried } = findServer(context, folder);
   if (!command) {
-    const choice = await vscode.window.showErrorMessage(
-      tried
-        ? vscode.l10n.t("zfls: there is no zfls at {0}, which zfls.path names.", tried)
-        : vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."),
-      vscode.l10n.t("Open Settings"),
-    );
-    if (choice) {
-      await vscode.commands.executeCommand("workbench.action.openSettings", "zfls.path");
-    }
+    // not awaited: the start, and those waiting for it, end now
+    void vscode.window
+      .showErrorMessage(
+        tried
+          ? vscode.l10n.t("zfls: there is no zfls at {0}, which zfls.path names.", tried)
+          : vscode.l10n.t("zfls: no zfls executable found. Set zfls.path, or put zfls on the PATH."),
+        vscode.l10n.t("Open Settings"),
+      )
+      .then((choice) => {
+        if (choice) {
+          void vscode.commands.executeCommand("workbench.action.openSettings", "zfls.path");
+        }
+      });
     return undefined;
   }
   const args = serverArguments(folder);

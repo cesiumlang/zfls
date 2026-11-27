@@ -8,8 +8,8 @@ const regex = @import("../regex.zig");
 
 /// A macro ready to be substituted
 pub const Compiled = struct {
-    /// Matches a use of the macro; a function-like one's arguments are its
-    /// groups, in order
+    /// Matches a use of the macro: its name, and for a function-like one the
+    /// opening parenthesis of its arguments
     re: regex.Regex,
     /// The parameter names of a function-like macro, null for an object-like one
     params: ?[]const []const u8,
@@ -31,41 +31,91 @@ pub fn compile(a: Allocator, name: []const u8, args: ?[]const u8) !Compiled {
     if (str.strip(arg_text).len > 0) {
         for (try str.split(a, arg_text, ",")) |p| try params.append(a, str.strip(p));
     }
-    var pat: std.ArrayList(u8) = .empty;
-    try pat.print(a, "\\b{s}\\s*\\(", .{name});
-    if (params.items.len == 0) try pat.appendSlice(a, "\\s*");
-    for (params.items, 0..) |_, i| {
-        if (i > 0) try pat.append(a, ',');
-        try pat.appendSlice(a, "(.*)");
-    }
-    try pat.appendSlice(a, "\\)");
-    return .{ .re = try regex.Regex.compile(a, pat.items, .{}), .params = params.items };
+    const re = try regex.Regex.compile(a, try a.print("\\b{s}\\s*\\(", .{name}), .{});
+    return .{ .re = re, .params = params.items };
 }
 
 /// Substitute the uses of macro `c` with `value` in `line`; `count` is the
 /// number of uses
 pub fn substitute(a: Allocator, c: *const Compiled, value: []const u8, line: []const u8) !regex.Regex.SubResult {
     var out: std.ArrayList(u8) = .empty;
-    var it = c.re.iterator(line);
+    var args: std.ArrayList([]const u8) = .empty;
     var last: usize = 0;
+    var pos: usize = 0;
     var count: usize = 0;
-    while (it.next()) |m| {
+    while (pos <= line.len) {
+        const m = c.re.searchAt(line, pos) orelse break;
+        var end = m.end(0);
+        args.clearRetainingCapacity();
+        if (c.params) |params| {
+            // a use with as many arguments as the macro has parameters; a
+            // lone quote in one (`STR( a"b )`) is no character literal
+            end = try arguments(a, line, end, &args, true) orelse blk: {
+                args.clearRetainingCapacity();
+                break :blk try arguments(a, line, end, &args, false);
+            } orelse {
+                pos = m.end(0);
+                continue;
+            };
+            const blank = args.items.len == 1 and str.strip(args.items[0]).len == 0;
+            if (args.items.len != params.len and !(params.len == 0 and blank)) {
+                pos = m.end(0);
+                continue;
+            }
+        }
         try out.appendSlice(a, line[last..m.start(0)]);
-        try appendValue(a, &out, c, value, m);
-        last = m.end(0);
+        try appendValue(a, &out, c, value, args.items);
+        last = end;
+        pos = if (end > m.start(0)) end else end + 1;
         count += 1;
     }
     try out.appendSlice(a, line[last..]);
     return .{ .out = out.items, .count = count };
 }
 
-/// Append the value of macro `c` with the arguments of use `m` in place of
+/// The arguments of a use whose opening parenthesis ends before `from`,
+/// appended to `args`: split at the commas outside parentheses and
+/// character literals (when `quotes`). The index after the closing
+/// parenthesis, or null when the line ends before it.
+fn arguments(a: Allocator, line: []const u8, from: usize, args: *std.ArrayList([]const u8), quotes: bool) !?usize {
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+    var start = from;
+    for (line[from..], from..) |ch, i| {
+        if (quote) |q| {
+            if (ch == q) quote = null;
+            continue;
+        }
+        switch (ch) {
+            '\'', '"' => if (quotes) {
+                quote = ch;
+            },
+            '(', '[' => depth += 1,
+            ')', ']' => {
+                if (depth == 0) {
+                    if (ch == ']') return null;
+                    try args.append(a, line[start..i]);
+                    return i + 1;
+                }
+                depth -= 1;
+            },
+            ',' => if (depth == 0) {
+                try args.append(a, line[start..i]);
+                start = i + 1;
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+/// Append the value of macro `c` with the arguments `args` in place of
 /// its parameters. The value is taken as it is, never as a regex template.
 /// Outside character literals and `!` comments, `a ## b` pastes `a` and `b`
 /// together (Intel fpp, flang, ISO cpp), `#param` is the argument in double
 /// quotes and `/**/` is removed (gfortran's traditional cpp joins the words
 /// around it).
-fn appendValue(a: Allocator, out: *std.ArrayList(u8), c: *const Compiled, v: []const u8, m: regex.Match) !void {
+fn appendValue(a: Allocator, out: *std.ArrayList(u8), c: *const Compiled, v: []const u8, args: []const []const u8) !void {
     const params = c.params orelse &.{};
     const value_start = out.items.len;
     var quote: ?u8 = null;
@@ -77,7 +127,7 @@ fn appendValue(a: Allocator, out: *std.ArrayList(u8), c: *const Compiled, v: []c
             const start = i;
             while (i < v.len and regex.isWordChar(v[i])) i += 1;
             const word = v[start..i];
-            try out.appendSlice(a, argument(params, m, word) orelse word);
+            try out.appendSlice(a, argument(params, args, word) orelse word);
             continue;
         }
         i += 1;
@@ -108,7 +158,7 @@ fn appendValue(a: Allocator, out: *std.ArrayList(u8), c: *const Compiled, v: []c
                 while (j < v.len and isBlank(v[j])) j += 1;
                 const name_start = j;
                 while (j < v.len and regex.isWordChar(v[j])) j += 1;
-                if (argument(params, m, v[name_start..j])) |arg| {
+                if (argument(params, args, v[name_start..j])) |arg| {
                     try appendQuoted(a, out, arg);
                     i = j;
                     continue;
@@ -120,11 +170,11 @@ fn appendValue(a: Allocator, out: *std.ArrayList(u8), c: *const Compiled, v: []c
     }
 }
 
-/// The argument of use `m` for parameter `word`, without the white space
+/// The argument in `args` for parameter `word`, without the white space
 /// around it; null when `word` is no parameter
-fn argument(params: []const []const u8, m: regex.Match, word: []const u8) ?[]const u8 {
+fn argument(params: []const []const u8, args: []const []const u8, word: []const u8) ?[]const u8 {
     for (params, 0..) |p, k| {
-        if (std.mem.eql(u8, p, word)) return str.strip(m.group(@intCast(k + 1)) orelse "");
+        if (std.mem.eql(u8, p, word)) return if (k < args.len) str.strip(args[k]) else "";
     }
     return null;
 }
@@ -221,4 +271,14 @@ test "empty C comments are removed outside character literals and comments (#226
     try testing.expectEqualStrings("integer :: prefix", try removeEmptyComments(a, "integer :: pre/**/fix"));
     try testing.expectEqualStrings("print *, \"a##b\", 'x/**/y'", try removeEmptyComments(a, "print *, \"a##b\", 'x/**/y'"));
     try testing.expectEqualStrings("x = ab ! c/**/d", try removeEmptyComments(a, "x = a/**/b ! c/**/d"));
+}
+
+test "a function-like macro's arguments end at their closing parenthesis (#951)" {
+    try expectSubstituted("SQ", "x", "((x)*(x))", "call foo(SQ(a), b)", "call foo(((a)*(a)), b)");
+    try expectSubstituted("N", "x", "x", "real :: v(N(3)), w", "real :: v(3), w");
+    try expectSubstituted("ADD", "a, b", "a + b", "y = ADD(f(p, q), 'x,)') * ADD(1, 2)", "y = f(p, q) + 'x,)' * 1 + 2");
+    // a use with another number of arguments, or unclosed, is left alone
+    try expectSubstituted("ONE", "x", "x", "y = ONE(1, 2)", "y = ONE(1, 2)");
+    try expectSubstituted("ONE", "x", "x", "y = ONE(1", "y = ONE(1");
+    try expectSubstituted("SQ", "x", "x*x", "y = SQ(SQ(2))", "y = SQ(2)*SQ(2)");
 }

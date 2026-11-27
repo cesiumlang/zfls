@@ -145,7 +145,7 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
             } else break;
             tmp_str = try std.mem.concat(a, u8, &.{ tmp_str, test_str[0 .. close + 1] });
             test_str = test_str[close + 1 ..];
-        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension") or std.ascii.startsWithIgnoreCase(tmp_str, "rank")) {
+        } else if (std.ascii.startsWithIgnoreCase(tmp_str, "dimension") or std.ascii.startsWithIgnoreCase(tmp_str, "rank") or std.ascii.startsWithIgnoreCase(tmp_str, "bind")) {
             const mc = helpers.findParenMatch(test_str);
             if (mc < 0) break;
             const mcu: usize = @intCast(mc);
@@ -153,6 +153,12 @@ pub fn parseVarKeywords(a: Allocator, test_str_in: []const u8) E!struct { keywor
             test_str = test_str[mcu + 1 ..];
         }
         tmp_str = lstripChars(tmp_str, ", ");
+        // BIND(C, NAME="x") keeps the case of its binding name (#964)
+        if (std.ascii.startsWithIgnoreCase(tmp_str, "bind")) {
+            try keywords.append(a, try std.mem.concat(a, u8, &.{ "BIND", str.strip(tmp_str)[4..] }));
+            keyword_match = R().KEYWORD_LIST.match(test_str);
+            continue;
+        }
         try keywords.append(a, try std.ascii.allocUpperString(a, str.strip(tmp_str)));
         keyword_match = R().KEYWORD_LIST.match(test_str);
     }
@@ -393,10 +399,12 @@ pub fn readModDef(a: Allocator, line_in: []const u8) E!?DefResult {
     const m = R().MOD.match(line) orelse return null;
     const name = m.group(1).?;
     if (std.ascii.eqlIgnoreCase(name, "procedure")) {
-        const trailing = line[m.end(1)..];
+        // names only: not a comment after them, nor a `::` before (#963)
+        var trailing = str.strip(helpers.beforeComment(line[m.end(1)..]));
+        if (std.mem.startsWith(u8, trailing, "::")) trailing = trailing[2..];
         var names: std.ArrayList([]const u8) = .empty;
         var it = std.mem.splitScalar(u8, trailing, ',');
-        while (it.next()) |n| try names.append(a, try std.ascii.allocLowerString(a, str.strip(n)));
+        while (it.next()) |n| if (str.strip(n).len > 0) try names.append(a, try std.ascii.allocLowerString(a, str.strip(n)));
         return .{ .int_pro = names.items };
     }
     const trailing = line[m.start(1)..];
@@ -502,7 +510,9 @@ pub fn readUseStmt(a: Allocator, line: []const u8) E!?DefResult {
     return .{ .use = .{ .mod_name = use_mod, .only_list = only.items, .renames = renames.items } };
 }
 
-pub fn readImpStmt(a: Allocator, line: []const u8) E!?DefResult {
+pub fn readImpStmt(a: Allocator, line_in: []const u8) E!?DefResult {
+    // the names, without a comment after them (#963)
+    const line = str.rstrip(helpers.beforeComment(line_in));
     const re = &R().IMPORT;
     const m = re.match(line) orelse return null;
     const spec = m.named(re, "spec");
@@ -517,6 +527,7 @@ pub fn readImpStmt(a: Allocator, line: []const u8) E!?DefResult {
     var it = std.mem.splitScalar(u8, trailing, ',');
     while (it.next()) |p| {
         const s = str.strip(p);
+        if (s.len == 0) continue;
         var dup = false;
         for (list.items) |o| if (std.mem.eql(u8, o, s)) {
             dup = true;

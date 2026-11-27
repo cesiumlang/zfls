@@ -43,7 +43,7 @@ pub fn byProcessId(io: Io, gpa: Allocator, p: Program) !void {
     const c = try Client.start(io, gpa, p.argv);
     defer c.deinit();
     defer c.end(false);
-    try session(c, p, &child, .{ .processId = processId(child), .program = p.program }, "attach by process id");
+    try session(c, p, &child, .{ .processId = dap.processId(child), .program = p.program }, "attach by process id");
     c.end(false);
     try check(try finished(io, gpa, &child), "attach by process id: detached, the program ends by itself", .{});
     waited = true;
@@ -153,10 +153,4 @@ fn listening(io: Io, server: *std.process.Child) !?u16 {
         return std.fmt.parseInt(u16, std.mem.trim(u8, line[at + mark.len ..], " \r"), 10) catch null;
     }
     return null;
-}
-
-extern "kernel32" fn GetProcessId(process: std.os.windows.HANDLE) callconv(.winapi) u32;
-
-fn processId(child: std.process.Child) i64 {
-    return if (sysinfo.target.os.tag == .windows) GetProcessId(child.id.?) else child.id.?;
 }

@@ -469,17 +469,19 @@
       "default": []
     },
     "formatter": {
-      "description": "Format documents and selections with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout (default: none)",
-      "type": [
-        "string",
-        "null"
-      ],
+      "description": "Format documents and selections with zfls, its own formatter, which needs no tool; or with findent, fprettify, codee (Codee's codee format), forformat, or custom (formatter_path with formatter_args), installed separately, which zfls gives the text on stdin and reads the result from stdout; none: no formatting (default: zfls)",
+      "type": "string",
       "enum": [
+        "zfls",
         "findent",
         "fprettify",
+        "codee",
+        "forformat",
+        "custom",
         "none",
         null
-      ]
+      ],
+      "default": "zfls"
     },
     "formatter_path": {
       "description": "The formatter executable, or the directory that holds it (default: the one on the PATH; for codee, codee_path's); the command of the custom formatter",
@@ -500,13 +502,17 @@
       "default": []
     },
     "formatter_fixed": {
-      "description": "The formatter of fixed-form files: findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)",
+      "description": "The formatter of fixed-form files: zfls, findent, codee, forformat, custom, or none (default: the formatter option's; fprettify formats free form only)",
       "type": [
         "string",
         "null"
       ],
       "enum": [
+        "zfls",
         "findent",
+        "codee",
+        "forformat",
+        "custom",
         "none",
         null
       ]
@@ -553,6 +559,11 @@
       "description": "Do not show Run and Debug above a program (code lenses, for an editor that has those commands, as the VS Code extension does)",
       "type": "boolean",
       "default": false
+    },
+    "closing_hint_lines": {
+      "description": "An inlay hint after the END of a construct or procedure of this many lines or more, with its opening statement (default: 25; 0: none)",
+      "type": "integer",
+      "default": 25
     },
     "pp_suffixes": {
       "description": "File extensions to be parsed ONLY for preprocessor commands (default: all uppercase source file suffixes, and .fpp)",

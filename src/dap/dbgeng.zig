@@ -130,6 +130,10 @@ pub const Engine = struct {
     /// Waiting for a step to end, rather than a breakpoint
     stepping: bool = false,
     interrupted: std.atomic.Value(bool) = .init(false),
+    /// Between a resume and the next stop: when a pause may interrupt (#971)
+    running: std.atomic.Value(bool) = .init(false),
+    /// The process was attached to, not launched: the end detaches (#970)
+    attached: bool = false,
 
     pub fn init() !Engine {
         const lib = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("C:\\Windows\\System32\\dbgeng.dll")) orelse
@@ -156,7 +160,7 @@ pub const Engine = struct {
 
     pub fn deinit(self: *Engine) void {
         if (self.own_handle != 0) _ = CloseHandle(self.own_handle);
-        _ = self.client.EndSession(dbg.DEBUG_END_ACTIVE_TERMINATE);
+        _ = self.client.EndSession(if (self.attached) dbg.DEBUG_END_ACTIVE_DETACH else dbg.DEBUG_END_ACTIVE_TERMINATE);
         _ = self.data.vtable.base.Release(@ptrCast(self.data));
         _ = self.registers.vtable.base.Release(@ptrCast(self.registers));
         _ = self.system.vtable.base.Release(@ptrCast(self.system));
@@ -202,6 +206,7 @@ pub const Engine = struct {
     pub fn attach(self: *Engine, pid: u32) !void {
         try self.setup();
         try ok(self.client.AttachProcess(0, pid, dbg.DEBUG_ATTACH_DEFAULT));
+        self.attached = true;
         try ok(self.control.WaitForEvent(0, 0xffffffff));
         try self.afterStart();
     }
@@ -372,6 +377,8 @@ pub const Engine = struct {
     pub fn resumeThread(self: *Engine, how: Resume, thread: ?u32) !void {
         if (thread) |t| _ = self.system.SetCurrentThreadId(t);
         self.stepping = how != .go;
+        // a pause asked while stopped is no reason for the next stop (#971)
+        self.interrupted.store(false, .release);
         switch (how) {
             .go => try ok(self.control.SetExecutionStatus(DEBUG_STATUS_GO)),
             .over => try ok(self.control.SetExecutionStatus(dbg.DEBUG_STATUS_STEP_OVER)),
@@ -379,10 +386,13 @@ pub const Engine = struct {
             // the engine's "go up": to the caller's line
             .out => try ok(self.control.ExecuteWide(dbg.DEBUG_OUTCTL_IGNORE, std.unicode.utf8ToUtf16LeStringLiteral("gu"), dbg.DEBUG_EXECUTE_NOT_LOGGED)),
         }
+        self.running.store(true, .release);
     }
 
-    /// Breaks into a running program; from any thread
+    /// Breaks into a running program, from any thread; nothing while it is
+    /// stopped (#971)
     pub fn interrupt(self: *Engine) void {
+        if (!self.running.load(.acquire)) return;
         self.interrupted.store(true, .release);
         _ = self.control.SetInterrupt(dbg.DEBUG_INTERRUPT_ACTIVE);
     }
@@ -391,6 +401,7 @@ pub const Engine = struct {
     pub fn wait(self: *Engine, a: Allocator, ms: u32) !Stop {
         const hr: u32 = @bitCast(self.control.WaitForEvent(0, ms));
         if (hr == 1) return .running; // S_FALSE: the time is up
+        self.running.store(false, .release);
         var status: u32 = 0;
         _ = self.control.GetExecutionStatus(&status);
         var event: u32 = 0;

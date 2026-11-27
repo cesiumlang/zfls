@@ -59,6 +59,13 @@ pub fn dupeOpt(a: Allocator, s: ?[]const u8) !?[]u8 {
     return if (s) |v| try a.dupe(u8, v) else null;
 }
 
+/// A copy of `xs` and its strings
+pub fn dupeAll(a: Allocator, xs: []const []const u8) ![]const []const u8 {
+    const out = try a.alloc([]const u8, xs.len);
+    for (xs, out) |x, *o| o.* = try a.dupe(u8, x);
+    return out;
+}
+
 pub fn spaces(a: Allocator, n: usize) ![]u8 {
     const out = try a.alloc(u8, n);
     @memset(out, ' ');
@@ -139,12 +146,18 @@ pub const Utf16Cursor = struct {
 
     pub fn at(c: *Utf16Cursor, text: []const u8, off: usize) usize {
         if (c.ptr != @as(?[*]const u8, text.ptr) or c.len != text.len or off < c.byte) c.* = .{ .ptr = text.ptr, .len = text.len };
-        const base = @min(c.byte, text.len);
-        c.units += byteToUtf16(text[base..], off - base);
+        // past the end, each byte is one unit, counted from the last offset (#965)
+        c.units += if (c.byte >= text.len) off - c.byte else byteToUtf16(text[c.byte..], off - c.byte);
         c.byte = off;
         return c.units;
     }
 };
+
+test "a cursor past the end of its line counts each byte once (#965)" {
+    const text = "aé";
+    var c: Utf16Cursor = .{};
+    for ([_]usize{ 1, 5, 8, 9 }) |off| try std.testing.expectEqual(byteToUtf16(text, off), c.at(text, off));
+}
 
 test "a cursor counts as byteToUtf16 does" {
     const text = "aéb = c";

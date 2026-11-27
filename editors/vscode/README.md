@@ -14,7 +14,7 @@ Fortran language support powered by [zfls](https://github.com/cesiumlang/zfls), 
 - namelist files (`.nml`, `.namelist`): highlighting, folding of each group, and an outline of the groups and the variables they set (from zfls, which does not read them as Fortran)
 - snippets for program units and constructs (see [Snippets](#snippets))
 - indentation as you type: a line after the start of a program unit, procedure (with its prefixes: `pure`, `integer`, ...), derived type, interface or construct (named or not) is indented, and an END, ELSE, CASE, CONTAINS, TYPE IS, ... is outdented as you type it; keywords in comments and strings are ignored. A `module procedure` line does not indent the next one (in an interface block it has no body)
-- formatting of documents and selections with findent or fprettify (see [Formatting](#formatting))
+- formatting of documents and selections with zfls's own formatter, which needs no tool, or with findent, fprettify and others (see [Formatting](#formatting))
 - Fortran and C: go to definition of a `BIND(C)` procedure gives its C declarations too, and find references its C calls (from clangd or Microsoft's C/C++, when one is installed, and from zfls's own search of the workspace's C files); on a name in a C or C++ file, go to definition gives the Fortran procedures that bind it and find references their Fortran calls, even before a Fortran file is opened
 - a debugger of its own, for programs that gdb debugs: arrays by their subscripts, derived types and polymorphic objects as Fortran shows them, module variables, stopping on Fortran runtime errors (see [zfls's debugger](#zflss-debugger)); breakpoints in Fortran files for the other debuggers too, such as C/C++ (cppdbg, cppvsdbg) and CodeLLDB
 - code lenses: the number of references above each module, procedure and derived type (click it for the references), and **Run** and **Debug** above a program
@@ -81,7 +81,8 @@ It replaces the Modern Fortran extension rather than working alongside it: disab
 | `zfls.arguments` | none | Extra command-line options (`zfls --help`) |
 | `zfls.disableModernFortranCheck` | `false` | Do not recommend disabling the extensions zfls replaces (Modern Fortran, ...) when they are enabled |
 | `zfls.trace.server` | `off` | Log the language server messages in the `zfls` output channel |
-| `zfls.formatting.formatter` | `Disabled` | `findent`, `fprettify`, `codee`, `forformat` or `custom` to format Fortran files (see [Formatting](#formatting)) |
+| `zfls.formatting.formatter` | `zfls` | The formatter of Fortran files: `zfls` (its own), `findent`, `fprettify`, `codee`, `forformat`, `custom`, or `Disabled` (see [Formatting](#formatting)) |
+| `zfls.formatting.zflsArgs` | `[]` | Options of zfls's own formatter (`--indent N`, `--case`, `--spacing`, `--align`, `--indent-directives`) |
 | `zfls.formatting.path` | empty | The formatter, or its directory, when it is not on the `PATH` |
 | `zfls.formatting.findentArgs` | `[]` | Extra arguments for findent |
 | `zfls.formatting.fprettifyArgs` | `[]` | Extra arguments for fprettify |
@@ -95,6 +96,10 @@ Each setting becomes the fortls option of the same meaning (the settings' descri
 A `.zflsrc` file (TOML) in the workspace root configures source directories, preprocessor definitions and other options; as with fortls, a `.fortlsrc`, `.fortls.json` or `.fortls` file (JSON) works too, and `.zflsrc` is read first. The option names are the same in both; see the readme's migration table. `zfls config` in a terminal prints the options in effect and where each came from. zfls also reads a user configuration file of the same format, `%APPDATA%\zfls\config.json` on Windows, else `~/.config/zfls/config.json` (`$XDG_CONFIG_HOME/zfls/config.json`), for other editors; this extension's settings take over from it (but for the options of `zfls.arguments`, which are command-line options), and the project's file from both. VS Code opens the JSON files as JSON with comments, and `.zflsrc` as TOML (with the Even Better TOML extension, which reads the schema too), and checks them against a schema of the options zfls reads from them, with their descriptions and defaults in completion and hover. The schema is generated from zfls's option table (`zig build generated`). The user configuration file gets the schema too (`zfls/config.json` in any directory); for a file that `zfls.configFile` names under another name, add `"$schema": "https://raw.githubusercontent.com/cesiumlang/zfls/main/editors/vscode/schemas/fortls.schema.json"` to it (zfls ignores the key).
 
 With a TOML extension that supports `tomlValidation`, such as [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml), `fpm.toml` files are checked against the [fpm manifest schema](https://github.com/fortran-lang/fpm-metadata) too.
+
+## Untrusted workspaces
+
+In a workspace you have not trusted (Restricted Mode), the workspace's own values of the settings that choose a program, its arguments or where it writes (`zfls.arguments`, the compilers and their arguments, `zfls.compileCommands`, `zfls.linter.modOutput`, the fypp settings and the like) are not read, and fypp, which runs the Python of the files it reads, does not run even when your own settings turn it on. Trusting the workspace restarts zfls with them.
 
 ## Workspaces with several folders
 
@@ -189,17 +194,18 @@ The zfls language server runs it (its `codee` options, which other editors use t
 
 ## Formatting
 
-**Format Document**, **Format Selection** and format on save (`editor.formatOnSave`) use an external formatter, which must be installed separately:
+**Format Document**, **Format Selection** and format on save (`editor.formatOnSave`) use zfls's own formatter by default, or an external one, installed separately:
 
 | Formatter | Install | Formats |
 | --- | --- | --- |
+| `zfls` (the default) | nothing: part of zfls | Indentation by scope, free and fixed form; with `zfls.formatting.zflsArgs`, the keywords' case (`--case`), blanks around operators (`--spacing`) and the `::` of declarations in a column (`--align`), free form; with `editor.formatOnType`, the line Enter ends |
 | [findent](https://pypi.org/project/findent/) | `pip install findent` or `conda install -c conda-forge findent` | Indentation of free-form and fixed-form files |
 | [fprettify](https://github.com/fortran-lang/fprettify) | `pip install fprettify` or `conda install -c conda-forge fprettify` | Indentation, whitespace and more, free-form files only |
 | [Codee](https://www.codee.com) (`codee`) | Codee's installer; the `codee` of `zfls.codee.path` is used unless `zfls.formatting.path` is set | Its formatter, `codee format`, on whole files |
 | forformat | as its project says | Whole files |
 | `custom` | your own: `zfls.formatting.path` with `zfls.formatting.customArgs` | What your command does with the source on its standard input |
 
-Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so that no formatter runs, and VS Code offers formatters of other extensions, until one is chosen. The setting can differ per language, for example fprettify for free form and findent for fixed form:
+Choose one with `zfls.formatting.formatter`; `Disabled` turns formatting off, so that VS Code offers formatters of other extensions. The setting can differ per language, for example fprettify for free form and findent for fixed form:
 
 ```jsonc
 "zfls.formatting.formatter": "fprettify",
@@ -208,7 +214,7 @@ Choose one with `zfls.formatting.formatter`; it is `Disabled` by default, so tha
 }
 ```
 
-The zfls server runs the formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see the [zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
+The zfls server formats, or runs the external formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see the [zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
 
 **Format Selection** formats the whole lines the selection touches. The formatter sees only those lines, not the surrounding code: findent starts at the indentation of the first selected line (`-Ia`), and fprettify keeps it too, but select whole constructs (a complete `do` loop, `if` block or procedure) for the indentation inside them to come out right.
 
@@ -302,7 +308,7 @@ LFortran's programs (built with `-g`, not on Windows, where LFortran refuses it)
 
 With gdb, a variable, an array's element or a small component has a data breakpoint (Break on Value Change, a hardware watchpoint at its address); a whole array or more than 8 bytes has none, and says why. The Debug Console takes gdb's commands (`print a(2:5)`, `ptype p`), and completes Fortran's names in them: after `%` a component's (`p origin%`), else the frame's variables and the module variables its line sees. `setupCommands` (gdb commands, such as `set print elements 0`) run before the program starts.
 
-On macOS zfls's debugger runs lldb-dap (`"lldb": true` in the configuration, or the lldb-dap to run; `xcrun --find lldb-dap` finds Xcode's), since gdb does not run on Apple Silicon and must be code-signed on Intel; `zfls.run.gdbPath` or the configuration's `gdb` choose gdb instead. With lldb-dap there are breakpoints, stepping, the stack, the program in a terminal and the **Fortran runtime errors** stops, but lldb reads no Fortran: for the programs of gfortran and LLVM Flang the Variables view is empty and expressions are not evaluated. Over ssh, macOS lets a debugger start a program only with Developer Mode on (`sudo DevToolsSecurity -enable`).
+On macOS zfls's debugger runs lldb-dap (`"lldb": true` in the configuration, or the lldb-dap to run; `xcrun --find lldb-dap` finds Xcode's), since gdb does not run on Apple Silicon and must be code-signed on Intel; `zfls.run.gdbPath` or the configuration's `gdb` choose gdb instead. With lldb-dap there are breakpoints, stepping, the stack, the program in a terminal and the **Fortran runtime errors** stops, but lldb reads no Fortran: for the programs of gfortran and LLVM Flang the Variables view is empty and expressions are not evaluated. On Windows, `"lldb"` can name the lldb-dap of LLVM 23.1.6 or later (LLVM's Windows installer has it; it needs a Python on the `PATH`), for MinGW's gfortran programs; gdb stays the default there. Over ssh, macOS lets a debugger start a program only with Developer Mode on (`sudo DevToolsSecurity -enable`).
 
 With Windows's Debugger Engine, zfls reads the variables itself: dbghelp (of the engine) says where each is, zfls's index of the sources (the workspace folder) its type, kind and rank, and the array descriptors (Intel's, LLVM Flang's) their bounds; a polymorphic object or array shows its dynamic type's components, which the descriptor names. Of LLVM Flang's programs built with `-g`, the engine shows the variables (the main program's that Flang makes static too) and stops at Flang's runtime errors and ERROR STOP. The program runs in a console window of its own (`"console": "internalConsole"`: none, its output is then lost). Hovers, watches and the Debug Console take a variable, its components, elements and substrings (`p%x`, `a(2,-1)`, `s(2:4)`), and a module's variable by the name the line sees (`cells`) or by its module's (`grid::cells`); the Debug Console completes their names and, after `%`, their components'. Its breakpoints take conditions, Fortran expressions of the stopped frame (`k == 1`, `p%x > 0 .and. n /= 3`), hit conditions (the hits ignored, as gdb takes them) and log messages (`k is {k}`), which zfls evaluates at each hit; a condition it cannot evaluate stops, and says why. A variable, element or component is set to a Fortran expression's value (`100`, `n + 1`, `.true.`, `'abc'`), in its type; a whole array or a derived type is not. Function breakpoints take a procedure's Fortran name (`work`, `grid::work`, `main`); data breakpoints watch a scalar, an element or a small component of 1, 2, 4 or 8 bytes; and the memory, disassembly, modules and loaded sources views work as with gdb.
 

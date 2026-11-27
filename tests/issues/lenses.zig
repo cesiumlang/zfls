@@ -137,19 +137,41 @@ test "Run and Debug above a program, for a client that has the commands (#218)" 
     }
 }
 
-test "without the client's commands, reference lenses only show the count and a program has none (#218)" {
+test "without the client's commands, reference lenses run the server's and a program has none (#218, #984)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const w = try h.Workspace.init(&files, .{});
     defer w.deinit();
+    const commands = json.items(json.path(w.init_result, &.{ "capabilities", "executeCommandProvider", "commands" }));
+    try std.testing.expectEqual(1, commands.len);
+    try std.testing.expectEqualStrings("zfls.server.showReferences", json.str(commands[0]).?);
     try std.testing.expectEqual(0, (try lenses(w, a, "main.f90")).len);
     const got = try lenses(w, a, "geometry.f90");
     try std.testing.expectEqual(4, got.len);
     const resolved = try resolve(w, a, got[2]);
     try std.testing.expectEqualStrings("2 references", title(resolved));
-    try std.testing.expectEqualStrings("", json.str(json.path(resolved, &.{ "command", "command" })).?);
-    try std.testing.expect(json.path(resolved, &.{ "command", "arguments" }) == null);
+    try std.testing.expectEqualStrings("zfls.server.showReferences", json.str(json.path(resolved, &.{ "command", "command" })).?);
+    try std.testing.expectEqual(3, json.items(json.path(resolved, &.{ "command", "arguments" })).len);
+}
+
+test "the server's lens command answers the references and shows the first (#984)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const w = try h.Workspace.init(&files, .{ .show_document = true });
+    defer w.deinit();
+    const resolved = try resolve(w, a, (try lenses(w, a, "geometry.f90"))[2]);
+    const command = json.get(resolved, "command").?;
+    const answer = try w.server.dispatchPublic(a, "workspace/executeCommand", try json.parse(a, try json.stringify(a, command)));
+    try std.testing.expectEqual(2, json.items(answer).len);
+    const shown = try w.sentWith("window/showDocument");
+    try std.testing.expectEqual(1, shown.len);
+    // a client that has its own: no command of the server's
+    const own = try h.Workspace.init(&files, .{ .client_commands = &all_commands });
+    defer own.deinit();
+    const provider = json.path(own.init_result, &.{ "capabilities", "executeCommandProvider" });
+    try std.testing.expect(provider == null or provider.? == .null);
 }
 
 test "code_lens_no_references and code_lens_no_run turn each kind off (#218)" {

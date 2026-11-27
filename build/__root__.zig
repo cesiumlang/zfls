@@ -85,6 +85,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(addGenerated(b)).step);
     test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "source_archive", "source-archive", "Write the source archive zfls-v<version>-src.tar.gz, submodules included (-- [OUT_DIR], default dist)")).step);
     test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "package_vscode", "package-vscode", "Package the VS Code extension per platform from the release archives (-- DIST)")).step);
+    test_step.dependOn(&b.addRunArtifact(addReleaseTool(b, "release_notes", "release-notes", "Write the notes of this version's release: the pull requests since the last tag and the milestone's issues none of them closes (-- OUT; gh and GH_TOKEN)")).step);
 
     // Tests of the open issues of upstream fortls, run in-process (see
     // tests/issues/harness.zig)
@@ -170,7 +171,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
         .root_source_file = b.path("tests/lsp_client.zig"),
         .imports = &.{.{ .name = "zfls", .module = mod }},
     });
-    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran, Flang and ifx oracles, stress test, zfls dap with the engine, gdb and lldb-dap, the compiler check)");
+    const tools_step = b.step("test-tools", "Install the Zig test drivers (gfortran, Flang and ifx oracles, stress test, zfls dap with the engine, gdb and lldb-dap and on MPI programs, the compiler check)");
     const Tool = struct { name: []const u8, root: []const u8, step: ?[]const u8, desc: []const u8, needs_fortls: bool, needs_zig: bool = false, in_test: bool = false, windows_only: bool = false, needs_kit: bool = false };
     const tools = [_]Tool{
         .{
@@ -205,7 +206,7 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .name = "dap_windows",
             .root = "tests/dap_windows.zig",
             .step = "test-dap",
-            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it, linked with the ifx kit), LLVM Flang's with -- --flang FLANG and ifx's with -- --ifx IFX",
+            .desc = "Debug a C program with zfls dap (Windows only; zig cc builds it, linked with the ifx kit), LLVM Flang's with -- --flang FLANG, ifx's with -- --ifx IFX and LFortran's with -- --lfortran LFORTRAN (clang and lld-link on the PATH)",
             .needs_fortls = false,
             .needs_zig = true,
             .needs_kit = true,
@@ -223,6 +224,13 @@ fn addScriptTests(b: *std.Build, mod: *std.Build.Module, exe: *std.Build.Step.Co
             .root = "tests/dap_lldb.zig",
             .step = "test-dap-lldb",
             .desc = "Debug a gfortran program (or LFortran's, with -- --compiler lfortran) with zfls dap and lldb-dap (skipped without the compiler or lldb-dap)",
+            .needs_fortls = false,
+        },
+        .{
+            .name = "dap_mpi",
+            .root = "tests/dap_mpi.zig",
+            .step = "test-dap-mpi",
+            .desc = "Debug an MPI program with zfls dap, a session per rank under gdbserver (Linux only; skipped without MPI's mpif90 and mpiexec, or gdbserver)",
             .needs_fortls = false,
         },
         .{

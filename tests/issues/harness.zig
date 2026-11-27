@@ -139,6 +139,15 @@ pub const Options = struct {
     client_commands: []const []const u8 = &.{},
     /// the `workDoneToken` of the initialize request
     progress_token: ?i64 = null,
+    /// no initialize request: the test sends its own
+    uninitialized: bool = false,
+    /// the client takes the refreshes of semantic tokens, inlay hints and
+    /// code lenses, and shows progress the server starts (#980)
+    refresh_support: bool = false,
+    /// the client resolves code actions' edits, and takes
+    /// `window/showDocument` (#984)
+    resolve_actions: bool = false,
+    show_document: bool = false,
     /// the client pulls diagnostics (`textDocument/diagnostic`) and takes
     /// `workspace/diagnostic/refresh`
     pull_diagnostics: bool = false,
@@ -266,13 +275,15 @@ pub const Workspace = struct {
         // every file a request read rests at the next save
         w.server.keep_awake = 0;
         const dynamic = .{ .dynamicRegistration = opts.dynamic_registration };
+        // a test that sends its own (#368); the server takes one only (#965)
+        if (opts.uninitialized) return w;
         w.init_result = try w.server.dispatchPublic(w.a(), "initialize", try json.from(aa, .{
             .rootPath = if (opts.unc_root) null else w.root,
             .rootUri = if (opts.unc_root) try paths.pathToUri(aa, w.root) else null,
             .capabilities = .{ .textDocument = .{
                 .documentSymbol = .{ .hierarchicalDocumentSymbolSupport = opts.hierarchical_symbols },
                 .signatureHelp = dynamic,
-                .codeAction = .{ .dynamicRegistration = opts.dynamic_registration, .disabledSupport = opts.disabled_actions },
+                .codeAction = .{ .dynamicRegistration = opts.dynamic_registration, .disabledSupport = opts.disabled_actions, .resolveSupport = .{ .properties = @as([]const []const u8, if (opts.resolve_actions) &.{"edit"} else &.{}) } },
                 .formatting = dynamic,
                 .rangeFormatting = dynamic,
                 .completion = .{ .completionItem = .{
@@ -286,7 +297,10 @@ pub const Workspace = struct {
                 .didChangeWatchedFiles = .{ .dynamicRegistration = opts.watch_registration, .relativePatternSupport = opts.watch_registration },
                 .workspaceEdit = .{ .resourceOperations = if (opts.create_files) &[_][]const u8{"create"} else &[_][]const u8{} },
                 .diagnostics = .{ .refreshSupport = opts.pull_diagnostics },
-            }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
+                .semanticTokens = .{ .refreshSupport = opts.refresh_support },
+                .inlayHint = .{ .refreshSupport = opts.refresh_support },
+                .codeLens = .{ .refreshSupport = opts.refresh_support },
+            }, .window = .{ .workDoneProgress = opts.refresh_support, .showDocument = .{ .support = opts.show_document } }, .experimental = .{ .commands = .{ .commands = opts.client_commands } } },
             .workDoneToken = opts.progress_token,
             .initializationOptions = if (opts.init_options) |o| try zfls.json5.parse(aa, o) else null,
         }));
@@ -699,7 +713,7 @@ pub const Workspace = struct {
     }
 
     /// An inlay hint: its 0-based line and column, and label
-    pub const Hint = struct { line: i64, col: i64, label: []const u8 };
+    pub const Hint = struct { line: i64, col: i64, label: []const u8, linked: bool = false };
 
     pub const InlineValue = struct { line: i64, col: i64, name: []const u8 };
 
@@ -725,11 +739,22 @@ pub const Workspace = struct {
             .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 10000, .character = 0 } },
         });
         var out: std.ArrayList(Hint) = .empty;
-        for (json.items(v)) |item| try out.append(w.a(), .{
-            .line = json.int(json.path(item, &.{ "position", "line" })) orelse -1,
-            .col = json.int(json.path(item, &.{ "position", "character" })) orelse -1,
-            .label = json.str(json.get(item, "label")) orelse "",
-        });
+        for (json.items(v)) |item| {
+            // a label of parts: their text, and whether one links somewhere
+            const label = json.get(item, "label");
+            var joined: std.ArrayList(u8) = .empty;
+            var linked = false;
+            if (json.str(label)) |s| try joined.appendSlice(w.a(), s) else for (json.items(label)) |part| {
+                try joined.appendSlice(w.a(), json.str(json.get(part, "value")) orelse "");
+                linked = linked or json.get(part, "location") != null;
+            }
+            try out.append(w.a(), .{
+                .line = json.int(json.path(item, &.{ "position", "line" })) orelse -1,
+                .col = json.int(json.path(item, &.{ "position", "character" })) orelse -1,
+                .label = joined.items,
+                .linked = linked,
+            });
+        }
         return out.items;
     }
 

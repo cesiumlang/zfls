@@ -232,6 +232,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       actions: read
+      contents: read
+      pull-requests: read
     outputs:
       run_id: ${{ steps.find.outputs.run_id }}
     steps:
@@ -251,8 +253,20 @@ jobs:
             echo "Using the archives of run $NAMED, as named." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq '.workflow_runs[].id')
-          for id in $runs; do
+          # only runs of this repository's own branches (a fork's pull
+          # request runs its own copy of this workflow, which can upload
+          # anything), of a pull request this commit merged; GitHub's
+          # records say so, not the run's artifacts
+          # (by the head commit each merged pull request ended on: a run's
+          # pull_requests are its branch's open ones, not the run's)
+          heads=" $(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null) | .head.sha] | join(" ")') "
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=50" --jq ".workflow_runs[] | select(.head_repository.full_name == \"$GITHUB_REPOSITORY\") | \"\(.id) \(.head_sha)\"")
+          while read -r id head; do
+            [ -n "$id" ] || continue
+            if [ "${heads#* "$head" }" = "$heads" ]; then
+              echo "run $id: not of a pull request this commit merged; not reusing it"
+              continue
+            fi
             names=" $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")') "
             case "$names" in *" tested-tree "*) ;; *) continue ;; esac
             case "$names" in *" dist "*) ;; *) continue ;; esac
@@ -270,7 +284,7 @@ jobs:
               echo "Releasing the archives of run $id, which built and tested this tree." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-          done
+          done <<< "$runs"
           echo "No passed pull request run built this tree; building and testing it here." | tee -a "$GITHUB_STEP_SUMMARY"
 
   version-check:
@@ -853,10 +867,11 @@ jobs:
     # The macOS arm64 leg runs on a self-hosted runner instead when the
     # repository variable MACOS_ARM64_RUNNER names one (a label of it, such
     # as `self-hosted`): a switch for the hours when GitHub's own runners
-    # are not handed out. Never for a pull request from a fork, whose
-    # workflow could run anything on that machine.
+    # are not handed out; `false` (or unset) is off. Never for a pull
+    # request from a fork, whose workflow could run anything on that machine.
     runs-on: >-
       ${{ (matrix.target == 'aarch64-macos' && vars.MACOS_ARM64_RUNNER != ''
+      && vars.MACOS_ARM64_RUNNER != 'false'
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository))
       && vars.MACOS_ARM64_RUNNER || matrix.os }}
@@ -1138,7 +1153,7 @@ jobs:
           mkdir -p "$mm"
           for wait in 15 30 60 0; do
             sh .github/workflows/get_micromamba.sh win-64 "$mm" &&
-              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld && break
+              MAMBA_ROOT_PREFIX="$(cygpath -w "$mm/root")" "$mm/Library/bin/micromamba.exe" create -y -q -p "$(cygpath -w "$tmp/lfortran")" -c conda-forge lfortran lld clang && break
             [ "$wait" = 0 ] && exit 1
             echo "::warning::installing LFortran failed; retrying in ${wait}s"
             sleep "$wait"
@@ -1158,6 +1173,9 @@ jobs:
           set -e
           cat p.out p.txt
           grep -q "linked" p.out && grep -q "6.0" p.txt && [ "$code" = 3 ]
+          # for tests/dap_windows.zig: the CodeView build (#176), with the
+          # clang beside LFortran
+          echo "ZFLS_LFORTRAN_WINDOWS=$(cygpath -w "$bin/lfortran.exe")" >> "$GITHUB_ENV"
 
       # LLVM Flang's programs link with lld-link and the package's ifx kit,
       # with the environment Run Fortran File gives the build (LIB, LINK,
@@ -1226,10 +1244,11 @@ jobs:
       # and linked with the package's ifx kit (the runner's Visual Studio
       # hidden). And on LLVM Flang's, built with -g and the package's ifx kit
       # (FLANG), and on ifx's, built with /Zi (IFX): their breakpoints,
-      # stack, variables, stepping, runtime errors and ERROR STOP
+      # stack, variables, stepping, runtime errors and ERROR STOP; and on
+      # LFortran's, built with CodeView by zfls (#176, #185)
       - name: zfls dap, the debugger of Windows's programs (Windows x64)
         if: matrix.target == 'x86_64-windows'
-        run: zig-out/bin/dap_windows --zfls "$ZFLS"
+        run: zig-out/bin/dap_windows --zfls "$ZFLS" ${ZFLS_LFORTRAN_WINDOWS:+--lfortran "$ZFLS_LFORTRAN_WINDOWS"}
 
       # zfls dap with gdb on a gfortran program: the variables as Fortran,
       # the module variables, a runtime error (GFORTRAN and GDB name
@@ -1285,6 +1304,20 @@ jobs:
           LD_LIBRARY_PATH: ""
         run: zig-out/bin/dap_gdb --zfls "$ZFLS" --compiler lfortran
 
+      # and on an MPI program (Open MPI's; Ubuntu 24.04's MPICH runs each
+      # rank as a job of its own): the launcher run with each rank under
+      # gdbserver, a session per rank (#988)
+      - name: zfls dap on an MPI program (Linux x64)
+        if: matrix.target == 'x86_64-linux'
+        timeout-minutes: 10
+        env:
+          LD_LIBRARY_PATH: ""
+        run: |
+          if ! command -v mpif90.openmpi && [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            sudo apt-get install -y openmpi-bin libopenmpi-dev || { sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev; }
+          fi
+          zig-out/bin/dap_mpi --zfls "$ZFLS" --mpif90 mpif90.openmpi --mpiexec mpiexec.openmpi
+
       # zfls dap with lldb-dap (Xcode's) on a gfortran program: breakpoints,
       # a step, the stack, a runtime error, attaching, a terminal. A debugger
       # starts a program only with Developer Mode on, which a runner's
@@ -1299,6 +1332,29 @@ jobs:
           fi
           xcrun --find lldb-dap
           zig-out/bin/dap_lldb --zfls "$ZFLS"
+
+      # lldb-dap of LLVM 23.1.6, the oldest that tells Windows's stops
+      # (#452): LLVM's Windows installer has lldb (its clang+llvm archive
+      # does not), unpacked with 7-Zip, not installed; liblldb.dll loads
+      # python3.dll, setup-python's
+      - name: lldb-dap (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: |
+          d="$RUNNER_TEMP/lldb"
+          mkdir -p "$d"
+          curl -sSfL --retry 3 -o "$d/llvm.msi" https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/LLVM-23.1.6-win64.msi
+          echo "81f7eb520ca698eb2d5cd8bc4b8f24f7add9ed66ed40a6f722a6e6f060737c00  $d/llvm.msi" | sha256sum -c -
+          "/c/Program Files/7-Zip/7z.exe" e -y -o"$d/bin" "$d/llvm.msi" CM_FP_bin.liblldb.dll CM_FP_bin.lldb_dap.exe CM_FP_bin.lldb_server.exe CM_FP_bin.lldb_argdumper.exe > /dev/null
+          for f in liblldb.dll lldb_dap.exe lldb_server.exe lldb_argdumper.exe; do mv "$d/bin/CM_FP_bin.$f" "$d/bin/${f//_/-}"; done
+          rm "$d/llvm.msi"
+          "$d/bin/lldb-dap.exe" --version
+          echo "LLDB_DAP=$(cygpath -w "$d/bin/lldb-dap.exe")" >> "$GITHUB_ENV"
+
+      # zfls dap with it on a gfortran program (GFORTRAN names MSYS2's):
+      # breakpoints, a step, the stack, runtime errors, ERROR STOP, attaching
+      - name: zfls dap with lldb-dap (Windows x64)
+        if: matrix.target == 'x86_64-windows'
+        run: zig-out/bin/dap_lldb --zfls "$ZFLS"
 
       # LFortran from conda-forge (LFORTRAN names it; the PATH does not have
       # it), for zfls dap with lldb-dap on its program
@@ -1652,6 +1708,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # the release notes' pull requests and issues
+      issues: read
+      pull-requests: read
       # the attestations of the release files
       id-token: write
       attestations: write
@@ -1727,13 +1786,20 @@ jobs:
           gpg-key: ${{ secrets.RELEASE_GPG_KEY }}
           gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
 
+      # the pull requests since the last release and the milestone's issues
+      # none of them closes (#979)
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zig build release-notes -- "$RUNNER_TEMP/release-notes.md"
+
       - name: Publish release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: zfls v${{ needs.version.outputs.version }}
           files: dist/*
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
 
   # The next version is begun on dev: main keeps the version it released. A
   # separate job, so that a push dev refuses does not stop the publishing.

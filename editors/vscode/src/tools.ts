@@ -240,7 +240,26 @@ export interface RunOptions {
   timeout?: number;
   /** Kills the process when aborted */
   signal?: AbortSignal;
+  /** With `signal`: kills what the process started too (fpm's test programs) */
+  tree?: boolean;
   env?: NodeJS.ProcessEnv;
+}
+
+/** Kills `child` and the processes it started */
+function killTree(child: cp.ChildProcess): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  try {
+    if (process.platform === "win32") {
+      cp.spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    } else {
+      // its process group, which it leads (`detached`)
+      process.kill(-child.pid, "SIGKILL");
+    }
+  } catch {
+    child.kill("SIGKILL");
+  }
 }
 
 /**
@@ -255,13 +274,16 @@ export function runProcess(command: string, args: string[], opts: RunOptions = {
       resolve({ code: null, stdout: "", stderr: "", error: Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT" }) });
       return;
     }
+    const tree = opts.tree === true && opts.signal !== undefined;
+    const started = Date.now();
     try {
       child = cp.spawn(program, args, {
         cwd: opts.cwd,
         env: opts.env,
-        signal: opts.signal,
+        signal: tree ? undefined : opts.signal,
         timeout: opts.timeout || undefined,
         windowsHide: true,
+        detached: tree && process.platform !== "win32",
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (err) {
@@ -272,13 +294,26 @@ export function runProcess(command: string, args: string[], opts: RunOptions = {
     const errOut: Buffer[] = [];
     let error: Error | undefined;
     let timedOut = false;
+    if (tree) {
+      const abort = (): void => {
+        error ??= Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+        killTree(child);
+      };
+      if (opts.signal!.aborted) {
+        abort();
+      } else {
+        opts.signal!.addEventListener("abort", abort, { once: true });
+        child.on("close", () => opts.signal!.removeEventListener("abort", abort));
+      }
+    }
     child.stdout?.on("data", (d: Buffer) => out.push(d));
     child.stderr?.on("data", (d: Buffer) => errOut.push(d));
     child.on("error", (err) => {
       error ??= err;
     });
     child.on("exit", (_code, signal) => {
-      if (signal && opts.timeout && !opts.signal?.aborted) {
+      // killed by its own signal (a crash) before the time: no timeout
+      if (signal && opts.timeout && !opts.signal?.aborted && Date.now() - started >= opts.timeout) {
         timedOut = true;
       }
     });

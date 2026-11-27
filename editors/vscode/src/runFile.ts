@@ -112,7 +112,8 @@ async function runOrDebug(log: vscode.LogOutputChannel, uri: vscode.Uri | undefi
     log.info(`[run] ${build.compiler} ${args.join(" ")} (in ${build.cwd})`);
     built = await runTask(
       new vscode.Task(
-        { type: "zfls", task },
+        // one task per file: a Run of another file is not this one's
+        { type: "zfls", task, file: plan.source },
         plan.folder ?? vscode.TaskScope.Workspace,
         `${task} ${path.basename(plan.source)}`,
         "zfls",
@@ -139,7 +140,7 @@ async function runOrDebug(log: vscode.LogOutputChannel, uri: vscode.Uri | undefi
   if (!debug) {
     log.info(`[run] ${build.program} ${plan.programArgs.join(" ")} (in ${plan.cwd})`);
     const run = new vscode.Task(
-      { type: "zfls", task: "run" },
+      { type: "zfls", task: "run", file: plan.source },
       plan.folder ?? vscode.TaskScope.Workspace,
       `run ${path.basename(plan.source)}`,
       "zfls",
@@ -323,6 +324,22 @@ export async function chooseInstalledDebugger(
     await vscode.commands.executeCommand("workbench.extensions.search", choice.extensions.map((id) => `@id:${id}`).join(" "));
   }
   return undefined;
+}
+
+/** The debugger of zfls.run.debugger for a program of `scope` built by
+ * `compiler`, and the gdb or lldb-dap that zfls's debugger would run, as
+ * Run and Debug and fpm's targets choose them; undefined (with a message)
+ * when none is installed */
+export async function debuggerFor(
+  scope: vscode.Uri,
+  compiler: string | undefined,
+  msvc: boolean,
+): Promise<{ type: DebugType; gdbPath: string | undefined; lldb: boolean } | undefined> {
+  const preference = vscode.workspace.getConfiguration("zfls.run", scope).get<string>("debugger", "auto");
+  const gdbPath = gdbFor(scope, compiler);
+  const lldb = lldbWanted(scope);
+  const type = await chooseInstalledDebugger(preference, msvc, gdbPath, lldb);
+  return type ? { type, gdbPath, lldb } : undefined;
 }
 
 /** Whether zfls's debugger runs lldb-dap rather than gdb: on macOS, where
