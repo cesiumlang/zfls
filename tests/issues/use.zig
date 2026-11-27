@@ -399,3 +399,15 @@ test "USE openacc gives OpenACC's kinds and constants (acc_device_host) (#535)" 
     try w.expectHoverContains("a.f90", w.pos("a.f90", "acc_device_host", 0, 0), "INTEGER(KIND=acc_device_kind)");
     try w.expectHoverContains("a.f90", w.pos("a.f90", "acc_device_radeon", 0, 0), "INTEGER(KIND=acc_device_kind)");
 }
+
+test "PUBLIC and PRIVATE statements name a procedure in any case (#950)" {
+    const files = [_]h.File{
+        .{ .name = "m.f90", .text = "module m\n  implicit none\n  private\n  public :: Solve\ncontains\n  subroutine solve()\n  end subroutine\nend module m\n" },
+        .{ .name = "p.f90", .text = "program p\n  use m\n  implicit none\n  call solve()\nend program p\n" },
+    };
+    const w = try h.Workspace.init(&files, .{});
+    defer w.deinit();
+    try w.open("p.f90", "fortran");
+    const d = (try w.definition("p.f90", w.pos("p.f90", "solve", 0, 1))) orelse return error.NoDefinition;
+    try std.testing.expect(std.mem.endsWith(u8, d.uri, "/m.f90"));
+}

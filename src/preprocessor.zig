@@ -111,23 +111,42 @@ const VarErr = error{TupleValue} || Allocator.Error;
 
 fn replaceVars(a: Allocator, line: []const u8, defs: *const Defs) VarErr![]const u8 {
     var out: std.ArrayList(u8) = .empty;
-    var it = helpers.words(line);
-    var i_0: usize = 0;
-    while (it.next()) |m| {
-        try out.appendSlice(a, line[i_0..m.start]);
-        if (defs.get(m.str)) |d| {
-            // fortls fails on function-like macros here
-            if (d.args != null) return error.TupleValue;
-            try out.appendSlice(a, d.value);
-        } else {
-            try out.appendSlice(a, "False");
-        }
-        i_0 = m.end;
-    }
-    if (i_0 < line.len) try out.appendSlice(a, line[i_0..]);
+    try appendExpanded(a, &out, line, defs, 0);
     var res = try std.mem.replaceOwned(u8, a, out.items, "@$@", "True");
     res = try std.mem.replaceOwned(u8, a, res, "%$%", "False");
     return res;
+}
+
+/// Macros that name macros are expanded this deep in a condition; deeper,
+/// as for macros that name each other, a name is false
+const max_condition_depth = 16;
+
+/// `text` with each name replaced by its macro's value, itself expanded
+/// (`#define V MAJOR`, #960), or by `False` when it is no macro
+fn appendExpanded(a: Allocator, out: *std.ArrayList(u8), text: []const u8, defs: *const Defs, depth: usize) VarErr!void {
+    var it = helpers.words(text);
+    var i_0: usize = 0;
+    while (it.next()) |m| {
+        try out.appendSlice(a, text[i_0..m.start]);
+        i_0 = m.end;
+        // what an earlier expansion or `#define X` (no value) left
+        if (depth > 0 and (std.mem.eql(u8, m.str, "True") or std.mem.eql(u8, m.str, "False"))) {
+            try out.appendSlice(a, m.str);
+            continue;
+        }
+        const d = defs.get(m.str) orelse {
+            try out.appendSlice(a, "False");
+            continue;
+        };
+        // fortls fails on function-like macros here
+        if (d.args != null) return error.TupleValue;
+        if (depth >= max_condition_depth) {
+            try out.appendSlice(a, "False");
+            continue;
+        }
+        try appendExpanded(a, out, d.value, defs, depth + 1);
+    }
+    if (i_0 < text.len) try out.appendSlice(a, text[i_0..]);
 }
 
 fn replaceOps(a: Allocator, expr: []const u8) ![]const u8 {
@@ -164,7 +183,7 @@ fn appendMultilineMacro(a: Allocator, d: Def, line: []const u8) !Def {
 const Directive = enum { if_, ifdef, ifndef, else_, elif, endif };
 
 const directives = std.StaticStringMap(Directive).initComptime(.{
-    .{ "if ", .if_ },
+    .{ "if", .if_ },
     .{ "ifdef", .ifdef },
     .{ "ifndef", .ifndef },
     .{ "else", .else_ },
@@ -249,8 +268,15 @@ fn preprocessInner(
     var output: std.ArrayList([]const u8) = .empty;
     var def_cont_name: ?[]const u8 = null;
 
+    // the lines left of a condition continued with `\`, read with it
+    var cond_lines_left: usize = 0;
     for (contents, 0..) |line_in, i| {
         var line = line_in;
+        if (cond_lines_left > 0) {
+            cond_lines_left -= 1;
+            try output.append(a, "");
+            continue;
+        }
         // Handle multiline macro continuation
         if (def_cont_name) |dcn| {
             try output.append(a, "");
@@ -266,18 +292,30 @@ fn preprocessInner(
             try output.append(a, line);
             var kw_buf: [8]u8 = undefined;
             const kw = directives.get(std.ascii.lowerString(&kw_buf, m.group(1).?)).?;
+            // the condition: with the lines a `\` continues it on, without
+            // C comments (#961)
+            var cond_line = line;
+            if (kw == .if_ or kw == .elif) {
+                while (i + cond_lines_left + 1 < contents.len) {
+                    const rs = str.rstrip(cond_line);
+                    if (rs.len == 0 or rs[rs.len - 1] != '\\') break;
+                    cond_lines_left += 1;
+                    cond_line = try std.mem.concat(a, u8, &.{ rs[0 .. rs.len - 1], " ", contents[i + cond_lines_left] });
+                }
+            }
+            cond_line = try withoutComments(a, cond_line, true);
             var if_start = false;
             var is_path = false;
             if (kw == .if_) {
-                const r = if (active(pp_stack.items)) try rejectedAt(a, dialect, line, m.end(1), i, depth, &pp_rejected) else null;
-                is_path = if (r) |taken| taken else evalPpIf(a, line[m.end(1)..], &defs_tmp);
+                const r = if (active(pp_stack.items)) try rejectedAt(a, dialect, cond_line, m.end(1), i, depth, &pp_rejected) else null;
+                is_path = if (r) |taken| taken else evalPpIf(a, cond_line[m.end(1)..], &defs_tmp);
                 if_start = true;
             } else if (kw == .ifdef) {
                 if_start = true;
-                is_path = defs_tmp.contains(str.strip(line[m.end(0)..]));
+                is_path = defs_tmp.contains(firstWord(cond_line[m.end(0)..]));
             } else if (kw == .ifndef) {
                 if_start = true;
-                is_path = !defs_tmp.contains(str.strip(line[m.end(0)..]));
+                is_path = !defs_tmp.contains(firstWord(cond_line[m.end(0)..]));
             }
             if (if_start) {
                 if (is_path) {
@@ -302,7 +340,7 @@ fn preprocessInner(
                     // An earlier if or elif in this group has been true
                     if (top.start == null) top.start = i + 1;
                     cond = .excluded;
-                } else if (if (active(pp_stack.items[0 .. pp_stack.items.len - 1])) try rejectedAt(a, dialect, line, m.end(1), i, depth, &pp_rejected) else null) |taken| {
+                } else if (if (active(pp_stack.items[0 .. pp_stack.items.len - 1])) try rejectedAt(a, dialect, cond_line, m.end(1), i, depth, &pp_rejected) else null) |taken| {
                     if (taken) {
                         top.end = i + 1;
                         try pp_skips.append(a, skipOf(pp_stack.pop().?));
@@ -310,7 +348,7 @@ fn preprocessInner(
                         try pp_stack.append(a, .{});
                         cond = .included;
                     } else cond = .excluded_start;
-                } else if (evalPpIf(a, line[m.end(1)..], &defs_tmp)) {
+                } else if (evalPpIf(a, cond_line[m.end(1)..], &defs_tmp)) {
                     top.end = i + 1;
                     try pp_skips.append(a, skipOf(pp_stack.pop().?));
                     grp[1] = true;
@@ -385,7 +423,8 @@ fn preprocessInner(
                 } else {
                     def_value = "True";
                 }
-                var d: Def = .{ .value = try a.dupe(u8, def_value) };
+                // `#define N 10 /* size */` (#961)
+                var d: Def = .{ .value = try a.dupe(u8, str.strip(try withoutComments(a, def_value, false))) };
                 if (m.group(3) != null) d.args = try a.dupe(u8, m.group(4) orelse "");
                 try defs_tmp.put(a, try a.dupe(u8, def_name), d);
             } else if (std.mem.eql(u8, directive, "undef") and defs_tmp.contains(def_name)) {
@@ -414,7 +453,7 @@ fn preprocessInner(
                 if (depth >= 32 or budget.files >= IncludeBudget.max_files or budget.bytes >= IncludeBudget.max_bytes) {} else if (fsio.readFile(io, a, ip, .limited(IncludeBudget.max_bytes - budget.bytes))) |data| {
                     budget.files += 1;
                     budget.bytes += data.len;
-                    const text = try std.mem.replaceOwned(u8, a, data, "\t", " ");
+                    const text = try std.mem.replaceOwned(u8, a, str.withoutBom(data), "\t", " ");
                     const inc_lines = try parser.splitLines(a, text);
                     const dir = try paths.abspath(a, paths.dirname(ip));
                     var dup = false;
@@ -435,30 +474,20 @@ fn preprocessInner(
             }
         };
         line = try macro.removeEmptyComments(a, line);
-        // Substitute (if any) read in preprocessor macros
-        var it = defs_tmp.iterator();
-        while (it.next()) |e| {
-            const def_tmp = e.key_ptr.*;
-            const value = e.value_ptr.*;
-            if (std.mem.find(u8, line, def_tmp) == null) continue;
-            const gop = try def_regexes.getOrPut(a, def_tmp);
-            if (!gop.found_existing) {
-                gop.key_ptr.* = def_tmp;
-                gop.value_ptr.* = macro.compile(a, def_tmp, value.args) catch |err| blk: {
-                    parser.Trace.print(trace, "!!! bad macro {s}: {s}", .{ def_tmp, @errorName(err) });
-                    break :blk null;
-                };
-            }
-            const c = &(gop.value_ptr.* orelse continue);
-            const res = try macro.substitute(a, c, value.value, line);
-            if (res.count > 0 and res.out.len <= max_substituted_line) {
-                parser.Trace.print(trace, "{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, value.value });
-                line = res.out;
-            }
+        // Substitute (if any) read in preprocessor macros, again while a
+        // pass changes the line: a value may name a macro defined before
+        // its own (#960), but one that names itself is not expanded again
+        var pass: usize = 0;
+        while (pass < max_rescans) : (pass += 1) {
+            const before = line;
+            line = try substituteAll(a, &defs_tmp, &def_regexes, line, pass, i, trace);
+            if (std.mem.eql(u8, before, line)) break;
         }
         if (try predefined.expand(a, line, .{ .io = io, .file = file_name, .line = i + 1 }, &defs_tmp)) |l| line = l;
         try output.append(a, line);
     }
+    // an excluded branch the file does not close goes to its end (#965)
+    for (pp_stack.items) |e| if (e.start) |s| try pp_skips.append(a, .{ .start = s, .end = contents.len });
     return .{
         .lines = output.items,
         .skips = pp_skips.items,
@@ -468,6 +497,68 @@ fn preprocessInner(
         .defs = defs_tmp,
         .rejected = pp_rejected.items,
     };
+}
+
+/// `text` without its C comments: `/* ... */` (to the end of the line when
+/// it does not close), and with `line_comments` from `//` on. A `//` in a
+/// macro's value is Fortran's concatenation; in a condition it is none.
+fn withoutComments(a: Allocator, text: []const u8, line_comments: bool) ![]const u8 {
+    if (std.mem.find(u8, text, "/*") == null and !(line_comments and std.mem.find(u8, text, "//") != null)) return text;
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < text.len) {
+        if (std.mem.startsWith(u8, text[i..], "/*")) {
+            const close = std.mem.findPos(u8, text, i + 2, "*/") orelse break;
+            // a comment is a blank between tokens, but in a macro's value
+            // `/**/` joins them, as gfortran's cpp does (`appendValue`)
+            try out.appendSlice(a, if (close == i + 2 and !line_comments) "/**/" else " ");
+            i = close + 2;
+            continue;
+        }
+        if (line_comments and std.mem.startsWith(u8, text[i..], "//")) break;
+        try out.append(a, text[i]);
+        i += 1;
+    }
+    return out.items;
+}
+
+/// The name an `#ifdef` or `#ifndef` tests: the first word after it
+fn firstWord(text: []const u8) []const u8 {
+    const s = str.lstrip(text);
+    var e: usize = 0;
+    while (e < s.len and (std.ascii.isAlphanumeric(s[e]) or s[e] == '_' or s[e] == '$')) e += 1;
+    return s[0..e];
+}
+
+/// The passes of macro substitution over one line, at most
+const max_rescans = 32;
+
+/// One pass of substitution of the macros of `defs` in `line` (0-based
+/// line `i`); after the first, not of a macro whose value names itself
+fn substituteAll(a: Allocator, defs: *const Defs, def_regexes: *std.array_hash_map.String(?macro.Compiled), line_in: []const u8, pass: usize, i: usize, trace: ?parser.Trace) ![]const u8 {
+    var line = line_in;
+    var it = defs.iterator();
+    while (it.next()) |e| {
+        const def_tmp = e.key_ptr.*;
+        const value = e.value_ptr.*;
+        if (std.mem.find(u8, line, def_tmp) == null) continue;
+        if (pass > 0 and helpers.findWordInLine(value.value, def_tmp).start >= 0) continue;
+        const gop = try def_regexes.getOrPut(a, def_tmp);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = def_tmp;
+            gop.value_ptr.* = macro.compile(a, def_tmp, value.args) catch |err| blk: {
+                parser.Trace.print(trace, "!!! bad macro {s}: {s}", .{ def_tmp, @errorName(err) });
+                break :blk null;
+            };
+        }
+        const c = &(gop.value_ptr.* orelse continue);
+        const res = try macro.substitute(a, c, value.value, line);
+        if (res.count > 0 and res.out.len <= max_substituted_line) {
+            parser.Trace.print(trace, "{s} !!! Macro sub({d}) '{s}' -> '{s}'", .{ str.strip(line), i + 1, def_tmp, value.value });
+            line = res.out;
+        }
+    }
+    return line;
 }
 
 /// Whether the lines are in no excluded branch of `stack`
@@ -560,4 +651,58 @@ test "pp function-like macro without arguments (#225)" {
     try testing.expectEqualStrings("i = (i + 1)", out.lines[4]);
     try testing.expectEqualStrings("if (ie /= 0) return", out.lines[5]);
     try testing.expectEqualStrings("i = 42", out.lines[6]);
+}
+
+test "macros whose values name macros, rescanned (#960)" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const lines = [_][]const u8{
+        "#define RK_BASE 8",
+        "#define RK RK_BASE",
+        "#define MAJOR 4",
+        "#define V MAJOR",
+        "#define X X+1",
+        "real(RK) :: x",
+        "#if V >= 3",
+        "integer :: new",
+        "#else",
+        "integer :: old",
+        "#endif",
+        "y = X",
+    };
+    const out = try preprocessFile(a, undefined, &lines, null, null, &.{}, .any, null);
+    try testing.expectEqualStrings("real(8) :: x", out.lines[5]);
+    try testing.expectEqual(@as(usize, 1), out.skips.len);
+    try testing.expectEqual(@as(usize, 9), out.skips[0].start);
+    try testing.expectEqualStrings("y = X+1", out.lines[11]);
+}
+
+test "comments in directives, #if( and continued conditions (#961)" {
+    patterns.init();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const lines = [_][]const u8{
+        "#define N 10 /* size */",
+        "#define FOO",
+        "#if(N > 5) /* on */",
+        "integer :: a(N)",
+        "#endif",
+        "#ifdef FOO // x",
+        "integer :: b",
+        "#endif",
+        "#if N > 5 && \\",
+        "    defined(FOO)",
+        "integer :: c",
+        "#endif",
+        "#if !defined(BAR)",
+        "integer :: d",
+        "#endif",
+    };
+    const out = try preprocessFile(a, undefined, &lines, null, null, &.{}, .any, null);
+    try testing.expectEqualStrings("integer :: a(10)", out.lines[3]);
+    try testing.expectEqual(@as(usize, 0), out.skips.len);
+    try testing.expectEqualStrings("", out.lines[9]);
 }

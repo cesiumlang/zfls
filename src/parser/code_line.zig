@@ -70,7 +70,7 @@ pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: usize, forwa
     if (backward) {
         // a fixed-form line continues a statement by its column 6, a
         // free-form one when the code line before it ends with `&`
-        const cont = if (self.fixed) helpers.fixedContStart(curr_line) else null;
+        const cont = if (self.fixed) helpers.fixedContMark(curr_line) else null;
         const continued = !self.fixed or cont != null;
         if (self.fixed) {
             if (cont) |c| curr_line = try contLine(a, curr_line, c);
@@ -88,7 +88,7 @@ pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: usize, forwa
             var part: []const u8 = undefined;
             var first = false;
             if (self.fixed) {
-                const c = helpers.fixedContStart(raw);
+                const c = helpers.fixedContMark(raw);
                 first = c == null;
                 part = try fixedNoComment(a, raw);
                 if (c) |start| part = try contLine(a, part, start);
@@ -131,7 +131,7 @@ pub fn getCodeLine(self: *const FortranFile, a: Allocator, line_no: usize, forwa
             i += 1;
             var part = next;
             if (self.fixed) {
-                const c = helpers.fixedContStart(next) orelse break;
+                const c = helpers.fixedContMark(next) orelse break;
                 // a comment ends its line only: one before a continuation
                 // must not cut off the rest of the statement (hansec #202)
                 cut = try fixedNoComment(a, line);

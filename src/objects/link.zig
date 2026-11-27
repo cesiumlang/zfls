@@ -32,6 +32,10 @@ pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Erro
             if (sc.inherit == null or td.inherit_version == inherit_version) return;
             td.inherit_version = inherit_version;
             td.inherit_var = try findInScope(env, self.parent, sc.inherit.?, .{});
+            // no type extends itself, also through others (#956)
+            if (td.inherit_var) |iv| if (iv.kind != .type or extendsInto(iv, self)) {
+                td.inherit_var = null;
+            };
             if (td.inherit_var) |iv| {
                 // Resolve parent inheritance while avoiding circular recursion
                 td.inherit_tmp = sc.inherit;
@@ -55,7 +59,11 @@ pub fn resolveInherit(self: *Obj, env: Env, inherit_version: i64) Allocator.Erro
                 sc.in_children.clearRetainingCapacity();
             }
         },
-        .submodule => self.submodData().ancestor_obj = self.findSubmoduleParent(env),
+        .submodule => {
+            // no submodule descends from itself, also through others (#955)
+            const p = self.findSubmoduleParent(env);
+            self.submodData().ancestor_obj = if (p != null and descendsInto(p.?, self)) null else p;
+        },
         else => {},
     }
 }
@@ -528,13 +536,43 @@ pub fn getTypeObj(self: *Obj, env: Env) !?*Obj {
 
 pub fn getOverridden(self: *const Obj, a: Allocator, field_name: []const u8) ![]*Obj {
     var out: std.ArrayList(*Obj) = .empty;
-    if (self.kind != .type) return out.items;
-    for (self.childList()) |child| {
-        if (std.ascii.eqlIgnoreCase(child.name, field_name)) {
-            try out.append(a, child);
-            break;
+    var cur: ?*const Obj = self;
+    var hops: usize = 0;
+    while (cur) |t| : (cur = t.typeDataConst().inherit_var) {
+        if (t.kind != .type or hops == max_extensions) break;
+        hops += 1;
+        for (t.childList()) |child| {
+            if (std.ascii.eqlIgnoreCase(child.name, field_name)) {
+                try out.append(a, child);
+                break;
+            }
         }
     }
-    if (self.typeDataConst().inherit_var) |iv| try out.appendSlice(a, try iv.getOverridden(a, field_name));
     return out.items;
+}
+
+/// More types in one chain of extensions are taken for a loop
+pub const max_extensions = 256;
+
+/// Whether submodule `s` is `target` or descends from it, through its
+/// parent submodules
+fn descendsInto(s: *const Obj, target: *const Obj) bool {
+    var cur: ?*const Obj = s;
+    var hops: usize = 0;
+    while (cur) |x| : (cur = if (x.kind == .submodule) x.submodDataConst().ancestor_obj else null) {
+        if (x == target or hops == max_extensions) return true;
+        hops += 1;
+    }
+    return false;
+}
+
+/// Whether type `t` is `target` or extends it, through the types it extends
+fn extendsInto(t: *const Obj, target: *const Obj) bool {
+    var cur: ?*const Obj = t;
+    var hops: usize = 0;
+    while (cur) |x| : (cur = if (x.kind == .type) x.typeDataConst().inherit_var else null) {
+        if (x == target or hops == max_extensions) return true;
+        hops += 1;
+    }
+    return false;
 }
