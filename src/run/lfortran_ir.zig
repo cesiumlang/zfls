@@ -8,8 +8,9 @@
 //! LFortran's runtime and writes the PDB, which Windows's Debugger Engine
 //! reads; elsewhere (#992) it is marked for DWARF and LFortran links it
 //! (on macOS, dsymutil then writes the `.dSYM`).
-//! On macOS its calls of `print_stacktrace_addresses` are left out: there
-//! LFortran 0.69's traceback aborts the program at ERROR STOP (#470).
+//! Its calls of `print_stacktrace_addresses` are left out: LFortran 0.69's
+//! traceback needs the files of its own `-g` link, and without them ends
+//! the program at ERROR STOP before its message (on macOS, #470, aborts it).
 //!
 //!     zfls lfortran-ir --lfortran EXE (--clang EXE | --llc EXE)
 //!         [--lld-link EXE --runtime LIB] -o PROGRAM [LFORTRAN OPTIONS...] SOURCE
@@ -67,8 +68,8 @@ pub fn patch(a: Allocator, ir: []const u8, dir: []const u8, format: Format) !?[]
 }
 
 /// The IR without its calls of LFortran's traceback (`-g`'s, before an
-/// ERROR STOP's message), which on macOS abort the program ("The stack
-/// address was not found", LFortran 0.69, #470)
+/// ERROR STOP's message), which end the program there in a build of
+/// zfls's (on macOS "The stack address was not found", LFortran 0.69, #470)
 pub fn withoutTraceback(a: Allocator, ir: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var it = std.mem.splitScalar(u8, ir, '\n');
@@ -175,7 +176,7 @@ pub fn main(a: Allocator, io: Io, environ: *const std.process.Environ.Map, args:
     } else |_| ir;
     const cwd = try a.dupe(u8, paths.getCwd());
     std.mem.replaceScalar(u8, cwd, '\\', '/');
-    const traced = if (sysinfo.target.os.tag == .macos) try withoutTraceback(a, lined) else lined;
+    const traced = try withoutTraceback(a, lined);
     const patched = (try patch(a, traced, cwd, format)) orelse {
         say(io, "zfls lfortran-ir: {s}'s IR has module flags already; zfls does not know it\n", .{o.lfortran});
         return 1;
