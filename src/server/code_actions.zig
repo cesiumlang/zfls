@@ -303,27 +303,41 @@ pub fn addKeywordCaseActions(self: *Server, a: Allocator, file: *FortranFile, as
     };
     for (cases) |cs| {
         var edits: std.ArrayList(lsp.TextEdit) = .empty;
-        for (0..file.nLines()) |ln| {
-            const raw = file.getLine(ln, false) orelse continue;
-            if (helpers.isComment(file.fixed, raw)) continue;
-            const t = std.mem.trimStart(u8, raw, " \t");
-            if (t.len > 0 and t[0] == '#') continue;
-            var code = try helpers.stripStrings(a, raw, true);
-            if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
-            var it = helpers.words(code);
-            while (it.next()) |w| {
-                // `.and.`, `.true.`: their words are keywords too
-                const dotted = w.start > 0 and code[w.start - 1] == '.' and w.end < code.len and code[w.end] == '.';
-                if (!dotted and !semantic.isKeyword(w.str)) continue;
-                if (dotted and !isDotWord(w.str)) continue;
-                if (names.contains(.{ ln, str.byteToUtf16(raw, w.start) })) continue;
-                const new = try rewrite.inCase(a, w.str, cs.case);
-                if (std.mem.eql(u8, new, w.str)) continue;
-                try edits.append(a, .{ .range = Server.rangeOf(file, ln, w.start, ln, w.end), .newText = new });
-            }
+        for (try keywordChanges(a, file, names, cs.case)) |c| {
+            try edits.append(a, .{ .range = Server.rangeOf(file, c.line, c.start, c.line, c.end), .newText = c.text });
         }
         if (edits.items.len > 0) try out.append(a, try action(a, uri, cs.title, cs.kind, edits.items));
     }
+}
+
+/// A keyword written in another case: its line (0-based), bytes and text
+pub const CaseChange = struct { line: usize, start: usize, end: usize, text: []const u8 };
+
+/// The keywords of `file` (not the names, `names`: `semantic.namePositions`)
+/// that `case` writes otherwise, in order; for the keyword case actions and
+/// the formatter's `--case` (indent_format.zig)
+pub fn keywordChanges(a: Allocator, file: *const FortranFile, names: anytype, case: rewrite.Case) ![]const CaseChange {
+    var out: std.ArrayList(CaseChange) = .empty;
+    for (0..file.nLines()) |ln| {
+        const raw = file.getLine(ln, false) orelse continue;
+        if (helpers.isComment(file.fixed, raw)) continue;
+        const t = std.mem.trimStart(u8, raw, " \t");
+        if (t.len > 0 and t[0] == '#') continue;
+        var code = try helpers.stripStrings(a, raw, true);
+        if (std.mem.findScalar(u8, code, '!')) |i| code = code[0..i];
+        var it = helpers.words(code);
+        while (it.next()) |w| {
+            // `.and.`, `.true.`: their words are keywords too
+            const dotted = w.start > 0 and code[w.start - 1] == '.' and w.end < code.len and code[w.end] == '.';
+            if (!dotted and !semantic.isKeyword(w.str)) continue;
+            if (dotted and !isDotWord(w.str)) continue;
+            if (names.contains(.{ ln, str.byteToUtf16(raw, w.start) })) continue;
+            const new = try rewrite.inCase(a, w.str, case);
+            if (std.mem.eql(u8, new, w.str)) continue;
+            try out.append(a, .{ .line = ln, .start = w.start, .end = w.end, .text = new });
+        }
+    }
+    return out.items;
 }
 
 fn isDotWord(w: []const u8) bool {

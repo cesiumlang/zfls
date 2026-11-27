@@ -148,7 +148,7 @@ test "an unknown formatter is named with all those zfls knows (#278)" {
     const w = try init("{\"formatter\": \"black\"}");
     defer w.deinit();
     var found = false;
-    for (try w.sentWith("window/showMessage")) |m| found = found or std.mem.find(u8, m, "findent, fprettify, codee, forformat or custom") != null;
+    for (try w.sentWith("window/showMessage")) |m| found = found or std.mem.find(u8, m, "findent, fprettify, codee, forformat, custom or zfls") != null;
     try std.testing.expect(found);
 }
 

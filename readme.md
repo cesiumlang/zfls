@@ -18,7 +18,7 @@ A Fortran language server written in Zig. zfls is a native port of [fortls](http
 - Inlay hints: the dummy argument each positional argument of a call goes to (`call move(p, dx: 1.0)`), the type of each `ASSOCIATE` name, the implicit type of each name that is not declared, and the value of a named constant where it is used
 - Selection ranges (expand the selection from a name to its parentheses, statement, constructs, procedure, module and file), links on the files of `#include` and `INCLUDE`, and a rename check that refuses intrinsics and keywords before a new name is typed
 - Code actions: implementing deferred type-bound procedures, adding `IMPLICIT NONE`, writing `.eq.` ... `.ge.` as `==` ... `>=` and `real*8` as `real(8)`, extracting statements into a subroutine, and (Source Actions) the keywords of a file in upper, lower or title case
-- Formatting of documents and selections with findent, fprettify, Codee's formatter, forformat or a command of the user's (see [Formatting](#formatting)), and conversion of a file between fixed and free form with findent (see [Converting the source form](#converting-the-source-form))
+- Formatting of documents and selections with zfls's own indentation, findent, fprettify, Codee's formatter, forformat or a command of the user's (see [Formatting](#formatting)), and conversion of a file between fixed and free form with findent (see [Converting the source form](#converting-the-source-form))
 - Include directories and preprocessor definitions from the project's `compile_commands.json` (CMake, Meson, Bear) and `fpm.toml` (see [Build files](#build-files))
 - Fixed and free source form (also switched within a file by LLVM Flang's `!dir$ fixed` and `!dir$ free`, and ifx's `!DEC$ NOFREEFORM` and `!DEC$ FREEFORM`), line continuations, Doxygen and FORD style documentation comments, OpenMP conditional compilation lines (`!$ x = 1`) read as code (see [OpenMP conditional compilation](#openmp-conditional-compilation))
 - Sources indexed by default by their extension, in either case: `.f90`, `.f95`, `.f03`, `.f05`, `.f08`, `.f18`, `.f23`, `.cuf`, `.pf` (pFUnit), `.fypp` and `.fpp`, and in fixed form `.f`, `.f77`, `.for`, `.ftn` (`incl_suffixes` adds more); one table (`src/suffixes.zig`) decides the source form, the Fortran entries of `compile_commands.json` and the VS Code extension's file associations
@@ -669,7 +669,7 @@ Two requests act on the checks: `zfls/compilerCheck` (`{textDocument: {uri}}`) c
 
 ### Formatting
 
-With `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or `custom`, zfls answers `textDocument/formatting` and `textDocument/rangeFormatting` (format document, format selection, format on save) by running that formatter, which is installed separately (`pip install findent`, `pip install fprettify`, or the same from conda-forge; [Codee](https://www.codee.com); forformat). This works in every editor, not only VS Code; zfls offers formatting only when a formatter is set.
+With `formatter` set to `zfls`, `findent`, `fprettify`, `codee`, `forformat` or `custom`, zfls answers `textDocument/formatting` and `textDocument/rangeFormatting` (format document, format selection, format on save) with its own formatter, or by running that one, which is installed separately (`pip install findent`, `pip install fprettify`, or the same from conda-forge; [Codee](https://www.codee.com); forformat). This works in every editor, not only VS Code; zfls offers formatting only when a formatter is set.
 
 | `formatter` | Command line |
 | --- | --- |
@@ -678,6 +678,7 @@ With `formatter` set to `findent`, `fprettify`, `codee`, `forformat` or `custom`
 | `codee` | `codee format - -o -`, then `formatter_args`; the `codee` of `codee_path` unless `formatter_path` is set |
 | `forformat` | `forformat --stdin-filename=FILE -ifree` (or `-ifixed`), then `formatter_args` |
 | `custom` | `formatter_path` with `formatter_args`, in which `${file}` is the document's path and `${form}` `free` or `fixed` |
+| `zfls` | none: zfls's own, which indents free-form files by their scopes (program units, procedures, types, interfaces and constructs; ELSE, CASE and CONTAINS at their construct's level; continuation lines one level further) and changes nothing else: no token moves, preprocessor lines and the rest of a continued character literal stay as they are. `formatter_args` takes `--indent N` (3 by default). Free form only |
 
 zfls gives the formatter the document's text, as the editor has it, on its standard input, reads the result from its standard output (no files are written), and answers with an edit for each block of lines the formatter changed (from a line diff), so the lines it left alone keep their exact text. The formatter runs in the file's directory, so fprettify finds the `.fprettify.rc` files there and above.
 
