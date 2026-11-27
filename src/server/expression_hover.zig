@@ -85,7 +85,7 @@ fn typeText(a: Allocator, t: typing.Typed) !?[]const u8 {
         .unknown => return null,
         .character => "CHARACTER",
         .derived => if (t.obj) |o| (try o.getDescNoLink(a)) else return null,
-        else => typing.typeName(t.cat),
+        else => if (t.kind) |k| try a.print("{s}({d})", .{ typing.typeName(t.cat), k }) else typing.typeName(t.cat),
     };
     if (!t.array or !t.rank_known or t.rank == 0) return base;
     var dims: std.ArrayList(u8) = .empty;
