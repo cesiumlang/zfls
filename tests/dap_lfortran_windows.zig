@@ -67,12 +67,14 @@ pub fn run(io: Io, gpa: Allocator, a: Allocator, environ: *const std.process.Env
 
 fn session(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: []const u8) !void {
     const line = w.lineOf(text, "stop here");
+    const print_line = w.lineOf(text, "and here");
     _ = try c.request("initialize", .{ .adapterID = "fortran", .pathFormat = "path", .linesStartAt1 = true });
     // the engine, chosen by the program's PDB
     _ = try c.request("launch", .{ .program = exe, .cwd = tmp, .console = "internalConsole", .sourceRoot = tmp });
     _ = try c.event("initialized");
-    const bps = items(try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{.{ .line = line }} }), "breakpoints");
-    try check(bps.len == 1 and (get(bps[0], "verified") orelse Value{ .bool = false }).bool, "a verified breakpoint at line {d}", .{line});
+    const bps = items(try c.request("setBreakpoints", .{ .source = .{ .path = src }, .breakpoints = .{ .{ .line = line }, .{ .line = print_line } } }), "breakpoints");
+    for (bps, [_]i64{ line, print_line }) |bp, l| try check((get(bp, "verified") orelse Value{ .bool = false }).bool, "a verified breakpoint at line {d}", .{l});
+    try check(bps.len == 2, "{d} breakpoints", .{bps.len});
     _ = try c.request("configurationDone", .{});
     const stopped = get(try c.event("stopped"), "body").?;
     try check(std.mem.eql(u8, str(stopped, "reason") orelse "", "breakpoint"), "stopped at the breakpoint ({s})", .{str(stopped, "reason") orelse "?"});
@@ -82,6 +84,11 @@ fn session(c: *Client, exe: []const u8, tmp: []const u8, src: []const u8, text: 
     const locals = try w.scopeVariables(c, items(try c.request("scopes", .{ .frameId = int(frames[0], "id").? }), "scopes"), "Locals");
     try check(std.mem.eql(u8, w.valueOf(locals, "i"), "4"), "i = 4 ({s})", .{w.valueOf(locals, "i")});
     try check(std.mem.eql(u8, w.valueOf(locals, "s"), "6"), "s = 6 ({s})", .{w.valueOf(locals, "s")});
+    // the PRINT's own line (#470)
+    _ = try c.request("continue", .{ .threadId = thread });
+    const at_print = get(try c.event("stopped"), "body").?;
+    const print_frames = items(try c.request("stackTrace", .{ .threadId = int(at_print, "threadId").? }), "stackFrames");
+    try check(print_frames.len > 0 and int(print_frames[0], "line") == print_line, "at the PRINT, line {d} ({?d})", .{ print_line, if (print_frames.len > 0) int(print_frames[0], "line") else null });
     _ = try c.request("continue", .{ .threadId = thread });
     _ = try c.event("terminated");
     _ = try c.request("disconnect", .{});

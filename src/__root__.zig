@@ -101,6 +101,7 @@ pub const run_env = @import("run/env.zig");
 pub const run_kit = @import("run/kit.zig");
 pub const run_command = @import("run/command.zig");
 pub const run_lfortran_codeview = @import("run/lfortran_codeview.zig");
+pub const run_lfortran_lines = @import("run/lfortran_lines.zig");
 pub const run_cli = @import("run/cli.zig");
 pub const dap_values = @import("dap/values.zig");
 pub const dap_fortran = @import("dap/fortran.zig");
