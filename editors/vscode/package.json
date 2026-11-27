@@ -1311,9 +1311,14 @@
             "type": "string",
             "enum": [
               "build",
+              "link",
               "run"
             ],
             "description": "%taskDefinition.zfls.task.description%"
+          },
+          "file": {
+            "type": "string",
+            "description": "%taskDefinition.zfls.file.description%"
           }
         }
       },
