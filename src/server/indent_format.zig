@@ -16,6 +16,7 @@ const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
 const indent_text = @import("../indent.zig");
 const spacing = @import("../spacing.zig");
+const fixed_indent = @import("../fixed_indent.zig");
 const rewrite = @import("../rewrite.zig");
 const semantic = @import("../semantic.zig");
 
@@ -45,10 +46,10 @@ pub fn caseOf(args: []const []const u8) ?rewrite.Case {
     return null;
 }
 
-/// The whole free-form `file` formatted (its editor's lines) with the
-/// formatter's `args`, or null for a file without an AST or in fixed form
+/// The whole `file` formatted (its editor's lines) with the formatter's
+/// `args`, or null for a file without an AST; in fixed form indented only
+/// (`--case` too)
 pub fn formatLines(self: *Server, a: Allocator, file: *FortranFile, args: []const []const u8) !?[]const []const u8 {
-    if (file.fixed) return null;
     const ast = file.ast orelse return null;
     var lines = file.editLines();
     if (caseOf(args)) |case| {
@@ -66,6 +67,7 @@ pub fn formatLines(self: *Server, a: Allocator, file: *FortranFile, args: []cons
         }
         lines = cased;
     }
+    if (file.fixed) return try withDirectives(a, try fixedLines(a, ast, lines, width(args), self.s.fixedColumns() orelse 72), args);
     const layout = try depths(a, ast, lines);
     if (has(args, "--spacing")) {
         const spaced = try a.dupe([]const u8, lines);
@@ -78,7 +80,47 @@ pub fn formatLines(self: *Server, a: Allocator, file: *FortranFile, args: []cons
         lines = spaced;
     }
     const indented = try indent_text.indent(a, lines, layout.depth, width(args));
-    return if (has(args, "--align")) try spacing.alignColons(a, indented, layout.single) else indented;
+    return try withDirectives(a, if (has(args, "--align")) try spacing.alignColons(a, indented, layout.single) else indented, args);
+}
+
+/// How many scopes each of `n` lines is in: those after a scope's first
+/// statement and before its END
+fn scopeDepths(a: Allocator, ast: *objects.Ast, n: usize) ![]usize {
+    const inside = try a.alloc(usize, n);
+    @memset(inside, 0);
+    for (ast.scope_list.items) |sc| {
+        if (sc == ast.none_scope or sc.file_ast != ast or sc.kind == .include or sc.sline == 0 or sc.eline <= sc.sline) continue;
+        var l = sc.sline;
+        while (l + 1 < sc.eline and l < n) : (l += 1) inside[l] += 1;
+    }
+    return inside;
+}
+
+/// A fixed-form file's lines, each statement's code at its depth
+/// (fixed_indent.zig); `limit` the line length
+fn fixedLines(a: Allocator, ast: *objects.Ast, lines: []const []const u8, w: usize, limit: usize) ![]const []const u8 {
+    const inside = try scopeDepths(a, ast, lines.len);
+    const out = try a.dupe([]const u8, lines);
+    var quote: u8 = 0;
+    var start_depth: usize = 0;
+    for (lines, 0..) |line, i| {
+        const kind = fixed_indent.kindOf(line);
+        if (kind == .other) continue;
+        const code = fixed_indent.codeOf(line, limit);
+        const start_quote: u8 = if (kind == .continuation) quote else 0;
+        if (kind == .statement) start_depth = inside[i] -| @intFromBool(middle(ast, std.mem.trim(u8, code, " "), i));
+        quote = fixed_indent.endQuote(code, start_quote);
+        // in a continued character literal: as it is
+        if (start_quote != 0 or quote != 0) continue;
+        const depth = if (kind == .statement) start_depth else start_depth + 1;
+        if (try fixed_indent.reindent(a, line, depth, w, limit)) |l| out[i] = l;
+    }
+    return out;
+}
+
+/// `--indent-directives`: the preprocessor's directives nested
+fn withDirectives(a: Allocator, lines: []const []const u8, args: []const []const u8) ![]const []const u8 {
+    return if (has(args, "--indent-directives")) try indent_text.directives(a, lines, 2) else lines;
 }
 
 fn has(args: []const []const u8, flag: []const u8) bool {
@@ -99,14 +141,7 @@ const Layout = struct {
 /// statement
 fn depths(a: Allocator, ast: *objects.Ast, lines: []const []const u8) !Layout {
     const n = lines.len;
-    const inside = try a.alloc(usize, n);
-    @memset(inside, 0);
-    for (ast.scope_list.items) |sc| {
-        if (sc == ast.none_scope or sc.file_ast != ast or sc.kind == .include or sc.sline == 0 or sc.eline <= sc.sline) continue;
-        // the lines after its first statement's, before its END's
-        var l = sc.sline;
-        while (l + 1 < sc.eline and l < n) : (l += 1) inside[l] += 1;
-    }
+    const inside = try scopeDepths(a, ast, n);
     const out = try a.alloc(?usize, n);
     const start_quote = try a.alloc(u8, n);
     const single = try a.alloc(bool, n);

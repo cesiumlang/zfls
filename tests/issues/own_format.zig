@@ -126,11 +126,14 @@ test "Enter indents the line it ends: an END at its construct's depth (#986)" {
     try std.testing.expectEqual(@as(usize, 0), (try other.onTypeFormatting("e.f90", .{ .line = 2, .col = 0 }, "\n")).len);
 }
 
-test "a fixed-form file is left to another formatter (#986)" {
-    const fixed = h.File{ .name = "f.f", .text = "      program p\n      x = 1\n      end\n" };
+test "fixed form: the code after column 6 indented, labels, comments and continued literals as they are (#986)" {
+    const fixed = h.File{ .name = "f.f", .text = "      program p\nc     a comment\n      integer i\n      do 10 i = 1, 2\n      if (i .gt. 1) then\n      print *, 'it''s a long\n     &literal'\n      else\n      print *, i,\n     &  i\n      end if\n   10 continue\n      end\n" };
     const w = try h.Workspace.init(&.{fixed}, .{ .init_options = "{\"formatter\": \"zfls\"}" });
     defer w.deinit();
-    try std.testing.expectEqualStrings(fixed.text, try formatted(w, "f.f"));
+    try std.testing.expectEqualStrings(
+        "      program p\nc     a comment\n         integer i\n         do 10 i = 1, 2\n            if (i .gt. 1) then\n      print *, 'it''s a long\n     &literal'\n            else\n               print *, i,\n     &            i\n            end if\n   10    continue\n      end\n",
+        try formatted(w, "f.f"),
+    );
 }
 
 test "the corpus formatted keeps its tokens, and formatting it again changes nothing (#986)" {
@@ -141,8 +144,8 @@ test "the corpus formatted keeps its tokens, and formatting it again changes not
     defer dir.close(io);
     var it = dir.iterate();
     var checked: usize = 0;
-    while (try it.next(io)) |e| for ([_][]const u8{ "{\"formatter\": \"zfls\"}", "{\"formatter\": \"zfls\", \"formatter_args\": [\"--spacing\", \"--align\"]}" }) |options| {
-        if (e.kind != .file or !(std.mem.endsWith(u8, e.name, ".f90") or std.mem.endsWith(u8, e.name, ".F90"))) continue;
+    while (try it.next(io)) |e| for ([_][]const u8{ "{\"formatter\": \"zfls\"}", "{\"formatter\": \"zfls\", \"formatter_args\": [\"--spacing\", \"--align\", \"--indent-directives\"]}" }) |options| {
+        if (e.kind != .file or !(std.mem.endsWith(u8, e.name, ".f90") or std.mem.endsWith(u8, e.name, ".F90") or std.mem.endsWith(u8, e.name, ".f"))) continue;
         const text = try dir.readFileAlloc(io, e.name, a, .limited(1 << 22));
         const w = try h.Workspace.init(&.{.{ .name = e.name, .text = text }}, .{ .init_options = options });
         defer w.deinit();
