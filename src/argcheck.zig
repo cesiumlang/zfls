@@ -645,10 +645,31 @@ pub const Checker = struct {
             while (i < e.len and (std.ascii.isAlphanumeric(e[i]) or e[i] == '_')) i += 1;
             if (i == ns or !std.ascii.isAlphabetic(e[ns])) return null;
             const name = e[ns..i];
-            const obj = if (v) |parent|
+            var obj = if (v) |parent|
                 (try c.component(parent, name)) orelse return null
             else
                 (try c.lookup(scope, name, line_no)) orelse return null;
+            while (i < e.len and e[i] == ' ') i += 1;
+            // a call of a function: its result, the call's arguments skipped
+            // (#987)
+            if (v == null and obj.kind == .function and i < e.len and e[i] == '(') {
+                obj = obj.procDataConst().result_obj orelse return null;
+                i = (matching(e, i) orelse return null) + 1;
+                while (i < e.len and e[i] == ' ') i += 1;
+                const typ = typeSource(obj) orelse return null;
+                const fn_array = dimensions.isArray(obj);
+                if (fn_array) rank = rankOf(dimensions.of(obj)) orelse 0;
+                if (!dimensions.known(obj)) rank_known = false;
+                array = fn_array;
+                v = obj;
+                v_type = typ;
+                if (i < e.len and e[i] == '%') {
+                    i += 1;
+                    while (i < e.len and e[i] == ' ') i += 1;
+                    continue;
+                }
+                break;
+            }
             if (obj.kind != .variable) return null;
             // an associate name: the type of what it is linked to, the rank
             // its selector or section gives it (#707, #714)
