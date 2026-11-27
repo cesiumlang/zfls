@@ -209,6 +209,8 @@ pub const Session = struct {
     nodes_arena: std.heap.ArenaAllocator,
     /// An MPI program's coordinator (mpi.zig)
     mpi: ?mpi.State = null,
+    /// The engine's program is LFortran's (engine_lfortran.zig), once asked
+    lfortran: ?bool = null,
 
     pub fn send(s: *Session, a: Allocator, msg: anytype) void {
         _ = s.sendSeq(a, msg);

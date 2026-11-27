@@ -10,6 +10,13 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ir_text = @import("ir_text.zig");
+const dbgOf = ir_text.dbgOf;
+const metadataId = ir_text.metadataId;
+const field = ir_text.field;
+const number = ir_text.number;
+const splitLines = ir_text.splitLines;
+const word = ir_text.word;
 const fixed_indent = @import("../fixed_indent.zig");
 const objects = @import("../objects.zig");
 const parser = @import("../parser.zig");
@@ -106,12 +113,6 @@ fn isOutput(s_in: []const u8) bool {
     return false;
 }
 
-fn word(s: []const u8) []const u8 {
-    var e: usize = 0;
-    while (e < s.len and (std.ascii.isAlphanumeric(s[e]) or s[e] == '_')) e += 1;
-    return s[0..e];
-}
-
 /// The `)` that closes the `(` at `s[0]`, outside character literals
 fn closeParen(s: []const u8) ?usize {
     var depth: usize = 0;
@@ -134,13 +135,22 @@ fn closeParen(s: []const u8) ?usize {
     return null;
 }
 
-/// The procedures of the source file at `path` (its `text`), with their
-/// output statements
-pub fn ofSource(a: Allocator, io: std.Io, path: []const u8, text: []const u8) ![]const Proc {
+/// The source file at `path` (its `text`), parsed
+pub fn parse(a: Allocator, io: std.Io, path: []const u8, text: []const u8) !struct { file: *parser.FortranFile, ast: *objects.Ast } {
     patterns.init();
     const file = try parser.FortranFile.create(a, path, null);
     _ = try file.setText(text);
-    const ast = try file.parse(io, null, &.{}, .{});
+    return .{ .file = file, .ast = try file.parse(io, null, &.{}, .{}) };
+}
+
+/// The procedures of the source file at `path` (its `text`), with their
+/// output statements
+pub fn ofSource(a: Allocator, io: std.Io, path: []const u8, text: []const u8) ![]const Proc {
+    const p = try parse(a, io, path, text);
+    return ofParsed(a, p.file, p.ast);
+}
+
+pub fn ofParsed(a: Allocator, file: *const parser.FortranFile, ast: *const objects.Ast) ![]const Proc {
     return procedures(a, ast, try outputStatements(a, file.editLines(), file.fixed));
 }
 
@@ -171,7 +181,7 @@ pub fn procedures(a: Allocator, ast: *const objects.Ast, stmts: []const Stmt) ![
 const anchors = [_][]const u8{ "_lfortran_printf", "_lfortran_file_write" };
 const setups = [_][]const u8{ "_lcompilers_string_format_fortran", "_lfortran_get_decimal_mode", "_lfortran_get_sign_mode", "_lfortran_get_round_mode" };
 
-const Subprogram = struct { name: []const u8, line: usize };
+pub const Subprogram = struct { name: []const u8, line: usize };
 
 /// `ir` with the lines of the output statements of `procs`; as it was
 /// where it is not LFortran's as zfls knows it
@@ -293,7 +303,7 @@ fn isRecord(l: []const u8) bool {
     return std.mem.startsWith(u8, std.mem.trimStart(u8, l, " "), "#dbg_");
 }
 
-fn matching(procs: []const Proc, sp: Subprogram) ?Proc {
+pub fn matching(procs: []const Proc, sp: Subprogram) ?Proc {
     for (procs) |p| {
         if (p.sline != sp.line) continue;
         if (std.ascii.eqlIgnoreCase(p.name, sp.name) or (p.program and std.mem.eql(u8, sp.name, "main"))) return p;
@@ -315,38 +325,6 @@ fn callee(l: []const u8) ?[]const u8 {
     const at = std.mem.findScalarPos(u8, l, c, '@') orelse return null;
     const open = std.mem.findScalarPos(u8, l, at, '(') orelse return null;
     return l[at + 1 .. open];
-}
-
-fn dbgOf(l: []const u8) ?u64 {
-    const at = std.mem.findLast(u8, l, "!dbg !") orelse return null;
-    return number(l[at + "!dbg !".len ..]);
-}
-
-fn metadataId(l: []const u8) ?u64 {
-    if (l.len < 2 or l[0] != '!' or !std.ascii.isDigit(l[1])) return null;
-    return number(l[1..]);
-}
-
-/// The text after `key` up to `end`
-fn field(l: []const u8, key: []const u8, end: u8) ?[]const u8 {
-    const at = (std.mem.find(u8, l, key) orelse return null) + key.len;
-    const e = std.mem.findScalarPos(u8, l, at, end) orelse l.len;
-    return l[at..e];
-}
-
-/// The number at the start of `s`
-fn number(s: ?[]const u8) ?u64 {
-    const t = s orelse return null;
-    var e: usize = 0;
-    while (e < t.len and std.ascii.isDigit(t[e])) e += 1;
-    return std.fmt.parseInt(u64, t[0..e], 10) catch null;
-}
-
-fn splitLines(a: Allocator, text: []const u8) ![]const []const u8 {
-    var out: std.ArrayList([]const u8) = .empty;
-    var it = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n');
-    while (it.next()) |l| try out.append(a, std.mem.trimEnd(u8, l, "\r"));
-    return out.items;
 }
 
 const testing = std.testing;
