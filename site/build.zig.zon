@@ -1,0 +1,24 @@
+// The documentation site, a package of its own: zfls itself does not
+// fetch Zine, the site's build does.
+.{
+    .name = .zfls_site,
+    .fingerprint = 0xa6e423c57847eae4,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.17.1",
+    .dependencies = .{
+        .zine = .{
+            .url = "git+https://github.com/kristoff-it/zine?ref=v0.14.1#6cacc90b1dfdc414859683e85e05c93602a4afd1",
+            .hash = "zine-0.14.1-ou6nIFeNFwCxFPt29bP6F-PubAggNwx148VrLX4Oo4zN",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "gen",
+        "layouts",
+        "assets",
+        "zine.ziggy",
+        "pages.txt",
+        "llms.txt",
+    },
+}

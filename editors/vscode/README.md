@@ -74,7 +74,7 @@ It replaces the Modern Fortran extension rather than working alongside it: disab
 | `zfls.ppDefs` | none | Preprocessor definitions, name to value |
 | `zfls.disableIntelDirectives` | `false` | Read Intel's conditional compilation directives (`!DEC$ IF DEFINED (X)`) as comments, every branch included |
 | `zfls.debugLog` | `false` | Write zfls's debug log in the project's root folder (a change restarts zfls) |
-| `zfls.disableIndexCache` | `false` | Do not keep the workspace's files in zfls's [index cache](https://github.com/cesiumlang/zfls#index-cache) |
+| `zfls.disableIndexCache` | `false` | Do not keep the workspace's files in zfls's [index cache](https://github.com/cesiumlang/zfls/blob/main/docs/performance.md#index-cache) |
 | `zfls.disableCompileCommands` | `false` | Do not read a `compile_commands.json` |
 | `zfls.disableBindCSearch` | `false` | Go to definition of a `BIND(C)` procedure does not search the workspace's C files |
 | `zfls.bindCClangd` | empty | A clangd (its path, or `clangd`) that zfls asks for the C declarations of `BIND(C)` procedures |
@@ -214,7 +214,7 @@ Choose one with `zfls.formatting.formatter`; `Disabled` turns formatting off, so
 }
 ```
 
-The zfls server formats, or runs the external formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see the [zfls readme](https://github.com/cesiumlang/zfls#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
+The zfls server formats, or runs the external formatter (its `formatter` options, which these settings set; other editors set them in a configuration file, see [Formatting](https://github.com/cesiumlang/zfls/blob/main/docs/formatting.md#formatting)). It sends the text to the formatter on its standard input and reads the result from its standard output, so no files are written, and changes only the lines the formatter changed. findent is told the source form of the file (`-ifree` or `-ifixed`) unless `zfls.formatting.findentArgs` sets one. fprettify reads `.fprettify.rc` files from the directory of the file and its parents, as when it formats the file itself. A change of these settings applies to the next formatting; turning formatting off restarts the server, so that VS Code stops offering it. In `zfls.formatting.path` and the argument settings, `${workspaceFolder}`, `${workspaceFolder:name}`, `${userHome}`, `${env:NAME}` and a leading `~` are expanded; an argument with a space in it stays one.
 
 **Format Selection** formats the whole lines the selection touches. The formatter sees only those lines, not the surrounding code: findent starts at the indentation of the first selected line (`-Ia`), and fprettify keeps it too, but select whole constructs (a complete `do` loop, `if` block or procedure) for the indentation inside them to come out right.
 

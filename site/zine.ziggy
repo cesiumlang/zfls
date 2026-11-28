@@ -1,0 +1,10 @@
+.zine_version = "0.14.1-dev",
+.site = .simple(.{
+    .title = "zfls",
+    // Zine needs one; the site is served under more than one domain and no
+    // page names it (site.yml checks)
+    .host_url = "https://zfls.invalid",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+}),

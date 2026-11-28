@@ -1,0 +1,631 @@
+/* cesiumlang.org's style sheet (cesiumlang/cesiumlang.org@c657aa2), by way
+   of skein's (chasingdaylight/skein@1e2695e), in the colors of zfls's logo:
+   Fortran's purple, and Zig's orange in the dark. */
+:root {
+  --light: #fbfafc;
+  --lightgray: #e3dfe8;
+  --gray: #aaa3b3;
+  --darkgray: #37333d;
+  --dark: #1d1a21;
+  --secondary: #734f96;
+  --tertiary: #55387a;
+  --highlight: rgba(115, 79, 150, 0.08);
+  --code-bg: #efecf3;
+  --font-body: "Source Sans Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-header: "Schibsted Grotesk", var(--font-body);
+  --font-code: "IBM Plex Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  --light: #151417;
+  --lightgray: #2e2b33;
+  --gray: #686170;
+  --darkgray: #d5d0dc;
+  --dark: #ebe7f0;
+  --secondary: #c7aee6;
+  --tertiary: #f7a41d;
+  --highlight: rgba(199, 174, 230, 0.1);
+  --code-bg: #222026;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding-top: var(--topbar-h);
+  background: var(--light);
+  color: var(--darkgray);
+  font-family: var(--font-body);
+  line-height: 1.6;
+}
+
+a {
+  color: var(--secondary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--tertiary);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--dark);
+  font-family: var(--font-header);
+  line-height: 1.2;
+  margin: 1.6em 0 0.5em;
+}
+
+h1 {
+  margin-top: 0;
+}
+
+.page {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) minmax(0, 46rem) minmax(10rem, 16rem);
+  gap: 2rem;
+  justify-content: center;
+  max-width: 100rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem;
+}
+
+.sidebar {
+  position: sticky;
+  top: calc(var(--topbar-h) + 1rem);
+  align-self: start;
+  max-height: calc(100vh - var(--topbar-h) - 2rem);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lightgray) transparent;
+}
+
+/* the floating header: it stays on screen and the page scrolls under it */
+:root {
+  --topbar-h: 3.5rem;
+}
+
+/* a jump to an anchor stops below the floating header, not under it */
+html {
+  scroll-padding-top: calc(var(--topbar-h) + 0.75rem);
+}
+
+#topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--topbar-h);
+  padding: 0 1rem;
+  background: color-mix(in srgb, var(--light) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--lightgray);
+}
+
+#topbar .spacer {
+  flex: 1;
+}
+
+#topbar button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 6px;
+  color: var(--darkgray);
+  cursor: pointer;
+}
+
+#topbar button:hover {
+  background: var(--highlight);
+}
+
+#topbar button:focus-visible {
+  outline: 2px solid var(--secondary);
+}
+
+#topbar svg {
+  width: 20px;
+  height: 20px;
+  fill: var(--darkgray);
+}
+
+#topbar .menuIcon,
+#topbar .readerIcon {
+  fill: none;
+}
+
+#topbar .readerIcon {
+  fill: currentColor;
+}
+
+#menu-toggle {
+  display: none !important;
+}
+
+#topbar .dayIcon {
+  display: inline;
+}
+
+#topbar .nightIcon {
+  display: none;
+}
+
+:root[data-theme="dark"] #topbar .dayIcon {
+  display: none;
+}
+
+:root[data-theme="dark"] #topbar .nightIcon {
+  display: inline;
+}
+
+#reader-toggle[aria-pressed="true"] {
+  background: var(--highlight);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--dark);
+  font-family: var(--font-header);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.brand img {
+  height: 2.5rem;
+  width: auto;
+  margin: 0;
+}
+
+/* the edition selector: a release, or the development version
+   (cesiumlang.org#43) */
+#edition {
+  flex: 0 0 auto;
+  height: 2.25rem;
+  padding: 0 0.5rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--darkgray);
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#edition[hidden] {
+  display: none;
+}
+
+/* the title goes once the page has been scrolled */
+.brand-text {
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 10rem;
+  transition: max-width 0.2s, opacity 0.2s;
+}
+
+
+/* the search field of the header: the room between the title and the buttons;
+   what it finds is listed under it */
+#search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 36rem;
+  color: var(--gray);
+}
+
+#search > svg {
+  position: absolute;
+  left: 0.7rem;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+#search-input {
+  width: 100%;
+  min-width: 0;
+  height: 2.25rem;
+  padding: 0 0.75rem 0 2.1rem;
+  font: inherit;
+  color: var(--darkgray);
+  background: transparent;
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+}
+
+#search-input:focus {
+  outline: none;
+  border-color: var(--secondary);
+}
+
+#search-results {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  width: max(100%, min(36rem, 92vw));
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+#search-results[hidden] {
+  display: none;
+}
+
+#search-results a {
+  display: block;
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid var(--lightgray);
+  color: var(--darkgray);
+}
+
+#search-results a:hover {
+  background: var(--highlight);
+}
+
+#search-results strong {
+  color: var(--dark);
+}
+
+#search-results small {
+  display: block;
+  color: var(--gray);
+}
+
+#search-results p {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+}
+
+/* explorer: a folder is an arrow and a title; what is inside is indented under
+   the title, with a line to show the level */
+#explorer ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#explorer ul ul {
+  margin-left: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--lightgray);
+}
+
+#explorer li {
+  margin: 0.15rem 0;
+}
+
+#explorer .folder > .row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* a page lines up with the titles of the folders beside it */
+#explorer li:not(.folder) > a,
+#explorer li:not(.folder) > span {
+  margin-left: 1.25rem;
+}
+
+#explorer button.fold {
+  all: unset;
+  cursor: pointer;
+  width: 1rem;
+  text-align: center;
+  color: var(--gray);
+  transition: transform 0.15s;
+}
+
+#explorer .folder.open > .row > button.fold {
+  transform: rotate(90deg);
+}
+
+#explorer .folder:not(.open) > ul {
+  display: none;
+}
+
+#explorer a.current {
+  color: var(--tertiary);
+  font-weight: 600;
+}
+
+#explorer a {
+  color: var(--darkgray);
+}
+
+#explorer a:hover {
+  color: var(--secondary);
+}
+
+/* content */
+.content img {
+  max-width: 100%;
+}
+
+.meta {
+  color: var(--gray);
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+.meta .tag {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0 0.5rem;
+  border-radius: 1rem;
+  background: var(--highlight);
+}
+
+#breadcrumbs {
+  color: var(--gray);
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+#breadcrumbs a::after {
+  content: " \203A ";
+  color: var(--gray);
+}
+
+table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+th, td {
+  border: 1px solid var(--lightgray);
+  padding: 0.35rem 0.7rem;
+  text-align: left;
+}
+
+th {
+  background: var(--highlight);
+}
+
+code {
+  font-family: var(--font-code);
+  font-size: 0.9em;
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--lightgray);
+  border-radius: 5px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 1rem;
+  border-left: 3px solid var(--lightgray);
+}
+
+/* callouts: Zine blocks with the class callout-KIND */
+.block[class*="callout-"] {
+  border-left: 4px solid var(--secondary);
+  background: var(--highlight);
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  margin: 1rem 0;
+}
+
+.block.callout-warning,
+.block.callout-caution {
+  border-left-color: #e0a030;
+}
+
+.block.callout-danger,
+.block.callout-bug,
+.block.callout-error {
+  border-left-color: #d04050;
+}
+
+.block[class*="callout-"] > h1 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.3rem;
+}
+
+/* table of contents */
+.toc {
+  font-size: 0.9rem;
+}
+
+.toc ul {
+  list-style: none;
+  padding-left: 0.8rem;
+  margin: 0;
+}
+
+.toc > ul {
+  padding-left: 0;
+}
+
+.toc a {
+  color: var(--darkgray);
+}
+
+.toc a:hover {
+  color: var(--secondary);
+}
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--lightgray);
+  color: var(--gray);
+  font-size: 0.9rem;
+}
+
+/* narrow screens: one column; the explorer is a menu under the header */
+@media (max-width: 1000px) {
+  :root[data-scrolled] .brand-text {
+    max-width: 0;
+    opacity: 0;
+  }
+
+  #search {
+    max-width: none;
+  }
+
+  /* the results use the width of the screen, not of the field */
+  #search-results {
+    position: fixed;
+    top: calc(var(--topbar-h) + 0.3rem);
+    left: 0.5rem;
+    right: 0.5rem;
+    width: auto;
+  }
+
+  #topbar .spacer {
+    display: none;
+  }
+
+  :root[data-menu="open"],
+  :root[data-menu="open"] body {
+    overflow: hidden;
+  }
+
+  .sidebar.left {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #menu-toggle {
+    display: flex !important;
+  }
+
+  .sidebar.right {
+    display: none;
+  }
+
+  .sidebar.left {
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
+    z-index: 4;
+    width: min(20rem, 85vw);
+    /* a fixed box with align-self: start fits its content; give it the height of the screen */
+    height: calc(100vh - var(--topbar-h));
+    height: calc(100dvh - var(--topbar-h));
+    max-height: none;
+    padding: 1rem;
+    background: var(--light);
+    border-right: 1px solid var(--lightgray);
+    transform: translateX(-100%);
+    transition: transform 0.2s;
+  }
+
+  :root[data-menu="open"] .sidebar.left {
+    transform: none;
+  }
+
+  #menu-backdrop {
+    display: none;
+    position: fixed;
+    inset: var(--topbar-h) 0 0 0;
+    z-index: 3;
+    background: rgba(0, 0, 0, 0.4);
+  }
+
+  :root[data-menu="open"] #menu-backdrop {
+    display: block;
+  }
+}
+
+/* reader mode: only the page, and the header to leave it */
+:root[data-reader="on"] .sidebar,
+:root[data-reader="on"] #breadcrumbs,
+:root[data-reader="on"] #menu-toggle,
+:root[data-reader="on"] #menu-backdrop {
+  display: none !important;
+}
+
+:root[data-reader="on"] .page {
+  grid-template-columns: minmax(0, 46rem);
+}
+
+/* backlinks, under the page */
+.backlinks {
+  margin-top: 2.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--lightgray);
+}
+
+.backlinks h2 {
+  margin: 0.5rem 0;
+  font-size: 1.1rem;
+}
+
+.backlinks ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+/* a preview of the page a link goes to */
+.popover {
+  position: fixed;
+  z-index: 8;
+  width: min(28rem, calc(100vw - 1rem));
+  max-height: 22rem;
+  overflow: hidden;
+  padding: 0.8rem 1rem;
+  font-size: 0.9rem;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.popover::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.5rem;
+  background: linear-gradient(transparent, var(--light));
+}
+
+.popover h1,
+.popover h2,
+.popover h3 {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 1.1rem;
+}
+
+.popover pre {
+  font-size: 0.8rem;
+}

@@ -1,0 +1,42 @@
+# zfls
+
+> zfls is a Fortran language server written in Zig: one native program for Linux, macOS and Windows that gives an editor completion, hover, definitions, references, rename, diagnostics and formatting for Fortran, runs a compiler's checks, builds a file to run, and has a debug adapter (`zfls dap`). It is a port of fortls and takes fortls's command line options and configuration files.
+
+## Using it (for an agent setting it up)
+
+1. Get zfls: a release of https://github.com/cesiumlang/zfls (one program, nothing else to install), the installation scripts in `packaging/`, or the VS Code extension `cesiumlang.zfls`, which includes it.
+2. Start it from the editor's language client as `zfls`; it speaks the Language Server Protocol on standard input and output. `zfls dap` is the debug adapter, `zfls --help` lists the options.
+3. Put a project's options in `.zflsrc` (TOML) at its root; `zfls config` prints each option in effect and where it came from.
+4. Each diagnostic has a code; `diagnostic_severity` in `.zflsrc` or a `! zfls: disable=CODE` comment turns one off.
+
+## Documentation
+
+Each page is also served as Markdown, at the paths below.
+
+- [Overview](index.md): what zfls is, getting it
+
+Getting started:
+
+- [Installing](installing.md): release archives, installation scripts, the macOS package, verifying a download
+- [Editors](editors.md): Neovim, Helix, Emacs, Sublime Text, Kate, Zed
+- [Configuration](configuration.md): `.zflsrc`, the user's file, settings over LSP, precedence
+
+Reference:
+
+- [Features](features.md): everything zfls does
+- [Compilers](compilers.md): what works with gfortran, ifx, ifort, LLVM Flang, nvfortran, nagfor and LFortran
+- [Diagnostics and dialects](diagnostics.md): zfls's own checks and their codes
+- [The compiler check and linters](compiler-check.md): `compiler_diagnostics`, fortitude, Codee
+- [Formatting and the source form](formatting.md): formatters, fixed and free form
+- [Reading the source](source.md): comment markers, OpenMP and Intel conditional compilation, debug lines
+- [Build files and C](build-files.md): `compile_commands.json`, `fpm.toml`, module files, `BIND(C)`
+- [Running a file](running.md): `zfls/buildCommand` and `zfls build-command`
+- [Debugging](debugging.md): `zfls dap` with gdb, lldb-dap or Windows's Debugger Engine
+- [ifx without Visual Studio](ifx-kit.md): `zfls setup-ifx` and the ifx kit
+- [fpm targets and tests](tests.md): `zfls/fpmTargets`, `zfls/fpmTests`, `zfls/pfunitTests`
+- [Start-up time and memory](performance.md): the index cache, summaries
+- [Differences from fortls](fortls.md)
+
+zfls itself:
+
+- [Building](building.md), [Testing](testing.md), [Releases](releases.md), [Licenses](licenses.md)
