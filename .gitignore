@@ -12,9 +12,16 @@ zig-pkg/
 # compiler environments for local tests (pixi), not repository content
 /.toolchains/
 
-# generated documentation
-docs/build/
-site/
+# written by site/gen for Zine
+/site/content/
+/site/assets/site-index.json
+/site/assets/editions.json
+/site/assets/logo.svg
+# the files that pages link to, copied for Zine (site/gen/main.zig)
+/site/assets/img/
+/site/assets/v[0-9]*/
+# the site as built (zig build -p ../.site, in site/)
+/.site/
 
 # python
 __pycache__/

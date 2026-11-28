@@ -10,6 +10,9 @@
 # ship in its package, so they are not listed here.
 
 readme.md
+# the documentation and its site (pages.yml builds them)
+docs/*
+site/*
 CLAUDE.md
 LICENSE
 .vscode/*

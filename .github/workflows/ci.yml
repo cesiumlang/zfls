@@ -366,7 +366,7 @@ jobs:
         run: zig build check-generated
 
       - name: Source is formatted (zig fmt)
-        run: zig fmt --check build build.zig build.zig.zon src tests tools
+        run: zig fmt --check build build.zig build.zig.zon src tests tools site/gen site/build.zig site/build.zig.zon
 
       # Downloads are retried: a dropped connection to a
       # package host should not fail the run. Only what zfls's build needs

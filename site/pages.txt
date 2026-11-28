@@ -1,0 +1,28 @@
+# The tree of the site's pages, in order. A line at the left is a group: its
+# directory on the site, then its title. An indented line is a page of the
+# group above: its path under docs/ without `.md`, then its title in the
+# tree. The overview (index) is the home page. A new page is added here, and
+# to llms.txt; the generator warns of a page not listed.
+guides Getting started
+  installing Installing
+  editors Editors
+  configuration Configuration
+reference Reference
+  features Features
+  compilers Compilers
+  diagnostics Diagnostics and dialects
+  compiler-check The compiler check and linters
+  formatting Formatting and the source form
+  source Reading the source
+  build-files Build files and C
+  running Running a file
+  debugging Debugging
+  ifx-kit ifx without Visual Studio
+  tests fpm targets and tests
+  performance Start-up time and memory
+  fortls Differences from fortls
+project zfls itself
+  building Building
+  testing Testing
+  releases Releases
+  licenses Licenses

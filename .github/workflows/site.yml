@@ -1,0 +1,60 @@
+# Builds the documentation site (site/, with Zine, from docs/) and uploads it
+# as the Pages artifact. Called by pages.yml here, and by the mirror's
+# workflow (emanspeaks/zfls-docs), so that both sites are built the same way
+# from one definition; a change to the build is made here alone.
+name: Build the documentation site
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch, tag or commit of cesiumlang/zfls to build
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ZIG_VERSION: 0.17.1
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # the history: each page's date. No submodules: the site needs none.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: cesiumlang/zfls
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: randyos-org/setup-zig@bd9719185e5350e25dfaed832f37f7e869f47469 # node24 branch: v2.2.1 on Node.js 24, until upstream releases it
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Test the site's generator
+        working-directory: site
+        run: zig build test
+
+      - name: Build the site
+        working-directory: site
+        run: zig build -p ../.site
+
+      # the site is served under more than one domain: no page may name one
+      - name: No page names a domain of the site
+        run: |
+          if grep -rIl -e 'zfls\.cesiumlang\.org' -e 'randyeckman\.com' -e 'zfls\.invalid' .site/public; then
+            echo "::error::these pages name a domain the site is served under"
+            exit 1
+          fi
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .site/public

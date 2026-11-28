@@ -1,0 +1,12 @@
+<extend template="base.shtml">
+<head id="head"></head>
+<main id="main">
+  <article>
+    <h1 :text="$page.title"></h1>
+    <div id="page-meta" class="meta">
+      <span :text="$page.date.format('January 02, 2006')"></span>
+    </div>
+    <div class="content" :html="$page.content()"></div>
+    <div id="backlinks" class="backlinks" hidden></div>
+  </article>
+</main>

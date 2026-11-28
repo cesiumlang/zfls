@@ -1,0 +1,85 @@
+# Publishes the documentation site with GitHub Pages, at zfls.cesiumlang.org:
+# the pages of docs/, built with Zine by site.yml (site/).
+#
+# Runs on every push to main, and by hand (Actions > Documentation site > Run
+# workflow), on any branch to check the build without publishing it. A mirror
+# with its own domain (emanspeaks/zfls-docs) builds the same site from this
+# repository with the same workflow (site.yml).
+name: Documentation site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the site (else only build it, to check it)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build the site
+    uses: ./.github/workflows/site.yml
+    with:
+      ref: ${{ github.sha }}
+
+  deploy:
+    name: Publish
+    needs: build
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # The mirror is another repository's Pages site, under another domain,
+  # which builds this repository itself. A commit there starts its build and
+  # records what it built. It is made with a deploy key that can write to
+  # that repository and nothing else (the secret MIRROR_DEPLOY_KEY); without
+  # the secret the job is skipped.
+  mirror:
+    name: Start the mirror's build
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MIRROR_DEPLOY_KEY: ${{ secrets.MIRROR_DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.MIRROR_DEPLOY_KEY != ''
+        with:
+          repository: emanspeaks/zfls-docs
+          ssh-key: ${{ secrets.MIRROR_DEPLOY_KEY }}
+
+      - name: Record the commit to build
+        if: env.MIRROR_DEPLOY_KEY != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '%s\n' "$GITHUB_SHA" > source.txt
+          git add source.txt
+          if git diff --cached --quiet; then
+            echo "The mirror already has this commit."
+            exit 0
+          fi
+          git commit -q -m "Build cesiumlang/zfls@${GITHUB_SHA::7}"
+          git push -q
